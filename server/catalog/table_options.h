@@ -45,6 +45,7 @@
 #include "catalog/key_generator.h"
 #include "catalog/types.h"
 #include "catalog/validators.h"
+#include "pg/format_options.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
 #include "pg/storage_options.h"
@@ -192,12 +193,12 @@ struct CheckConstraint {
 };
 
 struct FileInfo {
-  FileFormat format = FileFormat::None;
-  std::shared_ptr<pg::StorageOptions> storage;
+  std::shared_ptr<pg::StorageOptions> storage_options;
+  std::shared_ptr<pg::FormatOptions> format_options;
 };
 
 inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {
-  return info.format != FileFormat::None;
+  return info.format_options != nullptr;
 }
 
 struct CreateTableRequest {

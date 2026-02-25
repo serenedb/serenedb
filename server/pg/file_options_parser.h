@@ -26,6 +26,7 @@
 #include <functional>
 
 #include "catalog/types.h"
+#include "pg/format_options.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -143,6 +144,95 @@ class FileOptionsParser {
       UnrecognizedFormat(format, location);
     }
     return {it->second, format, location};
+  }
+
+  std::shared_ptr<TextFormatOptions> ParseTextFormatOptions(bool is_csv) {
+    uint8_t delim = is_csv ? ',' : '\t';
+    if (const auto* option = EraseOption("delimiter")) {
+      auto maybe_delim = TryGet<char>(option->arg);
+      if (!maybe_delim) {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(_operation,
+                  " delimiter must be a single one-byte character"));
+      }
+      delim = *maybe_delim;
+    }
+
+    uint8_t escape = is_csv ? '"' : '\\';
+    if (const auto* option = EraseOption("escape")) {
+      auto maybe_escape = TryGet<char>(option->arg);
+      if (!maybe_escape) {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(_operation, " escape must be a single one-byte character"));
+      }
+      escape = *maybe_escape;
+    }
+
+    std::string null_string = is_csv ? "" : "\\N";
+    if (const auto* option = EraseOption("null")) {
+      auto maybe_null = TryGet<std::string_view>(option->arg);
+      if (!maybe_null) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(_operation, " null must be a string"));
+      }
+      null_string = std::string{*maybe_null};
+    }
+
+    bool header = false;
+    if (const auto* option = EraseOption("header")) {
+      if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
+        if (*maybe_match == "match") {
+          THROW_SQL_ERROR(
+            CURSOR_POS(ErrorPosition(ExprLocation(option))),
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("match option for header is not supported yet"));
+        }
+      }
+      auto maybe_header = TryGetBoolOption(option->arg);
+      if (!maybe_header) {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("header requires a Boolean value or \"match\""));
+      }
+      header = *maybe_header;
+    }
+
+    return std::make_shared<TextFormatOptions>(delim, escape,
+                                               std::move(null_string), header);
+  }
+
+  std::shared_ptr<ParquetFormatOptions> ParseParquetFormatOptions() {
+    return std::make_shared<ParquetFormatOptions>();
+  }
+
+  std::shared_ptr<DwrfFormatOptions> ParseDwrfFormatOptions() {
+    return std::make_shared<DwrfFormatOptions>();
+  }
+
+  std::shared_ptr<OrcFormatOptions> ParseOrcFormatOptions() {
+    return std::make_shared<OrcFormatOptions>();
+  }
+
+  std::shared_ptr<FormatOptions> ParseFormatOptions(
+    std::string_view format_name, FileFormat format) {
+    switch (format) {
+      case FileFormat::Text:
+        return ParseTextFormatOptions(format_name == "csv");
+      case FileFormat::Parquet:
+        return ParseParquetFormatOptions();
+      case FileFormat::Dwrf:
+        return ParseDwrfFormatOptions();
+      case FileFormat::Orc:
+        return ParseOrcFormatOptions();
+      case FileFormat::None:
+        SDB_UNREACHABLE();
+    }
   }
 
   std::string_view _query_string;

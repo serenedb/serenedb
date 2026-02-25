@@ -40,7 +40,6 @@
 #include <velox/dwio/common/Reader.h>
 #include <velox/dwio/common/ReaderFactory.h>
 #include <velox/dwio/common/Writer.h>
-#include <velox/dwio/common/WriterFactory.h>
 #include <velox/dwio/text/reader/TextReader.h>
 #include <velox/dwio/text/writer/TextWriter.h>
 #include <velox/exec/AggregateFunctionRegistry.h>
@@ -87,6 +86,7 @@
 #include "query/context.h"
 #include "query/transaction.h"
 #include "query/types.h"
+#include "query/utils.h"
 #include "utils/query_string.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -296,16 +296,7 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
   return MakePtrView(*ptr);
 }
 
-std::string_view ToAlias(std::string_view name) {
-  return name.substr(0, name.find_last_of(query::kColumnSeparator));
-}
-
-std::vector<std::string> ToAliases(std::span<const std::string> names) {
-  return names | std::views::transform([](const auto& name) {
-           return std::string{ToAlias(name)};
-         }) |
-         std::ranges::to<std::vector>();
-}
+using query::ToAlias;
 
 std::string ToPgTypeString(const velox::Type& type) {
   return absl::AsciiStrToLower(type.toString());
@@ -1955,18 +1946,24 @@ class CopyOptionsParser : public FileOptionsParser {
   void Parse() {
     ParseDataSource();
 
-    const containers::FlatHashMap<std::string_view, std::function<void()>>
-      format2parser{{"csv", [&] { ParseText(true); }},
-                    {"text", [&] { ParseText(false); }},
-                    {"parquet", [&] { ParseParquet(); }},
-                    {"dwrf", [&] { ParseDwrf(); }},
-                    {"orc", [&] { ParseOrc(); }}};
-
-    auto [_, format, location] = ParseFileFormat();
-
-    auto it = format2parser.find(format);
-    SDB_ASSERT(it != format2parser.end());
-    it->second();
+    auto [underlying, format, location] = ParseFileFormat();
+    switch (underlying) {
+      case FileFormat::Text:
+        ParseTextFormatOptionsSpecified(format == "csv");
+        break;
+      case FileFormat::Parquet:
+      case FileFormat::Dwrf:
+      case FileFormat::Orc: {
+        auto options = ParseFormatOptions(format, underlying);
+        if (_is_writer) {
+          _writer_options = options->createWriterOptions(_row_type);
+        } else {
+          _reader_options = options->createReaderOptions(_row_type);
+        }
+      } break;
+      case FileFormat::None:
+        SDB_UNREACHABLE();
+    }
 
     bool show_progress = false;
     if (const auto* option = EraseOption("progress")) {
@@ -1993,65 +1990,8 @@ class CopyOptionsParser : public FileOptionsParser {
     CheckUnrecognizedOptions();
   }
 
-  void ParseText(bool is_csv) {
-    uint8_t delim = is_csv ? ',' : '\t';
-    if (const auto* option = EraseOption("delimiter")) {
-      auto maybe_delim = TryGet<char>(option->arg);
-      if (!maybe_delim) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("COPY delimiter must be a single one-byte character"));
-      }
-      delim = *maybe_delim;
-    }
-
-    uint8_t escape = '\\';
-    if (const auto* option = EraseOption("escape")) {
-      auto maybe_escape = TryGet<char>(option->arg);
-      if (!maybe_escape) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("COPY escape must be a single one-byte character"));
-      }
-      escape = *maybe_escape;
-    }
-
-    std::string_view null = "\\N";
-    if (const auto* option = EraseOption("null")) {
-      auto maybe_null = TryGet<std::string_view>(option->arg);
-      if (!maybe_null) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY null must be a string"));
-      }
-      null = *maybe_null;
-    }
-
-    uint8_t header = 0;
-    if (const auto* option = EraseOption("header")) {
-      if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
-        if (*maybe_match == "match") {
-          THROW_SQL_ERROR(
-            CURSOR_POS(ErrorPosition(ExprLocation(option))),
-            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-            ERR_MSG("match option for header is not supported yet"));
-        }
-      }
-
-      auto maybe_header = TryGetBoolOption(option->arg);
-      if (!maybe_header) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("header requires a Boolean value or \"match\""));
-      }
-      header = *maybe_header;
-    }
-
-    SerDeOptions serde_options{delim, '\2', '\3', escape, false};
-    serde_options.nullString = null;
+  void ParseTextFormatOptionsSpecified(bool is_csv) {
+    auto text_format = ParseTextFormatOptions(is_csv);
 
     uint64_t reject_limit = 0;
     std::string_view on_error = "stop";
@@ -2143,106 +2083,38 @@ class CopyOptionsParser : public FileOptionsParser {
     }
 
     if (_is_writer) {
-      SDB_ASSERT(_sink);
-      auto text_options = std::make_shared<velox::text::WriterOptions>();
-      if (header) {
-        text_options->header = ToAliases(_row_type->names());
-      }
-      text_options->serDeOptions = std::move(serde_options);
-      text_options->schema = std::move(_row_type);
-      text_options->fileFormat = velox::dwio::common::FileFormat::TEXT;
-      _writer_options =
-        std::make_shared<connector::WriterOptions>(std::move(text_options));
+      _writer_options = text_format->createWriterOptions(std::move(_row_type));
     } else {
-      SDB_ASSERT(_source);
-      auto text_options = std::make_shared<velox::text::ReaderOptions>(nullptr);
-      text_options->setSerDeOptions(std::move(serde_options));
-      text_options->setFileSchema(std::move(_row_type));
-      text_options->setFileFormat(velox::dwio::common::FileFormat::TEXT);
+      _reader_options = text_format->createReaderOptions(std::move(_row_type));
 
-      auto handler = [rejector = CopyRowRejector{log_verbosity, _send_buffer,
-                                                 _table_name, reject_limit}](
-                       const RejectedRow& row) mutable {
-        rejector.Process(row);
-      };
-      text_options->setOnRowReject(std::move(handler));
-
-      auto row_reader_options =
-        std::make_shared<velox::dwio::common::RowReaderOptions>();
-      row_reader_options->setSkipRows(header);
-      _reader_options = std::make_shared<connector::ReaderOptions>(
-        std::move(text_options), std::move(row_reader_options));
-    }
-  }
-
-  void ParseParquet() {
-    std::vector<std::string> aliases;
-    aliases.reserve(_row_type->size());
-
-    for (const auto& name : _row_type->names()) {
-      std::string_view alias = ToAlias(name);
-      if (absl::c_contains(aliases, alias)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-                        ERR_MSG("column \"", alias,
-                                "\" specified more than once. That's forbidden "
-                                "for \"PARQUET\" format"));
-      }
-      aliases.emplace_back(alias);
-    }
-
-    _row_type = velox::ROW(std::move(aliases), _row_type->children());
-    CreateDefaultWriterReader(velox::dwio::common::FileFormat::PARQUET);
-  }
-
-  void ParseDwrf() {
-    CreateDefaultWriterReader(velox::dwio::common::FileFormat::DWRF);
-  }
-
-  void ParseOrc() {
-    CreateDefaultWriterReader(velox::dwio::common::FileFormat::ORC);
-  }
-
-  void CreateDefaultWriterReader(velox::dwio::common::FileFormat format) {
-    if (_is_writer) {
-      const auto& writer_factory = getWriterFactory(format);
-      auto* default_opts = writer_factory->createWriterOptions().release();
-      std::shared_ptr<velox::dwio::common::WriterOptions> dwio_options{
-        default_opts};
-      dwio_options->schema = std::move(_row_type);
-      dwio_options->fileFormat = format;
-      _writer_options =
-        std::make_shared<connector::WriterOptions>(std::move(dwio_options));
-    } else {
-      auto dwio_options =
-        std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
-      dwio_options->setFileFormat(format);
-      dwio_options->setFileSchema(std::move(_row_type));
-      auto row_reader_options =
-        std::make_shared<velox::dwio::common::RowReaderOptions>();
-      _reader_options = std::make_shared<connector::ReaderOptions>(
-        std::move(dwio_options), std::move(row_reader_options));
+      auto* text_options = basics::downCast<velox::text::ReaderOptions>(
+        _reader_options->dwio.get());
+      text_options->setOnRowReject(
+        [rejector = CopyRowRejector{log_verbosity, _send_buffer, _table_name,
+                                    reject_limit}](
+          const RejectedRow& row) mutable { rejector.Process(row); });
     }
   }
 
   // local filesystem / S3 / hdfs etc.
   void ParseDataSource() {
-    if (_is_writer) {
-      if (_file_path.empty()) {  // copy to stdout
-        SDB_ASSERT(_copy_queue);
+    if (_file_path.empty()) {
+      SDB_ASSERT(_copy_queue);
+      if (_is_writer) {  // copy to stdout
         _sink =
           std::make_unique<CopyOutWriteFile>(_send_buffer, _row_type->size());
-      } else {
-        _sink = std::make_unique<velox::LocalWriteFile>(_file_path, false,
-                                                        false, true, true);
-      }
-    } else {
-      if (_file_path.empty()) {  // copy from stdin
-        SDB_ASSERT(_copy_queue);
+      } else {  // copy from stdin
         _source = std::make_shared<CopyInReadFile>(_send_buffer, *_copy_queue,
                                                    _row_type->size());
-      } else {
-        _source = std::make_shared<velox::LocalReadFile>(_file_path);
       }
+      return;
+    }
+
+    auto options = ParseStorageOptions();
+    if (_is_writer) {
+      _sink = options->CreateFileSink();
+    } else {
+      _source = options->CreateFileSource();
     }
   }
 
@@ -2351,12 +2223,12 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
-    auto file_output_type = ROW(std::move(names), file_table_type->children());
-    auto parser = create_options_parser(file_output_type);
+    auto parser = create_options_parser(file_table_type);
     auto [source, reader_options] = std::move(parser).GetReader();
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
       std::move(source), std::move(reader_options));
+    auto file_output_type = ROW(std::move(names), file_table_type->children());
     state.root = std::make_shared<lp::TableScanNode>(
       _id_generator.NextPlanId(), std::move(file_output_type),
       std::move(read_file_table), file_table_type->names());
@@ -3739,23 +3611,8 @@ State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
                                     std::string_view table_name,
                                     const RangeVar* node) {
   const auto& file_info = table.GetFileInfo();
-  SDB_ASSERT(file_info.storage);
-
-  auto format = [&] {
-    using VeloxFormat = velox::dwio::common::FileFormat;
-    switch (file_info.format) {
-      case FileFormat::Text:
-        return VeloxFormat::TEXT;
-      case FileFormat::Parquet:
-        return VeloxFormat::PARQUET;
-      case FileFormat::Dwrf:
-        return VeloxFormat::DWRF;
-      case FileFormat::Orc:
-        return VeloxFormat::ORC;
-      case FileFormat::None:
-        SDB_UNREACHABLE();
-    }
-  }();
+  SDB_ASSERT(file_info.storage_options);
+  SDB_ASSERT(file_info.format_options);
 
   auto row_type = table.RowType();
 
@@ -3764,21 +3621,11 @@ State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
   auto file_output_type =
     velox::ROW(std::move(column_names), row_type->children());
 
-  std::shared_ptr<connector::ReaderOptions> reader_options;
-  reader_options = std::make_shared<connector::ReaderOptions>();
-  reader_options->dwio =
-    std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
-  auto& dwio = *reader_options->dwio;
-  dwio.setFileSchema(row_type);
-  dwio.setFileFormat(format);
-
-  reader_options->row_reader =
-    std::make_shared<velox::dwio::common::RowReaderOptions>();
-
-  auto source = file_info.storage->CreateFileSource();
+  auto reader_options = file_info.format_options->createReaderOptions(row_type);
+  auto source = file_info.storage_options->CreateFileSource();
 
   auto read_file_table = std::make_shared<connector::ReadFileTable>(
-    row_type, file_info.storage->path(), std::move(source),
+    row_type, file_info.storage_options->Path(), std::move(source),
     std::move(reader_options));
 
   auto state = parent->MakeChild();

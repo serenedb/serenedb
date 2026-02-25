@@ -63,32 +63,42 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
       }
     });
 
-    const auto* path_option = EraseOption("path");
-    if (!path_option) {
+    Parse();
+  }
+
+  void Parse() {
+    if (const auto* path_option = EraseOption("path")) {
+      auto maybe_path = TryGet<std::string_view>(path_option->arg);
+      if (!maybe_path) {
+        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("'path' option must be a string"));
+      }
+      _file_path = *maybe_path;
+    } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("CREATE TABLE USING EXTERNAL requires 'path' option"));
     }
-    auto maybe_path = TryGet<std::string_view>(path_option->arg);
-    if (!maybe_path) {
-      THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
-                      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("'path' option must be a string"));
-    }
-    _file_path = *maybe_path;
 
-    auto [underlying_format, _, location] = ParseFileFormat();
+    _storage_options = ParseStorageOptions();
+
+    auto [underlying_format, format_name, _] = ParseFileFormat();
     _parsed_format = underlying_format;
+    _format_options = ParseFormatOptions(format_name, underlying_format);
 
     CheckUnrecognizedOptions();
   }
 
-  catalog::FileInfo GetFileInfo() {
-    return {.format = _parsed_format, .storage = ParseStorageOptions()};
+  catalog::FileInfo GetFileInfo() && {
+    return {.storage_options = std::move(_storage_options),
+            .format_options = std::move(_format_options)};
   }
 
  private:
-  FileFormat _parsed_format = FileFormat::None;
+  FileFormat _parsed_format;
+  std::shared_ptr<StorageOptions> _storage_options;
+  std::shared_ptr<FormatOptions> _format_options;
 };
 
 std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {
@@ -390,7 +400,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
   if (is_external) {
     CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
-    request.file_info = parser.GetFileInfo();
+    request.file_info = std::move(parser).GetFileInfo();
     request.type = std::to_underlying(TableType::File);
   }
 

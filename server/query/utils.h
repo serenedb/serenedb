@@ -23,7 +23,9 @@
 #include <axiom/logical_plan/ExprPrinter.h>
 #include <axiom/logical_plan/LogicalPlanNode.h>
 
+#include <span>
 #include <string>
+#include <vector>
 
 #include "basics/fwd.h"
 
@@ -34,6 +36,9 @@ inline constexpr std::string_view kReservedSymbol = "$";
 
 // column_name<separator>unique_id -> column_name
 std::string CleanColumnNames(std::string text);
+
+std::string_view ToAlias(std::string_view name);
+std::vector<std::string> ToAliases(std::span<const std::string> names);
 
 bool Equals(const axiom::logical_plan::Expr& lhs,
             const axiom::logical_plan::Expr& rhs);

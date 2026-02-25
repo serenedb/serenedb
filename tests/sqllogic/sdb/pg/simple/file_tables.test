@@ -47,7 +47,7 @@ Fragment 0:  numWorkers=0:
       -- TableScan[1][File(parquet), [(salary, Filter(IsNotNull, deterministic, no nulls)), (iq, BigintMultiRange: [[91, 94], [96, 99]] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
       -- TableScan[2][File(parquet), [(salary, Filter(IsNull, deterministic, with nulls)), (iq, BigintRange: [90, 90] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
   -- Filter[5][expression: presto_like("fact",%gain%,\\)] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
-    -- TableScan[4][File(parquet), [(iq, BigintMultiRange: [[90, 94], [96, 96], [98, 98], [100, 100]] no nulls)], (presto_like("fact",%gain%,\\))] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+    -- TableScan[4][File(parquet), [(iq, BigintMultiRange: [[90, 94], [96, 96], [98, 98], [100, 100]] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
 
 
 query
@@ -125,3 +125,71 @@ SELECT COUNT(iq) FROM vedernikoff_company;
 ----
 count
 10000
+
+
+statement count 10000
+COPY (
+  SELECT 
+    iq,
+    'salary '::text || salary::text || ' dallar'::text as salary, 
+    'i do nothing and gain money' as fact
+  FROM
+    generate_series(1, 100) as clickclack(iq),
+    generate_series(1, 100) as serenedb(salary)
+) TO '/tmp/${__DATABASE__}_vedernikoff_company.csv';
+
+
+statement ok
+CREATE TABLE malandin_company(
+  iq INT8,
+  salary TEXT,
+  fact TEXT
+) USING EXTERNAL 
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.csv'
+);
+
+
+query
+SELECT salary, iq FROM malandin_company ORDER BY iq, salary LIMIT 1;
+----
+salary	iq
+salary 1 dallar	1
+
+
+query
+SELECT fact FROM malandin_company LIMIT 12;
+----
+fact
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+i do nothing and gain money
+
+
+query
+SELECT * FROM malandin_company WHERE iq = 10;
+----
+303 values hashing to 5600e63d5f8c31d485ae90f71818c6a3
+
+
+query
+SELECT iq FROM malandin_company WHERE iq = 10 LIMIT 1000 - 7;
+----
+101 values hashing to d205e693a80c0cd10ec6e7a312eaae99
+
+
+query
+SELECT * FROM 
+  malandin_company NATURAL JOIN
+  vedernikoff_company;
+----
+30003 values hashing to 017114532d4bd6a929a5d709e1e8d90f

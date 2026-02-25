@@ -39,61 +39,27 @@ class StorageOptions {
   virtual std::unique_ptr<velox::WriteFile> CreateFileSink() = 0;
   virtual std::shared_ptr<velox::ReadFile> CreateFileSource() = 0;
   virtual void toVPack(vpack::Builder&) const = 0;
-  virtual std::string_view path() const = 0;
 
+  std::string_view Path() const { return _path; }
   static std::shared_ptr<StorageOptions> fromVPack(vpack::Slice slice);
 
  protected:
   enum class Type : uint32_t { Local = 0 };
-  StorageOptions(Type type) : _type{type} {}
+  StorageOptions(Type type, std::string path)
+    : _type{type}, _path{std::move(path)} {}
   Type _type;
+  std::string _path;
 };
 
 class LocalStorageOptions : public StorageOptions {
  public:
   LocalStorageOptions(std::string path)
-    : StorageOptions{Type::Local}, _path{std::move(path)} {}
+    : StorageOptions{Type::Local, std::move(path)} {}
 
-  std::unique_ptr<velox::WriteFile> CreateFileSink() final {
-    return std::make_unique<velox::LocalWriteFile>(_path, false, false, true,
-                                                   true);
-  }
-  std::shared_ptr<velox::ReadFile> CreateFileSource() final {
-    return std::make_shared<velox::LocalReadFile>(_path);
-  }
-
-  void toVPack(vpack::Builder& b) const final {
-    b.add("type", static_cast<unsigned>(std::to_underlying(Type::Local)));
-    b.add("path", std::string_view{_path});
-  }
-
-  std::string_view path() const final { return _path; }
-
- private:
-  std::string _path;
+  std::unique_ptr<velox::WriteFile> CreateFileSink() final;
+  std::shared_ptr<velox::ReadFile> CreateFileSource() final;
+  void toVPack(vpack::Builder& b) const final;
 };
-
-inline std::shared_ptr<StorageOptions> StorageOptions::fromVPack(
-  vpack::Slice slice) {
-  if (!slice.isObject()) {
-    return nullptr;
-  }
-  auto type_slice = slice.get("type");
-  if (!type_slice.isNumber()) {
-    return nullptr;
-  }
-  switch (static_cast<Type>(type_slice.getNumber<unsigned>())) {
-    case Type::Local: {
-      auto path_slice = slice.get("path");
-      if (path_slice.isString()) {
-        return std::make_shared<LocalStorageOptions>(
-          std::string{path_slice.stringView()});
-      }
-      break;
-    }
-  }
-  return nullptr;
-}
 
 template<typename Context>
 void VPackWrite(Context ctx, const std::shared_ptr<StorageOptions>& storage) {

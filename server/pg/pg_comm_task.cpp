@@ -1347,6 +1347,7 @@ void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
     return;
   }
   if (data.Empty()) {
+    this->_send.FlushDone();
     return;
   }
   SDB_LOG_PGSQL("Sending Packet:", data.Print());

@@ -244,38 +244,29 @@ class SnapshotImpl : public Snapshot {
   }
 
   template<typename T>
-  Result UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id) {
-    Result r;
+  void UnregisterObject(std::shared_ptr<T> object,
+                        ObjectId parent_id) noexcept {
     if constexpr (std::is_same_v<T, Database>) {
-      r = RemoveFromResolution<ResolveType::Database>(parent_id,
-                                                      object->GetName());
+      RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName());
     } else if constexpr (std::is_same_v<T, Schema>) {
-      r =
-        RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName());
+      RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName());
     } else if constexpr (std::is_same_v<T, View>) {
-      r = RemoveFromResolution<ResolveType::Relation>(parent_id,
-                                                      object->GetName());
+      RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName());
     } else if constexpr (std::is_same_v<T, Function>) {
-      r = RemoveFromResolution<ResolveType::Function>(parent_id,
-                                                      object->GetName());
+      RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName());
     } else if constexpr (std::is_same_v<T, Table>) {
-      r = RemoveFromResolution<ResolveType::Relation>(parent_id,
-                                                      object->GetName());
+      RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName());
     } else if constexpr (std::is_same_v<T, Index>) {
-      r = RemoveFromResolution<ResolveType::Relation>(object->GetSchemaId(),
-                                                      object->GetName());
+      RemoveFromResolution<ResolveType::Relation>(object->GetSchemaId(),
+                                                  object->GetName());
       parent_id = object->GetRelationId();
     } else if constexpr (std::is_same_v<T, TableShard>) {
     } else if constexpr (std::is_same_v<T, IndexShard>) {
     } else {
       static_assert(false);
     }
-    if (!r.ok()) {
-      return r;
-    }
     SDB_ASSERT(parent_id.isSet());
     RemoveObjectDefinition(parent_id, object->GetId());
-    return {};
   }
 
   template<ResolveType Type>
@@ -285,9 +276,10 @@ class SnapshotImpl : public Snapshot {
   }
 
   template<ResolveType Type>
-  Result RemoveFromResolution(ObjectId parent_id, std::string_view name) {
+  void RemoveFromResolution(ObjectId parent_id,
+                            std::string_view name) noexcept {
     auto res = _resolution_table.RemoveObject<Type>(parent_id, name);
-    return res ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
+    SDB_ASSERT(res);
   }
 
   template<typename DependencyType = void>
@@ -628,7 +620,7 @@ class SnapshotImpl : public Snapshot {
   }
 
   void RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
-                              bool root = true) {
+                              bool root = true) noexcept {
     auto node = _objects.extract(id);
     SDB_ASSERT(!node.empty());
     std::shared_ptr<Object> obj = node.value();
@@ -703,8 +695,7 @@ class SnapshotImpl : public Snapshot {
             // indexes resolutions weren't erased in RemoveResulion
             // So, we need to do it now
             auto index = GetObject<Index>(index_id);
-            auto r = UnregisterObject(index, id);
-            SDB_ASSERT(r.ok());
+            UnregisterObject(index, id);
           }
         }
       } break;
@@ -1439,15 +1430,12 @@ Result LocalCatalog::DropDatabase(std::string_view name,
     }
     auto task = clone->CreateDatabaseDrop(*db_id);
 
-    if (auto r = clone->UnregisterObject(
-          clone->template GetObject<Database>(*db_id), id::kInstance);
-        !r.ok()) {
-      return r;
-    }
     if (auto r = GetServerEngine().WriteTombstone(id::kInstance, *db_id);
         !r.ok()) {
       return r;
     }
+    clone->UnregisterObject(clone->template GetObject<Database>(*db_id),
+                            id::kInstance);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     auto res = QueueDropTask(std::move(task));
@@ -1476,14 +1464,11 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
 
     auto task = clone->CreateSchemaDrop(db_id, *schema_id, true);
 
-    if (auto r = clone->UnregisterObject(
-          clone->template GetObject<Schema>(*schema_id), db_id);
-        !r.ok()) {
-      return r;
-    }
     if (auto r = _engine->WriteTombstone(db_id, *schema_id); !r.ok()) {
       return r;
     }
+    clone->UnregisterObject(clone->template GetObject<Schema>(*schema_id),
+                            db_id);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     auto res = QueueDropTask(std::move(task));
@@ -1510,14 +1495,11 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
     auto task = clone->CreateTableDrop(db_id, *schema_id, *table_id, true);
-    if (auto r = clone->UnregisterObject(
-          clone->template GetObject<Table>(*table_id), *schema_id);
-        !r.ok()) {
-      return r;
-    }
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
     }
+    clone->UnregisterObject(clone->template GetObject<Table>(*table_id),
+                            *schema_id);
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     auto res = QueueDropTask(std::move(task));
@@ -1555,10 +1537,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
 
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
                                        index->GetRelationId(), *index_id, true);
-    if (auto r = clone->UnregisterObject(index, *schema_id); !r.ok()) {
-      return r;
-    }
-
+    clone->UnregisterObject(index, *schema_id);
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1588,7 +1567,8 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     if (!r.ok()) {
       return r;
     }
-    return clone->UnregisterObject(std::move(view), *schema_id);
+    clone->UnregisterObject(std::move(view), *schema_id);
+    return Result{};
   });
 }
 
@@ -1613,7 +1593,8 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
     if (!r.ok()) {
       return r;
     }
-    return clone->UnregisterObject(std::move(func), *schema_id);
+    clone->UnregisterObject(std::move(func), *schema_id);
+    return Result{};
   });
 }
 

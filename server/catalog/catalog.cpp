@@ -323,10 +323,12 @@ Result CatalogFeature::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
 }
 
 Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
+  auto deleted = CollectDefinitions(table_id, RocksDBEntryType::Tombstone);
   return GetServerEngine().VisitDefinitions(
     table_id, RocksDBEntryType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
+      SDB_ASSERT(deleted.find(shard_id) == deleted.end());
       TableStats stats;
       if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
         SDB_WARN("xxxxx", Logger::STARTUP,
@@ -338,6 +340,8 @@ Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
 }
 
 Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
+  auto deleted = CollectDefinitions(index->GetId(), RocksDBEntryType::Tombstone);
+  SDB_ASSERT(deleted.empty());
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {

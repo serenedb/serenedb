@@ -239,7 +239,7 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, IndexShard>) {
       return AddObjectDefinition(parent_id, object);
     } else {
-      SDB_UNREACHABLE();
+      static_assert(false);
     }
   }
 
@@ -268,7 +268,7 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, TableShard>) {
     } else if constexpr (std::is_same_v<T, IndexShard>) {
     } else {
-      SDB_UNREACHABLE();
+      static_assert(false);
     }
     if (!r.ok()) {
       return r;
@@ -305,38 +305,31 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Schema: {
         auto db_deps = GetDependency<DatabaseDependency>(parent_id);
         db_deps->schemas.insert(object->GetId());
-        break;
-      }
+      } break;
       case ObjectType::Table: {
         auto schema_deps = GetDependency<SchemaDependency>(parent_id);
         schema_deps->tables.insert(object->GetId());
-        break;
-      }
+      } break;
       case ObjectType::Function: {
         auto schema_deps = GetDependency<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
-        break;
-      }
+      } break;
       case ObjectType::View: {
         auto schema_deps = GetDependency<SchemaDependency>(parent_id);
         schema_deps->views.insert(object->GetId());
-        break;
-      }
+      } break;
       case ObjectType::Index: {
         auto table_deps = GetDependency<TableDependency>(parent_id);
         table_deps->indexes.insert(object->GetId());
-        break;
-      }
+      } break;
       case ObjectType::TableShard: {
         auto table_deps = GetDependency<TableDependency>(parent_id);
         table_deps->shard_id = object->GetId();
-        break;
-      }
+      } break;
       case ObjectType::IndexShard: {
         auto index_deps = GetDependency<IndexDependency>(parent_id);
         index_deps->shard_id = object->GetId();
-        break;
-      }
+      } break;
       default:
         SDB_UNREACHABLE();
     }
@@ -354,7 +347,7 @@ class SnapshotImpl : public Snapshot {
            std::views::transform([&](ObjectId db_id) {
              auto it = _objects.find(db_id);
              SDB_ASSERT(it != _objects.end());
-             return std::dynamic_pointer_cast<Database>(*it);
+             return basics::downCast<Database>(*it);
            }) |
            std::ranges::to<std::vector>();
   }
@@ -364,7 +357,7 @@ class SnapshotImpl : public Snapshot {
     return db_deps->schemas | std::views::transform([&](ObjectId schema_id) {
              auto it = _objects.find(schema_id);
              SDB_ASSERT(it != _objects.end());
-             return std::dynamic_pointer_cast<Schema>(*it);
+             return basics::downCast<Schema>(*it);
            }) |
            std::ranges::to<std::vector>();
   }
@@ -392,7 +385,7 @@ class SnapshotImpl : public Snapshot {
                std::views::transform([&](ObjectId function_id) {
                  auto it = _objects.find(function_id);
                  SDB_ASSERT(it != _objects.end());
-                 return std::dynamic_pointer_cast<Function>(*it);
+                 return basics::downCast<Function>(*it);
                }) |
                std::ranges::to<std::vector>();
       })
@@ -405,7 +398,7 @@ class SnapshotImpl : public Snapshot {
       .transform([&](ObjectId db_id) {
         auto it = _objects.find(db_id);
         SDB_ASSERT(it != _objects.end());
-        return std::dynamic_pointer_cast<Database>(*it);
+        return basics::downCast<Database>(*it);
       })
       .value_or(nullptr);
   }
@@ -416,7 +409,7 @@ class SnapshotImpl : public Snapshot {
       .transform([&](ObjectId schema_id) {
         auto it = _objects.find(schema_id);
         SDB_ASSERT(it != _objects.end());
-        return std::dynamic_pointer_cast<Schema>(*it);
+        return basics::downCast<Schema>(*it);
       })
       .value_or(nullptr);
   }
@@ -439,7 +432,7 @@ class SnapshotImpl : public Snapshot {
       .transform([&](ObjectId relation_id) {
         auto it = _objects.find(relation_id);
         SDB_ASSERT(it != _objects.end());
-        return std::dynamic_pointer_cast<SchemaObject>(*it);
+        return basics::downCast<SchemaObject>(*it);
       })
       .value_or(nullptr);
   }
@@ -454,7 +447,7 @@ class SnapshotImpl : public Snapshot {
       .transform([&](ObjectId function_id) {
         auto it = _objects.find(function_id);
         SDB_ASSERT(it != _objects.end());
-        return std::dynamic_pointer_cast<Function>(*it);
+        return basics::downCast<Function>(*it);
       })
       .value_or(nullptr);
   }
@@ -465,7 +458,7 @@ class SnapshotImpl : public Snapshot {
     if (!rel) {
       return nullptr;
     }
-    return std::dynamic_pointer_cast<Table>(rel);
+    return basics::downCast<Table>(rel);
   }
 
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
@@ -602,7 +595,7 @@ class SnapshotImpl : public Snapshot {
     if (!obj) {
       return nullptr;
     }
-    return std::dynamic_pointer_cast<Database>(obj);
+    return basics::downCast<Database>(obj);
   }
 
   template<ResolveType Type>
@@ -654,44 +647,37 @@ class SnapshotImpl : public Snapshot {
           auto db_deps = GetDependency<DatabaseDependency>(parent_id);
           SDB_ASSERT(db_deps);
           db_deps->schemas.erase(id);
-          break;
-        }
+        } break;
         case ObjectType::Index: {
           auto table_deps = GetDependency<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->indexes.erase(id);
-          break;
-        }
+        } break;
         case ObjectType::IndexShard: {
           auto index_deps = GetDependency<IndexDependency>(parent_id);
           SDB_ASSERT(index_deps);
           index_deps->shard_id = ObjectId::none();
-          break;
-        }
+        } break;
         case ObjectType::Function: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
-          break;
-        }
+        } break;
         case ObjectType::Table: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->tables.erase(id);
-          break;
-        }
+        } break;
         case ObjectType::TableShard: {
           auto table_deps = GetDependency<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->shard_id = ObjectId::none();
-          break;
-        }
+        } break;
         case ObjectType::View: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->views.erase(id);
-          break;
-        }
+        } break;
         default:
           SDB_UNREACHABLE();
       }
@@ -701,15 +687,13 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Database: {
         auto db_deps = GetDependency<DatabaseDependency>(id);
         drop_childs(db_deps->schemas);
-        break;
-      }
+      } break;
       case ObjectType::Schema: {
         auto schema_deps = GetDependency<SchemaDependency>(id);
         drop_childs(schema_deps->functions);
         drop_childs(schema_deps->views);
         drop_childs(schema_deps->tables);
-        break;
-      }
+      } break;
       case ObjectType::Table: {
         auto table_deps = GetDependency<TableDependency>(id);
         RemoveObjectDefinition(id, table_deps->shard_id);
@@ -723,13 +707,11 @@ class SnapshotImpl : public Snapshot {
             SDB_ASSERT(r.ok());
           }
         }
-        break;
-      }
+      } break;
       case ObjectType::Index: {
         auto index_deps = GetDependency<IndexDependency>(id);
         RemoveObjectDefinition(id, index_deps->shard_id);
-        break;
-      }
+      } break;
       case ObjectType::Function:
       case ObjectType::View:
       case ObjectType::TableShard:
@@ -1173,7 +1155,7 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
 
-      auto view = std::dynamic_pointer_cast<View>(clone->GetObject(*object_id));
+      auto view = basics::downCast<View>(clone->GetObject(*object_id));
       if (!view) {
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
@@ -1232,8 +1214,7 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
 
-      auto old_table =
-        std::dynamic_pointer_cast<Table>(clone->GetObject(*object_id));
+      auto old_table = basics::downCast<Table>(clone->GetObject(*object_id));
       if (!old_table) {
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
@@ -1327,7 +1308,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
 
-      auto view = std::dynamic_pointer_cast<View>(clone->GetObject(*object_id));
+      auto view = basics::downCast<View>(clone->GetObject(*object_id));
       if (!view) {
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
@@ -1386,8 +1367,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }
 
-      auto table =
-        std::dynamic_pointer_cast<Table>(clone->GetObject(*object_id));
+      auto table = basics::downCast<Table>(clone->GetObject(*object_id));
       if (!table) {
         return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
       }

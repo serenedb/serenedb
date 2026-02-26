@@ -136,15 +136,17 @@ Result TableDrop::Finalize() {
 
 AsyncResult TableDrop::operator()() {
   std::vector<AsyncResult> async_results;
-  async_results.reserve(indexes.size() + 1);
-  auto shard_task = std::make_shared<TableShardDrop>(
-    DropTask{.parent_id = id, .id = shard_id, .is_root = false});
-  async_results.push_back(QueueDropTask(std::move(shard_task)));
+  async_results.reserve(indexes.size());
   for (auto& index : indexes) {
     async_results.push_back(QueueDropTask(index));
   }
-  co_await yaclib::Join(async_results.begin(), async_results.end());
-  if (!CheckResult(Finalize())) {
+  if (!async_results.empty()) {
+    co_await yaclib::Join(async_results.begin(), async_results.end());
+  }
+  auto shard_task = std::make_shared<TableShardDrop>(
+    DropTask{.parent_id = id, .id = shard_id, .is_root = false});
+  auto r = co_await QueueDropTask(std::move(shard_task));
+  if (!CheckResult(r) || !CheckResult(Finalize())) {
     co_return co_await QueueDropTask(shared_from_this());
   }
   co_return {};
@@ -152,8 +154,8 @@ AsyncResult TableDrop::operator()() {
 
 Result SchemaDrop::Finalize() {
   auto& server = GetServerEngine();
-  for (auto entry_type : {RocksDBEntryType::Table, RocksDBEntryType::Function,
-                          RocksDBEntryType::View}) {
+  for (auto entry_type : {RocksDBEntryType::Table, RocksDBEntryType::View,
+                          RocksDBEntryType::Function}) {
     auto r = server.DropEntry(id, entry_type);
     if (!CheckResult(r)) {
       return r;

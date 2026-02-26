@@ -81,7 +81,8 @@ yaclib::Future<> UpdateIndexes(ExecContext& context,
           break;
         }
         case IndexType::Secondary:
-          index_futures.push_back(yaclib::MakeFuture<>());
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_CASE_NOT_FOUND),
+                          ERR_MSG("Secondary index is not supported"));
           break;
         case IndexType::Unknown:
           SDB_UNREACHABLE();

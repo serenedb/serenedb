@@ -10,7 +10,7 @@
         "dist"
     ],
     "scripts": {
-        "build": "tsc -b && node scripts/copy-assets.mjs",
+        "build": "tsc -b --force && node scripts/copy-assets.mjs",
         "dev": "tsc --watch"
     },
     "exports": {

@@ -5,9 +5,9 @@
     "type": "module",
     "scripts": {
         "dev:docker": "vite --mode dev-docker",
-        "build:docker": "tsc -b && vite build --mode prod-docker",
+        "build:docker": "npm run build --workspace @serene-ui/shared-frontend && tsc -b && vite build --mode prod-docker",
         "dev:electron": "vite --mode dev-electron",
-        "build:electron": "tsc -b && vite build --mode prod-electron",
+        "build:electron": "npm run build --workspace @serene-ui/shared-frontend && tsc -b && vite build --mode prod-electron",
         "dev": "npm run dev:docker",
         "build": "npm run build:electron && npm run build:docker",
         "storybook": "storybook dev -p 6006",

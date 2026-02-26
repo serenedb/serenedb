@@ -17,7 +17,7 @@ COPY packages/shared-core/package*.json ./packages/shared-core/
 COPY packages/shared-backend/package*.json ./packages/shared-backend/
 COPY packages/shared-frontend/package*.json ./packages/shared-frontend/
 
-RUN npm install --include=dev
+RUN rm -f package-lock.json && npm install --include=dev
 
 COPY tsconfig.base.json ./
 COPY apps/backend ./apps/backend
@@ -37,14 +37,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apk add --no-cache nginx supervisor && \
-    npm install --no-save better-sqlite3@12.2.0 && \
-    npm cache clean --force
+  npm install --no-save better-sqlite3@12.2.0 && \
+  npm cache clean --force
 
 COPY apps/web/.nginx/nginx.conf /etc/nginx/nginx.conf
 COPY supervisord.conf /etc/supervisord.conf
+COPY cookbooks ./cookbooks
 COPY --from=builder /usr/src/apps/backend/dist ./backend/dist
 COPY --from=builder /usr/src/apps/web/dist/docker /var/www
 
 EXPOSE 3000 6543
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
-

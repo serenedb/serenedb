@@ -23,7 +23,7 @@
     "devDependencies": {
         "@types/config": "^3.3.5",
         "cross-env": "^10.1.0",
-        "esbuild": "^0.27.2",
+        "esbuild": "^0.27.3",
         "nodemon": "^3.1.11",
         "tsx": "^4.21.0"
     }

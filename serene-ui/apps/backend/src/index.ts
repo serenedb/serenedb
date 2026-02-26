@@ -1,6 +1,7 @@
 import {
     initDatabase,
     isDocker,
+    loadCookbookSavedQueries,
     logger,
     setWorkerPath,
 } from "@serene-ui/shared-backend";
@@ -22,6 +23,7 @@ const run = async () => {
         : path.join(__dirname, "migrations");
 
     initDatabase(dbPath, migrationsPath);
+    loadCookbookSavedQueries();
 
     const workerPath = isDevMode
         ? path.join(

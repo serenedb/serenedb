@@ -31,7 +31,7 @@ integer_datetimes	on	Shows whether datetimes are integer based.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
 server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.1	Shows the server version.
+server_version	<slt:ignore>	Shows the server version.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 transaction_isolation	<slt:ignore>	Sets the current transaction's isolation level.
 

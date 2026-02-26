@@ -165,6 +165,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                                 status: result.status,
                                 query: currentQueryResult?.query || "",
                                 created_at: result?.created_at,
+                                message: result.message,
                                 execution_started_at:
                                     result?.execution_started_at,
                                 execution_finished_at:

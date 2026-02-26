@@ -82,6 +82,10 @@ export const useQueryExecution = ({
                               result.status === "failed"
                                   ? result.error
                                   : undefined,
+                          message:
+                              result.status === "success"
+                                  ? result.message
+                                  : undefined,
                           created_at: result.created_at,
                           execution_started_at: result.execution_started_at,
                           execution_finished_at: result.execution_finished_at,

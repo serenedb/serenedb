@@ -29,7 +29,7 @@ export const ConsoleResultsPanel = ({
 
     return (
         <>
-            <ResizableHandle className="bg-border" tabIndex={-1}  />
+            <ResizableHandle className="bg-border" tabIndex={-1} />
             <ResizablePanel
                 className="flex flex-col"
                 minSize={30}

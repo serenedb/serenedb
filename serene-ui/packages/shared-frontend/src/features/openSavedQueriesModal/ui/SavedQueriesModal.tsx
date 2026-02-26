@@ -65,7 +65,7 @@ export const SavedQueriesModal = () => {
                                             : [],
                                     status: isQueryRunning
                                         ? "running"
-                                        : result?.status || "success",
+                                        : result?.status || "",
                                 },
                             ]}
                             selectedResultIndex={0}

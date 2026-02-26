@@ -2,11 +2,7 @@ import { useGetSavedQueries } from "@serene-ui/shared-frontend/entities";
 import { Button, PlusIcon } from "@serene-ui/shared-frontend/shared";
 import { useEffect, useRef } from "react";
 import { useSavedQueriesModal } from "../model/SavedQueriesModalContext";
-import {
-    ExportSavedQueriesButton,
-    ImportSavedQueriesButton,
-    SavedQueryButton,
-} from "./buttons";
+import { SavedQueryButton } from "./buttons";
 
 export const SavedQueriesSidebar = () => {
     const { setCurrentSavedQuery, currentSavedQuery } = useSavedQueriesModal();
@@ -41,8 +37,6 @@ export const SavedQueriesSidebar = () => {
             <div className="pl-4 pr-2 py-2 border-b border-border flex items-center justify-between">
                 <p className="text-sm font-medium">Saved queries</p>
                 <div className="flex gap-2">
-                    <ExportSavedQueriesButton />
-                    <ImportSavedQueriesButton />
                     <Button
                         onClick={handleAddQuery}
                         variant="secondary"

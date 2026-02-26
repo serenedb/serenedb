@@ -10,7 +10,7 @@ import { QuerySucceeded } from "./QuerySucceeded";
 interface QueryResultsProps {
     results: {
         rows: Record<string, any>[] | undefined;
-        status: "success" | "failed" | "pending" | "running";
+        status: "success" | "failed" | "pending" | "running" | "";
         error?: string;
         message?: string;
         created_at?: string;
@@ -28,7 +28,8 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     if (
         selectedResultIndex < 0 ||
         !results?.length ||
-        !results[selectedResultIndex]
+        !results[selectedResultIndex] ||
+        status === ""
     ) {
         return <NoQueryResults />;
     }

@@ -78,6 +78,7 @@ std::string GetUnnamedFunctionArgumentName(size_t param_idx);
 catalog::FunctionSignature ToSignature(const List* pg_parameters,
                                        const TypeName* pg_return_type);
 
+template<bool IsSystem = false>
 std::shared_ptr<catalog::Function> CreateFunctionImpl(
   const Config& config, ObjectId database_id, std::string_view database_name,
   std::string_view current_schema, const CreateFunctionStmt& stmt);

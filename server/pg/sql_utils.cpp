@@ -236,6 +236,7 @@ catalog::FunctionSignature ToSignature(const List* pg_parameters,
   return signature;
 }
 
+template<bool IsSystem>
 std::shared_ptr<catalog::Function> CreateFunctionImpl(
   const Config& config, ObjectId database_id, std::string_view database_name,
   std::string_view current_schema, const CreateFunctionStmt& stmt) {
@@ -282,14 +283,22 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
                             std::source_location::current());
   }
 
-  // Maybe optimized out for system functions
-  vpack::Builder builder;
-  sql_impl->ToVPack(builder);
-  properties.implementation = builder.slice();
+  if constexpr (!IsSystem) {
+    vpack::Builder builder;
+    sql_impl->ToVPack(builder);
+    properties.implementation = builder.slice();
+  }
 
   return std::make_shared<catalog::Function>(std::move(properties),
                                              std::move(sql_impl), database_id);
 }
+
+template std::shared_ptr<catalog::Function> CreateFunctionImpl<true>(
+  const Config&, ObjectId, std::string_view, std::string_view,
+  const CreateFunctionStmt&);
+template std::shared_ptr<catalog::Function> CreateFunctionImpl<false>(
+  const Config&, ObjectId, std::string_view, std::string_view,
+  const CreateFunctionStmt&);
 
 bool IsExpr(const Node* node) {
   switch (nodeTag(node)) {

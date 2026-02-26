@@ -514,8 +514,8 @@ void RegisterSystemFunctions() {
     const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
     const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);
     SDB_ASSERT(create_func_stmt);
-    auto func =
-      CreateFunctionImpl(Config{}, id::kSystemDB, "", "", *create_func_stmt);
+    auto func = CreateFunctionImpl<true>(Config{}, id::kSystemDB, "", "",
+                                         *create_func_stmt);
     gSystemFunctions[func->GetName()] = std::move(func);
   }
 }

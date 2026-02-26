@@ -21,6 +21,7 @@
 #pragma once
 
 #include "catalog/view.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
 
@@ -37,7 +38,8 @@ class BaseQueryView : public View, public QueryViewImpl {
 
  public:
   static Result Make(std::shared_ptr<catalog::View>& view, ObjectId database_id,
-                     ViewOptions&& options, ViewContext ctx);
+                     ViewOptions&& options, ViewContext ctx,
+                     const Config* config);
 
   BaseQueryView(ObjectId database_id, ViewMeta&& options, Internal&& meta,
                 StatePtr state);
@@ -63,7 +65,7 @@ class BaseQueryView : public View, public QueryViewImpl {
                 std::string_view new_name) const final;
 
   Result Update(std::shared_ptr<catalog::View>& new_view,
-                vpack::Slice new_options) const final;
+                vpack::Slice new_options, const Config* config) const final;
 
  private:
   Internal _meta;

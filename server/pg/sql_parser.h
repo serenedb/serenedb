@@ -40,7 +40,7 @@ List* ParseExpressions(MemoryContextData& ctx, const QueryString& query_string);
 Node* ParseSingleExpression(MemoryContextData& ctx,
                             const QueryString& query_string);
 
-pg::SqlStatement ParseSystemView(std::string_view query);
+RawStmt* ParseSystemObject(std::string_view query);
 
 }  // namespace pg
 }  // namespace sdb

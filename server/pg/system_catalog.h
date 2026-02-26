@@ -41,5 +41,6 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name);
 std::shared_ptr<catalog::View> GetView(std::string_view name);
 
 void RegisterSystemViews();
+void RegisterSystemFunctions();
 
 }  // namespace sdb::pg

@@ -44,6 +44,8 @@ auto GetField(const Field& field) {
     return GetField(std::to_underlying(field));
   } else if constexpr (std::is_same_v<Field, std::string_view>) {
     return velox::StringView{field};
+  } else if constexpr (std::is_same_v<Field, std::string>) {
+    return velox::StringView{field};
   } else if constexpr (std::is_same_v<Field, irs::bytes_view>) {
     return velox::StringView{irs::ViewCast<char>(field)};
   } else if constexpr (IsArray<Field>::value) {
@@ -154,13 +156,14 @@ template<typename T>
 class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
  public:
   explicit SystemTableSnapshot(const catalog::VirtualTable& table,
-                               ObjectId database)
+                               ObjectId database, const Config& config)
     : VirtualTableSnapshot{{},
                            database,
                            {},
                            table.Id(),
                            std::string{table.Name()},
-                           catalog::ObjectType::Virtual} {
+                           catalog::ObjectType::Virtual},
+      _config{config} {
     _table = &table;
   }
 
@@ -197,6 +200,7 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
       &pool, row_type, velox::BufferPtr{}, rows, std::move(children));
   }
 
+  const Config& _config;
   std::weak_ptr<velox::RowVector> _data;
 
   void WriteInternal(vpack::Builder& build) const final {}
@@ -213,8 +217,8 @@ class SystemTable : public catalog::VirtualTable {
   }
 
   std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(
-    ObjectId database) const final {
-    return std::make_shared<SystemTableSnapshot<T>>(*this, database);
+    ObjectId database, const Config& config) const final {
+    return std::make_shared<SystemTableSnapshot<T>>(*this, database, config);
   }
 
   velox::RowTypePtr RowType() const noexcept final {

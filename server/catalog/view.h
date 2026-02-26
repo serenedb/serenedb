@@ -27,6 +27,7 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
+#include "query/config.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
 
@@ -76,7 +77,8 @@ class View : public SchemaObject {
                         std::string_view new_name) const = 0;
 
   virtual Result Update(std::shared_ptr<catalog::View>& new_view,
-                        vpack::Slice properties) const = 0;
+                        vpack::Slice properties,
+                        const Config* config) const = 0;
 
  protected:
   View(ViewMeta&& options, ObjectId database_id);

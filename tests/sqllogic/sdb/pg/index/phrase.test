@@ -29,6 +29,7 @@ a	b
 
 query ok
 SELECT * FROM foo_idx WHERE PHRASE(b, 'over big dog') OR a = 1 ORDER BY a;
+----
 a	b
 1	quick brown fox jumps over lazy dog
 3	quick red fox jumps over big dog

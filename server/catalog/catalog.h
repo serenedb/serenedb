@@ -287,7 +287,7 @@ class CatalogFeature final : public SerenedFeature {
 
   Result AddRoles();
 
-  Result AddDatabase(vpack::Slice definition);
+  Result AddDatabase(ObjectId database_id, vpack::Slice definition);
   Result AddSchema(ObjectId database_id, ObjectId schema_id,
                    vpack::Slice definition);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,

@@ -1281,11 +1281,11 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
   std::ignore = VisitDefinitions(
     id::kInstance, RocksDBEntryType::Database,
-    [&](DefinitionKey, vpack::Slice result) -> Result {
+    [&](DefinitionKey key, vpack::Slice result) -> Result {
       catalog::DatabaseOptions options;
 
       if (auto r = vpack::ReadTupleNothrow(result, options); r.ok()) {
-        has_system = options.id == id::kSystemDB;
+        has_system = key.GetObjectId() == id::kSystemDB;
       }
 
       return {ERROR_INTERNAL};  // stop iteration
@@ -1299,8 +1299,9 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   const auto database = catalog::MakeSystemDatabaseOptions();
   vpack::Builder builder;
   vpack::WriteTuple(builder, database);
-  auto r = CreateDefinition(id::kInstance, RocksDBEntryType::Database,
-                            database.id, [&](bool) { return builder.slice(); });
+  auto r =
+    CreateDefinition(id::kInstance, RocksDBEntryType::Database, id::kSystemDB,
+                     [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write database marker: ", r.errorMessage());
@@ -1312,8 +1313,9 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   };
   builder.clear();
   vpack::WriteTuple(builder, schema_options);
-  r = CreateDefinition(database.id, RocksDBEntryType::Schema, schema_options.id,
-                       [&](bool) { return builder.slice(); });
+  r =
+    CreateDefinition(id::kSystemDB, RocksDBEntryType::Schema, schema_options.id,
+                     [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write schema marker: ", r.errorMessage());

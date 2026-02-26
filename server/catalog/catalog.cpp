@@ -247,13 +247,17 @@ Result CatalogFeature::Open() {
   return r;
 }
 
-Result CatalogFeature::AddDatabase(vpack::Slice definition) {
+Result CatalogFeature::AddDatabase(ObjectId database_id,
+                                   vpack::Slice definition) {
   catalog::DatabaseOptions database;
   if (auto r = vpack::ReadTupleNothrow(definition, database); !r.ok()) {
     return r;
   }
-  auto db = std::make_shared<catalog::Database>(database);
-  return Global().RegisterDatabase(db);
+  auto db = std::make_shared<catalog::Database>(database_id, database);
+  if (auto r = Global().RegisterDatabase(db); !r.ok()) {
+    return r;
+  }
+  return RegisterSchemas(database_id);
 }
 
 Result CatalogFeature::RegisterDatabases() {
@@ -272,7 +276,7 @@ Result CatalogFeature::RegisterDatabases() {
         QueueDropTask(std::move(db_drop)).Detach();
         return Result{};
       } else {
-        return AddDatabase(slice);
+        return AddDatabase(key.GetObjectId(), slice);
       }
     });
 }

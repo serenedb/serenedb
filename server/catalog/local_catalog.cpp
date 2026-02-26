@@ -772,25 +772,32 @@ LocalCatalog::LocalCatalog(bool skip_background_errors)
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterRole(std::move(role),
-                                 [](auto&) { return Result{}; });
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterRole(std::move(role), [](auto&) { return Result{}; });
+  });
 }
 
 Result LocalCatalog::RegisterDatabase(std::shared_ptr<Database> database) {
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(std::move(database), id::kInstance, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(database), id::kInstance, false);
+  });
 }
 
 Result LocalCatalog::RegisterSchema(ObjectId database_id,
                                     std::shared_ptr<Schema> schema) {
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(std::move(schema), database_id, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(schema), database_id, false);
+  });
 }
 
 Result LocalCatalog::RegisterView(ObjectId schema_id,
                                   std::shared_ptr<View> view) {
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(std::move(view), schema_id, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(view), schema_id, false);
+  });
 }
 
 Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
@@ -798,13 +805,17 @@ Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(table, schema_id, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(table, schema_id, false);
+  });
 }
 
 Result LocalCatalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
                                       std::shared_ptr<Function> function) {
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(std::move(function), schema_id, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(function), schema_id, false);
+  });
 }
 
 Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
@@ -905,14 +916,17 @@ ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
 
 Result LocalCatalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
   absl::MutexLock lock{&_mutex};
-
-  return _snapshot->RegisterObject(shard, shard->GetIndexId(), false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(shard, shard->GetIndexId(), false);
+  });
 }
 
 Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   absl::MutexLock lock{&_mutex};
 
-  return _snapshot->RegisterObject(shard, shard->GetTableId(), false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(shard, shard->GetTableId(), false);
+  });
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id,
@@ -1599,9 +1613,7 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
 }
 
 std::shared_ptr<Snapshot> LocalCatalog::GetSnapshot() const noexcept {
-  absl::MutexLock lock{&_mutex};
-  return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire)
-    ->Clone();
+  return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
 }
 
 }  // namespace sdb::catalog

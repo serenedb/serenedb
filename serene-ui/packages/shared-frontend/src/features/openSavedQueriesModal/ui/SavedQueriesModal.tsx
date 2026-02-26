@@ -50,7 +50,7 @@ export const SavedQueriesModal = () => {
                             <BindVariables
                                 bind_vars={currentSavedQuery?.bind_vars}
                                 setBindVars={handleChangeBindVars}
-                                className="h-110"
+                                className="h-120"
                             />
                         ) : null}
                     </div>
@@ -68,7 +68,12 @@ export const SavedQueriesModal = () => {
                                         : result?.status || "",
                                 },
                             ]}
-                            selectedResultIndex={0}
+                            selectedResultIndex={
+                                result?.status === "success" ||
+                                result?.status === "running"
+                                    ? 0
+                                    : -1
+                            }
                         />
                     </div>
                 </div>

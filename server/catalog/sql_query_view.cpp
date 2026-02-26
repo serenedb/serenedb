@@ -58,11 +58,8 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb {
 
-std::shared_ptr<SqlQueryViewImpl::State> SqlQueryViewImpl::Create(
-  const Config* config) {
-  auto resp = std::make_shared<State>();
-  resp->config = config;
-  return resp;
+std::shared_ptr<SqlQueryViewImpl::State> SqlQueryViewImpl::Create() {
+  return std::make_shared<State>();
 }
 
 Result SqlQueryViewImpl::Parse(State& state, ObjectId database_id,
@@ -94,22 +91,20 @@ Result SqlQueryViewImpl::Parse(State& state, ObjectId database_id,
 }
 
 Result SqlQueryViewImpl::Check(ObjectId database, std::string_view name,
-                               const State& state) {
+                               const State& state, const Config& config) {
   SDB_ASSERT(state.stmt);
-  SDB_ASSERT(state.config);
   if (state.stmt->stmt->type != T_SelectStmt) {
     return {ERROR_BAD_PARAMETER,
             "sql query view should contains select statement"};
   }
 
-  auto search_path =
-    state.config->Get<VariableType::PgSearchPath>("search_path");
+  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
 
   return basics::SafeCall([&] {
     pg::Objects objects;
     pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
     pg::ResolveQueryView(database, search_path, objects, disallowed,
-                         state.objects, *state.config);
+                         state.objects, config);
   });
 }
 

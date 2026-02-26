@@ -25,7 +25,6 @@
 
 #include "basics/assert.h"
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
 #include "pg/sql_utils.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -995,9 +994,6 @@ void VisitNodes(const List* list, Visitor&& visitor) {
 
 template<typename Visitor>
 auto VisitName(const List* name, Visitor&& visitor) {
-  if (name->type != T_List) {
-    SDB_PRINT("bad");
-  }
   SDB_ASSERT(name->type == T_List);
 
   switch (list_length(name)) {

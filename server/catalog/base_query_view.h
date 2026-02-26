@@ -65,7 +65,7 @@ class BaseQueryView : public View, public QueryViewImpl {
                 std::string_view new_name) const final;
 
   Result Update(std::shared_ptr<catalog::View>& new_view,
-                vpack::Slice new_options) const final;
+                vpack::Slice new_options, const Config* config) const final;
 
  private:
   Internal _meta;

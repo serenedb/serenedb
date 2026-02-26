@@ -61,7 +61,7 @@ class GraphView final : public View {
                 std::string_view new_name) const final;
 
   Result Update(std::shared_ptr<catalog::View>& new_view,
-                vpack::Slice properties) const final;
+                vpack::Slice properties, const Config*) const final;
 
  private:
   Internal _meta;

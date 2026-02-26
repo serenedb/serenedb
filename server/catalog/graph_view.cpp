@@ -216,7 +216,7 @@ Result GraphView::Rename(std::shared_ptr<catalog::View>& new_view,
 }
 
 Result GraphView::Update(std::shared_ptr<catalog::View>& new_view,
-                         vpack::Slice properties) const {
+                         vpack::Slice properties, const Config*) const {
   Internal new_meta;
   auto r = ToInternal(properties, GetDatabaseId(), new_meta);
   if (!r.ok()) {

@@ -1,0 +1,38 @@
+statement ok
+CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX foo_idx ON foo USING inverted(a,b);
+
+statement ok
+INSERT INTO foo values (1, 'quick brown fox jumps over lazy dog');
+
+statement ok
+INSERT INTO foo values (2, 'quick red fox jumps over lazy dog');
+
+statement ok
+INSERT INTO foo values (3, 'quick red fox jumps over big dog');
+
+statement ok
+INSERT INTO foo values (4, 'quick brown fox jumps over big dog');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query ok
+SELECT * FROM foo_idx WHERE PHRASE(b, 'over big dog') OR PHRASE(b, 'red fox') ORDER BY a;
+----
+a	b
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+query ok
+SELECT * FROM foo_idx WHERE PHRASE(b, 'over big dog') OR a = 1 ORDER BY a;
+a	b
+1	quick brown fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+statement ok
+DROP TABLE foo;

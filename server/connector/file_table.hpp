@@ -122,16 +122,6 @@ class ReadFileTable final : public FileTable {
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
-  bool SupportsFilterPushdown() const {
-    switch (_options->dwio->fileFormat()) {
-      using enum velox::dwio::common::FileFormat;
-      case PARQUET:
-        return true;
-      default:
-        return false;
-    }
-  }
-
  private:
   std::shared_ptr<velox::ReadFile> _source;
   std::shared_ptr<ReaderOptions> _options;

@@ -248,17 +248,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
-      velox::common::SubfieldFilters subfield_filters;
-      velox::core::TypedExprPtr remaining_filter;
-
-      if (!read_file_table->SupportsFilterPushdown()) {
-        rejected_filters = std::move(filters);
-        return std::make_shared<FileTableHandle>(
-          read_file_table->GetSource(), read_file_table->GetOptions(),
-          std::move(subfield_filters), std::move(remaining_filter));
-      }
-
       double sample_rate = 1.0;
+      velox::common::SubfieldFilters subfield_filters;
       std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
       for (auto& filter : filters) {
         auto remaining =
@@ -270,6 +261,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
         }
       }
 
+      velox::core::TypedExprPtr remaining_filter;
       if (remaining_conjuncts.size() == 1) {
         remaining_filter = std::move(remaining_conjuncts[0]);
       } else if (remaining_conjuncts.size() > 1) {

@@ -127,6 +127,362 @@ count
 10000
 
 
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq IS NULL;
+----
+count
+0
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq IS NOT NULL;
+----
+count
+10000
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE salary IS NULL;
+----
+count
+0
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE salary IS NOT NULL;
+----
+count
+10000
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq > 95;
+----
+count
+500
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq < 5;
+----
+count
+400
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq >= 99;
+----
+count
+200
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq <= 2;
+----
+count
+200
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq = 42;
+----
+count
+100
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq != 50;
+----
+count
+9900
+
+
+query ?
+SELECT DISTINCT iq FROM vedernikoff_company WHERE iq > 95 ORDER BY iq;
+----
+iq
+96
+97
+98
+99
+100
+
+
+query ?
+SELECT DISTINCT iq FROM vedernikoff_company WHERE iq < 5 ORDER BY iq;
+----
+iq
+1
+2
+3
+4
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq IN (1, 50, 100);
+----
+count
+300
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq NOT IN (1, 50, 100);
+----
+count
+9700
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq BETWEEN 10 AND 20;
+----
+count
+1100
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq > 90 AND iq < 95;
+----
+count
+400
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq > 50 OR iq < 3;
+----
+count
+5200
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq > 95 AND salary IS NOT NULL;
+----
+count
+500
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE iq > 95 AND salary IS NULL;
+----
+count
+0
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE salary LIKE 'salary 1%';
+----
+count
+1200
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE salary NOT LIKE 'salary 1%';
+----
+count
+8800
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE fact LIKE '%gain%';
+----
+count
+10000
+
+
+query
+SELECT COUNT(*) FROM vedernikoff_company WHERE fact NOT LIKE '%gain%';
+----
+count
+0
+
+
+statement count 15
+COPY (
+  SELECT
+    CASE WHEN x % 3 = 0 THEN NULL ELSE x END as id,
+    CASE WHEN x % 5 = 0 THEN NULL ELSE 'val_'::text || x::text END as name
+  FROM generate_series(1, 15) as t(x)
+) TO '/tmp/${__DATABASE__}_nullable_data.parquet';
+
+
+statement ok
+CREATE TABLE nullable_data(
+  id INT8,
+  name TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_nullable_data.parquet'
+);
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NULL;
+----
+count
+5
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE name IS NULL;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NOT NULL;
+----
+count
+10
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE name IS NOT NULL;
+----
+count
+12
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NULL AND name IS NULL;
+----
+count
+1
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NULL AND name IS NOT NULL;
+----
+count
+4
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NOT NULL AND name IS NULL;
+----
+count
+2
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NOT NULL AND name IS NOT NULL;
+----
+count
+8
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IS NULL OR name IS NULL;
+----
+count
+7
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id > 10;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id < 5;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id >= 10;
+----
+count
+4
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id <= 5;
+----
+count
+4
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id != 7;
+----
+count
+9
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id IN (1, 5, 10);
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id NOT IN (1, 5, 10);
+----
+count
+7
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id > 5 AND name IS NOT NULL;
+----
+count
+5
+
+
+query
+SELECT COUNT(*) FROM nullable_data WHERE id > 5 AND name IS NULL;
+----
+count
+1
+
+
+query ??
+SELECT id, name FROM nullable_data WHERE id IS NULL ORDER BY name;
+----
+id	name
+NULL	val_12
+NULL	val_3
+NULL	val_6
+NULL	val_9
+NULL	NULL
+
+
+query ??
+SELECT id, name FROM nullable_data WHERE name IS NULL ORDER BY id;
+----
+id	name
+5	NULL
+10	NULL
+NULL	NULL
+
+
+query ??
+SELECT id, name FROM nullable_data WHERE id IS NOT NULL AND name IS NOT NULL ORDER BY id;
+----
+id	name
+1	val_1
+2	val_2
+4	val_4
+7	val_7
+8	val_8
+11	val_11
+13	val_13
+14	val_14
+
+
+query ??
+SELECT id, name FROM nullable_data WHERE id > 10 AND name IS NOT NULL ORDER BY id;
+----
+id	name
+11	val_11
+13	val_13
+14	val_14
+
+
 statement count 10000
 COPY (
   SELECT 
@@ -148,6 +504,32 @@ CREATE TABLE malandin_company(
 WITH (
   PATH = '/tmp/${__DATABASE__}_vedernikoff_company.csv'
 );
+
+
+# all filters are supposed to be pushdowned — no FilterNode in the plan
+query ?
+EXPLAIN (EXECUTION)
+SELECT *
+FROM
+  malandin_company as v1,
+  malandin_company as v2,
+  malandin_company as v3
+WHERE 
+  v1.iq > 90 AND v1.iq < 100 AND v1.iq != 95 AND v1.salary IS NOT NULL
+  AND v2.iq = 90 AND v2.salary IS NULL
+  AND v3.iq >= 90 AND v3.iq <= 100 AND v3.iq NOT IN (99, 95, 97)
+  AND v3.fact LIKE '%gain%' AND (v1.iq = 23 OR v2.iq = 54);
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- NestedLoopJoin[6][INNER] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+  -- Filter[0][expression: or(presto_eq("iq",23),presto_eq("iq",54))] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+    -- NestedLoopJoin[3][INNER] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+      -- TableScan[1][File(text), [(salary, Filter(IsNotNull, deterministic, no nulls)), (iq, BigintMultiRange: [[91, 94], [96, 99]] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+      -- TableScan[2][File(text), [(salary, Filter(IsNull, deterministic, with nulls)), (iq, BigintRange: [90, 90] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+  -- Filter[5][expression: presto_like("fact",%gain%,\\)] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+    -- TableScan[4][File(text), [(iq, BigintMultiRange: [[90, 94], [96, 96], [98, 98], [100, 100]] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
 
 
 query
@@ -188,8 +570,396 @@ SELECT iq FROM malandin_company WHERE iq = 10 LIMIT 1000 - 7;
 
 
 query
-SELECT * FROM 
+SELECT * FROM
   malandin_company NATURAL JOIN
   vedernikoff_company;
 ----
 30003 values hashing to 017114532d4bd6a929a5d709e1e8d90f
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq IS NULL;
+----
+count
+0
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq IS NOT NULL;
+----
+count
+10000
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE salary IS NULL;
+----
+count
+0
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE salary IS NOT NULL;
+----
+count
+10000
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq > 95;
+----
+count
+500
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq < 5;
+----
+count
+400
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq >= 99;
+----
+count
+200
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq <= 2;
+----
+count
+200
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq = 42;
+----
+count
+100
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq != 50;
+----
+count
+9900
+
+
+query ?
+SELECT DISTINCT iq FROM malandin_company WHERE iq > 95 ORDER BY iq;
+----
+iq
+96
+97
+98
+99
+100
+
+
+query ?
+SELECT DISTINCT iq FROM malandin_company WHERE iq < 5 ORDER BY iq;
+----
+iq
+1
+2
+3
+4
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq IN (1, 50, 100);
+----
+count
+300
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq NOT IN (1, 50, 100);
+----
+count
+9700
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq BETWEEN 10 AND 20;
+----
+count
+1100
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq > 90 AND iq < 95;
+----
+count
+400
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq > 50 OR iq < 3;
+----
+count
+5200
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq > 95 AND salary IS NOT NULL;
+----
+count
+500
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE iq > 95 AND salary IS NULL;
+----
+count
+0
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE salary LIKE 'salary 1%';
+----
+count
+1200
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE salary NOT LIKE 'salary 1%';
+----
+count
+8800
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE fact LIKE '%gain%';
+----
+count
+10000
+
+
+query
+SELECT COUNT(*) FROM malandin_company WHERE fact NOT LIKE '%gain%';
+----
+count
+0
+
+
+statement count 15
+COPY (
+  SELECT
+    CASE WHEN x % 3 = 0 THEN NULL ELSE x END as id,
+    CASE WHEN x % 5 = 0 THEN NULL ELSE 'val_'::text || x::text END as name
+  FROM generate_series(1, 15) as t(x)
+) TO '/tmp/${__DATABASE__}_nullable_data.csv';
+
+
+statement ok
+CREATE TABLE clickclack(
+  id INT8,
+  name TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_nullable_data.csv'
+);
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NULL;
+----
+count
+5
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE name IS NULL;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NOT NULL;
+----
+count
+10
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE name IS NOT NULL;
+----
+count
+12
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NULL AND name IS NULL;
+----
+count
+1
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NULL AND name IS NOT NULL;
+----
+count
+4
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NOT NULL AND name IS NULL;
+----
+count
+2
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NOT NULL AND name IS NOT NULL;
+----
+count
+8
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IS NULL OR name IS NULL;
+----
+count
+7
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id > 10;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id < 5;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id >= 10;
+----
+count
+4
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id <= 5;
+----
+count
+4
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id != 7;
+----
+count
+9
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id IN (1, 5, 10);
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id NOT IN (1, 5, 10);
+----
+count
+7
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id > 5 AND name IS NOT NULL;
+----
+count
+5
+
+
+query
+SELECT COUNT(*) FROM clickclack WHERE id > 5 AND name IS NULL;
+----
+count
+1
+
+
+query ??
+SELECT id, name FROM clickclack WHERE id IS NULL ORDER BY name;
+----
+id	name
+NULL	val_12
+NULL	val_3
+NULL	val_6
+NULL	val_9
+NULL	NULL
+
+
+query ??
+SELECT id, name FROM clickclack WHERE name IS NULL ORDER BY id;
+----
+id	name
+5	NULL
+10	NULL
+NULL	NULL
+
+
+query ??
+SELECT id, name FROM clickclack WHERE id IS NOT NULL AND name IS NOT NULL ORDER BY id;
+----
+id	name
+1	val_1
+2	val_2
+4	val_4
+7	val_7
+8	val_8
+11	val_11
+13	val_13
+14	val_14
+
+
+query
+EXPLAIN (EXECUTION)
+SELECT id, name FROM clickclack WHERE id > 10 AND name IS NOT NULL ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[1][id ASC NULLS LAST] -> "id":BIGINT, "name":VARCHAR
+  -- TableScan[0][File(text), [(name, Filter(IsNotNull, deterministic, no nulls)), (id, BigintRange: [11, 9223372036854775807] no nulls)]] -> "id":BIGINT, "name":VARCHAR
+
+
+query ??
+SELECT id, name FROM clickclack WHERE id > 10 AND name IS NOT NULL ORDER BY id;
+----
+id	name
+11	val_11
+13	val_13
+14	val_14
+
+
+query
+EXPLAIN (EXECUTION)
+SELECT name FROM clickclack WHERE id > 10 AND name IS NOT NULL ORDER BY name;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (name:VARCHAR, "name")] -> "name":VARCHAR
+  -- OrderBy[1][name ASC NULLS LAST] -> "name":VARCHAR
+    -- TableScan[0][File(text), [(name, Filter(IsNotNull, deterministic, no nulls)), (id, BigintRange: [11, 9223372036854775807] no nulls)]] -> "name":VARCHAR
+
+
+query ?
+SELECT name FROM clickclack WHERE id > 10 AND name IS NOT NULL ORDER BY name;
+----
+name
+val_11
+val_13
+val_14

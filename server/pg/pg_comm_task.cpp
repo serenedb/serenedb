@@ -1304,10 +1304,15 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
     _send.WriteUncommitted({"\0W", 2});
     _send.WriteUncommitted(context);
   }
-  if (query.size() > 1) {
-    _send.WriteUncommitted({"\0q", 2});
-    _send.WriteUncommitted({query.data(), query.size() - 1});
-  }
+
+  // TODO: 'q' (internal query) and 'p' (internal position) fields should only
+  // be sent for errors originating from internally-generated queries
+  // (e.g. PL/pgSQL functions, triggers).
+  // if (query.size() > 1) {
+  //   _send.WriteUncommitted({"\0q", 2});
+  //   _send.WriteUncommitted({query.data(), query.size() - 1});
+  // }
+
   if (cursor_pos > 0) {
     _send.WriteUncommitted({"\0P", 2});
     // TODO: zero copy serialization here

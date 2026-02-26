@@ -275,8 +275,7 @@ class CatalogFeature final : public SerenedFeature {
 #endif
 
  private:
-  Result OpenDatabase(DatabaseOptions database);
-  Result AddDatabase(const DatabaseOptions& database);
+  Result RegisterDatabases();
   Result RegisterSchemas(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
@@ -288,6 +287,7 @@ class CatalogFeature final : public SerenedFeature {
 
   Result AddRoles();
 
+  Result AddDatabase(vpack::Slice definition);
   Result AddSchema(ObjectId database_id, ObjectId schema_id,
                    vpack::Slice definition);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,

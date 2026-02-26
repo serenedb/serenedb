@@ -146,6 +146,19 @@ Result CreateSchemaDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
     });
 }
 
+Result CreateDatabaseDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
+                          std::shared_ptr<DatabaseDrop>& drop) {
+  drop->parent_id = id::kInstance;
+  drop->id = db_id;
+  return engine.VisitDefinitions(
+    db_id, RocksDBEntryType::Schema, [&](DefinitionKey key, vpack::Slice) {
+      drop->schemas.push_back(std::make_shared<SchemaDrop>());
+      drop->schemas.back()->is_root = false;
+      return CreateSchemaDrop(engine, db_id, key.GetObjectId(),
+                              drop->schemas.back());
+    });
+}
+
 }  // namespace
 
 template<typename T>
@@ -219,16 +232,7 @@ Result CatalogFeature::Open() {
     }
   }
 
-  auto r = GetServerEngine().VisitDefinitions(
-    id::kInstance, RocksDBEntryType::Database,
-    [&](DefinitionKey, vpack::Slice slice) -> Result {
-      catalog::DatabaseOptions database;
-      if (auto r = vpack::ReadTupleNothrow(slice, database); !r.ok()) {
-        return r;
-      }
-
-      return OpenDatabase(std::move(database));
-    });
+  auto r = RegisterDatabases();
 
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
@@ -243,9 +247,34 @@ Result CatalogFeature::Open() {
   return r;
 }
 
-Result CatalogFeature::AddDatabase(const DatabaseOptions& options) {
-  return Global().RegisterDatabase(
-    std::make_shared<catalog::Database>(options));
+Result CatalogFeature::AddDatabase(vpack::Slice definition) {
+  catalog::DatabaseOptions database;
+  if (auto r = vpack::ReadTupleNothrow(definition, database); !r.ok()) {
+    return r;
+  }
+  auto db = std::make_shared<catalog::Database>(database);
+  return Global().RegisterDatabase(db);
+}
+
+Result CatalogFeature::RegisterDatabases() {
+  auto deleted = CollectDefinitions(id::kInstance, RocksDBEntryType::Tombstone);
+  return GetServerEngine().VisitDefinitions(
+    id::kInstance, RocksDBEntryType::Database,
+    [&](DefinitionKey key, vpack::Slice slice) {
+      if (deleted.contains(key.GetObjectId())) {
+        auto db_drop = std::make_shared<DatabaseDrop>();
+        db_drop->is_root = true;
+        auto r =
+          CreateDatabaseDrop(GetServerEngine(), key.GetObjectId(), db_drop);
+        if (!r.ok()) {
+          return r;
+        }
+        QueueDropTask(std::move(db_drop)).Detach();
+        return Result{};
+      } else {
+        return AddDatabase(slice);
+      }
+    });
 }
 
 Result CatalogFeature::RegisterSchemas(ObjectId database_id) {
@@ -340,7 +369,8 @@ Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
 }
 
 Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
-  auto deleted = CollectDefinitions(index->GetId(), RocksDBEntryType::Tombstone);
+  auto deleted =
+    CollectDefinitions(index->GetId(), RocksDBEntryType::Tombstone);
   SDB_ASSERT(deleted.empty());
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
@@ -463,25 +493,6 @@ Result CatalogFeature::AddSchema(ObjectId db_id, ObjectId schema_id,
     return r;
   }
   return Result{ERROR_OK};
-}
-
-Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
-  SDB_TRACE(
-    "xxxxx", Logger::ENGINES,
-    "opening views and collections metadata in database: ", database.name);
-
-  return basics::SafeCall(
-    [&] -> Result {
-      if (auto r = AddDatabase(database); !r.ok()) {
-        return r;
-      }
-
-      return RegisterSchemas(database.id);
-    },
-    [&](ErrorCode code, std::string_view message) {
-      return Result{code, "error while opening database '", database.name,
-                    "': ", message};
-    });
 }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {

@@ -49,7 +49,8 @@ template<typename ImplQueryView>
 Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
                                           ObjectId database_id,
                                           ViewOptions&& options,
-                                          ViewContext ctx) {
+                                          ViewContext ctx,
+                                          const Config* config) {
   Internal meta;
   auto r = [&] -> Result {
     if (ctx != ViewContext::Internal) {
@@ -67,7 +68,7 @@ Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
     return {ERROR_BAD_PARAMETER, "Query can't be empty"};
   }
 
-  auto state = ImplQueryView::Create();
+  auto state = ImplQueryView::Create(config);
 
   r = ImplQueryView::Parse(*state, database_id, meta.query);
   if (!r.ok()) {
@@ -143,7 +144,7 @@ Result BaseQueryView<ImplQueryView>::Update(
     return {};
   }
 
-  auto new_state = ImplQueryView::Create();
+  auto new_state = ImplQueryView::Create(_state->config);
 
   r =
     ImplQueryView::Parse(*new_state, ObjectId{GetDatabaseId()}, new_meta.query);

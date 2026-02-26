@@ -48,10 +48,11 @@ void ResolveFunctions(ObjectId database,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query, const Config& config);
 
-enum class ObjectType {
+enum class ObjectType : uint8_t {
   Function = 0,
   Relation = 1,
 };
+
 void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
                                std::span<const std::string> search_path,
                                const Objects::ObjectName& name,

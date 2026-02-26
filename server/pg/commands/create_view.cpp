@@ -71,9 +71,9 @@ std::string DeparseWithAlias(Node* select, const char* table_alias,
 yaclib::Future<Result> CreateView(const ExecContext& context,
                                   const ViewStmt& stmt) {
   // TODO: use correct schema
+  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
   const auto db = context.GetDatabaseId();
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  auto current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema = stmt.view->schemaname
                                     ? std::string_view{stmt.view->schemaname}
                                     : current_schema;
@@ -98,7 +98,7 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
 
   std::shared_ptr<catalog::View> view;
   auto r = SqlQueryView::Make(view, db, std::move(options),
-                              catalog::ViewContext::User);
+                              catalog::ViewContext::User, &conn_ctx);
   if (!r.ok()) {
     return yaclib::MakeFuture(std::move(r));
   }
@@ -135,9 +135,10 @@ std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {
   options.properties = builder.slice();
 
   std::shared_ptr<catalog::View> view;
+  static Config gDefaultConfig;
   // TODO why ViewContext::Internal and id::kInvalid() does not work?
   auto r = SqlQueryView::Make(view, id::kSystemDB, std::move(options),
-                              catalog::ViewContext::User);
+                              catalog::ViewContext::User, &gDefaultConfig);
 
   SDB_ASSERT(r.ok(), "Cannot make system view");
 

@@ -32,6 +32,7 @@ class SqlQueryViewImpl {
     pg::MemoryContextPtr memory_context;
     const RawStmt* stmt = nullptr;
     pg::Objects objects;
+    const Config* config = nullptr;
     // TODO(mbkkt) warnings?
   };
 
@@ -40,7 +41,7 @@ class SqlQueryViewImpl {
   }
 
  protected:
-  static std::shared_ptr<State> Create();
+  static std::shared_ptr<State> Create(const Config* config);
 
   static Result Parse(State& state, ObjectId database, std::string_view query);
 

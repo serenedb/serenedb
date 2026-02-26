@@ -34,3 +34,28 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.1	Shows the server version.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 transaction_isolation	<slt:ignore>	Sets the current transaction's isolation level.
+
+# Check that pg_settings see updated settings
+
+statement ok
+set default_transaction_isolation = 'repeatable read';
+
+
+query
+SELECT setting FROM pg_settings
+WHERE name = 'default_transaction_isolation';
+----
+setting
+repeatable read
+
+
+statement ok
+set default_transaction_isolation = 'read committed';
+
+
+query
+SELECT setting FROM pg_settings
+WHERE name = 'default_transaction_isolation';
+----
+setting
+read committed

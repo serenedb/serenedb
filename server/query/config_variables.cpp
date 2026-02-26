@@ -1458,7 +1458,7 @@ void Config::VisitFullDescription(
     if (!value.data()) {
       value = description.default_value;
     }
-    f(name, description.default_value, description.description);
+    f(name, value, description.description);
   }
 
   for (const auto& [name, description] : kVeloxVariableDescription) {
@@ -1466,7 +1466,7 @@ void Config::VisitFullDescription(
     if (!value.data()) {
       value = description.default_value;
     }
-    f(name, std::string{description.default_value}, description.description);
+    f(name, std::string{value}, description.description);
   }
 }
 

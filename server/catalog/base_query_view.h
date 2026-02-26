@@ -21,6 +21,7 @@
 #pragma once
 
 #include "catalog/view.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
 
@@ -37,7 +38,8 @@ class BaseQueryView : public View, public QueryViewImpl {
 
  public:
   static Result Make(std::shared_ptr<catalog::View>& view, ObjectId database_id,
-                     ViewOptions&& options, ViewContext ctx);
+                     ViewOptions&& options, ViewContext ctx,
+                     const Config* config);
 
   BaseQueryView(ObjectId database_id, ViewMeta&& options, Internal&& meta,
                 StatePtr state);

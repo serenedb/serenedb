@@ -241,8 +241,8 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
   std::string_view current_schema, const CreateFunctionStmt& stmt) {
   SDB_ASSERT(stmt.funcname);
 
-  auto [_, function_name] =
-    ParseObjectName(stmt.funcname, database_name, current_schema);
+  auto function_name =
+    ParseObjectName(stmt.funcname, database_name, current_schema).relation;
 
   catalog::FunctionProperties properties;
   properties.name = std::string{function_name};

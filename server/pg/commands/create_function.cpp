@@ -53,14 +53,13 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   auto database_name = context.GetDatabase();
   const auto database_id = context.GetDatabaseId();
 
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
-  auto [schema, _] =
-    ParseObjectName(stmt.funcname, context.GetDatabase(), current_schema);
+  auto& connection_context = basics::downCast<const ConnectionContext>(context);
+  auto current_schema = connection_context.GetCurrentSchema();
+  auto schema =
+    ParseObjectName(stmt.funcname, database_name, current_schema).schema;
 
-  auto function =
-    CreateFunctionImpl(basics::downCast<const ConnectionContext>(context),
-                       database_id, database_name, current_schema, stmt);
+  auto function = CreateFunctionImpl(connection_context, database_id,
+                                     database_name, current_schema, stmt);
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

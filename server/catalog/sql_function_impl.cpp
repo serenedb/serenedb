@@ -82,7 +82,7 @@ Result FunctionImpl::Init(ObjectId database, std::string_view name,
   if (!r.ok()) {
     return r;
   }
-  auto search_path = Config().Get<VariableType::PgSearchPath>("search_path");
+  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
   r = basics::SafeCall([&] {
     pg::Objects objects;
     pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};

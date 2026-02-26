@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <absl/strings/substitute.h>
+
+#include <exception>
 #include <yaclib/async/future.hpp>
 
 #include "app/app_server.h"
@@ -28,9 +31,6 @@
 #include "catalog/object_dependency.h"
 #include "general_server/scheduler.h"
 #include "rest_server/serened_single.h"
-#include "rest_server/server_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::catalog {
 using AsyncResult = yaclib::Future<Result>;
@@ -42,41 +42,30 @@ template<typename T>
 AsyncResult QueueDropTask(std::shared_ptr<T> task) {
   auto* scheduler = GetScheduler();
   if (SerenedServer::Instance().isStopping()) {
-    return yaclib::MakeFuture<Result>();
+    co_return {};
   }
   SDB_ASSERT(scheduler);
 
   try {
-    auto [f, p] = yaclib::MakeContract<Result>();
-    scheduler->queue(RequestLane::InternalLow,
-                     [task, p = std::move(p)]() mutable {
-                       (*task)()
-                         .ThenInline([p = std::move(p)](Result&& r) mutable {
-                           std::move(p).Set(std::move(r));
-                         })
-                         .Detach();
-                     });
-    return std::move(f).ThenInline(
-      [task = std::move(task)](Result&& r) mutable -> AsyncResult {
-        if (r.errorNumber() == ERROR_LOCKED) {
-          auto* scheduler = GetScheduler();
-          if (!scheduler) {
-            return yaclib::MakeFuture<Result>();
-          }
-          task->delay = std::min(kMaxDelay, task->delay << 1);
-          return scheduler
-            ->delay(T::kName, std::chrono::microseconds{task->delay})
-            .ThenInline([task] { return QueueDropTask(std::move(task)); });
-        }
-        if (!r.ok()) {
-          SDB_FATAL("xxxxx", Logger::THREADS, "Failed to execute ",
-                    task->GetContext(), ", error: ", r.errorMessage());
-        }
-        return yaclib::MakeFuture<Result>();
-      });
-  } catch (...) {
-    SDB_FATAL("xxxxx", Logger::THREADS, "Unable to schedule ", T::kName,
-              ", shutting down");
+    auto r = co_await scheduler->queueWithFuture(RequestLane::InternalLow,
+                                                 [task] { return (*task)(); });
+
+    if (r.errorNumber() == ERROR_LOCKED) {
+      auto* scheduler = GetScheduler();
+      SDB_ASSERT(scheduler);
+      task->delay = std::min(kMaxDelay, task->delay << 1);
+      co_return co_await scheduler
+        ->delay(T::kName, std::chrono::microseconds{task->delay})
+        .ThenInline([task] { return QueueDropTask(std::move(task)); });
+    }
+    if (!r.ok()) {
+      SDB_FATAL("xxxxx", Logger::THREADS, "Failed to execute ",
+                task->GetContext(), ", error: ", r.errorMessage());
+    }
+    co_return r;
+  } catch (std::exception& e) {
+    SDB_FATAL("xxxxx", Logger::THREADS, "Unable to schedule ", T::kName, ": \"",
+              e.what(), "\", shutting down");
   }
 }
 
@@ -93,8 +82,8 @@ struct TableShardDrop : DropTask, std::enable_shared_from_this<TableShardDrop> {
   TableShardDrop(DropTask&& task) : DropTask{std::move(task)} {}
 
   std::string GetContext() const {
-    return absl::StrFormat("TableShardDrop(table %d shard %d)", parent_id.id(),
-                           id.id());
+    return absl::Substitute("TableShardDrop(table $0 shard $1)", parent_id.id(),
+                            id.id());
   }
 
   AsyncResult operator()();
@@ -115,8 +104,8 @@ struct IndexShardDrop : DropTask, std::enable_shared_from_this<IndexShardDrop> {
       type{type} {}
 
   std::string GetContext() const {
-    return absl::StrFormat("IndexShardDrop(index %d shard %d)", parent_id.id(),
-                           id.id());
+    return absl::Substitute("IndexShardDrop(index $0 shard $1)", parent_id.id(),
+                            id.id());
   }
 
   AsyncResult operator()();
@@ -131,8 +120,8 @@ struct IndexDrop : DropTask, std::enable_shared_from_this<IndexDrop> {
   IndexType type;
 
   std::string GetContext() const {
-    return absl::StrFormat("IndexDrop(schema %d index %d)", parent_id.id(),
-                           id.id());
+    return absl::Substitute("IndexDrop(schema $0 index $1)", parent_id.id(),
+                            id.id());
   }
 
   AsyncResult operator()();
@@ -146,8 +135,8 @@ struct TableDrop : DropTask, std::enable_shared_from_this<TableDrop> {
   std::vector<std::shared_ptr<IndexDrop>> indexes;
 
   std::string GetContext() const {
-    return absl::StrFormat("TableDrop(schema %d table %d)", parent_id.id(),
-                           id.id());
+    return absl::Substitute("TableDrop(schema $0 table $1)", parent_id.id(),
+                            id.id());
   }
 
   AsyncResult operator()();
@@ -160,8 +149,8 @@ struct SchemaDrop : DropTask, std::enable_shared_from_this<SchemaDrop> {
   std::vector<std::shared_ptr<TableDrop>> tables;
 
   std::string GetContext() const {
-    return absl::StrFormat("SchemaDrop(database %d schema %d)", parent_id.id(),
-                           id.id());
+    return absl::Substitute("SchemaDrop(database $0 schema $1)", parent_id.id(),
+                            id.id());
   }
 
   AsyncResult operator()();
@@ -174,7 +163,7 @@ struct DatabaseDrop : DropTask, std::enable_shared_from_this<DatabaseDrop> {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
 
   std::string GetContext() const {
-    return absl::StrFormat("DatabaseDrop(database %d)", parent_id.id());
+    return absl::Substitute("DatabaseDrop(database $0)", parent_id.id());
   }
 
   AsyncResult operator()();

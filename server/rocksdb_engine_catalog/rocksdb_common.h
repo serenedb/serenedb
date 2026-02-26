@@ -34,7 +34,6 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_value.h"
 
 namespace rocksdb {
 class Comparator;

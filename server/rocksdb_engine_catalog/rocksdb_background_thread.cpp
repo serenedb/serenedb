@@ -230,9 +230,6 @@ void RocksDBBackgroundThread::run() {
         _engine.determineWalFilesInitial();
       }
 
-      if (!isStopping()) {
-        _engine.processCompactions();
-      }
     } catch (const std::exception& ex) {
       SDB_WARN("xxxxx", Logger::ENGINES,
                "caught exception in rocksdb background thread: ", ex.what());

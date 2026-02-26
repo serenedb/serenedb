@@ -7,7 +7,6 @@ target_sources(
         rocksdb_common.cpp
         rocksdb_key.cpp
         rocksdb_utils.cpp
-        rocksdb_value.cpp
         rocksdb_column_family_manager.cpp
         rocksdb_engine_catalog.cpp
         rocksdb_settings_manager.cpp

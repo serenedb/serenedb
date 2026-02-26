@@ -114,10 +114,10 @@ velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
   return velox::ROW(std::move(names), std::move(types));
 }
 
-Table::Table(TableOptions&& options, ObjectId database_id, ObjectId schema_id)
+Table::Table(TableOptions&& options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
-                 schema_id,
+                 {},
                  options.id,
                  std::move(options.name),
                  ObjectType::Table},
@@ -227,9 +227,11 @@ void catalog::Table::WriteProperties(vpack::Builder& build) const {
 
 void catalog::Table::WriteInternal(vpack::Builder& build) const {
   // TODO(gnusi) writeTuple?
-  SDB_ASSERT(build.isOpenObject());
+  build.clear();
+  build.openObject();
   vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
                      ObjectInternal{_database_id});
+  build.close();
 }
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

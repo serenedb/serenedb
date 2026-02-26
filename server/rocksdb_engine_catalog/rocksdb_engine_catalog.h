@@ -216,34 +216,20 @@ class RocksDBEngineCatalog {
 
   bool inRecovery() { return recoveryState() < RecoveryState::Done; }
 
-  void processCompactions();
-
-  void CreateTable(const catalog::Table& collection);
-  Result CreateIndex(const catalog::Index& index);
-
-  void ChangeTable(const catalog::Table& collection);
-
-  Result RenameTable(const catalog::Table& collection,
-                     std::string_view old_name);
-
   Result SyncTableShard(const TableShard& shard);
 
   Result CreateDefinition(ObjectId parent_id, RocksDBEntryType type,
                           ObjectId id, WriteProperties properties);
   Result DropDefinition(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
   Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
+  Result DropRange(std::string_view start, std::string_view end,
+                   rocksdb::ColumnFamilyHandle* cf);
   Result WriteTombstone(ObjectId parent_id, ObjectId id);
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
 
   rocksdb::TransactionDB* db() const { return _db; }
-
-  Result writeDatabaseMarker(ObjectId id, vpack::Slice slice,
-                             RocksDBLogValue&& log_value);
-  Result writeCreateTableMarker(ObjectId database_id, ObjectId schema_id,
-                                ObjectId id, vpack::Slice slice,
-                                std::string_view log_value);
 
   /// determine how many archived WAL files are available. this is called
   /// during the first few minutes after the instance start, when we don't
@@ -350,7 +336,6 @@ class RocksDBEngineCatalog {
     absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
   void shutdownRocksDBInstance() noexcept;
-  void waitForCompactionJobsToFinish();
   void EnsureSystemDatabase();
 
   std::string getCompressionSupport() const;
@@ -449,19 +434,6 @@ class RocksDBEngineCatalog {
   std::map<std::pair<ObjectId, ObjectId>, bool> _rebuild_collections;
   /// number of currently running tree rebuild jobs jobs
   size_t _running_rebuilds = 0;
-
-  /// lock for _pending_compactions and _running_compactions
-  absl::Mutex _pending_compactions_lock;
-  /// bounds for compactions that we have to process
-  std::deque<std::pair<std::string, std::string>> _pending_compactions;
-  /// number of currently running compaction jobs
-  size_t _running_compactions = 0;
-  /// column families for which we are currently running a compaction.
-  /// we track this because we want to avoid running multiple compactions on
-  /// the same column family concurrently. this can help to avoid a shutdown
-  /// hanger in rocksdb.
-  containers::FlatHashSet<rocksdb::ColumnFamilyHandle*>
-    _running_compactions_column_families;
 
   // sequence number from which WAL recovery was started. used only
   // for testing

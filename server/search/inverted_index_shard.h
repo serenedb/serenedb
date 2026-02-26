@@ -172,10 +172,6 @@ class InvertedIndexShard
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
-  bool SetOutOfSync() noexcept;
-  void MarkOutOfSyncUnsafe();
-  bool IsOutOfSync() const noexcept;
-  bool FailQueriesOnOutOfSync() const noexcept;
 
   auto& GetMutex() { return _mutex; }
   Snapshot GetSnapshot() const;

@@ -51,48 +51,48 @@ void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
   auto snapshot = catalog::GetCatalog().GetSnapshot();
-  auto insert_object =
-    [&](const std::shared_ptr<catalog::SchemaObject>& object) {
-      PgClass::Relkind relkind;
-      switch (object->GetType()) {
-        case catalog::ObjectType::Table:
-          relkind = PgClass::Relkind::OrdinaryTable;
-          break;
-        case catalog::ObjectType::View:
-          relkind = PgClass::Relkind::View;
-          break;
-        case catalog::ObjectType::Index:
-          relkind = PgClass::Relkind::Index;
-          break;
-        default:
-          SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
-                    static_cast<uint8_t>(object->GetType()));
-      };
-
-      PgClass row{
-        .oid = object->GetId().id(),
-        .relname = object->GetName(),
-        .relnamespace = object->GetSchemaId().id(),
-        .reltablespace = 0,
-        .reltuples = -1,
-        .relkind = relkind,
-      };
-
-      if (relkind == PgClass::Relkind::OrdinaryTable) {
-        auto shard = snapshot->GetTableShard(object->GetId());
-        SDB_ASSERT(shard);
-        auto stats = shard->GetTableStats();
-        row.reltuples = static_cast<float>(stats.num_rows);
-      }
-
-      // TODO(codeworse): fill other fields
-      values.push_back(std::move(row));
+  auto insert_object = [&](ObjectId schema_id,
+                           const std::shared_ptr<catalog::Object>& object) {
+    PgClass::Relkind relkind;
+    switch (object->GetType()) {
+      case catalog::ObjectType::Table:
+        relkind = PgClass::Relkind::OrdinaryTable;
+        break;
+      case catalog::ObjectType::View:
+        relkind = PgClass::Relkind::View;
+        break;
+      case catalog::ObjectType::Index:
+        relkind = PgClass::Relkind::Index;
+        break;
+      default:
+        SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
+                  static_cast<uint8_t>(object->GetType()));
     };
+
+    PgClass row{
+      .oid = object->GetId().id(),
+      .relname = object->GetName(),
+      .relnamespace = schema_id.id(),
+      .reltablespace = 0,
+      .reltuples = -1,
+      .relkind = relkind,
+    };
+
+    if (relkind == PgClass::Relkind::OrdinaryTable) {
+      auto shard = snapshot->GetTableShard(object->GetId());
+      SDB_ASSERT(shard);
+      auto stats = shard->GetTableStats();
+      row.reltuples = static_cast<float>(stats.num_rows);
+    }
+
+    // TODO(codeworse): fill other fields
+    values.push_back(std::move(row));
+  };
 
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
     for (const auto& relation :
          snapshot->GetRelations(database_id, schema->GetName())) {
-      insert_object(relation);
+      insert_object(schema->GetId(), relation);
     }
   }
 }

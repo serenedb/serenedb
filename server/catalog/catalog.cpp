@@ -88,15 +88,16 @@ containers::FlatHashSet<ObjectId> CollectDefinitions(ObjectId parent_id,
   return drops;
 }
 
-Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId table_id,
-                       ObjectId index_id, std::shared_ptr<IndexDrop>& drop,
+Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
+                       ObjectId schema_id, ObjectId table_id, ObjectId index_id,
+                       std::shared_ptr<IndexDrop>& drop,
                        vpack::Slice definition) {
   drop->parent_id = table_id;
   drop->id = index_id;
   IndexBaseOptions options;
   if (vpack::ReadTupleNothrow(definition, options).ok()) {
-    drop->db_id = options.database_id;
-    drop->schema_id = options.schema_id;
+    drop->db_id = db_id;
+    drop->schema_id = schema_id;
     drop->type = options.type;
   }
   return engine.VisitDefinitions(index_id, RocksDBEntryType::IndexShard,
@@ -107,8 +108,9 @@ Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId table_id,
                                  });
 }
 
-Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId schema_id,
-                       ObjectId table_id, std::shared_ptr<TableDrop>& drop) {
+Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
+                       ObjectId schema_id, ObjectId table_id,
+                       std::shared_ptr<TableDrop>& drop) {
   drop->parent_id = schema_id;
   drop->id = table_id;
 
@@ -126,8 +128,8 @@ Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId schema_id,
     [&](DefinitionKey key, vpack::Slice slice) {
       drop->indexes.push_back(std::make_shared<IndexDrop>());
       drop->indexes.back()->is_root = false;
-      return CreateIndexDrop(engine, table_id, key.GetObjectId(),
-                             drop->indexes.back(), slice);
+      return CreateIndexDrop(engine, db_id, schema_id, table_id,
+                             key.GetObjectId(), drop->indexes.back(), slice);
     });
 }
 
@@ -139,7 +141,7 @@ Result CreateSchemaDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
     schema_id, RocksDBEntryType::Table, [&](DefinitionKey key, vpack::Slice) {
       drop->tables.push_back(std::make_shared<TableDrop>());
       drop->tables.back()->is_root = false;
-      return CreateTableDrop(engine, schema_id, key.GetObjectId(),
+      return CreateTableDrop(engine, db_id, schema_id, key.GetObjectId(),
                              drop->tables.back());
     });
 }
@@ -270,7 +272,7 @@ Result CatalogFeature::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
     schema_id, RocksDBEntryType::Function,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       std::shared_ptr<catalog::Function> function;
-      auto r = catalog::Function::Instantiate(function, db_id, slice, false);
+      auto r = catalog::Function::Instantiate(function, db_id, slice, true);
       if (!r.ok()) {
         return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
@@ -290,8 +292,8 @@ Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       }
       std::shared_ptr<View> view;
 
-      r = CreateViewInstance(view, db_id, std::move(options),
-                             ViewContext::Restore);
+      r =
+        CreateViewInstance(view, db_id, std::move(options), ViewContext::User);
       if (!r.ok()) {
         return r;
       }
@@ -300,7 +302,8 @@ Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
-Result CatalogFeature::RegisterIndexes(ObjectId table_id) {
+Result CatalogFeature::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
+                                       ObjectId table_id) {
   auto deleted = CollectDefinitions(table_id, RocksDBEntryType::Tombstone);
   return GetServerEngine().VisitDefinitions(
     table_id, RocksDBEntryType::Index,
@@ -309,12 +312,12 @@ Result CatalogFeature::RegisterIndexes(ObjectId table_id) {
       if (deleted.contains(index_id)) {
         auto index_drop = std::make_shared<IndexDrop>();
         index_drop->is_root = true;
-        auto r = CreateIndexDrop(GetServerEngine(), table_id, index_id,
-                                 index_drop, slice);
+        auto r = CreateIndexDrop(GetServerEngine(), db_id, schema_id, table_id,
+                                 index_id, index_drop, slice);
         QueueDropTask(std::move(index_drop)).Detach();
         return r;
       } else {
-        return AddIndex(table_id, index_id, slice);
+        return AddIndex(db_id, schema_id, table_id, index_id, slice);
       }
     });
 }
@@ -363,8 +366,8 @@ Result CatalogFeature::RegisterTables(ObjectId db_id, ObjectId schema_id) {
       if (deleted.contains(table_id)) {
         auto table_drop = std::make_shared<TableDrop>();
         table_drop->is_root = true;
-        auto r =
-          CreateTableDrop(GetServerEngine(), schema_id, table_id, table_drop);
+        auto r = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
+                                 table_drop);
         QueueDropTask(std::move(table_drop)).Detach();
         return r;
       } else {
@@ -416,17 +419,19 @@ Result CatalogFeature::AddTable(ObjectId db_id, ObjectId schema_id,
   if (!r.ok()) {
     return r;
   }
-  return RegisterIndexes(table_id);
+  return RegisterIndexes(db_id, schema_id, table_id);
 }
 
-Result CatalogFeature::AddIndex(ObjectId table_id, ObjectId index_id,
+Result CatalogFeature::AddIndex(ObjectId database_id, ObjectId schema_id,
+                                ObjectId table_id, ObjectId index_id,
                                 vpack::Slice slice) {
   IndexBaseOptions options;
   if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
     return r;
   }
   return Global()
-    .RegisterIndex(table_id, std::move(options))
+    .RegisterIndex(database_id, schema_id, index_id, table_id,
+                   std::move(options))
     .transform([&](auto&& index) { return RegisterIndexShard(index); })
     .error_or(Result{});
 }
@@ -443,6 +448,7 @@ Result CatalogFeature::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = Global().RegisterSchema(db_id, std::move(schema)); !r.ok()) {
     return r;
   }
+
   if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
     return r;
   }

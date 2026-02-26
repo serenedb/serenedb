@@ -109,7 +109,6 @@
 #include "rocksdb_engine_catalog/rocksdb_sync_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
@@ -318,9 +317,11 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
 
   auto key = make_key();
   auto value = make_value();
+  std::string value_str{reinterpret_cast<const char*>(value.start()),
+                        value.byteSize()};
   batch.Put(RocksDBColumnFamilyManager::get(
               RocksDBColumnFamilyManager::Family::Definitions),
-            key.GetBuffer(), value.string());
+            key.GetBuffer(), value_str);
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
@@ -353,38 +354,6 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
-}
-
-vpack::Slice GetTableProperties(vpack::Builder& builder,
-                                const catalog::Table& collection,
-                                bool internal) {
-  builder.clear();
-  builder.openObject();
-
-  if (internal) {
-    collection.WriteInternal(builder);
-  } else {
-    collection.WriteProperties(builder);
-  }
-
-  builder.close();
-  return builder.slice();
-}
-
-template<typename T>
-vpack::Slice GetObjectProperties(vpack::Builder& builder, const T& object,
-                                 bool internal) {
-  builder.clear();
-  builder.openObject();
-
-  if (internal) {
-    object.WriteInternal(builder);
-  } else {
-    object.WriteProperties(builder);
-  }
-
-  builder.close();
-  return builder.slice();
 }
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
@@ -830,14 +799,9 @@ void RocksDBEngineCatalog::stop() {
     }
     _sync_thread.reset();
   }
-
-  waitForCompactionJobsToFinish();
 }
 
-void RocksDBEngineCatalog::unprepare() {
-  waitForCompactionJobsToFinish();
-  shutdownRocksDBInstance();
-}
+void RocksDBEngineCatalog::unprepare() { shutdownRocksDBInstance(); }
 
 void RocksDBEngineCatalog::trackRevisionTreeHibernation() noexcept {
   ++_metrics_tree_hibernations;
@@ -917,20 +881,6 @@ void RocksDBEngineCatalog::cleanupReplicationContexts() {
 #endif
 }
 
-Result RocksDBEngineCatalog::writeCreateTableMarker(
-  ObjectId database_id, ObjectId schema_id, ObjectId cid, vpack::Slice slice,
-  std::string_view log_value) {
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer<DefinitionKey> key{schema_id,
-                                              RocksDBEntryType::Table, cid};
-      return key;
-    },
-    [&] { return RocksDBValue::Object(RocksDBEntryType::Table, slice); },  //
-    [&] { return log_value; });
-}
-
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
   return SerenedServer::Instance()
     .getFeature<RocksDBRecoveryManager>()
@@ -941,235 +891,6 @@ Tick RocksDBEngineCatalog::recoveryTick() noexcept {
   return SerenedServer::Instance()
     .getFeature<RocksDBRecoveryManager>()
     .recoverySequenceNumber();
-}
-
-void RocksDBEngineCatalog::processCompactions() {
-  Scheduler* scheduler = SchedulerFeature::gScheduler;
-  if (scheduler == nullptr) {
-    return;
-  }
-
-  auto& server = SerenedServer::Instance();
-  uint64_t max_iterations = _options_provider._max_parallel_compactions;
-  uint64_t iterations = 0;
-  while (++iterations <= max_iterations) {
-    if (server.isStopping()) {
-      // don't fire off more compactions while we are shutting down
-      return;
-    }
-
-    std::string start, end;
-
-    auto* cf = RocksDBColumnFamilyManager::get(
-      RocksDBColumnFamilyManager::Family::Definitions);
-
-    {
-      absl::WriterMutexLock locker{&_pending_compactions_lock};
-      if (_pending_compactions.empty() ||
-          _running_compactions >= _options_provider._max_parallel_compactions) {
-        // nothing to do, or too much to do
-        SDB_TRACE(
-          "xxxxx", Logger::ENGINES,
-          "not scheduling compactions. pending: ", _pending_compactions.size(),
-          ", running: ", _running_compactions);
-        return;
-      }
-
-      if (!_running_compactions_column_families.emplace(cf).second) {
-        // a compaction is already running for the same column family.
-        // we don't want to schedule parallel compactions for the same column
-        // family because they can lead to shutdown issues (this is an issue of
-        // RocksDB).
-        SDB_TRACE(
-          "xxxxx", Logger::ENGINES,
-          "not scheduling compactions. already have a compaction running "
-          "for column family '",
-          cf->GetName(), "', running: ", _running_compactions);
-        return;
-      }
-
-      // found something to do, now steal the item from the queue
-      std::tie(start, end) = std::move(_pending_compactions.front());
-      _pending_compactions.pop_front();
-
-      if (SerenedServer::Instance().isStopping()) {
-        // if we are stopping, it is ok to not process but lose any pending
-        // compactions
-        return;
-      }
-
-      // set it to running already, so that concurrent callers of this method
-      // will not kick off additional jobs
-      ++_running_compactions;
-
-      SDB_TRACE("xxxxx", Logger::ENGINES,
-                "scheduling compaction in column family '", cf->GetName(),
-                "' for execution");
-    }
-
-    scheduler->queue(RequestLane::ClientSlow, [this, key_start = start,
-                                               key_end = end]() {
-      auto* cf = RocksDBColumnFamilyManager::get(
-        RocksDBColumnFamilyManager::Family::Definitions);
-      if (SerenedServer::Instance().isStopping()) {
-        SDB_TRACE("xxxxx", Logger::ENGINES,
-                  "aborting pending compaction due to server shutdown");
-      } else {
-        SDB_TRACE("xxxxx", Logger::ENGINES, "executing compaction for range ",
-                  key_start, " ", key_end);
-        double start = utilities::GetMicrotime();
-        try {
-          rocksdb::CompactRangeOptions opts;
-          opts.exclusive_manual_compaction = false;
-          opts.allow_write_stall = true;
-          opts.canceled = &gCancelCompactions;
-          rocksdb::Slice b{key_start}, e{key_end};
-          _db->CompactRange(opts, cf, &b, &e);
-        } catch (const std::exception& ex) {
-          SDB_WARN("xxxxx", Logger::ENGINES, "compaction for range ", key_start,
-                   " ", key_end, " failed with error: ", ex.what());
-        } catch (...) {
-          // whatever happens, we need to count down _running_compactions in
-          // all cases
-        }
-
-        SDB_TRACE("xxxxx", Logger::ENGINES, "finished compaction for range ",
-                  key_start, " ", key_end, ", took: ",
-                  absl::StrFormat("%.6f", utilities::GetMicrotime() - start));
-      }
-      // always count down _running_compactions!
-      absl::WriterMutexLock locker{&_pending_compactions_lock};
-
-      SDB_ASSERT(_running_compactions_column_families.size() ==
-                 _running_compactions);
-      SDB_ASSERT(_running_compactions > 0);
-      --_running_compactions;
-
-      [[maybe_unused]] const auto count =
-        _running_compactions_column_families.erase(cf);
-      SDB_ASSERT(count);
-    });
-  }
-}
-
-Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
-  const auto table_id = index.GetRelationId();
-  const auto index_id = index.GetId();
-  SDB_ASSERT(index_id.isSet());
-
-  vpack::Builder b;
-  index.WriteInternal(b);
-
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer<DefinitionKey> key{table_id, RocksDBEntryType::Index,
-                                              index_id};
-      return key;
-    },
-    [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },
-    [&] { return std::string_view{}; });
-}
-
-void RocksDBEngineCatalog::CreateTable(const catalog::Table& c) {
-  const auto db_id = c.GetDatabaseId();
-  const auto schema_id = c.GetSchemaId();
-  const auto table_id = c.GetId();
-  SDB_ASSERT(table_id.isSet());
-
-  vpack::Builder b;
-
-  auto r = WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer<DefinitionKey> key{
-        schema_id, RocksDBEntryType::Table, table_id};
-      return key;
-    },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Table,
-                                  GetTableProperties(b, c, true));
-    },
-    [&] {
-      const wal::SchemaObjectPut entry{
-        .database_id = db_id,
-        .schema_id = schema_id,
-        .object_id = table_id,
-        .data = GetTableProperties(b, c, false),
-      };
-      return wal::Write(RocksDBLogType::TableCreate, entry);
-    });
-
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-}
-
-void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c) {
-  const auto db_id = c.GetDatabaseId();
-  const auto schema_id = c.GetSchemaId();
-
-  vpack::Builder b;
-
-  auto r = WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer<DefinitionKey> key{
-        schema_id, RocksDBEntryType::Table, c.GetId()};
-      return key;
-    },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Table,
-                                  GetTableProperties(b, c, true));
-    },
-    [&] {
-      const wal::SchemaObjectPut entry{
-        .database_id = db_id,
-        .schema_id = schema_id,
-        .object_id = c.GetId(),
-        .data = GetTableProperties(b, c, false),
-      };
-      return wal::Write(RocksDBLogType::TableChange, entry);
-    });
-
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-}
-
-Result RocksDBEngineCatalog::RenameTable(const catalog::Table& c,
-                                         std::string_view old_name) {
-  const auto db_id = c.GetDatabaseId();
-  const auto cid = c.GetId();
-
-  vpack::Builder b;
-
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer<DefinitionKey> key{c.GetSchemaId(),
-                                              RocksDBEntryType::Table, cid};
-      return key;
-    },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Table,
-                                  GetTableProperties(b, c, true));
-    },
-    [&] {
-      b.clear();
-      b.openObject(true);
-      b.add("name", old_name);
-      b.add("new", c.GetName());
-      b.close();
-
-      const wal::SchemaObjectPut entry{
-        .database_id = db_id,
-        .schema_id = c.GetSchemaId(),
-        .object_id = cid,
-        .data = b.slice(),
-      };
-      return wal::Write(RocksDBLogType::TableRename, entry);
-    });
 }
 
 Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
@@ -1606,8 +1327,7 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
   return WriteDefinition(
     _db->GetRootDB(),
     [&] { return RocksDBKeyWithBuffer<DefinitionKey>{parent_id, type, id}; },
-    [&] { return RocksDBValue::Object(type, properties(true)); },
-    [] { return std::string_view{}; });
+    [&] { return properties(true); }, [] { return std::string_view{}; });
 }
 
 Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
@@ -1621,16 +1341,17 @@ Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
 
 Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
                                        RocksDBEntryType type) {
-  rocksdb::WriteBatch batch;
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
-  return VisitDefinitions(parent_id, type,
-                          [&](DefinitionKey key, vpack::Slice value) {
-                            batch.Delete(cf, key.GetBuffer());
-                            return Result{};
-                          });
+  auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
+  return DropRange(start, end, cf);
+}
+
+Result RocksDBEngineCatalog::DropRange(std::string_view start,
+                                       std::string_view end,
+                                       rocksdb::ColumnFamilyHandle* cf) {
   return rocksutils::ConvertStatus(
-    _db->GetRootDB()->Write(rocksdb::WriteOptions{}, &batch));
+    _db->GetRootDB()->DeleteRange(rocksdb::WriteOptions{}, cf, start, end));
 }
 
 Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
@@ -1640,7 +1361,7 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
       return RocksDBKeyWithBuffer<DefinitionKey>{
         parent_id, RocksDBEntryType::Tombstone, id};
     },
-    [] { return RocksDBValue::Empty(RocksDBEntryType::Tombstone); },
+    [] { return vpack::Slice::emptyStringSlice(); },
     [] { return std::string_view{}; });
 }
 
@@ -2200,46 +1921,6 @@ HealthData RocksDBEngineCatalog::healthCheck() {
 
   return {static_cast<const HealthDataBase&>(_health_data),
           _health_data.res.clone()};
-}
-
-void RocksDBEngineCatalog::waitForCompactionJobsToFinish() {
-  // wait for started compaction jobs to finish
-  int iterations = 0;
-
-  do {
-    size_t num_running;
-    {
-      absl::ReaderMutexLock locker{&_pending_compactions_lock};
-      num_running = _running_compactions;
-    }
-    if (num_running == 0) {
-      return;
-    }
-    ++iterations;
-
-    // Maybe a flush can help?
-    if (iterations == 100) {
-      Result res =
-        flushWal(false /* waitForSync */, true /* flushColumnFamilies */);
-      if (res.fail()) {
-        SDB_WARN("xxxxx", Logger::ENGINES,
-                 "Error on flushWal during waitForCompactionJobsToFinish: ",
-                 res.errorMessage());
-      }
-    }
-    // print this only every 10 seconds
-    if (iterations % 200 == 0) {
-      SDB_INFO("xxxxx", Logger::ENGINES, "waiting for ", num_running,
-               " compaction job(s) to finish...");
-    }
-    // unfortunately there is not much we can do except waiting for
-    // RocksDB's compaction job(s) to finish.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    // wait up to 2 minutes, and then give up
-  } while (iterations <= 2400);
-
-  SDB_WARN("xxxxx", Logger::ENGINES,
-           "giving up waiting for pending compaction job(s)");
 }
 
 bool RocksDBEngineCatalog::checkExistingDB(

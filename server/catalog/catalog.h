@@ -181,7 +181,8 @@ struct LogicalCatalog {
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Function> function) = 0;
   virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
-    ObjectId table_id, IndexBaseOptions options) = 0;
+    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    IndexBaseOptions options) = 0;
   virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
 
   virtual Result CreateDatabase(
@@ -282,20 +283,17 @@ class CatalogFeature final : public SerenedFeature {
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterIndexShard(const std::shared_ptr<Index>& index);
-  Result RegisterIndexes(ObjectId table_id);
+  Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
+                         ObjectId table_id);
 
   Result AddRoles();
 
   Result AddSchema(ObjectId database_id, ObjectId schema_id,
                    vpack::Slice definition);
-  Result AddFunction(ObjectId db_id, ObjectId schema_id, ObjectId function_id,
-                     vpack::Slice definition);
-  Result AddView(ObjectId db_id, ObjectId schema_id, ObjectId view_id,
-                 vpack::Slice definition);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   vpack::Slice definition);
-  Result AddIndex(ObjectId table_id, ObjectId index_id,
-                  vpack::Slice definition);
+  Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
+                  ObjectId index_id, vpack::Slice definition);
 
   Result AddTableShard(ObjectId table_id, ObjectId shard_id,
                        vpack::Slice definition);

@@ -14,8 +14,10 @@ struct InvertedIndexOptions {
 
 class InvertedIndex final : public Index {
  public:
-  InvertedIndex(IndexOptions<InvertedIndexOptions> options)
-    : Index{std::move(options.base)} {}
+  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
+                ObjectId relation_id,
+                IndexOptions<InvertedIndexOptions> options)
+    : Index{database_id, schema_id, id, relation_id, std::move(options.base)} {}
 
   void WriteInternal(vpack::Builder& builder) const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(

@@ -63,7 +63,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
 
   ResultOr<std::shared_ptr<Index>> RegisterIndex(
-    ObjectId table_id, IndexBaseOptions options) final;
+    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    IndexBaseOptions options) final;
   Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;

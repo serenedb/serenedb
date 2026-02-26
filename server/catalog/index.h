@@ -33,10 +33,6 @@ class IndexShard;
 namespace catalog {
 
 struct IndexBaseOptions {
-  ObjectId database_id;
-  ObjectId schema_id;
-  ObjectId id;
-  ObjectId relation_id;  // relation, which is being indexed
   std::string name;
   IndexType type = IndexType::Unknown;
   std::vector<Column::Id> column_ids;
@@ -66,14 +62,18 @@ class Index : public SchemaObject {
   struct IndexOutput;
   IndexOutput MakeIndexOutput() const;
 
-  Index(IndexBaseOptions options);
+  Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
+        ObjectId relation_id, IndexBaseOptions options);
 
   ObjectId _relation_id;
   IndexType _type;
   std::vector<Column::Id> _column_ids;
 };
 
-ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options);
+ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
+                                           ObjectId schema_id, ObjectId id,
+                                           ObjectId relation_id,
+                                           IndexBaseOptions options);
 Result ValidateIndexOptions(const IndexBaseOptions& options,
                             std::span<const Column*> indexed_columns);
 

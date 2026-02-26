@@ -44,7 +44,6 @@
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "utils/exec_context.h"
 #include "vpack/vpack_helper.h"
 

@@ -80,6 +80,11 @@ CREATE TABLE s2.t(id INTEGER);
 
 connection after_table_drop
 statement ok
+CREATE VIEW s2.v AS SELECT id + 1 FROM s2.t;
+
+
+connection after_table_drop
+statement ok
 SET sdb_fault_crash_on_drop TO DEFAULT;
 
 
@@ -90,9 +95,25 @@ DROP SCHEMA s1 CASCADE;
 
 connection after_schema_drop
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-select COUNT(*) FROM pg_class WHERE relname = 't';
+SELECT COUNT(*) FROM pg_class WHERE relname = 't';
 ----
 count
+1
+
+
+connection after_schema_drop
+query ok
+SELECT COUNT(*) FROM pg_class WHERE relname = 'v';
+----
+count
+1
+
+
+connection after_schema_drop
+query ok
+SELECT * FROM f();
+----
+f
 1
 
 

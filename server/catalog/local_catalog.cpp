@@ -41,6 +41,7 @@
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
+#include "basics/buffer.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/debugging.h"
@@ -99,49 +100,6 @@
 
 namespace sdb::catalog {
 namespace {
-
-auto MakePropertiesWriter() {
-  return [b = vpack::Builder{}](const DatabaseObject& object,
-                                bool internal) mutable {
-    b.clear();
-    b.openObject();
-    if (internal) {
-      object.WriteInternal(b);
-    } else {
-      object.WriteProperties(b);
-    }
-    b.close();
-
-    return b.slice();
-  };
-}
-
-Result RegisterDatabaseImpl(ObjectId id, std::string_view name,
-                            bool start_applier) {
-#ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsAgent()) {
-    return {};
-  }
-
-  auto& server = SerenedServer::Instance();
-  server.getFeature<QueryRegistryFeature>().AddDatabase(id);
-  server.getFeature<ReplicationFeature>().AddReplicationClients(id);
-  auto* applier = AddReplicationApplier(id, name);
-
-  if (!start_applier) {
-    return {};
-  }
-
-  return basics::SafeCall([&] {
-    if (auto replication = server.TryGetFeature<ReplicationFeature>();
-        replication) {
-      replication->startApplier(name, *applier);
-    }
-  });
-#else
-  return {};
-#endif
-}
 
 Result Apply(auto& snapshot, auto&& f) {
   auto clone =
@@ -864,8 +822,7 @@ Result LocalCatalog::RegisterView(ObjectId schema_id,
 
 Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
                                    CreateTableOptions options) {
-  auto table =
-    std::make_shared<Table>(std::move(options), database_id, schema_id);
+  auto table = std::make_shared<Table>(std::move(options), database_id);
 
   absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(table, schema_id, false);
@@ -886,10 +843,6 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto r = clone->RegisterObject(database, id::kInstance, false);
-    if (!r.ok()) {
-      return r;
-    }
-    r = RegisterDatabaseImpl(database->GetId(), database->GetName(), true);
     if (!r.ok()) {
       return r;
     }
@@ -959,15 +912,17 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
 }
 
 ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
-  ObjectId table_id, IndexBaseOptions options) {
-  auto index = MakeIndex(std::move(options));
+  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  IndexBaseOptions options) {
+  auto index =
+    MakeIndex(database_id, schema_id, id, relation_id, std::move(options));
   if (!index) {
     return std::unexpected<Result>(std::in_place, std::move(index).error());
   }
 
   absl::MutexLock lock{&_mutex};
 
-  auto r = _snapshot->RegisterObject(*index, table_id, false);
+  auto r = _snapshot->RegisterObject(*index, relation_id, false);
   if (!r.ok()) {
     return std::unexpected<Result>(std::in_place, r.errorNumber(),
                                    r.errorMessage());
@@ -1014,10 +969,6 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
   }
 
   auto& table = basics::downCast<Table>(*relation);
-  options.id = ObjectId{0};  // Will be set in ctor
-  options.relation_id = relation->GetId();
-  options.database_id = database_id;
-  options.schema_id = *schema_id;
   auto& columns = table.Columns();
   auto find_column = [&](std::string_view name) {
     auto it = absl::c_find_if(
@@ -1043,7 +994,8 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
     return validation_res;
   }
 
-  auto index = MakeIndex(std::move(options));
+  auto index = MakeIndex(database_id, *schema_id, ObjectId{0}, table.GetId(),
+                         std::move(options));
   if (!index) {
     return std::move(index).error();
   }
@@ -1071,14 +1023,16 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
     if (!r.ok()) {
       return r;
     }
-    return _engine->CreateIndex(**index);
+    vpack::Builder b;
+    (*index)->WriteInternal(b);
+    return _engine->CreateDefinition((*index)->GetRelationId(),
+                                     RocksDBEntryType::Index, (*index)->GetId(),
+                                     [&](bool) { return b.slice(); });
   });
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
                                 std::shared_ptr<View> view, bool replace) {
-  auto writer = MakePropertiesWriter();
-
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto schema_id =
@@ -1111,9 +1065,14 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       return r;
     }
 
+    vpack::Builder builder;
+    builder.openObject();
+    view->WriteProperties(builder);
+    builder.close();
+
     return _engine->CreateDefinition(
       *schema_id, RocksDBEntryType::View, view->GetId(),
-      [&](bool internal) { return writer(*view, internal); });
+      [&](bool internal) { return builder.slice(); });
   });
 }
 
@@ -1121,8 +1080,6 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
                                     std::string_view schema,
                                     std::shared_ptr<Function> function,
                                     bool replace) {
-  auto writer = MakePropertiesWriter();
-
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto schema_id =
@@ -1134,9 +1091,13 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
     if (!r.ok()) {
       return r;
     }
-    return _engine->CreateDefinition(
-      *schema_id, RocksDBEntryType::Function, function->GetId(),
-      [&](bool internal) { return writer(*function, internal); });
+    vpack::Builder builder;
+    builder.openObject();
+    function->WriteProperties(builder);
+    builder.close();
+    return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
+                                     function->GetId(),
+                                     [&](bool) { return builder.slice(); });
   });
 }
 
@@ -1168,8 +1129,7 @@ Result LocalCatalog::CreateTable(
     if (!schema_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto table =
-      std::make_shared<Table>(std::move(options), database_id, *schema_id);
+    auto table = std::make_shared<Table>(std::move(options), database_id);
     auto r = clone->RegisterObject(table, *schema_id, false);
     if (!r.ok()) {
       return r;
@@ -1181,7 +1141,14 @@ Result LocalCatalog::CreateTable(
     if (!r.ok()) {
       return r;
     }
-    _engine->CreateTable(*table);
+    vpack::Builder b;
+    table->WriteInternal(b);
+    r = _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
+                                  table->GetId(),
+                                  [&](bool) { return b.slice(); });
+    if (!r.ok()) {
+      return r;
+    }
     return _engine->CreateDefinition(
       shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
       [](bool) -> vpack::Slice { return {}; });
@@ -1191,8 +1158,6 @@ Result LocalCatalog::CreateTable(
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
                                 std::string_view new_name) {
-  auto writer = MakePropertiesWriter();
-
   auto r = [&] -> Result {
     absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) -> Result {
@@ -1229,9 +1194,14 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
         return r;
       }
 
+      vpack::Builder builder;
+      builder.openObject();
+      new_view->WriteProperties(builder);
+      builder.close();
+
       return _engine->CreateDefinition(
         *schema_id, RocksDBEntryType::View, new_view->GetId(),
-        [&](bool internal) { return writer(*new_view, internal); });
+        [&](bool internal) { return builder.slice(); });
     });
   }();
 
@@ -1239,7 +1209,6 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
     return r;
   }
 
-  aql::QueryCache::instance()->invalidate(database_id);
   return {};
 }
 
@@ -1292,7 +1261,11 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
         return r;
       }
 
-      return _engine->RenameTable(*new_table, name);
+      vpack::Builder b;
+      new_table->WriteInternal(b);
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
+                                       new_table->GetId(),
+                                       [&](bool) { return b.slice(); });
     });
   }();
 
@@ -1339,8 +1312,6 @@ Result LocalCatalog::ChangeRole(std::string_view name,
 Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
                                 ChangeCallback<View> new_view) {
-  auto writer = MakePropertiesWriter();
-
   auto r = [&] {
     absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) -> Result {
@@ -1376,9 +1347,14 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
         return r;
       }
 
+      vpack::Builder builder;
+      builder.openObject();
+      updated->WriteProperties(builder);
+      builder.close();
+
       return _engine->CreateDefinition(
         *schema_id, RocksDBEntryType::View, updated->GetId(),
-        [&](bool internal) { return writer(*updated, internal); });
+        [&](bool internal) { return builder.slice(); });
     });
   }();
 
@@ -1433,7 +1409,13 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
         return r;
       }
 
-      return basics::SafeCall([&] { _engine->ChangeTable(*updated); });
+      return basics::SafeCall([&] {
+        vpack::Builder b;
+        updated->WriteInternal(b);
+        return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
+                                         updated->GetId(),
+                                         [&](bool) { return b.slice(); });
+      });
     });
   }();
 
@@ -1656,7 +1638,9 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
 }
 
 std::shared_ptr<Snapshot> LocalCatalog::GetSnapshot() const noexcept {
-  return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
+  absl::MutexLock lock{&_mutex};
+  return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire)
+    ->Clone();
 }
 
 }  // namespace sdb::catalog

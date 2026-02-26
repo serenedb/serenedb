@@ -73,7 +73,7 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
   Uint64ToPersistent(start, 0ULL);
 
   Uint64ToPersistent(end, parent_id.id());
-  end.push_back(std::numeric_limits<char>::max());
+  end.push_back(std::numeric_limits<uint8_t>::max());
   Uint64ToPersistent(end, std::numeric_limits<unsigned long long>::max());
   return {start, end};
 }
@@ -86,7 +86,6 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
   Uint64ToPersistent(start, 0ULL);
 
   Uint64ToPersistent(end, parent_id.id());
-  end.push_back(static_cast<char>(type));
   end.push_back(static_cast<char>(type));
   Uint64ToPersistent(end, std::numeric_limits<unsigned long long>::max());
   return {start, end};

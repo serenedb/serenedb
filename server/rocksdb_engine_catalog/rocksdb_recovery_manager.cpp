@@ -55,7 +55,6 @@
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "storage_engine/engine_feature.h"
 #include "vpack/vpack_helper.h"
 

@@ -20,6 +20,8 @@
 
 #include "catalog/drop_task.h"
 
+#include <rocksdb/options.h>
+
 #include <yaclib/async/join.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
@@ -28,7 +30,9 @@
 #include "basics/errors.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/types.h"
+#include "connector/key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
+#include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 
@@ -45,7 +49,21 @@ bool CheckResult(const Result& result) {
 
 AsyncResult TableShardDrop::operator()() {
   auto& server = GetServerEngine();
-  auto r = server.DropDefinition(parent_id, RocksDBEntryType::TableShard, id);
+  auto [start, end] = connector::key_utils::CreateTableRange(parent_id);
+  // Drop table data
+  auto r = server.DropRange(start, end,
+                            RocksDBColumnFamilyManager::get(
+                              RocksDBColumnFamilyManager::Family::Default));
+  if (!CheckResult(r)) {
+    return QueueDropTask(shared_from_this());
+  }
+  rocksdb::Slice start_slice{start}, end_slice{end};
+  r = rocksutils::ConvertStatus(server.db()->CompactRange(
+    rocksdb::CompactRangeOptions{}, &start_slice, &end_slice));
+  if (!CheckResult(r)) {
+    return QueueDropTask(shared_from_this());
+  }
+  r = server.DropDefinition(parent_id, RocksDBEntryType::TableShard, id);
   if (!CheckResult(r)) {
     return QueueDropTask(shared_from_this());
   }
@@ -190,18 +208,15 @@ Result DatabaseDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, id);
-  if (!CheckResult(r)) {
-    return r;
-  }
   r = server.DropDefinition(id::kInstance, RocksDBEntryType::Database, id);
   if (!CheckResult(r)) {
     return r;
   }
-  return {};
+  return server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, id);
 }
 
 AsyncResult DatabaseDrop::operator()() {
+  SDB_ASSERT(is_root);
   std::vector<AsyncResult> async_results;
   async_results.reserve(schemas.size());
   for (auto& schema : schemas) {

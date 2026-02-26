@@ -96,7 +96,7 @@ class MockTableHandle final : public velox::connector::ConnectorTableHandle {
 
   const std::string& name() const final { return _name; };
 
-  const auto& AcceptedFilters() { return _filters; }
+  auto& AcceptedFilters() { return _filters; }
 
  private:
   std::string _name;

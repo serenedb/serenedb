@@ -32,10 +32,13 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
+#include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/utils/text_format.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "basics/exceptions.h"
@@ -52,6 +55,7 @@ struct VeloxFilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
+  containers::FlatHashMap<std::string, ColumnInfo>& column_cache;
 };
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -94,16 +98,26 @@ std::optional<velox::Variant> EvaluateConstant(
   return const_expr.value();
 }
 
-velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
-                                 const velox::core::FieldAccessTypedExpr& expr,
-                                 std::string& field_name) {
+const search::ColumnInfo& FindColumnInfo(
+  const VeloxFilterContext& ctx,
+  const velox::core::FieldAccessTypedExpr& expr) {
+  auto cache_it = ctx.column_cache.find(expr.name());
+  if (cache_it != ctx.column_cache.end()) {
+    SDB_ASSERT(cache_it->second.analyzer.analyzer);
+    return cache_it->second;
+  }
+
   auto column = ctx.column_getter(expr.name());
-  SDB_ENSURE(column, ERROR_BAD_PARAMETER, "Column ", expr.name(),
-             " was not found");
-  auto column_id = column->Id();
-  basics::StrResize(field_name, sizeof(column_id));
-  absl::big_endian::Store(field_name.data(), column_id);
-  return column->type()->kind();
+  SDB_ENSURE(column.has_value(), ERROR_BAD_PARAMETER, "Column '", expr.name(),
+             "' was not found");
+
+  return ctx.column_cache.emplace(expr.name(), std::move(column.value()))
+    .first->second;
+}
+
+void MakeFieldName(const search::ColumnInfo& column, std::string& field_name) {
+  basics::StrResize(field_name, sizeof(column.info.Id()));
+  absl::big_endian::Store(field_name.data(), column.info.Id());
 }
 
 // Maps velox kinds to native types used in iresearch
@@ -157,22 +171,23 @@ void DoMangle(std::string& field_name) {
 }
 
 Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
-                       velox::TypeKind kind, const velox::Variant& value) {
+                       const ColumnInfo& column_info,
+                       const velox::Variant& value) {
   SDB_ASSERT(!value.isNull(),
              "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
              "For regular filter it should be just irs::Empty!");
-  SDB_ASSERT(value.kind() == kind,
+  SDB_ASSERT(value.kind() == column_info.info.type()->kind(),
              "Values should have same kind as field. Analyzer should put "
              "necessary casts.");
-  auto process = []<typename T>(irs::ByTerm& filter, std::string& field_name,
-                                const velox::Variant& value) -> Result {
+  auto process = [&]<typename T>(irs::ByTerm& filter, std::string& field_name,
+                                 const velox::Variant& value) -> Result {
     irs::bstring term_value;
     DoMangle<T>(field_name);
     if constexpr (std::is_same_v<T, velox::StringView>) {
-      irs::StringTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(value.value<velox::StringView>());
-      stream.next();
+      const irs::TermAttr* token =
+        irs::get<irs::TermAttr>(*column_info.analyzer.analyzer);
+      column_info.analyzer.analyzer->reset(value.value<velox::StringView>());
+      column_info.analyzer.analyzer->next();
       filter.mutable_options()->term.assign(token->value);
     } else if constexpr (std::is_same_v<T, bool>) {
       filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
@@ -187,7 +202,8 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
     *filter.mutable_field() = field_name;
     return {};
   };
-  return DispatchValue(kind, process, filter, field_name, value);
+  return DispatchValue(column_info.info.type()->kind(), process, filter,
+                       field_name, value);
 }
 
 template<typename Filter, typename Source>
@@ -343,14 +359,23 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
     return {};
   }
 
+  const auto& column_info = FindColumnInfo(ctx, *left_field);
+  if (column_info.info.type()->kind() == velox::TypeKind::VARCHAR &&
+      column_info.analyzer.analyzer->type() !=
+        irs::Type<irs::StringTokenizer>::id()) {
+    return {ERROR_BAD_PARAMETER, "Field '", left_field->name(),
+            "' is not indexed by identity analyzer. Use TERM_EQ "
+            "function."};
+  }
+
   auto& term_filter = (ctx.negated != not_equal)
                         ? Negate<irs::ByTerm>(filter)
                         : AddFilter<irs::ByTerm>(filter);
 
-  std::string field_name;
-  const auto kind = ExtractFieldName(ctx, *left_field, field_name);
   term_filter.boost(ctx.boost);
-  return SetupTermFilter(term_filter, field_name, kind, value.value());
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+  return SetupTermFilter(term_filter, field_name, column_info, value.value());
 }
 
 Result FromVeloxComparison(irs::BooleanFilter& filter,
@@ -392,8 +417,18 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     return {};
   }
 
+  const auto& column_info = FindColumnInfo(ctx, *left_field);
+
+  if (column_info.info.type()->kind() == velox::TypeKind::VARCHAR &&
+      column_info.analyzer.analyzer->type() !=
+        irs::Type<irs::StringTokenizer>::id()) {
+    return {ERROR_BAD_PARAMETER, "Field '", left_field->name(),
+            "' is not indexed by identity analyzer. Use corresponding TERM_XX "
+            "comparison function."};
+  }
+
   std::string field_name;
-  const auto kind = ExtractFieldName(ctx, *left_field, field_name);
+  MakeFieldName(column_info, field_name);
 
   auto setup_base_filter = [&](auto& filter,
                                std::string&& field_name) -> decltype(auto) {
@@ -417,21 +452,18 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     }
     SDB_UNREACHABLE();
   };
-  SDB_ASSERT(value->kind() == kind,
+  SDB_ASSERT(value->kind() == column_info.info.type()->kind(),
              "Values should have same kind as field. Analyzer should put "
              "necessary casts.");
   return DispatchValue(
-    kind,
+    column_info.info.type()->kind(),
     [&]<typename T>(const velox::Variant& v) -> Result {
       DoMangle<T>(field_name);
       if constexpr (std::is_same_v<T, velox::StringView>) {
         auto& range_filter = AddFilter<irs::ByRange>(filter);
-        irs::StringTokenizer stream;
-        const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-        stream.reset(v.value<velox::StringView>());
-        stream.next();
         setup_base_filter(range_filter, std::move(field_name))
-          .assign(token->value);
+          .assign(irs::ViewCast<irs::byte_type>(
+            static_cast<std::string_view>(v.value<velox::StringView>())));
       } else if constexpr (std::is_same_v<T, bool>) {
         auto& range_filter = AddFilter<irs::ByRange>(filter);
         setup_base_filter(range_filter, std::move(field_name))
@@ -495,12 +527,20 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   }
 
   std::string field_name;
-  const auto kind = ExtractFieldName(ctx, *field_typed, field_name);
+  const auto& column_info = FindColumnInfo(ctx, *field_typed);
 
+  if (column_info.info.type()->kind() == velox::TypeKind::VARCHAR &&
+      column_info.analyzer.analyzer->type() !=
+        irs::Type<irs::StringTokenizer>::id()) {
+    return {ERROR_BAD_PARAMETER, "Field '", field_typed->name(),
+            "' is not indexed by identity analyzer. Use TERM_IN."};
+  }
+
+  MakeFieldName(column_info, field_name);
   auto& terms_filter = ctx.negated ? Negate<irs::ByTerms>(filter)
                                    : AddFilter<irs::ByTerms>(filter);
   return DispatchValue(
-    kind,
+    column_info.info.type()->kind(),
     []<typename T>(auto& terms_filter, auto& value_array, auto& ctx,
                    auto& field_name, velox::TypeKind kind) -> Result {
       DoMangle<T>(field_name);
@@ -512,11 +552,9 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
           continue;
         }
         if constexpr (std::is_same_v<T, velox::StringView>) {
-          irs::StringTokenizer stream;
-          const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-          stream.reset(value.template value<velox::StringView>());
-          stream.next();
-          opts.terms.emplace(token->value);
+          opts.terms.emplace(
+            irs::ViewCast<irs::byte_type>(static_cast<std::string_view>(
+              value.template value<velox::StringView>())));
         } else if constexpr (std::is_same_v<T, bool>) {
           opts.terms.emplace(irs::ViewCast<irs::byte_type>(
             irs::BooleanTokenizer::value(value.template value<bool>())));
@@ -531,7 +569,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
       return {};
     },
     terms_filter, values_list.empty() ? value.value().array() : values_list,
-    ctx, field_name, kind);
+    ctx, field_name, column_info.info.type()->kind());
 
   return {};
 }
@@ -552,8 +590,9 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
   auto* left_field = static_cast<const velox::core::FieldAccessTypedExpr*>(
     call.inputs()[0].get());
 
+  const auto& column_info = FindColumnInfo(ctx, *left_field);
   std::string field_name;
-  ExtractFieldName(ctx, *left_field, field_name);
+  MakeFieldName(column_info, field_name);
   mangling::MangleNull(field_name);
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
@@ -588,11 +627,21 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
     call.inputs()[0].get());
 
+  const auto& column_info = FindColumnInfo(ctx, *field_typed);
   std::string field_name;
-  auto kind = ExtractFieldName(ctx, *field_typed, field_name);
-  if (kind != velox::TypeKind::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
+  MakeFieldName(column_info, field_name);
+
+  if (column_info.info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "LIKE field '", field_typed->name(),
+            "' is not VARCHAR"};
   }
+
+  if (column_info.analyzer.analyzer->type() !=
+      irs::Type<irs::StringTokenizer>::id()) {
+    return {ERROR_BAD_PARAMETER, "Field '", field_typed->name(),
+            "' is not indexed by identity analyzer. Use TERM_LIKE."};
+  }
+
   mangling::MangleString(field_name);
   auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
                                       : AddFilter<irs::ByWildcard>(filter);
@@ -603,9 +652,58 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   return {};
 }
 
-Result FromSearchPhrase(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
-                     const velox::core::CallTypedExpr& call) {
-  AddFilter<irs::All>(filter);
+Result FromSearchPhrase(irs::BooleanFilter& filter,
+                        const VeloxFilterContext& ctx,
+                        const velox::core::CallTypedExpr& call) {
+  if (call.inputs().size() != 2) {
+    return {ERROR_BAD_PARAMETER, "PHRASE has ", call.inputs().size(),
+            " inputs but 2 expected"};
+  }
+  if (!call.inputs()[0]->isFieldAccessKind()) {
+    return {ERROR_BAD_PARAMETER, "Input is not field access"};
+  }
+
+  auto value = EvaluateConstant(call.inputs()[1]);
+  if (!value.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
+  }
+
+  if (value->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as VARCHAR"};
+  }
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    call.inputs()[0].get());
+
+  const auto& column_info = FindColumnInfo(ctx, *field_typed);
+  if (column_info.info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "PHRASE field '", field_typed->name(),
+            "' is not VARCHAR"};
+  }
+
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+
+  if ((column_info.analyzer.features &
+       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
+      irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
+    return {ERROR_BAD_PARAMETER, "PHRASE field '", field_typed->name(),
+            "' should have Positions and Frequency features enabled"};
+  }
+
+  auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
+                             : AddFilter<irs::ByPhrase>(filter);
+  column_info.analyzer.analyzer->reset(
+    static_cast<std::string_view>(value.value().value<velox::StringView>()));
+  const irs::TermAttr* token =
+    irs::get<irs::TermAttr>(*column_info.analyzer.analyzer);
+  mangling::MangleString(field_name);
+  *phrase.mutable_field() = field_name;
+  phrase.boost(ctx.boost);
+  while (column_info.analyzer.analyzer->next()) {
+    phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+      token->value);
+  }
   return {};
 }
 
@@ -670,10 +768,13 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};
 }
 
-Result ExprToFilter(irs::BooleanFilter& filter,
-                    const velox::core::TypedExprPtr& expr,
-                    const ColumnGetter& column_getter) {
-  VeloxFilterContext ctx{.negated = false, .column_getter = column_getter};
+Result ExprToFilter(
+  irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
+  const ColumnGetter& column_getter,
+  containers::FlatHashMap<std::string, ColumnInfo>& column_cache) {
+  VeloxFilterContext ctx{.negated = false,
+                         .column_getter = column_getter,
+                         .column_cache = column_cache};
   try {
     return FromVeloxExpression(filter, ctx, expr);
   } catch (const velox::VeloxException& ex) {
@@ -684,6 +785,19 @@ Result ExprToFilter(irs::BooleanFilter& filter,
     return {ERROR_BAD_PARAMETER,
             "Failed to build filter with velox error:", ex.what()};
   }
+}
+
+Result MakeSearchFilter(irs::And& root,
+                        std::span<velox::core::TypedExprPtr> conjuncts,
+                        const ColumnGetter& column_getter) {
+  containers::FlatHashMap<std::string, ColumnInfo> column_cache;
+  for (auto& expr : conjuncts) {
+    auto res = ExprToFilter(root, expr, column_getter, column_cache);
+    if (res.fail()) {
+      return res;
+    }
+  }
+  return {};
 }
 
 }  // namespace sdb::connector::search

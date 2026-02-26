@@ -1,6 +1,9 @@
 #include "catalog/inverted_index.h"
 
+#include <iresearch/analysis/analyzers.hpp>
+
 #include "search/inverted_index_shard.h"
+
 namespace sdb::catalog {
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
@@ -17,6 +20,18 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
 
 void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
   Index::WriteInternal(builder);
+}
+
+ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
+  catalog::Column::Id column_id) const {
+  // TODO(Dronplane): implement analyzer pool for caching. And do not create
+  // analyzer on demand! implement analyzer options storage - store in catalog
+  // or smth.
+  auto options = vpack::Slice::emptyObjectSlice();
+  return {.analyzer = irs::analysis::analyzers::Get(
+            _options.analyzer_name, irs::Type<irs::text_format::VPack>::get(),
+            {options.startAs<char>(), options.byteSize()}),
+          .features = _options.features};
 }
 
 }  // namespace sdb::catalog

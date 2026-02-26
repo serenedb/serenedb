@@ -70,13 +70,17 @@ inline bool HasColumnOverlap(
 template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   irs::IndexWriter::Transaction& transaction,
-  std::span<const catalog::Column::Id> columns) {
+  const catalog::InvertedIndex& index) {
+  auto analyzer_provider = [&](catalog::Column::Id column_id) {
+    return index.GetColumnAnalyzer(column_id);
+  };
+
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
-    return std::make_unique<search::SearchSinkInsertWriter>(transaction,
-                                                            columns);
+    return std::make_unique<search::SearchSinkInsertWriter>(
+      transaction, analyzer_provider, index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
-    return std::make_unique<search::SearchSinkUpdateWriter>(transaction,
-                                                            columns);
+    return std::make_unique<search::SearchSinkUpdateWriter>(
+      transaction, analyzer_provider, index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
@@ -90,15 +94,18 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
-  auto resolve_index_writer =
-    [&](auto& transaction, std::span<const catalog::Column::Id> columns) {
-      if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
-                                   irs::IndexWriter::Transaction>) {
-        writers.push_back(MakeInvertedIndexWriter<Kind>(transaction, columns));
-      } else {
-        SDB_UNREACHABLE();
-      }
-    };
+  auto resolve_index_writer = [&](auto& transaction,
+                                  const catalog::Index& index) {
+    if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
+                                 irs::IndexWriter::Transaction>) {
+      const auto& inverted_index =
+        basics::downCast<catalog::InvertedIndex>(index);
+      writers.push_back(
+        MakeInvertedIndexWriter<Kind>(transaction, inverted_index));
+    } else {
+      SDB_UNREACHABLE();
+    }
+  };
 
   if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     containers::FlatHashSet<catalog::Column::Id> update_column_ids;

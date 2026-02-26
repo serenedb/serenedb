@@ -101,12 +101,11 @@ class Transaction : public Config {
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
-  template<InvocableWith<void(irs::IndexWriter::Transaction&,
-                              std::span<const catalog::Column::Id>),
-                         void(rocksdb::Transaction&,
-                              std::span<const catalog::Column::Id>)>
-             Visit,
-           typename Filter = std::nullptr_t>
+  template<
+    InvocableWith<void(irs::IndexWriter::Transaction&, const catalog::Index&),
+                  void(rocksdb::Transaction&, const catalog::Index&)>
+      Visit,
+    typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
     auto snapshot = GetCatalogSnapshot();
@@ -132,12 +131,12 @@ class Transaction : public Config {
           transaction = std::make_unique<irs::IndexWriter::Transaction>(
             inverted_index_shard.GetTransaction());
         }
-        visit(*transaction, index->GetColumnIds());
+        visit(*transaction, *index);
       } else {
         if (!_rocksdb_transaction) [[unlikely]] {
           CreateRocksDBTransaction();
         }
-        visit(*_rocksdb_transaction, index->GetColumnIds());
+        visit(*_rocksdb_transaction, *index);
       }
     }
   }

@@ -59,10 +59,12 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx,
+  irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
   std::span<const catalog::Column::Id> columns)
-  : ColumnSinkWriterImplBase{columns}, _trx{trx} {
-  _pk_field.PrepareForStringValue();
+  : ColumnSinkWriterImplBase{columns},
+    _analyzer_provider{std::move(analyzer_provider)},
+    _trx{trx} {
+  _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
 }
 
@@ -145,7 +147,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
                        Kind == velox::TypeKind::VARBINARY) {
     mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue();
+    _field.PrepareForStringValue(_analyzer_provider(column_id));
     if (have_nulls) {
       _current_writer =
         MakeIndexWriter(make_nullable_writer_func(&WriteStringValue));
@@ -265,17 +267,32 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
   return field;
 }
 
-void SearchSinkInsertBaseImpl::Field::PrepareForStringValue() {
+void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gStringStreamPool.emplace(AnalyzerImpl::StringStreamTag{});
 }
 
+void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
+  sdb::catalog::ColumnAnalyzer&& column_analyzer) {
+  index_features = column_analyzer.features;
+  analyzer.reset();
+  string_analyzer = std::move(column_analyzer.analyzer);
+}
+
 void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {
-  auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
-  sstream.reset(value);
+  SDB_ASSERT(analyzer || string_analyzer);
+  SDB_ASSERT((analyzer == nullptr) || (string_analyzer == nullptr));
+  if (analyzer) {
+    auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
+    sstream.reset(value);
+  } else {
+    string_analyzer->reset(value);
+  }
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gNumberStreamPool.emplace(AnalyzerImpl::NumberStreamTag{});
 }
@@ -300,6 +317,7 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gBoolStreamPool.emplace(AnalyzerImpl::BoolStreamTag{});
 }
@@ -310,6 +328,7 @@ void SearchSinkInsertBaseImpl::Field::SetBooleanValue(bool value) {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForNullValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gNullStreamPool.emplace(AnalyzerImpl::NullStreamTag{});
 }

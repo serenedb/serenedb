@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <catalog/inverted_index.h>
 #include <velox/core/ExpressionEvaluator.h>
 
 #include "axiom/connectors/ConnectorMetadata.h"
@@ -31,10 +32,16 @@
 
 namespace sdb::connector::search {
 
-using ColumnGetter = std::function<const SereneDBColumn*(std::string_view)>;
-// Convert Velox expression to IResearch filter
-Result ExprToFilter(irs::BooleanFilter& filter,
-                    const velox::core::TypedExprPtr& expr,
-                    const ColumnGetter& column_getter);
+struct ColumnInfo {
+  const SereneDBColumn& info;
+  catalog::ColumnAnalyzer analyzer;
+};
+
+using ColumnGetter =
+  absl::AnyInvocable<std::optional<ColumnInfo>(std::string_view) const>;
+
+Result MakeSearchFilter(irs::And& root,
+                        std::span<velox::core::TypedExprPtr> conjuncts,
+                        const ColumnGetter& column_getter);
 
 }  // namespace sdb::connector::search

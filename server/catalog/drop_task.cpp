@@ -111,14 +111,11 @@ AsyncResult IndexDrop::operator()() {
   auto shard_task = std::make_shared<IndexShardDrop>(
     DropTask{.parent_id = id, .id = shard_id, .is_root = false}, db_id,
     schema_id, type);
-  return QueueDropTask(std::move(shard_task))
-    .ThenInline([self = shared_from_this()](Result&&) {
-      auto r = self->Finalize();
-      if (!CheckResult(r)) {
-        return QueueDropTask(self);
-      }
-      return yaclib::MakeFuture<Result>();
-    });
+  auto r = co_await QueueDropTask(std::move(shard_task));
+  if (!CheckResult(r) || !CheckResult(Finalize())) {
+    co_return co_await QueueDropTask(shared_from_this());
+  }
+  co_return {};
 }
 
 Result TableDrop::Finalize() {
@@ -146,25 +143,18 @@ AsyncResult TableDrop::operator()() {
   for (auto& index : indexes) {
     async_results.push_back(QueueDropTask(index));
   }
-  return yaclib::Join(async_results.begin(), async_results.end())
-    .ThenInline([self = shared_from_this()]() {
-      auto r = self->Finalize();
-      if (!CheckResult(r)) {
-        return QueueDropTask(self);
-      }
-      return yaclib::MakeFuture<Result>();
-    });
+  co_await yaclib::Join(async_results.begin(), async_results.end());
+  if (!CheckResult(Finalize())) {
+    co_return co_await QueueDropTask(shared_from_this());
+  }
+  co_return {};
 }
 
 Result SchemaDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto drop_entry = [&](RocksDBEntryType type) {
-    auto r = server.DropEntry(id, type);
-    return r;
-  };
-  for (auto entry_type : {RocksDBEntryType::Table, RocksDBEntryType::Index,
-                          RocksDBEntryType::Function, RocksDBEntryType::View}) {
-    auto r = drop_entry(entry_type);
+  for (auto entry_type : {RocksDBEntryType::Table, RocksDBEntryType::Function,
+                          RocksDBEntryType::View}) {
+    auto r = server.DropEntry(id, entry_type);
     if (!CheckResult(r)) {
       return r;
     }
@@ -188,18 +178,13 @@ AsyncResult SchemaDrop::operator()() {
   for (auto& table : tables) {
     async_results.push_back(QueueDropTask(table));
   }
-  auto on_finish = [self = shared_from_this()]() {
-    auto r = self->Finalize();
-    if (!CheckResult(r)) {
-      return QueueDropTask(self);
-    }
-    return yaclib::MakeFuture<Result>();
-  };
-  if (async_results.empty()) {
-    return on_finish();
+  if (!async_results.empty()) {
+    co_await yaclib::Join(async_results.begin(), async_results.end());
   }
-  return yaclib::Join(async_results.begin(), async_results.end())
-    .ThenInline(std::move(on_finish));
+  if (!CheckResult(Finalize())) {
+    co_return co_await QueueDropTask(shared_from_this());
+  }
+  co_return {};
 }
 
 Result DatabaseDrop::Finalize() {
@@ -222,18 +207,13 @@ AsyncResult DatabaseDrop::operator()() {
   for (auto& schema : schemas) {
     async_results.push_back(QueueDropTask(schema));
   }
-  auto on_finish = [self = shared_from_this()]() {
-    auto r = self->Finalize();
-    if (!CheckResult(r)) {
-      return QueueDropTask(self);
-    }
-    return yaclib::MakeFuture<Result>();
-  };
-  if (async_results.empty()) {
-    return on_finish();
+  if (!async_results.empty()) {
+    co_await yaclib::Join(async_results.begin(), async_results.end());
   }
-  return yaclib::Join(async_results.begin(), async_results.end())
-    .ThenInline(std::move(on_finish));
+  if (!CheckResult(Finalize())) {
+    co_return co_await QueueDropTask(shared_from_this());
+  }
+  co_return {};
 }
 
 }  // namespace sdb::catalog

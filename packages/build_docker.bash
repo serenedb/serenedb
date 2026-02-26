@@ -148,7 +148,7 @@ log ""
 log "=== Testing Image ==="
 
 # Quick smoke test
-if docker run --rm -e SERENE_NO_AUTH=1 "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
+if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
   log "  ✓ Version check passed"
 else
   log "  ✗ Version check failed (continuing anyway)"
@@ -186,7 +186,7 @@ log "=== Done ==="
 log "Image: ${FULL_IMAGE_NAME}:${VERSION}"
 log ""
 log "Run with:"
-log "  docker run -d -p 8529:8529 -e SERENE_ROOT_PASSWORD=secret ${FULL_IMAGE_NAME}:${VERSION}"
+log "  docker run -d -p 8529:8529 ${FULL_IMAGE_NAME}:${VERSION}"
 log ""
 log "Or with docker-compose:"
 log "  See ${DOCKER_DIR}/docker-compose.yml"

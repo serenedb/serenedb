@@ -1,5 +1,4 @@
 name: SereneDB-Build-Base
-# TODO: how to strip keeping the debug symbols?
 
 on:
   workflow_call:
@@ -163,8 +162,6 @@ jobs:
       - name: Remap directories to legacy paths
         run: |
           mv private/gh-ci private/ci
-          # rm -rf packages
-          # mv gh-packages packages
 
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'

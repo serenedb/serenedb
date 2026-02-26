@@ -118,6 +118,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
+
 using namespace catalog;
 
 struct HashEq {
@@ -417,6 +418,11 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
   auto it = schema.find(name);
   return it == schema.end() ? nullptr : *it;
 }
+
+containers::FlatHashMap<std::string, std::shared_ptr<Function>>
+  gSystemFunctions;
+containers::FlatHashMap<std::string, std::shared_ptr<View>> gSystemViews;
+
 }  // namespace
 
 const VirtualTable* GetSystemTable(std::string_view schema,
@@ -451,9 +457,6 @@ void VisitSystemTables(
   }
 }
 
-containers::FlatHashMap<std::string, std::shared_ptr<Function>>
-  gSystemFunctions;
-
 std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
 #ifndef SDB_GTEST
   // For query building tests we need to run this without feature
@@ -487,8 +490,6 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
     });
 }
 
-containers::FlatHashMap<std::string, std::shared_ptr<View>> gSystemViews;
-
 std::shared_ptr<View> GetView(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   auto it = gSystemViews.find(name);
@@ -500,22 +501,20 @@ std::shared_ptr<View> GetView(std::string_view name) {
 
 void RegisterSystemViews() {
   for (const auto system_view_query : kSystemViewsQueries) {
-    auto stmt = pg::ParseSystemObject(system_view_query);
-    const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
+    const auto* raw_stmt = ParseSystemObject(system_view_query);
     const auto* view_stmt = castNode(ViewStmt, raw_stmt->stmt);
-    auto system_view = pg::CreateSystemView(*view_stmt);
-    gSystemViews[system_view->GetName()] = system_view;
+    SDB_ASSERT(view_stmt);
+    auto system_view = CreateSystemView(*view_stmt);
+    gSystemViews[system_view->GetName()] = std::move(system_view);
   }
 }
 
 void RegisterSystemFunctions() {
   for (const auto system_func_query : kSystemFunctionsQueries) {
-    auto stmt = pg::ParseSystemObject(system_func_query);
-    const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
+    const auto* raw_stmt = ParseSystemObject(system_func_query);
     const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);
     SDB_ASSERT(create_func_stmt);
-    auto func = CreateFunctionImpl<true>(Config{}, id::kSystemDB, "", "",
-                                         *create_func_stmt);
+    auto func = CreateSystemFunction(*create_func_stmt);
     gSystemFunctions[func->GetName()] = std::move(func);
   }
 }

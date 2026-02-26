@@ -34,7 +34,7 @@ class FunctionImpl {
   FunctionImpl() = default;
 
   Result Init(ObjectId database, std::string_view name, std::string query,
-              bool is_procedure, const Config& config);
+              bool is_procedure, const Config* config);
 
   static Result FromVPack(ObjectId database, vpack::Slice slice,
                           std::unique_ptr<FunctionImpl>& implementation,

@@ -45,9 +45,156 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+namespace {
+
+// Parses options and return function body and catalog options.
+// For the pre-PG14 syntax function body is stored in the "as" option.
+// Example: CREATE FUNCTION foo() RETURNS int AS $$ SELECT 1; $$ LANGUAGE
+// For the PG14+ syntax function body is in the sql_body field of
+// CreateFunctionStmt.
+// Example: CREATE FUNCTION foo() RETURNS int LANGUAGE SQL BEGIN ATOMIC
+std::pair<std::string, catalog::FunctionOptions> ParseFunctionBodyAndOptions(
+  const List* pg_options) {
+  catalog::FunctionOptions options;
+
+  options.language = catalog::FunctionLanguage::SQL;
+  options.state = catalog::FunctionState::Volatile;
+  options.parallel = catalog::FunctionParallel::Unsafe;
+  options.type = catalog::FunctionType::Compute;
+  options.kind = catalog::FunctionKind::Scalar;
+  options.internal = false;
+
+  std::string function_body;
+  VisitNodes(pg_options, [&](const DefElem& option) {
+    std::string_view opt_name = option.defname;
+
+    if (opt_name == "language") {
+      std::string_view lang = strVal(option.arg);
+      if (lang == "sql") {
+        options.language = catalog::FunctionLanguage::SQL;
+      } else {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("language \"", lang, "\" does not exist"));
+      }
+    } else if (opt_name == "volatility") {
+      std::string_view vol = strVal(option.arg);
+      if (vol == "immutable") {
+        options.state = catalog::FunctionState::Immutable;
+      } else if (vol == "stable") {
+        options.state = catalog::FunctionState::Stable;
+      } else if (vol == "volatile") {
+        options.state = catalog::FunctionState::Volatile;
+      } else {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("invalid volatility: ", vol));
+      }
+    } else if (opt_name == "parallel") {
+      std::string_view par = strVal(option.arg);
+      if (par == "safe") {
+        options.parallel = catalog::FunctionParallel::Safe;
+      } else if (par == "restricted") {
+        options.parallel = catalog::FunctionParallel::Restricted;
+      } else if (par == "unsafe") {
+        options.parallel = catalog::FunctionParallel::Unsafe;
+      } else {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("invalid parallel mode: ", par));
+      }
+    } else if (opt_name == "strict") {
+      options.strict = boolVal(option.arg);
+    } else if (opt_name == "security") {
+      options.security = boolVal(option.arg);
+    } else if (opt_name == "cost") {
+      options.cost = floatVal(option.arg);
+    } else if (opt_name == "rows") {
+      options.rows = floatVal(option.arg);
+    } else if (opt_name == "window") {
+      options.kind = catalog::FunctionKind::Window;
+    } else if (opt_name == "leakproof") {
+    } else if (opt_name == "as") {
+      if (IsA(option.arg, List)) {
+        List* list = castNode(List, option.arg);
+        function_body = strVal(castNode(Node, list_nth(list, 0)));
+      } else if (IsA(option.arg, String)) {
+        function_body = strVal(option.arg);
+      }
+    } else if (opt_name == "transform") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("TRANSFORM option is not supported"));
+    } else if (opt_name == "support") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("SUPPORT option is not supported"));
+    } else if (opt_name == "set") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("SET option is not supported"));
+    } else {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("unknown function option: ", opt_name));
+    }
+  });
+
+  return {std::move(function_body), std::move(options)};
+}
+
+}  // namespace
+
+std::shared_ptr<catalog::Function> CreateFunctionImpl(
+  const Config* config, ObjectId database_id, std::string_view database_name,
+  std::string_view current_schema, const CreateFunctionStmt& stmt) {
+  SDB_ASSERT(stmt.funcname);
+
+  auto function_name =
+    ParseObjectName(stmt.funcname, database_name, current_schema).relation;
+
+  catalog::FunctionProperties properties;
+  properties.name = std::string{function_name};
+
+  std::string function_body;
+  std::tie(function_body, properties.options) =
+    ParseFunctionBodyAndOptions(stmt.options);
+  SDB_ASSERT(!function_body.empty() == !stmt.sql_body);
+  if (stmt.sql_body) {
+    // All checks for user functions are guaranteed by sql_analyzer_velox.cpp,
+    // but that is not the case for system functions, so throw if something in
+    // system functions is not OK.
+    SDB_ENSURE(IsA(stmt.sql_body, List), ERROR_INTERNAL);
+    const auto* outer_list = castNode(List, stmt.sql_body);
+    SDB_ENSURE(list_length(outer_list) == 1, ERROR_INTERNAL);
+    const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
+    SDB_ENSURE(IsA(inner_list_node, List), ERROR_INTERNAL);
+    const auto* inner_list = castNode(List, inner_list_node);
+    SDB_ENSURE(list_length(inner_list) == 1, ERROR_INTERNAL);
+    auto* body_stmt = list_nth_node(Node, inner_list, 0);
+    function_body = pg::DeparseStmt(body_stmt);
+  }
+
+  auto& signature = properties.signature;
+  signature = pg::ToSignature(stmt.parameters, stmt.returnType);
+  if (stmt.is_procedure) {
+    SDB_ASSERT(!signature.return_type);
+    signature.MarkAsProcedure();
+  }
+
+  auto sql_impl = std::make_unique<pg::FunctionImpl>();
+  auto r = sql_impl->Init(database_id, function_name, std::move(function_body),
+                          stmt.is_procedure, config);
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+
+  if (config) {
+    // Case for non system views
+    vpack::Builder builder;
+    sql_impl->ToVPack(builder);
+    properties.implementation = builder.slice();
+  }
+
+  return std::make_shared<catalog::Function>(std::move(properties),
+                                             std::move(sql_impl), database_id);
+}
+
 yaclib::Future<Result> CreateFunction(ExecContext& context,
                                       const CreateFunctionStmt& stmt) {
-  // TODO: use correct schema -- what is it about?
   SDB_ASSERT(stmt.funcname);
 
   auto database_name = context.GetDatabase();
@@ -58,7 +205,7 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   auto schema =
     ParseObjectName(stmt.funcname, database_name, current_schema).schema;
 
-  auto function = CreateFunctionImpl(connection_context, database_id,
+  auto function = CreateFunctionImpl(&connection_context, database_id,
                                      database_name, current_schema, stmt);
 
   auto& catalog =
@@ -74,6 +221,11 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   }
 
   return yaclib::MakeFuture(std::move(r));
+}
+
+std::shared_ptr<catalog::Function> CreateSystemFunction(
+  const CreateFunctionStmt& stmt) {
+  return CreateFunctionImpl(nullptr, id::kSystemDB, "", "", stmt);
 }
 
 }  // namespace sdb::pg

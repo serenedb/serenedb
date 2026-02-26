@@ -162,22 +162,14 @@ Node* ParseSingleExpression(MemoryContextData& ctx,
   return expr;
 }
 
-pg::SqlStatement ParseSystemObject(std::string_view query) {
-  static auto gConnCtx = std::make_shared<ConnectionContext>(
-    ExecContext::superuser().user(), StaticStrings::kSystemDatabase,
-    id::kSystemDB, nullptr, nullptr);
+RawStmt* ParseSystemObject(std::string_view query) {
+  static auto gMemoryContext = pg::CreateMemoryContext();
+  auto query_string = QueryString{query};
+  auto* statements = pg::Parse(*gMemoryContext, query_string);
 
-  pg::SqlStatement res;
-  res.query_string = std::make_shared<QueryString>(query);
-  // Note use resetMemoryContext for re-binding!
-  res.memory_context = pg::CreateMemoryContext();
-  res.tree = {
-    .list = pg::Parse(*res.memory_context, *res.query_string),
-    .root_idx = 0,
-  };
-  res.NextRoot(gConnCtx);
-
-  return res;
+  // Assume that each system object is single statement
+  SDB_ASSERT(list_length(statements) == 1);
+  return castNode(RawStmt, list_nth(statements, 0));
 }
 
 }  // namespace sdb::pg

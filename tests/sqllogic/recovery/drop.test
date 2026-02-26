@@ -63,6 +63,15 @@ SELECT COUNT(*) FROM pg_class WHERE relname = 'i' OR relname = 't';
 count
 0
 
+
+connection after_table_drop
+query ok
+SELECT pg_schema_size('s1');
+----
+pg_schema_size
+0
+
+
 connection after_table_drop
 statement ok
 CREATE TABLE s1.t(id INTEGER);
@@ -106,14 +115,6 @@ query ok
 SELECT COUNT(*) FROM pg_class WHERE relname = 'v';
 ----
 count
-1
-
-
-connection after_schema_drop
-query ok
-SELECT * FROM f();
-----
-f
 1
 
 

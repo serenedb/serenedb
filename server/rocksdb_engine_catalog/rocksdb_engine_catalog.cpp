@@ -1354,6 +1354,41 @@ Result RocksDBEngineCatalog::DropRange(std::string_view start,
     _db->GetRootDB()->DeleteRange(rocksdb::WriteOptions{}, cf, start, end));
 }
 
+uint64_t RocksDBEngineCatalog::GetTableSize(ObjectId table_id) const {
+  auto [start, end] = connector::key_utils::CreateTableRange(table_id);
+  rocksdb::Range range(start, end);
+  uint64_t size = 0;
+  rocksdb::SizeApproximationOptions opts{.include_memtables = true,
+                                         .include_files = true};
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  _db->GetApproximateSizes(opts, cf, &range, 1, &size);
+  return size;
+}
+
+uint64_t RocksDBEngineCatalog::GetSchemaSize(
+  const catalog::Snapshot& snapshot, ObjectId database_id,
+  std::string_view schema_name) const {
+  uint64_t total = 0;
+
+  for (auto& rel : snapshot.GetRelations(database_id, schema_name)) {
+    if (rel->GetType() != catalog::ObjectType::Table) {
+      continue;
+    }
+    total += GetTableSize(rel->GetId());
+  }
+  return total;
+}
+
+uint64_t RocksDBEngineCatalog::GetDatabaseSize(
+  const catalog::Snapshot& snapshot, ObjectId database_id) const {
+  uint64_t total = 0;
+  for (auto& schema : snapshot.GetSchemas(database_id)) {
+    total += GetSchemaSize(snapshot, database_id, schema->GetName());
+  }
+  return total;
+}
+
 Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
   return WriteDefinition(
     _db->GetRootDB(),

@@ -226,6 +226,13 @@ class RocksDBEngineCatalog {
                    rocksdb::ColumnFamilyHandle* cf);
   Result WriteTombstone(ObjectId parent_id, ObjectId id);
 
+  uint64_t GetTableSize(ObjectId table_id) const;
+  uint64_t GetSchemaSize(const catalog::Snapshot& snapshot,
+                         ObjectId database_id,
+                         std::string_view schema_name) const;
+  uint64_t GetDatabaseSize(const catalog::Snapshot& snapshot,
+                           ObjectId database_id) const;
+
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
 

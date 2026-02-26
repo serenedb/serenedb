@@ -133,7 +133,6 @@ void ResolveFunction(ObjectId database,
   SDB_ASSERT(data.object->GetType() == catalog::ObjectType::Function);
   auto& func = basics::downCast<catalog::Function>(*data.object);
   if (func.Options().language == catalog::FunctionLanguage::SQL) {
-    // TODO(mkornaukhov) here?
     bool changed = disallowed.emplace(name).second;
     SDB_ASSERT(changed);
     ResolveSqlFunction(database, search_path, objects, disallowed,

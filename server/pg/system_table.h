@@ -163,7 +163,7 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
                            table.Id(),
                            std::string{table.Name()},
                            catalog::ObjectType::Virtual},
-      _config(config) {
+      _config{config} {
     _table = &table;
   }
 

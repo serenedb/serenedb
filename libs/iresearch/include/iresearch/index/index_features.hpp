@@ -27,6 +27,7 @@
 #include <set>
 #include <span>
 
+#include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"

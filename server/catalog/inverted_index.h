@@ -2,7 +2,6 @@
 
 #include <iresearch/index/index_features.hpp>
 
-#include "basics/assert.h"
 #include "basics/object_pool.hpp"
 #include "catalog/index.h"
 #include "catalog/search_analyzer_impl.h"

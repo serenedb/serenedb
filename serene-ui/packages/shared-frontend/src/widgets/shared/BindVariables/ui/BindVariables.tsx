@@ -27,7 +27,7 @@ export const BindVariables: React.FC<BindVariablesProps> = ({
     };
 
     return (
-        <div className={cn("w-65 h-full bg-popover rounded-md", className)}>
+        <div className={cn("w-65 h-full bg-background rounded-md", className)}>
             <div className="pl-4 pr-2 py-3 border-b border-border flex items-center justify-between">
                 <p className="text-sm font-medium">Bind variables</p>
             </div>

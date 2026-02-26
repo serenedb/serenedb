@@ -28,8 +28,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     if (
         selectedResultIndex < 0 ||
         !results?.length ||
-        !results[selectedResultIndex] ||
-        status === ""
+        !results[selectedResultIndex]
     ) {
         return <NoQueryResults />;
     }

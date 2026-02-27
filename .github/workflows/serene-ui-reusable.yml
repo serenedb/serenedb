@@ -387,6 +387,7 @@ jobs:
                       Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
                   draft: false
                   prerelease: true
+                  token: ${{ secrets.PAT_TOKEN }}
                   files: release-assets/**/*
 
     notify:

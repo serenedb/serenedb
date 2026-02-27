@@ -8,10 +8,28 @@ import { apiRouter } from "./routers";
 import { onError } from "@orpc/server";
 
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
+const APP_NAME = "SereneUI";
 
 if (require("electron-squirrel-startup")) {
     app.quit();
 }
+
+const ensureAppDataPaths = () => {
+    const appDataPath = app.getPath("appData");
+    const userDataPath = path.join(appDataPath, APP_NAME);
+    app.setPath("userData", userDataPath);
+
+    const dataPath = path.join(userDataPath, "data");
+    const logsPath = path.join(userDataPath, "logs");
+
+    fs.mkdirSync(dataPath, { recursive: true });
+    fs.mkdirSync(logsPath, { recursive: true });
+
+    return {
+        dataPath,
+        logsPath,
+    };
+};
 
 const createWindow = (): void => {
     const iconPath = path.join(
@@ -46,15 +64,10 @@ const createWindow = (): void => {
 };
 
 const loadBackend = () => {
-    const userDataPath = app.getPath("userData");
-    if (!fs.existsSync(userDataPath)) {
-        fs.mkdirSync(userDataPath, { recursive: true });
-    }
-
-    const logsPath = path.join(userDataPath, "logs");
+    const { dataPath, logsPath } = ensureAppDataPaths();
     initLogger(logsPath);
 
-    const dbPath = path.join(userDataPath, "db.sqlite");
+    const dbPath = path.join(dataPath, "db.sqlite");
     const migrationsPath = path.join(__dirname, "migrations");
 
     initDatabase(dbPath, migrationsPath);
@@ -81,6 +94,8 @@ const loadBackend = () => {
         serverPort.start();
     });
 };
+
+app.setName(APP_NAME);
 
 app.on("ready", () => {
     loadBackend();

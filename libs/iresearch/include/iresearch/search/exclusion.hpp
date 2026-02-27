@@ -27,26 +27,20 @@
 
 namespace irs {
 
+template<typename IncludeAdapter, typename ExcludeAdapters>
 class Exclusion : public DocIterator {
  public:
-  Exclusion(DocIterator::ptr&& incl, DocIterator::ptr&& excl) noexcept
-    : _incl(std::move(incl)), _excl(std::move(excl)) {
-    SDB_ASSERT(_incl);
-    SDB_ASSERT(_excl);
-    _incl_doc = irs::get<DocAttr>(*_incl);
-    _excl_doc = irs::get<DocAttr>(*_excl);
-    SDB_ASSERT(_incl_doc);
-    SDB_ASSERT(_excl_doc);
-  }
+  Exclusion(IncludeAdapter incl, ExcludeAdapters excl) noexcept
+    : _incl{std::move(incl)}, _excl{std::move(excl)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return _incl->GetMutable(type);
+    return _incl.GetMutable(type);
   }
 
-  doc_id_t value() const noexcept final { return _incl_doc->value; }
+  doc_id_t value() const noexcept final { return _incl.value(); }
 
   doc_id_t advance() final {
-    const auto incl = _incl->advance();
+    const auto incl = _incl.advance();
     return converge(incl);
   }
 
@@ -54,15 +48,15 @@ class Exclusion : public DocIterator {
     if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
-    const auto incl = _incl->seek(target);
+    const auto incl = _incl.seek(target);
     return converge(incl);
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    return _incl->PrepareScore(ctx);
+    return _incl.PrepareScore(ctx);
   }
 
-  void FetchScoreArgs(uint16_t index) final { _incl->FetchScoreArgs(index); }
+  void FetchScoreArgs(uint16_t index) final { _incl.FetchScoreArgs(index); }
 
   uint32_t count() final { return CountImpl(*this); }
 
@@ -83,26 +77,34 @@ class Exclusion : public DocIterator {
     if (doc_limits::eof(incl)) [[unlikely]] {
       return incl;
     }
-    auto excl = _excl_doc->value;
-    if (excl < incl) {
-      excl = _excl->seek(incl);
-    }
-    while (excl == incl) {
-      incl = _incl->advance();
-      if (doc_limits::eof(incl)) {
-        return incl;
+
+    if constexpr (requires { _excl.begin(); }) {
+      for (auto& it : _excl) {
+        auto excl = it.value();
+        if (excl < incl) {
+          excl = it.seek(incl);
+        }
+        if (excl == incl) {
+          return advance();
+        }
+        SDB_ASSERT(excl > incl);
       }
+    } else {
+      auto excl = _excl.value();
       if (excl < incl) {
-        excl = _excl->seek(incl);
+        excl = _excl.seek(incl);
       }
+      if (excl == incl) {
+        return advance();
+      }
+      SDB_ASSERT(excl > incl);
     }
+
     return incl;
   }
 
-  DocIterator::ptr _incl;
-  DocIterator::ptr _excl;
-  const DocAttr* _incl_doc;
-  const DocAttr* _excl_doc;
+  IncludeAdapter _incl;
+  ExcludeAdapters _excl;
 };
 
 }  // namespace irs

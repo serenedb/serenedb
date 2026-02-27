@@ -125,17 +125,27 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
     return incl;
   }
 
-  // exclusion part does not affect scoring at all
-  auto excl = MakeDisjunction({.segment = ctx.segment, .ctx = ctx.ctx},
-                              ScoreMergeType::Noop, excl_begin, end);
+  ScoreAdapters excl;
+  excl.reserve(std::distance(excl_begin, end));
+  for (auto it = excl_begin; it != end; ++it) {
+    auto docs = (*it)->execute(ctx);
+    if (doc_limits::eof(docs->value())) {
+      continue;
+    }
+    excl.emplace_back(std::move(docs));
+  }
 
-  // got empty iterator for excluded
-  if (doc_limits::eof(excl->value())) {
-    // pure conjunction/disjunction
+  if (excl.empty()) {
     return incl;
   }
 
-  return memory::make_managed<Exclusion>(std::move(incl), std::move(excl));
+  if (excl.size() == 1) {
+    return memory::make_managed<Exclusion<ScoreAdapter, ScoreAdapter>>(
+      ScoreAdapter{std::move(incl)}, std::move(excl[0]));
+  }
+
+  return memory::make_managed<Exclusion<ScoreAdapter, ScoreAdapters>>(
+    ScoreAdapter{std::move(incl)}, std::move(excl));
 }
 
 void BooleanQuery::visit(const SubReader& segment,

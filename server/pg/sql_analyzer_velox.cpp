@@ -2264,14 +2264,13 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       ProcessSelectStmt(state, *castNode(SelectStmt, stmt.query));
 
       const auto& output_type = *state.root->outputType();
-      table_type = MakePtrView(output_type);
       column_names.reserve(output_type.size());
       column_exprs.reserve(output_type.size());
       for (const auto& [type, name] :
            std::views::zip(output_type.children(), output_type.names())) {
         auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
         column_exprs.push_back(std::move(expr));
-        
+
         auto alias = ToAlias(name);
         if (absl::c_contains(column_names, alias)) {
           column_names.emplace_back(name);
@@ -2279,6 +2278,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
           column_names.emplace_back(alias);
         }
       }
+      table_type = velox::ROW(column_names, output_type.children());
     }
 
     auto parser = create_options_parser(table_type);

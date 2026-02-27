@@ -468,7 +468,6 @@ struct ReaderState {
 };
 
 void FormatBlock128Init();
-void FormatBlock256Init();
 
 namespace formats {
 // Checks whether a format with the specified name is registered.
@@ -482,9 +481,6 @@ Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
 // For static lib reference all known formats in lib
 // no explicit call of fn is required, existence of fn is sufficient.
 inline void Init() {
-#ifdef __AVX2__
-  FormatBlock256Init();
-#endif
   FormatBlock128Init();
 }
 

@@ -851,7 +851,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(3, 0, 0);
 
       // reset && seek to document
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(767), reader.Seek(767));
@@ -860,7 +860,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(15, 2, 14);
 
       // reset && seek to doc_limits::min()
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(0), reader.Seek(irs::doc_limits::min()));
@@ -870,7 +870,7 @@ TEST_F(SkipReaderTest, Seek) {
 
       // reset && seek to doc_limits::invalid()
       // DocIterator API says it's undefined, so we don't care
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(kCount + kSkip0, reader.Seek(irs::doc_limits::invalid()));
@@ -879,7 +879,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(3, 0, 0);
 
       // reset && seek to eof
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(kCount), reader.Seek(irs::doc_limits::eof()));
@@ -890,7 +890,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(11, 2, 13);
 
       // reset && seek to 1928
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(1928), reader.Seek(1928));
@@ -901,7 +901,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(11, 2, 13);
 
       // reset && seek to 1927
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(1927), reader.Seek(1927));
@@ -912,7 +912,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(11, 2, 12);
 
       // reset && seek to 1511
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(1511), reader.Seek(1511));
@@ -921,7 +921,7 @@ TEST_F(SkipReaderTest, Seek) {
       ctx.AssertCallsCount(17, 2, 16);
 
       // reset && seek to 1512
-      reader.Reset();
+      reader.Reset(kCount);
       ctx.Reset();
       ctx.ResetCallsCount();
       ASSERT_EQ(docs_left(1512), reader.Seek(1512));
@@ -1328,14 +1328,14 @@ TEST_F(SkipReaderTest, Seek) {
           ctx.AssertCallsCount(kSkipLevels, 0, 0);
           ASSERT_TRUE(lower < doc);
           ASSERT_TRUE(doc <= upper);
-          reader.Reset();
+          reader.Reset(kCount);
           doc -= 2;
         }
 
         for (size_t i = kCount - 1; i <= kCount; --i, doc -= 2) {
           lower = irs::doc_limits::invalid();
           upper = irs::doc_limits::invalid();
-          reader.Reset();
+          reader.Reset(kCount);
           ASSERT_EQ(docs_left(irs::doc_id_t(i)), reader.Seek(doc));
           ASSERT_TRUE(lower < doc);
           ASSERT_TRUE(doc <= upper);

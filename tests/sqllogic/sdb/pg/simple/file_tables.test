@@ -1017,7 +1017,7 @@ db error: ERROR: check constraints are not supported for external tables
 
 statement error
 CREATE TABLE babsky(
-  iq INT8 DEFAULT 42,
+  iq INTEGER DEFAULT 42,
   salary TEXT
 ) USING EXTERNAL
 WITH (

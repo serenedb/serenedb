@@ -32,7 +32,7 @@ std::shared_ptr<velox::ReadFile> LocalStorageOptions::CreateFileSource() {
 }
 
 void LocalStorageOptions::toVPack(vpack::Builder& b) const {
-  b.add("type", static_cast<unsigned>(std::to_underlying(Type::Local)));
+  b.add("type", std::to_underlying(Type::Local));
   b.add("path", std::string_view{_path});
 }
 
@@ -44,14 +44,14 @@ std::shared_ptr<StorageOptions> StorageOptions::fromVPack(vpack::Slice slice) {
   if (!type_slice.isNumber()) {
     return nullptr;
   }
-  switch (static_cast<Type>(type_slice.getNumber<unsigned>())) {
+  switch (static_cast<Type>(type_slice.getNumber<uint32_t>())) {
     case Type::Local: {
-      auto path_slice = slice.get("path");
-      if (path_slice.isString()) {
+      if (auto path_slice = slice.get("path"); path_slice.isString()) {
         return std::make_shared<LocalStorageOptions>(
           std::string{path_slice.stringView()});
+      } else {
+        return nullptr;
       }
-      break;
     }
   }
   return nullptr;

@@ -93,7 +93,7 @@ TextFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
 void TextFormatOptions::toVPack(vpack::Builder& b) const {
   b.add("format", std::to_underlying(_format));
   b.add("delim", _delim);
-  b.add("escape", static_cast<unsigned>(_escape));
+  b.add("escape", _escape);
   b.add("null_string", std::string_view{_null_string});
   b.add("header", _header);
 }
@@ -111,7 +111,7 @@ ParquetFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
 }
 
 void ParquetFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", static_cast<unsigned>(std::to_underlying(_format)));
+  b.add("format", std::to_underlying(_format));
 }
 
 std::shared_ptr<connector::WriterOptions>
@@ -127,7 +127,7 @@ DwrfFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
 }
 
 void DwrfFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", static_cast<unsigned>(std::to_underlying(_format)));
+  b.add("format", std::to_underlying(_format));
 }
 
 std::shared_ptr<connector::WriterOptions> OrcFormatOptions::createWriterOptions(
@@ -143,7 +143,7 @@ std::shared_ptr<connector::ReaderOptions> OrcFormatOptions::createReaderOptions(
 }
 
 void OrcFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", static_cast<unsigned>(std::to_underlying(_format)));
+  b.add("format", std::to_underlying(_format));
 }
 
 std::shared_ptr<FormatOptions> FormatOptions::fromVPack(vpack::Slice slice) {
@@ -154,23 +154,23 @@ std::shared_ptr<FormatOptions> FormatOptions::fromVPack(vpack::Slice slice) {
   if (!format_slice.isNumber()) {
     return nullptr;
   }
-  switch (static_cast<FileFormat>(format_slice.getNumber<unsigned>())) {
+  switch (static_cast<FileFormat>(format_slice.getNumber<uint8_t>())) {
     case FileFormat::Text: {
       uint8_t delim = '\t';
-      uint8_t escape = '\\';
-      std::string null_string = "\\N";
-      bool header = false;
       if (auto s = slice.get("delim"); s.isNumber()) {
-        delim = s.getNumber<unsigned>();
+        delim = s.getNumber<uint8_t>();
       }
+      uint8_t escape = '\\';
       if (auto s = slice.get("escape"); s.isNumber()) {
-        escape = s.getNumber<unsigned>();
+        escape = s.getNumber<uint8_t>();
       }
+      std::string null_string = "\\N";
       if (auto s = slice.get("null_string"); s.isString()) {
         null_string = std::string{s.stringView()};
       }
-      if (auto s = slice.get("header"); s.isBool()) {
-        header = s.getBool();
+      uint8_t header = 0;
+      if (auto s = slice.get("header"); s.isNumber()) {
+        header = s.getNumber<uint8_t>();
       }
       return std::make_shared<TextFormatOptions>(
         delim, escape, std::move(null_string), header);

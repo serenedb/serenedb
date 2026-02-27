@@ -59,7 +59,7 @@ class FormatOptions {
 class TextFormatOptions : public FormatOptions {
  public:
   TextFormatOptions(uint8_t delim, uint8_t escape, std::string null_string,
-                    bool header)
+                    uint8_t header)
     : FormatOptions{FileFormat::Text},
       _delim{delim},
       _escape{escape},
@@ -76,7 +76,7 @@ class TextFormatOptions : public FormatOptions {
   uint8_t _delim;
   uint8_t _escape;
   std::string _null_string;
-  bool _header;
+  uint8_t _header;
 };
 
 class ParquetFormatOptions : public FormatOptions {

@@ -1,6 +1,3 @@
-control substitution on
-
-
 statement ok
 SET sdb_fault_unable_to_create TO DEFAULT;
 

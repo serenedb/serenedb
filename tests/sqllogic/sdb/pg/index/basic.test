@@ -197,12 +197,16 @@ BEGIN;
 statement count 3
 INSERT INTO table_numeric_idx VALUES (23,1), (27,3), (28,5);
 
+statement ok
+VACUUM (UPDATE_INDEXES) table_numeric_idx;
+
 query
 SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 OR a = 28 ORDER BY a;
 ----
 a	b
 1	1
 2	3
+7	3
 17	5
 
 statement ok

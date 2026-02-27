@@ -2525,8 +2525,7 @@ class SingleWandIterator : public DocIterator {
                 "kBlockSize must be a multiple of kScoreBlock");
 
   explicit SingleWandIterator(WandExtent extent)
-    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
-            WandReadSkip{extent}} {}
+    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN, extent} {}
 
   ~SingleWandIterator() {
     if (_doc_in) {
@@ -2757,7 +2756,7 @@ class SingleWandIterator : public DocIterator {
   uint32_t _left_in_list = 0;
   IndexInput::ptr _doc_in;
   Attributes _attrs;
-  SkipReader<WandReadSkip> _skip;
+  SkipReader<WandReadSkip, InputType> _skip;
 };
 
 template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
@@ -2918,18 +2917,19 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
                                                       uint32_t docs_count) {
   SDB_ASSERT(docs_count > 0);
 
-  auto skip_in = this->_doc_in->Dup();
-
-  if (!skip_in) {
+  std::unique_ptr<InputType> skip_in_ptr{
+    sdb::basics::downCast<InputType>(this->_doc_in->Dup().release())};
+  if (!skip_in_ptr) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to duplicate document input");
     throw IoError("Failed to duplicate document input");
   }
+  auto& skip_in = *skip_in_ptr;
 
   SDB_ASSERT(!_skip.NumLevels());
-  skip_in->Seek(skip_offs);
-  _skip.Reader().ReadWandScore(*skip_in);
-  _skip.Prepare(std::move(skip_in), docs_count);
+  skip_in.Seek(skip_offs);
+  _skip.Reader().ReadWandScore(skip_in);
+  _skip.Prepare(std::move(skip_in_ptr), docs_count);
 
   if (const auto num_levels = _skip.NumLevels();
       num_levels > 0 && num_levels <= PostingsWriterBase::kMaxSkipLevels)

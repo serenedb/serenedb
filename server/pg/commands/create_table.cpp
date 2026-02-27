@@ -142,6 +142,8 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   auto database = catalog.GetSnapshot()->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
+  bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
+
   catalog::CreateTableRequest request;
   request.name = table;
   request.columns.reserve(list_length(stmt.tableElts));
@@ -190,6 +192,12 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   auto append_check_constraint = [&](const Constraint& constraint,
                                      std::string_view column_name = {}) {
     SDB_ASSERT(constraint.contype == CONSTR_CHECK);
+    if (is_external) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ExprLocation(&constraint)),
+        ERR_MSG("check constraints are not supported for external tables"));
+    }
     std::string name;
     if (constraint.conname) {
       name = constraint.conname;
@@ -210,6 +218,11 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   };
 
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
+    if (is_external) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), CURSOR_POS(location),
+        ERR_MSG("primary keys are not supported for external tables"));
+    }
     if (absl::c_linear_search(request.pkColumns, column_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
                       ERR_MSG("column \"", request.columns[column_id].name,
@@ -291,6 +304,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             null_info = NullInfo::NotNull;
             break;
           case CONSTR_DEFAULT: {
+            if (is_external) {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                CURSOR_POS(ExprLocation(&constraint)),
+                ERR_MSG(
+                  "default values are not supported for external tables"));
+            }
             switch (col.generated_type) {
               using enum catalog::Column::GeneratedType;
               case kVirtual:
@@ -321,6 +341,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             append_check_constraint(constraint, col.name);
             break;
           case CONSTR_GENERATED: {
+            if (is_external) {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                CURSOR_POS(ExprLocation(&constraint)),
+                ERR_MSG(
+                  "generated columns are not supported for external tables"));
+            }
             switch (col.generated_type) {
               using enum catalog::Column::GeneratedType;
               case kVirtual:
@@ -397,7 +424,6 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   });
   SDB_ASSERT(!stmt.constraints);
 
-  bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
   if (is_external) {
     CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
     request.file_info = std::move(parser).GetFileInfo();

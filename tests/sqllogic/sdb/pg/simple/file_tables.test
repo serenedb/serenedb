@@ -963,3 +963,77 @@ name
 val_11
 val_13
 val_14
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8 PRIMARY KEY,
+  salary TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+----
+db error: ERROR: primary keys are not supported for external tables
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8,
+  salary TEXT,
+  PRIMARY KEY (iq)
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+----
+db error: ERROR: primary keys are not supported for external tables
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8,
+  salary TEXT CHECK (iq > 0)
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+----
+db error: ERROR: check constraints are not supported for external tables
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8,
+  salary TEXT,
+  CHECK (iq > 0)
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+----
+db error: ERROR: check constraints are not supported for external tables
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8 DEFAULT 42,
+  salary TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+----
+db error: ERROR: default values are not supported for external tables
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8,
+  doubled INT8 GENERATED ALWAYS AS (iq * 2) STORED
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+----
+db error: ERROR: generated columns are not supported for external tables

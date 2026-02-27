@@ -275,31 +275,6 @@ class CatalogFeature final : public SerenedFeature {
 #endif
 
  private:
-  Result RegisterDatabases();
-  Result RegisterSchemas(ObjectId database_id);
-  Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
-  Result RegisterViews(ObjectId database_id, ObjectId schema_id);
-  Result RegisterTableShard(ObjectId table_id);
-  Result RegisterTables(ObjectId database_id, ObjectId schema_id);
-  Result RegisterIndexShard(const std::shared_ptr<Index>& index);
-  Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
-                         ObjectId table_id);
-
-  Result AddRoles();
-
-  Result AddDatabase(ObjectId database_id, vpack::Slice definition);
-  Result AddSchema(ObjectId database_id, ObjectId schema_id,
-                   vpack::Slice definition);
-  Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                  vpack::Slice definition);
-  Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                  ObjectId index_id, vpack::Slice definition);
-
-  Result AddTableShard(ObjectId table_id, ObjectId shard_id,
-                       vpack::Slice definition);
-  Result AddIndexShard(ObjectId index_id, ObjectId shard_id,
-                       vpack::Slice definition);
-
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
   bool _skip_background_errors = false;

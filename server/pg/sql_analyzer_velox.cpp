@@ -856,6 +856,8 @@ class SqlAnalyzer {
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
                      bool implicit_pk_column = false);
+  State ProcessInvertedIndex(State* parent, const Objects::ObjectData& object,
+                             const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -3784,6 +3786,37 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
   return {table_alias, std::move(column_names)};
 }
 
+State SqlAnalyzer::ProcessInvertedIndex(State* parent,
+                                        const Objects::ObjectData& object,
+                                        const RangeVar* node) {
+  SDB_ASSERT(object.object);
+  const auto& inverted_index =
+    basics::downCast<const catalog::InvertedIndex>(*object.object);
+  auto& table = *catalog::GetCatalog().GetSnapshot()->GetObject<catalog::Table>(
+    inverted_index.GetRelationId());
+  auto type = table.RowType();
+
+  auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
+
+  if (!object.table) {
+    object.table = std::make_shared<connector::RocksDBInvertedIndexTable>(
+      table, _transaction, inverted_index);
+  }
+
+  SDB_ASSERT(
+    !table.Columns().empty(),
+    "Column with inverted index should have at least one column to index");
+  auto state = parent->MakeChild();
+  state.root = std::make_shared<lp::TableScanNode>(
+    _id_generator.NextPlanId(),
+    velox::ROW(std::move(column_names), type->children()), object.table,
+    type->names());
+
+  state.resolver.CreateTable(table_alias,
+                             MakePtrView(state.root->outputType()));
+  return state;
+}
+
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
                                 const Objects::ObjectData& object,
@@ -3870,6 +3903,16 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
       basics::downCast<catalog::VirtualTableSnapshot>(logical_object);
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
+  } else if (logical_object.GetType() == catalog::ObjectType::Index) {
+    const auto& index = basics::downCast<catalog::Index>(logical_object);
+    if (index.GetIndexType() != IndexType::Inverted) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(node))),
+                      ERR_MSG("Index '", name, "' of type '",
+                              magic_enum::enum_name(index.GetIndexType()),
+                              "' cannot be used in FROM clause"));
+    }
+    return ProcessInvertedIndex(parent, *object, node);
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

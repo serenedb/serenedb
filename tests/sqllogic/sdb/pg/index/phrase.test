@@ -1,0 +1,58 @@
+statement ok
+CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+CREATE INDEX foo_idx ON foo USING inverted(a, b, c);
+
+statement ok
+INSERT INTO foo values (1, 'quick brown fox jumps over lazy dog', 'value a');
+
+statement ok
+INSERT INTO foo values (2, 'quick red fox jumps over lazy dog', 'value a');
+
+statement ok
+INSERT INTO foo values (3, 'quick red fox jumps over big dog', 'value a');
+
+statement ok
+INSERT INTO foo values (4, 'quick brown fox jumps over big dog', 'value b');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query ok
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR PHRASE(b, 'red fox') ORDER BY a;
+----
+a	b
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+query ok
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR a = 1 ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+query ok
+SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value b') AND PHRASE(b, 'over big dog');
+----
+a	b	c
+4	quick brown fox jumps over big dog	value b
+
+
+statement ok
+UPDATE foo SET c = 'value abc' WHERE a = 3;
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query ok
+SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value abc') AND PHRASE(b, 'over big dog');
+----
+a	b	c
+3	quick red fox jumps over big dog	value abc
+
+statement ok
+DROP TABLE foo;

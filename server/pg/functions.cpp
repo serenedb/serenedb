@@ -37,6 +37,7 @@
 #include "pg/functions/extract.h"
 #include "pg/functions/interval.h"
 #include "pg/functions/json.h"
+#include "pg/functions/search.hpp"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -634,6 +635,7 @@ void registerFunctions(const std::string& prefix) {
                           int32_t, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "error"});
   registerExtractFunctions(prefix);
+  registerSearchFunctions(prefix);
 }
 
 }  // namespace sdb::pg::functions

@@ -24,43 +24,98 @@
 
 #include <absl/algorithm/container.h>
 
+#include "iresearch/search/scorer.hpp"
+
 namespace irs {
 namespace {
+
+template<ScoreMergeType MergeType>
+IRS_FORCE_INLINE void ConstantScoreImpl(score_t* res, scores_size_t n,
+                                        score_t value) {
+  if constexpr (MergeType == ScoreMergeType::Noop) {
+    std::fill_n(res, n, value);
+  } else {
+    for (scores_size_t i = 0; i != n; ++i) {
+      Merge<MergeType>(res[i], value);
+    }
+  }
+}
 
 class ConstanScore : public ScoreOperator {
  public:
   explicit ConstanScore(score_t value) noexcept : _value{value} {}
 
-  void Score(score_t* res, size_t n) noexcept final {
-    std::fill_n(res, n, _value);
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
+    ConstantScoreImpl<MergeType>(res, n, _value);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    std::fill_n(res, kScoreBlock, _value);
+  score_t Score() const noexcept final { return _value; }
+
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
-  void ScorePostingBlock(score_t* res) noexcept final {
-    std::fill_n(res, kPostingBlock, _value);
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
   }
 
  private:
   score_t _value;
 };
 
+template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+IRS_FORCE_INLINE void DefaultScoreImpl(score_t* res, scores_size_t n) {
+  if constexpr (MergeType == ScoreMergeType::Noop) {
+    std::memset(res, 0, sizeof(score_t) * n);
+  } else {
+    SDB_ASSERT(std::all_of(res, res + n, [](score_t s) { return s >= 0; }));
+  }
+}
+
 }  // namespace
 
-DefaultScore DefaultScore::gInstance;
+score_t DefaultScore::Score() const noexcept { return 0; }
 
-void DefaultScore::Score(score_t* res, size_t n) noexcept {
-  std::memset(res, 0, sizeof(score_t) * n);
+void DefaultScore::Score(score_t* res, scores_size_t n) const noexcept {
+  DefaultScoreImpl(res, n);
+}
+void DefaultScore::ScoreSum(score_t* res, scores_size_t n) const noexcept {
+  DefaultScoreImpl<ScoreMergeType::Sum>(res, n);
+}
+void DefaultScore::ScoreMax(score_t* res, scores_size_t n) const noexcept {
+  DefaultScoreImpl<ScoreMergeType::Max>(res, n);
 }
 
-void DefaultScore::ScoreBlock(score_t* res) noexcept {
-  std::memset(res, 0, sizeof(score_t) * kScoreBlock);
+void DefaultScore::ScoreBlock(score_t* res) const noexcept {
+  DefaultScoreImpl(res, kScoreBlock);
+}
+void DefaultScore::ScoreSumBlock(score_t* res) const noexcept {
+  DefaultScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+}
+void DefaultScore::ScoreMaxBlock(score_t* res) const noexcept {
+  DefaultScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
 }
 
-void DefaultScore::ScorePostingBlock(score_t* res) noexcept {
-  std::memset(res, 0, sizeof(score_t) * kPostingBlock);
+void DefaultScore::ScorePostingBlock(score_t* res) const noexcept {
+  DefaultScoreImpl(res, kPostingBlock);
 }
 
 ScoreFunction ScoreFunction::Constant(score_t value) noexcept {

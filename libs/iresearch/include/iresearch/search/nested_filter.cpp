@@ -212,16 +212,16 @@ class NoneMatcher {
   score_t _boost;
 };
 
-template<ScoreMergeType MergeType>
+template<ScoreMergeType InnerType>
 struct NestedScore final : ScoreOperator {
   ScoreFunction child_score;
   ColumnArgsFetcher fetcher;
-  std::array<score_t, kScoreBlock> parent_scores{};
-  std::array<score_t, kScoreBlock> child_temp;
-  std::array<doc_id_t, kScoreBlock> child_docs;
+  ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> parent_scores{};
+  ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> child_temp;
+  ABSL_CACHELINE_ALIGNED std::array<doc_id_t, kScoreBlock> child_docs;
   score_t current_parent_score = 0;
   uint16_t child_idx = 0;
-  uint16_t parent_idx = 0;
+  mutable uint16_t parent_idx = 0;
 
   void CollectChild(auto& child_it) {
     child_docs[child_idx] = child_it.value();
@@ -249,24 +249,41 @@ struct NestedScore final : ScoreOperator {
     fetcher.Fetch(std::span{child_docs.data(), child_idx});
     child_score.Score(child_temp.data(), child_idx);
     for (uint16_t i = 0; i < child_idx; ++i) {
-      Merge<MergeType>(current_parent_score, child_temp[i]);
+      Merge<InnerType>(current_parent_score, child_temp[i]);
     }
     child_idx = 0;
   }
 
-  score_t Score() noexcept final {
+  score_t Score() const noexcept final {
     parent_idx = 0;
     return parent_scores.front();
   }
 
-  void Score(score_t* res, size_t n) noexcept final {
-    std::memcpy(res, parent_scores.data(), n * sizeof(score_t));
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
     parent_idx = 0;
+    Merge<MergeType>(res, parent_scores.data(), n);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    std::memcpy(res, parent_scores.data(), kScoreBlock * sizeof(score_t));
-    parent_idx = 0;
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
   }
 };
 

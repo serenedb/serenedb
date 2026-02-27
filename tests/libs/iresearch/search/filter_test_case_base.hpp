@@ -122,8 +122,22 @@ struct Boost : public irs::ScorerBase<Boost, void> {
    public:
     explicit ScoreOperator(irs::score_t boost) noexcept : boost(boost) {}
 
-    void Score(irs::score_t* res, size_t n) noexcept override {
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+      ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
       std::fill_n(res, n, boost);
+    }
+
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 
     irs::score_t boost;
@@ -202,12 +216,26 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
       : ctx(ctx), sort(sort) {}
 
-    void Score(irs::score_t* res, size_t n) noexcept override {
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
       if (sort.scorer_score) {
+        ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
         sort.scorer_score(this, res, n);
       } else {
         std::fill_n(res, n, 0);
       }
+    }
+
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 
     irs::ScoreContext ctx;
@@ -262,7 +290,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
   std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
     prepare_scorer;
   std::function<irs::TermCollector::ptr()> prepare_term_collector;
-  std::function<void(irs::ScoreOperator*, irs::score_t*, size_t n)>
+  std::function<void(const irs::ScoreOperator*, irs::score_t*, size_t n)>
     scorer_score;
   std::function<void()> term_reset;
   std::function<void()> field_reset;
@@ -302,16 +330,30 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
   struct Scorer : public irs::ScoreOperator {
     Scorer(irs::doc_id_t docs_count) : count(docs_count) {}
 
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      for (size_t i = 0; i < n; ++i) {
-        // docs_count may be nullptr if no collector called,
-        // e.g. by range_query for BitsetDocIterator
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+      const auto r = [&] {
         if (count) {
-          res[i] = 1.f / count;
+          return 1.f / count;
         } else {
-          res[i] = std::numeric_limits<irs::score_t>::infinity();
+          return std::numeric_limits<irs::score_t>::infinity();
         }
+      }();
+      for (irs::scores_size_t i = 0; i != n; ++i) {
+        irs::Merge<MergeType>(res[i], r);
       }
+    }
+
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 
     irs::doc_id_t count;
@@ -350,10 +392,23 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
   struct Scorer : public irs::ScoreOperator {
     Scorer(const irs::FreqBlockAttr* fr) : freq(fr) {}
 
-    void Score(irs::score_t* res, size_t n) noexcept override {
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
       ASSERT_NE(nullptr, freq);
       ASSERT_NE(nullptr, freq->value);
-      std::copy_n(freq->value, n, res);
+      irs::Merge<MergeType>(res, freq->value, n);
+    }
+
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 
     const irs::FreqBlockAttr* freq;

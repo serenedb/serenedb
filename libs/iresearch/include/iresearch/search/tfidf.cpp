@@ -177,36 +177,37 @@ Scorer::ptr MakeJson(std::string_view args) {
 
 // Helper functions
 
-IRS_FORCE_INLINE float_t Tfidf(uint32_t freq, float_t idf) noexcept {
+IRS_FORCE_INLINE score_t TfIdf(uint32_t freq, score_t idf) noexcept {
   // TODO(gnusi): do we need sqrt?
-  return std::sqrtf(static_cast<float_t>(freq)) * idf;
+  return std::sqrt(static_cast<score_t>(freq)) * idf;
 }
 
-template<bool HasNorm, bool HasBoost, typename T>
-IRS_FORCE_INLINE void TfIdf(T* IRS_RESTRICT res, size_t n,
+template<ScoreMergeType MergeType, bool HasNorm, bool HasBoost>
+IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
                             const uint32_t* IRS_RESTRICT freq,
                             [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
                             [[maybe_unused]] const score_t* IRS_RESTRICT boost,
-                            float_t idf) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    res[i] = [&] {
+                            score_t idf) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto r = [&] IRS_FORCE_INLINE {
       if constexpr (HasNorm && HasBoost) {
-        return boost[i] * Tfidf(freq[i], idf) /
-               std::sqrtf(static_cast<float_t>(norm[i]));
+        return boost[i] * TfIdf(freq[i], idf) /
+               std::sqrt(static_cast<score_t>(norm[i]));
       } else if constexpr (HasNorm) {
-        return Tfidf(freq[i], idf) / std::sqrtf(static_cast<float_t>(norm[i]));
+        return TfIdf(freq[i], idf) / std::sqrt(static_cast<score_t>(norm[i]));
       } else if constexpr (HasBoost) {
-        return boost[i] * Tfidf(freq[i], idf);
+        return boost[i] * TfIdf(freq[i], idf);
       } else {
-        return Tfidf(freq[i], idf);
+        return TfIdf(freq[i], idf);
       }
     }();
+    Merge<MergeType>(res[i], r);
   }
 }
 
 template<bool HasNorm, bool HasFilterBoost>
-struct TfidfScore : public ScoreOperator {
-  TfidfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
+struct TfIdfScore : public ScoreOperator {
+  TfIdfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
              const FreqBlockAttr* freq,
              const score_t* filter_boost = nullptr) noexcept
     : freq{freq},
@@ -214,35 +215,48 @@ struct TfidfScore : public ScoreOperator {
       norm{norm},
       idf{boost * idf.value} {}
 
-  score_t Score() noexcept final {
-    score_t res;
-    TfIdf<HasNorm, HasFilterBoost>(&res, 1, freq->value, TryGetValue(norm),
-                                   TryGetValue(filter_boost), idf);
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
+                                  scores_size_t n) const noexcept {
+    TfIdf<MergeType, HasNorm, HasFilterBoost>(
+      res, n, freq->value, TryGetValue(norm), TryGetValue(filter_boost), idf);
+  }
+
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
     return res;
   }
 
-  void Score(score_t* res, size_t n) noexcept final {
-    TfIdf<HasNorm, HasFilterBoost>(res, n, freq->value, TryGetValue(norm),
-                                   TryGetValue(filter_boost), idf);
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    TfIdf<HasNorm, HasFilterBoost>(res, kScoreBlock, freq->value,
-                                   TryGetValue(norm), TryGetValue(filter_boost),
-                                   idf);
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
   }
 
-  void ScorePostingBlock(score_t* res) noexcept final {
-    TfIdf<HasNorm, HasFilterBoost>(res, kPostingBlock, freq->value,
-                                   TryGetValue(norm), TryGetValue(filter_boost),
-                                   idf);
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
   }
 
   const FreqBlockAttr* freq;
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
   [[no_unique_address]] utils::Need<HasNorm, const uint32_t*> norm;
-  float_t idf;  // precomputed : boost * idf
+  score_t idf;  // precomputed : boost * idf
 };
 
 }  // namespace
@@ -259,7 +273,7 @@ void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
   // TODO(mbkkt) SDB_ASSERT(docs_with_field >= docs_with_term);
 
   auto* idf = stats_cast(stats_buf);
-  idf->value += static_cast<float_t>(
+  idf->value += static_cast<score_t>(
     std::log1p((docs_with_field + 1.0) / (docs_with_term + 1.0)));
   // TODO(mbkkt) SDB_ASSERT(idf.value >= 0.f);
 }
@@ -298,7 +312,7 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
   return ResolveBool(norm != nullptr, [&]<bool HasNorms>() {
     return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
       const auto* stats = stats_cast(ctx.stats);
-      return ScoreFunction::Make<TfidfScore<HasNorms, HasBoost>>(
+      return ScoreFunction::Make<TfIdfScore<HasNorms, HasBoost>>(
         norm, ctx.boost, *stats, freq, filter_boost);
     });
   });

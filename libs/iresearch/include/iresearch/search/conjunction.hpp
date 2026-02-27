@@ -98,7 +98,7 @@ using ScoreAdapters = std::vector<ScoreAdapter>;
 template<typename T>
 using EmptyWrapper = T;
 
-template<ScoreMergeType MergeType>
+template<ScoreMergeType InnerType>
 class ConjunctionScore : public ScoreOperator {
  public:
   static ScoreFunction Make(const PrepareScoreContext& ctx, auto& itrs) {
@@ -118,7 +118,7 @@ class ConjunctionScore : public ScoreOperator {
       case 1:
         return std::move(sources.front());
       default:
-        return ScoreFunction::Make<ConjunctionScore<MergeType>>(
+        return ScoreFunction::Make<ConjunctionScore<InnerType>>(
           std::move(sources));
     }
   }
@@ -126,42 +126,62 @@ class ConjunctionScore : public ScoreOperator {
   explicit ConjunctionScore(std::vector<ScoreFunction> sources)
     : _sources{std::move(sources)} {}
 
-  score_t Score() noexcept final {
+  score_t Score() const noexcept final {
     auto source = _sources.begin();
     auto end = _sources.end();
 
     auto res = source->Score();
     for (++source; source != end; ++source) {
-      Merge<MergeType>(res, source->Score());
+      Merge<InnerType>(res, source->Score());
     }
     return res;
   }
 
-  void Score(score_t* res, size_t n) noexcept final {
-    auto source = _sources.begin();
-    auto end = _sources.end();
-
-    source->Score(res, n);
-    for (++source; source != end; ++source) {
-      source->Score(_scores.data(), n);
-      Merge<MergeType>(res, _scores.data(), n);
-    }
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Noop>(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    auto source = _sources.begin();
-    auto end = _sources.end();
-
-    source->ScoreBlock(res);
-    for (++source; source != end; ++source) {
-      source->ScoreBlock(_scores.data());
-      Merge<MergeType>(res, _scores.data(), kScoreBlock);
-    }
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreBlockImpl<ScoreMergeType::Noop>(res);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreBlockImpl<ScoreMergeType::Sum>(res);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreBlockImpl<ScoreMergeType::Max>(res);
   }
 
  private:
+  template<ScoreMergeType OuterType>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->Score<OuterType>(res, n);
+    for (++source; source != end; ++source) {
+      source->Score<InnerType>(res, n);
+    }
+  }
+
+  template<ScoreMergeType OuterType>
+  IRS_FORCE_INLINE void ScoreBlockImpl(score_t* res) const noexcept {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->ScoreBlock<OuterType>(res);
+    for (++source; source != end; ++source) {
+      source->ScoreBlock<InnerType>(res);
+    }
+  }
+
   std::vector<ScoreFunction> _sources;
-  std::array<score_t, kScoreBlock> _scores;
 };
 
 // Conjunction of N iterators

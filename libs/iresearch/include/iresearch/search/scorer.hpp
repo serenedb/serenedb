@@ -228,18 +228,6 @@ struct Scorer {
   virtual TypeInfo::type_id type() const noexcept = 0;
 };
 
-// Possible variants of merging multiple scores
-enum class ScoreMergeType {
-  // Do nothing
-  Noop = 0,
-
-  // Sum multiple scores
-  Sum,
-
-  // Find max amongst multiple scores
-  Max,
-};
-
 template<typename Visitor>
 IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
   switch (type) {
@@ -298,54 +286,57 @@ class ScorerBase : public Scorer {
   }
 };
 
-template<ScoreMergeType MergeType>
-IRS_FORCE_INLINE void Merge(score_t& bucket, score_t arg) noexcept {
+template<ScoreMergeType MergeType, typename T>
+IRS_FORCE_INLINE void Merge(score_t& bucket, T arg) noexcept {
   if constexpr (MergeType == ScoreMergeType::Sum) {
     bucket += arg;
   } else if constexpr (MergeType == ScoreMergeType::Max) {
-    bucket = std::max(bucket, arg);
+    bucket = std::max<score_t>(bucket, arg);
   } else {
-    static_assert(false);
+    static_assert(MergeType == ScoreMergeType::Noop);
+    bucket = arg;
   }
 }
 
 template<ScoreMergeType MergeType, typename T>
-IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res,
-                            const score_t* IRS_RESTRICT args,
-                            size_t n) noexcept {
-  for (size_t i = 0; i < n; ++i) {
+IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
+                            const T* IRS_RESTRICT args,
+                            scores_size_t n) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     Merge<MergeType>(res[i], args[i]);
   }
 }
 
-template<ScoreMergeType MergeType, typename T, typename I>
-IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
+template<ScoreMergeType MergeType, typename I>
+IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
+                            const I* IRS_RESTRICT hits,
                             const score_t* IRS_RESTRICT args,
-                            size_t n) noexcept {
-  for (size_t i = 0; i < n; ++i) {
+                            scores_size_t n) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto bucket_index = hits[i];
     Merge<MergeType>(res[bucket_index], args[i]);
   }
 }
 
-template<ScoreMergeType MergeType, typename T, typename I>
-IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
-                            I base, const score_t* IRS_RESTRICT args,
-                            size_t n) noexcept {
-  for (size_t i = 0; i < n; ++i) {
+template<ScoreMergeType MergeType, typename I>
+IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
+                            const I* IRS_RESTRICT hits, I base,
+                            const score_t* IRS_RESTRICT args,
+                            scores_size_t n) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto bucket_index = hits[i] - base;
     Merge<MergeType>(res[bucket_index], args[i]);
   }
 }
 
-template<ScoreMergeType MergeType, typename T, size_t N>
+template<ScoreMergeType MergeType, size_t N>
 IRS_FORCE_INLINE void Merge(score_t* res, std::span<score_t, N> args) noexcept {
   Merge<MergeType>(res, args.data(), args.size());
 }
 
-template<ScoreMergeType MergeType, typename T, typename I, size_t N>
-IRS_FORCE_INLINE void Merge(T* res, std::span<I, N> hits,
-                            std::span<score_t, N> args) noexcept {
+template<ScoreMergeType MergeType, typename I, size_t N>
+IRS_FORCE_INLINE void Merge(score_t* res, std::span<const I, N> hits,
+                            std::span<const score_t, N> args) noexcept {
   SDB_ASSERT(hits.size() <= args.size());
   Merge<MergeType>(res, hits.data(), args.data(), hits.size());
 }

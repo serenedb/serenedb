@@ -2010,20 +2010,16 @@ class CopyOptionsParser {
 
  private:
   std::string_view TryFormatFromFile() const {
+    // text format is default so detecting it here would be redundant
     const auto pos = _file_path.rfind('.');
     if (pos == std::string_view::npos) {
       return {};
     }
 
     const auto file_format = _file_path.substr(pos + 1);
-    if (file_format == "csv" || file_format == "text" ||
-        file_format == "parquet" || file_format == "dwrf" ||
-        file_format == "orc") {
+    if (file_format == "csv" || file_format == "parquet" ||
+        file_format == "dwrf" || file_format == "orc") {
       return file_format;
-    }
-
-    if (file_format == "tsv" || file_format == "txt") {
-      return "text";
     }
 
     return {};
@@ -5338,7 +5334,8 @@ void SqlAnalyzer::ProcessFunctionBody(
                    " at column ", i + 1, "."));
     }
 
-    names.emplace_back(expected_row.nameOf(i));
+    names.emplace_back(_id_generator.NextColumnName(expected_row.nameOf(i)));
+
     exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
       actual_col_type, actual_type.nameOf(i)));
   }

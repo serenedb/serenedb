@@ -583,21 +583,33 @@ class BlockDisjunction : public DocIterator {
   static_assert(kWindow <= std::numeric_limits<uint16_t>::max());
 
   struct BlockScore final : ScoreOperator {
-    alignas(64) std::array<score_t, kScoreBlock> result;
+    ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> result;
     alignas(4096) std::array<score_t, kWindow> score_window;
 
     void FetchScoreArgs(uint16_t offset, uint16_t index) noexcept {
       result[index] = score_window[offset];
     }
 
-    score_t Score() noexcept final { return result.front(); }
+    score_t Score() const noexcept final { return result.front(); }
 
-    void ScoreBlock(score_t* res) noexcept final {
-      std::memcpy(res, result.data(), kScoreBlock * sizeof(score_t));
+    void Score(score_t* res, scores_size_t n) const noexcept final {
+      Merge<ScoreMergeType::Noop>(res, result.data(), n);
+    }
+    void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+      Merge<ScoreMergeType::Sum>(res, result.data(), n);
+    }
+    void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+      Merge<ScoreMergeType::Max>(res, result.data(), n);
     }
 
-    void Score(score_t* res, size_t n) noexcept final {
-      std::memcpy(res, result.data(), n * sizeof(score_t));
+    void ScoreBlock(score_t* res) const noexcept final {
+      Merge<ScoreMergeType::Noop>(res, result.data(), kScoreBlock);
+    }
+    void ScoreSumBlock(score_t* res) const noexcept final {
+      Merge<ScoreMergeType::Sum>(res, result.data(), kScoreBlock);
+    }
+    void ScoreMaxBlock(score_t* res) const noexcept final {
+      Merge<ScoreMergeType::Max>(res, result.data(), kScoreBlock);
     }
   };
 

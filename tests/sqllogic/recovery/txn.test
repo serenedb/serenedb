@@ -1,0 +1,193 @@
+control substitution on
+
+###############################################################################
+# Repeatable Read recovery tests
+#
+# 1. Crash recovery: committed vs uncommitted data (single crash)
+# 2. Crash before RocksDB commit: data must NOT survive
+# 3. Crash after RocksDB commit: data MUST survive
+###############################################################################
+
+
+###############################################################################
+# 1. Crash recovery (crash_on_packet)
+###############################################################################
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE IF NOT EXISTS t_rr(key INT PRIMARY KEY, value INT);
+
+statement ok
+RESET sdb_faults;
+
+# ==== Committed txn 1: inserts ====
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+statement ok
+INSERT INTO t_rr VALUES (1, 10), (2, 20), (3, 30);
+
+statement ok
+COMMIT;
+
+# ==== Committed txn 2: update + delete + insert ====
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+statement ok
+UPDATE t_rr SET value = 999 WHERE key = 1;
+
+statement ok
+DELETE FROM t_rr WHERE key = 3;
+
+statement ok
+INSERT INTO t_rr VALUES (4, 40);
+
+statement ok
+COMMIT;
+
+# ==== Committed txn 3: another insert (multiple committed txns survive) ====
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+statement ok
+INSERT INTO t_rr VALUES (5, 50);
+
+statement ok
+COMMIT;
+
+# ==== Uncommitted txn: must be lost after crash ====
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+statement ok
+INSERT INTO t_rr VALUES (6, 60), (7, 70);
+
+statement ok
+UPDATE t_rr SET value = 0 WHERE key = 2;
+
+statement ok
+DELETE FROM t_rr WHERE key = 4;
+
+# ==== TRIGGER CRASH (uncommitted txn is in flight) ====
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+query error connection closed
+SELECT 1;
+
+# ==== RECONNECT AND VERIFY ====
+# Committed: (1,999) update, (2,20) original, (4,40) insert, (5,50) insert
+# key=3 deleted by committed txn 2
+# Uncommitted: keys 6,7 gone; key=2 still 20; key=4 still present
+connection rr_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM t_rr ORDER BY key;
+----
+key	value
+1	999
+2	20
+4	40
+5	50
+
+connection rr_after
+statement ok
+DROP TABLE IF EXISTS t_rr;
+
+
+###############################################################################
+# 2. Crash before RocksDB commit (crash_before_rocksdb_commit)
+#    Server crashes during COMMIT, before RocksDB persists.
+#    Data must NOT survive recovery.
+###############################################################################
+
+connection rr_after
+statement ok
+RESET sdb_faults;
+
+connection rr_after
+statement ok
+CREATE TABLE t_pre_commit(key INT PRIMARY KEY, value INT);
+
+connection rr_after
+statement ok
+INSERT INTO t_pre_commit VALUES (1, 10);
+
+# Arm: crash right before rocksdb commit
+connection rr_after
+statement ok
+SET sdb_fault_crash_before_rocksdb_commit TO DEFAULT;
+
+connection rr_after
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection rr_after
+statement ok
+INSERT INTO t_pre_commit VALUES (2, 20);
+
+# COMMIT triggers exit(1) before RocksDB commit
+connection rr_after
+statement error connection closed
+COMMIT;
+
+# Reconnect and verify: key=2 must NOT be present
+connection rr_pre
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM t_pre_commit ORDER BY key;
+----
+key	value
+1	10
+
+connection rr_pre
+statement ok
+DROP TABLE t_pre_commit;
+
+
+###############################################################################
+# 3. Crash after RocksDB commit (crash_after_rocksdb_commit)
+#    Server crashes during COMMIT, after RocksDB persists.
+#    Data MUST survive recovery.
+###############################################################################
+
+connection rr_pre
+statement ok
+RESET sdb_faults;
+
+connection rr_pre
+statement ok
+CREATE TABLE t_post_commit(key INT PRIMARY KEY, value INT);
+
+connection rr_pre
+statement ok
+INSERT INTO t_post_commit VALUES (1, 10);
+
+# Arm: crash right after rocksdb commit
+connection rr_pre
+statement ok
+SET sdb_fault_crash_after_rocksdb_commit TO DEFAULT;
+
+connection rr_pre
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection rr_pre
+statement ok
+INSERT INTO t_post_commit VALUES (2, 20);
+
+# COMMIT triggers exit(1) after RocksDB commit
+connection rr_pre
+statement error connection closed
+COMMIT;
+
+# Reconnect and verify: key=2 MUST be present (RocksDB committed it)
+connection rr_post
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM t_post_commit ORDER BY key;
+----
+key	value
+1	10
+2	20
+
+connection rr_post
+statement ok
+DROP TABLE t_post_commit;

@@ -3,7 +3,7 @@ target_link_libraries(search-benchmark-game-build iresearch-static simdjson)
 
 add_executable(search-benchmark-game-query do_query.cpp)
 
-target_link_libraries(search-benchmark-game-query sereneserver)
+target_link_libraries(search-benchmark-game-query iresearch-static)
 
 add_custom_target(search-benchmark-game)
 add_dependencies(

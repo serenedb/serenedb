@@ -31,12 +31,12 @@ using Disallowed = containers::FlatHashSet<Objects::ObjectName>;
 void ResolveQueryView(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
-                      const Objects& query);
+                      const Objects& query, const Config& config);
 
 void ResolveSqlFunction(ObjectId database,
                         std::span<const std::string> search_path,
                         Objects& objects, Disallowed& disallowed,
-                        const Objects& query);
+                        const Objects& query, const Config& config);
 
 void Resolve(ObjectId database, Objects& objects, const Config& config);
 

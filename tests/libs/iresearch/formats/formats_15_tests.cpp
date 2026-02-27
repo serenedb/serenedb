@@ -41,9 +41,20 @@ struct EmptyColumnProvider : irs::ColumnProvider {
 struct FreqScorerContext : public irs::ScoreOperator {
   FreqScorerContext(const auto* freq) : freq_source{freq} {}
 
-  void Score(irs::score_t* res, size_t n) noexcept override {
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
     ASSERT_EQ(1, n);
-    *res = freq_source->value;
+    irs::Merge<MergeType>(*res, freq_source->value);
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
   }
 
   const irs::FreqAttr* freq_source;

@@ -255,44 +255,53 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
     _conflict_resolver{transaction, cf, conflict_policy, table_name},
     _number_of_rows_affected{number_of_rows_affected} {}
 
-SSTInsertDataSink::SSTInsertDataSink(
+template<bool IsGeneratedPK>
+SSTInsertDataSink<IsGeneratedPK>::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SSTSinkWriter>(
-      SSTSinkWriter{db, cf, columns}, memory_pool, object_key, key_childs,
-      std::move(columns), std::move(index_writers)) {}
+  : Base(SSTSinkWriter<IsGeneratedPK>{object_key, db, cf, columns, memory_pool},
+         memory_pool, object_key, key_childs, std::move(columns),
+         std::move(index_writers)) {}
 
-void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
+template<bool IsGeneratedPK>
+void SSTInsertDataSink<IsGeneratedPK>::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  SDB_ASSERT(input->type()->size() == _columns_info.size(),
-             "RocksDBDataSink: column oids size ", _columns_info.size(),
+  SDB_ASSERT(input->type()->size() == this->_columns_info.size(),
+             "RocksDBDataSink: column oids size ", this->_columns_info.size(),
              " doesn't match input type size ", input->type()->size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
-  const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
 
-  _store_keys_buffers.clear();
-  _store_keys_buffers.reserve(num_rows);
-
+  this->_store_keys_buffers.clear();
+  this->_store_keys_buffers.reserve(num_rows);
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey<true>(
-      input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
-      _store_keys_buffers.emplace_back());
+    auto& key_buffer = this->_store_keys_buffers.emplace_back();
+    if (!this->_key_childs.empty()) {
+      primary_key::Create(*input, this->_key_childs, row_idx, key_buffer);
+    } else {
+      const auto generated_pk =
+        std::bit_cast<int64_t>(RevisionId::create().id());
+      primary_key::AppendSigned(key_buffer, generated_pk);
+    }
   }
 
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (_columns_info[i].id != catalog::Column::kGeneratedPKId) {
-      WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
+    if (this->_columns_info[i].id != catalog::Column::kGeneratedPKId) {
+      this->WriteInputColumn(this->_columns_info[i].id, i, *input,
+                             all_rows_range);
     }
   }
 }
+
+template class SSTInsertDataSink<true>;
+template class SSTInsertDataSink<false>;
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::string_view table_name, rocksdb::Transaction& transaction,
@@ -2415,7 +2424,9 @@ const std::string* RocksDBDataSinkBase<DataWriterType>::SetupRowKey(
   if (row_key.empty()) {
     return nullptr;
   }
-  key_utils::SetupColumnForKey(row_key, _column_id);
+  if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
+    key_utils::SetupColumnForKey(row_key, _column_id);
+  }
 
   return &row_key;
 }

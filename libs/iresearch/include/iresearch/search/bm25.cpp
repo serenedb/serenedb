@@ -100,8 +100,8 @@ struct BM25FieldCollector final : FieldCollector {
 };
 
 struct ObjectParams {
-  float_t k = BM25::K();
-  float_t b = BM25::B();
+  score_t k = BM25::K();
+  score_t b = BM25::B();
   bool boost_as_score = BM25::BOOST_AS_SCORE();
   bool approximate = true;
 };
@@ -124,8 +124,8 @@ Scorer::ptr MakeFromObject(const vpack::Slice slice) {
 }
 
 struct ArrayParams {
-  float_t k = BM25::K();
-  float_t b = BM25::B();
+  score_t k = BM25::K();
+  score_t b = BM25::B();
 };
 
 Scorer::ptr MakeFromArray(const vpack::Slice slice) {
@@ -184,23 +184,23 @@ Scorer::ptr MakeJson(std::string_view args) {
   return nullptr;
 }
 
-template<typename T>
-IRS_FORCE_INLINE void Bm1Boost(T* IRS_RESTRICT res, size_t n,
+template<ScoreMergeType MergeType>
+IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, scores_size_t n,
                                const score_t* IRS_RESTRICT boost,
-                               float_t num) noexcept {
-  for (size_t i = 0; i < n; ++i) {
+                               score_t num) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     res[i] = boost[i] * num;
   }
 }
 
-template<bool HasBoost, typename T>
-IRS_FORCE_INLINE void Bm15(T* IRS_RESTRICT res, size_t n,
+template<ScoreMergeType MergeType, bool HasBoost>
+IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
                            [[maybe_unused]] const score_t* IRS_RESTRICT boost,
-                           float_t num, float_t c1) noexcept {
+                           score_t num, score_t c1) noexcept {
   SDB_ASSERT(c1 != 0.f);
-  for (size_t i = 0; i < n; ++i) {
-    const auto c0 = [&] {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto c0 = [&] IRS_FORCE_INLINE {
       if constexpr (HasBoost) {
         SDB_ASSERT(boost);
         return boost[i] * num;
@@ -208,19 +208,20 @@ IRS_FORCE_INLINE void Bm15(T* IRS_RESTRICT res, size_t n,
         return num;
       }
     }();
-    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+    const auto r = c0 - c0 / (1.f + static_cast<score_t>(freq[i]) / c1);
+    Merge<MergeType>(res[i], r);
   }
 }
 
-template<bool HasBoost, typename T>
-IRS_FORCE_INLINE void Bm25(T* IRS_RESTRICT res, size_t n,
+template<ScoreMergeType MergeType, bool HasBoost>
+IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
                            const uint32_t* IRS_RESTRICT norm,
                            [[maybe_unused]] const score_t* IRS_RESTRICT boost,
-                           float_t num, float_t norm_const,
-                           float_t norm_length) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    const auto c0 = [&] {
+                           score_t num, score_t norm_const,
+                           score_t norm_length) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto c0 = [&] IRS_FORCE_INLINE {
       if constexpr (HasBoost) {
         SDB_ASSERT(boost);
         return boost[i] * num;
@@ -228,60 +229,67 @@ IRS_FORCE_INLINE void Bm25(T* IRS_RESTRICT res, size_t n,
         return num;
       }
     }();
-    const float_t c1 = norm_const + norm_length * static_cast<float_t>(norm[i]);
-    res[i] = c0 - c0 * c1 / (c1 + static_cast<float_t>(freq[i]));
+    const score_t c1 = norm_const + norm_length * static_cast<score_t>(norm[i]);
+    const auto r = c0 - c0 * c1 / (c1 + static_cast<score_t>(freq[i]));
+    Merge<MergeType>(res[i], r);
   }
 }
 
 template<bool HasFilterBoost>
 struct Bm1Score : public ScoreOperator {
-  Bm1Score(float_t k, score_t boost, const BM25Stats& stats,
+  Bm1Score(score_t k, score_t boost, const BM25Stats& stats,
            const score_t* fb) noexcept
     : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
-  score_t Score() noexcept final {
-    score_t res;
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
     if constexpr (HasFilterBoost) {
-      Bm1Boost(&res, 1, filter_boost, num);
-    } else {
-      res = 0;
-    }
-    return res;
-  }
-
-  void Score(score_t* res, size_t n) noexcept final {
-    if constexpr (HasFilterBoost) {
-      Bm1Boost(res, n, filter_boost, num);
+      Bm1Boost<MergeType>(res, n, filter_boost, num);
     } else {
       std::memset(res, 0, sizeof(score_t) * n);
     }
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    if constexpr (HasFilterBoost) {
-      Bm1Boost(res, kScoreBlock, filter_boost, num);
-    } else {
-      std::memset(res, 0, sizeof(score_t) * kScoreBlock);
-    }
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
+    return res;
   }
 
-  void ScorePostingBlock(score_t* res) noexcept final {
-    if constexpr (HasFilterBoost) {
-      Bm1Boost(res, kPostingBlock, filter_boost, num);
-    } else {
-      std::memset(res, 0, sizeof(score_t) * kPostingBlock);
-    }
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
   }
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
-  [[no_unique_address]] utils::Need<HasFilterBoost, float_t>
+  [[no_unique_address]] utils::Need<HasFilterBoost, score_t>
     num;  // partially precomputed numerator : boost * (k + 1) * idf
 };
 
 template<bool HasFilterBoost>
 struct Bm15Score : public ScoreOperator {
-  Bm15Score(float_t k, score_t boost, const BM25Stats& stats,
+  Bm15Score(score_t k, score_t boost, const BM25Stats& stats,
             const FreqBlockAttr* freq, const score_t* fb) noexcept
     : filter_boost{fb},
       num{boost * (k + 1) * stats.idf},
@@ -290,35 +298,53 @@ struct Bm15Score : public ScoreOperator {
     SDB_ASSERT(this->freq);
   }
 
-  score_t Score() noexcept final {
-    score_t res;
-    Bm15<HasFilterBoost>(&res, 1, freq->value, TryGetValue(filter_boost), num,
-                         norm_const);
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
+    Bm15<MergeType, HasFilterBoost>(res, n, freq->value,
+                                    TryGetValue(filter_boost), num, norm_const);
+  }
+
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
     return res;
   }
-  void Score(score_t* res, size_t n) noexcept final {
-    Bm15<HasFilterBoost>(res, n, freq->value, TryGetValue(filter_boost), num,
-                         norm_const);
+
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
   }
-  void ScoreBlock(score_t* res) noexcept final {
-    Bm15<HasFilterBoost>(res, kScoreBlock, freq->value,
-                         TryGetValue(filter_boost), num, norm_const);
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScorePostingBlock(score_t* res) noexcept final {
-    Bm15<HasFilterBoost>(res, kPostingBlock, freq->value,
-                         TryGetValue(filter_boost), num, norm_const);
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
   }
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
-  float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
-  float_t norm_const;         // 'k' factor
+  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
+  score_t norm_const;         // 'k' factor
   const FreqBlockAttr* freq;  // document frequency
 };
 
 template<bool HasFilterBoost>
 struct Bm25Score : public ScoreOperator {
-  Bm25Score(float_t k, score_t boost, const BM25Stats& stats,
+  Bm25Score(score_t k, score_t boost, const BM25Stats& stats,
             const FreqBlockAttr* freq, const uint32_t* norm,
             const score_t* filter_boost) noexcept
     : filter_boost{filter_boost},
@@ -328,37 +354,51 @@ struct Bm25Score : public ScoreOperator {
       norm{norm},
       norm_length{stats.norm_length} {}
 
-  score_t Score() noexcept final {
-    score_t res;
-    Bm25<HasFilterBoost>(&res, 1, freq->value, norm, TryGetValue(filter_boost),
-                         num, norm_const, norm_length);
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
+    Bm25<MergeType, HasFilterBoost>(res, n, freq->value, norm,
+                                    TryGetValue(filter_boost), num, norm_const,
+                                    norm_length);
+  }
+
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
     return res;
   }
 
-  void Score(score_t* res, size_t n) noexcept final {
-    Bm25<HasFilterBoost>(res, n, freq->value, norm, TryGetValue(filter_boost),
-                         num, norm_const, norm_length);
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
-                         TryGetValue(filter_boost), num, norm_const,
-                         norm_length);
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
   }
 
-  void ScorePostingBlock(score_t* res) noexcept final {
-    Bm25<HasFilterBoost>(res, kPostingBlock, freq->value, norm,
-                         TryGetValue(filter_boost), num, norm_const,
-                         norm_length);
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
   }
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
     filter_boost;
-  float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
-  float_t norm_const;         // 'k' factor
+  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
+  score_t norm_const;         // 'k' factor
   const FreqBlockAttr* freq;  // document frequency
   const uint32_t* norm;
-  float_t norm_length;  // precomputed 'k*b/avg_dl'
+  score_t norm_length;  // precomputed 'k*b/avg_dl'
 };
 
 }  // namespace
@@ -378,7 +418,7 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
   const auto total_term_freq = field_ptr ? field_ptr->total_term_freq : 0;
 
   // precomputed idf value
-  stats->idf += float_t(
+  stats->idf += score_t(
     std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
                (static_cast<double>(docs_with_term) + 0.5)));
   SDB_ASSERT(stats->idf >= 0.f);
@@ -390,12 +430,12 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
   }
 
   // precomputed length norm
-  const float_t kb = _k * _b;
+  const score_t kb = _k * _b;
 
   stats->norm_const = _k - kb;
   if (total_term_freq && docs_with_field) {
-    const auto avg_dl = static_cast<float_t>(total_term_freq) /
-                        static_cast<float_t>(docs_with_field);
+    const auto avg_dl = static_cast<score_t>(total_term_freq) /
+                        static_cast<score_t>(docs_with_field);
     stats->norm_length = kb / avg_dl;
   } else {
     stats->norm_length = kb;

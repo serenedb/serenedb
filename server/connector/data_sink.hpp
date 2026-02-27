@@ -294,7 +294,11 @@ class RocksDBUpdateDataSink final
   bool _update_pk{};
 };
 
-class SSTInsertDataSink final : public RocksDBDataSinkBase<SSTSinkWriter> {
+template<bool IsGeneratedPK>
+class SSTInsertDataSink final
+  : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>> {
+  using Base = RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>>;
+
  public:
   SSTInsertDataSink(
     rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
@@ -306,15 +310,18 @@ class SSTInsertDataSink final : public RocksDBDataSinkBase<SSTSinkWriter> {
   void appendData(velox::RowVectorPtr input) final;
 
   bool finish() final {
-    _data_writer.Finish();
+    this->_data_writer.Finish();
     return true;
   }
 
   void abort() final {
-    _data_writer.Abort();
-    RocksDBDataSinkBase<SSTSinkWriter>::abort();
+    this->_data_writer.Abort();
+    Base::abort();
   }
 };
+
+extern template class SSTInsertDataSink<true>;
+extern template class SSTInsertDataSink<false>;
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:

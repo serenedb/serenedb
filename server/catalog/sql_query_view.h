@@ -45,7 +45,7 @@ class SqlQueryViewImpl {
   static Result Parse(State& state, ObjectId database, std::string_view query);
 
   static Result Check(ObjectId database, std::string_view name,
-                      const State& state);
+                      const State& state, const Config& config);
 };
 
 using SqlQueryView = catalog::BaseQueryView<SqlQueryViewImpl>;

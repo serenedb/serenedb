@@ -48,26 +48,40 @@ struct DocIdScorer : irs::ScorerBase<void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    struct ScorerContext : irs::ScoreOperator {
-      ScorerContext(const irs::FreqBlockAttr* freq,
-                    irs::doc_id_t divisor) noexcept
-        : freq{freq}, divisor{divisor} {}
+  struct ScorerContext : irs::ScoreOperator {
+    ScorerContext(const irs::FreqBlockAttr* freq,
+                  irs::doc_id_t divisor) noexcept
+      : freq{freq}, divisor{divisor} {}
 
-      void Score(irs::score_t* res, size_t n) noexcept override {
-        ASSERT_NE(nullptr, res);
-        for (size_t i = 0; i < n; ++i) {
-          auto doc_id = freq ? freq->value[i] : next_doc++;
-          res[i] = divisor == 0 ? static_cast<irs::score_t>(doc_id)
-                                : static_cast<irs::score_t>(doc_id % divisor);
-        }
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+      ASSERT_NE(nullptr, res);
+      for (size_t i = 0; i < n; ++i) {
+        auto doc_id = freq ? freq->value[i] : next_doc++;
+        irs::Merge<MergeType>(
+          res[i], divisor == 0 ? static_cast<irs::score_t>(doc_id)
+                               : static_cast<irs::score_t>(doc_id % divisor));
       }
+    }
 
-      const irs::FreqBlockAttr* freq;
-      irs::doc_id_t divisor;
-      mutable irs::doc_id_t next_doc{irs::doc_limits::min()};
-    };
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+    }
 
+    const irs::FreqBlockAttr* freq;
+    irs::doc_id_t divisor;
+    mutable irs::doc_id_t next_doc{irs::doc_limits::min()};
+  };
+
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
 
     return irs::ScoreFunction::Make<ScorerContext>(freq, divisor);

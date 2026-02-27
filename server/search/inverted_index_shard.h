@@ -43,6 +43,7 @@ class InvertedIndexShard;
 struct InvertedIndexShardOptions {
   size_t commit_interval_ms;
   size_t consolidation_interval_ms;
+  size_t cleanup_interval_step;
 };
 
 struct ThreadPoolState {

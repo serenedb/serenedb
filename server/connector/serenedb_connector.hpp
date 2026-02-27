@@ -660,6 +660,11 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (needs_read_your_own_writes) {
       auto& rocksdb_transaction = transaction.GetRocksDBTransaction();
       SDB_ASSERT(snapshot == rocksdb_transaction.GetSnapshot());
+      if (serene_table_handle.GetSearchQuery()) {
+        SDB_THROW(
+          ERROR_NOT_IMPLEMENTED,
+          "sdb_read_your_own_writes is not supported for inverted index");
+      }
 
 #ifdef SDB_FAULT_INJECTION
       // failpoints are per process so we make unique name to allow multiple

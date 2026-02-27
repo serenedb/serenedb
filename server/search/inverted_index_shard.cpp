@@ -112,7 +112,7 @@ InvertedIndexShard::InvertedIndexShard(PrivateTag,
   _tasks_settings.commit_interval_msec = _options.commit_interval_ms;
   _tasks_settings.consolidation_interval_msec =
     _options.consolidation_interval_ms;
-  _tasks_settings.cleanup_interval_step = 10;
+  _tasks_settings.cleanup_interval_step = _options.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
   const auto db_id = index.GetDatabaseId();

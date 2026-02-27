@@ -25,7 +25,7 @@ struct ColumnAnalyzer {
 class InvertedIndex final : public Index {
  public:
   InvertedIndex(IndexOptions<InvertedIndexOptions> options)
-    : Index{std::move(options.base)}, _options(options.impl) {}
+    : Index{std::move(options.base)}, _options{std::move(options.impl)} {}
 
   void WriteInternal(vpack::Builder& builder) const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(

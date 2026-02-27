@@ -38,7 +38,6 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/utils/text_format.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "basics/exceptions.h"
@@ -101,6 +100,7 @@ std::optional<velox::Variant> EvaluateConstant(
 const search::ColumnInfo& FindColumnInfo(
   const VeloxFilterContext& ctx,
   const velox::core::FieldAccessTypedExpr& expr) {
+  // TODO(Dronplane): Remove this cache whe analyzers would be pooled.
   auto cache_it = ctx.column_cache.find(expr.name());
   if (cache_it != ctx.column_cache.end()) {
     SDB_ASSERT(cache_it->second.analyzer.analyzer);

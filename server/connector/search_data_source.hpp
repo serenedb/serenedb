@@ -34,7 +34,8 @@ class SearchDataSource final : public velox::connector::DataSource,
                                public Materializer {
  public:
   SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                   // Search source always uses snapshot
+                   // Search source always uses snapshot synced with index state
+                   // to avoid materialization failures
                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                    std::vector<catalog::Column::Id> column_ids,

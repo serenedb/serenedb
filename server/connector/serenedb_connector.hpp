@@ -195,12 +195,12 @@ class SereneDBConnectorTableHandle final
   }
 
   auto& GetTransaction() const noexcept { return _transaction; }
-  // splits per segment???
+
   const irs::Filter::Query* GetSearchQuery() const noexcept {
     return _search_query.get();
   }
 
-  ObjectId GetIndex() const noexcept { return _index_id; }
+  ObjectId GetIndexId() const noexcept { return _index_id; }
 
  private:
   std::string _name;
@@ -688,7 +688,7 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     if (serene_table_handle.GetSearchQuery()) {
       const auto& search_snapshot =
-        transaction.EnsureSearchSnapshot(serene_table_handle.GetIndex());
+        transaction.EnsureSearchSnapshot(serene_table_handle.GetIndexId());
       return std::make_unique<search::SearchDataSource>(
         *connector_query_ctx->memoryPool(),
         search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,

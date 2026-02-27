@@ -2269,7 +2269,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       for (const auto& [type, name] :
            std::views::zip(output_type.children(), output_type.names())) {
         auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
-        column_exprs.push_back(std::move(expr));
+        column_exprs.emplace_back(std::move(expr));
 
         auto alias = ToAlias(name);
         if (absl::c_contains(column_names, alias)) {

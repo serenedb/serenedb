@@ -99,12 +99,20 @@
 #endif
 
 namespace sdb::catalog {
+
+class SnapshotImpl;
+
 namespace {
 
-Result Apply(auto& snapshot, auto&& f) {
+Result Apply(
+  auto& snapshot, auto&& f,
+  std::function<void(const std::shared_ptr<SnapshotImpl>&)> rollback = {}) {
   auto clone =
     std::atomic_load_explicit(&snapshot, std::memory_order_relaxed)->Clone();
   if (auto r = f(clone); !r.ok()) {
+    if (rollback) {
+      rollback(clone);
+    }
     return r;
   }
   std::atomic_store_explicit(&snapshot, std::move(clone),
@@ -459,6 +467,10 @@ class SnapshotImpl : public Snapshot {
       return nullptr;
     }
     return *it;
+  }
+
+  bool ContainsObject(ObjectId id) const {
+    return _objects.find(id) != _objects.end();
   }
 
   std::shared_ptr<TableShard> GetTableShard(ObjectId table_id) const final {
@@ -825,54 +837,67 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
   // TODO(gnusi): make it atomic
 
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
-    auto r = clone->RegisterObject(database, id::kInstance, false);
-    if (!r.ok()) {
-      return r;
-    }
-    {
-      vpack::Builder builder;
-      database->WriteInternal(builder);
-      auto r = _engine->CreateDefinition(
-        id::kInstance, RocksDBEntryType::Database, database_id,
-        [&](bool) { return builder.slice(); });
-
+  return Apply(
+    _snapshot,
+    [&](auto& clone) {
+      auto r = clone->RegisterObject(database, id::kInstance, false);
       if (!r.ok()) {
         return r;
       }
-    }
+      {
+        vpack::Builder builder;
+        database->WriteInternal(builder);
+        auto r = _engine->CreateDefinition(
+          id::kInstance, RocksDBEntryType::Database, database_id,
+          [&](bool) { return builder.slice(); });
 
-    auto schema = std::make_shared<Schema>(
-      database_id, SchemaOptions{
-                     .owner_id = owner_id,
-                     .name = std::string{StaticStrings::kPublic},
-                   });
-    if (auto r = clone->RegisterObject(schema, database_id, false); !r.ok()) {
-      return r;
-    }
-    vpack::Builder builder;
-    schema->WriteInternal(builder);
+        if (!r.ok()) {
+          return r;
+        }
+      }
 
-    return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
-                                     schema->GetId(),
-                                     [&](bool) { return builder.slice(); });
-  });
+      auto schema = std::make_shared<Schema>(
+        database_id, SchemaOptions{
+                       .owner_id = owner_id,
+                       .name = std::string{StaticStrings::kPublic},
+                     });
+      r = clone->RegisterObject(schema, database_id, false);
+      SDB_ASSERT(r.ok());
+      vpack::Builder builder;
+      schema->WriteInternal(builder);
+
+      return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
+                                       schema->GetId(),
+                                       [&](bool) { return builder.slice(); });
+    },
+    [&](auto clone) {
+      if (clone->ContainsObject(database->GetId())) {
+        clone->UnregisterObject(database, id::kInstance);
+      }
+    });
 }
 
 Result LocalCatalog::CreateSchema(ObjectId database_id,
                                   std::shared_ptr<Schema> schema) {
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
-    if (auto r = clone->RegisterObject(schema, database_id, false); !r.ok()) {
-      return r;
-    }
-    vpack::Builder builder;
-    schema->WriteInternal(builder);
+  return Apply(
+    _snapshot,
+    [&](auto& clone) {
+      if (auto r = clone->RegisterObject(schema, database_id, false); !r.ok()) {
+        return r;
+      }
+      vpack::Builder builder;
+      schema->WriteInternal(builder);
 
-    return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
-                                     schema->GetId(),
-                                     [&](bool) { return builder.slice(); });
-  });
+      return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
+                                       schema->GetId(),
+                                       [&](bool) { return builder.slice(); });
+    },
+    [&](auto clone) {
+      if (clone->ContainsObject(schema->GetId())) {
+        clone->UnregisterObject(schema, database_id);
+      }
+    });
 }
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
@@ -987,80 +1012,91 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
     return std::move(index).error();
   }
 
-  return Apply(_snapshot, [&](auto& clone) {
-    auto r = clone->RegisterObject(*index, (*index)->GetRelationId(), false);
-    if (!r.ok()) {
-      return r;
-    }
-    r = (*index)
-          ->CreateIndexShard(true, ObjectId{0}, std::move(args))
-          .transform([&](auto&& index_shard) {
-            vpack::Builder b;
-            index_shard->WriteInternal(b);
-            auto r = _engine->CreateDefinition(
-              index_shard->GetId(), RocksDBEntryType::IndexShard,
-              index_shard->GetId(), [&](bool) { return b.slice(); });
-            if (!r.ok()) {
-              return r;
-            }
-            return clone->RegisterObject(std::move(index_shard),
-                                         (*index)->GetId(), false);
-          })
-          .error_or(Result{});
-    if (!r.ok()) {
-      return r;
-    }
-    vpack::Builder b;
-    (*index)->WriteInternal(b);
-    return _engine->CreateDefinition((*index)->GetRelationId(),
-                                     RocksDBEntryType::Index, (*index)->GetId(),
-                                     [&](bool) { return b.slice(); });
-  });
+  return Apply(
+    _snapshot,
+    [&](auto& clone) {
+      auto r = clone->RegisterObject(*index, (*index)->GetRelationId(), false);
+      if (!r.ok()) {
+        return r;
+      }
+      r = (*index)
+            ->CreateIndexShard(true, ObjectId{0}, std::move(args))
+            .transform([&](auto&& index_shard) {
+              vpack::Builder b;
+              index_shard->WriteInternal(b);
+              auto r = _engine->CreateDefinition(
+                index_shard->GetId(), RocksDBEntryType::IndexShard,
+                index_shard->GetId(), [&](bool) { return b.slice(); });
+              if (!r.ok()) {
+                return r;
+              }
+              return clone->RegisterObject(std::move(index_shard),
+                                           (*index)->GetId(), false);
+            })
+            .error_or(Result{});
+      if (!r.ok()) {
+        return r;
+      }
+      vpack::Builder b;
+      (*index)->WriteInternal(b);
+      return _engine->CreateDefinition(
+        (*index)->GetRelationId(), RocksDBEntryType::Index, (*index)->GetId(),
+        [&](bool) { return b.slice(); });
+    },
+    [&](auto clone) {
+      if (clone->ContainsObject((*index)->GetId())) {
+        clone->UnregisterObject(*index, (*index)->GetRelationId());
+      }
+    });
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
                                 std::shared_ptr<View> view, bool replace) {
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
-    auto schema_id =
-      clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-    if (!schema_id) {
-      return Result(ERROR_SERVER_ILLEGAL_NAME);
-    }
-
-    if (replace) {
-      // Check replaced object have the same type
-      Result r = clone
-                   ->template GetObjectId<ResolveType::Relation>(
-                     *schema_id, view->GetName())
-                   .transform([&](ObjectId existed_id) {
-                     auto existed_object =
-                       clone->template GetObject<SchemaObject>(existed_id);
-                     return existed_object->GetType() == ObjectType::View
-                              ? Result{}
-                              : Result{ERROR_SERVER_ILLEGAL_NAME, "\"",
-                                       view->GetName(), "\" is not a view"};
-                   })
-                   .value_or(Result{});
-      if (!r.ok()) {
-        return r;
-      }
-    }
-
-    auto r = clone->RegisterObject(view, *schema_id, replace);
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result(ERROR_SERVER_ILLEGAL_NAME);
+  }
+  if (replace) {
+    // Check replaced object have the same type
+    Result r =
+      _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, view->GetName())
+        .transform([&](ObjectId existed_id) {
+          auto existed_object = _snapshot->GetObject<SchemaObject>(existed_id);
+          return existed_object->GetType() == ObjectType::View
+                   ? Result{}
+                   : Result{ERROR_SERVER_ILLEGAL_NAME, "\"", view->GetName(),
+                            "\" is not a view"};
+        })
+        .value_or(Result{});
     if (!r.ok()) {
       return r;
     }
+  }
 
-    vpack::Builder builder;
-    builder.openObject();
-    view->WriteProperties(builder);
-    builder.close();
+  return Apply(
+    _snapshot,
+    [&](auto& clone) {
+      auto r = clone->RegisterObject(view, *schema_id, replace);
+      if (!r.ok()) {
+        return r;
+      }
 
-    return _engine->CreateDefinition(
-      *schema_id, RocksDBEntryType::View, view->GetId(),
-      [&](bool internal) { return builder.slice(); });
-  });
+      vpack::Builder builder;
+      builder.openObject();
+      view->WriteProperties(builder);
+      builder.close();
+
+      return _engine->CreateDefinition(
+        *schema_id, RocksDBEntryType::View, view->GetId(),
+        [&](bool internal) { return builder.slice(); });
+    },
+    [&](auto clone) {
+      if (clone->ContainsObject(view->GetId())) {
+        clone->UnregisterObject(view, *schema_id);
+      }
+    });
 }
 
 Result LocalCatalog::CreateFunction(ObjectId database_id,
@@ -1068,24 +1104,32 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
                                     std::shared_ptr<Function> function,
                                     bool replace) {
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
-    auto schema_id =
-      clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-    if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto r = clone->RegisterObject(function, *schema_id, replace);
-    if (!r.ok()) {
-      return r;
-    }
-    vpack::Builder builder;
-    builder.openObject();
-    function->WriteProperties(builder);
-    builder.close();
-    return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
-                                     function->GetId(),
-                                     [&](bool) { return builder.slice(); });
-  });
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(
+    _snapshot,
+    [&](auto& clone) {
+      auto r = clone->RegisterObject(function, *schema_id, replace);
+      if (!r.ok()) {
+        return r;
+      }
+      vpack::Builder builder;
+      builder.openObject();
+      function->WriteProperties(builder);
+      builder.close();
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
+                                       function->GetId(),
+                                       [&](bool) { return builder.slice(); });
+    },
+    [&](auto clone) {
+      if (clone->ContainsObject(function->GetId())) {
+        clone->UnregisterObject(function, *schema_id);
+      }
+    });
 }
 
 Result LocalCatalog::CreateTable(
@@ -1108,76 +1152,82 @@ Result LocalCatalog::CreateTable(
               " has non primitive type and can not be part of primary key"};
     }
   }
+  auto table = std::make_shared<Table>(std::move(options), database_id);
+  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) -> Result {
-    auto schema_id =
-      clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-    if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto table = std::make_shared<Table>(std::move(options), database_id);
-    auto r = clone->RegisterObject(table, *schema_id, false);
-    if (!r.ok()) {
-      return r;
-    }
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
 
-    TableStats stats;
-    auto shard = std::make_shared<TableShard>(table->GetId(), stats);
-    r = clone->RegisterObject(shard, table->GetId(), false);
-    if (!r.ok()) {
-      return r;
-    }
-    vpack::Builder b;
-    table->WriteInternal(b);
-    r = _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
-                                  table->GetId(),
-                                  [&](bool) { return b.slice(); });
-    if (!r.ok()) {
-      return r;
-    }
-    return _engine->CreateDefinition(
-      shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
-      [](bool) -> vpack::Slice { return {}; });
-  });
+  return Apply(
+    _snapshot,
+    [&](auto& clone) -> Result {
+      auto r = clone->RegisterObject(table, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+
+      r = clone->RegisterObject(shard, table->GetId(), false);
+      SDB_ASSERT(r.ok());
+      vpack::Builder b;
+      table->WriteInternal(b);
+      r = _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
+                                    table->GetId(),
+                                    [&](bool) { return b.slice(); });
+      if (!r.ok()) {
+        return r;
+      }
+      return _engine->CreateDefinition(
+        shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
+        [](bool) -> vpack::Slice { return {}; });
+    },
+    [&](auto clone) {
+      if (clone->ContainsObject(table->GetId())) {
+        clone->UnregisterObject(table, *schema_id);
+      }
+    });
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
                                 std::string_view new_name) {
-  auto r = [&] -> Result {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) -> Result {
-      auto schema_id =
-        clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-      if (!schema_id) {
-        return Result{ERROR_SERVER_ILLEGAL_NAME};
-      }
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
 
-      auto object_id =
-        clone->template GetObjectId<ResolveType::Relation>(*schema_id, name);
-      if (!object_id) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      auto view = basics::downCast<View>(clone->GetObject(*object_id));
-      if (!view) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
+  if (!view) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      if (view->GetName() == new_name) {
-        return {};
-      }
+  if (view->GetName() == new_name) {
+    return {};
+  }
 
-      std::shared_ptr<View> new_view;
-      auto r = view->Rename(new_view, new_name);
-      if (!r.ok()) {
-        return r;
-      }
+  std::shared_ptr<View> new_view;
+  auto r = view->Rename(new_view, new_name);
+  if (!r.ok()) {
+    return r;
+  }
 
-      r = clone->template ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                               new_view);
-      if (!r.ok()) {
+  return Apply(
+    _snapshot,
+    [&](auto& clone) -> Result {
+      if (auto r = clone->template ReplaceObject<ResolveType::Relation>(
+            *schema_id, name, new_view);
+          !r.ok()) {
         return r;
       }
 
@@ -1189,58 +1239,56 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
       return _engine->CreateDefinition(
         *schema_id, RocksDBEntryType::View, new_view->GetId(),
         [&](bool internal) { return builder.slice(); });
+    },
+    [&](const std::shared_ptr<SnapshotImpl>& clone) {
+      auto obj = clone->GetObject<View>(new_view->GetId());
+      if (obj->GetName() == new_view->GetName()) {
+        auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id,
+                                                             new_name, view);
+        SDB_ASSERT(r.ok());
+      }
     });
-  }();
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
 }
 
 Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
                                  std::string_view name,
                                  std::string_view new_name) {
-  ObjectId table_id;
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
 
-  auto r = [&] {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) -> Result {
-      auto schema_id =
-        clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-      if (!schema_id) {
-        return Result{ERROR_SERVER_ILLEGAL_NAME};
-      }
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      auto object_id =
-        clone->template GetObjectId<ResolveType::Relation>(*schema_id, name);
-      if (!object_id) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  auto old_table = basics::downCast<Table>(_snapshot->GetObject(*object_id));
+  if (!old_table) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      auto old_table = basics::downCast<Table>(clone->GetObject(*object_id));
-      if (!old_table) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  if (old_table->GetName() == new_name) {
+    return {};
+  }
 
-      if (old_table->GetName() == new_name) {
-        return {};
-      }
+  NewOptions options{
+    .name = new_name,
+    .schema = old_table->GetSchema(),
+    .number_of_shards = old_table->numberOfShards(),
+    .replication_factor = old_table->replicationFactor(),
+    .write_concern = old_table->writeConcern(),
+    .wait_for_sync = old_table->waitForSync(),
+  };
 
-      table_id = old_table->GetId();
+  auto new_table = std::make_shared<Table>(*old_table, std::move(options));
 
-      NewOptions options{
-        .name = new_name,
-        .schema = old_table->GetSchema(),
-        .number_of_shards = old_table->numberOfShards(),
-        .replication_factor = old_table->replicationFactor(),
-        .write_concern = old_table->writeConcern(),
-        .wait_for_sync = old_table->waitForSync(),
-      };
-
-      auto new_table = std::make_shared<Table>(*old_table, std::move(options));
-
+  absl::MutexLock lock{&_mutex};
+  return Apply(
+    _snapshot,
+    [&](auto& clone) -> Result {
       auto r = clone->template ReplaceObject<ResolveType::Relation>(
         *schema_id, name, new_table);
       if (!r.ok()) {
@@ -1252,17 +1300,15 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
       return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
                                        new_table->GetId(),
                                        [&](bool) { return b.slice(); });
+    },
+    [&](const std::shared_ptr<SnapshotImpl>& clone) {
+      auto obj = clone->GetObject<Table>(new_table->GetId());
+      if (obj->GetName() == new_table->GetName()) {
+        auto r = clone->ReplaceObject<ResolveType::Relation>(
+          *schema_id, new_name, old_table);
+        SDB_ASSERT(r.ok());
+      }
     });
-  }();
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  if (table_id.isSet()) {
-    aql::QueryCache::instance()->invalidate(database_id, table_id);
-  }
-  return {};
 }
 
 Result LocalCatalog::ChangeRole(std::string_view name,
@@ -1298,118 +1344,95 @@ Result LocalCatalog::ChangeRole(std::string_view name,
 Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
                                 ChangeCallback<View> new_view) {
-  auto r = [&] {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) -> Result {
-      auto schema_id =
-        clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-      if (!schema_id) {
-        return Result{ERROR_SERVER_ILLEGAL_NAME};
-      }
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
 
-      auto object_id =
-        clone->template GetObjectId<ResolveType::Relation>(*schema_id, name);
-      if (!object_id) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      auto view = basics::downCast<View>(clone->GetObject(*object_id));
-      if (!view) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
+  if (!view) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      std::shared_ptr<View> updated;
-      auto r = new_view(*view, updated);
-      if (!r.ok()) {
-        return r;
-      }
-      if (!updated) {
-        return {};
-      }
-
-      r = clone->template ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                               updated);
-      if (!r.ok()) {
-        return r;
-      }
-
-      vpack::Builder builder;
-      builder.openObject();
-      updated->WriteProperties(builder);
-      builder.close();
-
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::View, updated->GetId(),
-        [&](bool internal) { return builder.slice(); });
-    });
-  }();
-
+  std::shared_ptr<View> updated;
+  auto r = new_view(*view, updated);
   if (!r.ok()) {
     return r;
   }
+  if (!updated) {
+    return {};
+  }
+  return Apply(_snapshot, [&](auto& clone) -> Result {
+    auto r = clone->template ReplaceObject<ResolveType::Relation>(
+      *schema_id, name, updated);
+    if (!r.ok()) {
+      return r;
+    }
 
-  aql::QueryCache::instance()->invalidate(database_id);
-  return {};
+    vpack::Builder builder;
+    builder.openObject();
+    updated->WriteProperties(builder);
+    builder.close();
+
+    return _engine->CreateDefinition(
+      *schema_id, RocksDBEntryType::View, updated->GetId(),
+      [&](bool internal) { return builder.slice(); });
+  });
 }
 
 Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                                  std::string_view name,
                                  ChangeCallback<Table> new_table) {
-  ObjectId table_id;
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
 
-  auto r = [&] {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) -> Result {
-      auto schema_id =
-        clone->template GetObjectId<ResolveType::Schema>(database_id, schema);
-      if (!schema_id) {
-        return Result{ERROR_SERVER_ILLEGAL_NAME};
-      }
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      auto object_id =
-        clone->template GetObjectId<ResolveType::Relation>(*schema_id, name);
-      if (!object_id) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
+  auto table = basics::downCast<Table>(_snapshot->GetObject(*object_id));
+  if (!table) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
 
-      auto table = basics::downCast<Table>(clone->GetObject(*object_id));
-      if (!table) {
-        return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-      }
-
-      std::shared_ptr<Table> updated;
-      auto r = new_table(*table, updated);
-      if (!r.ok()) {
-        return r;
-      }
-      if (!updated) {
-        return {};
-      }
-
-      table_id = updated->GetId();
-
-      r = clone->template ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                               updated);
-      if (!r.ok()) {
-        return r;
-      }
-
-      return basics::SafeCall([&] {
-        vpack::Builder b;
-        updated->WriteInternal(b);
-        return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
-                                         updated->GetId(),
-                                         [&](bool) { return b.slice(); });
-      });
-    });
-  }();
-
+  std::shared_ptr<Table> updated;
+  auto r = new_table(*table, updated);
   if (!r.ok()) {
     return r;
   }
+  if (!updated) {
+    return {};
+  }
 
-  aql::QueryCache::instance()->invalidate(database_id, table_id);
-  return {};
+  return Apply(_snapshot, [&](auto& clone) -> Result {
+    auto r = clone->template ReplaceObject<ResolveType::Relation>(
+      *schema_id, name, updated);
+    if (!r.ok()) {
+      return r;
+    }
+
+    return basics::SafeCall([&] {
+      vpack::Builder b;
+      updated->WriteInternal(b);
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
+                                       updated->GetId(),
+                                       [&](bool) { return b.slice(); });
+    });
+  });
 }
 
 Result LocalCatalog::DropRole(std::string_view role) {

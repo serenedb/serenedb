@@ -121,3 +121,28 @@ count
 connection after_schema_drop
 statement ok
 CREATE SCHEMA s1;
+
+
+connection after_schema_drop
+statement ok
+CREATE DATABASE db;
+
+
+connection after_schema_drop
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+connection after_schema_drop
+statement error connection closed
+DROP DATABASE db;
+
+
+connection after_database_drop
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE DATABASE db;
+
+
+connection after_database_drop
+statement ok
+DROP DATABASE db;

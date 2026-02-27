@@ -700,7 +700,9 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::Table: {
         auto table_deps = GetDependency<TableDependency>(id);
-        RemoveObjectDefinition(id, table_deps->shard_id);
+        if (table_deps->shard_id.isSet()) {
+          RemoveObjectDefinition(id, table_deps->shard_id);
+        }
         auto index_ids = table_deps->indexes;
         if (root) {
           for (auto index_id : index_ids) {
@@ -713,7 +715,9 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::Index: {
         auto index_deps = GetDependency<IndexDependency>(id);
-        RemoveObjectDefinition(id, index_deps->shard_id);
+        if (index_deps->shard_id.isSet()) {
+          RemoveObjectDefinition(id, index_deps->shard_id);
+        }
       } break;
       case ObjectType::Function:
       case ObjectType::View:
@@ -844,6 +848,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       if (!r.ok()) {
         return r;
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {
         vpack::Builder builder;
         database->WriteInternal(builder);
@@ -886,6 +891,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
       if (auto r = clone->RegisterObject(schema, database_id, false); !r.ok()) {
         return r;
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder builder;
       schema->WriteInternal(builder);
 
@@ -1019,29 +1025,37 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       if (!r.ok()) {
         return r;
       }
-      r = (*index)
-            ->CreateIndexShard(true, ObjectId{0}, std::move(args))
-            .transform([&](auto&& index_shard) {
-              vpack::Builder b;
-              index_shard->WriteInternal(b);
-              auto r = _engine->CreateDefinition(
-                index_shard->GetId(), RocksDBEntryType::IndexShard,
-                index_shard->GetId(), [&](bool) { return b.slice(); });
-              if (!r.ok()) {
-                return r;
-              }
-              return clone->RegisterObject(std::move(index_shard),
-                                           (*index)->GetId(), false);
-            })
-            .error_or(Result{});
-      if (!r.ok()) {
-        return r;
+      auto shard =
+        (*index)->CreateIndexShard(true, ObjectId{0}, std::move(args));
+      if (!shard) {
+        return std::move(shard).error();
       }
-      vpack::Builder b;
-      (*index)->WriteInternal(b);
-      return _engine->CreateDefinition(
-        (*index)->GetRelationId(), RocksDBEntryType::Index, (*index)->GetId(),
-        [&](bool) { return b.slice(); });
+      r = clone->RegisterObject(*shard, (*index)->GetId(), false);
+      SDB_ASSERT(r.ok());
+
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      {  // Write index definition
+        vpack::Builder b;
+        (*index)->WriteInternal(b);
+        r = _engine->CreateDefinition(
+          (*index)->GetRelationId(), RocksDBEntryType::Index, (*index)->GetId(),
+          [&](bool) { return b.slice(); });
+        if (!r.ok()) {
+          return r;
+        }
+      }
+      {  // Write index shard definition
+        vpack::Builder b;
+        (*shard)->WriteInternal(b);
+
+        r = _engine->CreateDefinition(
+          (*index)->GetId(), RocksDBEntryType::IndexShard, (*shard)->GetId(),
+          [&](bool) { return b.slice(); });
+        if (!r.ok()) {
+          return r;
+        }
+      }
+      return Result{};
     },
     [&](auto clone) {
       if (clone->ContainsObject((*index)->GetId())) {
@@ -1082,6 +1096,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       if (!r.ok()) {
         return r;
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder builder;
       builder.openObject();
@@ -1117,6 +1132,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
       if (!r.ok()) {
         return r;
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder builder;
       builder.openObject();
       function->WriteProperties(builder);
@@ -1172,6 +1188,7 @@ Result LocalCatalog::CreateTable(
 
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder b;
       table->WriteInternal(b);
       r = _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,

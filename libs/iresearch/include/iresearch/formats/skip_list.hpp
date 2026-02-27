@@ -154,7 +154,7 @@ class SkipReaderBase : util::Noncopyable {
     // Where level starts.
     uint64_t begin;
     // Pointer to child level.
-    uint64_t child{};
+    uint64_t child = 0;
     // Number of documents left at a level.
     // int64_t to be able to go below 0.
     int64_t left;
@@ -257,9 +257,9 @@ class SkipReader final : public SkipReaderBase<InputType> {
  public:
   // skip_0: skip interval for level 0
   // skip_n: skip interval for levels 1..n
-  template<typename T>
-  SkipReader(doc_id_t skip_0, doc_id_t skip_n, T&& reader)
-    : Base{skip_0, skip_n}, _reader{std::forward<T>(reader)} {}
+  template<typename... Args>
+  SkipReader(doc_id_t skip_0, doc_id_t skip_n, Args&&... args)
+    : Base{skip_0, skip_n}, _reader{std::forward<Args>(args)...} {}
 
   // Seeks to the specified target.
   // Returns Number of elements skipped from upper bound

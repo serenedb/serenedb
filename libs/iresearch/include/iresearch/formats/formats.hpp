@@ -480,9 +480,7 @@ Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
 
 // For static lib reference all known formats in lib
 // no explicit call of fn is required, existence of fn is sufficient.
-inline void Init() {
-  FormatBlock128Init();
-}
+inline void Init() { FormatBlock128Init(); }
 
 // Load all formats from plugins directory.
 void LoadAll(std::string_view path);

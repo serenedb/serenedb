@@ -35,12 +35,12 @@ namespace {
 // returns maximum number of skip levels needed to store specified
 // count of objects for skip list with
 // step skip_0 for 0 level, step skip_n for other levels
-constexpr size_t CountMaxLevels(size_t skip_0, size_t skip_n,
-                                size_t count) noexcept {
+constexpr size_t CountMaxLevels(uint64_t skip_0, uint64_t skip_n,
+                                uint64_t count) noexcept {
   return skip_0 < count ? 1 + math::Log(count / skip_0, skip_n) : 0;
 }
 
-static_assert(CountMaxLevels(128, 8, doc_limits::eof()) == 9);
+static_assert(CountMaxLevels(128, 32, doc_limits::eof()) == 5);
 
 }  // namespace
 

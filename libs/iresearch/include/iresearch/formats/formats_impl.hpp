@@ -251,8 +251,8 @@ enum class PostingsFormat : int32_t {
 //                          ^                       ^       (level 0 skip point)
 class PostingsWriterBase : public PostingsWriter {
  public:
-  static constexpr uint32_t kMaxSkipLevels = 9;
-  static constexpr uint32_t kSkipN = 8;
+  static constexpr uint32_t kMaxSkipLevels = 5;
+  static constexpr uint32_t kSkipN = 32;
 
   static constexpr std::string_view kDocFormatName =
     "iresearch_10_postings_documents";
@@ -1549,8 +1549,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
  public:
   PostingIteratorImpl(WandExtent extent)
-    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
-            ReadSkip{extent}} {}
+    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN, extent} {}
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
@@ -1574,12 +1573,15 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     }
 
     void Enable(const TermMetaImpl& state) noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
       SDB_ASSERT(state.docs_count > IteratorTraits::kBlockSize);
 
       // Since we store pointer deltas, add postings offset
       auto& top = _skip_levels.front();
       CopyState<IteratorTraits>(top, state);
-      Enable();
+
+      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
+      _skip_levels.back().doc = doc_limits::invalid();
     }
 
     void Init(size_t num_levels) {
@@ -1614,7 +1616,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       next.doc = doc_limits::eof();
     }
 
-    IRS_FORCE_INLINE size_t AdjustLevel(size_t level) const noexcept {
+    IRS_FORCE_INLINE static size_t AdjustLevel(size_t level) noexcept {
       return level;
     }
 
@@ -1636,12 +1638,6 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     }
 
    private:
-    void Enable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::invalid();
-    }
-
     std::vector<SkipState> _skip_levels;
     SkipState* _prev{};  // Pointer to skip context used by skip reader
   };

@@ -129,7 +129,7 @@ class Transaction : public Config {
         }
         visit(*transaction, *index);
       } else {
-        visit(EnsureRocksDBTransaction(), index->GetColumnIds());
+        visit(EnsureRocksDBTransaction(), *index);
       }
     }
   }

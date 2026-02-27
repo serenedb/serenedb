@@ -746,10 +746,6 @@ class SereneDBConnector final : public velox::connector::Connector {
         [&]<bool IsUpdate>() -> std::unique_ptr<velox::connector::DataSink> {
           std::vector<velox::column_index_t> pk_indices;
           if constexpr (IsUpdate) {
-            // TODO(Dronplane) discard writers not affected by update. We can
-            // check meta and do not create writer if it is not interested in
-            // the updated columns
-            // TODO(Dronplane) if PK changes - all writers are affected!
             pk_indices.resize(table.PKType()->size());
             absl::c_iota(pk_indices, 0);
 #ifdef SDB_DEV

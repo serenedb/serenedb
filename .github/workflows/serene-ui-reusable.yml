@@ -330,8 +330,8 @@ jobs:
                   APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
                   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
               run: |
-                  DEBUG=* npm run package:prod
-                  DEBUG=* npm run make:prod
+                  npm run package:prod
+                  npm run make:prod
 
             - name: Upload macOS artifacts
               if: inputs.BUILD_MACOS_APP

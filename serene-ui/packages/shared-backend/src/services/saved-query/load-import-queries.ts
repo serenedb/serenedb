@@ -3,6 +3,8 @@ import path from "path";
 import { SavedQueryRepository } from "../../repositories/saved-query/saved-query.repository.js";
 import { logger } from "../../utils/logger.js";
 
+const MAX_SQL_FILE_SIZE_BYTES = 1024 * 1024;
+
 const resolveImportQueriesDir = (
     importQueriesPackName: string,
 ): string | null => {
@@ -37,7 +39,6 @@ const resolveImportQueriesDir = (
 
 export const loadImportQueries = (): void => {
     const importQueriesPackName = process.env.IMPORT_QUERIES?.trim();
-
     if (!importQueriesPackName) {
         return;
     }
@@ -69,8 +70,19 @@ export const loadImportQueries = (): void => {
         return;
     }
 
+    let loadedCount = 0;
+
     for (const sqlFile of sqlFiles) {
         const filePath = path.join(importQueriesDir, sqlFile);
+        const fileSizeBytes = fs.statSync(filePath).size;
+
+        if (fileSizeBytes > MAX_SQL_FILE_SIZE_BYTES) {
+            logger.warn(
+                `Skipped SQL file "${sqlFile}" in "${importQueriesPackName}": file size ${fileSizeBytes} bytes exceeds limit ${MAX_SQL_FILE_SIZE_BYTES} bytes`,
+            );
+            continue;
+        }
+
         const queryName = path.basename(sqlFile, ".sql");
         const query = fs.readFileSync(filePath, "utf-8");
 
@@ -85,6 +97,7 @@ export const loadImportQueries = (): void => {
 
         if (existingQuery) {
             SavedQueryRepository.update(existingQuery.id, { query });
+            loadedCount += 1;
             continue;
         }
 
@@ -94,9 +107,10 @@ export const loadImportQueries = (): void => {
             bind_vars: [],
             usage_count: 0,
         });
+        loadedCount += 1;
     }
 
     logger.info(
-        `Import queries preload complete: loaded ${sqlFiles.length} saved queries from "${importQueriesPackName}"`,
+        `Import queries preload complete: loaded ${loadedCount}/${sqlFiles.length} saved queries from "${importQueriesPackName}"`,
     );
 };

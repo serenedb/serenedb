@@ -64,6 +64,7 @@ TextFormatOptions::createWriterOptions(velox::RowTypePtr schema) const {
 
   auto text_options = std::make_shared<velox::text::WriterOptions>();
   if (_header) {
+    SDB_ASSERT(_header == 1);  // now we support only one-line header.
     text_options->header = query::ToAliases(schema->names());
   }
   text_options->serDeOptions = std::move(serde_options);

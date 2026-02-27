@@ -34,9 +34,10 @@ namespace sdb::query {
 inline constexpr std::string_view kColumnSeparator = ":";
 inline constexpr std::string_view kReservedSymbol = "$";
 
-// column_name<separator>unique_id -> column_name
+// in text clean colnames: column_name<separator>unique_id -> column_name
 std::string CleanColumnNames(std::string text);
 
+// column_name<separator>unique_id -> column_name
 std::string_view ToAlias(std::string_view name);
 std::vector<std::string> ToAliases(std::span<const std::string> names);
 

@@ -1848,22 +1848,21 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
          typename InputType>
 bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
                          InputType>::SeekToBlock(doc_id_t target) {
-  if constexpr (!IteratorTraits::Position()) {
-    const auto distance = target - this->_max_in_leaf;
-    if (distance <= IteratorTraits::kBlockSize) [[unlikely]] {
-      if (this->_left_in_list == 0) [[unlikely]] {
-        return false;
+  const bool avoid_seek = [&] IRS_FORCE_INLINE {
+    if constexpr (!IteratorTraits::Position()) {
+      const auto distance = target - this->_max_in_leaf;
+      if (distance <= IteratorTraits::kBlockSize) [[unlikely]] {
+        return true;
       }
-      ReadBlock(this->_max_in_leaf);
-      return true;
     }
-  }
+    return target <= _skip.Reader().UpperBound();
+  }();
 
-  if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
+  if (avoid_seek) [[unlikely]] {
     if (this->_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    ReadTailBlock(this->_max_in_leaf);
+    ReadBlock(this->_max_in_leaf);
     return true;
   }
 

@@ -925,9 +925,6 @@ class PhraseIterator : public DocIterator {
                 return std::move(itrs);
               }(std::forward<Adapters>(itrs))},
       _freq{std::move(pos)} {
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
@@ -984,27 +981,32 @@ class PhraseIterator : public DocIterator {
   }
 
   doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t advance() final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
-        return doc;
+        return doc_value = doc;
       }
     }
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    if (const auto doc = doc_value; target <= doc) [[unlikely]] {
       return doc;
     }
     const auto doc = _approx.seek(target);
-    if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+    if (target != doc) {
       return doc;
     }
-    return advance();
+    if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+      return doc_value = doc;
+    }
+    return doc + 1;
   }
 
   uint32_t count() final { return CountImpl(*this); }
@@ -1028,8 +1030,7 @@ class PhraseIterator : public DocIterator {
   }
 
  private:
-  using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, FreqBlockAttr>;
+  using Attributes = std::tuple<DocAttr, AttributePtr<CostAttr>, FreqBlockAttr>;
 
   const byte_type* _stats{};
   score_t _boost{1.0f};

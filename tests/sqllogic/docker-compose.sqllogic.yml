@@ -14,6 +14,13 @@ services:
           size: 16G
     networks:
       - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    command: ["postgres", "-c", "max_connections=900"]
 
   serenedb-single:
     image: "$BUILD_IMAGE"
@@ -25,21 +32,29 @@ services:
     # It assumes that sanitizers and coverage dirs are created.
     # Executable 'serened' switches to 'serenedb' user. If required dirs are not created,
     # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
+    env_file:
+      - "$WORKSPACE/docker.env"
+    environment:
+      - BUILD_DIR
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/7777' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     command: >
         sh -c '
           if ! id serenedb >/dev/null 2>&1; then
             useradd serenedb &&
-            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage
+            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR}/coverage
           fi &&
-          exec /serenedb/build/bin/serened /tmp/serenedb_datadir \
+          exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
             --server.endpoint pgsql+tcp://0.0.0.0:7777 \
             --server.endpoint tcp://0.0.0.0:8529 \
             --server.authentication 0
         '
-    env_file:
-      - "$WORKSPACE/docker.env"
-    networks:
-      - test-network
 
   tests:
     image: rust:latest
@@ -47,11 +62,13 @@ services:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
     depends_on:
-      - postgres
-      - serenedb-single
-    command: sqllogic/run_serene_and_pg.sh
+      postgres:
+        condition: service_healthy
+      serenedb-single:
+        condition: service_healthy
     networks:
       - test-network
+    command: sqllogic/run_serene_and_pg.sh
 
 networks:
   test-network:

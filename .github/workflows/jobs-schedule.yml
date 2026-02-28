@@ -1,8 +1,200 @@
 name: Jobs Schedule
+
 on:
   schedule:
-    - cron: "0 0 * * 0"   # раз в неделю, воскресенье 00:00 UTC
+    # Daily coverage build - every day at 05:00-08:00 UTC
+    - cron: '0 5 * * *'
+    # Monday - MemoryWithOrigins sanitizer at 01:00-05:00 UTC
+    - cron: '0 1 * * 1'
+    # Tuesday - Address sanitizer
+    - cron: '0 1 * * 2'
+    # Wednesday - Undefined sanitizer
+    - cron: '0 1 * * 3'
+    # Thursday - Thread sanitizer
+    - cron: '0 1 * * 4'
 
 jobs:
-  call:
-    uses: ./.github/workflows/reusable.yml
+  # Daily coverage build
+  coverage-daily:
+    if: github.event.schedule == '0 5 * * *'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      DEBUG_PRINT_ENV: false
+      LOCATION: 'x86'
+      BRANCH: 'main'
+      CLUSTER_BRANCH: 'main'
+      VPACK_TESTS: true
+      IRESEARCH_TESTS: true
+      UNIT_TESTS: true
+      SQLLOGIC_TESTS: true
+      INTEGRATION_TESTS: false
+      BUILD_PACKAGES: false
+      FULL_SUITE: false
+      SANITIZERS: ''
+      USE_COVERAGE: 'SourceBased'
+      SDB_CLUSTER: 'Off'
+      SDB_ALLOC: 'JE'
+      SDB_DEV: 'On'
+      USE_IPO: 'Off'
+      ENSURE_VTUNE_SYMBOLS: 'Off'
+      BUILDMODE: 'RelWithDebInfo'
+      USE_DEBUG_INFO: 'COLUMNS'
+      BUILD_IMAGE: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS: '0'
+      EXTRA_ARTIFACTS: ''
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+
+  # Monday - MemoryWithOrigins sanitizer
+  sanitizer-memory:
+    if: github.event.schedule == '0 1 * * 1'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      DEBUG_PRINT_ENV: false
+      LOCATION: 'x86'
+      BRANCH: 'main'
+      CLUSTER_BRANCH: 'main'
+      VPACK_TESTS: true
+      IRESEARCH_TESTS: true
+      UNIT_TESTS: true
+      SQLLOGIC_TESTS: true
+      INTEGRATION_TESTS: false
+      BUILD_PACKAGES: false
+      FULL_SUITE: false
+      SANITIZERS: 'MemoryWithOrigins'
+      USE_COVERAGE: ''
+      SDB_CLUSTER: 'Off'
+      SDB_ALLOC: 'JE'
+      SDB_DEV: 'On'
+      USE_IPO: 'Off'
+      ENSURE_VTUNE_SYMBOLS: 'Off'
+      BUILDMODE: 'RelWithDebInfo'
+      USE_DEBUG_INFO: 'COLUMNS'
+      BUILD_IMAGE: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS: '0'
+      EXTRA_ARTIFACTS: ''
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+
+  # Tuesday - Address sanitizer
+  sanitizer-address:
+    if: github.event.schedule == '0 1 * * 2'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      DEBUG_PRINT_ENV: false
+      LOCATION: 'x86'
+      BRANCH: 'main'
+      CLUSTER_BRANCH: 'main'
+      VPACK_TESTS: true
+      IRESEARCH_TESTS: true
+      UNIT_TESTS: true
+      SQLLOGIC_TESTS: true
+      INTEGRATION_TESTS: false
+      BUILD_PACKAGES: false
+      FULL_SUITE: false
+      SANITIZERS: 'Address'
+      USE_COVERAGE: ''
+      SDB_CLUSTER: 'Off'
+      SDB_ALLOC: 'JE'
+      SDB_DEV: 'On'
+      USE_IPO: 'Off'
+      ENSURE_VTUNE_SYMBOLS: 'Off'
+      BUILDMODE: 'RelWithDebInfo'
+      USE_DEBUG_INFO: 'COLUMNS'
+      BUILD_IMAGE: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS: '0'
+      EXTRA_ARTIFACTS: ''
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+
+  # Wednesday - Undefined sanitizer
+  sanitizer-undefined:
+    if: github.event.schedule == '0 1 * * 3'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      DEBUG_PRINT_ENV: false
+      LOCATION: 'x86'
+      BRANCH: 'main'
+      CLUSTER_BRANCH: 'main'
+      VPACK_TESTS: true
+      IRESEARCH_TESTS: true
+      UNIT_TESTS: true
+      SQLLOGIC_TESTS: true
+      INTEGRATION_TESTS: false
+      BUILD_PACKAGES: false
+      FULL_SUITE: false
+      SANITIZERS: 'Undefined'
+      USE_COVERAGE: ''
+      SDB_CLUSTER: 'Off'
+      SDB_ALLOC: 'JE'
+      SDB_DEV: 'On'
+      USE_IPO: 'Off'
+      ENSURE_VTUNE_SYMBOLS: 'Off'
+      BUILDMODE: 'RelWithDebInfo'
+      USE_DEBUG_INFO: 'COLUMNS'
+      BUILD_IMAGE: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS: '0'
+      EXTRA_ARTIFACTS: ''
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+
+  # Thursday - Thread sanitizer
+  sanitizer-thread:
+    if: github.event.schedule == '0 1 * * 4'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      DEBUG_PRINT_ENV: false
+      LOCATION: 'x86'
+      BRANCH: 'main'
+      CLUSTER_BRANCH: 'main'
+      VPACK_TESTS: true
+      IRESEARCH_TESTS: true
+      UNIT_TESTS: true
+      SQLLOGIC_TESTS: true
+      INTEGRATION_TESTS: false
+      BUILD_PACKAGES: false
+      FULL_SUITE: false
+      SANITIZERS: 'Thread'
+      USE_COVERAGE: ''
+      SDB_CLUSTER: 'Off'
+      SDB_ALLOC: 'JE'
+      SDB_DEV: 'On'
+      USE_IPO: 'Off'
+      ENSURE_VTUNE_SYMBOLS: 'Off'
+      BUILDMODE: 'RelWithDebInfo'
+      USE_DEBUG_INFO: 'COLUMNS'
+      BUILD_IMAGE: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS: '0'
+      EXTRA_ARTIFACTS: ''
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}

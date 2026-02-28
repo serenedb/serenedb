@@ -1,7 +1,84 @@
 name: SereneDB-Build-Manual
+
 on:
   workflow_dispatch:
+    inputs:
+      PRESET:
+        description: 'Build preset'
+        type: choice
+        required: true
+        default: 'build'
+        options:
+          - asan
+          - tsan
+          - build
+          - release
+      LOCATION:
+        description: 'Where the load is executed'
+        type: choice
+        required: true
+        options:
+          - X64
+          - arm
+          - self-hosted
+        default: 'self-hosted'
+      BRANCH:
+        description: 'SereneDB branch to test'
+        type: string
+        required: true
+        default: 'main'
+      JOB_CONFIG:
+        description: 'JSON config for job settings'
+        type: string
+        required: false
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+      DOCKER_SERENEDB_IMAGE:
+        description: 'Produce SereneDB Docker Images'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_EXTRA_TAGS:
+        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        required: false
+        type: string
+        default: ''
+      PUSH_IMAGES_2_REGISTRY:
+        description: 'Push images to Private Docker Registry'
+        required: true
+        type: boolean
+        default: false
+      EXTRA_ARTIFACTS:
+        description: 'Keep these artifacts additionally'
+        type: string
+        required: false
+        default: ''
+      DOCKER_BUILD_IMAGES:
+        description: 'Produce SereneDB Build Images'
+        required: true
+        type: boolean
+        default: false
+      BUILD_CONFIG:
+        description: 'Backup JSON configuration for builds'
+        type: string
+        required: false
+        default: '{}'
 
 jobs:
-  call:
-    uses: ./.github/workflows/reusable.yml
+  call-reusable:
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      # General environment
+      BRANCH: ${{ inputs.BRANCH }}
+      PRESET: ${{ inputs.PRESET }}
+      LOCATION: ${{ inputs.LOCATION }}
+      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
+      PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+      DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+      EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+      DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
+      # Job config environment
+      JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
+      # Build config environment
+      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+
+    secrets: inherit

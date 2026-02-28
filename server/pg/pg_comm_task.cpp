@@ -1341,12 +1341,13 @@ void PgSQLCommTask<T>::Start() {
 }
 
 template<rest::SocketType T>
-void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
+void PgSQLCommTask<T>::SendAsync(message::SequenceView data) noexcept {
   if (_send_should_close.load(std::memory_order_acquire)) {
     Base::Close(this->_close_error);
     return;
   }
   if (data.Empty()) {
+    this->_send.FlushDone();
     return;
   }
   SDB_LOG_PGSQL("Sending Packet:", data.Print());

@@ -35,10 +35,10 @@ namespace sdb::pg {
 namespace {
 
 void ResolveInformationSchema(ObjectId database, std::string_view relation,
-                              Objects::ObjectData& data) {
+                              Objects::ObjectData& data, const Config& config) {
   if (const auto* table =
         GetSystemTable(StaticStrings::kInformationSchema, relation)) {
-    data.object = table->CreateSnapshot(database);
+    data.object = table->CreateSnapshot(database, config);
   }
   // TODO(codeworse): add views and functions from information_schema
 }
@@ -46,21 +46,23 @@ void ResolveInformationSchema(ObjectId database, std::string_view relation,
 void ResolveFunctions(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
-                      const Objects& query);
+                      const Objects& query, const Config& config);
 
-enum class ObjectType {
+enum class ObjectType : uint8_t {
   Function = 0,
   Relation = 1,
 };
+
 void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
                                std::span<const std::string> search_path,
                                const Objects::ObjectName& name,
-                               Objects::ObjectData& data) {
+                               Objects::ObjectData& data,
+                               const Config& config) {
   auto resolve_object = [&](std::string_view schema) {
     SDB_ASSERT(!data.object);
     if (schema == StaticStrings::kInformationSchema) {
       // In case information_schema is in the search path
-      ResolveInformationSchema(database, name.relation, data);
+      ResolveInformationSchema(database, name.relation, data, config);
       return;
     }
 
@@ -92,13 +94,21 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
 void ResolveFunction(ObjectId database,
                      std::span<const std::string> search_path, Objects& objects,
                      Disallowed& disallowed, const Objects::ObjectName& name,
-                     Objects::ObjectData& data) {
+                     Objects::ObjectData& data, const Config& config) {
   if (data.object) {
     return;
   }
 
   // system functions
   if (const auto func = pg::GetFunction(name.relation)) {
+    if (func->Options().language == catalog::FunctionLanguage::SQL) {
+      bool changed = disallowed.emplace(name).second;
+      SDB_ASSERT(changed);
+      ResolveSqlFunction(database, search_path, objects, disallowed,
+                         func->SqlFunction().GetObjects(), config);
+      changed = disallowed.erase(name) != 0;
+      SDB_ASSERT(changed);
+    }
     data.object = std::move(func);
     return;
   }
@@ -106,14 +116,14 @@ void ResolveFunction(ObjectId database,
   if (name.schema == StaticStrings::kInformationSchema) {
     // information_schema must be explicitly defined
     // (except the case it is in the search path)
-    ResolveInformationSchema(database, name.relation, data);
+    ResolveInformationSchema(database, name.relation, data, config);
     if (data.object) {
       return;
     }
   }
 
   ResolveObjectInSchemaPath(database, ObjectType::Function, search_path, name,
-                            data);
+                            data, config);
 
   if (!data.object) {
     SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "function \"",
@@ -126,7 +136,7 @@ void ResolveFunction(ObjectId database,
     bool changed = disallowed.emplace(name).second;
     SDB_ASSERT(changed);
     ResolveSqlFunction(database, search_path, objects, disallowed,
-                       func.SqlFunction().GetObjects());
+                       func.SqlFunction().GetObjects(), config);
     changed = disallowed.erase(name) != 0;
     SDB_ASSERT(changed);
   }
@@ -136,21 +146,21 @@ void ResolveFunction(ObjectId database,
 void ResolveRelation(ObjectId database,
                      std::span<const std::string> search_path, Objects& objects,
                      Disallowed& disallowed, const Objects::ObjectName& name,
-                     Objects::ObjectData& data) {
+                     Objects::ObjectData& data, const Config& config) {
   if (data.object) {
     return;
   }
 
   // system tables
   if (const auto* table = pg::GetTable(name.relation)) {
-    data.object = table->CreateSnapshot(database);
+    data.object = table->CreateSnapshot(database, config);
     return;
   }
 
   if (name.schema == StaticStrings::kInformationSchema) {
     // information_schema must be explicitly defined
     // (except the case it is in the search path)
-    ResolveInformationSchema(database, name.relation, data);
+    ResolveInformationSchema(database, name.relation, data, config);
     if (data.object) {
       return;
     }
@@ -160,8 +170,8 @@ void ResolveRelation(ObjectId database,
     bool changed = disallowed.emplace(name).second;
     SDB_ASSERT(changed);
     auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
-    ResolveQueryView(database, search_path, objects, disallowed,
-                     state->objects);
+    ResolveQueryView(database, search_path, objects, disallowed, state->objects,
+                     config);
     changed = disallowed.erase(name) != 0;
     SDB_ASSERT(changed);
   };
@@ -174,7 +184,7 @@ void ResolveRelation(ObjectId database,
   }
 
   ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
-                            data);
+                            data, config);
 
   if (!data.object) {
     SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
@@ -188,7 +198,7 @@ void ResolveRelation(ObjectId database,
         const auto& default_value_objects = default_value->GetObjects();
         SDB_ASSERT(default_value_objects.getRelations().empty());
         ResolveFunctions(database, search_path, objects, disallowed,
-                         default_value_objects);
+                         default_value_objects, config);
       }
     }
   } else if (data.object->GetType() == catalog::ObjectType::View) {
@@ -199,22 +209,24 @@ void ResolveRelation(ObjectId database,
 void ResolveRelations(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
-                      const Objects& query) {
+                      const Objects& query, const Config& config) {
   for (const auto& [name, old_data] : query.getRelations()) {
     auto& new_data = objects.ensureRelation(name.schema, name.relation);
     new_data = old_data;
-    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data,
+                    config);
   }
 }
 
 void ResolveFunctions(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
-                      const Objects& query) {
+                      const Objects& query, const Config& config) {
   for (const auto& [name, old_data] : query.getFunctions()) {
     auto& new_data = objects.ensureFunction(name.schema, name.relation);
     new_data = old_data;
-    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data,
+                    config);
   }
 }
 
@@ -229,21 +241,23 @@ void Resolve(ObjectId database, Objects& objects, const Config& config) {
   for (auto& [name, old_data] : functions) {
     auto& new_data = objects.ensureFunction(name.schema, name.relation);
     new_data = std::move(old_data);
-    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data,
+                    config);
   }
 
   auto relations = std::move(objects.getRelations());
   for (auto& [name, old_data] : relations) {
     auto& new_data = objects.ensureRelation(name.schema, name.relation);
     new_data = std::move(old_data);
-    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data,
+                    config);
   }
 }
 
 void ResolveQueryView(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
-                      const Objects& query) {
+                      const Objects& query, const Config& config) {
   for (const auto& [name, old_data] : query.getRelations()) {
     if (disallowed.contains(name)) {
       SDB_THROW(ERROR_BAD_PARAMETER,
@@ -251,16 +265,17 @@ void ResolveQueryView(ObjectId database,
     }
     auto& new_data = objects.ensureRelation(name.schema, name.relation);
     new_data = old_data;
-    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data,
+                    config);
   }
-  ResolveFunctions(database, search_path, objects, disallowed, query);
+  ResolveFunctions(database, search_path, objects, disallowed, query, config);
 }
 
 void ResolveSqlFunction(ObjectId database,
                         std::span<const std::string> search_path,
                         Objects& objects, Disallowed& disallowed,
-                        const Objects& query) {
-  ResolveRelations(database, search_path, objects, disallowed, query);
+                        const Objects& query, const Config& config) {
+  ResolveRelations(database, search_path, objects, disallowed, query, config);
   for (const auto& [name, old_data] : query.getFunctions()) {
     if (disallowed.contains(name)) {
       SDB_THROW(ERROR_BAD_PARAMETER,
@@ -268,7 +283,8 @@ void ResolveSqlFunction(ObjectId database,
     }
     auto& new_data = objects.ensureFunction(name.schema, name.relation);
     new_data = old_data;
-    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data,
+                    config);
   }
 }
 

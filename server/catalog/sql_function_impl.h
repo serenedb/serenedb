@@ -25,6 +25,7 @@
 #include "function.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
+#include "query/config.h"
 
 namespace sdb::pg {
 
@@ -33,7 +34,7 @@ class FunctionImpl {
   FunctionImpl() = default;
 
   Result Init(ObjectId database, std::string_view name, std::string query,
-              bool is_procedure);
+              bool is_procedure, const Config* config);
 
   static Result FromVPack(ObjectId database, vpack::Slice slice,
                           std::unique_ptr<FunctionImpl>& implementation,

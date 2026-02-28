@@ -5291,7 +5291,8 @@ void SqlAnalyzer::ProcessFunctionBody(
                    " at column ", i + 1, "."));
     }
 
-    names.emplace_back(expected_row.nameOf(i));
+    names.emplace_back(_id_generator.NextColumnName(expected_row.nameOf(i)));
+
     exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
       actual_col_type, actual_type.nameOf(i)));
   }

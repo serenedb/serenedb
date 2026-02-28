@@ -636,8 +636,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   //     rol.oid;)",
 
   // pg_show_all_settings
-  // R"(CREATE VIEW pg_settings AS
-  //   SELECT * FROM pg_show_all_settings() AS A;)",
+  R"(CREATE VIEW pg_settings AS
+    SELECT * FROM pg_show_all_settings() AS A;)",
 
   // pg_show_all_file_settings
   // R"(CREATE VIEW pg_file_settings AS

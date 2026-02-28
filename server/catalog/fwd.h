@@ -45,5 +45,6 @@ class ValidatorBase;
 class KeyGenerator;
 struct ShardingStrategy;
 struct TableOptions;
+class ObjectId;
 
 }  // namespace sdb

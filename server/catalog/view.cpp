@@ -69,7 +69,9 @@ Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
 
   switch (options.meta.type) {
     case ViewType::ViewSqlQuery:
-      return SqlQueryView::Make(view, database_id, std::move(options), ctx);
+      SDB_ASSERT(ctx != ViewContext::User);
+      return SqlQueryView::Make(view, database_id, std::move(options), ctx,
+                                nullptr);
     case ViewType::ViewGraph:
       return GraphView::Make(view, database_id, std::move(options),
                              ctx != ViewContext::Internal);

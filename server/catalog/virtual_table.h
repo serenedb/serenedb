@@ -28,6 +28,7 @@
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
 #include "catalog/object.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
 
@@ -56,7 +57,7 @@ class VirtualTableSnapshot : public SchemaObject {
 class VirtualTable {
  public:
   virtual std::shared_ptr<VirtualTableSnapshot> CreateSnapshot(
-    ObjectId database) const = 0;
+    ObjectId database, const Config& config) const = 0;
 
   virtual ~VirtualTable() = default;
 

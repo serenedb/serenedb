@@ -47,6 +47,7 @@ set(iresearch-tests_sources
     ./search/nested_filter_test.cpp
     ./search/granular_range_filter_tests.cpp
     ./search/wildcard_filter_test.cpp
+    ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
     ./search/scorers_tests.cpp
@@ -94,6 +95,7 @@ set(iresearch-tests_sources
     ./utils/block_pool_test.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
+    ./utils/regexp_utils_test.cpp
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp

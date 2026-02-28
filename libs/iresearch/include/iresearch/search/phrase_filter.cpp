@@ -109,6 +109,10 @@ struct GetVisitor {
         return ByRange::visit(segment, field, *range, visitor);
       };
   }
+
+  field_visitor operator()(const ByRegexpOptions& part) const {
+    return ByRegexp::visitor(part.pattern);
+  }
 };
 
 struct PrepareVisitor : util::Noncopyable {
@@ -134,6 +138,10 @@ struct PrepareVisitor : util::Noncopyable {
 
   auto operator()(const ByRangeOptions& part) const {
     return ByRange::prepare(ctx, field, part.range, part.scored_terms_limit);
+  }
+
+  auto operator()(const ByRegexpOptions& part) const {
+    return ByRegexp::prepare(ctx, field, part.pattern, part.scored_terms_limit);
   }
 
   PrepareVisitor(const PrepareContext& ctx, std::string_view field) noexcept

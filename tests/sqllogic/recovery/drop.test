@@ -18,6 +18,10 @@ CREATE INDEX i ON s1.t USING inverted(id);
 
 
 statement ok
+INSERT INTO s1.t VALUES (1), (2), (3);
+
+
+statement ok
 SET sdb_fault_crash_on_drop TO DEFAULT;
 
 
@@ -39,6 +43,16 @@ SELECT COUNT(*) FROM pg_class WHERE relname = 't';
 ----
 count
 1
+
+
+connection after_index_drop
+query ok
+SELECT * FROM s1.t;
+----
+id
+1
+2
+3
 
 
 connection after_index_drop

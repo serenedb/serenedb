@@ -1492,7 +1492,7 @@ Result LocalCatalog::DropDatabase(std::string_view name,
                             id::kInstance);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
-    auto res = QueueDropTask(std::move(task));
+    auto res = task->Schedule();
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1525,7 +1525,7 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
                             db_id);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
-    auto res = QueueDropTask(std::move(task));
+    auto res = task->Schedule();
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1556,7 +1556,7 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
                             *schema_id);
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
-    auto res = QueueDropTask(std::move(task));
+    auto res = task->Schedule();
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1592,7 +1592,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
                                        index->GetRelationId(), *index_id, true);
     clone->UnregisterObject(index, *schema_id);
-    auto res = QueueDropTask(std::move(task));
+    auto res = task->Schedule();
     if (async_result) {
       *async_result = std::move(res);
     }

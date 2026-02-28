@@ -22,6 +22,7 @@
 
 #include <absl/strings/substitute.h>
 
+#include <chrono>
 #include <exception>
 #include <yaclib/async/future.hpp>
 
@@ -37,37 +38,6 @@ using AsyncResult = yaclib::Future<Result>;
 
 static constexpr uint32_t kInitialDelay = 125;
 static constexpr uint32_t kMaxDelay = kInitialDelay << 7;
-
-template<typename T>
-AsyncResult QueueDropTask(std::shared_ptr<T> task) {
-  auto* scheduler = GetScheduler();
-  if (SerenedServer::Instance().isStopping()) {
-    co_return {};
-  }
-  SDB_ASSERT(scheduler);
-
-  try {
-    auto r = co_await scheduler->queueWithFuture(RequestLane::InternalLow,
-                                                 [task] { return (*task)(); });
-
-    if (r.errorNumber() == ERROR_LOCKED) {
-      auto* scheduler = GetScheduler();
-      SDB_ASSERT(scheduler);
-      task->delay = std::min(kMaxDelay, task->delay << 1);
-      co_return co_await scheduler
-        ->delay(T::kName, std::chrono::microseconds{task->delay})
-        .ThenInline([task] { return QueueDropTask(std::move(task)); });
-    }
-    if (!r.ok()) {
-      SDB_FATAL("xxxxx", Logger::THREADS, "Failed to execute ",
-                task->GetContext(), ", error: ", r.errorMessage());
-    }
-    co_return r;
-  } catch (std::exception& e) {
-    SDB_FATAL("xxxxx", Logger::THREADS, "Unable to schedule ", T::kName, ": \"",
-              e.what(), "\", shutting down");
-  }
-}
 
 struct DropTask {
   ObjectId parent_id;
@@ -126,6 +96,7 @@ struct IndexDrop : DropTask, std::enable_shared_from_this<IndexDrop> {
 
   AsyncResult operator()();
   Result Finalize();
+  AsyncResult Schedule();
 };
 
 struct TableDrop : DropTask, std::enable_shared_from_this<TableDrop> {
@@ -141,6 +112,7 @@ struct TableDrop : DropTask, std::enable_shared_from_this<TableDrop> {
 
   AsyncResult operator()();
   Result Finalize();
+  AsyncResult Schedule();
 };
 
 struct SchemaDrop : DropTask, std::enable_shared_from_this<SchemaDrop> {
@@ -155,6 +127,7 @@ struct SchemaDrop : DropTask, std::enable_shared_from_this<SchemaDrop> {
 
   AsyncResult operator()();
   Result Finalize();
+  AsyncResult Schedule();
 };
 
 struct DatabaseDrop : DropTask, std::enable_shared_from_this<DatabaseDrop> {
@@ -168,6 +141,7 @@ struct DatabaseDrop : DropTask, std::enable_shared_from_this<DatabaseDrop> {
 
   AsyncResult operator()();
   Result Finalize();
+  AsyncResult Schedule();
 };
 
 }  // namespace sdb::catalog

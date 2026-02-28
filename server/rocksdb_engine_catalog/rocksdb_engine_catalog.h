@@ -22,6 +22,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/notification.h>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/options.h>
@@ -30,6 +31,7 @@
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <map>
@@ -40,6 +42,7 @@
 #include <tuple>
 #include <vector>
 
+#include "app/app_server.h"
 #include "basics/common.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/read_write_lock.h"
@@ -51,6 +54,7 @@
 #include "catalog/types.h"
 #include "database/access_mode.h"
 #include "metrics/fwd.h"
+#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -337,6 +341,15 @@ class RocksDBEngineCatalog {
     ObjectId parent_id, RocksDBEntryType type,
     absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
+  void AddDropTask() { _running_drops.fetch_add(1, std::memory_order_release); }
+  void RemoveDropTask() {
+    _running_drops.fetch_sub(1, std::memory_order_release);
+    if (SerenedServer::Instance().isStopping() &&
+        _running_drops.load(std::memory_order_acquire) == 0) {
+      _drop_task_finished.Notify();
+    }
+  }
+
  private:
   Result VisitDefinitionsImpl(
     const std::string& start, const std::string& end,
@@ -450,6 +463,9 @@ class RocksDBEngineCatalog {
 
   // last point in time when an auto-flush happened
   std::chrono::steady_clock::time_point _auto_flush_last_executed;
+
+  std::atomic_uint64_t _running_drops = 0;
+  absl::Notification _drop_task_finished;
 
   metrics::Gauge<uint64_t>& _metrics_index_estimator_memory_usage;
   metrics::Gauge<uint64_t>& _metrics_wal_released_tick_flush;

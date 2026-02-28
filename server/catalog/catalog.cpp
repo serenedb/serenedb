@@ -81,12 +81,13 @@ Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
                        vpack::Slice definition) {
   drop->parent_id = table_id;
   drop->id = index_id;
+  drop->db_id = db_id;
+  drop->schema_id = schema_id;
   IndexBaseOptions options;
-  if (vpack::ReadTupleNothrow(definition, options).ok()) {
-    drop->db_id = db_id;
-    drop->schema_id = schema_id;
-    drop->type = options.type;
+  if (auto r = vpack::ReadTupleNothrow(definition, options); !r.ok()) {
+    return r;
   }
+  drop->type = options.type;
   return engine.VisitDefinitions(index_id, RocksDBEntryType::IndexShard,
                                  [&](DefinitionKey key, vpack::Slice) {
                                    SDB_ASSERT(!drop->shard_id.isSet());
@@ -114,7 +115,6 @@ Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
     table_id, RocksDBEntryType::Index,
     [&](DefinitionKey key, vpack::Slice slice) {
       drop->indexes.push_back(std::make_shared<IndexDrop>());
-      drop->indexes.back()->is_root = false;
       return CreateIndexDrop(engine, db_id, schema_id, table_id,
                              key.GetObjectId(), drop->indexes.back(), slice);
     });
@@ -127,7 +127,6 @@ Result CreateSchemaDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
   return engine.VisitDefinitions(
     schema_id, RocksDBEntryType::Table, [&](DefinitionKey key, vpack::Slice) {
       drop->tables.push_back(std::make_shared<TableDrop>());
-      drop->tables.back()->is_root = false;
       return CreateTableDrop(engine, db_id, schema_id, key.GetObjectId(),
                              drop->tables.back());
     });
@@ -140,7 +139,6 @@ Result CreateDatabaseDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
   return engine.VisitDefinitions(
     db_id, RocksDBEntryType::Schema, [&](DefinitionKey key, vpack::Slice) {
       drop->schemas.push_back(std::make_shared<SchemaDrop>());
-      drop->schemas.back()->is_root = false;
       return CreateSchemaDrop(engine, db_id, key.GetObjectId(),
                               drop->schemas.back());
     });
@@ -217,7 +215,7 @@ Result OpenDatabase::RegisterDatabases() {
         if (!r.ok()) {
           return r;
         }
-        QueueDropTask(std::move(db_drop)).Detach();
+        db_drop->Schedule().Detach();
         return Result{};
       } else {
         return AddDatabase(key.GetObjectId(), slice);
@@ -236,7 +234,7 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
         schema_drop->is_root = true;
         auto r = CreateSchemaDrop(GetServerEngine(), database_id, schema_id,
                                   schema_drop);
-        QueueDropTask(std::move(schema_drop)).Detach();
+        schema_drop->Schedule().Detach();
         return r;
       } else {
         return AddSchema(database_id, schema_id, slice);
@@ -291,7 +289,7 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
         index_drop->is_root = true;
         auto r = CreateIndexDrop(GetServerEngine(), db_id, schema_id, table_id,
                                  index_id, index_drop, slice);
-        QueueDropTask(std::move(index_drop)).Detach();
+        index_drop->Schedule().Detach();
         return r;
       } else {
         return AddIndex(db_id, schema_id, table_id, index_id, slice);
@@ -305,7 +303,7 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
     table_id, RocksDBEntryType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
-      SDB_ASSERT(_deleted.find(shard_id) == _deleted.end());
+      SDB_ASSERT(!_deleted.contains(shard_id));
       TableStats stats;
       if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
         SDB_WARN("xxxxx", Logger::STARTUP,
@@ -321,19 +319,10 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      SDB_ASSERT(_deleted.find(key.GetObjectId()) == _deleted.end());
+      SDB_ASSERT(!_deleted.contains(key.GetObjectId()));
       return index->CreateIndexShard(false, key.GetObjectId(), std::move(slice))
-        .transform([&](auto&& shard) {
-          vpack::Builder b;
-          shard->WriteInternal(b);
-          auto r = GetServerEngine().CreateDefinition(
-            shard->GetIndexId(), RocksDBEntryType::IndexShard, shard->GetId(),
-            [&](bool) { return b.slice(); });
-          if (!r.ok()) {
-            return r;
-          }
-          return _catalog.RegisterIndexShard(shard);
-        })
+        .transform(
+          [&](auto&& shard) { return _catalog.RegisterIndexShard(shard); })
         .error_or(Result{});
     });
 }
@@ -349,7 +338,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         table_drop->is_root = true;
         auto r = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
                                  table_drop);
-        QueueDropTask(std::move(table_drop)).Detach();
+        table_drop->Schedule().Detach();
         return r;
       } else {
         return AddTable(db_id, schema_id, table_id, slice);

@@ -22,6 +22,7 @@
 #include "rocksdb_engine_catalog.h"
 
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 #include <rocksdb/advanced_cache.h>
 #include <rocksdb/convenience.h>
 #include <rocksdb/db.h>
@@ -41,6 +42,7 @@
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
 
+#include <atomic>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -798,6 +800,10 @@ void RocksDBEngineCatalog::stop() {
       std::this_thread::yield();
     }
     _sync_thread.reset();
+  }
+
+  if (_running_drops.load(std::memory_order_acquire)) {
+    _drop_task_finished.WaitForNotification();
   }
 }
 

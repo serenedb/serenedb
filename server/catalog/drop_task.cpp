@@ -31,6 +31,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
+#include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
@@ -45,10 +46,48 @@ bool CheckResult(const Result& result) {
          result == ERROR_SERVER_DOCUMENT_NOT_FOUND ||
          result == ERROR_SERVER_INDEX_NOT_FOUND;
 }
+
+template<typename T>
+AsyncResult QueueDropTask(std::shared_ptr<T> task) {
+  auto* scheduler = GetScheduler();
+  if (SerenedServer::Instance().isStopping()) {
+    co_return {};
+  }
+  SDB_ASSERT(scheduler);
+  GetServerEngine().AddDropTask();
+
+  try {
+    auto r = co_await scheduler->queueWithFuture(RequestLane::InternalLow,
+                                                 [task] { return (*task)(); });
+    while (r.errorNumber() == ERROR_LOCKED) {
+      auto* scheduler = GetScheduler();
+      if (!scheduler) {
+        co_return {};
+      }
+      task->delay = std::min(kMaxDelay, task->delay << 1);
+      co_await scheduler->delay(T::kName,
+                                std::chrono::microseconds{task->delay});
+      r = co_await scheduler->queueWithFuture(RequestLane::InternalLow,
+                                              [task] { return (*task)(); });
+    }
+    GetServerEngine().RemoveDropTask();
+    if (!r.ok()) {
+      SDB_FATAL("xxxxx", Logger::THREADS, "Failed to execute ",
+                task->GetContext(), ", error: ", r.errorMessage());
+    }
+    co_return r;
+  } catch (std::exception& e) {
+    SDB_FATAL("xxxxx", Logger::THREADS, "Unable to schedule ", T::kName, ": \"",
+              e.what(), "\", shutting down");
+  }
+}
 }  // namespace
 
 AsyncResult TableShardDrop::operator()() {
+  SDB_ASSERT(!is_root);
   auto& server = GetServerEngine();
+  // TODO(codeworse): Probably we should store data by table shard id, not table
+  // id. So, in that way here we would use id(not parent_id)
   auto [start, end] = connector::key_utils::CreateTableRange(parent_id);
   // Drop table data
   auto r = server.DropRange(start, end,
@@ -63,15 +102,11 @@ AsyncResult TableShardDrop::operator()() {
   if (!CheckResult(r)) {
     return QueueDropTask(shared_from_this());
   }
-  r = server.DropDefinition(parent_id, RocksDBEntryType::TableShard, id);
-  if (!CheckResult(r)) {
-    return QueueDropTask(shared_from_this());
-  }
   return yaclib::MakeFuture<Result>();
 }
 
 AsyncResult IndexShardDrop::operator()() {
-  auto& server = GetServerEngine();
+  SDB_ASSERT(!is_root);
   // TODO(codeworse): in case of table/schema/database drop delete the entire
   // folder at once
   if (type == IndexType::Inverted) {
@@ -79,12 +114,6 @@ AsyncResult IndexShardDrop::operator()() {
     std::error_code ec;
     std::filesystem::remove_all(path, ec);
     if (ec) {
-      return QueueDropTask(shared_from_this());
-    }
-  }
-  if (is_root) {
-    auto r = server.DropDefinition(parent_id, RocksDBEntryType::IndexShard, id);
-    if (!CheckResult(r)) {
       return QueueDropTask(shared_from_this());
     }
   }
@@ -109,14 +138,15 @@ Result IndexDrop::Finalize() {
 
 AsyncResult IndexDrop::operator()() {
   auto shard_task = std::make_shared<IndexShardDrop>(
-    DropTask{.parent_id = id, .id = shard_id, .is_root = false}, db_id,
-    schema_id, type);
+    DropTask{.parent_id = id, .id = shard_id}, db_id, schema_id, type);
   auto r = co_await QueueDropTask(std::move(shard_task));
   if (!CheckResult(r) || !CheckResult(Finalize())) {
     co_return co_await QueueDropTask(shared_from_this());
   }
   co_return {};
 }
+
+AsyncResult IndexDrop::Schedule() { return QueueDropTask(shared_from_this()); }
 
 Result TableDrop::Finalize() {
   auto& server = GetServerEngine();
@@ -143,14 +173,16 @@ AsyncResult TableDrop::operator()() {
   if (!async_results.empty()) {
     co_await yaclib::Join(async_results.begin(), async_results.end());
   }
-  auto shard_task = std::make_shared<TableShardDrop>(
-    DropTask{.parent_id = id, .id = shard_id, .is_root = false});
+  auto shard_task =
+    std::make_shared<TableShardDrop>(DropTask{.parent_id = id, .id = shard_id});
   auto r = co_await QueueDropTask(std::move(shard_task));
   if (!CheckResult(r) || !CheckResult(Finalize())) {
     co_return co_await QueueDropTask(shared_from_this());
   }
   co_return {};
 }
+
+AsyncResult TableDrop::Schedule() { return QueueDropTask(shared_from_this()); }
 
 Result SchemaDrop::Finalize() {
   auto& server = GetServerEngine();
@@ -189,6 +221,8 @@ AsyncResult SchemaDrop::operator()() {
   co_return {};
 }
 
+AsyncResult SchemaDrop::Schedule() { return QueueDropTask(shared_from_this()); }
+
 Result DatabaseDrop::Finalize() {
   auto& server = GetServerEngine();
   auto r = server.DropEntry(id, RocksDBEntryType::Schema);
@@ -216,6 +250,10 @@ AsyncResult DatabaseDrop::operator()() {
     co_return co_await QueueDropTask(shared_from_this());
   }
   co_return {};
+}
+
+AsyncResult DatabaseDrop::Schedule() {
+  return QueueDropTask(shared_from_this());
 }
 
 }  // namespace sdb::catalog

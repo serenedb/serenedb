@@ -188,6 +188,9 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
 }
 
 void Transaction::ApplyTableStatsDiffs() noexcept {
+  if (_table_rows_deltas.empty()) {
+    return;
+  }
   auto snapshot = GetCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
     auto table_shard = snapshot->GetTableShard(table_id);

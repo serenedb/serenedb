@@ -306,7 +306,7 @@ void SchedulerFeature::start() {
   SDB_DEBUG("xxxxx", Logger::STARTUP, "scheduler has started");
 }
 
-void SchedulerFeature::beginShutdown() {
+void SchedulerFeature::stop() {
   // shutdown user jobs again, in case new ones appear
   signalStuffDeinit();
   _scheduler->shutdown();

@@ -70,11 +70,13 @@ class Scheduler {
   // lead to the program aborting with std::terminate.
   void queue(RequestLane lane, folly::Func func) noexcept;
 
-  template<typename Func>
-  auto queueWithFuture(RequestLane lane, Func&& func) {
-    auto [f, p] = yaclib::MakeContract<>();
-    queue(lane, [p = std::move(p)] mutable { std::move(p).Set(); });
-    return std::move(f).ThenInline(std::forward<Func>(func));
+  template<typename Func, typename R = std::invoke_result_t<Func>>
+  yaclib::Future<R> queueWithFuture(RequestLane lane, Func&& func) {
+    auto [f, p] = yaclib::MakeContract<R>();
+    queue(lane, [p = std::move(p), func = std::forward<Func>(func)] mutable {
+      std::move(p).Set(std::forward<Func>(func)());
+    });
+    return std::move(f);
   }
 
   // push an item onto the queue. indicates success or failure by returning

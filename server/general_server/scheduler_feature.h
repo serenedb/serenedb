@@ -42,8 +42,8 @@ class SchedulerFeature final : public SerenedFeature {
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
   void start() final;
+  void stop() final;
   void unprepare() final;
-  void beginShutdown() final;
 
   // -------------------------------------------------------------------------
   // UNRELATED SECTION STARTS HERE: Signals and other things crept into Sched

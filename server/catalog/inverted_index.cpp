@@ -11,11 +11,11 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   bool is_new, ObjectId id, vpack::Slice args) const {
   // TODO(codeworse): parse args into InvertedIndexShardOptions
   search::InvertedIndexShardOptions options;
-  if (auto r = vpack::ReadObjectNothrow(
-        args, options, {.skip_unknown = true, .strict = false});
-      !r.ok()) {
-    return std::unexpected<Result>(std::in_place, r.errorNumber(),
-                                   r.errorMessage());
+  if (!is_new) {
+    if (auto r = vpack::ReadTupleNothrow(args, options); !r.ok()) {
+      return std::unexpected<Result>(std::in_place, r.errorNumber(),
+                                     r.errorMessage());
+    }
   }
   auto inverted_index_shard =
     std::make_shared<search::InvertedIndexShard>(id, *this, options, is_new);

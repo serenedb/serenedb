@@ -60,8 +60,8 @@ RocksDBBackgroundThread::RocksDBBackgroundThread(RocksDBEngineCatalog& engine,
 RocksDBBackgroundThread::~RocksDBBackgroundThread() { shutdown(); }
 
 void RocksDBBackgroundThread::beginShutdown() {
-  Thread::beginShutdown();
   SyncStats();
+  Thread::beginShutdown();
 
   // wake up the thread that may be waiting in run()
   absl::MutexLock guard{&_condition.mutex};

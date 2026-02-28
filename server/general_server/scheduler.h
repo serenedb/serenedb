@@ -73,7 +73,8 @@ class Scheduler {
 
   template<typename Func, typename R = std::invoke_result_t<Func>>
   auto queueWithFuture(RequestLane lane, Func&& func) {
-    // TODO(codeworse): Use yaclib::IExecutor::Submit
+    // TODO(codeworse): Use yaclib::Run, when scheduler will be inherited from
+    // yaclib::IExecutor
     if constexpr (yaclib::is_future_base_v<R>) {
       // Use future unwrap
       auto [f, p] = yaclib::MakeContract<>();

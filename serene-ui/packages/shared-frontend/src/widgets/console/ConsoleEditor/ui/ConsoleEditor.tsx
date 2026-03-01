@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import {
     ExecuteQueryButton,
     useConsoleLayout,
@@ -11,6 +12,7 @@ import {
 } from "../../ConsoleEditorTabsSelector";
 
 import { PGSQLEditor } from "../../../shared/PGSQLEditor";
+import { DropZone } from "../../../shared/DropZone";
 import { useConnectionAutocomplete } from "../../../shared/PGSQLEditor/model";
 import { OpenSavedQueriesModalButton } from "@serene-ui/shared-frontend/features";
 
@@ -124,11 +126,50 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
         selectTab,
     ]);
 
+    const handleFilesDrop = useCallback(
+        async (files: File[]) => {
+            try {
+                const fileContents = await Promise.all(
+                    files.map(async (file) => ({
+                        value: await file.text(),
+                    })),
+                );
+
+                const firstNewTabId = tabs.length;
+
+                fileContents.forEach((fileContent, index) => {
+                    const nextTabId = firstNewTabId + index;
+                    addTab("query");
+                    updateTab(nextTabId, {
+                        value: fileContent.value,
+                    });
+                });
+
+                selectTab(firstNewTabId + fileContents.length - 1);
+            } catch (error) {
+                console.error(error);
+                toast.error("Failed to open SQL file", {
+                    description: "Please try dropping the file again.",
+                });
+            }
+        },
+        [addTab, selectTab, tabs.length, updateTab],
+    );
+
+    const handleRejectedFiles = useCallback((files: File[]) => {
+        if (!files.length) return;
+
+        toast.error("Unsupported file type", {
+            description: "Only .sql files can be opened here.",
+        });
+    }, []);
+
     return (
-        <div
-            className={cn("flex flex-col flex-1 h-full gap-1 relative", {
-                "bg-background": true,
-            })}>
+        <DropZone
+            supportedExtensions={["sql"]}
+            onFilesDrop={handleFilesDrop}
+            onRejectedFiles={handleRejectedFiles}
+            className={cn("flex flex-col flex-1 h-full gap-1 relative pt-2")}>
             <ConsoleEditorTabsSelector
                 tabs={tabs}
                 selectedTabId={selectedTabId}
@@ -176,6 +217,6 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
                     onExecuteInNewTab={handleExecuteInNewTab}
                 />
             </div>
-        </div>
+        </DropZone>
     );
 };

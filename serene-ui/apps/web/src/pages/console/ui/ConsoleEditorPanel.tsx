@@ -25,7 +25,7 @@ export const ConsoleEditorPanel = ({ layout }: ConsoleEditorPanelProps) => {
         addJobId,
         limit,
         setLimit,
-        editorRef
+        editorRef,
     } = useConsole();
     const currentTab = useMemo(
         () => tabs.find((tab) => tab.id === selectedTabId),

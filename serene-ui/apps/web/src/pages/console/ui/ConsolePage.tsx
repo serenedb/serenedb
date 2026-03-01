@@ -38,7 +38,7 @@ const ConsoleContent = () => {
                         layout === "horizontal" ? "horizontal" : "vertical"
                     }>
                     <ResizablePanel
-                        className="flex pt-2"
+                        className="flex"
                         minSize={30}
                         defaultSize={50}>
                         <ConsoleEditorPanel layout={layout} />

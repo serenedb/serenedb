@@ -1135,7 +1135,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder builder;
       builder.openObject();
-      function->WriteProperties(builder);
+      function->WriteInternal(builder);
       builder.close();
       return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
                                        function->GetId(),

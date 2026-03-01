@@ -14,6 +14,10 @@ CREATE TABLE s1.t(id INTEGER);
 
 
 statement ok
+CREATE FUNCTION s1.f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
+
+
+statement ok
 CREATE INDEX i ON s1.t USING inverted(id);
 
 
@@ -35,6 +39,14 @@ SELECT COUNT(*) FROM pg_class WHERE relname = 'i';
 ----
 count
 0
+
+
+connection after_index_drop
+query ok
+SELECT * FROM s1.f();
+----
+f
+1
 
 
 connection after_index_drop

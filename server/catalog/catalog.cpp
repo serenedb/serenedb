@@ -276,7 +276,7 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
     schema_id, RocksDBEntryType::Function,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       std::shared_ptr<catalog::Function> function;
-      auto r = catalog::Function::Instantiate(function, db_id, slice, true);
+      auto r = catalog::Function::Instantiate(function, db_id, slice, false);
       if (!r.ok()) {
         return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }

@@ -44,8 +44,6 @@
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
-#include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "utils/exec_context.h"
 #include "vpack/vpack_helper.h"
 
@@ -68,14 +66,13 @@ void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
 Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
   SDB_DEBUG("xxxxx", Logger::ENGINES, "writing settings: ", slice.toJson());
 
-  RocksDBKeyWithBuffer key;
-  key.constructSettingsValue(RocksDBSettingsType::ServerTick);
+  RocksDBKeyWithBuffer<SettingsKey> key{RocksDBSettingsType::ServerTick};
   rocksdb::Slice value(slice.startAs<char>(), slice.byteSize());
 
   rocksdb::Status s =
     batch.Put(RocksDBColumnFamilyManager::get(
                 RocksDBColumnFamilyManager::Family::Definitions),
-              key.string(), value);
+              key.GetBuffer(), value);
   if (!s.ok()) {
     SDB_WARN("xxxxx", Logger::ENGINES,
              "writing settings failed: ", s.ToString());
@@ -276,15 +273,14 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 }
 
 void RocksDBSettingsManager::loadSettings() {
-  RocksDBKeyWithBuffer key;
-  key.constructSettingsValue(RocksDBSettingsType::ServerTick);
+  RocksDBKeyWithBuffer<SettingsKey> key{RocksDBSettingsType::ServerTick};
 
   rocksdb::PinnableSlice result;
   rocksdb::Status status =
     _db->Get({},
              RocksDBColumnFamilyManager::get(
                RocksDBColumnFamilyManager::Family::Definitions),
-             key.string(), &result);
+             key.GetBuffer(), &result);
   if (status.ok()) {
     // key may not be there, so don't fail when not found
     vpack::Slice slice =

@@ -3,7 +3,7 @@ services:
     image: "$BUILD_IMAGE"
     security_opt:
       - seccomp:unconfined
-    restart: on-failure
+    restart: no
     volumes:
       - "$WORKSPACE:/serenedb"
       - "$WORKSPACE/logs:/var/log/serenedb"
@@ -12,15 +12,23 @@ services:
     # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
     command: >
         sh -c '
+          apt-get update -qq && apt-get install -y postgresql-client -qq &&
           if ! id serenedb >/dev/null 2>&1; then
             useradd serenedb &&
             chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage
           fi &&
-          exec /serenedb/build/bin/serened /tmp/serenedb_datadir \
-            --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-            --server.endpoint tcp://0.0.0.0:8529 \
-            --server.authentication 0
+          while true; do
+            /serenedb/build/bin/serened /tmp/serenedb_datadir \
+              --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+              --server.endpoint tcp://0.0.0.0:8529 \
+              --server.authentication 0
+          done
         '
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -p 7777 -U postgres -c 'SELECT 1;'"]
+      interval: 1s
+      retries: 20
+      start_period: 1s
     env_file:
       - "$WORKSPACE/docker.env"
     networks:
@@ -32,7 +40,8 @@ services:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
     depends_on:
-      - serenedb-single
+      serenedb-single:
+        condition: service_healthy
     command: sh -c 'exec sqllogic/run_recovery.sh'
     networks:
       - test-network

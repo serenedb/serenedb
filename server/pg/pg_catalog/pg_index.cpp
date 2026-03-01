@@ -67,8 +67,10 @@ void RetrieveObjects(ObjectId database_id,
     };
 
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
+    SDB_ASSERT(schema);
     for (const auto& relation :
          snapshot->GetRelations(database_id, schema->GetName())) {
+      SDB_ASSERT(relation);
       insert_object(relation);
     }
   }

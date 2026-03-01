@@ -29,9 +29,12 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "basics/result_or.h"
 #include "catalog/database.h"
+#include "catalog/drop_task.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -43,11 +46,10 @@
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
-
-using AsyncResult = yaclib::Future<Result>;
 
 template<typename T>
 using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
@@ -105,10 +107,6 @@ struct Snapshot {
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
-  virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
-  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShards() const = 0;
-  virtual std::vector<std::shared_ptr<Index>> GetIndexesByTable(
-    ObjectId table_id) const = 0;
   virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
     ObjectId table_id) const = 0;
   virtual std::shared_ptr<IndexShard> GetIndexShard(
@@ -174,15 +172,18 @@ struct LogicalCatalog {
   virtual Result RegisterDatabase(std::shared_ptr<Database> database) = 0;
   virtual Result RegisterSchema(ObjectId database,
                                 std::shared_ptr<catalog::Schema> schema) = 0;
-  virtual Result RegisterView(ObjectId database_id, std::string_view schema,
+  virtual Result RegisterView(ObjectId schema_id,
                               std::shared_ptr<catalog::View> view) = 0;
-  virtual Result RegisterTable(ObjectId database_id, std::string_view schema,
+  virtual Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                                CreateTableOptions options) = 0;
+  virtual Result RegisterTableShard(std::shared_ptr<TableShard> shard) = 0;
   virtual Result RegisterFunction(
-    ObjectId database_id, std::string_view schema,
+    ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Function> function) = 0;
-  virtual Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                               IndexBaseOptions options, vpack::Slice args) = 0;
+  virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
+    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    IndexBaseOptions options) = 0;
+  virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -235,10 +236,6 @@ struct LogicalCatalog {
                            std::string_view name,
                            AsyncResult* async_result) = 0;
 
-  virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
-  virtual void RegisterIndexDrop(IndexTombstone tombstone) = 0;
-  virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
-
   virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
 };
 
@@ -278,17 +275,6 @@ class CatalogFeature final : public SerenedFeature {
 #endif
 
  private:
-  Result OpenDatabase(DatabaseOptions database);
-  Result AddDatabase(const DatabaseOptions& database);
-  Result AddSchemas(ObjectId database_id,
-                    std::vector<std::shared_ptr<Schema>>& schemas);
-  Result AddViews(ObjectId database_id, const Schema& schema);
-  Result AddFunctions(ObjectId database_id, const Schema& schema);
-  Result AddRoles();
-  Result AddTables(ObjectId database_id, const Schema& schema);
-  Result AddIndexes(ObjectId database_id, const Schema& schema);
-  Result ProcessTombstones();
-
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
   bool _skip_background_errors = false;
@@ -296,7 +282,6 @@ class CatalogFeature final : public SerenedFeature {
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
-std::shared_ptr<TableShard> GetTableShard(ObjectId id);
 LogicalCatalog& GetCatalog();
 
 }  // namespace sdb::catalog

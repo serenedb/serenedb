@@ -73,16 +73,20 @@ void RocksDBBackgroundThread::SyncStats() {
   auto snapshot = catalog::GetCatalog().GetSnapshot();
   for (auto& db : snapshot->GetDatabases()) {
     for (auto& schema : snapshot->GetSchemas(db->GetId())) {
-      catalog::VisitTables(*snapshot, db->GetId(), schema->GetName(),
-                           [&](auto& table, auto& shard) mutable {
-                             auto r = _engine.SyncTableStats(*table, *shard);
-                             if (!r.ok()) {
-                               SDB_WARN("xxxxx", Logger::ENGINES,
-                                        "unable to update settings for table '",
-                                        table->GetName(),
-                                        "': ", r.errorMessage());
-                             }
-                           });
+      catalog::VisitTables(
+        *snapshot, db->GetId(), schema->GetName(),
+        [&](auto& table, auto& shard) mutable {
+          if (!shard) {
+            SDB_WARN("xxxxx", Logger::ENGINES, "table shard is null");
+            return;
+          }
+          auto r = _engine.SyncTableShard(*shard);
+          if (!r.ok()) {
+            SDB_WARN("xxxxx", Logger::ENGINES,
+                     "unable to update settings for table '", table->GetName(),
+                     "': ", r.errorMessage());
+          }
+        });
     }
   }
 }
@@ -163,22 +167,10 @@ void RocksDBBackgroundThread::run() {
         }
       }
 
-      bool force = isStopping();
 #ifdef SDB_CLUSTER
       _engine.replicationManager()->garbageCollect(force);
       _engine.dumpManager()->garbageCollect(force);
 #endif
-
-      if (!force) {
-        try {
-          // this only schedules tree rebuilds, but the actual rebuilds are
-          // performed by async tasks in the scheduler.
-          _engine.processTreeRebuilds();
-        } catch (const std::exception& ex) {
-          SDB_WARN("xxxxx", Logger::ENGINES,
-                   "caught exception during tree rebuilding: ", ex.what());
-        }
-      }
 
       const uint64_t latest_seq_no = _engine.db()->GetLatestSequenceNumber();
       const auto earliest_seq_needed =
@@ -238,9 +230,6 @@ void RocksDBBackgroundThread::run() {
         _engine.determineWalFilesInitial();
       }
 
-      if (!isStopping()) {
-        _engine.processCompactions();
-      }
     } catch (const std::exception& ex) {
       SDB_WARN("xxxxx", Logger::ENGINES,
                "caught exception in rocksdb background thread: ", ex.what());

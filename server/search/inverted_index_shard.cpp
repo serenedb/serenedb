@@ -89,10 +89,11 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
   return path;
 }
 
-InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
+InvertedIndexShard::InvertedIndexShard(ObjectId id,
+                                       const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
-  : IndexShard{index},
+  : IndexShard{id, index.GetId(), IndexType::Inverted},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
@@ -224,10 +225,6 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
                    recovery_tick,
                    ", it seems WAL tail was lost and index is out "
                    "of sync");
-
-          if (self->SetOutOfSync()) {
-            self->MarkOutOfSyncUnsafe();
-          }
         }
 
         // Register flush subscription
@@ -250,11 +247,6 @@ void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
 }
 
 Snapshot InvertedIndexShard::GetSnapshot() const {
-  if (FailQueriesOnOutOfSync() && IsOutOfSync()) {
-    SDB_THROW(ERROR_CLUSTER_AQL_COLLECTION_OUT_OF_SYNC, "Search index '",
-              GetId(), "' is out of sync and needs to be recreated");
-  }
-
   return {shared_from_this(), GetInvertedIndexSnapshot()};
 }
 
@@ -363,19 +355,6 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
   SDB_IF_FAILURE("Search::FailOnCommit") {
     // intentionally mark the commit as failed
     result.reset(ERROR_DEBUG);
-  }
-
-  if (result.fail() && SetOutOfSync()) {
-    try {
-      MarkOutOfSyncUnsafe();
-    } catch (const std::exception& e) {
-      // We couldn't persist the outOfSync flag,
-      // but we can't mark the inverted index shard as "not outOfSync" again.
-      // Not much we can do except logging.
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "failed to store 'outOfSync' flag for Search index '",
-               GetId().id(), "': ", e.what());
-    }
   }
 
   if (bool ok = result.ok(); !ok && _num_failed_commits != nullptr) {
@@ -514,38 +493,6 @@ Result InvertedIndexShard::CommitUnsafeImpl(
             GetId().id(), "'"};
   }
   return {};
-}
-
-bool InvertedIndexShard::SetOutOfSync() noexcept {
-  SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  auto error = _error.load(std::memory_order_relaxed);
-  return error == Error::NoError &&
-         _error.compare_exchange_strong(error, Error::OutOfSync,
-                                        std::memory_order_relaxed,
-                                        std::memory_order_relaxed);
-}
-
-void InvertedIndexShard::MarkOutOfSyncUnsafe() {
-  _search.trackOutOfSyncLink();
-
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto snapshot = catalog.Local().GetSnapshot();
-  auto c = snapshot->GetObject<catalog::Table>(GetId());
-  auto shard = snapshot->GetTableShard(GetId());
-  if (!c) {
-    return;
-  }
-
-  _engine.ChangeTable(*c, *shard);
-}
-
-bool InvertedIndexShard::IsOutOfSync() const noexcept {
-  return _error.load(std::memory_order_relaxed) == Error::OutOfSync;
-}
-
-bool InvertedIndexShard::FailQueriesOnOutOfSync() const noexcept {
-  return _search.failQueriesOnOutOfSync();
 }
 
 void InvertedIndexShard::FinishCreation() {

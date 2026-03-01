@@ -350,6 +350,10 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   r = catalog.CreateTable(db, schema, std::move(options), {});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", stmt.relation->relname, "\" already exists"));
   }
   return yaclib::MakeFuture(std::move(r));
 }

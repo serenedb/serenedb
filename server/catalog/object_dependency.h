@@ -20,35 +20,35 @@
 
 #pragma once
 
-#include <vector>
-
-#include "catalog/index.h"
+#include "basics/containers/flat_hash_set.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb::catalog {
 
-struct SecondaryIndexOptions {
-  bool unique = false;
+struct ObjectDependencyBase {
+  virtual ~ObjectDependencyBase() = default;
 };
 
-class SecondaryIndex : public Index {
- public:
-  using Options = SecondaryIndexOptions;
+struct TableDependency : public ObjectDependencyBase {
+  ObjectId shard_id;
+  containers::FlatHashSet<ObjectId> indexes;
+};
 
-  SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                 ObjectId relation_id,
-                 IndexOptions<SecondaryIndexOptions> options);
+struct IndexDependency : public ObjectDependencyBase {
+  ObjectId shard_id;
+};
 
-  void WriteInternal(vpack::Builder& builder) const final;
-  bool IsUnique() const noexcept { return _unique; }
-
-  ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool, ObjectId, vpack::Slice) const final {
-    return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
-                                   "Secondary Index Shard is not supported"};
+struct SchemaDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> tables;
+  containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<ObjectId> views;
+  bool Empty() const {
+    return tables.empty() && functions.empty() && views.empty();
   }
+};
 
- private:
-  bool _unique;
+struct DatabaseDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> schemas;
 };
 
 }  // namespace sdb::catalog

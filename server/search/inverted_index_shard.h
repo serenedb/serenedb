@@ -41,8 +41,8 @@ namespace sdb::search {
 class InvertedIndexShard;
 
 struct InvertedIndexShardOptions {
-  size_t commit_interval_ms;
-  size_t consolidation_interval_ms;
+  size_t commit_interval_ms = 1000;
+  size_t consolidation_interval_ms = 1000;
 };
 
 struct ThreadPoolState {
@@ -141,7 +141,7 @@ class InvertedIndexShard
     uint64_t time_ms;
   };
 
-  InvertedIndexShard(const catalog::InvertedIndex& index,
+  InvertedIndexShard(ObjectId id, const catalog::InvertedIndex& index,
                      InvertedIndexShardOptions options, bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db, ObjectId schema,
@@ -168,15 +168,10 @@ class InvertedIndexShard
   yaclib::Future<> CommitWait();
 
   ObjectId GetId() const noexcept { return _id; }
-  ObjectId GetRelationId() const noexcept { return _relation_id; }
   auto GetState() const noexcept { return _state; }
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
-  bool SetOutOfSync() noexcept;
-  void MarkOutOfSyncUnsafe();
-  bool IsOutOfSync() const noexcept;
-  bool FailQueriesOnOutOfSync() const noexcept;
 
   auto& GetMutex() { return _mutex; }
   Snapshot GetSnapshot() const;

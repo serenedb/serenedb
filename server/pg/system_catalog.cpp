@@ -412,6 +412,15 @@ constexpr auto kMapping =
     {"json_extract_path_text",
      {"pg_json_extract_path_text", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"pg_schema_size",
+     {"pg_schema_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"pg_database_size",
+     {"pg_database_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"pg_table_size",
+     {"pg_table_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {

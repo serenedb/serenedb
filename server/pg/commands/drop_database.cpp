@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/debugging.h"
+#include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/databases.h"
 #include "pg/commands.h"
@@ -30,6 +32,7 @@ yaclib::Future<Result> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt) {
   if (stmt.missing_ok && r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
     r = {};
   }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   return yaclib::MakeFuture(std::move(r));
 }
 

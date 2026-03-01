@@ -22,6 +22,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/notification.h>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/options.h>
@@ -30,6 +31,7 @@
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <map>
@@ -40,6 +42,7 @@
 #include <tuple>
 #include <vector>
 
+#include "app/app_server.h"
 #include "basics/common.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/read_write_lock.h"
@@ -51,7 +54,7 @@
 #include "catalog/types.h"
 #include "database/access_mode.h"
 #include "metrics/fwd.h"
-#include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
+#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -175,9 +178,6 @@ class RocksDBEngineCatalog {
   void toPrometheus(std::string& result, std::string_view globals,
                     bool ensure_whitespace) const;
 
-  Result VisitDatabases(
-    absl::FunctionRef<Result(vpack::Slice database)> visitor);
-
   std::string versionFilename(ObjectId id) const;
   std::string databasePath() const { return _base_path; }
   std::string path() const { return _path; }
@@ -204,17 +204,11 @@ class RocksDBEngineCatalog {
                   bool flush_column_families = false);
   void waitForEstimatorSync();
 
-  Result createDatabase(ObjectId id, vpack::Slice slice);
-  Result dropDatabase(ObjectId id);
-
   // wal in recovery
   RecoveryState recoveryState() noexcept;
 
   /// current recovery tick
   Tick recoveryTick() noexcept;
-
-  Result createTableShard(const catalog::Table& collection, bool is_new,
-                          std::shared_ptr<TableShard>& physical);
 
   /// disallow purging of WAL files even if the archive gets too big
   /// removing WAL files does not seem to be thread-safe, so we have to track
@@ -226,79 +220,27 @@ class RocksDBEngineCatalog {
 
   bool inRecovery() { return recoveryState() < RecoveryState::Done; }
 
-  void scheduleTreeRebuild(ObjectId database, ObjectId collection);
-  void processTreeRebuilds();
+  Result SyncTableShard(const TableShard& shard);
 
-  void compactRange(RocksDBKeyBounds bounds);
-  void processCompactions();
+  Result CreateDefinition(ObjectId parent_id, RocksDBEntryType type,
+                          ObjectId id, WriteProperties properties);
+  Result DropDefinition(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
+  Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
+  Result DropRange(std::string_view start, std::string_view end,
+                   rocksdb::ColumnFamilyHandle* cf);
+  Result WriteTombstone(ObjectId parent_id, ObjectId id);
 
-  Result CreateFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                        WriteProperties properties);
-
-  Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                      std::string_view name);
-
-  void createTable(const catalog::Table& collection, TableShard& physical);
-  Result CreateIndex(const catalog::Index& index);
-  Result StoreIndexShard(const IndexShard& index_shard);
-  ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);
-  Result MarkDeleted(const catalog::Table& collection,
-                     const TableShard& physical,
-                     const TableTombstone& tombstone);
-  Result MarkDeleted(const catalog::Index& index,
-                     const IndexTombstone& tombstone);
-  Result MarkDeleted(const catalog::Database& database);
-  Result MarkDeleted(const catalog::Schema& schema);
-
-  void prepareDropTable(ObjectId collection);
-  Result DropIndex(const IndexTombstone& tombstone);
-  Result DropIndexShard(ObjectId index_id);
-  Result DropTable(const TableTombstone& tombstone);
-
-  void ChangeTable(const catalog::Table& collection,
-                   const TableShard& physical);
-
-  Result RenameTable(const catalog::Table& collection,
-                     const TableShard& physical, std::string_view old_name);
-
-  Result CreateSchema(ObjectId db, ObjectId id, WriteProperties properties);
-  Result ChangeSchema(ObjectId db, ObjectId id, WriteProperties properties);
-  Result DropSchema(ObjectId db, ObjectId id);
-
-  Result ChangeView(ObjectId db, ObjectId schema_id, ObjectId id,
-                    WriteProperties properties);
-
-  Result CreateView(ObjectId db, ObjectId schema_id, ObjectId id,
-                    WriteProperties properties);
-
-  Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
-                  std::string_view name);
-
-  Result ChangeRole(ObjectId id, WriteProperties properties);
-
-  Result CreateRole(const catalog::Role& role);
-
-  Result DropRole(const catalog::Role& role);
-
-  Result SyncTableStats(const catalog::Table& c, const TableShard& physical);
+  uint64_t GetTableSize(ObjectId table_id) const;
+  uint64_t GetSchemaSize(const catalog::Snapshot& snapshot,
+                         ObjectId database_id,
+                         std::string_view schema_name) const;
+  uint64_t GetDatabaseSize(const catalog::Snapshot& snapshot,
+                           ObjectId database_id) const;
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
 
-  // TODO(gnusi): remove
-  using IndexTriple = std::tuple<ObjectId, ObjectId, IndexId>;
-  IndexTriple mapObjectToIndex(uint64_t object_id) const;
-  void addIndexMapping(uint64_t object_id, ObjectId db_id, ObjectId cid,
-                       IndexId iid);
-  void removeIndexMapping(uint64_t object_id);
-
   rocksdb::TransactionDB* db() const { return _db; }
-
-  Result writeDatabaseMarker(ObjectId id, vpack::Slice slice,
-                             RocksDBLogValue&& log_value);
-  Result writeCreateTableMarker(ObjectId database_id, ObjectId schema_id,
-                                ObjectId id, vpack::Slice slice,
-                                std::string_view log_value);
 
   /// determine how many archived WAL files are available. this is called
   /// during the first few minutes after the instance start, when we don't
@@ -395,34 +337,25 @@ class RocksDBEngineCatalog {
   std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>
   getCacheMetrics();
 
-  Result VisitObjects(
-    ObjectId database_id, RocksDBEntryType entry,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
-  Result VisitSchemaObjects(
-    ObjectId database_id, ObjectId schema_id, RocksDBEntryType entry,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
+  Result VisitDefinitions(
+    ObjectId parent_id, RocksDBEntryType type,
+    absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
+
+  void AddDropTask() { _running_drops.fetch_add(1, std::memory_order_release); }
+  void RemoveDropTask() {
+    _running_drops.fetch_sub(1, std::memory_order_release);
+    if (SerenedServer::Instance().isStopping() &&
+        _running_drops.load(std::memory_order_acquire) == 0) {
+      _drop_task_finished.Notify();
+    }
+  }
 
  private:
-  Result VisitObjectsImpl(
-    const RocksDBKeyBounds& bounds,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
-
-  Result DeleteSchemaObject(ObjectId db_id, ObjectId schema_id,
-                            ObjectId object_id, std::string_view object_name,
-                            RocksDBEntryType entry, RocksDBLogType log);
-  Result PutSchemaObject(ObjectId db, ObjectId schema_id, ObjectId id,
-                         WriteProperties properties, RocksDBEntryType entry,
-                         RocksDBLogType log);
-
-  Result PutObject(ObjectId db, ObjectId id, WriteProperties properties,
-                   RocksDBEntryType entry, RocksDBLogType log);
-
-  Result DeleteObject(ObjectId db_id, ObjectId object_id,
-                      std::string_view object_name, RocksDBEntryType entry,
-                      RocksDBLogType log);
+  Result VisitDefinitionsImpl(
+    const std::string& start, const std::string& end,
+    absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
   void shutdownRocksDBInstance() noexcept;
-  void waitForCompactionJobsToFinish();
   void EnsureSystemDatabase();
 
   std::string getCompressionSupport() const;
@@ -466,10 +399,6 @@ class RocksDBEngineCatalog {
   struct Collection {
     ObjectId db;
   };
-
-  // TODO(gnusi): remove
-  mutable absl::Mutex _map_lock;
-  containers::FlatHashMap<uint64_t, IndexTriple> _index_map;
 
   /// protects _prunable_wal_files
   mutable absl::Mutex _wal_file_lock;
@@ -526,19 +455,6 @@ class RocksDBEngineCatalog {
   /// number of currently running tree rebuild jobs jobs
   size_t _running_rebuilds = 0;
 
-  /// lock for _pending_compactions and _running_compactions
-  absl::Mutex _pending_compactions_lock;
-  /// bounds for compactions that we have to process
-  std::deque<RocksDBKeyBounds> _pending_compactions;
-  /// number of currently running compaction jobs
-  size_t _running_compactions = 0;
-  /// column families for which we are currently running a compaction.
-  /// we track this because we want to avoid running multiple compactions on
-  /// the same column family concurrently. this can help to avoid a shutdown
-  /// hanger in rocksdb.
-  containers::FlatHashSet<rocksdb::ColumnFamilyHandle*>
-    _running_compactions_column_families;
-
   // sequence number from which WAL recovery was started. used only
   // for testing
 #ifdef SDB_GTEST
@@ -547,6 +463,9 @@ class RocksDBEngineCatalog {
 
   // last point in time when an auto-flush happened
   std::chrono::steady_clock::time_point _auto_flush_last_executed;
+
+  std::atomic_uint64_t _running_drops = 0;
+  absl::Notification _drop_task_finished;
 
   metrics::Gauge<uint64_t>& _metrics_index_estimator_memory_usage;
   metrics::Gauge<uint64_t>& _metrics_wal_released_tick_flush;
@@ -579,7 +498,5 @@ class RocksDBEngineCatalog {
 
   std::shared_ptr<RocksDBDumpManager> _dump_manager;
 };
-
-Result DeleteTableMeta(rocksdb::DB*, const TableTombstone& tombstone);
 
 }  // namespace sdb

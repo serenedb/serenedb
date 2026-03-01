@@ -188,8 +188,12 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
 }
 
 void Transaction::ApplyTableStatsDiffs() noexcept {
+  if (_table_rows_deltas.empty()) {
+    return;
+  }
+  auto snapshot = GetCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
-    auto table_shard = catalog::GetTableShard(table_id);
+    auto table_shard = snapshot->GetTableShard(table_id);
     SDB_ASSERT(table_shard);
     if (table_shard) {
       table_shard->UpdateNumRows(delta);

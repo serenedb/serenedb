@@ -1,0 +1,34 @@
+statement ok
+SET sdb_fault_unable_to_create TO DEFAULT;
+
+
+statement error db error: ERROR: internal error
+CREATE TABLE t(id INTEGER);
+
+
+statement error db error: ERROR: internal error
+CREATE SCHEMA s;
+
+
+statement error db error: ERROR: internal error
+CREATE DATABASE db;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE DATABASE db;
+
+
+statement ok
+DROP DATABASE db;
+
+
+statement ok
+CREATE SCHEMA s;
+
+
+statement ok
+CREATE TABLE t(id INTEGER)

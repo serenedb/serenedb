@@ -2,7 +2,7 @@
 
 cd sqllogic
 
-export RETRY_ATTEMPTS=10
+export RETRY_ATTEMPTS=120
 export BACKOFF_DURATION=500ms
 
 declare -a test_files=()

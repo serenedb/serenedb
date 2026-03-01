@@ -32,7 +32,6 @@ namespace sdb::catalog {
 // NOLINTBEGIN
 struct DatabaseOptions {
   std::string name;  // TODO(gnusi): change to std::string_view
-  ObjectId id;
   ObjectId owner_id;
   uint32_t replicationFactor = 1;  // 0 for redundant
   uint32_t writeConcern = 1;
@@ -45,8 +44,8 @@ DatabaseOptions MakeSystemDatabaseOptions();
 
 class Database final : public Object {
  public:
-  explicit Database(DatabaseOptions options)
-    : Object{options.owner_id, options.id, std::move(options.name),
+  explicit Database(ObjectId id, DatabaseOptions options)
+    : Object{options.owner_id, id, std::move(options.name),
              ObjectType::Database},
       _replication_factor{options.replicationFactor},
       _write_concern{options.writeConcern} {}

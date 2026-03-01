@@ -36,6 +36,8 @@
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rest_server/serened_single.h"
 
@@ -131,6 +133,9 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
   }
   return yaclib::MakeFuture(std::move(r));
 }

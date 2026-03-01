@@ -41,7 +41,8 @@ Result CreateDatabase(const ExecContext& exec,
     options.writeConcern = 1;
   }
 
-  auto database = std::make_shared<catalog::Database>(std::move(options));
+  auto database =
+    std::make_shared<catalog::Database>(ObjectId{0}, std::move(options));
 
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()

@@ -20,6 +20,8 @@
 
 namespace sdb::catalog {
 
+struct Snapshot;
+
 class SchemaObject;
 class Function;
 class Table;

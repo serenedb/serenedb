@@ -265,7 +265,16 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return converge(this->_itrs[0].seek(target));
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    for (auto& it : this->_itrs) {
+      const auto doc = it.LazySeek(target);
+      if (doc != target) {
+        return doc;
+      }
+    }
+    return target;
+  }
 
   uint32_t count() final { return DocIterator::CountImpl(*this); }
 
@@ -278,17 +287,15 @@ class Conjunction : public ConjunctionBase<Adapter> {
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
   doc_id_t converge(doc_id_t target) {
-    const auto begin = this->_itrs.begin() + 1;
-    const auto end = this->_itrs.end();
-  restart:
     if (doc_limits::eof(target)) [[unlikely]] {
       return doc_limits::eof();
     }
+    const auto begin = this->_itrs.begin() + 1;
+    const auto end = this->_itrs.end();
     for (auto it = begin; it != end; ++it) {
       const auto doc = it->LazySeek(target);
       if (target < doc) {
-        target = this->_itrs[0].seek(doc);
-        goto restart;
+        return seek(doc);
       }
     }
     return target;

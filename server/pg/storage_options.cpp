@@ -28,12 +28,14 @@
 
 namespace sdb::pg {
 
-std::unique_ptr<velox::WriteFile> LocalStorageOptions::CreateFileSink() {
+std::unique_ptr<velox::WriteFile> LocalStorageOptions::CreateFileSink(
+  const velox::filesystems::FileOptions& options) {
   return std::make_unique<velox::LocalWriteFile>(_path, false, false, true,
                                                  true);
 }
 
-std::shared_ptr<velox::ReadFile> LocalStorageOptions::CreateFileSource() {
+std::shared_ptr<velox::ReadFile> LocalStorageOptions::CreateFileSource(
+  const velox::filesystems::FileOptions& options) {
   return std::make_shared<velox::LocalReadFile>(_path);
 }
 
@@ -71,14 +73,16 @@ velox::config::ConfigPtr S3StorageOptions::BuildConfig() const {
   return std::make_shared<velox::config::ConfigBase>(std::move(config));
 }
 
-std::unique_ptr<velox::WriteFile> S3StorageOptions::CreateFileSink() {
+std::unique_ptr<velox::WriteFile> S3StorageOptions::CreateFileSink(
+  const velox::filesystems::FileOptions& options) {
   auto fs = velox::filesystems::getFileSystem(_path, BuildConfig());
-  return fs->openFileForWrite(_path, {});
+  return fs->openFileForWrite(_path, options);
 }
 
-std::shared_ptr<velox::ReadFile> S3StorageOptions::CreateFileSource() {
+std::shared_ptr<velox::ReadFile> S3StorageOptions::CreateFileSource(
+  const velox::filesystems::FileOptions& options) {
   auto fs = velox::filesystems::getFileSystem(_path, BuildConfig());
-  auto file = fs->openFileForRead(_path);
+  auto file = fs->openFileForRead(_path, options);
   return std::shared_ptr<velox::ReadFile>(std::move(file));
 }
 

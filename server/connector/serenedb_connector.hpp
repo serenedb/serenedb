@@ -270,9 +270,9 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
           velox::expression::kAnd);
       }
 
-      return std::make_shared<FileTableHandle>(
-        read_file_table->GetSource(), read_file_table->GetOptions(),
-        std::move(subfield_filters), std::move(remaining_filter));
+      return std::make_shared<FileTableHandle>(read_file_table->GetOptions(),
+                                               std::move(subfield_filters),
+                                               std::move(remaining_filter));
     }
 
     rejected_filters = std::move(filters);
@@ -436,8 +436,7 @@ class SereneDBConnectorSplitManager final
     if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_shared<FileSplitSource>(
-        file_handle->GetSource(), file_handle->GetOptions(),
-        StaticStrings::kSereneDBConnector, options);
+        file_handle->GetOptions(), StaticStrings::kSereneDBConnector, options);
     }
     return std::make_shared<SereneDBSplitSource>();
   }
@@ -522,7 +521,7 @@ class SereneDBConnectorMetadata final
           dynamic_cast<const WriteFileTable*>(table.get())) {
       SDB_ASSERT(kind == axiom::connector::WriteKind::kInsert);
       return std::make_shared<FileConnectorWriteHandle>(
-        write_file_table->GetSink(), write_file_table->GetOptions());
+        write_file_table->GetOptions());
     }
 
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
@@ -636,9 +635,9 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
-        file_handle->GetSource(), file_handle->GetOptions(),
-        file_handle->GetSubfieldFilters(), output_type, column_handles,
-        *connector_query_ctx->memoryPool(), file_handle->GetRemainingFilter(),
+        file_handle->GetOptions(), file_handle->GetSubfieldFilters(),
+        output_type, column_handles, *connector_query_ctx->memoryPool(),
+        file_handle->GetRemainingFilter(),
         connector_query_ctx->expressionEvaluator());
     }
 
@@ -715,8 +714,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
           connector_insert_table_handle.get())) {
       return std::make_unique<FileDataSink>(
-        file_handle->GetSink(), file_handle->GetOptions(),
-        *connector_query_ctx->connectorMemoryPool());
+        file_handle->GetOptions(), *connector_query_ctx->connectorMemoryPool());
     }
 
     auto& serene_insert_handle =

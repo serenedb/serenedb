@@ -28,22 +28,18 @@
 
 #include "basics/fwd.h"
 #include "catalog/types.h"
+#include "connector/file_table.hpp"
 #include "vpack/builder.h"
 #include "vpack/slice.h"
-
-namespace sdb::connector {
-struct WriterOptions;
-struct ReaderOptions;
-}  // namespace sdb::connector
 
 namespace sdb::pg {
 
 class FormatOptions {
  public:
   virtual ~FormatOptions() = default;
-  virtual std::shared_ptr<connector::WriterOptions> createWriterOptions(
+  virtual connector::DwioWriterOptions createWriterOptions(
     velox::RowTypePtr schema) const = 0;
-  virtual std::shared_ptr<connector::ReaderOptions> createReaderOptions(
+  virtual connector::DwioReaderOptions createReaderOptions(
     velox::RowTypePtr schema) const = 0;
   virtual void toVPack(vpack::Builder&) const = 0;
 
@@ -66,9 +62,9 @@ class TextFormatOptions : public FormatOptions {
       _null_string{std::move(null_string)},
       _header{header} {}
 
-  std::shared_ptr<connector::WriterOptions> createWriterOptions(
+  connector::DwioWriterOptions createWriterOptions(
     velox::RowTypePtr schema) const final;
-  std::shared_ptr<connector::ReaderOptions> createReaderOptions(
+  connector::DwioReaderOptions createReaderOptions(
     velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 
@@ -83,9 +79,9 @@ class ParquetFormatOptions : public FormatOptions {
  public:
   ParquetFormatOptions() : FormatOptions{FileFormat::Parquet} {}
 
-  std::shared_ptr<connector::WriterOptions> createWriterOptions(
+  connector::DwioWriterOptions createWriterOptions(
     velox::RowTypePtr schema) const final;
-  std::shared_ptr<connector::ReaderOptions> createReaderOptions(
+  connector::DwioReaderOptions createReaderOptions(
     velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 };
@@ -94,9 +90,9 @@ class DwrfFormatOptions : public FormatOptions {
  public:
   DwrfFormatOptions() : FormatOptions{FileFormat::Dwrf} {}
 
-  std::shared_ptr<connector::WriterOptions> createWriterOptions(
+  connector::DwioWriterOptions createWriterOptions(
     velox::RowTypePtr schema) const final;
-  std::shared_ptr<connector::ReaderOptions> createReaderOptions(
+  connector::DwioReaderOptions createReaderOptions(
     velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 };
@@ -105,9 +101,9 @@ class OrcFormatOptions : public FormatOptions {
  public:
   OrcFormatOptions() : FormatOptions{FileFormat::Orc} {}
 
-  std::shared_ptr<connector::WriterOptions> createWriterOptions(
+  connector::DwioWriterOptions createWriterOptions(
     velox::RowTypePtr schema) const final;
-  std::shared_ptr<connector::ReaderOptions> createReaderOptions(
+  connector::DwioReaderOptions createReaderOptions(
     velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 };

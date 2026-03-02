@@ -714,7 +714,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
           connector_insert_table_handle.get())) {
       return std::make_unique<FileDataSink>(
-        file_handle->GetOptions(), *connector_query_ctx->connectorMemoryPool());
+        file_handle->GetOptions(), *connector_query_ctx->memoryPool(),
+        *connector_query_ctx->connectorMemoryPool());
     }
 
     auto& serene_insert_handle =

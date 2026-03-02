@@ -68,13 +68,15 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
 }
 
 FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
-                           velox::memory::MemoryPool& memory_pool) {
-  auto sink = options->storage_options->CreateFileSink({.pool = &memory_pool});
+                           velox::memory::MemoryPool& leaf_pool,
+                           velox::memory::MemoryPool& aggregate_pool) {
+  // S3 requiries leaf_pool
+  auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
     std::move(sink), "serenedb_sink");
   const auto& writer_factory =
     velox::dwio::common::getWriterFactory(options->Writer()->fileFormat);
-  options->Writer()->memoryPool = &memory_pool;
+  options->Writer()->memoryPool = &aggregate_pool;
   _writer = writer_factory->createWriter(std::move(write_sink),
                                          std::move(options->Writer()));
   SDB_ASSERT(_writer);

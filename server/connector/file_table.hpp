@@ -232,7 +232,8 @@ class FileConnectorWriteHandle final
 class FileDataSink final : public velox::connector::DataSink {
  public:
   FileDataSink(std::shared_ptr<WriterOptions> options,
-               velox::memory::MemoryPool& memory_pool);
+               velox::memory::MemoryPool& leaf_pool,
+               velox::memory::MemoryPool& aggregate_pool);
 
   void appendData(velox::RowVectorPtr input) final;
 

@@ -467,10 +467,6 @@ class NGramSimilarityDocIterator : public DocIterator {
                min_match_count, collect_all_states},
       // we are not interested in disjunction`s // scoring
       _approx{std::move(itrs), min_match_count} {
-    // avoid runtime conversion
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
@@ -521,27 +517,37 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
   doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t advance() final {
+    auto doc = _approx.value();
+    if (doc == _checked_doc) [[likely]] {
+      doc = _approx.advance();
+    }
     while (true) {
-      const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-        return doc;
+        _checked_doc = doc;
+        return std::get<DocAttr>(_attrs).value = doc;
       }
+      doc = _approx.advance();
     }
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
-      return doc;
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    if (const auto doc = _checked_doc; target <= doc) [[unlikely]] {
+      return doc <= doc_value ? doc_value : _checked_doc + 1;
     }
     const auto doc = _approx.seek(target);
-    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+    if (target != doc) {
       return doc;
     }
-    return advance();
+    _checked_doc = doc;
+    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      return doc_value = doc;
+    }
+    return doc + 1;
   }
 
   uint32_t count() final { return CountImpl(*this); }
@@ -566,8 +572,8 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
  private:
-  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>,
-                                BoostBlockAttr, FreqBlockAttr>;
+  using Attributes =
+    std::tuple<DocAttr, AttributePtr<CostAttr>, BoostBlockAttr, FreqBlockAttr>;
 
   const byte_type* _stats{};
   score_t _boost{1.0f};
@@ -575,6 +581,7 @@ class NGramSimilarityDocIterator : public DocIterator {
 
   Checker _checker;
   Approx _approx;
+  doc_id_t _checked_doc = doc_limits::invalid();
   Attributes _attrs;
   score_t* _collected_boost = nullptr;  // TODO(gnusi): maybe array?
   uint32_t* _collected_freq = nullptr;

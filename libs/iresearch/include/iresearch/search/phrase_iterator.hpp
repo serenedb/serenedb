@@ -925,9 +925,6 @@ class PhraseIterator : public DocIterator {
                 return std::move(itrs);
               }(std::forward<Adapters>(itrs))},
       _freq{std::move(pos)} {
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
@@ -984,27 +981,37 @@ class PhraseIterator : public DocIterator {
   }
 
   doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t advance() final {
+    auto doc = _approx.value();
+    if (doc == _checked_doc) [[likely]] {
+      doc = _approx.advance();
+    }
     while (true) {
-      const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
-        return doc;
+        _checked_doc = doc;
+        return std::get<DocAttr>(_attrs).value = doc;
       }
+      doc = _approx.advance();
     }
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
-      return doc;
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    if (const auto doc = _checked_doc; target <= doc) [[unlikely]] {
+      return doc <= doc_value ? doc_value : _checked_doc + 1;
     }
     const auto doc = _approx.seek(target);
-    if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+    if (target != doc) {
       return doc;
     }
-    return advance();
+    _checked_doc = doc;
+    if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+      return doc_value = doc;
+    }
+    return doc + 1;
   }
 
   uint32_t count() final { return CountImpl(*this); }
@@ -1028,8 +1035,7 @@ class PhraseIterator : public DocIterator {
   }
 
  private:
-  using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, FreqBlockAttr>;
+  using Attributes = std::tuple<DocAttr, AttributePtr<CostAttr>, FreqBlockAttr>;
 
   const byte_type* _stats{};
   score_t _boost{1.0f};
@@ -1038,6 +1044,7 @@ class PhraseIterator : public DocIterator {
   // first approximation (conjunction over all words in a phrase)
   Conjunction _approx;
   Frequency _freq;
+  doc_id_t _checked_doc = doc_limits::invalid();
   Attributes _attrs;
   [[no_unique_address]] utils::Need<!Frequency::kOneShot, uint32_t*>
     _collected_freqs;

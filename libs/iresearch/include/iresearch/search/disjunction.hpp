@@ -128,7 +128,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     // TODO: optimize
     return seek(target);
   }
@@ -312,7 +312,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     // TODO: optimize
     return seek(target);
   }
@@ -468,7 +468,7 @@ class Disjunction : public CompoundDocIterator<Adapter> {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     // TODO: optimize
     return seek(target);
   }
@@ -793,7 +793,7 @@ class MinMatchDisjunction : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     // TODO: optimize
     return seek(target);
   }

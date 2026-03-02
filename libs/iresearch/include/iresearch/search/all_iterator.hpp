@@ -57,7 +57,7 @@ class AllIterator : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) noexcept final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 

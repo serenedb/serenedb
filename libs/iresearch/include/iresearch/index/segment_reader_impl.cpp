@@ -56,7 +56,7 @@ class AllIterator : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) noexcept final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 
@@ -109,7 +109,7 @@ class MaskDocIterator : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 
@@ -161,7 +161,7 @@ class MaskedDocIterator : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) noexcept final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 

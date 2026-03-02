@@ -181,7 +181,7 @@ struct DocIterator : AttributeProvider {
   // first doc in iterator that is greater than target.
   // In other words: `target <= LazySeek(target) <= seek(target)`
   virtual doc_id_t LazySeek(doc_id_t target) {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 

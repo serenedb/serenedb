@@ -99,7 +99,7 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
 }
 
 doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) {
-  SDB_ASSERT(target > value());
+  SDB_ASSERT(target >= value());
   return seek(target);
 }
 

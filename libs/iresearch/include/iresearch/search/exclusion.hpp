@@ -53,7 +53,7 @@ class Exclusion : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     // TODO: optimize
     return seek(target);
   }

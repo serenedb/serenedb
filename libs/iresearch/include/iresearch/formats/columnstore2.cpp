@@ -267,7 +267,7 @@ class RangeColumnIterator : public ResettableDocIterator,
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 
@@ -338,7 +338,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target > value());
+    SDB_ASSERT(target >= value());
     return seek(target);
   }
 

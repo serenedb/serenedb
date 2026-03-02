@@ -88,7 +88,7 @@ class Exclusion : public DocIterator {
       for (auto& it : _excl) {
         auto excl = it.value();
         if (excl < incl) {
-          excl = it.LazySeek(incl);
+          excl = it.seek(incl);
         }
         if (excl == incl) {
           return advance();
@@ -98,7 +98,7 @@ class Exclusion : public DocIterator {
     } else {
       auto excl = _excl.value();
       if (excl < incl) {
-        excl = _excl.LazySeek(incl);
+        excl = _excl.seek(incl);
       }
       if (excl == incl) {
         return advance();

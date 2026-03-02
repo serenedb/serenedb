@@ -84,8 +84,9 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     ctx.scorer ? merge_type : ScoreMergeType::Noop,
     [&]<ScoreMergeType MergeType> {
       using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-      return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                          std::forward<Args>(args)...);
+      return MakeDisjunction<Disjunction>(
+        ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+        std::move(itrs), std::forward<Args>(args)...);
     });
 }
 
@@ -110,8 +111,9 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
   }
 
   return MakeConjunction(ctx.scorer ? merge_type : ScoreMergeType::Noop,
-                         ctx.wand, std::move(itrs),
-                         std::forward<Args>(args)...);
+                         ctx.wand,
+                         static_cast<doc_id_t>(ctx.segment.docs_count()),
+                         std::move(itrs), std::forward<Args>(args)...);
 }
 
 }  // namespace
@@ -289,14 +291,15 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(ctx.scorer ? merge_type() : ScoreMergeType::Noop,
-                          [&]<ScoreMergeType MergeType> {
-                            // FIXME(gnusi): use FAST version
-                            using Disjunction =
-                              MinMatchIterator<ScoreAdapter, MergeType>;
-                            return MakeWeakDisjunction<Disjunction>(
-                              ctx.wand, std::move(itrs), min_match_count);
-                          });
+  return ResolveMergeType(
+    ctx.scorer ? merge_type() : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType> {
+      // FIXME(gnusi): use FAST version
+      using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
+      return MakeWeakDisjunction<Disjunction>(
+        ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+        std::move(itrs), min_match_count);
+    });
 }
 
 void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,

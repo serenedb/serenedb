@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
@@ -35,7 +36,15 @@ class ColumnArgsFetcher {
 
   void Clear() noexcept { _columns.clear(); }
 
-  void Fetch(std::span<doc_id_t> docs) {
+  void FetchPostingBlock(std::span<const doc_id_t, kPostingBlock> docs) {
+    for (auto& [_, entry] : _columns) {
+      auto& [reader, norms] = entry;
+      reader->GetPostingBlock(
+        docs, std::span<uint32_t, kPostingBlock>{norms.data(), kPostingBlock});
+    }
+  }
+
+  void Fetch(std::span<const doc_id_t> docs) {
     for (auto& [_, entry] : _columns) {
       auto& [reader, norms] = entry;
       reader->Get(docs, norms);

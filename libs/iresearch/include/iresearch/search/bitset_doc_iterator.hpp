@@ -38,6 +38,7 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   doc_id_t value() const noexcept final { return _doc.value; }
   doc_id_t advance() final;
   doc_id_t seek(doc_id_t target) final;
+  doc_id_t LazySeek(doc_id_t target) final;
   uint32_t count() final;
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final;

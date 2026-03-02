@@ -114,6 +114,18 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return SeekInternal(parent);
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    // TODO(mbkkt) should be SDB_ASSERT(target > value())
+    // but depends on underlying iterator implementation
+    SDB_ASSERT(target >= value());
+    const auto parent = _parent->LazySeek(target);
+    if (parent != target) {
+      return parent;
+    }
+    // TODO: optimize
+    return SeekInternal(parent);
+  }
+
   uint32_t count() final { return CountImpl(*this); }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;

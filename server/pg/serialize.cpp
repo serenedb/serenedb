@@ -425,7 +425,7 @@ void SerializeOneDimArray(SerializationContext context,
   const auto array_offset = array_vector->offsetAt(array_row);
   const auto& child_vector = array_vector->elements();
   velox::DecodedVector decoded_child;
-  decoded_child.decode(*child_vector, false);
+  decoded_child.decode(*child_vector, true);
   if constexpr (Format == VarFormat::Text) {
     context.buffer->WriteUncommitted("{");
     for (velox::vector_size_t i = 0; i < array_size; ++i) {
@@ -486,7 +486,7 @@ int32_t FlattenArray(SerializationContext context,
     return 1;
   }
   velox::DecodedVector decoded_child;
-  decoded_child.decode(*child_vector, false);
+  decoded_child.decode(*child_vector, true);
   velox::vector_size_t i = 0;
   int32_t dims = -1;
   if constexpr (First) {
@@ -527,7 +527,7 @@ void SerializeArray(SerializationContext context,
     const auto array_offset = array_vector->offsetAt(array_row);
     const auto& child_vector = array_vector->elements();
     velox::DecodedVector decoded_child;
-    decoded_child.decode(*child_vector, false);
+    decoded_child.decode(*child_vector, true);
     context.buffer->WriteUncommitted("{");
     for (velox::vector_size_t i = 0; i < array_size; ++i) {
       if (i > 0) {

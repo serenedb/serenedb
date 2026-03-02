@@ -521,24 +521,29 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
   doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    auto doc = _approx.value();
+    if (doc == _checked_doc) [[likely]] {
+      doc = _approx.advance();
+    }
     while (true) {
-      const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-        return doc_value = doc;
+        _checked_doc = doc;
+        return std::get<DocAttr>(_attrs).value = doc;
       }
+      doc = _approx.advance();
     }
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    if (const auto doc = doc_value; target <= doc) [[unlikely]] {
-      return doc;
+    if (const auto doc = _checked_doc; target <= doc) [[unlikely]] {
+      return doc <= doc_value ? doc : doc + 1;
     }
     const auto doc = _approx.seek(target);
     if (target != doc) {
       return doc;
     }
+    _checked_doc = doc;
     if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
       return doc_value = doc;
     }
@@ -576,6 +581,7 @@ class NGramSimilarityDocIterator : public DocIterator {
 
   Checker _checker;
   Approx _approx;
+  doc_id_t _checked_doc = doc_limits::invalid();
   Attributes _attrs;
   score_t* _collected_boost = nullptr;  // TODO(gnusi): maybe array?
   uint32_t* _collected_freq = nullptr;

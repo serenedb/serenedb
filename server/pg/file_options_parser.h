@@ -24,6 +24,7 @@
 #include <basics/containers/flat_hash_map.h>
 
 #include <functional>
+#include <type_traits>
 
 #include "catalog/types.h"
 #include "pg/format_options.h"
@@ -47,9 +48,62 @@ class FileOptionsParser {
       _notice{std::move(notice)} {}
 
  protected:
+  static bool IsS3Path(std::string_view path) {
+    return path.starts_with("s3://") || path.starts_with("s3a://") ||
+           path.starts_with("s3n://") || path.starts_with("oss://") ||
+           path.starts_with("cos://") || path.starts_with("cosn://");
+  }
+
   std::unique_ptr<StorageOptions> ParseStorageOptions() {
-    // TODO: S3 / hdfs etc.
+    if (IsS3Path(_file_path)) {
+      return ParseS3StorageOptions();
+    }
     return std::make_unique<LocalStorageOptions>(std::string{_file_path});
+  }
+
+  std::unique_ptr<S3StorageOptions> ParseS3StorageOptions() {
+    auto access_key = EraseOptionOrValue<std::string>("s3_access_key");
+    auto secret_key = EraseOptionOrValue<std::string>("s3_secret_key");
+    auto endpoint = EraseOptionOrValue<std::string>("s3_endpoint");
+    auto region = EraseOptionOrValue<std::string>("s3_region");
+    auto iam_role = EraseOptionOrValue<std::string>("s3_iam_role");
+    auto path_style_access = EraseOptionOrValue<bool>("s3_path_style_access");
+    auto ssl_enabled = EraseOptionOrValue<bool>("s3_ssl_enabled", true);
+    auto use_creds = EraseOptionOrValue<bool>("s3_use_instance_credentials");
+    return std::make_unique<S3StorageOptions>(
+      std::string{_file_path}, std::move(access_key), std::move(secret_key),
+      std::move(endpoint), std::move(region), std::move(iam_role),
+      path_style_access, ssl_enabled, use_creds);
+  }
+
+  template<typename T>
+  static constexpr std::string_view OptionTypeName() {
+    if constexpr (std::is_same_v<T, std::string> ||
+                  std::is_same_v<T, std::string_view>) {
+      return "a string";
+    } else if constexpr (std::is_same_v<T, bool>) {
+      return "a boolean";
+    } else if constexpr (std::is_same_v<T, int>) {
+      return "an integer";
+    } else if constexpr (std::is_same_v<T, double>) {
+      return "a number";
+    } else if constexpr (std::is_same_v<T, char>) {
+      return "a character";
+    }
+  }
+
+  template<typename T>
+  T EraseOptionOrValue(std::string_view name, T value = {}) {
+    if (const auto* option = EraseOption(name)) {
+      auto value = TryGet<T>(option->arg);
+      if (!value) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(name, " must be ", OptionTypeName<T>()));
+      }
+      return *value;
+    }
+    return value;
   }
 
   const DefElem* EraseOption(std::string_view name) {
@@ -193,7 +247,7 @@ class FileOptionsParser {
             ERR_MSG("match option for header is not supported yet"));
         }
       }
-      auto maybe_header = TryGetBoolOption(option->arg);
+      auto maybe_header = TryGet<bool>(option->arg);
       if (!maybe_header) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),

@@ -240,7 +240,7 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  _completed_rows += rows_read;
+  _completed_rows += batch->size();
   if (_report_callback) {
     const auto now = std::chrono::high_resolution_clock::now();
     auto seconds_since_last_report =

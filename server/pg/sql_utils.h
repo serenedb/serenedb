@@ -159,9 +159,9 @@ SDB_DECLARE_TRYGET(int);
 SDB_DECLARE_TRYGET(double);
 SDB_DECLARE_TRYGET(std::string_view);
 SDB_DECLARE_TRYGET(char);
+SDB_DECLARE_TRYGET(std::string);
+SDB_DECLARE_TRYGET(bool);
 #undef SDB_DECLARE_TRYGET
-
-std::optional<bool> TryGetBoolOption(const Node* expr);
 
 }  // namespace pg
 }  // namespace sdb

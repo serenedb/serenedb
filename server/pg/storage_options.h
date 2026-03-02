@@ -21,6 +21,7 @@
 #pragma once
 
 #include <velox/common/file/File.h>
+#include <velox/common/file/FileSystems.h>
 
 #include <memory>
 #include <string>
@@ -44,9 +45,15 @@ class StorageOptions {
   static std::shared_ptr<StorageOptions> fromVPack(vpack::Slice slice);
 
  protected:
-  enum class Type : uint32_t { Local = 0 };
+  enum class Type : uint32_t { Local = 0, S3 = 1 };
   StorageOptions(Type type, std::string path)
     : _type{type}, _path{std::move(path)} {}
+
+  void ToVPackBase(vpack::Builder& b) const {
+    b.add("type", std::to_underlying(_type));
+    b.add("path", std::string_view{_path});
+  }
+
   Type _type;
   std::string _path;
 };
@@ -59,6 +66,40 @@ class LocalStorageOptions : public StorageOptions {
   std::unique_ptr<velox::WriteFile> CreateFileSink() final;
   std::shared_ptr<velox::ReadFile> CreateFileSource() final;
   void toVPack(vpack::Builder& b) const final;
+};
+
+class S3StorageOptions : public StorageOptions {
+ public:
+  S3StorageOptions(std::string path, std::string access_key,
+                   std::string secret_key, std::string endpoint,
+                   std::string region, std::string iam_role,
+                   bool path_style_access, bool ssl_enabled,
+                   bool use_instance_credentials)
+    : StorageOptions{Type::S3, std::move(path)},
+      _access_key{std::move(access_key)},
+      _secret_key{std::move(secret_key)},
+      _endpoint{std::move(endpoint)},
+      _region{std::move(region)},
+      _iam_role{std::move(iam_role)},
+      _path_style_access{path_style_access},
+      _ssl_enabled{ssl_enabled},
+      _use_instance_credentials{use_instance_credentials} {}
+
+  std::unique_ptr<velox::WriteFile> CreateFileSink() final;
+  std::shared_ptr<velox::ReadFile> CreateFileSource() final;
+  void toVPack(vpack::Builder& b) const final;
+
+  velox::config::ConfigPtr BuildConfig() const;
+
+ private:
+  std::string _access_key;
+  std::string _secret_key;
+  std::string _endpoint;
+  std::string _region;
+  std::string _iam_role;
+  bool _path_style_access;
+  bool _ssl_enabled;
+  bool _use_instance_credentials;
 };
 
 template<typename Context>

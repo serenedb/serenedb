@@ -1967,7 +1967,7 @@ class CopyOptionsParser : public FileOptionsParser {
 
     bool show_progress = false;
     if (const auto* option = EraseOption("progress")) {
-      auto maybe_progress = TryGetBoolOption(option->arg);
+      auto maybe_progress = TryGet<bool>(option->arg);
       if (!maybe_progress) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),

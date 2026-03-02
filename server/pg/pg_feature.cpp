@@ -32,6 +32,8 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 
+#include <velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h>
+
 namespace sdb::pg {
 
 PostgresFeature::PostgresFeature(SerenedServer& server)
@@ -86,6 +88,8 @@ void PostgresFeature::prepare() {
   velox::memory::MemoryManager::initialize(
     velox::memory::MemoryManager::Options{});
 
+  velox::filesystems::registerS3FileSystem();
+
   RegisterVeloxFunctionsAndTypes();
 }
 
@@ -109,6 +113,7 @@ void PostgresFeature::start() {
 }
 
 void PostgresFeature::unprepare() {
+  velox::filesystems::finalizeS3FileSystem();
   folly::SingletonVault::singleton()->destroyInstancesFinal();
 }
 

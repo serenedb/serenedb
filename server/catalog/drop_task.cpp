@@ -22,6 +22,7 @@
 
 #include <rocksdb/options.h>
 
+#include <filesystem>
 #include <yaclib/async/join.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
@@ -36,15 +37,42 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
 
 namespace {
+
 bool CheckResult(const Result& result) {
   return result == ERROR_OK || result == ERROR_SERVER_DATA_SOURCE_NOT_FOUND ||
          result == ERROR_SERVER_DATABASE_NOT_FOUND ||
          result == ERROR_SERVER_DOCUMENT_NOT_FOUND ||
          result == ERROR_SERVER_INDEX_NOT_FOUND;
+}
+
+Result RemoveIndexShards(ObjectId db_id,
+                         std::optional<ObjectId> schema_id = std::nullopt,
+                         std::optional<ObjectId> table_id = std::nullopt,
+                         std::optional<ObjectId> index_id = std::nullopt) {
+  auto path = search::GetSearchEngine().GetPersistedPath(db_id);
+  if (schema_id) {
+    path /= absl::StrCat(*schema_id);
+  }
+  if (table_id) {
+    SDB_ASSERT(schema_id.has_value());
+    path /= absl::StrCat(*table_id);
+  }
+  if (index_id) {
+    SDB_ASSERT(table_id.has_value());
+    path /= absl::StrCat(*index_id);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(path, ec);
+  if (ec) {
+    return Result{ERROR_FAILED,
+                  "Failed to remove index shards: " + ec.message()};
+  }
+  return {};
 }
 
 template<typename T>
@@ -61,9 +89,10 @@ AsyncResult QueueDropTask(std::shared_ptr<T> task) {
                                                  [task] { return (*task)(); });
     while (r.errorNumber() == ERROR_LOCKED) {
       auto* scheduler = GetScheduler();
-      if (!scheduler) {
+      if (SerenedServer::Instance().isStopping()) {
         co_return {};
       }
+      SDB_ASSERT(scheduler);
       task->delay = std::min(kMaxDelay, task->delay << 1);
       co_await scheduler->delay(T::kName,
                                 std::chrono::microseconds{task->delay});
@@ -105,41 +134,28 @@ AsyncResult TableShardDrop::operator()() {
   return yaclib::MakeFuture<Result>();
 }
 
-AsyncResult IndexShardDrop::operator()() {
-  SDB_ASSERT(!is_root);
-  // TODO(codeworse): in case of table/schema/database drop delete the entire
-  // folder at once
-  if (type == IndexType::Inverted) {
-    auto path = search::InvertedIndexShard::GetPath(db_id, schema_id, id);
-    std::error_code ec;
-    std::filesystem::remove_all(path, ec);
-    if (ec) {
-      return QueueDropTask(shared_from_this());
-    }
-  }
-  return yaclib::MakeFuture<Result>();
-}
-
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
   auto r = server.DropEntry(id, RocksDBEntryType::IndexShard);
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropDefinition(parent_id, RocksDBEntryType::Index, id);
-  if (!CheckResult(r)) {
-    return r;
-  }
   if (is_root) {
+    r = server.DropDefinition(parent_id, RocksDBEntryType::Index, id);
+    if (!CheckResult(r)) {
+      return r;
+    }
+
     return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
   }
   return {};
 }
 
 AsyncResult IndexDrop::operator()() {
-  auto shard_task = std::make_shared<IndexShardDrop>(
-    DropTask{.parent_id = id, .id = shard_id}, db_id, schema_id, type);
-  auto r = co_await QueueDropTask(std::move(shard_task));
+  Result r;
+  if (type == IndexType::Inverted && is_root) {
+    r = RemoveIndexShards(db_id, schema_id, parent_id, shard_id);
+  }
   if (!CheckResult(r) || !CheckResult(Finalize())) {
     co_return co_await QueueDropTask(shared_from_this());
   }
@@ -150,15 +166,21 @@ AsyncResult IndexDrop::Schedule() { return QueueDropTask(shared_from_this()); }
 
 Result TableDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::TableShard);
+  auto r = server.DropEntry(id, RocksDBEntryType::Index);
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropDefinition(parent_id, RocksDBEntryType::Table, id);
+
+  r = server.DropEntry(id, RocksDBEntryType::TableShard);
   if (!CheckResult(r)) {
     return r;
   }
+
   if (is_root) {
+    r = server.DropDefinition(parent_id, RocksDBEntryType::Table, id);
+    if (!CheckResult(r)) {
+      return r;
+    }
     return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
   }
   return {};
@@ -193,11 +215,12 @@ Result SchemaDrop::Finalize() {
       return r;
     }
   }
-  auto r = server.DropDefinition(parent_id, RocksDBEntryType::Schema, id);
-  if (!CheckResult(r)) {
-    return r;
-  }
+
   if (is_root) {
+    auto r = server.DropDefinition(parent_id, RocksDBEntryType::Schema, id);
+    if (!CheckResult(r)) {
+      return r;
+    }
     r = server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
     if (!CheckResult(r)) {
       return r;

@@ -145,7 +145,7 @@ class InvertedIndexShard
                      InvertedIndexShardOptions options, bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db, ObjectId schema,
-                                       ObjectId id);
+                                       ObjectId table_id, ObjectId id);
 
   void WriteInternal(vpack::Builder& builder) const final;
 

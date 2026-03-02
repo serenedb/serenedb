@@ -82,9 +82,11 @@ bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
 }  // namespace
 
 std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
+                                                  ObjectId table_id,
                                                   ObjectId id) {
   std::filesystem::path path = GetSearchEngine().GetPersistedPath(db);
   path /= absl::StrCat(schema);
+  path /= absl::StrCat(table_id);
   path /= absl::StrCat(id);
   return path;
 }
@@ -106,6 +108,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path = _search.GetPersistedPath(db_id);
   path /= absl::StrCat(schema_id);
+  path /= absl::StrCat(index.GetRelationId());
   path /= absl::StrCat(index_id);
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);

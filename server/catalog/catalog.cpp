@@ -150,11 +150,6 @@ class OpenDatabase {
   OpenDatabase(LogicalCatalog& catalog) : _catalog{catalog} {}
 
   Result operator()() {
-    _deleted[RocksDBEntryType::Placeholder];
-    _deleted[RocksDBEntryType::Database];
-    _deleted[RocksDBEntryType::Schema];
-    _deleted[RocksDBEntryType::Table];
-    _deleted[RocksDBEntryType::Index];
     CollectDeletedDefinitions(id::kInstance, RocksDBEntryType::Placeholder);
     auto r = RegisterDatabases();
     ClearDeletedDefinitions(RocksDBEntryType::Placeholder);
@@ -237,19 +232,17 @@ Result OpenDatabase::RegisterDatabases() {
   return GetServerEngine().VisitDefinitions(
     id::kInstance, RocksDBEntryType::Database,
     [&](DefinitionKey key, vpack::Slice slice) {
-      if (IsDeleted(key.GetObjectId(), RocksDBEntryType::Placeholder)) {
-        auto db_drop = std::make_shared<DatabaseDrop>();
-        db_drop->is_root = true;
-        auto r =
-          CreateDatabaseDrop(GetServerEngine(), key.GetObjectId(), db_drop);
-        if (!r.ok()) {
-          return r;
-        }
-        db_drop->Schedule().Detach();
-        return Result{};
-      } else {
+      if (!IsDeleted(key.GetObjectId(), RocksDBEntryType::Placeholder)) {
         return AddDatabase(key.GetObjectId(), slice);
       }
+      auto db_drop = std::make_shared<DatabaseDrop>();
+      db_drop->is_root = true;
+      auto r =
+        CreateDatabaseDrop(GetServerEngine(), key.GetObjectId(), db_drop);
+      if (r.ok()) {
+        db_drop->Schedule().Detach();
+      }
+      return r;
     });
 }
 
@@ -258,16 +251,18 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
     database_id, RocksDBEntryType::Schema,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto schema_id = key.GetObjectId();
-      if (IsDeleted(key.GetObjectId(), RocksDBEntryType::Database)) {
-        auto schema_drop = std::make_shared<SchemaDrop>();
-        schema_drop->is_root = true;
-        auto r = CreateSchemaDrop(GetServerEngine(), database_id, schema_id,
-                                  schema_drop);
-        schema_drop->Schedule().Detach();
-        return r;
-      } else {
+      if (!IsDeleted(key.GetObjectId(), RocksDBEntryType::Database)) {
         return AddSchema(database_id, schema_id, slice);
       }
+
+      auto schema_drop = std::make_shared<SchemaDrop>();
+      schema_drop->is_root = true;
+      auto r = CreateSchemaDrop(GetServerEngine(), database_id, schema_id,
+                                schema_drop);
+      if (r.ok()) {
+        schema_drop->Schedule().Detach();
+      }
+      return r;
     });
 }
 
@@ -288,7 +283,7 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, RocksDBEntryType::View,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey, vpack::Slice slice) -> Result {
       ViewOptions options;
       auto r = ViewOptions::Read(options, slice);
       if (!r.ok()) {
@@ -312,16 +307,18 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
     table_id, RocksDBEntryType::Index,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto index_id = key.GetObjectId();
-      if (IsDeleted(index_id, RocksDBEntryType::Table)) {
-        auto index_drop = std::make_shared<IndexDrop>();
-        index_drop->is_root = true;
-        auto r = CreateIndexDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                 index_id, index_drop, slice);
-        index_drop->Schedule().Detach();
-        return r;
-      } else {
+      if (!IsDeleted(index_id, RocksDBEntryType::Table)) {
         return AddIndex(db_id, schema_id, table_id, index_id, slice);
       }
+
+      auto index_drop = std::make_shared<IndexDrop>();
+      index_drop->is_root = true;
+      auto r = CreateIndexDrop(GetServerEngine(), db_id, schema_id, table_id,
+                               index_id, index_drop, slice);
+      if (r.ok()) {
+        index_drop->Schedule().Detach();
+      }
+      return r;
     });
 }
 
@@ -346,10 +343,12 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       SDB_ASSERT(!IsDeleted(key.GetObjectId(), RocksDBEntryType::Index));
-      return index->CreateIndexShard(false, key.GetObjectId(), std::move(slice))
-        .transform(
-          [&](auto&& shard) { return _catalog.RegisterIndexShard(shard); })
-        .error_or(Result{});
+      auto shard =
+        index->CreateIndexShard(false, key.GetObjectId(), std::move(slice));
+      if (!shard) {
+        return std::move(shard.error());
+      }
+      return _catalog.RegisterIndexShard(*shard);
     });
 }
 
@@ -358,16 +357,17 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
     schema_id, RocksDBEntryType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
-      if (IsDeleted(table_id, RocksDBEntryType::Schema)) {
-        auto table_drop = std::make_shared<TableDrop>();
-        table_drop->is_root = true;
-        auto r = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                 table_drop);
-        table_drop->Schedule().Detach();
-        return r;
-      } else {
+      if (!IsDeleted(table_id, RocksDBEntryType::Schema)) {
         return AddTable(db_id, schema_id, table_id, slice);
       }
+      auto table_drop = std::make_shared<TableDrop>();
+      table_drop->is_root = true;
+      auto r = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
+                               table_drop);
+      if (r.ok()) {
+        table_drop->Schedule().Detach();
+      }
+      return r;
     });
 }
 
@@ -418,8 +418,7 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
   if (!r.ok()) {
     return r;
   }
-  r = RegisterIndexes(db_id, schema_id, table_id);
-  return r;
+  return RegisterIndexes(db_id, schema_id, table_id);
 }
 
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
@@ -517,8 +516,6 @@ void CatalogFeature::unprepare() {
   _local.reset();
   _global.reset();
 }
-
-void CatalogFeature::beginShutdown() {}
 
 void CatalogFeature::stop() {
   aql::QueryCacheProperties p{

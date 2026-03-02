@@ -59,28 +59,6 @@ struct TableShardDrop : DropTask, std::enable_shared_from_this<TableShardDrop> {
   AsyncResult operator()();
 };
 
-struct IndexShardDrop : DropTask, std::enable_shared_from_this<IndexShardDrop> {
-  static constexpr std::string_view kName = "index shard drop";
-
-  ObjectId db_id;
-  ObjectId schema_id;
-  IndexType type;
-
-  IndexShardDrop(DropTask&& task, ObjectId db_id, ObjectId schema_id,
-                 IndexType type)
-    : DropTask{std::move(task)},
-      db_id{db_id},
-      schema_id{schema_id},
-      type{type} {}
-
-  std::string GetContext() const {
-    return absl::Substitute("IndexShardDrop(index $0 shard $1)", parent_id.id(),
-                            id.id());
-  }
-
-  AsyncResult operator()();
-};
-
 struct IndexDrop : DropTask, std::enable_shared_from_this<IndexDrop> {
   static constexpr std::string_view kName = "index drop";
 

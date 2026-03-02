@@ -247,7 +247,6 @@ class CatalogFeature final : public SerenedFeature {
 
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void start() final;
-  void beginShutdown() final;
   void stop() final;
   void unprepare() final;
   void prepare() final;

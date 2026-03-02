@@ -23,7 +23,9 @@
 #include <axiom/logical_plan/ExprPrinter.h>
 #include <axiom/logical_plan/LogicalPlanNode.h>
 
+#include <span>
 #include <string>
+#include <vector>
 
 #include "basics/fwd.h"
 
@@ -32,8 +34,12 @@ namespace sdb::query {
 inline constexpr std::string_view kColumnSeparator = ":";
 inline constexpr std::string_view kReservedSymbol = "$";
 
-// column_name<separator>unique_id -> column_name
+// in text clean colnames: column_name<separator>unique_id -> column_name
 std::string CleanColumnNames(std::string text);
+
+// column_name<separator>unique_id -> column_name
+std::string_view ToAlias(std::string_view name);
+std::vector<std::string> ToAliases(std::span<const std::string> names);
 
 bool Equals(const axiom::logical_plan::Expr& lhs,
             const axiom::logical_plan::Expr& rhs);

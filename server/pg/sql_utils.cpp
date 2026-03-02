@@ -46,6 +46,102 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+template<typename T>
+std::optional<T> TryGetImpl(const Node* expr) {
+  SDB_ASSERT(expr);
+
+  if constexpr (std::is_same_v<T, int>) {
+    if (nodeTag(expr) == T_Integer) {
+      return intVal(expr);
+    }
+  } else if constexpr (std::is_same_v<T, double>) {
+    if (nodeTag(expr) == T_Float) {
+      return floatVal(expr);
+    }
+  } else if constexpr (std::is_same_v<T, std::string_view>) {
+    if (nodeTag(expr) == T_String) {
+      return strVal(expr);
+    }
+  } else if constexpr (std::is_same_v<T, char>) {
+    if (nodeTag(expr) == T_String) {
+      std::string_view str = strVal(expr);
+      if (str.size() != 1) {
+        return {};
+      }
+      return str[0];
+    }
+  } else {
+    static_assert(false);
+  }
+  return {};
+}
+
+template<typename T>
+std::optional<T> TryGet(const Node* expr) {
+  if (!expr) {
+    return {};
+  }
+
+  if (nodeTag(expr) == T_A_Const) {
+    const auto& a_const = *castNode(A_Const, expr);
+    if (a_const.isnull) {
+      return {};
+    }
+    return TryGetImpl<T>(castNode(Node, &a_const.val));
+  }
+
+  return TryGetImpl<T>(expr);
+}
+
+template<typename T>
+std::optional<T> TryGet(const Node& node) {
+  return TryGet<T>(&node);
+}
+
+template<typename T>
+std::optional<T> TryGet(const List* list, size_t i) {
+  if (i < list_length(list)) {
+    return TryGet<T>(castNode(Node, list_nth(list, i)));
+  }
+  return {};
+}
+
+std::optional<bool> TryGetBoolOption(const Node* expr) {
+  if (auto val = TryGet<std::string_view>(expr)) {
+    if (*val == "true" || *val == "on") {
+      return true;
+    }
+    if (*val == "false" || *val == "off") {
+      return false;
+    }
+    return {};
+  }
+
+  if (auto val = TryGet<int>(expr)) {
+    switch (*val) {
+      case 0:
+        return false;
+      case 1:
+        return true;
+      default:
+        return {};
+    }
+  }
+
+  return {};
+}
+
+#define SDB_DECLARE_TRYGET(T)                       \
+  template std::optional<T> TryGet<T>(const Node*); \
+  template std::optional<T> TryGet<T>(const Node&); \
+  template std::optional<T> TryGet<T>(const List*, size_t)
+
+SDB_DECLARE_TRYGET(int);
+SDB_DECLARE_TRYGET(double);
+SDB_DECLARE_TRYGET(std::string_view);
+SDB_DECLARE_TRYGET(char);
+#undef SDB_DECLARE_TRYGET
+
 bool IsDistinctAll(const List* distinct_clause) noexcept {
   return list_length(distinct_clause) == 1 &&
          list_nth(distinct_clause, 0) == nullptr;

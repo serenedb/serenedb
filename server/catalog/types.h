@@ -40,6 +40,15 @@ enum class TableType : uint8_t {
   Unknown = 0,
   Document = 2,
   Edge = 3,
+  File = 4,
+};
+
+enum class FileFormat : uint8_t {
+  None = 0,
+  Text = 1,
+  Parquet = 2,
+  Dwrf = 3,
+  Orc = 4,
 };
 
 enum class IndexType : uint8_t {
@@ -102,6 +111,8 @@ customize::enum_name<sdb::TableType>(sdb::TableType value) noexcept {
       return "document";
     case sdb::TableType::Edge:
       return "edge";
+    case sdb::TableType::File:
+      return "file";
     default:
       return invalid_tag;
   }

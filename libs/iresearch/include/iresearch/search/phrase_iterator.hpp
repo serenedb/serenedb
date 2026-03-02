@@ -993,9 +993,8 @@ class PhraseIterator : public DocIterator {
 
   template<typename Adapters>
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
-                 std::vector<TermPosition>&& pos,
-                 const FieldProperties& field, const byte_type* stats,
-                 score_t boost)
+                 std::vector<TermPosition>&& pos, const FieldProperties& field,
+                 const byte_type* stats, score_t boost)
     : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos)} {
     _stats = stats;
     _boost = boost;

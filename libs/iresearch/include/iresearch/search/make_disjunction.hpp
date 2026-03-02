@@ -65,8 +65,8 @@ DocIterator::ptr MakeDisjunction(WandContext ctx, doc_id_t docs_count,
   using SmallDisjunction = typename RebindIterator<Disjunction>::Small;
   if constexpr (!std::is_void_v<SmallDisjunction>) {
     if (size <= Disjunction::kSmallDisjunctionUpperBound) {
-      return memory::make_managed<SmallDisjunction>(std::move(itrs), docs_count,
-                                                    std::forward<Args>(args)...);
+      return memory::make_managed<SmallDisjunction>(
+        std::move(itrs), docs_count, std::forward<Args>(args)...);
     }
   }
 
@@ -102,9 +102,8 @@ DocIterator::ptr MakeWeakDisjunction(WandContext ctx, doc_id_t docs_count,
                            std::move(itrs));
   }
 
-  return memory::make_managed<WeakConjunction>(std::move(itrs), min_match,
-                                               docs_count,
-                                               std::forward<Args>(args)...);
+  return memory::make_managed<WeakConjunction>(
+    std::move(itrs), min_match, docs_count, std::forward<Args>(args)...);
 }
 
 }  // namespace irs

@@ -498,6 +498,20 @@ class BlockDisjunction : public DocIterator {
           score_ctx.score = &score;
         }
 
+        auto value = it.value();
+
+        // disjunction is 1 step next behind, that may happen:
+        // - before the very first next()
+        // - after seek() in case of 'kSeekReadahead == false'
+        if (value < _doc_base) {
+          value = it.advance();
+        }
+
+        if (doc_limits::eof(value)) {
+          // exhausted
+          return false;
+        }
+
         const auto [doc, has_hits] =
           it.FillBlock(_doc_base, _max, _mask, score_ctx, match_ctx);
 

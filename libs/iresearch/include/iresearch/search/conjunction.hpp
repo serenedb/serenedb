@@ -319,24 +319,10 @@ class Conjunction : public ConjunctionBase<Adapter> {
 
       std::memset(mask, 0, sizeof(mask));
 
-      // TODO(gnusi): fix FillBlock to handle min?
-      {
-        const auto offset = lead->value() - base;
-        SetBit(mask[offset / BitsRequired<uint64_t>()],
-               offset % BitsRequired<uint64_t>());
-      }
-
       const auto [lead_next, _] = lead->FillBlock(base, max, mask, {}, {});
 
       for (auto tail = lead + 1; tail != tail_end; ++tail) {
         std::memset(tail_mask, 0, sizeof(tail_mask));
-
-        // TODO(gnusi): fix FillBlock to handle min?
-        {
-          const auto offset = tail->value() - base;
-          SetBit(tail_mask[offset / BitsRequired<uint64_t>()],
-                 offset % BitsRequired<uint64_t>());
-        }
 
         const auto [tail_next, _] =
           tail->FillBlock(base, max, tail_mask, {}, {});
@@ -366,6 +352,14 @@ class Conjunction : public ConjunctionBase<Adapter> {
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
     DocIterator::CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    // TODO(gnusi): optimize
+    return DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
   }
 
  private:

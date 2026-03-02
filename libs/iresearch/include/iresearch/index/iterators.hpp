@@ -337,6 +337,7 @@ struct DocIterator : AttributeProvider {
     uint64_t* IRS_RESTRICT mask, [[maybe_unused]] FillBlockScoreContext score,
     [[maybe_unused]] FillBlockMatchContext match) {
     SDB_ASSERT(min < max);
+    SDB_ASSERT(self.value() >= min);
 
     [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
     [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
@@ -360,14 +361,11 @@ struct DocIterator : AttributeProvider {
       }
     };
 
-    auto value = self.value();
-    while (value < min) {
-      value = self.advance();
-    }
     bool empty = true;
-    for (; value < max; value = self.advance()) {
-      SDB_ASSERT(value >= min);
-      const auto offset = value - min;
+    auto doc = self.value();
+    for (; doc < max; doc = self.advance()) {
+      SDB_ASSERT(doc >= min);
+      const auto offset = doc - min;
 
       if constexpr (TrackMatch) {
         SDB_ASSERT(match.matches);
@@ -382,7 +380,7 @@ struct DocIterator : AttributeProvider {
       }
 
       if constexpr (MergeType != ScoreMergeType::Noop) {
-        score_hits[score_index] = value;
+        score_hits[score_index] = doc;
         self.FetchScoreArgs(score_index);
         ++score_index;
 
@@ -398,7 +396,7 @@ struct DocIterator : AttributeProvider {
       }
     }
 
-    return {value, empty};
+    return {doc, empty};
   }
 };
 

@@ -5797,6 +5797,7 @@ TEST(block_disjunction_test, min_match_next) {
 
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -5926,6 +5927,7 @@ TEST(block_disjunction_test, min_match_next) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -5957,6 +5959,7 @@ TEST(block_disjunction_test, min_match_next) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -5983,6 +5986,7 @@ TEST(block_disjunction_test, min_match_next) {
       {1, 2, 5, 7, 9, 11, 45, 65, 78, 126, 127}, {1, 5, 6, 12, 29, 126}, {129}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6007,6 +6011,7 @@ TEST(block_disjunction_test, min_match_next) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 1U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6072,6 +6077,7 @@ TEST(block_disjunction_test, min_match_next) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 0U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6103,6 +6109,7 @@ TEST(block_disjunction_test, min_match_next) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6174,6 +6181,7 @@ TEST(block_disjunction_test, min_match_next) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
@@ -6411,6 +6419,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
 
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6540,6 +6549,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6571,6 +6581,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6597,6 +6608,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       {1, 2, 5, 7, 9, 11, 45, 65, 78, 126, 127}, {1, 5, 6, 12, 29, 126}, {129}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6621,6 +6633,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 1U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6686,6 +6699,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 0U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6717,6 +6731,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -6788,6 +6803,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     std::vector<irs::doc_id_t> result;
     {
       Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                      irs::doc_limits::eof());
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
@@ -8945,6 +8961,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -8978,6 +8995,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -9307,6 +9325,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -9788,6 +9807,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -9821,6 +9841,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -10148,6 +10169,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U,
+
                    irs::doc_limits::eof());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),

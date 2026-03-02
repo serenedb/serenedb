@@ -1200,7 +1200,9 @@ class PostingIteratorBase : public DocIterator {
                                       uint64_t* IRS_RESTRICT const doc_mask,
                                       FillBlockScoreContext score,
                                       FillBlockMatchContext match) final {
+    SDB_ASSERT(!IteratorTraits::Position());
     SDB_ASSERT(min < max);
+    SDB_ASSERT(value() >= min);
 
     if (!score.score || score.score->IsDefault()) {
       score.merge_type = ScoreMergeType::Noop;
@@ -1211,14 +1213,24 @@ class PostingIteratorBase : public DocIterator {
         bool empty = true;
 
         // leftover from previous call
-        if (_left_in_leaf > 0) {
-          if (*(std::end(_docs) - 1) >= max) {
-            goto fill_block_tail;
+        {
+          auto count = _left_in_leaf;
+
+          // after seek/advance value() is not in leftover, include it
+          if (const auto* p = std::end(_docs) - count;
+              p > std::begin(_docs) && *std::prev(p) == value()) {
+            ++count;
           }
-          empty &= ProcessBatch<MergeType, TrackMatch>(
-            std::span<const doc_id_t>{std::end(_docs) - _left_in_leaf,
-                                      _left_in_leaf},
-            min, doc_mask, score, match);
+
+          if (count > 0) {
+            if (*(std::end(_docs) - 1) >= max) {
+              _left_in_leaf = count;
+              goto fill_block_tail;
+            }
+            empty &= ProcessBatch<MergeType, TrackMatch>(
+              std::span<const doc_id_t>{std::end(_docs) - count, count}, min,
+              doc_mask, score, match);
+          }
         }
 
         // full blocks only
@@ -1250,8 +1262,12 @@ class PostingIteratorBase : public DocIterator {
 
       fill_block_done:
         auto& doc_value = std::get<DocAttr>(_attrs).value;
-        doc_value = _left_in_leaf > 0 ? *(std::end(_docs) - _left_in_leaf)
-                                      : doc_limits::eof();
+        if (_left_in_leaf > 0) {
+          doc_value = *(std::end(_docs) - _left_in_leaf);
+          --_left_in_leaf;
+        } else {
+          doc_value = doc_limits::eof();
+        }
 
         if constexpr (IteratorTraits::Frequency()) {
           std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
@@ -1297,7 +1313,7 @@ class PostingIteratorBase : public DocIterator {
   using Position = PositionImpl<IteratorTraits>;
 
   virtual void ReadBlock(doc_id_t prev_doc) = 0;
-  virtual void SeekToBlock(doc_id_t target) = 0;
+  virtual bool SeekToBlock(doc_id_t target) = 0;
 
   template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
   bool ProcessBatch(std::span<const doc_id_t, N> docs, const doc_id_t min,
@@ -1445,8 +1461,6 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     }
 
     if (target <= doc) {
-      _left_in_leaf = left;
-
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
         freq_value = *(std::end(_freqs) - left_in_leaf);
@@ -1511,129 +1525,6 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
     }
     return seal();
   }
-}
-
-template<typename IteratorTraits>
-std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
-  const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT mask,
-  FillBlockScoreContext score, FillBlockMatchContext match) {
-  SDB_ASSERT(!IteratorTraits::Position());
-  SDB_ASSERT(min < max);
-  if (!score.score || score.score->IsDefault()) {
-    score.merge_type = ScoreMergeType::Noop;
-  }
-
-  auto process_score = [&](size_t left_in_leaf) IRS_FORCE_INLINE {
-    SDB_ASSERT(score.merge_type != ScoreMergeType::Noop);
-    if (score.fetcher) {
-      score.fetcher->Fetch(
-        std::span{std::end(_docs) - left_in_leaf, left_in_leaf});
-    }
-    if constexpr (IteratorTraits::Frequency()) {
-      std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - left_in_leaf;
-    }
-    if (left_in_leaf == kPostingBlock) [[likely]] {
-      score.score->ScorePostingBlock(
-        reinterpret_cast<score_t*>(EncBufEnd() - kPostingBlock));
-    } else {
-      score.score->Score(reinterpret_cast<score_t*>(EncBufEnd() - left_in_leaf),
-                         left_in_leaf);
-    }
-  };
-
-  return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
-    return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
-      bool empty = true;
-
-      auto* IRS_RESTRICT const doc_mask = mask;
-      [[maybe_unused]] auto* IRS_RESTRICT const score_window =
-        score.score_window;
-
-      auto process_doc =
-        [&](doc_id_t doc, [[maybe_unused]] score_t score_val) IRS_FORCE_INLINE {
-          SDB_ASSERT(doc >= min);
-          doc -= min;
-          if constexpr (TrackMatch) {
-            SDB_ASSERT(match.matches);
-            const bool has_match =
-              ++match.matches[doc] >= match.min_match_count;
-            SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
-                   doc % BitsRequired<uint64_t>(), has_match);
-            empty &= !has_match;
-          } else {
-            SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
-                   doc % BitsRequired<uint64_t>());
-            empty = false;
-          }
-          if constexpr (MergeType != ScoreMergeType::Noop) {
-            Merge<MergeType>(score_window[doc], score_val);
-          }
-        };
-
-      [[maybe_unused]] const auto* score_end =
-        reinterpret_cast<score_t*>(EncBufEnd());
-      [[maybe_unused]] const auto* score_ptr = score_end - _left_in_leaf;
-
-      if (!_doc_in) [[unlikely]] {
-        SDB_ASSERT(_left_in_list == 0);
-        if (_left_in_leaf == 0) {
-          return std::pair{_doc = doc_limits::eof(), true};
-        }
-
-        _doc = *(std::end(_docs) - 1);
-
-        if (_doc >= max) {
-          return std::pair{_doc, true};
-        }
-
-        if constexpr (MergeType != ScoreMergeType::Noop) {
-          process_score(1);
-        }
-        process_doc(_doc, *score_ptr);
-        _left_in_leaf = 0;
-        return std::pair{_doc, empty};
-      }
-
-      const auto* const doc_end = std::end(_docs);
-      const auto* doc_ptr = doc_end - _left_in_leaf;
-      doc_id_t doc = _doc;
-
-      while (true) {
-        if (doc_ptr == doc_end) [[unlikely]] {
-          if (_left_in_list == 0) [[unlikely]] {
-            doc = doc_limits::eof();
-            break;
-          }
-
-          _left_in_leaf = 0;
-          ReadBlock(doc);
-          doc_ptr = doc_end - _left_in_leaf;
-          score_ptr = score_end - _left_in_leaf;
-          if constexpr (MergeType != ScoreMergeType::Noop) {
-            process_score(_left_in_leaf);
-          }
-        }
-
-        doc = *doc_ptr;
-
-        if (doc >= max) {
-          break;
-        }
-
-        process_doc(doc, *score_ptr);
-        ++doc_ptr;
-        ++score_ptr;
-      }
-
-      _doc = doc;
-      _left_in_leaf = static_cast<uint32_t>(doc_end - doc_ptr);
-
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
-      }
-      return std::pair{_doc, empty};
-    });
-  });
 }
 
 static_assert(kMaxScorers < WandContext::kDisable);

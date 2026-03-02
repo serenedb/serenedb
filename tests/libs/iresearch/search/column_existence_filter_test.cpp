@@ -1035,8 +1035,10 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
         .scorer = &sort,
 
       });
-      ASSERT_EQ(column->size(),
-                irs::CostAttr::extract(*filter_itr));  // 2 columns matched, capped by segment docs_count
+      ASSERT_EQ(
+        column->size(),
+        irs::CostAttr::extract(
+          *filter_itr));  // 2 columns matched, capped by segment docs_count
 
       size_t docs_count = 0;
       auto score = column_itr->PrepareScore({

@@ -96,7 +96,7 @@ RocksDBDataSource::RocksDBDataSource(
   }
 }
 
-RocksDBRYOWDataSource::RocksDBRYOWDataSource(
+RocksDBRYOWFullScanDataSource::RocksDBRYOWFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
@@ -110,7 +110,7 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
                       transaction.GetSnapshot()},
     _transaction{transaction} {}
 
-RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
+RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
@@ -125,7 +125,7 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
                       snapshot},
     _db{db} {}
 
-void RocksDBRYOWDataSource::addSplit(
+void RocksDBRYOWFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBDataSource::addSplit(std::move(split));
   InitIterators([&](const rocksdb::ReadOptions& options) {
@@ -134,7 +134,7 @@ void RocksDBRYOWDataSource::addSplit(
   });
 }
 
-void RocksDBSnapshotDataSource::addSplit(
+void RocksDBSnapshotFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBDataSource::addSplit(std::move(split));
   InitIterators([&](const rocksdb::ReadOptions& options) {

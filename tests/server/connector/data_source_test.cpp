@@ -105,7 +105,7 @@ class DataSourceTest : public ::testing::Test,
     SDB_ASSERT(!column_ids.empty());
     auto effective_column_id = column_ids[0];
 
-    RocksDBSnapshotDataSource source(
+    RocksDBSnapshotFullScanDataSource source(
       *pool_.get(), *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
@@ -288,8 +288,9 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
     {makeFlatVector<int32_t>(key_data), makeFlatVector<std::string>(data)});
   auto row_type_empty = velox::ROW({});
   MakeRocksDBWrite(row_data, kObjectKey);
-  RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                   row_type_empty, {0}, 0, kObjectKey);
+  RocksDBSnapshotFullScanDataSource source(*pool_.get(), *_db,
+                                           *_cf_handles.front(), row_type_empty,
+                                           {0}, 0, kObjectKey);
 
   // read as single batch
   {

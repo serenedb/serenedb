@@ -24,7 +24,7 @@
 
 namespace sdb::connector {
 
-SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
+SereneDBFullScanTableHandle::SereneDBFullScanTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},

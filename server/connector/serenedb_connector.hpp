@@ -25,6 +25,7 @@
 #include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/core/Expressions.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/ReaderFactory.h>
 #include <velox/type/Type.h>
@@ -163,10 +164,10 @@ class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
   catalog::Column::Id _id;
 };
 
-class SereneDBConnectorTableHandle final
+class SereneDBFullScanTableHandle
   : public velox::connector::ConnectorTableHandle {
  public:
-  explicit SereneDBConnectorTableHandle(
+  explicit SereneDBFullScanTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout);
 
@@ -187,6 +188,26 @@ class SereneDBConnectorTableHandle final
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
+};
+
+class SereneDBPointLookupTableHandle final
+  : public SereneDBFullScanTableHandle {
+ public:
+  explicit SereneDBPointLookupTableHandle(
+    const axiom::connector::ConnectorSessionPtr& session,
+    const axiom::connector::TableLayout& layout,
+    std::vector<velox::core::TypedExprPtr> filters,
+    velox::core::ConstantTypedExprPtr eq_val)
+    : SereneDBFullScanTableHandle{session, layout},
+      filters{std::move(filters)},
+      eq_val{std::move(eq_val)} {}
+
+ public:
+  [[maybe_unused]] std::vector<velox::core::TypedExprPtr>
+    filters;  // not used for now, but for range queries it may be. Or maybe
+              // better to somehow extract range boundaries and store only
+              // them, IDK for now
+  velox::core::ConstantTypedExprPtr eq_val;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -237,12 +258,53 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
       basics::downCast<const SereneDBColumn>(findColumn(column_name))->Id());
   }
 
+  // TODO here
   velox::connector::ConnectorTableHandlePtr createTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     std::vector<velox::connector::ColumnHandlePtr> column_handles,
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
+    auto extract_eq = [&](velox::core::TypedExprPtr expr)
+      -> velox::connector::ConnectorTableHandlePtr {
+      if (expr->isCallKind()) {
+        auto* as_call = expr->asUnchecked<velox::core::CallTypedExpr>();
+        SDB_PRINT("  name=", as_call->name());
+        SDB_PRINT("  inputs=");
+        for (const auto& input : as_call->inputs()) {
+          SDB_PRINT("    input=", input->toString(),
+                    "; kind=", magic_enum::enum_name(input->kind()));
+        }
+        if (as_call->name() == "presto_eq") {
+          SDB_ASSERT(as_call->inputs().size() == 2);
+          SDB_ASSERT(as_call->inputs()[0]->kind() ==
+                     velox::core::ExprKind::kFieldAccess);
+          SDB_ASSERT(as_call->inputs()[1]->kind() ==
+                     velox::core::ExprKind::kConstant);
+          // auto as_const =
+          //   as_call->inputs()[1]->asUnchecked<velox::core::ConstantTypedExpr>();
+          auto as_const = basics::downCast<velox::core::ConstantTypedExpr>(
+            as_call->inputs()[1]);
+          // TODO check here that field access is PK
+          SDB_ASSERT(filters.size() == 1);
+          return std::make_shared<SereneDBPointLookupTableHandle>(
+            session, *this, filters, as_const);
+        }
+      }
+      return {};
+    };
+
+    for (const auto& filter : filters) {
+      SDB_PRINT("filter: ", filter->toString());
+      if (auto res = extract_eq(filter)) {
+        // TODO do something with rejected filters
+        return res;
+      }
+    }
+    if (filters.empty()) {
+      SDB_PRINT("no filters!");
+    }
+
     rejected_filters = std::move(filters);
 
     if (const auto* read_file_table =
@@ -252,8 +314,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     }
 
     SDB_ASSERT(!table().columnMap().empty(),
-               "SereneDBConnectorTableHandle: need a column for count field");
-    return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
+               "SereneDBFullScanTableHandle: need a column for count field");
+    return std::make_shared<SereneDBFullScanTableHandle>(session, *this);
   }
 };
 
@@ -610,7 +672,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
 
     const auto& serene_table_handle =
-      basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
+      basics::downCast<const SereneDBFullScanTableHandle>(*table_handle);
     const auto& object_key = serene_table_handle.TableId();
 
     // need to remap names to oids
@@ -651,13 +713,23 @@ class SereneDBConnector final : public velox::connector::Connector {
         SDB_THROW(ERROR_DEBUG, fail_on_ryow, " condition failed");
       }
 #endif
-
-      return std::make_unique<RocksDBRYOWDataSource>(
+      return std::make_unique<RocksDBRYOWFullScanDataSource>(
         *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
         object_key);
     }
-    return std::make_unique<RocksDBSnapshotDataSource>(
+
+    if (const auto* point_lookup =
+          dynamic_cast<const SereneDBPointLookupTableHandle*>(
+            table_handle.get())) {
+      return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
+        *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
+        serene_table_handle.GetEffectiveColumnId(), object_key, snapshot,
+        point_lookup->eq_val->toConstantVector(
+          connector_query_ctx->connectorMemoryPool()));
+    }
+
+    return std::make_unique<RocksDBSnapshotFullScanDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
       serene_table_handle.GetEffectiveColumnId(), object_key, snapshot);
   }

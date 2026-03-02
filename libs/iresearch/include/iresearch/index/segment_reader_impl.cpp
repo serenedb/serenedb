@@ -55,6 +55,8 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
+  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
+
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
     // TODO(gnusi): optimize
@@ -103,6 +105,8 @@ class MaskDocIterator : public DocIterator {
     return advance();
   }
 
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+
   uint32_t count() final { return CountImpl(*this); }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
@@ -132,7 +136,7 @@ class MaskedDocIterator : public DocIterator {
 
   doc_id_t value() const noexcept final { return _current.value; }
 
-  doc_id_t advance() final {
+  doc_id_t advance() noexcept final {
     while (_next < _end) {
       _current.value = _next++;
       if (!_docs_mask.contains(_current.value)) {
@@ -142,7 +146,7 @@ class MaskedDocIterator : public DocIterator {
     return _current.value = doc_limits::eof();
   }
 
-  doc_id_t seek(doc_id_t target) final {
+  doc_id_t seek(doc_id_t target) noexcept final {
     if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
@@ -150,7 +154,9 @@ class MaskedDocIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return CountImpl(*this); }
+  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
+
+  uint32_t count() noexcept final { return CountImpl(*this); }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {

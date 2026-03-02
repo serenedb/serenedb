@@ -150,9 +150,11 @@ class RemappingDocIterator : public DocIterator {
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(false);
+    return _doc.value = doc_limits::eof();
   }
+
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
  private:
   DocIterator::ptr _it;
@@ -218,9 +220,11 @@ class CompoundDocIterator : public DocIterator {
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(false);
+    return _doc.value = doc_limits::eof();
   }
+
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
  private:
   friend class SortingCompoundDocIterator;
@@ -300,9 +304,11 @@ class SortingCompoundDocIterator : public DocIterator {
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(false);
+    return doc_limits::eof();
   }
+
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
  private:
   class Context {

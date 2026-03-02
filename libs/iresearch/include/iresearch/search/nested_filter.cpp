@@ -114,6 +114,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return SeekInternal(parent);
   }
 
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+
   uint32_t count() final { return CountImpl(*this); }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;

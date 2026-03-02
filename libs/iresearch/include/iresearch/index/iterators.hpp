@@ -175,6 +175,8 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
+  virtual doc_id_t LazySeek(doc_id_t target) = 0;
+
   virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                        ScoreCollector& collector) {
     CollectImpl(*this, scorer, fetcher, collector);

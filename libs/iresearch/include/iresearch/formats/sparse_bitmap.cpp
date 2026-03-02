@@ -557,4 +557,8 @@ doc_id_t SparseBitmapIterator::seek(doc_id_t target) {
   return value();
 }
 
+doc_id_t SparseBitmapIterator::LazySeek(doc_id_t target) {
+  return seek(target);
+}
+
 }  // namespace irs

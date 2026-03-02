@@ -52,6 +52,8 @@ class Exclusion : public DocIterator {
     return converge(incl);
   }
 
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     return _incl.PrepareScore(ctx);
   }
@@ -82,7 +84,7 @@ class Exclusion : public DocIterator {
       for (auto& it : _excl) {
         auto excl = it.value();
         if (excl < incl) {
-          excl = it.seek(incl);
+          excl = it.LazySeek(incl);
         }
         if (excl == incl) {
           return advance();
@@ -92,7 +94,7 @@ class Exclusion : public DocIterator {
     } else {
       auto excl = _excl.value();
       if (excl < incl) {
-        excl = _excl.seek(incl);
+        excl = _excl.LazySeek(incl);
       }
       if (excl == incl) {
         return advance();

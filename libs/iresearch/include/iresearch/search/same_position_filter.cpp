@@ -75,6 +75,8 @@ class SamePositionIterator : public DocIterator {
     return advance();
   }
 
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+
   uint32_t count() final { return CountImpl(*this); }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,

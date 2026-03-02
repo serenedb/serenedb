@@ -1165,6 +1165,10 @@ class PostingIteratorBase : public DocIterator {
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
+  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final {
+    return seek(target);
+  }
+
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     doc_value = doc_limits::eof();
@@ -2427,6 +2431,10 @@ struct PostingAdapter {
     return self().seek(target);
   }
 
+  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) {
+    return self().LazySeek(target);
+  }
+
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
     return self().FetchScoreArgs(index);
   }
@@ -2571,6 +2579,10 @@ class SingleWandIterator : public DocIterator {
   IRS_FORCE_INLINE doc_id_t advance() final { return seek(value() + 1); }
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
+
+  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final {
+    return seek(target);
+  }
 
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;

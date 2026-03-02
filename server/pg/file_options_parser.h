@@ -31,7 +31,7 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "pg/storage_options.h"
+#include "catalog/storage_options.h"
 
 namespace sdb::pg {
 

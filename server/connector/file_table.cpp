@@ -30,7 +30,6 @@
 #include <velox/dwio/parquet/reader/ParquetReader.h>
 
 #include "basics/down_cast.h"
-#include "pg/storage_options.h"
 #include "serenedb_connector.hpp"
 
 namespace {

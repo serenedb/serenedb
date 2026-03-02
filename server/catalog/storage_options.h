@@ -32,7 +32,7 @@
 #include "vpack/builder.h"
 #include "vpack/slice.h"
 
-namespace sdb::pg {
+namespace sdb {
 
 class StorageOptions {
  public:
@@ -125,4 +125,4 @@ void VPackRead(Context ctx, std::shared_ptr<StorageOptions>& storage) {
   storage = StorageOptions::fromVPack(ctx.vpack());
 }
 
-}  // namespace sdb::pg
+}  // namespace sdb

@@ -48,7 +48,7 @@
 #include "pg/format_options.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
-#include "pg/storage_options.h"
+#include "catalog/storage_options.h"
 #include "query/utils.h"
 #include "utils/velox_vpack.h"
 
@@ -193,7 +193,7 @@ struct CheckConstraint {
 };
 
 struct FileInfo {
-  std::shared_ptr<pg::StorageOptions> storage_options;
+  std::shared_ptr<StorageOptions> storage_options;
   std::shared_ptr<pg::FormatOptions> format_options;
 };
 

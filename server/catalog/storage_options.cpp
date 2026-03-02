@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/storage_options.h"
+#include "catalog/storage_options.h"
 
 #include <velox/common/config/Config.h>
 #include <velox/common/file/FileSystems.h>
@@ -26,7 +26,7 @@
 
 #include <unordered_map>
 
-namespace sdb::pg {
+namespace sdb {
 
 std::unique_ptr<velox::WriteFile> LocalStorageOptions::CreateFileSink(
   const velox::filesystems::FileOptions& options) {
@@ -169,4 +169,4 @@ std::shared_ptr<StorageOptions> StorageOptions::fromVPack(vpack::Slice slice) {
   return nullptr;
 }
 
-}  // namespace sdb::pg
+}  // namespace sdb

@@ -287,15 +287,17 @@ class Conjunction : public ConjunctionBase<Adapter> {
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
   doc_id_t converge(doc_id_t target) {
+    const auto begin = this->_itrs.begin() + 1;
+    const auto end = this->_itrs.end();
+  restart:
     if (doc_limits::eof(target)) [[unlikely]] {
       return doc_limits::eof();
     }
-    const auto begin = this->_itrs.begin() + 1;
-    const auto end = this->_itrs.end();
     for (auto it = begin; it != end; ++it) {
       const auto doc = it->LazySeek(target);
       if (target < doc) {
-        return seek(doc);
+        target = this->_itrs[0].seek(doc);
+        goto restart;
       }
     }
     return target;

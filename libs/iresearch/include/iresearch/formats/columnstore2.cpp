@@ -266,7 +266,10 @@ class RangeColumnIterator : public ResettableDocIterator,
     return value();
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   void reset() noexcept final {
     _min_doc = _min_base;
@@ -334,7 +337,10 @@ class BitmapColumnIterator : public ResettableDocIterator,
     return doc;
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   void reset() final { _bitmap.reset(); }
 

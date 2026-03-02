@@ -98,7 +98,10 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
   return advance();
 }
 
-doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) { return seek(target); }
+doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) {
+  SDB_ASSERT(target > value());
+  return seek(target);
+}
 
 uint32_t BitsetDocIterator::count() {
   uint32_t count = 0;

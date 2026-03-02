@@ -52,7 +52,11 @@ class Exclusion : public DocIterator {
     return converge(incl);
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    // TODO: optimize
+    return seek(target);
+  }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     return _incl.PrepareScore(ctx);

@@ -56,7 +56,10 @@ class AllIterator : public DocIterator {
     return doc_value;
   }
 
-  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {

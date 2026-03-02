@@ -75,7 +75,17 @@ class SamePositionIterator : public DocIterator {
     return advance();
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    const auto doc = _approx.seek(target);
+    if (target != doc) {
+      return doc;
+    }
+    if (doc_limits::eof(doc) || FindSamePosition()) {
+      return doc;
+    }
+    return doc + 1;
+  }
 
   uint32_t count() final { return CountImpl(*this); }
 

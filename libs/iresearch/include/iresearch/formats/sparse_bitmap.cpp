@@ -558,6 +558,7 @@ doc_id_t SparseBitmapIterator::seek(doc_id_t target) {
 }
 
 doc_id_t SparseBitmapIterator::LazySeek(doc_id_t target) {
+  SDB_ASSERT(target > value());
   return seek(target);
 }
 

@@ -114,7 +114,15 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return SeekInternal(parent);
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    const auto parent = _parent->LazySeek(target);
+    if (parent != target) {
+      return parent;
+    }
+    // TODO: optimize
+    return SeekInternal(parent);
+  }
 
   uint32_t count() final { return CountImpl(*this); }
 

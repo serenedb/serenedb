@@ -292,8 +292,6 @@ class DocIteratorImpl : public DocIterator {
     return std::get<DocAttr>(_attrs).value = doc_limits::eof();
   }
 
-  doc_id_t LazySeek(doc_id_t doc) final { return seek(doc); }
-
  private:
   using Attributes =
     std::tuple<DocAttr, AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
@@ -397,8 +395,6 @@ class SortingDocIteratorImpl : public DocIterator {
     SDB_ASSERT(false);
     return std::get<DocAttr>(_attrs).value = doc_limits::eof();
   }
-
-  doc_id_t LazySeek(doc_id_t doc) final { return seek(doc); }
 
  private:
   using Attributes =

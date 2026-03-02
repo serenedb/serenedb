@@ -154,8 +154,6 @@ class RemappingDocIterator : public DocIterator {
     return _doc.value = doc_limits::eof();
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
-
  private:
   DocIterator::ptr _it;
   const DocMapF* _mapper;
@@ -223,8 +221,6 @@ class CompoundDocIterator : public DocIterator {
     SDB_ASSERT(false);
     return _doc.value = doc_limits::eof();
   }
-
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
  private:
   friend class SortingCompoundDocIterator;
@@ -307,8 +303,6 @@ class SortingCompoundDocIterator : public DocIterator {
     SDB_ASSERT(false);
     return doc_limits::eof();
   }
-
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
  private:
   class Context {

@@ -127,7 +127,11 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
     return doc_value = std::min(_itrs[0].value(), _itrs[1].value());
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    // TODO: optimize
+    return seek(target);
+  }
 
   uint32_t count() final {
     uint32_t count = 0;
@@ -307,7 +311,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
     return doc_value = min;
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    // TODO: optimize
+    return seek(target);
+  }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -459,7 +467,11 @@ class Disjunction : public CompoundDocIterator<Adapter> {
     return doc_value = lead().value();
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    // TODO: optimize
+    return seek(target);
+  }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -780,7 +792,11 @@ class MinMatchDisjunction : public DocIterator {
     }
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    // TODO: optimize
+    return seek(target);
+  }
 
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points

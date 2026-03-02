@@ -106,7 +106,10 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return advance();
   }
 
-  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   void reset() noexcept final {
     _next = _begin;

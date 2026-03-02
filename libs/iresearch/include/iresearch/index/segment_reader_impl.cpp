@@ -55,7 +55,10 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
-  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
@@ -105,7 +108,10 @@ class MaskDocIterator : public DocIterator {
     return advance();
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   uint32_t count() final { return CountImpl(*this); }
 
@@ -154,7 +160,10 @@ class MaskedDocIterator : public DocIterator {
     return advance();
   }
 
-  doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target > value());
+    return seek(target);
+  }
 
   uint32_t count() noexcept final { return CountImpl(*this); }
 

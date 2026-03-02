@@ -1166,6 +1166,7 @@ class PostingIteratorBase : public DocIterator {
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
   IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
     return seek(target);
   }
 
@@ -2581,6 +2582,7 @@ class SingleWandIterator : public DocIterator {
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
   IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
     return seek(target);
   }
 

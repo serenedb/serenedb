@@ -138,33 +138,36 @@ class GeoIterator : public DocIterator {
   }
 
   doc_id_t advance() final {
-    doc_id_t value;
-    while (!doc_limits::eof(value = _approx->advance())) {
-      if (Accept()) {
-        return value;
+    while (true) {
+      const auto doc = _approx->advance();
+      if (doc_limits::eof(doc) || Accept()) {
+        return doc;
       }
     }
-    return doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t target) final {
-    auto* doc = std::get<AttributePtr<DocAttr>>(_attrs).ptr;
-
-    if (target <= doc->value) {
-      return doc->value;
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
     }
-
-    if (doc_limits::eof(_approx->seek(target))) {
-      return doc_limits::eof();
+    const auto doc = _approx->seek(target);
+    if (doc_limits::eof(doc) || Accept()) {
+      return doc;
     }
-
-    if (!Accept()) {
-      return advance();
-    }
-    return doc->value;
+    return advance();
   }
 
-  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target > value());
+    const auto doc = _approx->seek(target);
+    if (target != doc) {
+      return doc;
+    }
+    if (doc_limits::eof(doc) || Accept()) {
+      return doc;
+    }
+    return doc + 1;
+  }
 
   uint32_t count() final { return CountImpl(*this); }
 

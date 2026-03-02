@@ -211,7 +211,8 @@ irs::DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
 
   return irs::memory::make_managed<GeoIterator<Parser, Acceptor>>(
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
-    irs::MakeDisjunction<Disjunction>({}, std::move(itrs)),
+    irs::MakeDisjunction<Disjunction>(
+      {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
     std::move(column_it), parser, acceptor, field.meta(), query_stats, boost);
 }
 

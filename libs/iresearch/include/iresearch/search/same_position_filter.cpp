@@ -43,9 +43,10 @@ class SamePositionIterator : public DocIterator {
   using Positions = std::vector<PosAttr*>;
 
   template<typename... Args>
-  SamePositionIterator(ScoreMergeType merge_type, Positions&& pos,
-                       Args&&... args)
-    : _approx{merge_type, std::forward<Args>(args)...}, _pos(std::move(pos)) {
+  SamePositionIterator(ScoreMergeType merge_type, doc_id_t docs_count,
+                       Positions&& pos, Args&&... args)
+    : _approx{merge_type, docs_count, std::forward<Args>(args)...},
+      _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
@@ -170,7 +171,8 @@ class SamePositionQuery : public Filter::Query {
 
     // TODO(mbkkt) Implement wand?
     return MakeConjunction<SamePositionIterator>(
-      ScoreMergeType::Noop, {}, std::move(itrs), std::move(positions));
+      ScoreMergeType::Noop, {}, static_cast<doc_id_t>(ctx.segment.docs_count()),
+      std::move(itrs), std::move(positions));
   }
 
   score_t Boost() const noexcept final { return _boost; }

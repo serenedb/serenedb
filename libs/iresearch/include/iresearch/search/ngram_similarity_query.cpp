@@ -104,6 +104,8 @@ class NGramApprox : public MinMatchDisjunction {
 
  public:
   using Base::Base;
+  NGramApprox(doc_id_t docs_count, CostAdapters&& itrs, size_t min_match)
+    : Base{std::move(itrs), min_match, docs_count} {}
 };
 
 template<>
@@ -111,8 +113,8 @@ class NGramApprox<true> : public Conjunction<CostAdapter> {
   using Base = Conjunction<CostAdapter>;
 
  public:
-  NGramApprox(CostAdapters&& itrs, size_t min_match_count)
-    : Base{ScoreMergeType::Noop,
+  NGramApprox(doc_id_t docs_count, CostAdapters&& itrs, size_t min_match_count)
+    : Base{ScoreMergeType::Noop, docs_count,
            [](auto&& itrs) {
              absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
                return lhs.est < rhs.est;
@@ -461,12 +463,13 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 template<typename Approx, typename Checker>
 class NGramSimilarityDocIterator : public DocIterator {
  public:
-  NGramSimilarityDocIterator(CostAdapters&& itrs, size_t total_terms_count,
-                             size_t min_match_count, bool collect_all_states)
+  NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
+                             size_t total_terms_count, size_t min_match_count,
+                             bool collect_all_states)
     : _checker{std::begin(itrs), std::end(itrs), total_terms_count,
                min_match_count, collect_all_states},
       // we are not interested in disjunction`s // scoring
-      _approx{std::move(itrs), min_match_count} {
+      _approx{docs_count, std::move(itrs), min_match_count} {
     // avoid runtime conversion
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_approx);
@@ -476,11 +479,11 @@ class NGramSimilarityDocIterator : public DocIterator {
       irs::GetMutable<CostAttr>(&_approx);
   }
 
-  NGramSimilarityDocIterator(CostAdapters&& itrs, size_t total_terms_count,
-                             size_t min_match_count,
+  NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
+                             size_t total_terms_count, size_t min_match_count,
                              const FieldProperties& field,
                              const byte_type* stats, score_t boost)
-    : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
+    : NGramSimilarityDocIterator{docs_count, std::move(itrs), total_terms_count,
                                  min_match_count, stats != nullptr} {
     _stats = stats;
     _field = field;
@@ -631,10 +634,11 @@ DocIterator::ptr NGramSimilarityQuery::execute(
 
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (itrs.size() == _min_match_count) {
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<Dummy>>>(
-      std::move(itrs), query_state->terms.size(), _min_match_count,
+      docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
       query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr,
       _boost);
   }
@@ -642,7 +646,7 @@ DocIterator::ptr NGramSimilarityQuery::execute(
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
-    std::move(itrs), query_state->terms.size(), _min_match_count,
+    docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
     query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr, _boost);
 }
 
@@ -662,16 +666,19 @@ DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(
   }
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
+  const auto docs_count = static_cast<doc_id_t>(rdr.docs_count());
   if (itrs.size() == _min_match_count) {
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<NGramPosition>>>(
-      std::move(itrs), query_state->terms.size(), _min_match_count, true);
+      docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+      true);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<NGramPosition>>>(
-    std::move(itrs), query_state->terms.size(), _min_match_count, true);
+    docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+    true);
 }
 
 }  // namespace irs

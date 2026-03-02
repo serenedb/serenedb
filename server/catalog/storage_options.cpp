@@ -70,6 +70,8 @@ velox::config::ConfigPtr S3StorageOptions::BuildConfig() const {
   set_bool(key(S3Key::kSSLEnabled), _ssl_enabled);
   set_bool(key(S3Key::kUseInstanceCredentials), _use_instance_credentials);
 
+  set_str(velox::filesystems::S3Config::kS3LogLevel, "OFF");
+
   return std::make_shared<velox::config::ConfigBase>(std::move(config));
 }
 

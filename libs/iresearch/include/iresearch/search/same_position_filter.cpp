@@ -77,7 +77,7 @@ class SamePositionIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final {
     SDB_ASSERT(target > value());
-    const auto doc = _approx.seek(target);
+    const auto doc = _approx.LazySeek(target);
     if (target != doc) {
       return doc;
     }

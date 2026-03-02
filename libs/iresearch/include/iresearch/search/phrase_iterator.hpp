@@ -1001,7 +1001,7 @@ class PhraseIterator : public DocIterator {
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     if (const auto doc = _checked_doc; target <= doc) [[unlikely]] {
-      return doc <= doc_value ? doc : doc + 1;
+      return doc <= doc_value ? doc_value : _checked_doc + 1;
     }
     const auto doc = _approx.seek(target);
     if (target != doc) {

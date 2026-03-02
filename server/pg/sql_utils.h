@@ -150,17 +150,6 @@ std::optional<T> TryGet(const Node& node);
 template<typename T>
 std::optional<T> TryGet(const List* list, size_t i);
 
-#define SDB_DECLARE_TRYGET(T)                              \
-  extern template std::optional<T> TryGet<T>(const Node*); \
-  extern template std::optional<T> TryGet<T>(const Node&); \
-  extern template std::optional<T> TryGet<T>(const List*, size_t)
-
-SDB_DECLARE_TRYGET(int);
-SDB_DECLARE_TRYGET(double);
-SDB_DECLARE_TRYGET(std::string_view);
-SDB_DECLARE_TRYGET(char);
-#undef SDB_DECLARE_TRYGET
-
 std::optional<bool> TryGetBoolOption(const Node* expr);
 
 }  // namespace pg

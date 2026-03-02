@@ -246,7 +246,7 @@ struct NestedScore final : ScoreOperator {
 
   void FlushChildBatch() {
     SDB_ASSERT(child_idx);
-    fetcher.Fetch(std::span{child_docs.data(), child_idx});
+    fetcher.Fetch(std::span<const doc_id_t>{child_docs.data(), child_idx});
     child_score.Score(child_temp.data(), child_idx);
     for (uint16_t i = 0; i < child_idx; ++i) {
       Merge<InnerType>(current_parent_score, child_temp[i]);

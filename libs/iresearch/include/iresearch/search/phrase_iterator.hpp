@@ -914,8 +914,9 @@ class PhraseIterator : public DocIterator {
   using TermPosition = typename Frequency::TermPosition;
 
   template<typename Adapters>
-  PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos)
-    : _approx{ScoreMergeType::Noop,
+  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
+                 std::vector<TermPosition>&& pos)
+    : _approx{ScoreMergeType::Noop, docs_count,
               [](auto itrs) {
                 absl::c_sort(itrs,
                              [](const auto& lhs, const auto& rhs) noexcept {
@@ -945,10 +946,11 @@ class PhraseIterator : public DocIterator {
   }
 
   template<typename Adapters>
-  PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos,
+  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
+                 std::vector<TermPosition>&& pos,
                  const FieldProperties& field, const byte_type* stats,
                  score_t boost)
-    : PhraseIterator{std::forward<Adapters>(itrs), std::move(pos)} {
+    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos)} {
     _stats = stats;
     _boost = boost;
     _field = field;

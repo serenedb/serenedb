@@ -97,8 +97,9 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
         using FixedPhraseIterator =
           PhraseIterator<Conjunction<Adapter>,
                          FixedPhraseFrequency<false, true, HasIntervals>>;
-        return memory::make_managed<FixedPhraseIterator>(std::move(itrs),
-                                                         std::move(positions));
+        return memory::make_managed<FixedPhraseIterator>(
+          static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
+          std::move(positions));
       });
   }
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
@@ -106,8 +107,8 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
       PhraseIterator<Conjunction<Adapter>,
                      FixedPhraseFrequency<false, false, HasIntervals>>;
     return memory::make_managed<FixedPhraseIterator>(
-      std::move(itrs), std::move(positions), phrase_state->reader->meta(),
-      stats.c_str(), boost);
+      static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
+      std::move(positions), phrase_state->reader->meta(), stats.c_str(), boost);
   });
 }
 
@@ -191,8 +192,9 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
       }
     }
 
-    return memory::make_managed<FixedPhraseIterator>(std::move(itrs),
-                                                     std::move(positions));
+    return memory::make_managed<FixedPhraseIterator>(
+      static_cast<doc_id_t>(segment.docs_count()), std::move(itrs),
+      std::move(positions));
   });
 }
 
@@ -263,7 +265,8 @@ DocIterator::ptr VariadicPhraseQuery::execute(
     }
 
     // TODO(mbkkt) VariadicPhrase wand support
-    auto disj = MakeDisjunction<Disjunction>({}, std::move(disj_itrs));
+    auto disj = MakeDisjunction<Disjunction>(
+      {}, static_cast<doc_id_t>(rdr.docs_count()), std::move(disj_itrs));
     pos.first = sdb::basics::downCast<CompoundDocIterator>(disj.get());
     conj_itrs.emplace_back(std::move(disj));
     ++position;
@@ -279,7 +282,8 @@ DocIterator::ptr VariadicPhraseQuery::execute(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         return memory::make_managed<
           VariadicPhraseIterator<Adapter, false, true, HasIntervals>>(
-          std::move(conj_itrs), std::move(positions));
+          static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
+          std::move(positions));
       });
   }
 
@@ -288,15 +292,16 @@ DocIterator::ptr VariadicPhraseQuery::execute(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         return memory::make_managed<
           VariadicPhraseIterator<Adapter, true, false, HasIntervals>>(
-          std::move(conj_itrs), std::move(positions),
-          phrase_state->reader->meta(), stats.c_str(), boost);
+          static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
+          std::move(positions), phrase_state->reader->meta(), stats.c_str(),
+          boost);
       });
   }
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     return memory::make_managed<
       VariadicPhraseIterator<Adapter, false, false, HasIntervals>>(
-      std::move(conj_itrs), std::move(positions), phrase_state->reader->meta(),
-      stats.c_str(), boost);
+      static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
+      std::move(positions), phrase_state->reader->meta(), stats.c_str(), boost);
   });
 }
 
@@ -379,7 +384,8 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
       }
 
       // TODO(mbkkt) VariadicPhrase wand support
-      auto disj = MakeDisjunction<Disjunction>({}, std::move(disj_itrs));
+      auto disj = MakeDisjunction<Disjunction>(
+        {}, static_cast<doc_id_t>(segment.docs_count()), std::move(disj_itrs));
       pos.first = sdb::basics::downCast<CompundDocIterator>(disj.get());
       conj_itrs.emplace_back(std::move(disj));
       ++position;
@@ -404,8 +410,9 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
     }
     SDB_ASSERT(term_state == std::end(phrase_state->terms));
 
-    return memory::make_managed<VariadicPhraseIterator>(std::move(conj_itrs),
-                                                        std::move(positions));
+    return memory::make_managed<VariadicPhraseIterator>(
+      static_cast<doc_id_t>(segment.docs_count()), std::move(conj_itrs),
+      std::move(positions));
   });
 }
 

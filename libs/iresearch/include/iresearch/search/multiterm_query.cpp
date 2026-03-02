@@ -182,8 +182,9 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
 
   return ResolveMergeType(_merge_type, [&]<ScoreMergeType MergeType>() {
     using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
-    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            _min_match, state->estimation());
+    return MakeWeakDisjunction<Disjunction>(
+      ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+      std::move(itrs), _min_match, state->estimation());
   });
 }
 

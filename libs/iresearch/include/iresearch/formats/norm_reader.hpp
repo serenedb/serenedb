@@ -25,6 +25,7 @@
 #include <span>
 
 #include "basics/memory.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -35,21 +36,14 @@ struct NormReader : public memory::Managed {
   virtual void Get(std::span<const doc_id_t> docs,
                    std::span<uint32_t> values) = 0;
 
+  virtual void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                               std::span<uint32_t, kPostingBlock> values) = 0;
+
   virtual uint32_t Get(doc_id_t doc) = 0;
 
   virtual score_t GetAvg() const noexcept {
     SDB_ASSERT(false);
     return {};
-  }
-
- protected:
-  IRS_FORCE_INLINE void GetImpl(this auto& self, std::span<const doc_id_t> docs,
-                                std::span<uint32_t> values) {
-    SDB_ASSERT(docs.size() <= values.size());
-    const auto size = docs.size();
-    for (size_t i = 0; i < size; ++i) {
-      values[i] = self.Get(docs[i]);
-    }
   }
 };
 

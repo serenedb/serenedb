@@ -80,7 +80,9 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
 
   return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
     using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-    return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+    return MakeDisjunction<Disjunction>(ctx.wand,
+                                        static_cast<doc_id_t>(ctx.segment.docs_count()),
+                                        std::move(itrs),
                                         std::forward<Args>(args)...);
   });
 }
@@ -105,8 +107,9 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return MakeConjunction(merge_type, ctx.wand, std::move(itrs),
-                         std::forward<Args>(args)...);
+  return MakeConjunction(merge_type, ctx.wand,
+                         static_cast<doc_id_t>(ctx.segment.docs_count()),
+                         std::move(itrs), std::forward<Args>(args)...);
 }
 
 }  // namespace
@@ -287,8 +290,9 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
   return ResolveMergeType(merge_type(), [&]<ScoreMergeType MergeType>() {
     // FIXME(gnusi): use FAST version
     using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
-    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            min_match_count);
+    return MakeWeakDisjunction<Disjunction>(
+      ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+      std::move(itrs), min_match_count);
   });
 }
 

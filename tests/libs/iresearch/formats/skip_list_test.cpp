@@ -457,6 +457,7 @@ TEST_F(SkipReaderTest, SeekWithLevelAdjustments) {
   };
 
   struct ReadSkip {
+    using StreamType = irs::IndexInput;
     size_t count;
     size_t* threshold{};
     std::vector<size_t> scores;
@@ -574,6 +575,7 @@ TEST_F(SkipReaderTest, Seek) {
   };
 
   struct ReadSkip {
+    using StreamType = irs::IndexInput;
     size_t read_calls_count = 0;
     size_t move_down_calls_count = 0;
     mutable size_t is_less_calls_count = 0;

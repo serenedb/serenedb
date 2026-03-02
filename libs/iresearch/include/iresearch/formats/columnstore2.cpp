@@ -25,6 +25,9 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/overload.h>
 
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/store/directory_attributes.hpp>
+#include <limits>
 #include <utility>
 
 #include "basics/down_cast.h"
@@ -510,6 +513,23 @@ class NormReaderImpl : public NormReader {
   explicit NormReaderImpl(Iterator&& it) noexcept : _it{std::move(it)} {}
 
   void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
+    GetBlockImpl(docs, values);
+  }
+
+  uint32_t Get(doc_id_t doc) final {
+    _it->reset();  // TODO(gnusi): remove this
+    return GetImpl(doc);
+  }
+
+  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                       std::span<uint32_t, kPostingBlock> values) final {
+    GetBlockImpl(docs, values);
+  }
+
+ private:
+  template<size_t N>
+  IRS_FORCE_INLINE void GetBlockImpl(std::span<const doc_id_t, N> docs,
+                                     std::span<uint32_t, N> values) {
     SDB_ASSERT(docs.size() <= values.size());
     SDB_ASSERT(absl::c_is_sorted(docs));
     _it->reset();  // TODO(gnusi): remove this
@@ -519,12 +539,6 @@ class NormReaderImpl : public NormReader {
     }
   }
 
-  uint32_t Get(doc_id_t doc) final {
-    _it->reset();  // TODO(gnusi): remove this
-    return GetImpl(doc);
-  }
-
- private:
   IRS_FORCE_INLINE uint32_t GetImpl(doc_id_t doc) {
     const auto r = _it->seek(doc);
     if (r != doc) [[unlikely]] {
@@ -564,15 +578,12 @@ class DirectFixedNormReader : public NormReader {
 
   void Get(std::span<const doc_id_t> docs,
            std::span<uint32_t> values) noexcept final {
-    SDB_ASSERT(docs.size() <= values.size());
-
-    const auto size = docs.size();
     const auto base = _doc_base;
     const auto* IRS_RESTRICT const origin = _origin;
     auto* IRS_RESTRICT const values_data = values.data();
     const auto* IRS_RESTRICT const docs_data = docs.data();
 
-    for (size_t i = 0; i < size; ++i) {
+    for (size_t i = 0; i < docs.size(); ++i) {
       values_data[i] = ReadValue(origin, docs_data[i] - base);
     }
   }
@@ -580,6 +591,36 @@ class DirectFixedNormReader : public NormReader {
   IRS_FORCE_INLINE uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= _doc_base);
     return ReadValue(_origin, doc - _doc_base);
+  }
+
+  void GetPostingBlock(
+    std::span<const doc_id_t, kPostingBlock> docs,
+    std::span<uint32_t, kPostingBlock> values) noexcept final {
+    static constexpr uint32_t kMask = [] -> uint32_t {
+      if constexpr (Encoding == NormEncoding::Byte) {
+        return std::numeric_limits<uint8_t>::max();
+      } else if constexpr (Encoding == NormEncoding::Short) {
+        return std::numeric_limits<uint16_t>::max();
+      } else {
+        return std::numeric_limits<uint32_t>::max();
+      }
+    }();
+    const auto base = _mm256_set1_epi32(_doc_base);
+    const auto mask = _mm256_set1_epi32(kMask);
+    const auto* IRS_RESTRICT docs_data = docs.data();
+    auto* IRS_RESTRICT values_data = values.data();
+    const auto* origin = _origin;
+
+    for (size_t i = 0; i < kPostingBlock; i += 8) {
+      auto indices =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs_data + i));
+      indices = _mm256_sub_epi32(indices, base);
+      auto gathered =
+        _mm256_i32gather_epi32(origin, indices, std::to_underlying(Encoding));
+      gathered = _mm256_and_si256(gathered, mask);
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(values_data + i),
+                          gathered);
+    }
   }
 
  private:

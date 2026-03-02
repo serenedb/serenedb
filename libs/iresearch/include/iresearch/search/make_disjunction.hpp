@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include "iresearch/search/block_disjunction.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/disjunction.hpp"
@@ -34,7 +32,7 @@ namespace irs {
 
 // Returns disjunction iterator created from the specified sub iterators
 template<typename Disjunction, typename... Args>
-DocIterator::ptr MakeDisjunction(WandContext ctx,
+DocIterator::ptr MakeDisjunction(WandContext ctx, doc_id_t docs_count,
                                  typename Disjunction::Adapters&& itrs,
                                  Args&&... args) {
   const auto size = itrs.size();
@@ -59,7 +57,7 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
     if (2 == size) {
       // 2-way disjunction
       return memory::make_managed<BasicDisjunction>(
-        std::move(itrs.front()), std::move(itrs.back()),
+        std::move(itrs.front()), std::move(itrs.back()), docs_count,
         std::forward<Args>(args)...);
     }
   }
@@ -67,18 +65,18 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
   using SmallDisjunction = typename RebindIterator<Disjunction>::Small;
   if constexpr (!std::is_void_v<SmallDisjunction>) {
     if (size <= Disjunction::kSmallDisjunctionUpperBound) {
-      return memory::make_managed<SmallDisjunction>(
-        std::move(itrs), std::forward<Args>(args)...);
+      return memory::make_managed<SmallDisjunction>(std::move(itrs), docs_count,
+                                                    std::forward<Args>(args)...);
     }
   }
 
-  return memory::make_managed<Disjunction>(std::move(itrs),
+  return memory::make_managed<Disjunction>(std::move(itrs), docs_count,
                                            std::forward<Args>(args)...);
 }
 
 // Returns weak conjunction iterator created from the specified sub iterators
 template<typename WeakConjunction, typename... Args>
-DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
+DocIterator::ptr MakeWeakDisjunction(WandContext ctx, doc_id_t docs_count,
                                      typename WeakConjunction::Adapters&& itrs,
                                      size_t min_match, Args&&... args) {
   // This case must be handled by a caller, we're unable to process it here
@@ -94,16 +92,18 @@ DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
   if (1 == min_match) {
     // Pure disjunction
     using Disjunction = typename RebindIterator<WeakConjunction>::Disjunction;
-    return MakeDisjunction<Disjunction>(ctx, std::move(itrs),
+    return MakeDisjunction<Disjunction>(ctx, docs_count, std::move(itrs),
                                         std::forward<Args>(args)...);
   }
 
   if (min_match == size) {
     // Pure conjunction
-    return MakeConjunction(WeakConjunction::kMergeType, ctx, std::move(itrs));
+    return MakeConjunction(WeakConjunction::kMergeType, ctx, docs_count,
+                           std::move(itrs));
   }
 
   return memory::make_managed<WeakConjunction>(std::move(itrs), min_match,
+                                               docs_count,
                                                std::forward<Args>(args)...);
 }
 

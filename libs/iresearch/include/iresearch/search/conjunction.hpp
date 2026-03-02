@@ -22,13 +22,18 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
 #include <absl/container/inlined_vector.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <numeric>
 #include <ranges>
 
 #include "basics/empty.hpp"
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -227,8 +232,9 @@ class Conjunction : public ConjunctionBase<Adapter> {
   using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>>;
 
  public:
-  explicit Conjunction(ScoreMergeType merge_type, std::vector<Adapter>&& itrs)
-    : Base{merge_type, std::move(itrs)} {
+  explicit Conjunction(ScoreMergeType merge_type, doc_id_t docs_count,
+                       std::vector<Adapter>&& itrs)
+    : Base{merge_type, std::move(itrs)}, _docs_count{docs_count} {
     SDB_ASSERT(!this->_itrs.empty());
 
     std::get<AttributePtr<DocAttr>>(_attrs) =
@@ -261,7 +267,83 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return converge(this->_itrs[0].seek(target));
   }
 
-  uint32_t count() final { return DocIterator::CountImpl(*this); }
+  uint32_t count() final {
+    constexpr uint64_t kDensityThresholdInverse = 32;
+    const auto lead_cost = CostAttr::extract(this->_itrs[0], CostAttr::kMax);
+
+    if (lead_cost < _docs_count / kDensityThresholdInverse) {
+      return DocIterator::CountImpl(*this);
+    } else {
+      return CountDense();
+    }
+  }
+
+  uint32_t CountDense() {
+    SDB_ASSERT(this->_itrs.size() > 1);
+
+    const auto lead = this->_itrs.begin();
+    const auto tail_end = this->_itrs.end();
+    const auto tail_back = tail_end - 1;
+
+    ABSL_CACHELINE_ALIGNED uint64_t mask[kNumBlocks];
+    ABSL_CACHELINE_ALIGNED uint64_t tail_mask[kNumBlocks];
+    uint32_t total = 0;
+    doc_id_t base = this->_itrs[0].advance();
+
+    while (true) {
+    align:
+      base = ConvergeRange(base);
+      if (doc_limits::eof(base)) {
+        return total;
+      }
+
+      const doc_id_t max = base + kWindow;
+
+      std::memset(mask, 0, sizeof(mask));
+
+      // TODO(gnusi): fix FillBlock to handle min?
+      {
+        const auto offset = lead->value() - base;
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>());
+      }
+
+      const auto [lead_next, _] = lead->FillBlock(base, max, mask, {}, {});
+
+      for (auto tail = lead + 1; tail != tail_end; ++tail) {
+        std::memset(tail_mask, 0, sizeof(tail_mask));
+
+        // TODO(gnusi): fix FillBlock to handle min?
+        {
+          const auto offset = tail->value() - base;
+          SetBit(tail_mask[offset / BitsRequired<uint64_t>()],
+                 offset % BitsRequired<uint64_t>());
+        }
+
+        const auto [tail_next, _] =
+          tail->FillBlock(base, max, tail_mask, {}, {});
+
+        if (tail == tail_back) {
+          for (size_t i = 0; i < kNumBlocks; ++i) {
+            total += std::popcount(mask[i] & tail_mask[i]);
+          }
+        } else {
+          uint64_t any_set = 0;
+          for (size_t i = 0; i < kNumBlocks; ++i) {
+            mask[i] &= tail_mask[i];
+            any_set |= mask[i];
+          }
+
+          if (any_set == 0) {
+            base = lead->seek(tail_next);
+            goto align;
+          }
+        }
+      }
+
+      base = lead_next;
+    }
+  }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
@@ -269,9 +351,12 @@ class Conjunction : public ConjunctionBase<Adapter> {
   }
 
  private:
+  static constexpr size_t kNumBlocks = 16;
+  static constexpr doc_id_t kWindow = BitsRequired<uint64_t>() * kNumBlocks;
+
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
-  doc_id_t converge(doc_id_t target) {
+  IRS_FORCE_INLINE doc_id_t converge(doc_id_t target) {
     const auto begin = this->_itrs.begin() + 1;
     const auto end = this->_itrs.end();
   restart:
@@ -288,6 +373,22 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return target;
   }
 
+  IRS_FORCE_INLINE doc_id_t ConvergeRange(doc_id_t min) {
+  restart2:
+    if (doc_limits::eof(min)) [[unlikely]] {
+      return doc_limits::eof();
+    }
+    for (auto it = this->_itrs.begin() + 1; it != this->_itrs.end(); ++it) {
+      const auto doc = it->seek(min);
+      if (doc >= min + kWindow) {
+        min = this->_itrs[0].seek(doc);
+        goto restart2;
+      }
+    }
+    return min;
+  }
+
+  doc_id_t _docs_count{};
   Attributes _attrs;
 };
 
@@ -295,6 +396,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
 template<template<typename> typename Wrapper = EmptyWrapper, typename Adapter,
          typename... Args>
 DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
+                                 doc_id_t docs_count,
                                  std::vector<Adapter>&& itrs, Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {
     // empty or unreachable search criteria
@@ -310,7 +412,7 @@ DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
   });
 
   return memory::make_managed<Wrapper<Conjunction<Adapter>>>(
-    merge_type, std::forward<Args>(args)..., std::move(itrs));
+    merge_type, docs_count, std::forward<Args>(args)..., std::move(itrs));
 }
 
 }  // namespace irs

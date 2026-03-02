@@ -83,16 +83,14 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
   static constexpr auto kMergeType = ScoreMergeType::Noop;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  BasicDisjunction(adapter&& lhs, adapter&& rhs)
+  BasicDisjunction(adapter&& lhs, adapter&& rhs, doc_id_t docs_count)
     : BasicDisjunction{std::move(lhs), std::move(rhs),
-                       [this] noexcept {
-                         return CostAttr::extract(_itrs[0], 0) +
-                                CostAttr::extract(_itrs[1], 0);
+                       [this, docs_count] noexcept {
+                         const auto est = CostAttr::extract(_itrs[0], 0) +
+                                          CostAttr::extract(_itrs[1], 0);
+                         SDB_ASSERT(docs_count);
+                         return std::min<CostAttr::Type>(est, docs_count);
                        },
-                       ResolveOverloadTag{}} {}
-
-  BasicDisjunction(Adapter lhs, Adapter rhs, CostAttr::Type est)
-    : BasicDisjunction{std::move(lhs), std::move(rhs), est,
                        ResolveOverloadTag{}} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -212,16 +210,15 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
   static constexpr auto kMergeType = ScoreMergeType::Noop;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  SmallDisjunction(Adapters&& itrs, CostAttr::Type est)
-    : SmallDisjunction{std::move(itrs), est, ResolveOverloadTag{}} {}
-  explicit SmallDisjunction(Adapters&& itrs)
+  SmallDisjunction(Adapters&& itrs, doc_id_t docs_count)
     : SmallDisjunction{std::move(itrs),
-                       [&] noexcept {
-                         return std::accumulate(
+                       [this, docs_count] noexcept {
+                         const auto est = std::accumulate(
                            _begin, _end, CostAttr::Type{0},
                            [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                              return lhs + CostAttr::extract(rhs, 0);
                            });
+                         return std::min<CostAttr::Type>(est, docs_count);
                        },
                        ResolveOverloadTag{}} {}
 
@@ -388,17 +385,15 @@ class Disjunction : public CompoundDocIterator<Adapter> {
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
   static constexpr size_t kSmallDisjunctionUpperBound = 5;
 
-  Disjunction(Adapters&& itrs, CostAttr::Type est)
-    : Disjunction{std::move(itrs), est, ResolveOverloadTag()} {}
-
-  explicit Disjunction(Adapters&& itrs)
+  Disjunction(Adapters&& itrs, doc_id_t docs_count)
     : Disjunction{std::move(itrs),
-                  [&] noexcept {
-                    return absl::c_accumulate(
+                  [this, docs_count] noexcept {
+                    const auto est = absl::c_accumulate(
                       _itrs, CostAttr::Type{0},
                       [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                         return lhs + CostAttr::extract(rhs, 0);
                       });
+                    return std::min<CostAttr::Type>(est, docs_count);
                   },
                   ResolveOverloadTag{}} {}
 
@@ -629,7 +624,8 @@ class MinMatchDisjunction : public DocIterator {
   }
 
  public:
-  MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count)
+  MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count,
+                      doc_id_t docs_count)
     : _itrs{std::move(itrs)},
       _min_match_count{std::clamp(min_match_count, size_t{1}, _itrs.size())},
       _lead{_itrs.size()} {
@@ -641,12 +637,13 @@ class MinMatchDisjunction : public DocIterator {
       return lhs.est < rhs.est;
     });
 
-    std::get<CostAttr>(_attrs).reset([this]() noexcept {
-      return absl::c_accumulate(
+    std::get<CostAttr>(_attrs).reset([this, docs_count]() noexcept {
+      const auto est = absl::c_accumulate(
         _itrs, CostAttr::Type{0},
         [](CostAttr::Type lhs, const auto& rhs) noexcept {
           return lhs + rhs.est;
         });
+      return std::min<CostAttr::Type>(est, docs_count);
     });
 
     // prepare external heap

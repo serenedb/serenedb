@@ -72,10 +72,6 @@ class SearchRemoveFilterBase : public irs::Filter,
     return _doc.value = irs::doc_limits::eof();
   }
 
-  irs::doc_id_t LazySeek(irs::doc_id_t target) noexcept final {
-    return seek(target);
-  }
-
   mutable const irs::SubReader* _segment{};
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};

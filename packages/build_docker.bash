@@ -28,9 +28,6 @@ IMAGE_NAME="serenedb"
 # Parse DOCKER_EXTRA_TAGS into a bash array (handles commas and spaces)
 IFS=', ' read -r -a EXTRA_TAGS_ARRAY <<<"${DOCKER_EXTRA_TAGS:-}"
 
-# -----------------------------------------------------------------------------
-# Functions
-# -----------------------------------------------------------------------------
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }

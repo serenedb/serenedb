@@ -209,7 +209,8 @@ jobs:
       - name: Produce Build Images
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
-        run: ./private/ci/build_images.sh
+        working-directory: ./private/ci
+        run: ./build_images.sh
 
       # ==================== UPDATE FILE OWNERSHIP ====================
       - name: Update file ownership

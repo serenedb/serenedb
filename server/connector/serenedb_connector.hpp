@@ -186,8 +186,6 @@ class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
 
   auto& GetTransaction() const noexcept { return _transaction; }
 
-  auto& GetPKNames() const noexcept { return _pk_names; }
-
   auto& GetPKType() const noexcept { return _pk_type; }
 
   auto& GetFilter() const noexcept { return _filter; }
@@ -197,16 +195,9 @@ class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
-  std::vector<std::string> _pk_names;
-  velox::TypePtr _pk_type;
+  velox::RowTypePtr _pk_type;
   std::unique_ptr<Filter> _filter;
 };
-
-// Imagine we have table
-// pk1 pk2 pk3 c4 c5 ...
-// Ideally when we have *prefix* on pki set up -> optimize,
-// but for now lets assume we use point lookup when only
-// we have filter like (pk1=const, pk2=const, pk3=const)
 
 class SereneDBColumn final : public axiom::connector::Column {
  public:
@@ -263,17 +254,6 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
-    for (const auto& filter : filters) {
-      SDB_PRINT("filter: ", filter->toString());
-      // if ([[maybe_unused]] auto res = extract_eq(filter)) {
-      // TODO do something with rejected filters
-      // return res;
-      // }
-    }
-    if (filters.empty()) {
-      SDB_PRINT("no filters!");
-    }
-
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
       double sample_rate = 1.0;
@@ -305,7 +285,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
     // Rejected filters are used to remove filters from plan as I see.
     // Think about them better. For now assume we need all filters
-    // (usedful filter) and (useless) -- ? Do not forget to handle this case
+    // (useful filter) and
+    // (useless) -- ? Do not forget to handle this case
 
     auto filter = ParseFilters(filters);
     rejected_filters = std::move(filters);
@@ -725,27 +706,15 @@ class SereneDBConnector final : public velox::connector::Connector {
         object_key);
     }
 
-    // todo check for possibility of point lookup
-    // if (const auto* point_lookup =
-    //       dynamic_cast<const SereneDBPointLookupTableHandle*>(
-    //         table_handle.get())) {
-    //   return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
-    //     *connector_query_ctx->memoryPool(), _db, _cf, output_type,
-    //     column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
-    //     snapshot, point_lookup->eq_val->toConstantVector(
-    //       connector_query_ctx->connectorMemoryPool()));
-    // }
-
-    if (const auto* filter = serene_table_handle.GetFilter().get(); filter) {
-      if (auto point = TryGetPoint(*filter, serene_table_handle.GetPKNames(),
-                                   serene_table_handle.GetPKType(),
-                                   connector_query_ctx->connectorMemoryPool());
-          point) {
-        return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
-          *connector_query_ctx->memoryPool(), _db, _cf, output_type,
-          column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
-          snapshot, point);
-      }
+    SDB_ASSERT(serene_table_handle.GetFilter());
+    const auto* filter = serene_table_handle.GetFilter().get();
+    if (auto point = TryGetPoint(*filter, serene_table_handle.GetPKType(),
+                                 connector_query_ctx->connectorMemoryPool());
+        point) {
+      return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
+        *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
+        serene_table_handle.GetEffectiveColumnId(), object_key, snapshot,
+        point);
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

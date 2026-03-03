@@ -49,8 +49,6 @@ SereneDBTableHandle::SereneDBTableHandle(
                              std::next(column_map.begin())->second)
                              ->Id();
   }
-  // Looks like _pk_names are redundant?
-  _pk_names = basics::downCast<RocksDBTable>(layout.table()).PKType()->names();
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
 
   _transaction.AddRocksDBRead();

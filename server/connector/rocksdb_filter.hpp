@@ -70,104 +70,65 @@ struct AndFilter : Filter {
   std::vector<std::unique_ptr<Filter>> filters;
 };
 
-inline std::unique_ptr<Filter> ParseFilter(velox::core::TypedExprPtr& filter) {
-  if (filter->isCallKind()) {
-    auto* as_call = filter->asUnchecked<velox::core::CallTypedExpr>();
-    SDB_PRINT("  name=", as_call->name());
-    SDB_PRINT("  inputs=");
-    for (const auto& input : as_call->inputs()) {
-      SDB_PRINT("    input=", input->toString(),
-                "; kind=", magic_enum::enum_name(input->kind()));
+inline std::unique_ptr<Filter> ParseFilter(
+  const velox::core::TypedExprPtr& filter) {
+  if (!filter->isCallKind()) {
+    return {};
+  }
+  auto* func_call = filter->asUnchecked<velox::core::CallTypedExpr>();
+  if (func_call->name() == "presto_eq") {
+    SDB_ASSERT(func_call->inputs().size() == 2);
+    if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
+        func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
+      return {};
     }
-    if (as_call->name() == "presto_eq") {
-      SDB_ASSERT(as_call->inputs().size() == 2);
-      SDB_ASSERT(as_call->inputs()[0]->kind() ==
-                 velox::core::ExprKind::kFieldAccess);
-      auto as_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
-        as_call->inputs()[0]);
-      SDB_ASSERT(as_call->inputs()[1]->kind() ==
-                 velox::core::ExprKind::kConstant);
-      auto as_const =
-        basics::downCast<velox::core::ConstantTypedExpr>(as_call->inputs()[1]);
-      return std::make_unique<EqFilter>(as_access->name(), as_const);
-    }
+    auto field_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
+      func_call->inputs()[0]);
+    auto const_val =
+      basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
+    return std::make_unique<EqFilter>(field_access->name(), const_val);
   }
   return {};
 }
 
-// TODO find out which interface will be better
-// But some shit like
-// f(col) = ... is not ok
 inline std::unique_ptr<Filter> ParseFilters(
-  std::vector<velox::core::TypedExprPtr>& filters) {
-  // TODO better rejected filters logics
+  const std::vector<velox::core::TypedExprPtr>& filters) {
   std::vector<std::unique_ptr<Filter>> resp;
-  std::vector<velox::core::TypedExprPtr> rejected;
-  for (auto& filter : filters) {
-    auto cur_parsed = ParseFilter(filter);
-    if (!cur_parsed) {
-      rejected.emplace_back(filter);
-    } else {
-      resp.emplace_back(std::move(cur_parsed));
+  for (const auto& filter : filters) {
+    if (auto parsed = ParseFilter(filter)) {
+      resp.emplace_back(std::move(parsed));
     }
   }
-  if (resp.size() == 1) {
-    // filters = std::move(rejected);
-    return std::move(resp[0]);
-  }
-  if (resp.size() > 1) {
-    // filters = std::move(rejected);
-    return std::make_unique<AndFilter>(std::move(resp));
-  }
-  return {};
+
+  return std::make_unique<AndFilter>(std::move(resp));
 }
 
-// cannot create row vec I suppose
 // Somehow need to pass kind of row {a: 42, b: "lol"}  into data source
 inline std::shared_ptr<velox::RowVector> TryGetPoint(
-  const Filter& filter, std::span<const std::string> pk_names,
-  velox::TypePtr pk_type, velox::memory::MemoryPool* pool) {
-  SDB_ASSERT(pk_names.size() == pk_type->size());
-  SDB_ASSERT(!pk_names.empty());
-  if (pk_names.size() == 1) {
-    if (filter.kind != FilterKind::Eq) {
-      return {};
-    }
-    auto as_eq = basics::downCast<EqFilter>(&filter);
-    if (as_eq->column_name == pk_names[0]) {
-      std::vector<velox::VectorPtr> vectors{
-        as_eq->value->toConstantVector(pool)};
-
-      return std::make_shared<velox::RowVector>(
-        pool, pk_type, velox::BufferPtr{}, 1, std::move(vectors));
-    }
-  } else {
-    if (filter.kind != FilterKind::And) {
-      return {};
-    }
-    auto* as_and = basics::downCast<AndFilter>(&filter);
-    absl::flat_hash_map<std::string, EqFilter*> cname2filter;
-    for (const auto& sub_filter : as_and->filters) {
-      auto* sf = sub_filter.get();
-      if (sf->kind != FilterKind::Eq)
-        continue;
-      auto* as_eq = basics::downCast<EqFilter>(sf);
-      auto res = cname2filter.emplace(as_eq->column_name, as_eq);
-      SDB_ASSERT(res.second);
-    }
-    // for each column name extract expr
-    std::vector<velox::VectorPtr> vectors;
-    for (std::string_view pk_col_name : pk_names) {
-      if (auto it = cname2filter.find(pk_col_name); it != cname2filter.end()) {
-        vectors.emplace_back(it->second->value->toConstantVector(pool));
-      } else {
-        return {};
-      }
-    }
-    return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
-                                              1, std::move(vectors));
+  const Filter& filter, velox::RowTypePtr pk_type,
+  velox::memory::MemoryPool* pool) {
+  SDB_ASSERT(pk_type->size() != 0);
+  SDB_ASSERT(filter.kind == FilterKind::And);
+  auto& and_filter = basics::downCast<AndFilter>(filter);
+  absl::flat_hash_map<std::string, EqFilter*> cname2filter;
+  for (const auto& sub_filter : and_filter.filters) {
+    if (sub_filter->kind != FilterKind::Eq)
+      continue;
+    auto* as_eq = basics::downCast<EqFilter>(sub_filter.get());
+    auto res = cname2filter.emplace(as_eq->column_name, as_eq);
+    SDB_ASSERT(res.second);
   }
-  return {};
+
+  std::vector<velox::VectorPtr> children;
+  for (std::string_view pk_col_name : pk_type->names()) {
+    if (auto it = cname2filter.find(pk_col_name); it != cname2filter.end()) {
+      children.emplace_back(it->second->value->toConstantVector(pool));
+    } else {
+      return {};
+    }
+  }
+  return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
+                                            1, std::move(children));
 }
 
 }  // namespace sdb::connector

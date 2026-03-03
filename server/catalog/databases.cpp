@@ -58,7 +58,7 @@ Result DropDatabase(const ExecContext& exec, std::string_view db_name) {
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()
-    .DropDatabase(db_name, nullptr);
+    .DropDatabase(db_name);
 }
 
 }  // namespace sdb::catalog

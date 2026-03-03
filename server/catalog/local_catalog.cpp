@@ -136,15 +136,12 @@ class SnapshotImpl : public Snapshot {
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(ObjectId db_id) {
     auto db_deps = GetDependency<DatabaseDependency>(db_id);
-    auto drop_task = std::make_shared<DatabaseDrop>();
+    auto drop_task = std::make_shared<DatabaseDrop>(db_id);
     drop_task->schemas = db_deps->schemas |
                          std::views::transform([&](ObjectId id) {
                            return CreateSchemaDrop(db_id, id, false);
                          }) |
                          std::ranges::to<std::vector>();
-    drop_task->parent_id = id::kInstance;
-    drop_task->id = db_id;
-    drop_task->is_root = true;
     return drop_task;
   }
 
@@ -152,26 +149,20 @@ class SnapshotImpl : public Snapshot {
                                                ObjectId schema_id,
                                                bool is_root) {
     auto schema_deps = GetDependency<SchemaDependency>(schema_id);
-    auto drop_task = std::make_shared<SchemaDrop>();
+    auto drop_task = std::make_shared<SchemaDrop>(db_id, schema_id, is_root);
     drop_task->tables = schema_deps->tables |
                         std::views::transform([&](ObjectId id) {
                           return CreateTableDrop(db_id, schema_id, id, false);
                         }) |
                         std::ranges::to<std::vector>();
 
-    drop_task->parent_id = db_id;
-    drop_task->id = schema_id;
-    drop_task->is_root = is_root;
     return drop_task;
   }
 
   std::shared_ptr<TableDrop> CreateTableDrop(ObjectId db_id, ObjectId schema_id,
                                              ObjectId table_id, bool is_root) {
     auto table_deps = GetDependency<TableDependency>(table_id);
-    auto drop_task = std::make_shared<TableDrop>();
-    drop_task->parent_id = schema_id;
-    drop_task->id = table_id;
-    drop_task->is_root = is_root;
+    auto drop_task = std::make_shared<TableDrop>(schema_id, table_id, is_root);
     drop_task->indexes =
       table_deps->indexes | std::views::transform([&](ObjectId id) {
         return CreateIndexDrop(db_id, schema_id, table_id, id, is_root);
@@ -186,14 +177,9 @@ class SnapshotImpl : public Snapshot {
                                              ObjectId index_id, bool is_root) {
     auto index_deps = GetDependency<IndexDependency>(index_id);
     auto index = GetObject<Index>(index_id);
-    auto drop_task = std::make_shared<IndexDrop>();
-    drop_task->parent_id = table_id;
-    drop_task->id = index_id;
-    drop_task->is_root = is_root;
-    drop_task->type = index->GetIndexType();
+    auto drop_task = std::make_shared<IndexDrop>(
+      db_id, schema_id, table_id, index_id, index->GetIndexType(), is_root);
     drop_task->shard_id = index_deps->shard_id;
-    drop_task->schema_id = schema_id;
-    drop_task->db_id = db_id;
     return drop_task;
   }
 
@@ -1472,8 +1458,7 @@ Result LocalCatalog::DropRole(std::string_view role) {
   return {};
 }
 
-Result LocalCatalog::DropDatabase(std::string_view name,
-                                  AsyncResult* async_result) {
+Result LocalCatalog::DropDatabase(std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto db_id =
@@ -1492,16 +1477,13 @@ Result LocalCatalog::DropDatabase(std::string_view name,
                             id::kInstance);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
-    auto res = task->Schedule();
-    if (async_result) {
-      *async_result = std::move(res);
-    }
+    DropTask::Schedule(std::move(task)).Detach();
     return Result{};
   });
 }
 
 Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
-                                bool cascade, AsyncResult* async_result) {
+                                bool cascade) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto schema_id =
@@ -1525,17 +1507,13 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
                             db_id);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
-    auto res = task->Schedule();
-    if (async_result) {
-      *async_result = std::move(res);
-    }
+    DropTask::Schedule(std::move(task)).Detach();
     return Result{};
   });
 }
 
 Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
-                               std::string_view name,
-                               AsyncResult* async_result) {
+                               std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto schema_id =
@@ -1556,17 +1534,13 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
                             *schema_id);
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
-    auto res = task->Schedule();
-    if (async_result) {
-      *async_result = std::move(res);
-    }
+    DropTask::Schedule(std::move(task)).Detach();
     return Result{};
   });
 }
 
 Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
-                               std::string_view name,
-                               AsyncResult* async_result) {
+                               std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     SDB_ASSERT(clone);
@@ -1592,10 +1566,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
                                        index->GetRelationId(), *index_id, true);
     clone->UnregisterObject(index, *schema_id);
-    auto res = task->Schedule();
-    if (async_result) {
-      *async_result = std::move(res);
-    }
+    DropTask::Schedule(std::move(task)).Detach();
     return Result{};
   });
 }

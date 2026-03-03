@@ -95,18 +95,18 @@ class LocalCatalog final : public LogicalCatalog,
                      ChangeCallback<Table> callback) final;
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback) final;
 
-  Result DropDatabase(std::string_view name, AsyncResult* async_result) final;
+  Result DropDatabase(std::string_view name) final;
   Result DropRole(std::string_view role) final;
-  Result DropSchema(ObjectId database_id, std::string_view name, bool cascade,
-                    AsyncResult* async_result) final;
+  Result DropSchema(ObjectId database_id, std::string_view name,
+                    bool cascade) final;
   Result DropView(ObjectId database_id, std::string_view schema,
                   std::string_view name) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
                       std::string_view name) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
-                   std::string_view name, AsyncResult* async_result) final;
+                   std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
-                   std::string_view name, AsyncResult* async_result) final;
+                   std::string_view name) final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {

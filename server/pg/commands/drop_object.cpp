@@ -58,10 +58,10 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   const auto db = context.GetDatabaseId();
   switch (stmt.removeType) {
     case OBJECT_TABLE:
-      r = catalog.DropTable(db, schema, name, nullptr);
+      r = catalog.DropTable(db, schema, name);
       break;
     case OBJECT_INDEX:
-      r = catalog.DropIndex(db, schema, name, nullptr);
+      r = catalog.DropIndex(db, schema, name);
       break;
     case OBJECT_VIEW: {
       r = catalog.DropView(db, schema, name);
@@ -77,7 +77,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
              " because it is required by the database system"};
       } else {
         const bool cascade = stmt.behavior == DROP_CASCADE;
-        r = catalog.DropSchema(db, name, cascade, nullptr);
+        r = catalog.DropSchema(db, name, cascade);
       }
     } break;
     default:

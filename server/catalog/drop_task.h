@@ -28,6 +28,7 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/object_dependency.h"
 #include "general_server/scheduler.h"
@@ -42,84 +43,110 @@ static constexpr uint32_t kMaxDelay = kInitialDelay << 7;
 struct DropTask {
   ObjectId parent_id;
   ObjectId id;
-  bool is_root = false;
+  bool is_root;
   uint32_t delay = kInitialDelay;  // delay in microseconds
+
+  DropTask(ObjectId parent_id, ObjectId id, bool is_root = false)
+    : parent_id{parent_id}, id{id}, is_root{is_root} {}
+
+  static AsyncResult Schedule(std::shared_ptr<DropTask> task) noexcept;
+  virtual AsyncResult operator()() = 0;
+  virtual std::string_view GetName() const noexcept = 0;
+  virtual std::string GetContext() const noexcept = 0;
 };
 
-struct TableShardDrop : DropTask, std::enable_shared_from_this<TableShardDrop> {
-  static constexpr std::string_view kName = "table shard drop";
+struct TableShardDrop final : public DropTask,
+                              std::enable_shared_from_this<TableShardDrop> {
+  TableShardDrop(ObjectId parent_id, ObjectId id) : DropTask{parent_id, id} {}
 
-  TableShardDrop(DropTask&& task) : DropTask{std::move(task)} {}
-
-  std::string GetContext() const {
+  std::string GetContext() const noexcept final {
     return absl::Substitute("TableShardDrop(table $0 shard $1)", parent_id.id(),
                             id.id());
   }
 
-  AsyncResult operator()();
+  std::string_view GetName() const noexcept final { return "table shard drop"; }
+
+  AsyncResult operator()() final;
 };
 
-struct IndexDrop : DropTask, std::enable_shared_from_this<IndexDrop> {
-  static constexpr std::string_view kName = "index drop";
-
+struct IndexDrop final : public DropTask,
+                         std::enable_shared_from_this<IndexDrop> {
   ObjectId db_id;
   ObjectId schema_id;
   ObjectId shard_id;
   IndexType type;
 
-  std::string GetContext() const {
+  IndexDrop(ObjectId db_id, ObjectId schema_id, ObjectId table_id, ObjectId id,
+            IndexType type, bool is_root = false)
+    : DropTask{table_id, id, is_root},
+      db_id{db_id},
+      schema_id{schema_id},
+      type{type} {}
+
+  std::string GetContext() const noexcept final {
     return absl::Substitute("IndexDrop(schema $0 index $1)", parent_id.id(),
                             id.id());
   }
 
-  AsyncResult operator()();
+  std::string_view GetName() const noexcept final { return "index drop"; }
+
+  AsyncResult operator()() final;
   Result Finalize();
-  AsyncResult Schedule();
 };
 
-struct TableDrop : DropTask, std::enable_shared_from_this<TableDrop> {
+struct TableDrop final : public DropTask,
+                         std::enable_shared_from_this<TableDrop> {
   static constexpr std::string_view kName = "table drop";
 
   ObjectId shard_id;
   std::vector<std::shared_ptr<IndexDrop>> indexes;
 
-  std::string GetContext() const {
+  TableDrop(ObjectId schema_id, ObjectId id, bool is_root = false)
+    : DropTask{schema_id, id, is_root} {}
+
+  std::string GetContext() const noexcept final {
     return absl::Substitute("TableDrop(schema $0 table $1)", parent_id.id(),
                             id.id());
   }
 
-  AsyncResult operator()();
+  std::string_view GetName() const noexcept final { return "table drop"; }
+
+  AsyncResult operator()() final;
   Result Finalize();
-  AsyncResult Schedule();
 };
 
-struct SchemaDrop : DropTask, std::enable_shared_from_this<SchemaDrop> {
-  static constexpr std::string_view kName = "scope drop";
-
+struct SchemaDrop final : public DropTask,
+                          std::enable_shared_from_this<SchemaDrop> {
   std::vector<std::shared_ptr<TableDrop>> tables;
 
-  std::string GetContext() const {
+  SchemaDrop(ObjectId db_id, ObjectId id, bool is_root = false)
+    : DropTask{db_id, id, is_root} {}
+
+  std::string GetContext() const noexcept final {
     return absl::Substitute("SchemaDrop(database $0 schema $1)", parent_id.id(),
                             id.id());
   }
 
-  AsyncResult operator()();
+  std::string_view GetName() const noexcept final { return "schema drop"; }
+
+  AsyncResult operator()() final;
   Result Finalize();
-  AsyncResult Schedule();
 };
 
-struct DatabaseDrop : DropTask, std::enable_shared_from_this<DatabaseDrop> {
-  static constexpr std::string_view kName = "database drop";
-
+struct DatabaseDrop final : public DropTask,
+                            std::enable_shared_from_this<DatabaseDrop> {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
 
-  std::string GetContext() const {
+  DatabaseDrop(ObjectId id) : DropTask{id::kInstance, id, true} {}
+
+  std::string GetContext() const noexcept final {
     return absl::Substitute("DatabaseDrop(database $0)", parent_id.id());
   }
 
-  AsyncResult operator()();
+  std::string_view GetName() const noexcept final { return "database drop"; }
+
+  AsyncResult operator()() final;
   Result Finalize();
-  AsyncResult Schedule();
 };
 
 }  // namespace sdb::catalog

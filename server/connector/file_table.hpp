@@ -42,10 +42,7 @@
 #include "basics/assert.h"
 #include "basics/fwd.h"
 #include "basics/message_buffer.h"
-
-namespace sdb {
-class StorageOptions;
-}
+#include "catalog/storage_options.h"
 
 namespace sdb::connector {
 
@@ -71,7 +68,7 @@ struct DwioReaderOptions {
 
 struct WriterOptions {
   DwioWriterOptions dwio;
-  std::shared_ptr<sdb::StorageOptions> storage_options;
+  std::shared_ptr<StorageOptions> storage_options;
 
   const auto& Writer() const { return dwio.writer; }
   auto& Writer() { return dwio.writer; }
@@ -81,7 +78,7 @@ struct ReaderOptions {
   DwioReaderOptions dwio;
   // if set then progress messages are written here
   ReportCallback report_callback;
-  std::shared_ptr<sdb::StorageOptions> storage_options;
+  std::shared_ptr<StorageOptions> storage_options;
 
   const auto& Reader() const { return dwio.reader; }
   auto& Reader() { return dwio.reader; }

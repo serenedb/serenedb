@@ -118,3 +118,45 @@
 [submodule "third_party/streamvbyte"]
 	path = third_party/streamvbyte
 	url = git@github.com:serenedb/streamvbyte.git
+[submodule "third_party/aws-sdk-cpp"]
+	path = third_party/aws-sdk-cpp
+	url = https://github.com/serenedb/aws-sdk-cpp.git
+[submodule "third_party/curl"]
+	path = third_party/curl
+	url = git@github.com:serenedb/curl.git
+[submodule "third_party/aws-c-common"]
+	path = third_party/aws-c-common
+	url = https://github.com/serenedb/aws-c-common
+[submodule "third_party/aws-crt-cpp"]
+	path = third_party/aws-crt-cpp
+	url = https://github.com/serenedb/aws-crt-cpp
+[submodule "third_party/aws-checksums"]
+	path = third_party/aws-checksums
+	url = https://github.com/serenedb/aws-checksums
+[submodule "third_party/aws-c-cal"]
+	path = third_party/aws-c-cal
+	url = https://github.com/serenedb/aws-c-cal
+[submodule "third_party/aws-c-io"]
+	path = third_party/aws-c-io
+	url = https://github.com/serenedb/aws-c-io
+[submodule "third_party/aws-c-compression"]
+	path = third_party/aws-c-compression
+	url = https://github.com/serenedb/aws-c-compression
+[submodule "third_party/aws-c-http"]
+	path = third_party/aws-c-http
+	url = https://github.com/serenedb/aws-c-http
+[submodule "third_party/aws-c-sdkutils"]
+	path = third_party/aws-c-sdkutils
+	url = https://github.com/serenedb/aws-c-sdkutils
+[submodule "third_party/aws-c-auth"]
+	path = third_party/aws-c-auth
+	url = https://github.com/serenedb/aws-c-auth
+[submodule "third_party/aws-c-event-stream"]
+	path = third_party/aws-c-event-stream
+	url = https://github.com/serenedb/aws-c-event-stream
+[submodule "third_party/aws-c-mqtt"]
+	path = third_party/aws-c-mqtt
+	url = https://github.com/serenedb/aws-c-mqtt
+[submodule "third_party/aws-c-s3"]
+	path = third_party/aws-c-s3
+	url = https://github.com/serenedb/aws-c-s3

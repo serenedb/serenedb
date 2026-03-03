@@ -25,24 +25,23 @@
 #include <velox/dwio/text/reader/TextReader.h>
 #include <velox/dwio/text/writer/TextWriter.h>
 
-#include "connector/file_table.hpp"
 #include "query/utils.h"
 
 namespace sdb::pg {
 
 namespace {
 
-std::shared_ptr<connector::WriterOptions> CreateDefaultWriterOptions(
+connector::DwioWriterOptions CreateDefaultWriterOptions(
   velox::dwio::common::FileFormat format, velox::RowTypePtr schema) {
   const auto& writer_factory = velox::dwio::common::getWriterFactory(format);
   std::shared_ptr<velox::dwio::common::WriterOptions> dwio_options{
     writer_factory->createWriterOptions().release()};
   dwio_options->schema = std::move(schema);
   dwio_options->fileFormat = format;
-  return std::make_shared<connector::WriterOptions>(std::move(dwio_options));
+  return {std::move(dwio_options)};
 }
 
-std::shared_ptr<connector::ReaderOptions> CreateDefaultReaderOptions(
+connector::DwioReaderOptions CreateDefaultReaderOptions(
   velox::dwio::common::FileFormat format, velox::RowTypePtr schema) {
   auto dwio_options =
     std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
@@ -50,14 +49,13 @@ std::shared_ptr<connector::ReaderOptions> CreateDefaultReaderOptions(
   dwio_options->setFileSchema(std::move(schema));
   auto row_reader_options =
     std::make_shared<velox::dwio::common::RowReaderOptions>();
-  return std::make_shared<connector::ReaderOptions>(
-    std::move(dwio_options), std::move(row_reader_options));
+  return {std::move(dwio_options), std::move(row_reader_options)};
 }
 
 }  // namespace
 
-std::shared_ptr<connector::WriterOptions>
-TextFormatOptions::createWriterOptions(velox::RowTypePtr schema) const {
+connector::DwioWriterOptions TextFormatOptions::createWriterOptions(
+  velox::RowTypePtr schema) const {
   velox::dwio::common::SerDeOptions serde_options{_delim, '\2', '\3', _escape,
                                                   false};
   serde_options.nullString = _null_string;
@@ -70,11 +68,11 @@ TextFormatOptions::createWriterOptions(velox::RowTypePtr schema) const {
   text_options->serDeOptions = std::move(serde_options);
   text_options->schema = std::move(schema);
   text_options->fileFormat = velox::dwio::common::FileFormat::TEXT;
-  return std::make_shared<connector::WriterOptions>(std::move(text_options));
+  return {std::move(text_options)};
 }
 
-std::shared_ptr<connector::ReaderOptions>
-TextFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
+connector::DwioReaderOptions TextFormatOptions::createReaderOptions(
+  velox::RowTypePtr schema) const {
   velox::dwio::common::SerDeOptions serde_options{_delim, '\2', '\3', _escape,
                                                   false};
   serde_options.nullString = _null_string;
@@ -87,8 +85,7 @@ TextFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
   auto row_reader_options =
     std::make_shared<velox::dwio::common::RowReaderOptions>();
   row_reader_options->setSkipRows(_header);
-  return std::make_shared<connector::ReaderOptions>(
-    std::move(text_options), std::move(row_reader_options));
+  return {std::move(text_options), std::move(row_reader_options)};
 }
 
 void TextFormatOptions::toVPack(vpack::Builder& b) const {
@@ -99,14 +96,14 @@ void TextFormatOptions::toVPack(vpack::Builder& b) const {
   b.add("header", _header);
 }
 
-std::shared_ptr<connector::WriterOptions>
-ParquetFormatOptions::createWriterOptions(velox::RowTypePtr schema) const {
+connector::DwioWriterOptions ParquetFormatOptions::createWriterOptions(
+  velox::RowTypePtr schema) const {
   return CreateDefaultWriterOptions(velox::dwio::common::FileFormat::PARQUET,
                                     std::move(schema));
 }
 
-std::shared_ptr<connector::ReaderOptions>
-ParquetFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
+connector::DwioReaderOptions ParquetFormatOptions::createReaderOptions(
+  velox::RowTypePtr schema) const {
   return CreateDefaultReaderOptions(velox::dwio::common::FileFormat::PARQUET,
                                     std::move(schema));
 }
@@ -115,14 +112,14 @@ void ParquetFormatOptions::toVPack(vpack::Builder& b) const {
   b.add("format", std::to_underlying(_format));
 }
 
-std::shared_ptr<connector::WriterOptions>
-DwrfFormatOptions::createWriterOptions(velox::RowTypePtr schema) const {
+connector::DwioWriterOptions DwrfFormatOptions::createWriterOptions(
+  velox::RowTypePtr schema) const {
   return CreateDefaultWriterOptions(velox::dwio::common::FileFormat::DWRF,
                                     std::move(schema));
 }
 
-std::shared_ptr<connector::ReaderOptions>
-DwrfFormatOptions::createReaderOptions(velox::RowTypePtr schema) const {
+connector::DwioReaderOptions DwrfFormatOptions::createReaderOptions(
+  velox::RowTypePtr schema) const {
   return CreateDefaultReaderOptions(velox::dwio::common::FileFormat::DWRF,
                                     std::move(schema));
 }
@@ -131,13 +128,13 @@ void DwrfFormatOptions::toVPack(vpack::Builder& b) const {
   b.add("format", std::to_underlying(_format));
 }
 
-std::shared_ptr<connector::WriterOptions> OrcFormatOptions::createWriterOptions(
+connector::DwioWriterOptions OrcFormatOptions::createWriterOptions(
   velox::RowTypePtr schema) const {
   return CreateDefaultWriterOptions(velox::dwio::common::FileFormat::ORC,
                                     std::move(schema));
 }
 
-std::shared_ptr<connector::ReaderOptions> OrcFormatOptions::createReaderOptions(
+connector::DwioReaderOptions OrcFormatOptions::createReaderOptions(
   velox::RowTypePtr schema) const {
   return CreateDefaultReaderOptions(velox::dwio::common::FileFormat::ORC,
                                     std::move(schema));

@@ -57,7 +57,8 @@ std::optional<T> TryGetImpl(const Node* expr) {
     if (nodeTag(expr) == T_Float) {
       return floatVal(expr);
     }
-  } else if constexpr (std::is_same_v<T, std::string_view>) {
+  } else if constexpr (std::is_same_v<T, std::string_view> ||
+                       std::is_same_v<T, std::string>) {
     if (nodeTag(expr) == T_String) {
       return strVal(expr);
     }
@@ -69,6 +70,29 @@ std::optional<T> TryGetImpl(const Node* expr) {
       }
       return str[0];
     }
+  } else if constexpr (std::is_same_v<T, bool>) {
+    if (auto val = TryGet<std::string_view>(expr)) {
+      if (*val == "true" || *val == "on") {
+        return true;
+      }
+      if (*val == "false" || *val == "off") {
+        return false;
+      }
+      return {};
+    }
+
+    if (auto val = TryGet<int>(expr)) {
+      switch (*val) {
+        case 0:
+          return false;
+        case 1:
+          return true;
+        default:
+          return {};
+      }
+    }
+
+    return {};
   } else {
     static_assert(false);
   }
@@ -105,31 +129,6 @@ std::optional<T> TryGet(const List* list, size_t i) {
   return {};
 }
 
-std::optional<bool> TryGetBoolOption(const Node* expr) {
-  if (auto val = TryGet<std::string_view>(expr)) {
-    if (*val == "true" || *val == "on") {
-      return true;
-    }
-    if (*val == "false" || *val == "off") {
-      return false;
-    }
-    return {};
-  }
-
-  if (auto val = TryGet<int>(expr)) {
-    switch (*val) {
-      case 0:
-        return false;
-      case 1:
-        return true;
-      default:
-        return {};
-    }
-  }
-
-  return {};
-}
-
 #define SDB_DECLARE_TRYGET(T)                       \
   template std::optional<T> TryGet<T>(const Node*); \
   template std::optional<T> TryGet<T>(const Node&); \
@@ -139,6 +138,8 @@ SDB_DECLARE_TRYGET(int);
 SDB_DECLARE_TRYGET(double);
 SDB_DECLARE_TRYGET(std::string_view);
 SDB_DECLARE_TRYGET(char);
+SDB_DECLARE_TRYGET(std::string);
+SDB_DECLARE_TRYGET(bool);
 #undef SDB_DECLARE_TRYGET
 
 bool IsDistinctAll(const List* distinct_clause) noexcept {

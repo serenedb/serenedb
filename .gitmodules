@@ -121,9 +121,6 @@
 [submodule "third_party/aws-sdk-cpp"]
 	path = third_party/aws-sdk-cpp
 	url = https://github.com/serenedb/aws-sdk-cpp.git
-[submodule "third_party/curl"]
-	path = third_party/curl
-	url = git@github.com:serenedb/curl.git
 [submodule "third_party/aws-c-common"]
 	path = third_party/aws-c-common
 	url = https://github.com/serenedb/aws-c-common

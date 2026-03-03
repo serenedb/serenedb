@@ -266,6 +266,11 @@ class RangeColumnIterator : public ResettableDocIterator,
     return value();
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
   void reset() noexcept final {
     _min_doc = _min_base;
     _max_doc = _min_doc +
@@ -330,6 +335,11 @@ class BitmapColumnIterator : public ResettableDocIterator,
     std::get<PayAttr>(_attrs).value =
       doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
     return doc;
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
   }
 
   void reset() final { _bitmap.reset(); }

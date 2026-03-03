@@ -36,14 +36,21 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
-  auto* names = stmt.removeType == OBJECT_SCHEMA
-                  ? stmt.objects
-                  : list_nth_node(List, stmt.objects, 0);
+  auto* names = [&]() -> List* {
+    if (stmt.removeType == OBJECT_SCHEMA) {
+      return stmt.objects;
+    } else if (stmt.removeType == OBJECT_FUNCTION) {
+      auto* object_with_args =
+        castNode(ObjectWithArgs, list_nth(stmt.objects, 0));
+      return object_with_args->objname;
+    } else {
+      return list_nth_node(List, stmt.objects, 0);
+    }
+  }();
   auto current_schema =
     basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
   auto [schema, name] =
     ParseObjectName(names, context.GetDatabase(), current_schema);
-
   Result r;
   const auto db = context.GetDatabaseId();
   switch (stmt.removeType) {

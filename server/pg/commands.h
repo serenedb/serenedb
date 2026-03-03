@@ -63,6 +63,9 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
 yaclib::Future<Result> CreateFunction(ExecContext& ctx,
                                       const CreateFunctionStmt& stmt);
 
+std::shared_ptr<catalog::Function> CreateSystemFunction(
+  const CreateFunctionStmt& stmt);
+
 yaclib::Future<Result> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 }  // namespace sdb::pg

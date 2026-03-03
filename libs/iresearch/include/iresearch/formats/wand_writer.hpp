@@ -95,9 +95,9 @@ class WandWriterImpl final : public WandWriter {
   }
 
  private:
-  // 9 -- current max skip list levels
+  // 5 -- current max skip list levels
   // 1 -- for whole skip list level
-  sdb::containers::SmallVector<EntryType, 9 + 1> _levels;
+  sdb::containers::SmallVector<EntryType, 5 + 1> _levels;
   [[no_unique_address]] Producer _producer;
 };
 

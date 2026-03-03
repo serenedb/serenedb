@@ -7,6 +7,7 @@ target_sources(
         format_options.cpp
         pg_comm_task.cpp
         pg_feature.cpp
+        storage_options.cpp
         sql_statement.cpp
         connection_context.cpp
         copy_file.cpp

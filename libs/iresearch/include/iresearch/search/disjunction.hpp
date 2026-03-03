@@ -66,6 +66,8 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   doc_id_t seek(doc_id_t target) final { return _it.seek(target); }
 
+  doc_id_t LazySeek(doc_id_t target) final { return _it.LazySeek(target); }
+
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
@@ -123,6 +125,12 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
     }
 
     return doc_value = std::min(_itrs[0].value(), _itrs[1].value());
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: optimize
+    return seek(target);
   }
 
   uint32_t count() final {
@@ -303,6 +311,12 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
     return doc_value = min;
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: optimize
+    return seek(target);
+  }
+
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
@@ -451,6 +465,12 @@ class Disjunction : public CompoundDocIterator<Adapter> {
     }
 
     return doc_value = lead().value();
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: optimize
+    return seek(target);
   }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
@@ -770,6 +790,12 @@ class MinMatchDisjunction : public DocIterator {
         return doc_value = doc_limits::eof();
       }
     }
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: optimize
+    return seek(target);
   }
 
   // Calculates total count of matched iterators. This value could be

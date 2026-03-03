@@ -36,7 +36,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
-#include "catalog/table_options.h"
+#include "catalog/types.h"
 
 namespace sdb {
 

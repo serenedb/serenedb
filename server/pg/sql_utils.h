@@ -25,6 +25,7 @@
 
 #include "basics/assert.h"
 #include "catalog/fwd.h"
+#include "query/config.h"
 
 struct Node;
 struct AConst;
@@ -62,6 +63,7 @@ struct JsonObjectConstructor;
 struct SQLValueFunction;
 struct SubLink;
 struct TypeName;
+struct CreateFunctionStmt;
 
 namespace sdb {
 class QueryString;

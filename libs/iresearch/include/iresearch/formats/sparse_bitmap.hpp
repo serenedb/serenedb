@@ -216,6 +216,8 @@ class SparseBitmapIterator : public ResettableDocIterator {
 
   doc_id_t seek(doc_id_t target) final;
 
+  doc_id_t LazySeek(doc_id_t target) final;
+
   void reset() final;
 
   // The value is undefined for

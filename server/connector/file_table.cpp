@@ -27,7 +27,6 @@
 #include <velox/dwio/common/FileSink.h>
 #include <velox/dwio/common/ReaderFactory.h>
 #include <velox/dwio/common/WriterFactory.h>
-#include <velox/dwio/parquet/reader/ParquetReader.h>
 
 #include "basics/down_cast.h"
 #include "serenedb_connector.hpp"
@@ -164,44 +163,40 @@ auto FileSplitSource::WholeFile() const -> std::vector<SplitAndGroup> {
           SplitAndGroup{}};
 }
 
-auto FileSplitSource::GetParquetSplits() const -> std::vector<SplitAndGroup> {
-  auto reader_opts = _options->Reader();
-  auto pool = velox::memory::memoryManager()->addLeafPool("file_split_source");
-  reader_opts->setMemoryPool(*pool);
-
+auto FileSplitSource::GetByteSplits() const -> std::vector<SplitAndGroup> {
   auto source = _options->storage_options->CreateFileSource({});
-  auto input =
-    std::make_unique<velox::dwio::common::BufferedInput>(source, *pool);
-  auto reader = CreateReader(std::move(input), *reader_opts);
-
-  auto* parquet_reader =
-    basics::downCast<velox::parquet::ParquetReader>(reader.get());
-  const auto meta = parquet_reader->fileMetaData();
-  const int num_row_groups = meta.numRowGroups();
-  if (num_row_groups <= 1) {
+  const uint64_t file_size = source->size();
+  if (file_size == 0) {
     return WholeFile();
   }
 
-  auto row_group_offset = [&](int i) -> uint64_t {
-    const auto rg = meta.rowGroup(i);
-    if (rg.hasFileOffset()) {
-      return static_cast<uint64_t>(rg.fileOffset());
-    }
-    const auto col = rg.columnChunk(0);
-    return col.hasDictionaryPageOffset()
-             ? static_cast<uint64_t>(col.dictionaryPageOffset())
-             : static_cast<uint64_t>(col.dataPageOffset());
+  auto ceil_div = [](uint64_t x, uint64_t y) -> uint64_t {
+    return (x + y - 1) / y;
   };
 
-  const uint64_t file_size = source->size();
+  uint64_t splits_per_file =
+    ceil_div(file_size, _split_options.fileBytesPerSplit);
+
+  if (_split_options.targetSplitCount > 0 &&
+      splits_per_file <
+        static_cast<uint64_t>(_split_options.targetSplitCount)) {
+    auto per_file = static_cast<uint64_t>(_split_options.targetSplitCount);
+    uint64_t bytes_in_split = ceil_div(file_size, per_file);
+    constexpr uint64_t kMinSplitSize = 32ULL << 20U;  // 32 MB
+    splits_per_file =
+      ceil_div(file_size, std::max(bytes_in_split, kMinSplitSize));
+  }
+
+  if (splits_per_file <= 1) {
+    return WholeFile();
+  }
+
+  const uint64_t split_size = ceil_div(file_size, splits_per_file);
   std::vector<SplitAndGroup> splits;
-  splits.reserve(num_row_groups + 1);
-  for (int i = 0; i < num_row_groups; ++i) {
-    const uint64_t start = row_group_offset(i);
-    const uint64_t end =
-      (i + 1 < num_row_groups) ? row_group_offset(i + 1) : file_size;
-    splits.emplace_back(
-      std::make_shared<FileConnectorSplit>(_connector_id, start, end - start));
+  splits.reserve(splits_per_file + 1);
+  for (uint64_t i = 0; i < splits_per_file; ++i) {
+    splits.emplace_back(std::make_shared<FileConnectorSplit>(
+      _connector_id, i * split_size, split_size));
   }
   splits.emplace_back();
 
@@ -222,7 +217,7 @@ auto FileSplitSource::getSplits(uint64_t /* target_bytes */)
   switch (_options->Reader()->fileFormat()) {
     using enum velox::dwio::common::FileFormat;
     case PARQUET:
-      return GetParquetSplits();
+      return GetByteSplits();
     default:
       return WholeFile();
   }
@@ -234,8 +229,9 @@ void FileDataSource::addSplit(
   auto input =
     std::make_unique<velox::dwio::common::BufferedInput>(_source, *_pool);
   _reader = CreateReader(std::move(input), *_reader_options);
-  _row_reader_options->range(file_split->start, file_split->length);
-  _row_reader = _reader->createRowReader(*_row_reader_options);
+  auto opts = *_row_reader_options;
+  opts.range(file_split->start, file_split->length);
+  _row_reader = _reader->createRowReader(opts);
 }
 
 std::optional<velox::RowVectorPtr> FileDataSource::next(

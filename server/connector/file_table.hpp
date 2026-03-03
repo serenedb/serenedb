@@ -96,7 +96,7 @@ class FileSplitSource final : public axiom::connector::SplitSource {
     uint64_t target_bytes) final;
 
  private:
-  std::vector<SplitSource::SplitAndGroup> GetParquetSplits() const;
+  std::vector<SplitSource::SplitAndGroup> GetByteSplits() const;
   std::vector<SplitSource::SplitAndGroup> WholeFile() const;
 
   std::shared_ptr<ReaderOptions> _options;

@@ -25,6 +25,7 @@
 #include "common.h"
 #include "key_utils.hpp"
 #include "primary_key.hpp"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
@@ -47,7 +48,7 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
     _object_key{object_key} {
   SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
              "Only one data source should be specified");
-  _read_options.async_io = true;
+  _read_options.async_io = IsIOUringEnabled();
   _read_options.snapshot = snapshot;
   if (_db) {
     _value_reader = [&](std::string_view full_key) -> std::string& {

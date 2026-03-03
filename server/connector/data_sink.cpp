@@ -41,6 +41,7 @@
 #include "connector/sink_writer_base.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 #if __has_feature(memory_sanitizer)
@@ -149,7 +150,7 @@ WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
     _table_name{table_name},
     _write_conflict_policy{policy} {
   _read_options.snapshot = transaction.GetSnapshot();
-  _read_options.async_io = true;
+  _read_options.async_io = IsIOUringEnabled();
 }
 
 template<bool CheckOldKeys>

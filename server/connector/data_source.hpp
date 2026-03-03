@@ -29,6 +29,7 @@
 #include "connector/key_utils.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
@@ -204,47 +205,47 @@ class RocksDBSnapshotMultiGetDataSource final
     std::vector<velox::VectorPtr> columns;
     columns.reserve(num_columns);
 
-    // SDB_ASSERT(_column_ids.size() == 1);
-    // TODO assert that pk consists of single column, otherwise does not work
-    // for now
-
     std::string key = key_utils::PrepareTableKey(_object_key);
     std::string pk;
-    // primary_key::AppendKeyValue(pk, *_value, 0);
     SDB_ASSERT(_value);
     primary_key::Create(*_value, 0, pk);
-    std::string value;
-
     rocksdb::ReadOptions ro;
-    ro.async_io = false;  // how is better?
+    ro.async_io = IsIOUringEnabled();
     ro.snapshot = _snapshot;
 
-    // =========
-    // count(*) does not work yet
+    // TODO support count(*), it does not work yet
     SDB_ASSERT(num_columns > 0);
-    columns.reserve(num_columns);
+
+    std::vector<std::string> keys(num_columns);
     for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key.resize(sizeof(_object_key));
       key_utils::AppendColumnKey(key, _column_ids[col_idx]);
       key += pk;
+      keys[col_idx] = key;
+    }
 
-      value.clear();
+    std::vector<rocksdb::Slice> key_slices(num_columns);
+    for (size_t i = 0; i < num_columns; ++i) {
+      key_slices[i] = keys[i];
+    }
 
-      // TODO do multiget
+    std::vector<rocksdb::ColumnFamilyHandle*> cfs(num_columns, &_cf);
+    std::vector<std::string> values(num_columns);
+    const auto statuses = _db.MultiGet(ro, cfs, key_slices, &values);
 
-      rocksdb::Status r;
-      if (r = _db.Get(ro, key, &value); !r.ok() && !r.IsNotFound()) {
-        auto res = rocksutils::ConvertStatus(r);
+    columns.reserve(num_columns);
+    for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
+      if (!statuses[col_idx].ok() && !statuses[col_idx].IsNotFound()) {
+        auto res = rocksutils::ConvertStatus(statuses[col_idx]);
         SDB_THROW(res.errorNumber(),
                   "Failed to read value by PK with point data source: ",
                   res.errorMessage());
       }
-
       const auto& type = _row_type->childAt(col_idx);
-
-      columns.emplace_back(
-        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadValue, type->kind(), r, value));
+      columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        ReadValue, type->kind(), statuses[col_idx], values[col_idx]));
     }
+
     SDB_ASSERT(absl::c_all_of(columns,
                               [&](const velox::VectorPtr& vec) {
                                 return vec->size() == columns.front()->size();

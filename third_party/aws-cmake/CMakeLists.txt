@@ -1,4 +1,3 @@
-# Monolithic AWS SDK build (ClickHouse-style)
 # Compiles all needed AWS CRT + SDK sources into a single _aws static library.
 
 set(AWS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")

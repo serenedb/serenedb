@@ -40,7 +40,7 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
 }  // namespace
 
-RocksDBDataSource::RocksDBDataSource(
+RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, std::vector<catalog::Column::Id> column_oids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
@@ -101,13 +101,13 @@ RocksDBRYOWFullScanDataSource::RocksDBRYOWFullScanDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key)
-  : RocksDBDataSource{memory_pool,
-                      cf,
-                      std::move(row_type),
-                      std::move(column_ids),
-                      effective_column_id,
-                      object_key,
-                      transaction.GetSnapshot()},
+  : RocksDBFullScanDataSource{memory_pool,
+                              cf,
+                              std::move(row_type),
+                              std::move(column_ids),
+                              effective_column_id,
+                              object_key,
+                              transaction.GetSnapshot()},
     _transaction{transaction} {}
 
 RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
@@ -116,18 +116,18 @@ RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
   const rocksdb::Snapshot* snapshot)
-  : RocksDBDataSource{memory_pool,
-                      cf,
-                      std::move(row_type),
-                      std::move(column_ids),
-                      effective_column_id,
-                      object_key,
-                      snapshot},
+  : RocksDBFullScanDataSource{memory_pool,
+                              cf,
+                              std::move(row_type),
+                              std::move(column_ids),
+                              effective_column_id,
+                              object_key,
+                              snapshot},
     _db{db} {}
 
 void RocksDBRYOWFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  RocksDBDataSource::addSplit(std::move(split));
+  RocksDBFullScanDataSource::addSplit(std::move(split));
   InitIterators([&](const rocksdb::ReadOptions& options) {
     return std::unique_ptr<rocksdb::Iterator>(
       _transaction.GetIterator(options, &_cf));
@@ -136,13 +136,13 @@ void RocksDBRYOWFullScanDataSource::addSplit(
 
 void RocksDBSnapshotFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  RocksDBDataSource::addSplit(std::move(split));
+  RocksDBFullScanDataSource::addSplit(std::move(split));
   InitIterators([&](const rocksdb::ReadOptions& options) {
     return std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(options, &_cf));
   });
 }
 
-void RocksDBDataSource::addSplit(
+void RocksDBFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
   if (_current_split) {
@@ -153,7 +153,7 @@ void RocksDBDataSource::addSplit(
 }
 
 template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
-void RocksDBDataSource::InitIterators(CreateFn&& create_iter) {
+void RocksDBFullScanDataSource::InitIterators(CreateFn&& create_iter) {
   // Creating iterator API expects options by const reference, but all
   // implementations copies this argument, so it should be safe.
   rocksdb::ReadOptions options;
@@ -172,7 +172,7 @@ void RocksDBDataSource::InitIterators(CreateFn&& create_iter) {
   }
 }
 
-std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
+std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
   if (!_current_split) {
@@ -220,31 +220,31 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
                                                      &_memory_pool);
 }
 
-void RocksDBDataSource::addDynamicFilter(
+void RocksDBFullScanDataSource::addDynamicFilter(
   velox::column_index_t output_channel,
   const std::shared_ptr<velox::common::Filter>& filter) {
   VELOX_UNSUPPORTED();
 }
 
-uint64_t RocksDBDataSource::getCompletedBytes() {
+uint64_t RocksDBFullScanDataSource::getCompletedBytes() {
   // TODO: implement completed bytes tracking
   return 0;
 }
 
-uint64_t RocksDBDataSource::getCompletedRows() { return _produced; }
+uint64_t RocksDBFullScanDataSource::getCompletedRows() { return _produced; }
 
 std::unordered_map<std::string, velox::RuntimeMetric>
-RocksDBDataSource::getRuntimeStats() {
+RocksDBFullScanDataSource::getRuntimeStats() {
   // TODO: implement runtime stats reporting
   return {};
 }
 
-void RocksDBDataSource::cancel() {
+void RocksDBFullScanDataSource::cancel() {
   // TODO: implement cancellation logic
 }
 
-velox::VectorPtr RocksDBDataSource::ReadColumn(velox::column_index_t col_idx,
-                                               uint64_t max_size) {
+velox::VectorPtr RocksDBFullScanDataSource::ReadColumn(
+  velox::column_index_t col_idx, uint64_t max_size) {
   auto& it = *_iterators[col_idx];
   auto column_id = _column_ids[col_idx];
 
@@ -262,8 +262,8 @@ velox::VectorPtr RocksDBDataSource::ReadColumn(velox::column_index_t col_idx,
 }
 
 template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBDataSource::ReadScalarColumn(rocksdb::Iterator& it,
-                                                     uint64_t max_size) {
+velox::VectorPtr RocksDBFullScanDataSource::ReadScalarColumn(
+  rocksdb::Iterator& it, uint64_t max_size) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), kInitialVectorSize, &_memory_pool);
@@ -303,16 +303,16 @@ velox::VectorPtr RocksDBDataSource::ReadScalarColumn(rocksdb::Iterator& it,
   return result;
 }
 
-velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(rocksdb::Iterator& it,
-                                                      uint64_t max_size) {
+velox::VectorPtr RocksDBFullScanDataSource::ReadUnknownColumn(
+  rocksdb::Iterator& it, uint64_t max_size) {
   uint64_t vector_size = IterateColumn(
     it, max_size, [](uint64_t, std::string_view, std::string_view) {});
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
                                                &_memory_pool);
 }
 
-velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(rocksdb::Iterator& it,
-                                                      uint64_t max_size) {
+velox::VectorPtr RocksDBFullScanDataSource::ReadColumnFromKey(
+  rocksdb::Iterator& it, uint64_t max_size) {
   // For now only generated PK column is supported
   auto result = velox::BaseVector::create<velox::FlatVector<int64_t>>(
     velox::BIGINT(), kInitialVectorSize, &_memory_pool);
@@ -336,9 +336,9 @@ velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(rocksdb::Iterator& it,
 }
 
 template<std::invocable<uint64_t, std::string_view, std::string_view> Callback>
-uint64_t RocksDBDataSource::IterateColumn(rocksdb::Iterator& it,
-                                          uint64_t max_size,
-                                          const Callback& func) {
+uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
+                                                  uint64_t max_size,
+                                                  const Callback& func) {
   uint64_t vector_size = 0;
 
   while (it.Valid() && max_size > vector_size) {

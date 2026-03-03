@@ -36,7 +36,7 @@ namespace sdb::connector {
 
 class SereneDBConnectorSplit;
 
-class RocksDBDataSource : public velox::connector::DataSource {
+class RocksDBFullScanDataSource : public velox::connector::DataSource {
  public:
   virtual void addSplit(
     std::shared_ptr<velox::connector::ConnectorSplit> split) override = 0;
@@ -51,11 +51,13 @@ class RocksDBDataSource : public velox::connector::DataSource {
   void cancel() final;
 
  protected:
-  RocksDBDataSource(velox::memory::MemoryPool& memory_pool,
-                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-                    std::vector<catalog::Column::Id> column_ids,
-                    catalog::Column::Id effective_column_id,
-                    ObjectId object_key, const rocksdb::Snapshot* snapshot);
+  RocksDBFullScanDataSource(velox::memory::MemoryPool& memory_pool,
+                            rocksdb::ColumnFamilyHandle& cf,
+                            velox::RowTypePtr row_type,
+                            std::vector<catalog::Column::Id> column_ids,
+                            catalog::Column::Id effective_column_id,
+                            ObjectId object_key,
+                            const rocksdb::Snapshot* snapshot);
 
   template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
   void InitIterators(CreateFn&& create);
@@ -102,7 +104,7 @@ class RocksDBDataSource : public velox::connector::DataSource {
 };
 
 // RocksDB Read Your Own Writes DataSource
-class RocksDBRYOWFullScanDataSource : public RocksDBDataSource {
+class RocksDBRYOWFullScanDataSource : public RocksDBFullScanDataSource {
  public:
   RocksDBRYOWFullScanDataSource(velox::memory::MemoryPool& memory_pool,
                                 rocksdb::Transaction& transaction,
@@ -119,7 +121,7 @@ class RocksDBRYOWFullScanDataSource : public RocksDBDataSource {
   rocksdb::Transaction& _transaction;
 };
 
-class RocksDBSnapshotFullScanDataSource : public RocksDBDataSource {
+class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
  public:
   RocksDBSnapshotFullScanDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
@@ -134,10 +136,23 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBDataSource {
   rocksdb::DB& _db;  // NOLINT
 };
 
-// TODO do not derive full scan, for now just to not reimplement most of the
-// things
-// TODO save constant expr here for eq comparison, use it in next for fast
-// calling multiget
+// TODO
+// 1. Do not derive full scan. Make own base class
+// 2. Solve problem with rejected filters. Looks like we need to pass pk_type
+// into creating table handle to decide whether to take a filter into account or
+// not. It's possible only after traversin all the filters.
+// 3. Structurize patterns in filter logics, support multiple points:
+//    - (pk1 = C1 and pk2 = C2) and 1 = 1 -- shuld work, it's presto_and()
+//    - (pk1 = C1 and pk2 = C2) or (pk1 = C3 and pk2 = C3) -- should work ok, 2
+//    points
+//    - pk1 in (C1, C2, C3) -- should work, it's presto_in(), should be
+//    transformed into or-s, multiple points
+//    - (pk1 = C1 or pk1 = C2) and (pk2 = C3 or pk2 = C4) -- should work
+// Patterns
+//          - (pk_i in (...)) and (pk_j in (...))
+//          - (pk_i = ... and pk_j = ...) or (pk_i = ... and pk_j = ...)
+//          - Looks like recursive? Carthesian tree?
+
 class RocksDBRYOWMultiGetDataSource final
   : public RocksDBRYOWFullScanDataSource {
  public:

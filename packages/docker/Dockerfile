@@ -34,7 +34,6 @@ RUN chmod +x /tmp/setup.sh \
 
 # Environment
 ENV GLIBCXX_FORCE_NEW=1
-ENV SERENE_INIT_PORT=8999
 
 # Default timezone
 RUN echo "UTC" > /etc/timezone

@@ -56,8 +56,6 @@ void SearchDataSource::addSplit(
               "SearchDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
-  // let sequential read make new try
-  _is_range = true;
   _current_segment = 0;
   _doc.reset();
 }

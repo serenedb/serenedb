@@ -29,6 +29,82 @@
 
 namespace sdb::connector {
 
+namespace {
+
+ enum class MultiGetState : uint8_t {
+  HasMore = 1U << 0U,
+  Done = 1U << 1U,  // returned from func when no more keys
+};
+
+// TODO(mbkkt) benchmark and choose best threshold
+constexpr size_t MultiGetThreshold = 1;
+
+template<typename DataSource>
+class MultiGetContext {
+ public:
+
+
+  static constexpr size_t kBatchSize = 32;  // copied from rocksdb
+
+
+
+  MultiGetContext(rocksdb::ColumnFamilyHandle& cf, DataSource& data_source, const rocksdb::ReadOptions& options)
+  : _cf{cf}, _data_source{data_source}, _read_options{options} { }
+
+  void push_key(std::string_view key) {
+    SDB_ASSERT(_current_size < _keys.size());
+    _keys[_current_size++] = key;
+  }
+
+  // keys should be sorted by same order as rocksdb comparator produce
+  template<typename KeyGenerator, typename ValueProcessor>
+  void multiGet(KeyGenerator&& key_generator, ValueProcessor&& value_processor) {
+
+  _current_size = 0;
+
+  bool running = true;
+  while (running) {
+    const auto state = key_generator();
+    if (state == MultiGetState::HasMore && _current_size < kBatchSize) {
+      continue;
+    }
+    running = state != MultiGetState::Done;
+    if (_current_size == 0) {
+      continue;
+    }
+    if (_current_size <= MultiGetThreshold) {
+      _statuses[0] =
+         _data_source.Get(_read_options, &_cf, _keys[0], &_values[0]);
+    } else {
+      _data_source.MultiGet(_read_options, &_cf, _current_size, &_keys[0], &_values[0],
+                        &_statuses[0]);
+    }
+    for (size_t c = 0; c < _current_size; ++c) {
+      if (!_statuses[c].ok()) {
+        continue;
+      }
+      value_processor(_keys[c], _values[c]);
+    }
+    _current_size = 0;
+  }
+}
+
+ private:
+  // TODO(mbkkt) Maybe move on stack multiGet?
+  std::array<rocksdb::Slice, kBatchSize> _keys;
+  std::array<rocksdb::Status, kBatchSize> _statuses;
+  std::array<rocksdb::PinnableSlice, kBatchSize> _values;
+  size_t _current_size;
+  rocksdb::ColumnFamilyHandle& _cf;
+  DataSource& _data_source;
+  const rocksdb::ReadOptions& _read_options;
+};
+
+}
+
+
+
+
 Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
                            const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
                            rocksdb::Transaction* transaction,
@@ -44,7 +120,8 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
     _effective_column_id(std::move(effective_column_id)),
-    _object_key{object_key} {
+    _object_key{object_key},
+    _multiget_buffer_allocator{&_memory_pool} {
   SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
              "Only one data source should be specified");
   _read_options.async_io = true;
@@ -77,6 +154,7 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
 
 velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
   std::vector<velox::VectorPtr> columns;
+  _new_batch = true;
   const auto num_columns = _row_type->size();
   if (!num_columns) {
     return velox::BaseVector::create<velox::RowVector>(
@@ -93,8 +171,7 @@ velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
     if (column_id == catalog::Column::kGeneratedPKId) {
       // TODO(Dronplane): optimize this case - if there is at least one
       // non-generated column we can read generated column in one pass with
-      // actually stored column. More to say  - we must do this to properly
-      // handle materialization failures. Same for UNKNOWN column.
+      // actually stored column.
       SDB_ASSERT(_effective_column_id != catalog::Column::kGeneratedPKId,
                  "DataSource: generated PK column is not an effective one");
       read_column_id = _effective_column_id;
@@ -119,7 +196,6 @@ template<typename Decoder>
 void Materializer::IterateColumnKeys(std::string_view column_key,
                                      std::span<std::string> row_keys,
                                      const Decoder& func) {
-  // TODO(Dronplane): try use multiget
   std::string buffer(column_key);
   auto cur = row_keys.begin();
   while (cur != row_keys.end()) {
@@ -129,6 +205,74 @@ void Materializer::IterateColumnKeys(std::string_view column_key,
     func(buffer, _value_reader(buffer));
     ++cur;
   }
+}
+
+template<typename Decoder, typename MultiGetSource>
+void Materializer::MultiGetIterateColumnKeys(std::string_view column_key,
+                                             std::span<std::string> row_keys,
+                                             MultiGetSource& src,
+                                             const Decoder& func) {
+  constexpr size_t ColumnKeySize =
+      sizeof(ObjectId) + sizeof(catalog::Column::Id);
+  
+  MultiGetContext<MultiGetSource> ctx(_cf, src, _read_options);
+  if (_new_batch) {
+    _read_idxs.resize(row_keys.size());
+    absl::c_iota(_read_idxs, 0);
+    absl::c_sort(_read_idxs, [&](size_t lhs, size_t rhs) { return row_keys[lhs] < row_keys[rhs];});        
+    _new_batch = false;
+    size_t required_size = ColumnKeySize * row_keys.size();
+    required_size = absl::c_accumulate(
+      row_keys, required_size,
+      [](auto init, const auto& rk) { return init + rk.size(); });
+    SDB_ASSERT(required_size < std::numeric_limits<uint32_t>::max());
+    if (!_multi_get_buffer || _multi_get_buffer->size() < required_size) {
+      if (_multi_get_buffer) {
+        _multiget_buffer_allocator.free(_multi_get_buffer);
+      }
+      _multi_get_buffer = _multiget_buffer_allocator.allocate(
+        static_cast<uint32_t>(required_size));
+    }
+
+    size_t offset = ColumnKeySize;
+    for (auto idx : _read_idxs) {
+      const auto& key = row_keys[idx];
+      memcpy(_multi_get_buffer->begin() + offset, key.data(), key.size());
+      offset += key.size() + ColumnKeySize;
+    }
+  }
+#ifdef SDB_DEV
+  {
+    SDB_ASSERT(_multi_get_buffer);
+    size_t required_size = column_key.size() * row_keys.size();
+    required_size = absl::c_accumulate(
+      row_keys, required_size,
+      [](auto init, const auto& rk) { return init + rk.size(); });
+    SDB_ASSERT(_multi_get_buffer->size() >= required_size);
+  }
+#endif
+  auto value_processor = [&](rocksdb::Slice key,
+                             const rocksdb::PinnableSlice& value) {
+    func(key.ToStringView(), value.ToStringView());
+  };
+  size_t full_key_offset = 0;
+  size_t row_key_idx = 0;
+  auto key_generator = [&] {
+    SDB_ASSERT(column_key.size() == ColumnKeySize);
+    auto& key = row_keys[_read_idxs[row_key_idx++]];
+    memcpy(_multi_get_buffer->begin() + full_key_offset, column_key.data(),
+           ColumnKeySize);
+    SDB_ASSERT(
+      memcmp(_multi_get_buffer->begin() + full_key_offset + ColumnKeySize,
+             key.data(), key.size()) == 0);
+    const auto full_key_size = ColumnKeySize + key.size();
+    ctx.push_key(std::string_view(_multi_get_buffer->begin() + full_key_offset,
+                                  full_key_size));
+    full_key_offset += full_key_size;
+    return row_key_idx == row_keys.size() ? MultiGetState::Done
+                                          : MultiGetState::HasMore;
+  };
+  ctx.multiGet(std::move(key_generator), std::move(value_processor));
 }
 
 velox::VectorPtr Materializer::ReadColumnKeys(std::span<std::string> row_keys,
@@ -172,11 +316,19 @@ velox::VectorPtr Materializer::ReadScalarColumnKeys(
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
   velox::vector_size_t vector_idx = 0;
-  IterateColumnKeys(
-    column_key, row_keys,
-    [&]([[maybe_unused]] std::string_view key, std::string_view value) {
-      ReadScalarType(value, vector_idx++, *result);
-    });
+  auto decoder_func= [&]([[maybe_unused]] std::string_view key, std::string_view value) {
+        ReadScalarType(value, vector_idx++, *result);
+  };
+  if (row_keys.size() > MultiGetThreshold) {
+    if (_db) {
+      MultiGetIterateColumnKeys(column_key, row_keys, *_db, decoder_func);
+    } else {
+      MultiGetIterateColumnKeys(column_key, row_keys, *_transaction, decoder_func);
+    }
+  } else {
+    IterateColumnKeys(
+      column_key, row_keys,decoder_func);
+  }
   return result;
 }
 

@@ -52,6 +52,9 @@ class Materializer {
   template<typename Decoder>
   void IterateColumnKeys(std::string_view column_key,
                          std::span<std::string> row_keys, const Decoder& func);
+  template<typename Decoder, typename MultiGetSource>
+  void MultiGetIterateColumnKeys(std::string_view column_key,
+                         std::span<std::string> row_keys, MultiGetSource& src, const Decoder& func);
 
   velox::VectorPtr ReadGeneratedColumnKeys(std::span<std::string> row_keys);
 
@@ -71,6 +74,7 @@ class Materializer {
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
+  
   // Column ID to use for iteration when the requested column is stored in the
   // key (e.g., kGeneratedPKId). This points to a column whose values are
   // stored in RocksDB as *values*, not inside *keys*. It's convenient to
@@ -80,11 +84,15 @@ class Materializer {
   // scans are replaced with empty Values node.
   catalog::Column::Id _effective_column_id;
   ObjectId _object_key;
-  bool _is_range = true;
+  bool _new_batch = true;
+  std::vector<size_t> _read_idxs;
   size_t _produced = 0;
   std::string _value_buffer;
   ValueReader _value_reader;
   rocksdb::ReadOptions _read_options;
+  velox::HashStringAllocator _multiget_buffer_allocator;
+  velox::HashStringAllocator::Header*  _multi_get_buffer = nullptr;
+  
 };
 
 }  // namespace sdb::connector

@@ -40,6 +40,7 @@ RCLONE_ARCH="linux-amd64"
 RCLONE_URL="https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-${RCLONE_ARCH}.zip"
 
 apt-get update
+apt-get upgrade -y
 apt-get install -y --no-install-recommends wget unzip
 
 wget --no-check-certificate -q "$RCLONE_URL" -O /tmp/rclone.zip
@@ -51,7 +52,9 @@ chmod +x /usr/sbin/rclone
 echo "Cleaning up..."
 
 rm -rf /tmp/rclone*
-apt-get purge -y --auto-remove wget unzip
+apt-get autopurge -y wget unzip
+apt-get autopurge -y
+apt-get autoclean
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 

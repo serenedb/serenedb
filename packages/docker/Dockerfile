@@ -42,11 +42,9 @@ RUN echo "UTC" > /etc/timezone
 # OpenShift runs containers with random UID and GID 0
 RUN chgrp -R 0 /var/lib/serenedb \
     && chmod -R 775 /var/lib/serenedb \
-    && chgrp -R 0 /var/log/serenedb \
-    && chmod -R 775 /var/log/serenedb
 
 # Volumes
-VOLUME ["/var/lib/serenedb", "/var/log/serenedb"]
+VOLUME ["/var/lib/serenedb"]
 
 # Entrypoint
 COPY entrypoint.sh /entrypoint.sh

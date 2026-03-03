@@ -117,11 +117,8 @@ BUILD_ARGS=(
   --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   --label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
   --file "${BUILD_DIR}/Dockerfile"
+  --no-cache
 )
-
-if [ "${DOCKER_NO_CACHE:-false}" = "true" ]; then
-  BUILD_ARGS+=(--no-cache)
-fi
 
 # Add extra tags
 for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
@@ -147,7 +144,7 @@ log "=== Testing Image ==="
 if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
   log "  ✓ Version check passed"
 else
-  log "  ✗ Version check failed (continuing anyway)"
+  error "  ✗ Version check failed"
 fi
 
 # Push to registry

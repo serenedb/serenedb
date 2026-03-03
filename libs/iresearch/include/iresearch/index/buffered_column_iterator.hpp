@@ -106,6 +106,11 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return advance();
   }
 
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
   void reset() noexcept final {
     _next = _begin;
     std::get<DocAttr>(_attrs).value = {};

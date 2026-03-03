@@ -157,6 +157,12 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     }
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: maybe optimize?
+    return seek(target);
+  }
+
   uint32_t count() final {
     // TODO(mbkkt) custom implementation?
     return CountImpl(*this);

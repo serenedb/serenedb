@@ -25,8 +25,11 @@
 #include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/connectors/hive/HiveConnectorUtil.h>
+#include <velox/core/Expressions.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/ReaderFactory.h>
+#include <velox/expression/ExprConstants.h>
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
@@ -431,6 +434,12 @@ class SereneDBConnectorSplitManager final
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const std::vector<axiom::connector::PartitionHandlePtr>& partitions,
     axiom::connector::SplitOptions options = {}) final {
+    if (const auto* file_handle =
+          dynamic_cast<const FileTableHandle*>(table_handle.get())) {
+      return std::make_shared<FileSplitSource>(
+        file_handle->GetSource(), file_handle->GetOptions(),
+        StaticStrings::kSereneDBConnector, options);
+    }
     return std::make_shared<SereneDBSplitSource>();
   }
 };
@@ -629,7 +638,9 @@ class SereneDBConnector final : public velox::connector::Connector {
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
         file_handle->GetSource(), file_handle->GetOptions(),
-        *connector_query_ctx->memoryPool());
+        file_handle->GetSubfieldFilters(), output_type, column_handles,
+        *connector_query_ctx->memoryPool(), file_handle->GetRemainingFilter(),
+        connector_query_ctx->expressionEvaluator());
     }
 
     const auto& serene_table_handle =

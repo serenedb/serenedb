@@ -175,6 +175,16 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
+  // Can be mixed with other API only after return target
+  // In general doing seek but if it understands that seek to target impossible
+  // return doc that is greater than target, and this doc less or equal than
+  // first doc in iterator that is greater than target.
+  // In other words: `target <= LazySeek(target) <= seek(target)`
+  virtual doc_id_t LazySeek(doc_id_t target) {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
   virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                        ScoreCollector& collector) {
     CollectImpl(*this, scorer, fetcher, collector);

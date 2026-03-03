@@ -106,13 +106,36 @@ SereneDBTableLayout::createTableHandle(
     return handle;
   }
 
-  rejected_filters = std::move(filters);
   if (const auto* read_file_table =
         dynamic_cast<const ReadFileTable*>(&this->table())) {
-    return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
-                                             read_file_table->GetOptions());
+    double sample_rate = 1.0;
+    velox::common::SubfieldFilters subfield_filters;
+    std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
+    for (auto& filter : filters) {
+      auto remaining =
+        velox::connector::hive::extractFiltersFromRemainingFilter(
+          filter, &evaluator, subfield_filters, sample_rate);
+      if (remaining) {
+        remaining_conjuncts.push_back(remaining);
+        rejected_filters.push_back(std::move(remaining));
+      }
+    }
+
+    velox::core::TypedExprPtr remaining_filter;
+    if (remaining_conjuncts.size() == 1) {
+      remaining_filter = std::move(remaining_conjuncts[0]);
+    } else if (remaining_conjuncts.size() > 1) {
+      remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+        velox::BOOLEAN(), std::move(remaining_conjuncts),
+        velox::expression::kAnd);
+    }
+
+    return std::make_shared<FileTableHandle>(
+      read_file_table->GetSource(), read_file_table->GetOptions(),
+      std::move(subfield_filters), std::move(remaining_filter));
   }
 
+  rejected_filters = std::move(filters);
   SDB_ASSERT(!table().columnMap().empty(),
              "SereneDBConnectorTableHandle: need a column for count field");
 

@@ -950,7 +950,6 @@ target_sources(folly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/folly/folly/Uri.cpp)
 sdb_update_module(${GIT_EXECUTABLE} "aws-sdk-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(aws-cmake)
 
-# Tell Velox's FindAWSSDK.cmake to use our monolithic build
 set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
 set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
 

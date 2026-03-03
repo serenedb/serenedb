@@ -108,7 +108,7 @@ class FileSplitSource final : public axiom::connector::SplitSource {
   bool _done = false;
 };
 
- class FileTable : public axiom::connector::Table {
+class FileTable : public axiom::connector::Table {
  public:
   explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
 

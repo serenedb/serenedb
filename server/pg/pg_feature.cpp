@@ -20,6 +20,8 @@
 
 #include "pg_feature.h"
 
+#include <velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h>
+
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
@@ -31,8 +33,6 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
-
-#include <velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h>
 
 namespace sdb::pg {
 

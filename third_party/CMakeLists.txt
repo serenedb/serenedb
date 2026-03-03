@@ -952,6 +952,7 @@ add_subdirectory(aws-cmake)
 
 set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
 set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
+set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 
 ################################################################################
 ## velox

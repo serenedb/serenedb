@@ -7,7 +7,6 @@
 #   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
 #   PUSH_IMAGES_2_REGISTRY   'true' to push to registry after build
 #   DOCKER_REGISTRY          Registry URL (default: registry.serenedb.com:5000)
-#   DOCKER_NO_CACHE          'true' to build without cache
 #   DOCKER_PLATFORM          Target platform (default: linux/amd64)
 #   DOCKER_USERNAME          Registry username (for push)
 #   DOCKER_PASSWORD          Registry password (for push)

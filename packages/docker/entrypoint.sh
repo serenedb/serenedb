@@ -70,7 +70,6 @@ if [ "$1" = "serened" ]; then
 
   # Build final command
   set -- "$@" \
-    --server.authentication="$AUTHENTICATION" \
     --config "$RUNTIME_CONFIG"
 
   echo "Config: $RUNTIME_CONFIG"

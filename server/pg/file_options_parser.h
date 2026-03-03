@@ -27,7 +27,7 @@
 #include <type_traits>
 
 #include "catalog/types.h"
-#include "pg/format_options.h"
+#include "catalog/format_options.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"

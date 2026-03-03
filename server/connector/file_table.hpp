@@ -108,28 +108,7 @@ class FileSplitSource final : public axiom::connector::SplitSource {
   bool _done = false;
 };
 
-class FileSplitSource final : public axiom::connector::SplitSource {
- public:
-  FileSplitSource(std::shared_ptr<velox::ReadFile> source,
-                  std::shared_ptr<ReaderOptions> options,
-                  std::string connector_id,
-                  axiom::connector::SplitOptions split_options = {});
-
-  std::vector<SplitSource::SplitAndGroup> getSplits(
-    uint64_t target_bytes) final;
-
- private:
-  std::vector<SplitSource::SplitAndGroup> GetParquetSplits() const;
-  std::vector<SplitSource::SplitAndGroup> WholeFile() const;
-
-  std::shared_ptr<velox::ReadFile> _source;
-  std::shared_ptr<ReaderOptions> _options;
-  std::string _connector_id;
-  axiom::connector::SplitOptions _split_options;
-  bool _done = false;
-};
-
-class FileTable : public axiom::connector::Table {
+ class FileTable : public axiom::connector::Table {
  public:
   explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
 

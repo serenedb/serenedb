@@ -45,7 +45,7 @@
 #include "catalog/key_generator.h"
 #include "catalog/types.h"
 #include "catalog/validators.h"
-#include "pg/format_options.h"
+#include "catalog/format_options.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
 #include "catalog/storage_options.h"
@@ -194,7 +194,7 @@ struct CheckConstraint {
 
 struct FileInfo {
   std::shared_ptr<StorageOptions> storage_options;
-  std::shared_ptr<pg::FormatOptions> format_options;
+  std::shared_ptr<FormatOptions> format_options;
 };
 
 inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {

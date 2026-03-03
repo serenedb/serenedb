@@ -24,14 +24,15 @@
 
 namespace sdb::connector {
 
-SereneDBFullScanTableHandle::SereneDBFullScanTableHandle(
+SereneDBTableHandle::SereneDBTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout)
+  const axiom::connector::TableLayout& layout, std::unique_ptr<Filter> filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     _transaction{
-      basics::downCast<RocksDBTable>(layout.table()).GetTransaction()} {
+      basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
+    _filter{std::move(filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
@@ -48,6 +49,10 @@ SereneDBFullScanTableHandle::SereneDBFullScanTableHandle(
                              std::next(column_map.begin())->second)
                              ->Id();
   }
+  // Looks like _pk_names are redundant?
+  _pk_names = basics::downCast<RocksDBTable>(layout.table()).PKType()->names();
+  _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
+
   _transaction.AddRocksDBRead();
 }
 

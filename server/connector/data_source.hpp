@@ -172,7 +172,7 @@ class RocksDBSnapshotMultiGetDataSource final
     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
     std::vector<catalog::Column::Id> column_ids,
     catalog::Column::Id effective_column_id, ObjectId object_key,
-    const rocksdb::Snapshot* snapshot, velox::VectorPtr value)
+    const rocksdb::Snapshot* snapshot, std::shared_ptr<velox::RowVector> value)
     : RocksDBSnapshotFullScanDataSource{memory_pool, db,
                                         cf,          row_type,
                                         column_ids,  effective_column_id,
@@ -210,7 +210,9 @@ class RocksDBSnapshotMultiGetDataSource final
 
     std::string key = key_utils::PrepareTableKey(_object_key);
     std::string pk;
-    primary_key::AppendKeyValue(pk, *_value, 0);
+    // primary_key::AppendKeyValue(pk, *_value, 0);
+    SDB_ASSERT(_value);
+    primary_key::Create(*_value, 0, pk);
     std::string value;
 
     rocksdb::ReadOptions ro;
@@ -292,6 +294,6 @@ class RocksDBSnapshotMultiGetDataSource final
     return result;
   }
 
-  velox::VectorPtr _value;
+  std::shared_ptr<velox::RowVector> _value;
 };
 }  // namespace sdb::connector

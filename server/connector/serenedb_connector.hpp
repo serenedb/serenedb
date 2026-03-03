@@ -47,6 +47,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/rocksdb_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
@@ -166,12 +167,12 @@ class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
   catalog::Column::Id _id;
 };
 
-class SereneDBFullScanTableHandle
-  : public velox::connector::ConnectorTableHandle {
+class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
  public:
-  explicit SereneDBFullScanTableHandle(
+  explicit SereneDBTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout);
+    const axiom::connector::TableLayout& layout,
+    std::unique_ptr<Filter> filter);
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -185,32 +186,27 @@ class SereneDBFullScanTableHandle
 
   auto& GetTransaction() const noexcept { return _transaction; }
 
+  auto& GetPKNames() const noexcept { return _pk_names; }
+
+  auto& GetPKType() const noexcept { return _pk_type; }
+
+  auto& GetFilter() const noexcept { return _filter; }
+
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
+  std::vector<std::string> _pk_names;
+  velox::TypePtr _pk_type;
+  std::unique_ptr<Filter> _filter;
 };
 
-class SereneDBPointLookupTableHandle final
-  : public SereneDBFullScanTableHandle {
- public:
-  explicit SereneDBPointLookupTableHandle(
-    const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout,
-    std::vector<velox::core::TypedExprPtr> filters,
-    velox::core::ConstantTypedExprPtr eq_val)
-    : SereneDBFullScanTableHandle{session, layout},
-      filters{std::move(filters)},
-      eq_val{std::move(eq_val)} {}
-
- public:
-  [[maybe_unused]] std::vector<velox::core::TypedExprPtr>
-    filters;  // not used for now, but for range queries it may be. Or maybe
-              // better to somehow extract range boundaries and store only
-              // them, IDK for now
-  velox::core::ConstantTypedExprPtr eq_val;
-};
+// Imagine we have table
+// pk1 pk2 pk3 c4 c5 ...
+// Ideally when we have *prefix* on pki set up -> optimize,
+// but for now lets assume we use point lookup when only
+// we have filter like (pk1=const, pk2=const, pk3=const)
 
 class SereneDBColumn final : public axiom::connector::Column {
  public:
@@ -267,41 +263,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
-    auto extract_eq = [&](velox::core::TypedExprPtr expr)
-      -> velox::connector::ConnectorTableHandlePtr {
-      if (expr->isCallKind()) {
-        auto* as_call = expr->asUnchecked<velox::core::CallTypedExpr>();
-        SDB_PRINT("  name=", as_call->name());
-        SDB_PRINT("  inputs=");
-        for (const auto& input : as_call->inputs()) {
-          SDB_PRINT("    input=", input->toString(),
-                    "; kind=", magic_enum::enum_name(input->kind()));
-        }
-        if (as_call->name() == "presto_eq") {
-          SDB_ASSERT(as_call->inputs().size() == 2);
-          SDB_ASSERT(as_call->inputs()[0]->kind() ==
-                     velox::core::ExprKind::kFieldAccess);
-          SDB_ASSERT(as_call->inputs()[1]->kind() ==
-                     velox::core::ExprKind::kConstant);
-          // auto as_const =
-          //   as_call->inputs()[1]->asUnchecked<velox::core::ConstantTypedExpr>();
-          auto as_const = basics::downCast<velox::core::ConstantTypedExpr>(
-            as_call->inputs()[1]);
-          // TODO check here that field access is PK
-          SDB_ASSERT(filters.size() == 1);
-          return std::make_shared<SereneDBPointLookupTableHandle>(
-            session, *this, filters, as_const);
-        }
-      }
-      return {};
-    };
-
     for (const auto& filter : filters) {
       SDB_PRINT("filter: ", filter->toString());
-      if (auto res = extract_eq(filter)) {
-        // TODO do something with rejected filters
-        return res;
-      }
+      // if ([[maybe_unused]] auto res = extract_eq(filter)) {
+      // TODO do something with rejected filters
+      // return res;
+      // }
     }
     if (filters.empty()) {
       SDB_PRINT("no filters!");
@@ -336,10 +303,17 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
         std::move(subfield_filters), std::move(remaining_filter));
     }
 
+    // Rejected filters are used to remove filters from plan as I see.
+    // Think about them better. For now assume we need all filters
+    // (usedful filter) and (useless) -- ? Do not forget to handle this case
+
+    auto filter = ParseFilters(filters);
     rejected_filters = std::move(filters);
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBFullScanTableHandle: need a column for count field");
-    return std::make_shared<SereneDBFullScanTableHandle>(session, *this);
+    // todo column names
+    return std::make_shared<SereneDBTableHandle>(session, *this,
+                                                 std::move(filter));
   }
 };
 
@@ -704,7 +678,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
 
     const auto& serene_table_handle =
-      basics::downCast<const SereneDBFullScanTableHandle>(*table_handle);
+      basics::downCast<const SereneDBTableHandle>(*table_handle);
     const auto& object_key = serene_table_handle.TableId();
 
     // need to remap names to oids
@@ -751,14 +725,27 @@ class SereneDBConnector final : public velox::connector::Connector {
         object_key);
     }
 
-    if (const auto* point_lookup =
-          dynamic_cast<const SereneDBPointLookupTableHandle*>(
-            table_handle.get())) {
-      return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
-        *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
-        serene_table_handle.GetEffectiveColumnId(), object_key, snapshot,
-        point_lookup->eq_val->toConstantVector(
-          connector_query_ctx->connectorMemoryPool()));
+    // todo check for possibility of point lookup
+    // if (const auto* point_lookup =
+    //       dynamic_cast<const SereneDBPointLookupTableHandle*>(
+    //         table_handle.get())) {
+    //   return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
+    //     *connector_query_ctx->memoryPool(), _db, _cf, output_type,
+    //     column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
+    //     snapshot, point_lookup->eq_val->toConstantVector(
+    //       connector_query_ctx->connectorMemoryPool()));
+    // }
+
+    if (const auto* filter = serene_table_handle.GetFilter().get(); filter) {
+      if (auto point = TryGetPoint(*filter, serene_table_handle.GetPKNames(),
+                                   serene_table_handle.GetPKType(),
+                                   connector_query_ctx->connectorMemoryPool());
+          point) {
+        return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
+          *connector_query_ctx->memoryPool(), _db, _cf, output_type,
+          column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
+          snapshot, point);
+      }
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

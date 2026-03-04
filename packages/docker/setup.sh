@@ -35,7 +35,7 @@ fi
 # Install rclone for backup functionality
 echo "Installing rclone..."
 
-RCLONE_VERSION="1.70.1"
+RCLONE_VERSION="1.72.1"
 RCLONE_ARCH="linux-amd64"
 RCLONE_URL="https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-${RCLONE_ARCH}.zip"
 

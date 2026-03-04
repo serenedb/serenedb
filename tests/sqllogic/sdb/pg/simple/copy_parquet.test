@@ -111,7 +111,7 @@ Fragment 0:  numWorkers=0:
   -- Project[3][expressions: (id:INTEGER, "id"), (name:VARCHAR, "name")] -> "id":INTEGER, "name":VARCHAR
     -- OrderBy[2][name ASC NULLS FIRST] -> "id":INTEGER, "name":VARCHAR
       -- Filter[1][expression: if(spark_isnotnull("name"),true,cast(pg_error(33575106,0,null value in column "name" of relation "reversed" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("id" as VARCHAR),null),, ,coalesce("name",null),).)) as BOOLEAN))] -> "id":INTEGER, "name":VARCHAR
-        -- TableScan[0][FileTableHandle] -> "id":INTEGER, "name":VARCHAR
+        -- TableScan[0][File(parquet)] -> "id":INTEGER, "name":VARCHAR
 
 
 statement count 3

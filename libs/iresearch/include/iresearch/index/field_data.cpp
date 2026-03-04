@@ -288,8 +288,8 @@ class DocIteratorImpl : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t doc) final {
-    irs::seek(*this, doc);
-    return value();
+    SDB_ASSERT(false);
+    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
   }
 
  private:
@@ -392,8 +392,8 @@ class SortingDocIteratorImpl : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t doc) final {
-    irs::seek(*this, doc);
-    return value();
+    SDB_ASSERT(false);
+    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
   }
 
  private:

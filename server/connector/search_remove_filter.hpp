@@ -71,6 +71,7 @@ class SearchRemoveFilterBase : public irs::Filter,
     SDB_ASSERT(false);
     return _doc.value = irs::doc_limits::eof();
   }
+
   mutable const irs::SubReader* _segment{};
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};

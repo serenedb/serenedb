@@ -248,6 +248,12 @@ class BlockDisjunction : public DocIterator {
     }
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO(gnusi): Optimize
+    return seek(target);
+  }
+
   uint32_t count() final {
     uint32_t count = 0;
 

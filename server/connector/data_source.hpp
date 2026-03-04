@@ -188,18 +188,16 @@ class RocksDBSnapshotMultiGetDataSource final
     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
     std::vector<catalog::Column::Id> column_ids,
     catalog::Column::Id effective_column_id, ObjectId object_key,
-    const rocksdb::Snapshot* snapshot, std::shared_ptr<velox::RowVector> value)
+    const rocksdb::Snapshot* snapshot, std::vector<velox::RowVectorPtr> values)
     : RocksDBSnapshotFullScanDataSource{memory_pool, db,
                                         cf,          row_type,
                                         column_ids,  effective_column_id,
                                         object_key,  snapshot},
-      _value{std::move(value)} {
+      _values{std::move(values)} {
     SDB_PRINT("[mkornaukhov] creating RocksDBSnapshotMultiGetDataSource");
   }
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
-    // VELOX_UNSUPPORTED();
-    // Just do nothing? Or store for check that next is not called before next
     SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
     if (_current_split) {
       SDB_THROW(ERROR_INTERNAL,
@@ -216,100 +214,113 @@ class RocksDBSnapshotMultiGetDataSource final
       return nullptr;
     }
 
-    const auto num_columns = _row_type->size();
-    std::vector<velox::VectorPtr> columns;
-    columns.reserve(num_columns);
+    if (_values.empty()) {
+      _current_split.reset();
+      return nullptr;
+    }
 
-    std::string key = key_utils::PrepareTableKey(_object_key);
-    std::string pk;
-    SDB_ASSERT(_value);
-    primary_key::Create(*_value, 0, pk);
+    const auto num_columns = _row_type->size();
+    // TODO support count(*), it does not work yet
+    SDB_ASSERT(num_columns > 0);
+
+    const auto num_points = _values.size();
+    const size_t total_keys = num_points * num_columns;
+
+    // Build per-point primary keys
+    std::vector<std::string> pks(num_points);
+    for (size_t p = 0; p < num_points; ++p) {
+      primary_key::Create(*_values[p], 0, pks[p]);
+    }
+
+    // Build all keys laid out as [point * num_columns + col]
+    std::vector<std::string> keys(total_keys);
+    for (size_t p = 0; p < num_points; ++p) {
+      for (size_t c = 0; c < num_columns; ++c) {
+        std::string key = key_utils::PrepareTableKey(_object_key);
+        key_utils::AppendColumnKey(key, _column_ids[c]);
+        key += pks[p];
+        keys[p * num_columns + c] = std::move(key);
+      }
+    }
+
+    std::vector<rocksdb::Slice> key_slices(total_keys);
+    for (size_t i = 0; i < total_keys; ++i) {
+      key_slices[i] = keys[i];
+    }
+
     rocksdb::ReadOptions ro;
     ro.async_io = IsIOUringEnabled();
     ro.snapshot = _snapshot;
 
-    // TODO support count(*), it does not work yet
-    SDB_ASSERT(num_columns > 0);
+    std::vector<rocksdb::ColumnFamilyHandle*> cfs(total_keys, &_cf);
+    std::vector<std::string> raw_values(total_keys);
+    const auto statuses = _db.MultiGet(ro, cfs, key_slices, &raw_values);
 
-    std::vector<std::string> keys(num_columns);
-    for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      key.resize(sizeof(_object_key));
-      key_utils::AppendColumnKey(key, _column_ids[col_idx]);
-      key += pk;
-      keys[col_idx] = key;
-    }
-
-    std::vector<rocksdb::Slice> key_slices(num_columns);
-    for (size_t i = 0; i < num_columns; ++i) {
-      key_slices[i] = keys[i];
-    }
-
-    std::vector<rocksdb::ColumnFamilyHandle*> cfs(num_columns, &_cf);
-    std::vector<std::string> values(num_columns);
-    const auto statuses = _db.MultiGet(ro, cfs, key_slices, &values);
-
+    std::vector<velox::VectorPtr> columns;
     columns.reserve(num_columns);
-    for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      if (!statuses[col_idx].ok() && !statuses[col_idx].IsNotFound()) {
-        auto res = rocksutils::ConvertStatus(statuses[col_idx]);
+    for (size_t c = 0; c < num_columns; ++c) {
+      const auto& type = _row_type->childAt(c);
+      columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+        ReadColumnValues, type->kind(), c, num_points, statuses, raw_values));
+    }
+
+    _produced += num_points;
+    _current_split.reset();
+    return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
+                                              num_points, std::move(columns));
+  }
+
+ private:
+  // Builds a FlatVector<T> of size num_points for column col_idx.
+  // Keys are laid out as statuses[p * num_columns + col_idx].
+  template<velox::TypeKind Kind>
+  velox::VectorPtr ReadColumnValues(
+    size_t col_idx, size_t num_points,
+    const std::vector<rocksdb::Status>& statuses,
+    const std::vector<std::string>& values) {
+    using T = typename velox::TypeTraits<Kind>::NativeType;
+    static constexpr std::string_view kTrueValue{"\1", 1};
+    const size_t num_columns = _row_type->size();
+
+    auto result = velox::BaseVector::create<velox::FlatVector<T>>(
+      velox::Type::create<Kind>(), num_points, &_memory_pool);
+
+    for (size_t p = 0; p < num_points; ++p) {
+      const size_t idx = p * num_columns + col_idx;
+      const auto& status = statuses[idx];
+      const auto& value = values[idx];
+
+      if (!status.ok() && !status.IsNotFound()) {
+        auto res = rocksutils::ConvertStatus(status);
         SDB_THROW(res.errorNumber(),
                   "Failed to read value by PK with point data source: ",
                   res.errorMessage());
       }
-      const auto& type = _row_type->childAt(col_idx);
-      columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-        ReadValue, type->kind(), statuses[col_idx], values[col_idx]));
-    }
-
-    SDB_ASSERT(absl::c_all_of(columns,
-                              [&](const velox::VectorPtr& vec) {
-                                return vec->size() == columns.front()->size();
-                              }),
-               "RocksDBDataSource(multi get): inconsistent number of rows "
-               "among columns");
-    _produced += columns.front()->size();
-    _current_split.reset();
-    return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
-                                              columns.front()->size(),
-                                              std::move(columns));
-  }
-
- private:
-  template<velox::TypeKind Kind>
-  velox::VectorPtr ReadValue(rocksdb::Status status, const std::string& value) {
-    using T = typename velox::TypeTraits<Kind>::NativeType;
-    static constexpr std::string_view kTrueValue{"\1", 1};
-
-    if (status.IsNotFound()) {
-      return velox::BaseVector::create<velox::FlatVector<T>>(
-        velox::Type::create<Kind>(), 0, &_memory_pool);
-    }
-    SDB_ASSERT(status.ok());
-    auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-      velox::Type::create<Kind>(), 1, &_memory_pool);
-    if (!value.empty()) {
-      if constexpr (std::is_same_v<T, velox::StringView>) {
-        const size_t offset = value[0] == 0 ? 1 : 0;
-        velox::StringView val(value.data() + offset, value.size() - offset);
-        result->set(0, val);
-      } else if constexpr (std::is_same_v<T, bool>) {
-        SDB_ASSERT(value.size() == kTrueValue.size(),
-                   "RocksDBDataSource: unexpected value size for bool column");
-        result->set(0, value == kTrueValue);
+      if (status.IsNotFound() || value.empty()) {
+        result->setNull(p, true);
       } else {
-        SDB_ASSERT(
-          value.size() == sizeof(T),
-          "RocksDBDataSource: unexpected value size for scalar column");
-        T tmp;
-        memcpy(&tmp, value.data(), sizeof(T));
-        result->set(0, tmp);
+        if constexpr (std::is_same_v<T, velox::StringView>) {
+          const size_t offset = value[0] == 0 ? 1 : 0;
+          result->set(
+            p, velox::StringView(value.data() + offset, value.size() - offset));
+        } else if constexpr (std::is_same_v<T, bool>) {
+          SDB_ASSERT(
+            value.size() == kTrueValue.size(),
+            "RocksDBDataSource: unexpected value size for bool column");
+          result->set(p, value == kTrueValue);
+        } else {
+          SDB_ASSERT(
+            value.size() == sizeof(T),
+            "RocksDBDataSource: unexpected value size for scalar column");
+          T tmp;
+          memcpy(&tmp, value.data(), sizeof(T));
+          result->set(p, tmp);
+        }
       }
-    } else {
-      result->setNull(0, true);
     }
     return result;
   }
 
-  std::shared_ptr<velox::RowVector> _value;
+  std::vector<velox::RowVectorPtr> _values;
 };
 }  // namespace sdb::connector

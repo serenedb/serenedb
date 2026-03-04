@@ -22,6 +22,8 @@
 
 #include <velox/core/ExpressionEvaluator.h>
 #include <velox/core/Expressions.h>
+#include <velox/vector/ComplexVector.h>
+#include <velox/vector/ConstantVector.h>
 
 #include "axiom/connectors/ConnectorMetadata.h"
 #include "basics/fwd.h"
@@ -294,6 +296,48 @@ inline std::unique_ptr<FilterNode> ParseFilter(
       basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
     return std::make_unique<EqFilterNode>(field_access->name(), const_val);
   }
+  if (func_call->name() == "in") {
+    if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess) {
+      return {};
+    }
+    auto field_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
+      func_call->inputs()[0]);
+
+    SDB_ASSERT(func_call->inputs().size() == 2,
+               "in() expected exactly 2 inputs: field + array constant");
+    if (func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
+      SDB_PRINT("[mkornaukhov] in() second arg is not a constant");
+      return {};
+    }
+    auto array_const =
+      basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
+    if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
+      SDB_PRINT("[mkornaukhov] in() second arg is not an array constant");
+      return {};
+    }
+
+    const auto elem_type = array_const->type()->childAt(0);
+    SDB_ASSERT(array_const->valueVector()->typeKind() ==
+               velox::TypeKind::ARRAY);
+    auto const_vec =
+      basics::downCast<velox::ConstantVector<velox::ComplexType>>(
+        array_const->valueVector());
+    auto array_vec =
+      basics::downCast<velox::ArrayVector>(const_vec->valueVector());
+    const auto offset = array_vec->offsetAt(const_vec->index());
+    const auto size = array_vec->sizeAt(const_vec->index());
+    const auto& elements = array_vec->elements();
+
+    std::vector<std::unique_ptr<FilterNode>> eqs;
+    eqs.reserve(size);
+    for (velox::vector_size_t i = 0; i < size; ++i) {
+      auto elem_const = std::make_shared<velox::core::ConstantTypedExpr>(
+        velox::BaseVector::wrapInConstant(1, offset + i, elements));
+      eqs.emplace_back(
+        std::make_unique<EqFilterNode>(field_access->name(), elem_const));
+    }
+    return std::make_unique<OrFilter>(std::move(eqs));
+  }
   return {};
 }
 
@@ -301,6 +345,7 @@ inline std::unique_ptr<FilterNode> ParseFilters(
   const std::vector<velox::core::TypedExprPtr>& filters) {
   std::vector<std::unique_ptr<FilterNode>> resp;
   for (const auto& filter : filters) {
+    SDB_PRINT("filter=", filter->toString());
     if (auto parsed = ParseFilter(filter)) {
       resp.emplace_back(std::move(parsed));
     }
@@ -337,42 +382,33 @@ inline std::shared_ptr<velox::RowVector> TryGetPoint2(
                                             1, std::move(children));
 }
 
-inline std::shared_ptr<velox::RowVector> TryGetPoint(
+inline std::vector<velox::RowVectorPtr> TryGetPoints(
   const FilterNode& filter, velox::RowTypePtr pk_type,
   velox::memory::MemoryPool* pool) {
   SDB_ASSERT(pk_type->size() != 0);
 
-  auto point = filter.NextPoint(pk_type->names());
-
-  // multiple point is not supported for now, as FilterOr is not supported
-  SDB_ASSERT(filter.NextPoint(pk_type->names()) == std::nullopt);
-
-  if (!point) {
-    SDB_PRINT("[mkornaukhov] no point filter found (or contraversal)");
-    return {};
-  }
-
-  if (!point->IsSpecific()) {
-    SDB_PRINT("[mkornaukhov] point filter is not specific, too wide");
-    return {};
-  }
-
-  const auto& cname2filter = point->column_filters;
-
-  std::vector<velox::VectorPtr> children;
-  for (std::string_view pk_col_name : pk_type->names()) {
-    if (auto it = cname2filter.find(pk_col_name); it != cname2filter.end()) {
-      SDB_ASSERT(std::holds_alternative<ColumnFilterEq>(it->second));
-      const auto& as_eq_column_filter = std::get<ColumnFilterEq>(it->second);
-      children.emplace_back(as_eq_column_filter.value->toConstantVector(pool));
-    } else {
-      SDB_ASSERT(false,
-                 "[mkornaukhov] wtf, pk column name not found in filter");
+  std::vector<velox::RowVectorPtr> result;
+  while (auto point = filter.NextPoint(pk_type->names())) {
+    if (!point->IsSpecific()) {
+      SDB_PRINT("[mkornaukhov] point filter is not specific, too wide");
       return {};
     }
+
+    const auto& cname2filter = point->column_filters;
+    std::vector<velox::VectorPtr> children;
+    for (std::string_view pk_col_name : pk_type->names()) {
+      auto it = cname2filter.find(pk_col_name);
+      SDB_ASSERT(it != cname2filter.end(),
+                 "[mkornaukhov] pk column name not found in filter");
+      SDB_ASSERT(std::holds_alternative<ColumnFilterEq>(it->second));
+
+      const auto& as_eq = std::get<ColumnFilterEq>(it->second);
+      children.emplace_back(as_eq.value->toConstantVector(pool));
+    }
+    result.emplace_back(std::make_shared<velox::RowVector>(
+      pool, pk_type, velox::BufferPtr{}, 1, std::move(children)));
   }
-  return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
-                                            1, std::move(children));
+  return result;
 }
 
 }  // namespace sdb::connector

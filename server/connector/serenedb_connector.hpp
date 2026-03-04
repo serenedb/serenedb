@@ -718,13 +718,13 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     SDB_ASSERT(serene_table_handle.GetFilter());
     const auto* filter = serene_table_handle.GetFilter().get();
-    if (auto point = TryGetPoint(*filter, serene_table_handle.GetPKType(),
-                                 connector_query_ctx->connectorMemoryPool());
-        point) {
+    if (auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+                                   connector_query_ctx->connectorMemoryPool());
+        !points.empty()) {
       return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
         serene_table_handle.GetEffectiveColumnId(), object_key, snapshot,
-        point);
+        std::move(points));
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

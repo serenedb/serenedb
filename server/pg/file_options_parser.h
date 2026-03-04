@@ -29,6 +29,7 @@
 #include "catalog/format_options.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
+#include "pg/file_option_groups.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -47,6 +48,8 @@ class FileOptionsParser {
       _operation{operation},
       _notice{std::move(notice)} {}
 
+  bool HelpRequested() const { return _help_requested; }
+
  protected:
   static bool IsS3Path(std::string_view path) {
     return path.starts_with("s3://") || path.starts_with("s3a://") ||
@@ -62,18 +65,19 @@ class FileOptionsParser {
   }
 
   std::unique_ptr<S3StorageOptions> ParseS3StorageOptions() {
-    auto access_key = EraseOptionOrValue<std::string>("s3_access_key");
-    auto secret_key = EraseOptionOrValue<std::string>("s3_secret_key");
-    auto endpoint = EraseOptionOrValue<std::string>("s3_endpoint");
-    auto region = EraseOptionOrValue<std::string>("s3_region");
-    auto iam_role = EraseOptionOrValue<std::string>("s3_iam_role");
-    auto path_style_access = EraseOptionOrValue<bool>("s3_path_style_access");
-    auto ssl_enabled = EraseOptionOrValue<bool>("s3_ssl_enabled", true);
-    auto use_creds = EraseOptionOrValue<bool>("s3_use_instance_credentials");
+    using namespace file_option_groups;
+    auto access_key = EraseOptionOrValue<std::string>(kS3AccessKey);
+    auto secret_key = EraseOptionOrValue<std::string>(kS3SecretKey);
+    auto endpoint = EraseOptionOrValue<std::string>(kS3Endpoint);
+    auto region = EraseOptionOrValue<std::string>(kS3Region);
+    auto iam_role = EraseOptionOrValue<std::string>(kS3IamRole);
+    auto path_style = EraseOptionOrValue<bool>(kS3PathStyleAccess, true);
+    auto ssl_enabled = EraseOptionOrValue<bool>(kS3SslEnabled, false);
+    auto use_creds = EraseOptionOrValue<bool>(kS3UseInstanceCredentials);
     return std::make_unique<S3StorageOptions>(
       std::string{_file_path}, std::move(access_key), std::move(secret_key),
-      std::move(endpoint), std::move(region), std::move(iam_role),
-      path_style_access, ssl_enabled, use_creds);
+      std::move(endpoint), std::move(region), std::move(iam_role), path_style,
+      ssl_enabled, use_creds);
   }
 
   template<typename T>
@@ -93,21 +97,32 @@ class FileOptionsParser {
   }
 
   template<typename T>
-  T EraseOptionOrValue(std::string_view name, T value = {}) {
-    if (const auto* option = EraseOption(name)) {
+  T EraseOptionOrValue(const OptionInfo& info, T value = {}) {
+    if (const auto* option = EraseOption(info)) {
       auto value = TryGet<T>(option->arg);
       if (!value) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(name, " must be ", OptionTypeName<T>()));
+                        ERR_MSG(info.name, " must be ", OptionTypeName<T>()));
       }
       return *value;
     }
     return value;
   }
 
-  const DefElem* EraseOption(std::string_view name) {
-    auto it = _options.find(name);
+  bool TryHandleHelp(std::span<const OptionGroup> groups) {
+    auto it = _options.find("help");
+    if (it == _options.end()) {
+      return false;
+    }
+    _options.clear();
+    _help_requested = true;
+    WriteNotice(FormatHelp(groups));
+    return true;
+  }
+
+  const DefElem* EraseOption(const OptionInfo& info) {
+    auto it = _options.find(info.name);
     if (it == _options.end()) {
       return nullptr;
     }
@@ -117,7 +132,7 @@ class FileOptionsParser {
     if (!option->arg) {
       THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                       ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG(name, " requires a parameter"));
+                      ERR_MSG(info.name, " requires a parameter"));
     }
     return option;
   }
@@ -169,6 +184,7 @@ class FileOptionsParser {
   };
 
   ParsedFileFormat ParseFileFormat() {
+    using namespace file_option_groups;
     const containers::FlatHashMap<std::string_view, FileFormat>
       format2underlying{{"csv", FileFormat::Text},
                         {"text", FileFormat::Text},
@@ -178,7 +194,7 @@ class FileOptionsParser {
 
     int location = -1;
     std::string_view format = "text";
-    if (const auto* option = EraseOption("format")) {
+    if (const auto* option = EraseOption(kFormat)) {
       location = ExprLocation(&option);
       auto maybe_format = TryGet<std::string_view>(option->arg);
       if (!maybe_format) {
@@ -201,8 +217,9 @@ class FileOptionsParser {
   }
 
   std::shared_ptr<TextFormatOptions> ParseTextFormatOptions(bool is_csv) {
+    using namespace file_option_groups;
     uint8_t delim = is_csv ? ',' : '\t';
-    if (const auto* option = EraseOption("delimiter")) {
+    if (const auto* option = EraseOption(kDelimiter)) {
       auto maybe_delim = TryGet<char>(option->arg);
       if (!maybe_delim) {
         THROW_SQL_ERROR(
@@ -215,7 +232,7 @@ class FileOptionsParser {
     }
 
     uint8_t escape = is_csv ? '"' : '\\';
-    if (const auto* option = EraseOption("escape")) {
+    if (const auto* option = EraseOption(kEscape)) {
       auto maybe_escape = TryGet<char>(option->arg);
       if (!maybe_escape) {
         THROW_SQL_ERROR(
@@ -227,7 +244,7 @@ class FileOptionsParser {
     }
 
     std::string null_string = is_csv ? "" : "\\N";
-    if (const auto* option = EraseOption("null")) {
+    if (const auto* option = EraseOption(kNull)) {
       auto maybe_null = TryGet<std::string_view>(option->arg);
       if (!maybe_null) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -238,7 +255,7 @@ class FileOptionsParser {
     }
 
     bool header = false;
-    if (const auto* option = EraseOption("header")) {
+    if (const auto* option = EraseOption(kHeader)) {
       if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
         if (*maybe_match == "match") {
           THROW_SQL_ERROR(
@@ -294,6 +311,7 @@ class FileOptionsParser {
   containers::FlatHashMap<std::string_view, const DefElem*> _options;
   std::string _operation;
   std::function<void(std::string)> _notice;
+  bool _help_requested = false;
 };
 
 }  // namespace sdb::pg

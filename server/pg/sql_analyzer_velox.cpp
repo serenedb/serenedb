@@ -75,6 +75,7 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/file_option_groups.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
@@ -1979,6 +1980,11 @@ class CopyOptionsParser : public FileOptionsParser {
 
  private:
   void Parse() {
+    using namespace file_option_groups;
+    if (TryHandleHelp(kCopyParserGroups)) {
+      return;
+    }
+
     ParseDataSource();
 
     auto [underlying, format, location] = ParseFileFormat();
@@ -2001,7 +2007,7 @@ class CopyOptionsParser : public FileOptionsParser {
     }
 
     bool show_progress = false;
-    if (const auto* option = EraseOption("progress")) {
+    if (const auto* option = EraseOption(kProgress)) {
       auto maybe_progress = TryGet<bool>(option->arg);
       if (!maybe_progress) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -2026,11 +2032,12 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {
+    using namespace file_option_groups;
     auto text_format = ParseTextFormatOptions(is_csv);
 
     uint64_t reject_limit = 0;
     std::string_view on_error = "stop";
-    if (const auto* option = EraseOption("on_error")) {
+    if (const auto* option = EraseOption(kOnError)) {
       if (_is_writer) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -2057,7 +2064,7 @@ class CopyOptionsParser : public FileOptionsParser {
       on_error = *maybe_on_error;
     }
 
-    if (const auto* option = EraseOption("reject_limit")) {
+    if (const auto* option = EraseOption(kRejectLimit)) {
       if (on_error != "ignore") {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -2081,7 +2088,7 @@ class CopyOptionsParser : public FileOptionsParser {
     }
 
     auto log_verbosity = CopyRowRejector::LogVerbosity::Default;
-    if (const auto* option = EraseOption("log_verbosity")) {
+    if (const auto* option = EraseOption(kLogVerbosity)) {
       auto maybe_verbosity = TryGet<std::string_view>(option->arg);
       if (!maybe_verbosity) {
         THROW_SQL_ERROR(
@@ -2105,14 +2112,13 @@ class CopyOptionsParser : public FileOptionsParser {
       }
     }
 
-    for (const auto& option_name :
-         {"default", "quote", "force_quote", "force_not_null", "force_null",
-          "encoding"}) {
-      if (const auto* option = EraseOption(option_name)) {
+    for (const auto& info : kUnsupportedTextCsvOptions) {
+      if (const auto* option = EraseOption(info)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("COPY option \"", option_name, "\" is not supported yet for ",
+          ERR_MSG("COPY option \"", info.name,
+                  "\" is not supported yet for ",
                   is_csv ? "CSV" : "TEXT", " format"));
       }
     }
@@ -2249,6 +2255,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto parser = create_options_parser(file_table_type);
+    if (parser.HelpRequested()) {
+      return;
+    }
     auto options = std::move(parser).GetReaderOptions();
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
@@ -2307,6 +2316,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     }
 
     auto parser = create_options_parser(table_type);
+    if (parser.HelpRequested()) {
+      return;
+    }
     auto options = std::move(parser).GetWriterOptions();
     auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,

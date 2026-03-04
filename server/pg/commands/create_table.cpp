@@ -28,6 +28,7 @@
 #include "catalog/table_options.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/file_option_groups.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
@@ -67,7 +68,12 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   }
 
   void Parse() {
-    if (const auto* path_option = EraseOption("path")) {
+    using namespace file_option_groups;
+    if (TryHandleHelp(kCreateExternalParserGroups)) {
+      return;
+    }
+
+    if (const auto* path_option = EraseOption(kPath)) {
       auto maybe_path = TryGet<std::string_view>(path_option->arg);
       if (!maybe_path) {
         THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
@@ -426,6 +432,9 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
 
   if (is_external) {
     CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
+    if (parser.HelpRequested()) {
+      return {};
+    }
     request.file_info = std::move(parser).GetFileInfo();
     request.type = std::to_underlying(TableType::File);
   }

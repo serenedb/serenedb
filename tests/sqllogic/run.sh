@@ -39,6 +39,61 @@ validate_boolean() {
     [[ "$1" =~ ^(true|false)$ ]] || { echo "Error: $2 must be 'true' or 'false'" >&2; return 1; }
 }
 
+launch_s3() {
+  MINIO_CONTAINER_NAME="serenedb-test-minio-$$"
+  export MINIO_ACCESS_KEY="minioadmin"
+  export MINIO_SECRET_KEY="minioadmin"
+  export MINIO_BUCKET="testbucket"
+  export MINIO_PORT
+  MINIO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+
+  cleanup_minio() {
+    if [[ -n "${MINIO_CONTAINER_NAME:-}" ]]; then
+      echo "Stopping MinIO container..."
+      docker rm -f "$MINIO_CONTAINER_NAME" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_minio EXIT
+
+  echo "Starting MinIO on port $MINIO_PORT..."
+  docker run -d \
+    --name "$MINIO_CONTAINER_NAME" \
+    -p "$MINIO_PORT:9000" \
+    -e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
+    -e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
+    minio/minio:latest server /data
+
+  echo "Waiting for MinIO to be ready..."
+  for i in $(seq 1 30); do
+    if curl -sf "http://localhost:$MINIO_PORT/minio/health/ready" >/dev/null 2>&1; then
+      echo "MinIO is ready."
+      break
+    fi
+    if [[ $i -eq 30 ]]; then
+      echo "ERROR: MinIO failed to start within 30 seconds"
+      exit 1
+    fi
+    sleep 1
+  done
+
+  echo "Creating bucket '$MINIO_BUCKET'..."
+  docker exec "$MINIO_CONTAINER_NAME" \
+    mc alias set local http://localhost:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1
+  docker exec "$MINIO_CONTAINER_NAME" \
+    mc mb "local/$MINIO_BUCKET" >/dev/null 2>&1 || true
+
+  echo "MinIO running on port $MINIO_PORT, bucket '$MINIO_BUCKET' created."
+  echo
+}
+
+launch_external() {
+  local test_files
+  test_files=$(compgen -G "$test" 2>/dev/null || true)
+  if echo "$test_files" | grep -q '_s3\.'; then
+    launch_s3
+  fi
+}
+
 # Main parsing function
 parse_options() {
     while [ $# -gt 0 ]; do
@@ -131,6 +186,8 @@ echo "Skip failed: $skip_failed"
 if [[ "$fast" == "true" ]]; then
   test='./tests/sqllogic/sdb/**/*.test'
 fi
+
+launch_external
 
 # Run tests based on parameters
 run_tests() {

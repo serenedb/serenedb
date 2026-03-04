@@ -1981,9 +1981,7 @@ class CopyOptionsParser : public FileOptionsParser {
  private:
   void Parse() {
     using namespace file_option_groups;
-    if (TryHandleHelp(kCopyParserGroups)) {
-      return;
-    }
+    HandleHelp(kCopyParserGroups);
 
     ParseDataSource();
 
@@ -2006,7 +2004,7 @@ class CopyOptionsParser : public FileOptionsParser {
         SDB_UNREACHABLE();
     }
 
-    bool show_progress = false;
+    auto show_progress = kProgress.DefaultValue<bool>();
     if (const auto* option = EraseOption(kProgress)) {
       auto maybe_progress = TryGet<bool>(option->arg);
       if (!maybe_progress) {
@@ -2036,7 +2034,7 @@ class CopyOptionsParser : public FileOptionsParser {
     auto text_format = ParseTextFormatOptions(is_csv);
 
     uint64_t reject_limit = 0;
-    std::string_view on_error = "stop";
+    auto on_error = kOnError.DefaultValue<std::string_view>();
     if (const auto* option = EraseOption(kOnError)) {
       if (_is_writer) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -2117,8 +2115,7 @@ class CopyOptionsParser : public FileOptionsParser {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("COPY option \"", info.name,
-                  "\" is not supported yet for ",
+          ERR_MSG("COPY option \"", info.name, "\" is not supported yet for ",
                   is_csv ? "CSV" : "TEXT", " format"));
       }
     }
@@ -2255,9 +2252,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto parser = create_options_parser(file_table_type);
-    if (parser.HelpRequested()) {
-      return;
-    }
     auto options = std::move(parser).GetReaderOptions();
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
@@ -2316,9 +2310,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     }
 
     auto parser = create_options_parser(table_type);
-    if (parser.HelpRequested()) {
-      return;
-    }
     auto options = std::move(parser).GetWriterOptions();
     auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,

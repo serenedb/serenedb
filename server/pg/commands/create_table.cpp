@@ -69,9 +69,7 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
 
   void Parse() {
     using namespace file_option_groups;
-    if (TryHandleHelp(kCreateExternalParserGroups)) {
-      return;
-    }
+    HandleHelp(kCreateExternalParserGroups);
 
     if (const auto* path_option = EraseOption(kPath)) {
       auto maybe_path = TryGet<std::string_view>(path_option->arg);
@@ -432,9 +430,6 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
 
   if (is_external) {
     CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
-    if (parser.HelpRequested()) {
-      return {};
-    }
     request.file_info = std::move(parser).GetFileInfo();
     request.type = std::to_underlying(TableType::File);
   }

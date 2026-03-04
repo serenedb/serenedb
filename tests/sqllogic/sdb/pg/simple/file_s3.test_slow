@@ -316,3 +316,38 @@ WHERE iq > 90;
 ----
 count
 10000
+
+
+statement error
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
+WITH (
+  FORMAT csv,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_IAM_ROLE 'arn:aws:iam::123456789012:role/test',
+  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+);
+----
+db error: ERROR: s3_access_key/s3_secret_key and s3_iam_role are mutually exclusive
+
+
+statement error
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
+WITH (
+  FORMAT csv,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+);
+----
+db error: ERROR: s3_access_key and s3_secret_key must be specified together
+
+
+statement error
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
+WITH (
+  FORMAT csv,
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+);
+----
+db error: ERROR: s3_access_key and s3_secret_key must be specified together

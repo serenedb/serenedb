@@ -22,129 +22,144 @@
 
 #include "pg/option_help.h"
 
+using namespace std::string_view_literals;
+
 namespace sdb::pg::file_option_groups {
 
-// --- Storage: S3 ---
+// Storage
+
+inline constexpr OptionInfo kStorage{"storage", "local"sv,
+                                     "Storage backend: local, s3"};
 
 inline constexpr OptionInfo kS3AccessKey{
-  "s3_access_key", "string", "AWS access key ID", ""};
+  "s3_access_key", ""sv, "AWS access key ID (used with s3_secret_key)"};
 inline constexpr OptionInfo kS3SecretKey{
-  "s3_secret_key", "string", "AWS secret access key", ""};
-inline constexpr OptionInfo kS3Endpoint{
-  "s3_endpoint", "string", "S3-compatible endpoint URL", ""};
-inline constexpr OptionInfo kS3Region{
-  "s3_region", "string", "AWS region", ""};
+  "s3_secret_key", ""sv, "AWS secret access key (used with s3_access_key)"};
 inline constexpr OptionInfo kS3IamRole{
-  "s3_iam_role", "string", "IAM role ARN for authentication", ""};
-inline constexpr OptionInfo kS3PathStyleAccess{
-  "s3_path_style_access", "boolean", "Use path-style S3 URLs", "true"};
-inline constexpr OptionInfo kS3SslEnabled{
-  "s3_ssl_enabled", "boolean", "Enable SSL for S3 connections", "false"};
+  "s3_iam_role", ""sv, "IAM role ARN (instead of access/secret keys)"};
 inline constexpr OptionInfo kS3UseInstanceCredentials{
-  "s3_use_instance_credentials", "boolean", "Use EC2 instance credentials",
-  "false"};
+  "s3_use_instance_credentials", false, "Use EC2 instance credentials"};
 
-inline constexpr OptionInfo kS3Options[] = {
-  kS3AccessKey,     kS3SecretKey,           kS3Endpoint,
-  kS3Region,        kS3IamRole,             kS3PathStyleAccess,
-  kS3SslEnabled,    kS3UseInstanceCredentials,
-};
+inline constexpr OptionInfo kS3AuthOptions[] = {
+  kS3AccessKey, kS3SecretKey, kS3IamRole, kS3UseInstanceCredentials};
 
-inline constexpr OptionGroup kS3Group{"S3", kS3Options, {}};
+inline constexpr OptionInfo kS3Endpoint{"s3_endpoint", ""sv,
+                                        "S3-compatible endpoint URL"};
+inline constexpr OptionInfo kS3Region{"s3_region", ""sv, "AWS region"};
+inline constexpr OptionInfo kS3PathStyleAccess{"s3_path_style_access", true,
+                                               "Use path-style S3 URLs"};
+inline constexpr OptionInfo kS3SslEnabled{"s3_ssl_enabled", false,
+                                          "Enable SSL for S3 connections"};
+
+inline constexpr OptionInfo kS3ConnectionOptions[] = {
+  kS3Endpoint, kS3Region, kS3PathStyleAccess, kS3SslEnabled};
+
+inline constexpr OptionInfo kStorageOptions[] = {kStorage};
+
+inline constexpr OptionGroup kCommonStorageGroup{"Common", kStorageOptions, {}};
+inline constexpr OptionGroup kS3AuthGroup{"Authentication", kS3AuthOptions, {}};
+inline constexpr OptionGroup kS3ConnectionGroup{
+  "Connection", kS3ConnectionOptions, {}};
+inline constexpr OptionGroup kS3Subgroups[] = {kS3AuthGroup,
+                                               kS3ConnectionGroup};
+inline constexpr OptionGroup kS3Group{"S3", {}, kS3Subgroups};
 inline constexpr OptionGroup kLocalGroup{"Local", {}, {}};
-inline constexpr OptionGroup kStorageSubgroups[] = {kS3Group, kLocalGroup};
+inline constexpr OptionGroup kStorageSubgroups[] = {kCommonStorageGroup,
+                                                    kS3Group, kLocalGroup};
 inline constexpr OptionGroup kStorageGroup{"Storage", {}, kStorageSubgroups};
 
-// --- Format: common ---
-
 inline constexpr OptionInfo kFormat{
-  "format", "string", "File format: text, csv, parquet, dwrf, orc", "text"};
+  "format", "text"sv, "File format: text, csv, parquet, dwrf, orc"};
 
 inline constexpr OptionInfo kCommonFormatOptions[] = {kFormat};
 
-// --- Format: Text/CSV ---
+inline constexpr OptionInfo kTextDelimiter{"delimiter", '\t',
+                                           "Column delimiter character"};
+inline constexpr OptionInfo kTextEscape{"escape", '\\', "Escape character"};
+inline constexpr OptionInfo kTextNull{"null", "\\N"sv,
+                                      "String representing NULL"};
 
-inline constexpr OptionInfo kDelimiter{
-  "delimiter", "character", "Column delimiter character",
-  "\\t (text), , (csv)"};
-inline constexpr OptionInfo kEscape{
-  "escape", "character", "Escape character", "\\\\ (text), \" (csv)"};
-inline constexpr OptionInfo kNull{
-  "null", "string", "String representing NULL", "\\\\N (text), empty (csv)"};
-inline constexpr OptionInfo kHeader{
-  "header", "boolean", "First line is a header row", "false"};
+inline constexpr OptionInfo kCsvDelimiter{"delimiter", ',',
+                                          "Column delimiter character"};
+inline constexpr OptionInfo kCsvEscape{"escape", '"', "Escape character"};
+inline constexpr OptionInfo kCsvNull{"null", ""sv, "String representing NULL"};
 
-inline constexpr OptionInfo kTextCsvOptions[] = {
-  kDelimiter, kEscape, kNull, kHeader};
+inline constexpr OptionInfo kHeader{"header", false,
+                                    "First line is a header row"};
 
-// --- COPY-specific (Text/CSV only) ---
+inline constexpr OptionInfo kTextOptions[] = {kTextDelimiter, kTextEscape,
+                                              kTextNull, kHeader};
+inline constexpr OptionInfo kCsvOptions[] = {kCsvDelimiter, kCsvEscape,
+                                             kCsvNull, kHeader};
 
-inline constexpr OptionInfo kProgress{
-  "progress", "boolean", "Show progress notices during COPY", "false"};
-inline constexpr OptionInfo kOnError{
-  "on_error", "string", "Error handling: stop, ignore", "stop"};
+inline constexpr OptionInfo kProgress{"progress", false,
+                                      "Show progress notices during COPY"};
+inline constexpr OptionInfo kOnError{"on_error", "stop"sv,
+                                     "Error handling: stop, ignore"};
 inline constexpr OptionInfo kRejectLimit{
-  "reject_limit", "integer",
-  "Max rows to skip (requires on_error = ignore)", "0"};
+  "reject_limit", 0, "Max rows to skip (requires on_error = ignore)"};
 inline constexpr OptionInfo kLogVerbosity{
-  "log_verbosity", "string", "Logging level: default, verbose, silent",
-  "default"};
+  "log_verbosity", "default"sv, "Logging level: default, verbose, silent"};
 
-inline constexpr OptionInfo kCopyTextCsvOptions[] = {
-  kDelimiter, kEscape, kNull, kHeader,
-  kProgress, kOnError, kRejectLimit, kLogVerbosity};
+inline constexpr OptionInfo kCommonCopyFormatOptions[] = {kFormat, kProgress};
 
-inline constexpr OptionGroup kCommonFormatGroup{"Common", kCommonFormatOptions,
-                                                {}};
-inline constexpr OptionGroup kTextCsvGroup{"Text/CSV", kTextCsvOptions, {}};
-inline constexpr OptionGroup kCopyTextCsvGroup{"Text/CSV", kCopyTextCsvOptions,
-                                               {}};
+inline constexpr OptionInfo kCopyTextOptions[] = {
+  kTextDelimiter, kTextEscape,  kTextNull,    kHeader,
+  kOnError,       kRejectLimit, kLogVerbosity};
+inline constexpr OptionInfo kCopyCsvOptions[] = {
+  kCsvDelimiter, kCsvEscape,   kCsvNull,     kHeader,
+  kOnError,      kRejectLimit, kLogVerbosity};
+
+inline constexpr OptionGroup kCommonCopyFormatGroup{
+  "Common", kCommonCopyFormatOptions, {}};
+inline constexpr OptionGroup kCommonFormatGroup{
+  "Common", kCommonFormatOptions, {}};
+inline constexpr OptionGroup kTextGroup{"Text", kTextOptions, {}};
+inline constexpr OptionGroup kCsvGroup{"CSV", kCsvOptions, {}};
+inline constexpr OptionGroup kCopyTextGroup{"Text", kCopyTextOptions, {}};
+inline constexpr OptionGroup kCopyCsvGroup{"CSV", kCopyCsvOptions, {}};
 inline constexpr OptionGroup kParquetGroup{"Parquet", {}, {}};
 inline constexpr OptionGroup kDwrfGroup{"DWRF", {}, {}};
 inline constexpr OptionGroup kOrcGroup{"ORC", {}, {}};
 
 inline constexpr OptionGroup kFormatSubgroups[] = {
-  kCommonFormatGroup, kTextCsvGroup, kParquetGroup, kDwrfGroup, kOrcGroup};
+  kCommonFormatGroup, kTextGroup, kCsvGroup,
+  kParquetGroup,      kDwrfGroup, kOrcGroup};
 inline constexpr OptionGroup kFormatGroup{"Format", {}, kFormatSubgroups};
 
 inline constexpr OptionGroup kCopyFormatSubgroups[] = {
-  kCommonFormatGroup, kCopyTextCsvGroup, kParquetGroup, kDwrfGroup, kOrcGroup};
-inline constexpr OptionGroup kCopyFormatGroup{"Format", {},
-                                              kCopyFormatSubgroups};
-
-// --- Unsupported Text/CSV options (recognized but not yet implemented) ---
+  kCommonCopyFormatGroup, kCopyTextGroup, kCopyCsvGroup,
+  kParquetGroup,          kDwrfGroup,     kOrcGroup};
+inline constexpr OptionGroup kCopyFormatGroup{
+  "Format", {}, kCopyFormatSubgroups};
 
 inline constexpr OptionInfo kDefault{
-  "default", "string", "Default value for columns (not yet supported)", ""};
+  "default", ""sv, "Default value for columns (not yet supported)"};
 inline constexpr OptionInfo kQuote{
-  "quote", "character", "Quote character for CSV (not yet supported)", ""};
+  "quote", '\0', "Quote character for CSV (not yet supported)"};
 inline constexpr OptionInfo kForceQuote{
-  "force_quote", "string",
-  "Force quoting for specified columns (not yet supported)", ""};
+  "force_quote", ""sv,
+  "Force quoting for specified columns (not yet supported)"};
 inline constexpr OptionInfo kForceNotNull{
-  "force_not_null", "string",
-  "Do not match null string for columns (not yet supported)", ""};
+  "force_not_null", ""sv,
+  "Do not match null string for columns (not yet supported)"};
 inline constexpr OptionInfo kForceNull{
-  "force_null", "string",
-  "Match null string even if quoted (not yet supported)", ""};
+  "force_null", ""sv, "Match null string even if quoted (not yet supported)"};
 inline constexpr OptionInfo kEncoding{
-  "encoding", "string",
-  "Character encoding of the file (not yet supported)", ""};
+  "encoding", ""sv, "Character encoding of the file (not yet supported)"};
 
 inline constexpr OptionInfo kUnsupportedTextCsvOptions[] = {
   kDefault, kQuote, kForceQuote, kForceNotNull, kForceNull, kEncoding};
 
-// --- CREATE TABLE USING EXTERNAL specific ---
+inline constexpr OptionInfo kHelp{"help", false, "Show available options"};
 
-inline constexpr OptionInfo kPath{
-  "path", "string", "Path to external file (required)", ""};
+inline constexpr OptionInfo kPath{"path", ""sv,
+                                  "Path to external file (required)"};
 
 inline constexpr OptionInfo kCreateExternalOptions[] = {kPath};
 
 inline constexpr OptionGroup kCreateExternalGroup{
   "External", kCreateExternalOptions, {}};
-
-// --- Per-parser group compositions ---
 
 inline constexpr OptionGroup kCopyParserGroups[] = {kStorageGroup,
                                                     kCopyFormatGroup};

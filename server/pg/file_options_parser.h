@@ -48,17 +48,24 @@ class FileOptionsParser {
       _operation{operation},
       _notice{std::move(notice)} {}
 
-  bool HelpRequested() const { return _help_requested; }
-
  protected:
-  static bool IsS3Path(std::string_view path) {
-    return path.starts_with("s3://") || path.starts_with("s3a://") ||
-           path.starts_with("s3n://") || path.starts_with("oss://") ||
-           path.starts_with("cos://") || path.starts_with("cosn://");
-  }
-
   std::unique_ptr<StorageOptions> ParseStorageOptions() {
-    if (IsS3Path(_file_path)) {
+    using namespace file_option_groups;
+    std::string_view storage = kStorage.DefaultValue<std::string_view>();
+    if (const auto* option = EraseOption(kStorage)) {
+      auto maybe_storage = TryGet<std::string_view>(option->arg);
+      if (!maybe_storage ||
+          (*maybe_storage != "local" && *maybe_storage != "s3")) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("storage must be \"local\" or \"s3\""));
+      }
+      storage = *maybe_storage;
+    } else if (auto detected = TryStorageFromContext(); !detected.empty()) {
+      storage = detected;
+    }
+
+    if (storage == "s3") {
       return ParseS3StorageOptions();
     }
     return std::make_unique<LocalStorageOptions>(std::string{_file_path});
@@ -66,62 +73,93 @@ class FileOptionsParser {
 
   std::unique_ptr<S3StorageOptions> ParseS3StorageOptions() {
     using namespace file_option_groups;
-    auto access_key = EraseOptionOrValue<std::string>(kS3AccessKey);
-    auto secret_key = EraseOptionOrValue<std::string>(kS3SecretKey);
-    auto endpoint = EraseOptionOrValue<std::string>(kS3Endpoint);
-    auto region = EraseOptionOrValue<std::string>(kS3Region);
-    auto iam_role = EraseOptionOrValue<std::string>(kS3IamRole);
-    auto path_style = EraseOptionOrValue<bool>(kS3PathStyleAccess, true);
-    auto ssl_enabled = EraseOptionOrValue<bool>(kS3SslEnabled, false);
-    auto use_creds = EraseOptionOrValue<bool>(kS3UseInstanceCredentials);
+
+    std::string access_key;
+    if (const auto* option = EraseOption(kS3AccessKey)) {
+      auto maybe_value = TryGet<std::string_view>(option->arg);
+      if (!maybe_value) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(kS3AccessKey.name, " must be a string"));
+      }
+      access_key = std::string{*maybe_value};
+    }
+
+    std::string secret_key;
+    if (const auto* option = EraseOption(kS3SecretKey)) {
+      auto maybe_value = TryGet<std::string_view>(option->arg);
+      if (!maybe_value) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(kS3SecretKey.name, " must be a string"));
+      }
+      secret_key = std::string{*maybe_value};
+    }
+
+    std::string iam_role;
+    if (const auto* option = EraseOption(kS3IamRole)) {
+      auto maybe_value = TryGet<std::string_view>(option->arg);
+      if (!maybe_value) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(kS3IamRole.name, " must be a string"));
+      }
+      if (!access_key.empty() || !secret_key.empty()) {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("s3_access_key/s3_secret_key and s3_iam_role are mutually "
+                  "exclusive"));
+      }
+      iam_role = std::string{*maybe_value};
+    }
+
+    if (access_key.empty() != secret_key.empty()) {
+      THROW_SQL_ERROR(
+        CURSOR_POS(0), ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("s3_access_key and s3_secret_key must be specified together"));
+    }
+
+    auto endpoint = EraseOptionOrDefault<kS3Endpoint>();
+    auto region = EraseOptionOrDefault<kS3Region>();
+    auto path_style = EraseOptionOrDefault<kS3PathStyleAccess>();
+    auto ssl_enabled = EraseOptionOrDefault<kS3SslEnabled>();
+    auto use_creds = EraseOptionOrDefault<kS3UseInstanceCredentials>();
     return std::make_unique<S3StorageOptions>(
       std::string{_file_path}, std::move(access_key), std::move(secret_key),
       std::move(endpoint), std::move(region), std::move(iam_role), path_style,
       ssl_enabled, use_creds);
   }
 
-  template<typename T>
-  static constexpr std::string_view OptionTypeName() {
-    if constexpr (std::is_same_v<T, std::string> ||
-                  std::is_same_v<T, std::string_view>) {
-      return "a string";
-    } else if constexpr (std::is_same_v<T, bool>) {
-      return "a boolean";
-    } else if constexpr (std::is_same_v<T, int>) {
-      return "an integer";
-    } else if constexpr (std::is_same_v<T, double>) {
-      return "a number";
-    } else if constexpr (std::is_same_v<T, char>) {
-      return "a character";
-    }
-  }
-
-  template<typename T>
-  T EraseOptionOrValue(const OptionInfo& info, T value = {}) {
-    if (const auto* option = EraseOption(info)) {
+  template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
+  T EraseOptionOrDefault() {
+    if (const auto* option = EraseOption(Info)) {
       auto value = TryGet<T>(option->arg);
       if (!value) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(info.name, " must be ", OptionTypeName<T>()));
+                        ERR_MSG(Info.name, " must be ", Info.TypeName()));
       }
       return *value;
     }
-    return value;
+
+    return Info.DefaultValue<T>();
   }
 
-  bool TryHandleHelp(std::span<const OptionGroup> groups) {
-    auto it = _options.find("help");
-    if (it == _options.end()) {
-      return false;
+  void HandleHelp(std::span<const OptionGroup> groups) {
+    using namespace file_option_groups;
+    const auto* option = EraseOption(kHelp, false);
+    if (!option) {
+      return;
     }
-    _options.clear();
-    _help_requested = true;
-    WriteNotice(FormatHelp(groups));
-    return true;
+
+    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+                    ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG(FormatHelp(groups)));
   }
 
-  const DefElem* EraseOption(const OptionInfo& info) {
+  const DefElem* EraseOption(const OptionInfo& info,
+                             bool param_required = true) {
     auto it = _options.find(info.name);
     if (it == _options.end()) {
       return nullptr;
@@ -129,7 +167,7 @@ class FileOptionsParser {
     const auto* option = it->second;
     _options.erase(it);
     SDB_ASSERT(option);
-    if (!option->arg) {
+    if (!option->arg && param_required) {
       THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                       ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(info.name, " requires a parameter"));
@@ -138,11 +176,14 @@ class FileOptionsParser {
   }
 
   void CheckUnrecognizedOptions() const {
-    for (const auto& [name, option] : _options) {
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("option \"", name, "\" not recognized"));
+    if (_options.empty()) {
+      return;
     }
+
+    auto [name, option] = *_options.begin();
+    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                    ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("option \"", name, "\" not recognized"));
   }
 
   [[noreturn]] void UnrecognizedFormat(std::string_view format, int location) {
@@ -164,6 +205,31 @@ class FileOptionsParser {
       return file_format;
     }
 
+    return {};
+  }
+
+  static bool IsS3Path(std::string_view path) {
+    return path.starts_with("s3://") || path.starts_with("s3a://") ||
+           path.starts_with("s3n://") || path.starts_with("oss://") ||
+           path.starts_with("cos://") || path.starts_with("cosn://");
+  }
+
+  std::string_view TryStorageFromContext() const {
+    using namespace file_option_groups;
+    // local is the default so detecting it here would be redundant
+    if (IsS3Path(_file_path)) {
+      return "s3";
+    }
+    for (const auto& info : kS3AuthOptions) {
+      if (_options.contains(info.name)) {
+        return "s3";
+      }
+    }
+    for (const auto& info : kS3ConnectionOptions) {
+      if (_options.contains(info.name)) {
+        return "s3";
+      }
+    }
     return {};
   }
 
@@ -193,7 +259,7 @@ class FileOptionsParser {
                         {"orc", FileFormat::Orc}};
 
     int location = -1;
-    std::string_view format = "text";
+    std::string_view format = kFormat.DefaultValue<std::string_view>();
     if (const auto* option = EraseOption(kFormat)) {
       location = ExprLocation(&option);
       auto maybe_format = TryGet<std::string_view>(option->arg);
@@ -218,8 +284,9 @@ class FileOptionsParser {
 
   std::shared_ptr<TextFormatOptions> ParseTextFormatOptions(bool is_csv) {
     using namespace file_option_groups;
-    uint8_t delim = is_csv ? ',' : '\t';
-    if (const auto* option = EraseOption(kDelimiter)) {
+    const auto& delim_opt = is_csv ? kCsvDelimiter : kTextDelimiter;
+    uint8_t delim = delim_opt.DefaultValue<uint8_t>();
+    if (const auto* option = EraseOption(delim_opt)) {
       auto maybe_delim = TryGet<char>(option->arg);
       if (!maybe_delim) {
         THROW_SQL_ERROR(
@@ -231,8 +298,9 @@ class FileOptionsParser {
       delim = *maybe_delim;
     }
 
-    uint8_t escape = is_csv ? '"' : '\\';
-    if (const auto* option = EraseOption(kEscape)) {
+    const auto& escape_opt = is_csv ? kCsvEscape : kTextEscape;
+    auto escape = escape_opt.DefaultValue<uint8_t>();
+    if (const auto* option = EraseOption(escape_opt)) {
       auto maybe_escape = TryGet<char>(option->arg);
       if (!maybe_escape) {
         THROW_SQL_ERROR(
@@ -243,8 +311,9 @@ class FileOptionsParser {
       escape = *maybe_escape;
     }
 
-    std::string null_string = is_csv ? "" : "\\N";
-    if (const auto* option = EraseOption(kNull)) {
+    const auto& null_opt = is_csv ? kCsvNull : kTextNull;
+    auto null_string = null_opt.DefaultValue<std::string>();
+    if (const auto* option = EraseOption(null_opt)) {
       auto maybe_null = TryGet<std::string_view>(option->arg);
       if (!maybe_null) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -254,7 +323,7 @@ class FileOptionsParser {
       null_string = std::string{*maybe_null};
     }
 
-    bool header = false;
+    auto header = kHeader.DefaultValue<bool>();
     if (const auto* option = EraseOption(kHeader)) {
       if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
         if (*maybe_match == "match") {
@@ -311,7 +380,6 @@ class FileOptionsParser {
   containers::FlatHashMap<std::string_view, const DefElem*> _options;
   std::string _operation;
   std::function<void(std::string)> _notice;
-  bool _help_requested = false;
 };
 
 }  // namespace sdb::pg

@@ -32,9 +32,39 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
   absl::StrAppend(&out, prefix, group.name, ":\n");
 
   for (const auto& opt : group.options) {
-    absl::StrAppend(&out, prefix, "  ", opt.name, " (", opt.type, ")");
-    if (!opt.default_value.empty()) {
-      absl::StrAppend(&out, " [default: ", opt.default_value, "]");
+    absl::StrAppend(&out, prefix, "  ", opt.name, " (", opt.TypeName(), ")");
+    switch (opt.type) {
+      case OptionInfo::Type::String:
+        if (!opt.string_val.empty()) {
+          absl::StrAppend(&out, " [default: ", opt.string_val, "]");
+        }
+        break;
+      case OptionInfo::Type::Boolean:
+        absl::StrAppend(&out, " [default: ", opt.bool_val ? "true" : "false",
+                        "]");
+        break;
+      case OptionInfo::Type::Integer:
+        absl::StrAppend(&out, " [default: ", opt.int_val, "]");
+        break;
+      case OptionInfo::Type::Character:
+        switch (opt.char_val) {
+          case '\t':
+            absl::StrAppend(&out, " [default: \\t]");
+            break;
+          case '\n':
+            absl::StrAppend(&out, " [default: \\n]");
+            break;
+          case '\r':
+            absl::StrAppend(&out, " [default: \\r]");
+            break;
+          case '\\':
+            absl::StrAppend(&out, " [default: \\\\]");
+            break;
+          default:
+            absl::StrAppend(
+              &out, " [default: ", std::string_view{&opt.char_val, 1}, "]");
+            break;
+        }
     }
     absl::StrAppend(&out, " - ", opt.description, "\n");
   }
@@ -54,6 +84,7 @@ std::string FormatHelp(std::span<const OptionGroup> groups) {
   std::string result;
   result.reserve(1024);
 
+  result.push_back('\n');
   for (const auto& group : groups) {
     FormatGroup(result, group, 0);
     absl::StrAppend(&result, "\n");

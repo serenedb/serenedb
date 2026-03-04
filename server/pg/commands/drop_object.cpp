@@ -112,7 +112,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   } else if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     r = {};
   }
-  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_INTENTIONAL_ABORT(); }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   return yaclib::MakeFuture(std::move(r));
 }
 

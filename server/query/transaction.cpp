@@ -64,11 +64,11 @@ Result Transaction::Commit() {
     };
 
     SDB_IF_FAILURE("crash_before_rocksdb_commit") {
-      SDB_IMMEDIATE_INTENTIONAL_ABORT();
+      SDB_IMMEDIATE_ABORT();
     }
     auto status = _rocksdb_transaction->Commit();
     SDB_IF_FAILURE("crash_after_rocksdb_commit") {
-      SDB_IMMEDIATE_INTENTIONAL_ABORT();
+      SDB_IMMEDIATE_ABORT();
     }
 
     if (!status.ok()) {

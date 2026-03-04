@@ -74,7 +74,7 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
 
   Uint64ToPersistent(end, parent_id.id());
   end.push_back(std::numeric_limits<uint8_t>::max());
-  Uint64ToPersistent(end, std::numeric_limits<unsigned long long>::max());
+  Uint64ToPersistent(end, std::numeric_limits<uint64_t>::max());
   return {start, end};
 }
 
@@ -87,13 +87,17 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
 
   Uint64ToPersistent(end, parent_id.id());
   end.push_back(static_cast<char>(type));
-  Uint64ToPersistent(end, std::numeric_limits<unsigned long long>::max());
+  Uint64ToPersistent(end, std::numeric_limits<uint64_t>::max());
   return {start, end};
 }
 
 std::string SettingsKey::Create(RocksDBSettingsType settings_type) {
   std::string key;
-  rocksutils::Concat(key, RocksDBEntryType::SettingsValue, settings_type);
+  key.reserve(sizeof(ObjectId) + sizeof(RocksDBEntryType) +
+              sizeof(RocksDBSettingsType));
+  Uint64ToPersistent(key, id::kInstance.id());
+  key.push_back(static_cast<char>(RocksDBEntryType::SettingsValue));
+  key.push_back(static_cast<char>(settings_type));
   return key;
 }
 

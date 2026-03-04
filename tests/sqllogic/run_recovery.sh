@@ -2,7 +2,7 @@
 
 cd sqllogic
 
-export RETRY_ATTEMPTS=120
+export RETRY_ATTEMPTS=10
 export BACKOFF_DURATION=500ms
 
 declare -a test_files=()
@@ -23,7 +23,7 @@ for test_file in "${test_files[@]}"; do
   echo "Running recovery test: $test_file"
 
   ./run.sh \
-    --host serenedb-single \
+    --host "$SERVICE_HOST" \
     --single-port 7777 \
     --test "$test_file" \
     --junit "tests-serenedb-recovery" \

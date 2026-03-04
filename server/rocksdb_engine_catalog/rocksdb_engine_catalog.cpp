@@ -1355,6 +1355,13 @@ Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
   return DropRange(start, end, cf);
 }
 
+Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id) {
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Definitions);
+  auto [start, end] = DefinitionKey::CreateInterval(parent_id);
+  return DropRange(start, end, cf);
+}
+
 Result RocksDBEngineCatalog::DropRange(std::string_view start,
                                        std::string_view end,
                                        rocksdb::ColumnFamilyHandle* cf) {

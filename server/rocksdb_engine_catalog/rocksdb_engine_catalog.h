@@ -226,6 +226,7 @@ class RocksDBEngineCatalog {
                           ObjectId id, WriteProperties properties);
   Result DropDefinition(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
   Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
+  Result DropEntry(ObjectId parent_id);
   Result DropRange(std::string_view start, std::string_view end,
                    rocksdb::ColumnFamilyHandle* cf);
   Result WriteTombstone(ObjectId parent_id, ObjectId id);

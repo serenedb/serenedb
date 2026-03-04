@@ -34,6 +34,7 @@
 #include <utility>
 #include <yaclib/async/contract.hpp>
 #include <yaclib/async/make.hpp>
+#include <yaclib/util/type_traits.hpp>
 
 #include "basics/exceptions.h"
 #include "basics/system-compiler.h"
@@ -41,7 +42,6 @@
 #include "metrics/fwd.h"
 #include "rest_server/serened.h"
 #include "utils/coro_helper.h"
-#include "yaclib/util/type_traits.hpp"
 
 namespace sdb {
 

@@ -37,8 +37,8 @@
 namespace sdb::catalog {
 using AsyncResult = yaclib::Future<Result>;
 
-static constexpr uint32_t kInitialDelay = 125;
-static constexpr uint32_t kMaxDelay = kInitialDelay << 7;
+inline constexpr uint32_t kInitialDelay = 125;
+inline constexpr uint32_t kMaxDelay = kInitialDelay << 7;
 
 struct DropTask {
   ObjectId parent_id;

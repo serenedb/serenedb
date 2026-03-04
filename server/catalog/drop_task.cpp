@@ -20,6 +20,7 @@
 
 #include "catalog/drop_task.h"
 
+#include <absl/strings/str_cat.h>
 #include <rocksdb/options.h>
 
 #include <filesystem>
@@ -43,28 +44,26 @@ namespace sdb::catalog {
 
 namespace {
 
-bool CheckResult(const Result& result) {
-  return result == ERROR_OK || result == ERROR_SERVER_DATA_SOURCE_NOT_FOUND ||
-         result == ERROR_SERVER_DATABASE_NOT_FOUND ||
-         result == ERROR_SERVER_DOCUMENT_NOT_FOUND ||
-         result == ERROR_SERVER_INDEX_NOT_FOUND;
-}
-
-Result RemoveIndexShards(ObjectId db_id,
-                         std::optional<ObjectId> schema_id = std::nullopt,
-                         std::optional<ObjectId> table_id = std::nullopt,
-                         std::optional<ObjectId> index_id = std::nullopt) {
+Result RemoveIndexShards(ObjectId db_id, ObjectId schema_id = ObjectId{0},
+                         ObjectId table_id = ObjectId{0},
+                         ObjectId index_id = ObjectId{0},
+                         ObjectId shard_id = ObjectId{0}) {
+  SDB_ASSERT(db_id.isSet());
   auto path = search::GetSearchEngine().GetPersistedPath(db_id);
-  if (schema_id) {
-    path /= absl::StrCat(*schema_id);
+  if (schema_id.isSet()) {
+    path /= absl::StrCat(schema_id);
   }
-  if (table_id) {
-    SDB_ASSERT(schema_id.has_value());
-    path /= absl::StrCat(*table_id);
+  if (table_id.isSet()) {
+    SDB_ASSERT(schema_id.isSet());
+    path /= absl::StrCat(table_id);
   }
-  if (index_id) {
-    SDB_ASSERT(table_id.has_value());
-    path /= absl::StrCat(*index_id);
+  if (index_id.isSet()) {
+    SDB_ASSERT(table_id.isSet());
+    path /= absl::StrCat(index_id);
+  }
+  if (shard_id.isSet()) {
+    SDB_ASSERT(index_id.isSet());
+    path /= absl::StrCat(shard_id);
   }
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
@@ -89,7 +88,7 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
       auto r = co_await scheduler->queueWithFuture(
         RequestLane::InternalLow, [task] { return (*task)(); });
       if (r.errorNumber() == ERROR_LOCKED) {
-        task->delay = std::min(kMaxDelay, task->delay << 1);
+        task->delay = std::min(kMaxDelay, task->delay * 2);
         continue;
       }
       if (!r.ok()) {
@@ -117,13 +116,13 @@ AsyncResult TableShardDrop::operator()() {
   auto r = server.DropRange(start, end,
                             RocksDBColumnFamilyManager::get(
                               RocksDBColumnFamilyManager::Family::Default));
-  if (!CheckResult(r)) {
+  if (!r.ok()) {
     return Schedule(shared_from_this());
   }
   rocksdb::Slice start_slice{start}, end_slice{end};
   r = rocksutils::ConvertStatus(server.db()->CompactRange(
     rocksdb::CompactRangeOptions{}, &start_slice, &end_slice));
-  if (!CheckResult(r)) {
+  if (!r.ok()) {
     return Schedule(shared_from_this());
   }
   return yaclib::MakeFuture<Result>();
@@ -132,12 +131,12 @@ AsyncResult TableShardDrop::operator()() {
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
   auto r = server.DropEntry(id, RocksDBEntryType::IndexShard);
-  if (!CheckResult(r)) {
+  if (!r.ok()) {
     return r;
   }
   if (is_root) {
     r = server.DropDefinition(parent_id, RocksDBEntryType::Index, id);
-    if (!CheckResult(r)) {
+    if (!r.ok()) {
       return r;
     }
 
@@ -149,29 +148,25 @@ Result IndexDrop::Finalize() {
 AsyncResult IndexDrop::operator()() {
   Result r;
   if (type == IndexType::Inverted && is_root) {
-    r = RemoveIndexShards(db_id, schema_id, parent_id, shard_id);
+    r = RemoveIndexShards(db_id, schema_id, parent_id, id);
   }
-  if (!CheckResult(r) || !CheckResult(Finalize())) {
-    co_return co_await Schedule(shared_from_this());
+  if (!r.ok() || !Finalize().ok()) {
+    return Schedule(shared_from_this());
   }
-  co_return {};
+  return yaclib::MakeFuture<Result>();
 }
 
 Result TableDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::Index);
-  if (!CheckResult(r)) {
-    return r;
-  }
 
-  r = server.DropEntry(id, RocksDBEntryType::TableShard);
-  if (!CheckResult(r)) {
+  auto r = server.DropEntry(id);
+  if (!r.ok()) {
     return r;
   }
 
   if (is_root) {
     r = server.DropDefinition(parent_id, RocksDBEntryType::Table, id);
-    if (!CheckResult(r)) {
+    if (!r.ok()) {
       return r;
     }
     return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
@@ -190,7 +185,7 @@ AsyncResult TableDrop::operator()() {
   }
   auto shard_task = std::make_shared<TableShardDrop>(id, shard_id);
   auto r = co_await Schedule(std::move(shard_task));
-  if (!CheckResult(r) || !CheckResult(Finalize())) {
+  if (!r.ok() || !Finalize().ok()) {
     co_return co_await Schedule(shared_from_this());
   }
   co_return {};
@@ -198,21 +193,18 @@ AsyncResult TableDrop::operator()() {
 
 Result SchemaDrop::Finalize() {
   auto& server = GetServerEngine();
-  for (auto entry_type : {RocksDBEntryType::Table, RocksDBEntryType::View,
-                          RocksDBEntryType::Function}) {
-    auto r = server.DropEntry(id, entry_type);
-    if (!CheckResult(r)) {
-      return r;
-    }
+  auto r = server.DropEntry(id);
+  if (!r.ok()) {
+    return r;
   }
 
   if (is_root) {
     auto r = server.DropDefinition(parent_id, RocksDBEntryType::Schema, id);
-    if (!CheckResult(r)) {
+    if (!r.ok()) {
       return r;
     }
     r = server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
-    if (!CheckResult(r)) {
+    if (!r.ok()) {
       return r;
     }
   }
@@ -228,7 +220,7 @@ AsyncResult SchemaDrop::operator()() {
   if (!async_results.empty()) {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
-  if (!CheckResult(Finalize())) {
+  if (!Finalize().ok()) {
     co_return co_await Schedule(shared_from_this());
   }
   co_return {};
@@ -237,11 +229,11 @@ AsyncResult SchemaDrop::operator()() {
 Result DatabaseDrop::Finalize() {
   auto& server = GetServerEngine();
   auto r = server.DropEntry(id, RocksDBEntryType::Schema);
-  if (!CheckResult(r)) {
+  if (!r.ok()) {
     return r;
   }
   r = server.DropDefinition(id::kInstance, RocksDBEntryType::Database, id);
-  if (!CheckResult(r)) {
+  if (!r.ok()) {
     return r;
   }
   return server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, id);
@@ -257,7 +249,7 @@ AsyncResult DatabaseDrop::operator()() {
   if (!async_results.empty()) {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
-  if (!CheckResult(Finalize())) {
+  if (!Finalize().ok()) {
     co_return co_await Schedule(shared_from_this());
   }
   co_return {};

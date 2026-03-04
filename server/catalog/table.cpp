@@ -226,12 +226,9 @@ void catalog::Table::WriteProperties(vpack::Builder& build) const {
 }
 
 void catalog::Table::WriteInternal(vpack::Builder& build) const {
-  // TODO(gnusi) writeTuple?
-  build.clear();
-  build.openObject();
+  SDB_ASSERT(build.isOpenObject());
   vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
                      ObjectInternal{_database_id});
-  build.close();
 }
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

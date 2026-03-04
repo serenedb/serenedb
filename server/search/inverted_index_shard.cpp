@@ -83,11 +83,13 @@ bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
 
 std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
                                                   ObjectId table_id,
-                                                  ObjectId id) {
+                                                  ObjectId index_id,
+                                                  ObjectId shard_id) {
   std::filesystem::path path = GetSearchEngine().GetPersistedPath(db);
   path /= absl::StrCat(schema);
   path /= absl::StrCat(table_id);
-  path /= absl::StrCat(id);
+  path /= absl::StrCat(index_id);
+  path /= absl::StrCat(shard_id);
   return path;
 }
 

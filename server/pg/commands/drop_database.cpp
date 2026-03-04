@@ -32,7 +32,7 @@ yaclib::Future<Result> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt) {
   if (stmt.missing_ok && r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
     r = {};
   }
-  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_INTENTIONAL_ABORT(); }
   return yaclib::MakeFuture(std::move(r));
 }
 

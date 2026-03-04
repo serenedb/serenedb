@@ -73,9 +73,8 @@ void RocksDBBackgroundThread::SyncStats() {
   auto snapshot = catalog::GetCatalog().GetSnapshot();
   for (auto& db : snapshot->GetDatabases()) {
     for (auto& schema : snapshot->GetSchemas(db->GetId())) {
-      catalog::VisitTables(
-        *snapshot, db->GetId(), schema->GetName(),
-        [&](auto& table, auto& shard) mutable {
+      catalog::VisitTableShards(
+        *snapshot, db->GetId(), schema->GetName(), [&](auto& shard) mutable {
           if (!shard) {
             SDB_WARN("xxxxx", Logger::ENGINES, "table shard is null");
             return;
@@ -83,7 +82,7 @@ void RocksDBBackgroundThread::SyncStats() {
           auto r = _engine.SyncTableShard(*shard);
           if (!r.ok()) {
             SDB_WARN("xxxxx", Logger::ENGINES,
-                     "unable to update settings for table '", table->GetName(),
+                     "unable to update settings for table '", shard->GetName(),
                      "': ", r.errorMessage());
           }
         });

@@ -302,7 +302,7 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
       if (!r.ok()) {
         return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
-
+      SDB_ASSERT(function);
       return _catalog.RegisterFunction(db_id, schema_id, std::move(function));
     });
 }
@@ -323,8 +323,8 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       if (!r.ok()) {
         return r;
       }
-
-      return _catalog.RegisterView(schema_id, view);
+      SDB_ASSERT(view);
+      return _catalog.RegisterView(schema_id, std::move(view));
     });
 }
 
@@ -356,11 +356,10 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Table));
       TableStats stats;
       if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
-        SDB_WARN("xxxxx", Logger::STARTUP,
-                 "Failed to read table stats for table shard ", shard_id);
+        return r;
       }
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
-      return _catalog.RegisterTableShard(shard);
+      return _catalog.RegisterTableShard(std::move(shard));
     });
 }
 
@@ -368,8 +367,7 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto shard =
-        index->CreateIndexShard(false, key.GetObjectId(), std::move(slice));
+      auto shard = index->CreateIndexShard(false, key.GetObjectId(), slice);
       if (!shard) {
         return std::move(shard.error());
       }
@@ -457,7 +455,23 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   if (!index) {
     return std::move(index.error());
   }
-  auto r = RegisterIndexShard(*index);
+  Result r;
+
+#ifdef SDB_DEV
+  // Check there are no tombstones in index scope
+  size_t counter = 0;
+  r = GetServerEngine().VisitDefinitions(index_id, RocksDBEntryType::Tombstone,
+                                         [&](DefinitionKey, vpack::Slice) {
+                                           counter++;
+                                           return Result{};
+                                         });
+  if (!r.ok()) {
+    return r;
+  }
+  SDB_ASSERT(counter == 0);
+#endif
+
+  r = RegisterIndexShard(std::move(*index));
   return r;
 }
 
@@ -532,23 +546,10 @@ void CatalogFeature::start() {
 }
 
 void CatalogFeature::unprepare() {
-  // TODO(gnusi): fix
   SDB_ASSERT(_local);
   SDB_ASSERT(_global);
   _local.reset();
   _global.reset();
-}
-
-void CatalogFeature::stop() {
-  aql::QueryCacheProperties p{
-    .mode = aql::QueryCacheMode::CacheAlwaysOff,
-    .max_results_count = 0,
-    .max_results_size = 0,
-    .max_entry_size = 0,
-    .show_bind_vars = false,
-  };
-  aql::QueryCache::instance()->properties(p);
-  aql::QueryCache::instance()->invalidate();
 }
 
 Result CatalogFeature::Open() {

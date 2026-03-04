@@ -123,8 +123,8 @@ struct Snapshot {
 };
 
 template<typename V>
-void VisitTables(const Snapshot& snapshot, ObjectId database_id,
-                 std::string_view schema, V&& v) {
+void VisitTableShards(const Snapshot& snapshot, ObjectId database_id,
+                      std::string_view schema, V&& v) {
   for (auto& rel : snapshot.GetRelations(database_id, schema)) {
     if (rel->GetType() != ObjectType::Table) {
       continue;
@@ -136,30 +136,8 @@ void VisitTables(const Snapshot& snapshot, ObjectId database_id,
       continue;
     }
     // SDB_ENSURE(shard, ERROR_INTERNAL);
-    v(table, shard);
+    v(shard);
   }
-}
-
-inline auto GetTables(const Snapshot& snapshot, ObjectId database_id,
-                      std::string_view schema) {
-  std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>
-    tables;
-  VisitTables(snapshot, database_id, schema, [&](auto& table, auto& shard) {
-    tables.emplace_back(table, shard);
-  });
-  return tables;
-}
-
-inline auto GetViews(const Snapshot& snapshot, ObjectId database_id,
-                     std::string_view schema) {
-  std::vector<std::shared_ptr<View>> views;
-  for (auto& rel : snapshot.GetRelations(database_id, schema)) {
-    if (rel->GetType() != ObjectType::View) {
-      continue;
-    }
-    views.push_back(basics::downCast<View>(rel));
-  }
-  return views;
 }
 
 using IndexFactory =
@@ -244,7 +222,6 @@ class CatalogFeature final : public SerenedFeature {
 
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void start() final;
-  void stop() final;
   void unprepare() final;
   void prepare() final;
 

@@ -265,7 +265,7 @@ class SnapshotImpl : public Snapshot {
       static_assert(false);
     }
     SDB_ASSERT(parent_id.isSet());
-    RemoveObjectDefinition(parent_id, object->GetId());
+    RemoveObjectDefinition(parent_id, object->GetId(), true, maybe_not_found);
   }
 
   template<ResolveType Type>
@@ -462,10 +462,6 @@ class SnapshotImpl : public Snapshot {
     return *it;
   }
 
-  bool ContainsObject(ObjectId id) const {
-    return _objects.find(id) != _objects.end();
-  }
-
   std::shared_ptr<TableShard> GetTableShard(ObjectId table_id) const final {
     auto table_deps = GetDependency<TableDependency>(table_id);
     if (!table_deps->shard_id.isSet()) {
@@ -627,9 +623,10 @@ class SnapshotImpl : public Snapshot {
   void RemoveObjectDefinition(ObjectId parent_id, ObjectId id, bool root = true,
                               bool maybe_not_found = false) noexcept {
     auto node = _objects.extract(id);
-    if (!maybe_not_found) {
-      SDB_ASSERT(!node.empty());
+    if (maybe_not_found && node.empty()) {
+      return;
     }
+    SDB_ASSERT(!node.empty());
     std::shared_ptr<Object> obj = node.value();
     SDB_ASSERT(obj);
     auto drop_childs = [&](const auto& deps) {
@@ -873,9 +870,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
                                        [&](bool) { return builder.slice(); });
     },
     [&](auto clone) {
-      if (clone->ContainsObject(database->GetId())) {
-        clone->UnregisterObject(database, id::kInstance);
-      }
+      clone->UnregisterObject(database, id::kInstance, true);
     });
 }
 
@@ -896,11 +891,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
-    [&](auto clone) {
-      if (clone->ContainsObject(schema->GetId())) {
-        clone->UnregisterObject(schema, database_id);
-      }
-    });
+    [&](auto clone) { clone->UnregisterObject(schema, database_id, true); });
 }
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
@@ -1055,9 +1046,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       return Result{};
     },
     [&](auto clone) {
-      if (clone->ContainsObject((*index)->GetId())) {
-        clone->UnregisterObject(*index, (*index)->GetRelationId());
-      }
+      clone->UnregisterObject(*index, (*index)->GetRelationId(), true);
     });
 }
 
@@ -1104,11 +1093,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
         *schema_id, RocksDBEntryType::View, view->GetId(),
         [&](bool internal) { return builder.slice(); });
     },
-    [&](auto clone) {
-      if (clone->ContainsObject(view->GetId())) {
-        clone->UnregisterObject(view, *schema_id);
-      }
-    });
+    [&](auto clone) { clone->UnregisterObject(view, *schema_id, true); });
 }
 
 Result LocalCatalog::CreateFunction(ObjectId database_id,
@@ -1138,11 +1123,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
                                        function->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
-    [&](auto clone) {
-      if (clone->ContainsObject(function->GetId())) {
-        clone->UnregisterObject(function, *schema_id);
-      }
-    });
+    [&](auto clone) { clone->UnregisterObject(function, *schema_id, true); });
 }
 
 Result LocalCatalog::CreateTable(
@@ -1204,11 +1185,7 @@ Result LocalCatalog::CreateTable(
         shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
         [&](bool) -> vpack::Slice { return b.slice(); });
     },
-    [&](auto clone) {
-      if (clone->ContainsObject(table->GetId())) {
-        clone->UnregisterObject(table, *schema_id);
-      }
-    });
+    [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,

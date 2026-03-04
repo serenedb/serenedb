@@ -7,7 +7,6 @@
 #   TEST_KIND=recovery ./run_in_docker.sh # Uses env variable
 
 TEST_KIND=${1:-${TEST_KIND:-sqllogic}}
-COMPOSE_FILE="docker-compose.$TEST_KIND.yml"
 
 if test -z "$SQLLOGIC_DIR"; then
   export SQLLOGIC_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -15,12 +14,6 @@ fi
 
 if ! test -f "$SQLLOGIC_DIR/run_in_docker.sh"; then
     echo "SQLLOGIC_DIR is undefined or invalid"
-    exit 255
-fi
-
-# Validate that compose file exists
-if ! test -f "$SQLLOGIC_DIR/$COMPOSE_FILE"; then
-    echo "Error: Unknown test kind '$TEST_KIND' - file '$COMPOSE_FILE' not found" >&2
     exit 255
 fi
 
@@ -101,6 +94,13 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
   docker network rm "$NETWORK_NAME"
   docker volume rm "$VOLUME_NAME"
 else
+  COMPOSE_FILE="docker-compose.$TEST_KIND.yml"
+  # Validate that compose file exists
+  if ! test -f "$SQLLOGIC_DIR/$COMPOSE_FILE"; then
+      echo "Error: Unknown test kind '$TEST_KIND' - file '$COMPOSE_FILE' not found" >&2
+      exit 255
+  fi
+
   # can be useful to run from container: docker compose run tests bash
   docker compose -f "$COMPOSE_FILE" up --attach tests --exit-code-from tests --remove-orphans
   test_exit_code=$?

@@ -274,6 +274,7 @@ jobs:
             vpack-tests.log
             iresearch-tests.log
             sqllogic-tests.log
+            recovery-tests.log
             serenedb-tests*.log
             fuerte-tests.log
             tests.log

@@ -46,7 +46,7 @@ fi
 cd $SQLLOGIC_DIR
 
 export BUILD_DIR="${BUILD_DIR:-build}"
-PREFIX="sl${GITHUB_RUN_NUMBER:-$(head -c4 /dev/urandom | tr -dc 'a-z0-9' || echo 'xxxx')}"
+PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 
 # can be useful to run from container: docker compose run tests bash
 docker compose \

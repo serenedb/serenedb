@@ -28,4 +28,4 @@ constexpr inline std::string_view kPhrase = "sdb_phrase";
 
 void registerSearchFunctions();
 
-}  // namespace sdb::search
+}  // namespace sdb::search::functions

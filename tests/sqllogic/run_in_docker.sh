@@ -48,6 +48,11 @@ cd $SQLLOGIC_DIR
 export BUILD_DIR="${BUILD_DIR:-build}"
 PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 
+cleanup() {
+  docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans --timeout 30
+}
+trap cleanup EXIT INT TERM
+
 # can be useful to run from container: docker compose run tests bash
 docker compose \
   -p "${PREFIX}" \
@@ -63,5 +68,6 @@ if ! test "${test_exit_code}" -eq "0"; then
   docker compose -f "$COMPOSE_FILE" logs serenedb-single
   echo "serenedb-single container log end!"
 fi
-docker compose -f "$COMPOSE_FILE" down --volumes
+
+# cleanup runs automatically via trap
 exit "$test_exit_code"

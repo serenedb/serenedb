@@ -172,7 +172,7 @@ class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
   explicit SereneDBTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
-    std::unique_ptr<Filter> filter);
+    std::unique_ptr<FilterNode> filter);
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -196,7 +196,7 @@ class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
-  std::unique_ptr<Filter> _filter;
+  std::unique_ptr<FilterNode> _filter;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -253,49 +253,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::connector::ColumnHandlePtr> column_handles,
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
-    std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
-    if (const auto* read_file_table =
-          dynamic_cast<const ReadFileTable*>(&this->table())) {
-      double sample_rate = 1.0;
-      velox::common::SubfieldFilters subfield_filters;
-      std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
-      for (auto& filter : filters) {
-        auto remaining =
-          velox::connector::hive::extractFiltersFromRemainingFilter(
-            filter, &evaluator, subfield_filters, sample_rate);
-        if (remaining) {
-          remaining_conjuncts.push_back(remaining);
-          rejected_filters.push_back(std::move(remaining));
-        }
-      }
-
-      velox::core::TypedExprPtr remaining_filter;
-      if (remaining_conjuncts.size() == 1) {
-        remaining_filter = std::move(remaining_conjuncts[0]);
-      } else if (remaining_conjuncts.size() > 1) {
-        remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
-          velox::BOOLEAN(), std::move(remaining_conjuncts),
-          velox::expression::kAnd);
-      }
-
-      return std::make_shared<FileTableHandle>(
-        read_file_table->GetSource(), read_file_table->GetOptions(),
-        std::move(subfield_filters), std::move(remaining_filter));
-    }
-
-    // Rejected filters are used to remove filters from plan as I see.
-    // Think about them better. For now assume we need all filters
-    // (useful filter) and
-    // (useless) -- ? Do not forget to handle this case
-
-    auto filter = ParseFilters(filters);
-    rejected_filters = std::move(filters);
-    SDB_ASSERT(!table().columnMap().empty(),
-               "SereneDBFullScanTableHandle: need a column for count field");
-    // todo column names
-    return std::make_shared<SereneDBTableHandle>(session, *this,
-                                                 std::move(filter));
-  }
+    std::vector<velox::core::TypedExprPtr>& rejected_filters) const final;
 };
 
 class RocksDBTable final : public axiom::connector::Table {
@@ -417,6 +375,58 @@ class RocksDBTable final : public axiom::connector::Table {
   bool _update_pk = false;
   bool _bulk_insert = false;
 };
+
+inline velox::connector::ConnectorTableHandlePtr
+SereneDBTableLayout::createTableHandle(
+  const axiom::connector::ConnectorSessionPtr& session,
+  std::vector<velox::connector::ColumnHandlePtr> column_handles,
+  velox::core::ExpressionEvaluator& evaluator,
+  std::vector<velox::core::TypedExprPtr> filters,
+  std::vector<velox::core::TypedExprPtr>& rejected_filters) const {
+  if (const auto* read_file_table =
+        dynamic_cast<const ReadFileTable*>(&this->table())) {
+    double sample_rate = 1.0;
+    velox::common::SubfieldFilters subfield_filters;
+    std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
+    for (auto& filter : filters) {
+      auto remaining =
+        velox::connector::hive::extractFiltersFromRemainingFilter(
+          filter, &evaluator, subfield_filters, sample_rate);
+      if (remaining) {
+        remaining_conjuncts.push_back(remaining);
+        rejected_filters.push_back(std::move(remaining));
+      }
+    }
+
+    velox::core::TypedExprPtr remaining_filter;
+    if (remaining_conjuncts.size() == 1) {
+      remaining_filter = std::move(remaining_conjuncts[0]);
+    } else if (remaining_conjuncts.size() > 1) {
+      remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+        velox::BOOLEAN(), std::move(remaining_conjuncts),
+        velox::expression::kAnd);
+    }
+
+    return std::make_shared<FileTableHandle>(
+      read_file_table->GetSource(), read_file_table->GetOptions(),
+      std::move(subfield_filters), std::move(remaining_filter));
+  }
+
+  // Rejected filters are used to remove filters from plan as I see.
+  // Think about them better. For now assume we need all filters
+  // (useful filter) and
+  // (useless) -- ? Do not forget to handle this case
+
+  auto pk_type = basics::downCast<RocksDBTable>(table()).PKType();
+
+  auto filter = ParseFilters(filters);
+  rejected_filters = std::move(filters);
+  SDB_ASSERT(!table().columnMap().empty(),
+             "SereneDBFullScanTableHandle: need a column for count field");
+  // todo column names
+  return std::make_shared<SereneDBTableHandle>(session, *this,
+                                               std::move(filter));
+}
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
  public:

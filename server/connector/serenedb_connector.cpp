@@ -26,7 +26,8 @@ namespace sdb::connector {
 
 SereneDBTableHandle::SereneDBTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout, std::unique_ptr<Filter> filter)
+  const axiom::connector::TableLayout& layout,
+  std::unique_ptr<FilterNode> filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},

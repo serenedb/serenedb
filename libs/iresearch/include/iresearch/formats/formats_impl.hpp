@@ -1363,12 +1363,11 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
       return doc_value = doc;
     };
 
-    if (_left_in_leaf >= IteratorTraits::kBlockSize / 8) {
+    // If this posting have only tail, this tail will be filled with garbage
+    // values, so we cannot use it.
+    if (_left_in_list != 0) [[likely]] {
       auto it =
         branchless_lower_bound(std::begin(_docs), std::end(_docs), target);
-      if (it == std::end(_docs)) [[unlikely]] {
-        return seal();
-      }
       return next(std::end(_docs) - it, *it);
     }
 
@@ -1739,9 +1738,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
 
   auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
   std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);
-  if (term_state.docs_count < IteratorTraits::kBlockSize) {
-    std::memset(this->_docs, 0, sizeof(this->_docs));
-  }
 
   if (term_state.docs_count > 1) {
     this->_left_in_list = term_state.docs_count;

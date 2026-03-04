@@ -185,10 +185,6 @@ struct SeekDoc {
   irs::doc_id_t expected;
 };
 
-}  // namespace detail
-
-namespace detail {
-
 struct Boosted : public irs::FilterWithBoost {
   struct Prepared : irs::Filter::Query {
     explicit Prepared(const BasicDocIterator::DocidsT& docs, irs::score_t boost)
@@ -231,6 +227,14 @@ struct Boosted : public irs::FilterWithBoost {
 unsigned Boosted::gExecuteCount{0};
 
 }  // namespace detail
+namespace {
+
+irs::ScoreAdapter MakeScoreAdapter(std::span<const irs::doc_id_t> docs) {
+  return {irs::memory::make_managed<detail::BasicDocIterator>(docs.begin(),
+                                                              docs.end())};
+}
+
+}  // namespace
 
 TEST(boolean_query_boost, hierarchy) {
   // hierarchy of boosted subqueries
@@ -14981,10 +14985,7 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{2, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                          included.begin(), included.end()),
-                        irs::memory::make_managed<detail::BasicDocIterator>(
-                          excluded.begin(), excluded.end()));
+      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
 
       // cost
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
@@ -15004,10 +15005,7 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                          included.begin(), included.end()),
-                        irs::memory::make_managed<detail::BasicDocIterator>(
-                          excluded.begin(), excluded.end()));
+      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -15025,10 +15023,7 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{1, 5, 6, 12, 29};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                          included.begin(), included.end()),
-                        irs::memory::make_managed<detail::BasicDocIterator>(
-                          excluded.begin(), excluded.end()));
+      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
         result.push_back(it.value());
@@ -15046,10 +15041,7 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                          included.begin(), included.end()),
-                        irs::memory::make_managed<detail::BasicDocIterator>(
-                          excluded.begin(), excluded.end()));
+      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
         result.push_back(it.value());
@@ -15066,10 +15058,7 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                          included.begin(), included.end()),
-                        irs::memory::make_managed<detail::BasicDocIterator>(
-                          excluded.begin(), excluded.end()));
+      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -15088,10 +15077,7 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                          included.begin(), included.end()),
-                        irs::memory::make_managed<detail::BasicDocIterator>(
-                          excluded.begin(), excluded.end()));
+      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -15119,10 +15105,7 @@ TEST(exclusion_test, seek) {
       {45, 45},
       {43, 45},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                        included.begin(), included.end()),
-                      irs::memory::make_managed<detail::BasicDocIterator>(
-                        excluded.begin(), excluded.end()));
+    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15139,10 +15122,7 @@ TEST(exclusion_test, seek) {
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
       {6, irs::doc_limits::eof()},
       {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
-    irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                        included.begin(), included.end()),
-                      irs::memory::make_managed<detail::BasicDocIterator>(
-                        excluded.begin(), excluded.end()));
+    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15163,10 +15143,7 @@ TEST(exclusion_test, seek) {
       {13, irs::doc_limits::eof()},
       {45, irs::doc_limits::eof()},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                        included.begin(), included.end()),
-                      irs::memory::make_managed<detail::BasicDocIterator>(
-                        excluded.begin(), excluded.end()));
+    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15186,10 +15163,7 @@ TEST(exclusion_test, seek) {
       {irs::doc_limits::invalid(), 11},
       {45, 45},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
-                        included.begin(), included.end()),
-                      irs::memory::make_managed<detail::BasicDocIterator>(
-                        excluded.begin(), excluded.end()));
+    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {

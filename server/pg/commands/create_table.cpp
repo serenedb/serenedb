@@ -28,6 +28,7 @@
 #include "catalog/table_options.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "pg/sql_exception.h"
@@ -43,6 +44,62 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
+
+class CreateTableUsingExternalOptions : public FileOptionsParser {
+ public:
+  CreateTableUsingExternalOptions(const List* options,
+                                  ConnectionContext& conn_ctx)
+    : FileOptionsParser{
+        "CREATE TABLE", {}, {}, [&conn_ctx](std::string msg) {
+          conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
+        }} {
+    VisitNodes(options, [&](const DefElem& option) {
+      auto [_, emplaced] =
+        _options.try_emplace(std::string_view{option.defname}, &option);
+      if (!emplaced) {
+        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(&option)),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    });
+
+    Parse();
+  }
+
+  void Parse() {
+    if (const auto* path_option = EraseOption("path")) {
+      auto maybe_path = TryGet<std::string_view>(path_option->arg);
+      if (!maybe_path) {
+        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("'path' option must be a string"));
+      }
+      _file_path = *maybe_path;
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("CREATE TABLE USING EXTERNAL requires 'path' option"));
+    }
+
+    _storage_options = ParseStorageOptions();
+
+    auto [underlying_format, format_name, _] = ParseFileFormat();
+    _parsed_format = underlying_format;
+    _format_options = ParseFormatOptions(format_name, underlying_format);
+
+    CheckUnrecognizedOptions();
+  }
+
+  catalog::FileInfo GetFileInfo() && {
+    return {.storage_options = std::move(_storage_options),
+            .format_options = std::move(_format_options)};
+  }
+
+ private:
+  FileFormat _parsed_format;
+  std::shared_ptr<StorageOptions> _storage_options;
+  std::shared_ptr<FormatOptions> _format_options;
+};
 
 std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {
   auto column_expr = std::make_shared<ColumnExpr>();
@@ -69,7 +126,7 @@ enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
-  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
@@ -84,6 +141,8 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto database = catalog.GetSnapshot()->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
+
+  bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
 
   catalog::CreateTableRequest request;
   request.name = table;
@@ -133,6 +192,12 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   auto append_check_constraint = [&](const Constraint& constraint,
                                      std::string_view column_name = {}) {
     SDB_ASSERT(constraint.contype == CONSTR_CHECK);
+    if (is_external) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ExprLocation(&constraint)),
+        ERR_MSG("check constraints are not supported for external tables"));
+    }
     std::string name;
     if (constraint.conname) {
       name = constraint.conname;
@@ -153,6 +218,11 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   };
 
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
+    if (is_external) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), CURSOR_POS(location),
+        ERR_MSG("primary keys are not supported for external tables"));
+    }
     if (absl::c_linear_search(request.pkColumns, column_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
                       ERR_MSG("column \"", request.columns[column_id].name,
@@ -234,6 +304,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             null_info = NullInfo::NotNull;
             break;
           case CONSTR_DEFAULT: {
+            if (is_external) {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                CURSOR_POS(ExprLocation(&constraint)),
+                ERR_MSG(
+                  "default values are not supported for external tables"));
+            }
             switch (col.generated_type) {
               using enum catalog::Column::GeneratedType;
               case kVirtual:
@@ -264,6 +341,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             append_check_constraint(constraint, col.name);
             break;
           case CONSTR_GENERATED: {
+            if (is_external) {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                CURSOR_POS(ExprLocation(&constraint)),
+                ERR_MSG(
+                  "generated columns are not supported for external tables"));
+            }
             switch (col.generated_type) {
               using enum catalog::Column::GeneratedType;
               case kVirtual:
@@ -339,6 +423,12 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     }
   });
   SDB_ASSERT(!stmt.constraints);
+
+  if (is_external) {
+    CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
+    request.file_info = std::move(parser).GetFileInfo();
+    request.type = std::to_underlying(TableType::File);
+  }
 
   catalog::CreateTableOptions options;
   auto r = MakeTableOptions(std::move(request), database->GetId(), options,

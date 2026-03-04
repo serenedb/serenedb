@@ -467,7 +467,6 @@ class NGramSimilarityDocIterator : public DocIterator {
                min_match_count, collect_all_states},
       // we are not interested in disjunction`s // scoring
       _approx{std::move(itrs), min_match_count} {
-    // avoid runtime conversion
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_approx);
 
@@ -542,6 +541,20 @@ class NGramSimilarityDocIterator : public DocIterator {
       return doc;
     }
     return advance();
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    // TODO(mbkkt) should be SDB_ASSERT(target > value())
+    // but depends on underlying iterator implementation
+    SDB_ASSERT(target >= value());
+    const auto doc = _approx.LazySeek(target);
+    if (target != doc) {
+      return doc;
+    }
+    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      return doc;
+    }
+    return doc + 1;
   }
 
   uint32_t count() final { return CountImpl(*this); }

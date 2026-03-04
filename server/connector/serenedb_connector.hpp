@@ -25,8 +25,11 @@
 #include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/connectors/hive/HiveConnectorUtil.h>
+#include <velox/core/Expressions.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/ReaderFactory.h>
+#include <velox/expression/ExprConstants.h>
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
@@ -431,6 +434,11 @@ class SereneDBConnectorSplitManager final
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const std::vector<axiom::connector::PartitionHandlePtr>& partitions,
     axiom::connector::SplitOptions options = {}) final {
+    if (const auto* file_handle =
+          dynamic_cast<const FileTableHandle*>(table_handle.get())) {
+      return std::make_shared<FileSplitSource>(
+        file_handle->GetOptions(), StaticStrings::kSereneDBConnector, options);
+    }
     return std::make_shared<SereneDBSplitSource>();
   }
 };
@@ -514,7 +522,7 @@ class SereneDBConnectorMetadata final
           dynamic_cast<const WriteFileTable*>(table.get())) {
       SDB_ASSERT(kind == axiom::connector::WriteKind::kInsert);
       return std::make_shared<FileConnectorWriteHandle>(
-        write_file_table->GetSink(), write_file_table->GetOptions());
+        write_file_table->GetOptions());
     }
 
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
@@ -628,8 +636,10 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
-        file_handle->GetSource(), file_handle->GetOptions(),
-        *connector_query_ctx->memoryPool());
+        file_handle->GetOptions(), file_handle->GetSubfieldFilters(),
+        output_type, column_handles, *connector_query_ctx->memoryPool(),
+        file_handle->GetRemainingFilter(),
+        connector_query_ctx->expressionEvaluator());
     }
 
     const auto& serene_table_handle =
@@ -721,7 +731,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
           connector_insert_table_handle.get())) {
       return std::make_unique<FileDataSink>(
-        file_handle->GetSink(), file_handle->GetOptions(),
+        file_handle->GetOptions(), *connector_query_ctx->memoryPool(),
         *connector_query_ctx->connectorMemoryPool());
     }
 

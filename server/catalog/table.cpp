@@ -145,7 +145,8 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _shard_ids{std::move(options.shards)},
     _number_of_shards{options.numberOfShards},
     _replication_factor{options.replicationFactor},
-    _write_concern{options.writeConcern} {
+    _write_concern{options.writeConcern},
+    _file_info{std::move(options.file_info)} {
   SDB_ASSERT(_shard_ids);
 
   _sharding_strategy = [&] -> std::unique_ptr<ShardingStrategy> {
@@ -191,6 +192,7 @@ struct Table::TableOutput {
   uint32_t writeConcern;
   int type;
   bool waitForSync;
+  FileInfo file_info;
 };
 // NOLINTEND
 
@@ -216,6 +218,7 @@ Table::TableOutput Table::MakeTableOptions() const {
     .writeConcern = _write_concern,
     .type = std::to_underlying(_type),
     .waitForSync = _wait_for_sync,
+    .file_info = _file_info,
   };
 }
 

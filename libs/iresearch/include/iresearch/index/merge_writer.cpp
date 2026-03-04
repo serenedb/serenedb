@@ -150,8 +150,8 @@ class RemappingDocIterator : public DocIterator {
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(false);
+    return _doc.value = doc_limits::eof();
   }
 
  private:
@@ -218,8 +218,8 @@ class CompoundDocIterator : public DocIterator {
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(false);
+    return _doc.value = doc_limits::eof();
   }
 
  private:
@@ -300,8 +300,8 @@ class SortingCompoundDocIterator : public DocIterator {
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(false);
+    return doc_limits::eof();
   }
 
  private:

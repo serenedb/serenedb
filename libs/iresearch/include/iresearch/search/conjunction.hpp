@@ -73,6 +73,10 @@ struct ScoreAdapter {
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) { return _it->seek(target); }
 
+  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) {
+    return _it->LazySeek(target);
+  }
+
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
     return _it->FetchScoreArgs(index);
   }
@@ -261,6 +265,19 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return converge(this->_itrs[0].seek(target));
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    // TODO(mbkkt) should be SDB_ASSERT(target > value())
+    // but depends on underlying iterator implementation
+    SDB_ASSERT(target >= value());
+    for (auto& it : this->_itrs) {
+      const auto doc = it.LazySeek(target);
+      if (doc != target) {
+        return doc;
+      }
+    }
+    return target;
+  }
+
   uint32_t count() final { return DocIterator::CountImpl(*this); }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
@@ -279,7 +296,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
       return doc_limits::eof();
     }
     for (auto it = begin; it != end; ++it) {
-      const auto doc = it->seek(target);
+      const auto doc = it->LazySeek(target);
       if (target < doc) {
         target = this->_itrs[0].seek(doc);
         goto restart;

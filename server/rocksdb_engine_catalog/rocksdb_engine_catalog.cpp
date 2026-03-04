@@ -802,9 +802,6 @@ void RocksDBEngineCatalog::stop() {
     _sync_thread.reset();
   }
 
-  if (_running_drops.load(std::memory_order_acquire)) {
-    _drop_task_finished.WaitForNotification();
-  }
 }
 
 void RocksDBEngineCatalog::unprepare() { shutdownRocksDBInstance(); }

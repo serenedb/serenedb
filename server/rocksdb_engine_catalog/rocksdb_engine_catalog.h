@@ -22,7 +22,6 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/notification.h>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/options.h>
@@ -342,15 +341,6 @@ class RocksDBEngineCatalog {
     ObjectId parent_id, RocksDBEntryType type,
     absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
-  void AddDropTask() { _running_drops.fetch_add(1, std::memory_order_release); }
-  void RemoveDropTask() {
-    _running_drops.fetch_sub(1, std::memory_order_release);
-    if (SerenedServer::Instance().isStopping() &&
-        _running_drops.load(std::memory_order_acquire) == 0) {
-      _drop_task_finished.Notify();
-    }
-  }
-
  private:
   Result VisitDefinitionsImpl(
     const std::string& start, const std::string& end,
@@ -464,9 +454,6 @@ class RocksDBEngineCatalog {
 
   // last point in time when an auto-flush happened
   std::chrono::steady_clock::time_point _auto_flush_last_executed;
-
-  std::atomic_uint64_t _running_drops = 0;
-  absl::Notification _drop_task_finished;
 
   metrics::Gauge<uint64_t>& _metrics_index_estimator_memory_usage;
   metrics::Gauge<uint64_t>& _metrics_wal_released_tick_flush;

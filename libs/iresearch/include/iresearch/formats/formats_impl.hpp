@@ -1341,43 +1341,44 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
   } else {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
     }
 
-    if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+    auto seal = [&] IRS_FORCE_INLINE {
       _left_in_leaf = 0;
       return doc_value = doc_limits::eof();
+    };
+
+    if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+      return seal();
     }
 
-    // If this posting have only tail, this tail will be filled with garbage
-    // values. So we cannot use it.
-    if (_left_in_list != 0) {
-      auto it =
-        branchless_lower_bound(std::begin(_docs), std::end(_docs), target);
-      SDB_ASSERT(it != std::end(_docs));
-      const auto left_in_leaf = std::end(_docs) - it;
+    auto next = [&](uint32_t left_in_leaf, doc_id_t doc) IRS_FORCE_INLINE {
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
         freq_value = *(std::end(_freqs) - left_in_leaf);
       }
       _left_in_leaf = left_in_leaf - 1;
-      return doc_value = *it;
+      return doc_value = doc;
+    };
+
+    if (_left_in_leaf >= IteratorTraits::kBlockSize / 8) {
+      auto it =
+        branchless_lower_bound(std::begin(_docs), std::end(_docs), target);
+      if (it == std::end(_docs)) [[unlikely]] {
+        return seal();
+      }
+      return next(std::end(_docs) - it, *it);
     }
 
     for (auto left_in_leaf = _left_in_leaf; left_in_leaf != 0; --left_in_leaf) {
       const auto doc = *(std::end(_docs) - left_in_leaf);
       if (target <= doc) {
-        if constexpr (IteratorTraits::Frequency()) {
-          auto& freq_value = std::get<FreqAttr>(_attrs).value;
-          freq_value = *(std::end(_freqs) - left_in_leaf);
-        }
-        _left_in_leaf = left_in_leaf - 1;
-        return doc_value = doc;
+        return next(left_in_leaf, doc);
       }
     }
-    _left_in_leaf = 0;
-    return doc_value = doc_limits::eof();
+    return seal();
   }
 }
 
@@ -1737,8 +1738,10 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   this->Init(meta);
 
   auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
-  std::get<CostAttr>(this->_attrs)
-    .reset(term_state.docs_count);  // Estimate iterator
+  std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);
+  if (term_state.docs_count < IteratorTraits::kBlockSize) {
+    std::memset(this->_docs, 0, sizeof(this->_docs));
+  }
 
   if (term_state.docs_count > 1) {
     this->_left_in_list = term_state.docs_count;

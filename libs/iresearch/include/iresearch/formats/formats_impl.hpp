@@ -3007,6 +3007,11 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   }
 
   const auto tail = docs_count % FieldTraits::kBlockSize;
+
+  if (!tail) {
+    return;
+  }
+
   const uint16_t size = doc_in.ReadI16();
   const auto* buf = doc_in.ReadView(size);
   if (!buf) {

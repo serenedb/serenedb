@@ -24,6 +24,7 @@
 
 #include <chrono>
 #include <exception>
+#include <limits>
 #include <yaclib/async/future.hpp>
 
 #include "app/app_server.h"
@@ -57,7 +58,10 @@ struct DropTask {
 
 struct TableShardDrop final : public DropTask,
                               std::enable_shared_from_this<TableShardDrop> {
-  TableShardDrop(ObjectId parent_id, ObjectId id) : DropTask{parent_id, id} {}
+  uint64_t size;
+
+  TableShardDrop(ObjectId parent_id, ObjectId id, uint64_t size)
+    : DropTask{parent_id, id}, size{size} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableShardDrop(table $0 shard $1)", parent_id.id(),
@@ -99,10 +103,14 @@ struct TableDrop final : public DropTask,
   static constexpr std::string_view kName = "table drop";
 
   ObjectId shard_id;
+  TableType type;
+  uint64_t table_size =
+    std::numeric_limits<uint64_t>::max();  // use_range_delete = true
   std::vector<std::shared_ptr<IndexDrop>> indexes;
 
-  TableDrop(ObjectId schema_id, ObjectId id, bool is_root = false)
-    : DropTask{schema_id, id, is_root} {}
+  TableDrop(ObjectId schema_id, ObjectId id, TableType type,
+            bool is_root = false)
+    : DropTask{schema_id, id, is_root}, type{type} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableDrop(schema $0 table $1)", parent_id.id(),

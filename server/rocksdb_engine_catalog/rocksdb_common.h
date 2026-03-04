@@ -62,6 +62,11 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
                      const rocksdb::Snapshot* snapshot,
                      bool prefix_same_as_start);
 
+/// helper method to remove large ranges of data
+Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
+                        rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,
+                        bool prefix_same_as_start, bool use_range_delete);
+
 /// compacts the entire key range of the database.
 /// warning: may cause a full rewrite of the entire database, which will
 /// take long for large databases - use with care!

@@ -22,6 +22,7 @@
 #pragma once
 
 #include <atomic>
+
 #include "app/app_feature.h"
 #include "rest_server/serened.h"
 
@@ -45,7 +46,9 @@ class ServerFeature final : public SerenedFeature {
   void prepare() final;
   void start() final;
   void beginShutdown() final;
-  bool isStopping() const { return _is_stopping.load(std::memory_order_acquire); }
+  bool isStopping() const {
+    return _is_stopping.load(std::memory_order_acquire);
+  }
 
  private:
   void waitForHeartbeat();

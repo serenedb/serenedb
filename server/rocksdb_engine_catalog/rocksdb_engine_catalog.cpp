@@ -801,7 +801,6 @@ void RocksDBEngineCatalog::stop() {
     }
     _sync_thread.reset();
   }
-
 }
 
 void RocksDBEngineCatalog::unprepare() { shutdownRocksDBInstance(); }

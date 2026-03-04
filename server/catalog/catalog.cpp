@@ -49,6 +49,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/types.h"
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
@@ -78,6 +79,22 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
           error, " metadata: ",     meta.toJson()};
 }
 
+ResultOr<CreateTableOptions> GetTableOptions(ObjectId db_id,
+                                             vpack::Slice slice) {
+  CreateTableOptions options;
+
+  // TODO(gnusi): .skip_unknown = false, .strict = true
+  if (auto r = vpack::ReadObjectNothrow<TableOptions>(
+        slice, options, {.skip_unknown = true, .strict = false},
+        ObjectInternal{db_id});
+      !r.ok()) {
+    return std::unexpected<Result>{
+      std::in_place,
+      ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice)};
+  }
+  return options;
+}
+
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
   ObjectId table_id, ObjectId index_id, vpack::Slice definition,
@@ -102,15 +119,24 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, bool is_root = false) {
-  auto drop = std::make_shared<TableDrop>(schema_id, table_id, is_root);
+  ObjectId table_id, CreateTableOptions options, bool is_root = false) {
+  auto type = magic_enum::enum_cast<TableType>(options.type);
+  SDB_ASSERT(type);
+  auto drop = std::make_shared<TableDrop>(schema_id, table_id, *type, is_root);
 
-  auto r = engine.VisitDefinitions(table_id, RocksDBEntryType::TableShard,
-                                   [&](DefinitionKey key, vpack::Slice) {
-                                     SDB_ASSERT(!drop->shard_id.isSet());
-                                     drop->shard_id = key.GetObjectId();
-                                     return Result{};
-                                   });
+  auto r = engine.VisitDefinitions(
+    table_id, RocksDBEntryType::TableShard,
+    [&](DefinitionKey key, vpack::Slice slice) {
+      SDB_ASSERT(!drop->shard_id.isSet());
+      drop->shard_id = key.GetObjectId();
+      TableStats stats;
+      if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
+        return r;
+      }
+      drop->table_size = stats.num_rows * options.columns.size();
+
+      return Result{};
+    });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -136,9 +162,14 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
   bool is_root = false) {
   auto drop = std::make_shared<SchemaDrop>(db_id, schema_id, is_root);
   auto r = engine.VisitDefinitions(
-    schema_id, RocksDBEntryType::Table, [&](DefinitionKey key, vpack::Slice) {
-      auto table_drop =
-        CreateTableDrop(engine, db_id, schema_id, key.GetObjectId());
+    schema_id, RocksDBEntryType::Table,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto options = GetTableOptions(db_id, slice);
+      if (!options) {
+        return std::move(options.error());
+      }
+      auto table_drop = CreateTableDrop(engine, db_id, schema_id,
+                                        key.GetObjectId(), std::move(*options));
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -206,7 +237,7 @@ class OpenDatabase {
   Result AddSchema(ObjectId database_id, ObjectId schema_id,
                    vpack::Slice definition);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                  vpack::Slice definition);
+                  CreateTableOptions options);
   Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   ObjectId index_id, vpack::Slice definition);
 
@@ -380,11 +411,15 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
     schema_id, RocksDBEntryType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
-      if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        return AddTable(db_id, schema_id, table_id, slice);
+      auto options = GetTableOptions(db_id, slice);
+      if (!options) {
+        return std::move(options.error());
       }
-      auto drop =
-        CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id, true);
+      if (!IsDeleted(table_id, DeletedScope::Schema)) {
+        return AddTable(db_id, schema_id, table_id, std::move(*options));
+      }
+      auto drop = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
+                                  std::move(*options), true);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -417,17 +452,7 @@ Result OpenDatabase::AddRoles() {
 }
 
 Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
-                              ObjectId table_id, vpack::Slice slice) {
-  CreateTableOptions options;
-
-  // TODO(gnusi): .skip_unknown = false, .strict = true
-  if (auto r = vpack::ReadObjectNothrow<TableOptions>(
-        slice, options, {.skip_unknown = true, .strict = false},
-        ObjectInternal{db_id});
-      !r.ok()) {
-    return ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice);
-  }
-
+                              ObjectId table_id, CreateTableOptions options) {
   auto r = _catalog.RegisterTable(db_id, schema_id, std::move(options));
   if (!r.ok()) {
     return r;

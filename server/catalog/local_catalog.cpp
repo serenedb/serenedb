@@ -150,25 +150,33 @@ class SnapshotImpl : public Snapshot {
                                                bool is_root) {
     auto schema_deps = GetDependency<SchemaDependency>(schema_id);
     auto drop_task = std::make_shared<SchemaDrop>(db_id, schema_id, is_root);
-    drop_task->tables = schema_deps->tables |
-                        std::views::transform([&](ObjectId id) {
-                          return CreateTableDrop(db_id, schema_id, id, false);
-                        }) |
-                        std::ranges::to<std::vector>();
+    drop_task->tables =
+      schema_deps->tables | std::views::transform([&](ObjectId id) {
+        auto table = GetObject<Table>(id);
+        SDB_ASSERT(table);
+        return CreateTableDrop(db_id, schema_id, std::move(table), false);
+      }) |
+      std::ranges::to<std::vector>();
 
     return drop_task;
   }
 
-  std::shared_ptr<TableDrop> CreateTableDrop(ObjectId db_id, ObjectId schema_id,
-                                             ObjectId table_id, bool is_root) {
-    auto table_deps = GetDependency<TableDependency>(table_id);
-    auto drop_task = std::make_shared<TableDrop>(schema_id, table_id, is_root);
+  std::shared_ptr<TableDrop> CreateTableDrop(
+    ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
+    bool is_root) {
+    auto table_deps = GetDependency<TableDependency>(table->GetId());
+    auto drop_task = std::make_shared<TableDrop>(
+      schema_id, table->GetId(), table->GetTableType(), is_root);
     drop_task->indexes =
       table_deps->indexes | std::views::transform([&](ObjectId id) {
-        return CreateIndexDrop(db_id, schema_id, table_id, id, is_root);
+        return CreateIndexDrop(db_id, schema_id, table->GetId(), id, is_root);
       }) |
       std::ranges::to<std::vector>();
     drop_task->shard_id = table_deps->shard_id;
+    auto shard = GetObject<TableShard>(table_deps->shard_id);
+    SDB_ASSERT(shard);
+    drop_task->table_size =
+      table->Columns().size() * shard->GetTableStats().num_rows;
     return drop_task;
   }
 
@@ -1515,11 +1523,13 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     if (!table_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto task = clone->CreateTableDrop(db_id, *schema_id, *table_id, true);
+    auto table = clone->GetObject<Table>(*table_id);
+    SDB_ASSERT(table);
+    auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
     }
-    clone->UnregisterObject(clone->GetObject<Table>(*table_id), *schema_id);
+    clone->UnregisterObject(std::move(table), *schema_id);
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();

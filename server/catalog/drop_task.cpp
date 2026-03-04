@@ -34,6 +34,8 @@
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
 #include "general_server/scheduler.h"
+#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
+#include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
@@ -112,16 +114,13 @@ AsyncResult TableShardDrop::operator()() {
   // TODO(codeworse): Probably we should store data by table shard id, not
   // table id. So, in that way here we would use id(not parent_id)
   auto [start, end] = connector::key_utils::CreateTableRange(parent_id);
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
   // Drop table data
-  auto r = server.DropRange(start, end,
-                            RocksDBColumnFamilyManager::get(
-                              RocksDBColumnFamilyManager::Family::Default));
-  if (!r.ok()) {
-    return Schedule(shared_from_this());
-  }
-  rocksdb::Slice start_slice{start}, end_slice{end};
-  r = rocksutils::ConvertStatus(server.db()->CompactRange(
-    rocksdb::CompactRangeOptions{}, &start_slice, &end_slice));
+  // TODO(codeworse): add some parameter for large range(not just >= 1000)
+  auto r =
+    rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
+                                 rocksdb::Slice{end}, cf, true, (size >= 1000));
   if (!r.ok()) {
     return Schedule(shared_from_this());
   }
@@ -183,10 +182,14 @@ AsyncResult TableDrop::operator()() {
   if (!async_results.empty()) {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
-  auto shard_task = std::make_shared<TableShardDrop>(id, shard_id);
-  auto r = co_await Schedule(std::move(shard_task));
-  if (!r.ok() || !Finalize().ok()) {
-    co_return co_await Schedule(shared_from_this());
+  SDB_ASSERT(type != TableType::Unknown);
+  if (type == TableType::Document) {
+    auto shard_task =
+      std::make_shared<TableShardDrop>(id, shard_id, table_size);
+    auto r = co_await Schedule(std::move(shard_task));
+    if (!r.ok() || !Finalize().ok()) {
+      co_return co_await Schedule(shared_from_this());
+    }
   }
   co_return {};
 }

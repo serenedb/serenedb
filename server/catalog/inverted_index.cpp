@@ -11,8 +11,8 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   // TODO(codeworse): parse args into InvertedIndexShardOptions
   search::InvertedIndexShardOptions options;
   options.commit_interval_ms = 1000;
-  options.consolidation_interval_ms = 10000;
-  options.cleanup_interval_step = 3;
+  options.consolidation_interval_ms = 1000;
+  options.cleanup_interval_step = 1;
   auto inverted_index_shard =
     search::InvertedIndexShard::Create(*this, options, is_new);
   return inverted_index_shard;

@@ -11,6 +11,12 @@ interface QueryResultsProps {
     results: {
         rows: Record<string, any>[] | undefined;
         status: "success" | "failed" | "pending" | "running" | "";
+        statementIndex?: number;
+        statementQuery?: string;
+        statementRange?: {
+            startOffset: number;
+            endOffset: number;
+        };
         error?: string;
         message?: string;
         created_at?: string;
@@ -19,11 +25,13 @@ interface QueryResultsProps {
         received_at?: string;
     }[];
     selectedResultIndex: number;
+    onSelectResult?: (index: number) => void;
 }
 
 export const QueryResults: React.FC<QueryResultsProps> = ({
     results,
     selectedResultIndex,
+    onSelectResult,
 }) => {
     if (
         selectedResultIndex < 0 ||
@@ -38,34 +46,26 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
         | Record<string, unknown>[]
         | undefined;
 
-    if (
-        selectedResult.status === "pending" ||
-        selectedResult.status === "running"
-    ) {
-        return <QueryPending />;
-    }
-
-    if (selectedResult.status === "failed") {
-        return <QueryFailed error={selectedResult.error || ""} />;
-    }
-
-    if (selectedResult.status === "success" && !rows?.length) {
-        return <QuerySucceeded message={selectedResult.message} />;
-    }
-
     const created_at = selectedResult.created_at;
     const started_at = selectedResult.execution_started_at;
     const finished_at = selectedResult.execution_finished_at;
     const received_at = selectedResult.received_at;
+    const hasRows = selectedResult.status === "success" && Boolean(rows?.length);
 
-    return (
-        <div className="flex flex-col flex-1 min-h-0">
-            <QueryResultsFooter
-                rows={rows}
-                created_at={created_at}
-                execution_started_at={started_at}
-                execution_finished_at={finished_at}
-                received_at={received_at}>
+    let content: React.ReactNode;
+
+    if (
+        selectedResult.status === "pending" ||
+        selectedResult.status === "running"
+    ) {
+        content = <QueryPending />;
+    } else if (selectedResult.status === "failed") {
+        content = <QueryFailed error={selectedResult.error || ""} />;
+    } else if (selectedResult.status === "success" && !rows?.length) {
+        content = <QuerySucceeded message={selectedResult.message} />;
+    } else {
+        content = (
+            <>
                 <TabsContent
                     className="flex-1 w-full h-full pt-2.5 min-h-0 overflow-auto"
                     value="json">
@@ -82,6 +82,22 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                         selectedResultIndex={selectedResultIndex}
                     />
                 </TabsContent>
+            </>
+        );
+    }
+
+    return (
+        <div className="flex flex-col flex-1 min-h-0">
+            <QueryResultsFooter
+                results={results}
+                selectedResultIndex={selectedResultIndex}
+                onSelectResult={onSelectResult}
+                rows={rows}
+                created_at={created_at}
+                execution_started_at={started_at}
+                execution_finished_at={finished_at}
+                received_at={received_at}>
+                {hasRows ? content : <div className="flex flex-1">{content}</div>}
             </QueryResultsFooter>
         </div>
     );

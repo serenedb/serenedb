@@ -240,7 +240,6 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
         }, [theme]);
 
         useEffect(() => {
-            console.log(globalTheme);
             const isDark = globalTheme === "dark";
             monaco.editor.defineTheme("myTheme", {
                 base: isDark ? "vs-dark" : "vs",

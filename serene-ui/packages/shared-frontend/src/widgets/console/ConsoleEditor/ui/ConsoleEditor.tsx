@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
     ExecuteQueryButton,
+    type ExecuteQueryBatchJob,
     useConsoleLayout,
     useQueryResults,
 } from "@serene-ui/shared-frontend/features";
@@ -9,6 +10,7 @@ import { Button, cn } from "@serene-ui/shared-frontend/shared";
 import {
     ConsoleEditorTabsSelector,
     type ConsoleTab,
+    type ConsoleStatementRange,
 } from "../../ConsoleEditorTabsSelector";
 
 import { PGSQLEditor } from "../../../shared/PGSQLEditor";
@@ -19,14 +21,30 @@ import { OpenSavedQueriesModalButton } from "@serene-ui/shared-frontend/features
 interface ConsoleEditorProps {
     selectedTabId: number;
     tabs: ConsoleTab[];
-    updateTab: (tabId: number, tabUpdate: Partial<ConsoleTab>) => void;
+    updateTab: (
+        tabId: number,
+        tabUpdate:
+            | Partial<ConsoleTab>
+            | ((tab: ConsoleTab) => Partial<ConsoleTab>),
+    ) => void;
     selectTab: (tabId: number) => void;
     removeTab: (tabId: number) => void;
     addTab: (tabType: ConsoleTab["type"]) => void;
-    addJobId: (jobId: number, tabId?: number) => void;
+    addPendingResults: (
+        results: Array<{
+            jobId: number;
+            statementIndex: number;
+            statementQuery: string;
+            sourceQuery: string;
+            statementRange: ConsoleStatementRange;
+        }>,
+        tabId?: number,
+    ) => void;
     limit: number;
     setLimit: (limit: number) => void;
     editorRef?: React.RefObject<HTMLElement | null>;
+    highlightRange?: ConsoleStatementRange;
+    highlightVariant?: "default" | "error";
 }
 
 export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
@@ -36,13 +54,15 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
     selectTab,
     removeTab,
     addTab,
-    addJobId,
+    addPendingResults,
     limit,
     setLimit,
     editorRef,
+    highlightRange,
+    highlightVariant,
 }) => {
     const { isMaximized, toggleMaximizedResults } = useConsoleLayout();
-    const { executeQuery } = useQueryResults();
+    const { executeQueryBatch } = useQueryResults();
     const autocomplete = useConnectionAutocomplete();
 
     const storybookPrefillAppliedRef = useRef(false);
@@ -84,16 +104,27 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
     }, [selectedTabId, tabs, updateTab]);
 
     const handleExecute = useCallback(async () => {
-        const result = await executeQuery(
+        const result = await executeQueryBatch(
             tabs[selectedTabId].value,
             tabs[selectedTabId].bind_vars || [],
             true,
             limit,
+            (job: ExecuteQueryBatchJob) => {
+                addPendingResults([
+                    {
+                        jobId: job.jobId,
+                        statementIndex: job.statementIndex,
+                        statementQuery: job.statementQuery,
+                        sourceQuery: job.sourceQuery,
+                        statementRange: job.statementRange,
+                    },
+                ]);
+            },
         );
-        if (result.success) {
-            addJobId(result.jobId);
+        if (!result.success) {
+            return;
         }
-    }, [tabs, selectedTabId, executeQuery, addJobId]);
+    }, [tabs, selectedTabId, executeQueryBatch, addPendingResults, limit]);
 
     const handleExecuteInNewTab = useCallback(async () => {
         const currentQuery = tabs[selectedTabId].value;
@@ -107,23 +138,38 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
         });
         selectTab(newTabIndex);
 
-        const result = await executeQuery(
+        const result = await executeQueryBatch(
             currentQuery,
             currentBindVars,
             true,
             limit,
+            (job: ExecuteQueryBatchJob) => {
+                addPendingResults(
+                    [
+                        {
+                            jobId: job.jobId,
+                            statementIndex: job.statementIndex,
+                            statementQuery: job.statementQuery,
+                            sourceQuery: job.sourceQuery,
+                            statementRange: job.statementRange,
+                        },
+                    ],
+                    newTabIndex,
+                );
+            },
         );
-        if (result.success) {
-            addJobId(result.jobId, newTabIndex);
+        if (!result.success) {
+            return;
         }
     }, [
         tabs,
         selectedTabId,
-        executeQuery,
-        addJobId,
+        executeQueryBatch,
+        addPendingResults,
         addTab,
         updateTab,
         selectTab,
+        limit,
     ]);
 
     const handleFilesDrop = useCallback(
@@ -185,6 +231,8 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
                     key={selectedTabId}
                     value={tabs[selectedTabId].value}
                     autocomplete={autocomplete}
+                    highlightRange={highlightRange}
+                    highlightVariant={highlightVariant}
                     onChange={(value) => {
                         updateTab(selectedTabId, {
                             value,
@@ -209,7 +257,8 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
                     query={tabs[selectedTabId].value}
                 />
                 <ExecuteQueryButton
-                    handleJobId={addJobId}
+                    handleJobId={() => undefined}
+                    onExecute={handleExecute}
                     query={tabs[selectedTabId].value}
                     bind_vars={tabs[selectedTabId].bind_vars}
                     limit={limit}

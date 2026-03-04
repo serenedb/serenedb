@@ -3,6 +3,10 @@ import React, { useEffect, useRef } from "react";
 import type * as Monaco from "monaco-editor";
 import { pgsqlFunctions, pgsqlKeywords } from "../model";
 
+const ACTIVE_STATEMENT_DECORATION_CLASS = "serene-active-statement-decoration";
+const ACTIVE_ERROR_STATEMENT_DECORATION_CLASS =
+    "serene-active-error-statement-decoration";
+
 interface PGSQLEditorProps {
     value: string;
     onChange: (value: string) => void;
@@ -16,6 +20,11 @@ interface PGSQLEditorProps {
         savedQueries: string[];
         queryHistory: string[];
     };
+    highlightRange?: {
+        startOffset: number;
+        endOffset: number;
+    };
+    highlightVariant?: "default" | "error";
 }
 
 let pgsqlCompletionProvider: Monaco.IDisposable | null = null;
@@ -29,6 +38,8 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             onExecute,
             onExecuteInNewTab,
             autocomplete: autocompleteProp,
+            highlightRange,
+            highlightVariant = "default",
         },
         ref,
     ) => {
@@ -40,10 +51,40 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             queryHistory: [],
         };
         const monacoRef = useRef<typeof Monaco | null>(null);
+        const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(
+            null,
+        );
+        const decorationsRef = useRef<string[]>([]);
 
         const registerAutocompletion = (monaco: typeof Monaco) => {
             monacoRef.current = monaco;
         };
+
+        useEffect(() => {
+            if (
+                typeof document === "undefined" ||
+                document.getElementById("serene-statement-decoration-styles")
+            ) {
+                return;
+            }
+
+            const style = document.createElement("style");
+            style.id = "serene-statement-decoration-styles";
+            style.textContent = `
+                .monaco-editor .${ACTIVE_STATEMENT_DECORATION_CLASS} {
+                    background-color: rgba(59, 130, 246, 0.18);
+                    border-bottom: 1px solid rgba(59, 130, 246, 0.45);
+                    border-radius: 2px;
+                }
+
+                .monaco-editor .${ACTIVE_ERROR_STATEMENT_DECORATION_CLASS} {
+                    background-color: rgba(239, 68, 68, 0.18);
+                    border-bottom: 1px solid rgba(239, 68, 68, 0.5);
+                    border-radius: 2px;
+                }
+            `;
+            document.head.appendChild(style);
+        }, []);
 
         useEffect(() => {
             const hasAutocomplete =
@@ -236,11 +277,53 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                 });
         }, [autocomplete]);
 
+        useEffect(() => {
+            const editor = editorRef.current;
+            const monaco = monacoRef.current;
+            const model = editor?.getModel();
+
+            if (!editor || !model || !monaco || !highlightRange) {
+                if (editor) {
+                    decorationsRef.current = editor.deltaDecorations(
+                        decorationsRef.current,
+                        [],
+                    );
+                }
+                return;
+            }
+
+            const start = model.getPositionAt(highlightRange.startOffset);
+            const end = model.getPositionAt(highlightRange.endOffset);
+
+            decorationsRef.current = editor.deltaDecorations(
+                decorationsRef.current,
+                [
+                    {
+                        range: new monaco.Range(
+                            start.lineNumber,
+                            start.column,
+                            end.lineNumber,
+                            end.column,
+                        ),
+                        options: {
+                            inlineClassName:
+                                highlightVariant === "error"
+                                    ? ACTIVE_ERROR_STATEMENT_DECORATION_CLASS
+                                    : ACTIVE_STATEMENT_DECORATION_CLASS,
+                        },
+                    },
+                ],
+            );
+        }, [highlightRange, highlightVariant, value]);
+
         return (
             <MonacoEditor
                 ref={ref}
                 language="pgsql"
                 beforeMount={registerAutocompletion}
+                onMount={(editor) => {
+                    editorRef.current = editor;
+                }}
                 options={{
                     suggestOnTriggerCharacters: true,
                     quickSuggestions: true,

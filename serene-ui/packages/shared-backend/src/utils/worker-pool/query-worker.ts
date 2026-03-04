@@ -129,8 +129,6 @@ const executeJob = async (taskData: any) => {
         const bindVars = JSON.parse(job.bind_vars?.toString() || "[]");
         const command = extractLeadingCommand(job.query);
 
-        console.log("1. " + command);
-
         if (shouldUseCursor(command)) {
             const cursor = client.query(new Cursor(job.query, bindVars));
 
@@ -151,7 +149,6 @@ const executeJob = async (taskData: any) => {
             }
 
             const actionType = mapCommandToActionType(command);
-            console.log("2. " + actionType);
 
             const message = buildSuccessMessage({
                 actionType,
@@ -178,7 +175,6 @@ const executeJob = async (taskData: any) => {
                     : command;
             const actionType = mapCommandToActionType(resultCommand);
 
-            console.log("2. " + actionType);
             const message = buildSuccessMessage({
                 actionType,
                 command: resultCommand,

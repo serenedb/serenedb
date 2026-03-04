@@ -15,6 +15,7 @@ interface ExecuteQueryButtonProps {
     saveToHistory?: boolean;
     limit?: number;
     handleJobId: (jobId: number) => void;
+    onExecute?: () => Promise<void> | void;
     onBeforeExecute?: () => void;
     onExecuteInNewTab?: () => void;
 }
@@ -25,6 +26,7 @@ export const ExecuteQueryButton = ({
     saveToHistory,
     limit,
     handleJobId,
+    onExecute,
     onBeforeExecute,
     onExecuteInNewTab,
 }: ExecuteQueryButtonProps) => {
@@ -40,6 +42,10 @@ export const ExecuteQueryButton = ({
                 className="rounded-r-none"
                 onClick={async () => {
                     onBeforeExecute?.();
+                    if (onExecute) {
+                        await onExecute();
+                        return;
+                    }
                     const result = await executeQuery(
                         query,
                         bind_vars || [],

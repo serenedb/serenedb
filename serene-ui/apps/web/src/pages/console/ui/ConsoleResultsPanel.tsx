@@ -5,6 +5,7 @@ import {
 import { QueryResults } from "@serene-ui/shared-frontend/widgets";
 import type { ConsoleTab } from "@serene-ui/shared-frontend/widgets";
 import { useMemo } from "react";
+import { useConsole } from "../model";
 
 interface ConsoleResultsPanelProps {
     currentTab: ConsoleTab;
@@ -17,9 +18,18 @@ export const ConsoleResultsPanel = ({
     isMaximized,
     isMaximizedResultsShown,
 }: ConsoleResultsPanelProps) => {
+    const { selectResult } = useConsole();
     const selectedResultIndex = useMemo(
-        () => currentTab.results.length - 1,
-        [currentTab.results.length],
+        () =>
+            Math.min(
+                Math.max(
+                    0,
+                    currentTab.selectedResultIndex ??
+                        currentTab.results.length - 1,
+                ),
+                Math.max(0, currentTab.results.length - 1),
+            ),
+        [currentTab.results.length, currentTab.selectedResultIndex],
     );
 
     // Only render if not maximized, or maximized with results shown
@@ -37,6 +47,9 @@ export const ConsoleResultsPanel = ({
                 <QueryResults
                     results={currentTab.results}
                     selectedResultIndex={selectedResultIndex}
+                    onSelectResult={(resultIndex) => {
+                        selectResult(currentTab.id, resultIndex);
+                    }}
                 />
             </ResizablePanel>
         </>

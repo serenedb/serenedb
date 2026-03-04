@@ -70,6 +70,29 @@ extern "C" {
 
 namespace irs {
 
+template<typename It, typename T, typename Cmp = std::less<>>
+It branchless_lower_bound(It begin, It end, const T& value,
+                          Cmp&& compare = {}) {
+  size_t len = end - begin;
+  if (len == 0) {
+    return end;
+  }
+  size_t step = std::bit_floor(len);
+  if (step != len && compare(begin[step], value)) {
+    len -= step + 1;
+    if (len == 0) {
+      return end;
+    }
+    step = std::bit_ceil(len);
+    begin = end - step;
+  }
+  for (step /= 2; step != 0; step /= 2) {
+    if (compare(begin[step], value))
+      begin += step;
+  }
+  return begin + compare(*begin, value);
+}
+
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
 inline void WriteStrings(IndexOutput& out, const auto& strings) {
@@ -1165,10 +1188,7 @@ class PostingIteratorBase : public DocIterator {
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
-  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= value());
-    return seek(target);
-  }
+  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final;
 
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -1315,9 +1335,62 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
 }
 
 template<typename IteratorTraits>
+doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
+  if constexpr (IteratorTraits::Position()) {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  } else {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    SDB_ASSERT(target > doc_value);
+
+    if (_max_in_leaf < target) [[unlikely]] {
+      if (!SeekToBlock(target)) [[unlikely]] {
+        _left_in_leaf = 0;
+        return doc_value = doc_limits::eof();
+      }
+    }
+
+    if (_left_in_list != 0) {
+      auto it =
+        branchless_lower_bound(std::begin(_docs), std::end(_docs), target);
+      const auto doc = *it;
+      if (doc != target) [[likely]] {
+        return doc;
+      }
+      const auto left_in_leaf = std::end(_docs) - it;
+      if constexpr (IteratorTraits::Frequency()) {
+        auto& freq_value = std::get<FreqAttr>(_attrs).value;
+        freq_value = *(std::end(_freqs) - left_in_leaf);
+      }
+      _left_in_leaf = left_in_leaf - 1;
+      return doc_value = doc;
+    }
+
+    for (auto left_in_leaf = _left_in_leaf; left_in_leaf != 0; --left_in_leaf) {
+      const auto doc = *(std::end(_docs) - left_in_leaf);
+      if (target <= doc) {
+        if (target < doc) {
+          return doc;
+        }
+        if constexpr (IteratorTraits::Frequency()) {
+          auto& freq_value = std::get<FreqAttr>(_attrs).value;
+          freq_value = *(std::end(_freqs) - left_in_leaf);
+        }
+        _left_in_leaf = left_in_leaf - 1;
+        return doc_value = doc;
+      }
+    }
+    _left_in_leaf = 0;
+    return doc_value = doc_limits::eof();
+  }
+}
+
+template<typename IteratorTraits>
 std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
   const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT mask,
   FillBlockScoreContext score, FillBlockMatchContext match) {
+  SDB_ASSERT(!IteratorTraits::Position());
   SDB_ASSERT(min < max);
   auto& doc_value = std::get<DocAttr>(_attrs).value;
 

@@ -87,8 +87,9 @@ It branchless_lower_bound(It begin, It end, const T& value,
     begin = end - step;
   }
   for (step /= 2; step != 0; step /= 2) {
-    if (compare(begin[step], value))
+    if (compare(begin[step], value)) {
       begin += step;
+    }
   }
   return begin + compare(*begin, value);
 }
@@ -1298,11 +1299,9 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     return doc_value;
   }
 
-  if (_max_in_leaf < target) [[unlikely]] {
-    if (!SeekToBlock(target)) [[unlikely]] {
-      _left_in_leaf = 0;
-      return doc_value = doc_limits::eof();
-    }
+  if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+    _left_in_leaf = 0;
+    return doc_value = doc_limits::eof();
   }
 
   [[maybe_unused]] uint32_t notify = 0;
@@ -1342,37 +1341,33 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
   } else {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    SDB_ASSERT(target > doc_value);
-
-    if (_max_in_leaf < target) [[unlikely]] {
-      if (!SeekToBlock(target)) [[unlikely]] {
-        _left_in_leaf = 0;
-        return doc_value = doc_limits::eof();
-      }
+    if (target <= doc_value) {
+      return doc_value;
     }
 
+    if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+      _left_in_leaf = 0;
+      return doc_value = doc_limits::eof();
+    }
+
+    // If this posting have only tail, this tail will be filled with garbage
+    // values. So we cannot use it.
     if (_left_in_list != 0) {
       auto it =
         branchless_lower_bound(std::begin(_docs), std::end(_docs), target);
-      const auto doc = *it;
-      if (doc != target) [[likely]] {
-        return doc;
-      }
+      SDB_ASSERT(it != std::end(_docs));
       const auto left_in_leaf = std::end(_docs) - it;
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
         freq_value = *(std::end(_freqs) - left_in_leaf);
       }
       _left_in_leaf = left_in_leaf - 1;
-      return doc_value = doc;
+      return doc_value = *it;
     }
 
     for (auto left_in_leaf = _left_in_leaf; left_in_leaf != 0; --left_in_leaf) {
       const auto doc = *(std::end(_docs) - left_in_leaf);
       if (target <= doc) {
-        if (target < doc) {
-          return doc;
-        }
         if constexpr (IteratorTraits::Frequency()) {
           auto& freq_value = std::get<FreqAttr>(_attrs).value;
           freq_value = *(std::end(_freqs) - left_in_leaf);

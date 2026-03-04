@@ -17,7 +17,7 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-#include "pg/functions/search.hpp"
+#include "search/functions.hpp"
 
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
@@ -27,7 +27,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 
-namespace sdb::pg::functions {
+namespace sdb::search::functions {
 
 namespace {
 
@@ -48,9 +48,9 @@ struct SearchStubFunction {
 // fail query.
 // TODO(Dronplane): maybe add naive implementation to run without index on best
 // effort basis?
-void registerSearchFunctions(const std::string& prefix) {
+void registerSearchFunctions() {
   velox::registerFunction<SearchStubFunction, bool,
-                          velox::Variadic<velox::Any>>({prefix + "phrase"});
+                          velox::Variadic<velox::Any>>({std::string{kPhrase}});
 }
 
-}  // namespace sdb::pg::functions
+}  // namespace sdb::search::functions

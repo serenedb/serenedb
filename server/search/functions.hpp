@@ -22,8 +22,10 @@
 
 #include <string>
 
-namespace sdb::pg::functions {
+namespace sdb::search::functions {
 
-void registerSearchFunctions(const std::string& prefix);
+constexpr inline std::string_view kPhrase = "sdb_phrase";
 
-}  // namespace sdb::pg::functions
+void registerSearchFunctions();
+
+}  // namespace sdb::search

@@ -43,6 +43,7 @@
 #include "basics/exceptions.h"
 #include "catalog/mangling.h"
 #include "iresearch/search/term_filter.hpp"
+#include "search/functions.hpp"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 #include "velox/type/CppToType.h"
@@ -761,7 +762,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxLike(filter, ctx, call);
   }
 
-  if (call.name() == "pg_phrase") {
+  if (call.name() == search::functions::kPhrase) {
     return FromSearchPhrase(filter, ctx, call);
   }
 

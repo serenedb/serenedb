@@ -842,7 +842,7 @@ bool RocksDBEngineCatalog::hasBackgroundError() const {
 
 // TODO: Rewrite this to use single scan.
 Result RocksDBEngineCatalog::VisitDefinitionsImpl(
-  const std::string& start, const std::string& end,
+  std::string_view start, std::string_view end,
   absl::FunctionRef<Result(DefinitionKey key, vpack::Slice)> visitor) {
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);

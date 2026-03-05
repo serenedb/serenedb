@@ -144,9 +144,11 @@ class InvertedIndexShard
   InvertedIndexShard(ObjectId id, const catalog::InvertedIndex& index,
                      InvertedIndexShardOptions options, bool is_new);
 
-  static std::filesystem::path GetPath(ObjectId db, ObjectId schema,
-                                       ObjectId table_id, ObjectId index_id,
-                                       ObjectId shard_id);
+  static std::filesystem::path GetPath(ObjectId db_id,
+                                       ObjectId schema_id = ObjectId{0},
+                                       ObjectId table_id = ObjectId{0},
+                                       ObjectId index_id = ObjectId{0},
+                                       ObjectId shard_id = ObjectId{0});
 
   void WriteInternal(vpack::Builder& builder) const final;
 

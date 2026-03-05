@@ -50,23 +50,8 @@ Result RemoveIndexShards(ObjectId db_id, ObjectId schema_id = ObjectId{0},
                          ObjectId table_id = ObjectId{0},
                          ObjectId index_id = ObjectId{0},
                          ObjectId shard_id = ObjectId{0}) {
-  SDB_ASSERT(db_id.isSet());
-  auto path = search::GetSearchEngine().GetPersistedPath(db_id);
-  if (schema_id.isSet()) {
-    path /= absl::StrCat(schema_id);
-  }
-  if (table_id.isSet()) {
-    SDB_ASSERT(schema_id.isSet());
-    path /= absl::StrCat(table_id);
-  }
-  if (index_id.isSet()) {
-    SDB_ASSERT(table_id.isSet());
-    path /= absl::StrCat(index_id);
-  }
-  if (shard_id.isSet()) {
-    SDB_ASSERT(index_id.isSet());
-    path /= absl::StrCat(shard_id);
-  }
+  auto path = search::InvertedIndexShard::GetPath(db_id, schema_id, table_id,
+                                                  index_id, shard_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {

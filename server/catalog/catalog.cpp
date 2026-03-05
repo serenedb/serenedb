@@ -59,7 +59,6 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/engine_feature.h"
-#include "utils/query_cache.h"
 #include "vpack/builder.h"
 #include "vpack/iterator.h"
 #include "vpack/serializer.h"
@@ -402,7 +401,8 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
       if (!shard) {
         return std::move(shard.error());
       }
-      return _catalog.RegisterIndexShard(*shard);
+      SDB_ASSERT(*shard);
+      return _catalog.RegisterIndexShard(std::move(*shard));
     });
 }
 
@@ -458,7 +458,7 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
     return r;
   }
   CollectDeletedDefinitions(table_id, DeletedScope::Table);
-  irs::Finally cleanup = [this] noexcept {
+  irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Table);
   };
   r = RegisterTableShard(table_id);
@@ -514,7 +514,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   }
 
   CollectDeletedDefinitions(schema_id, DeletedScope::Schema);
-  irs::Finally cleanup = [this] noexcept {
+  irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Schema);
   };
 

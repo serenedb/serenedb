@@ -343,7 +343,7 @@ class RocksDBEngineCatalog {
 
  private:
   Result VisitDefinitionsImpl(
-    const std::string& start, const std::string& end,
+    std::string_view start, std::string_view end,
     absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
   void shutdownRocksDBInstance() noexcept;

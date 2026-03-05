@@ -85,7 +85,6 @@
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
-#include "utils/query_cache.h"
 #include "vpack/builder.h"
 #include "vpack/slice.h"
 #include "yaclib/async/future.hpp"
@@ -294,7 +293,7 @@ class SnapshotImpl : public Snapshot {
   template<typename DependencyType = void>
   Result AddObjectDefinition(ObjectId parent_id,
                              std::shared_ptr<Object> object) {
-    if constexpr (!std::is_same_v<DependencyType, void>) {
+    if constexpr (!std::is_void_v<DependencyType>) {
       auto [_, inserted] = _object_dependencies.try_emplace(
         object->GetId(), std::make_shared<DependencyType>());
       SDB_ASSERT(inserted);
@@ -374,7 +373,7 @@ class SnapshotImpl : public Snapshot {
                  }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<SchemaObject>>());
+      .value_or(std::vector<std::shared_ptr<SchemaObject>>{});
   }
 
   std::vector<std::shared_ptr<Function>> GetFunctions(
@@ -390,7 +389,7 @@ class SnapshotImpl : public Snapshot {
                }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<Function>>());
+      .value_or(std::vector<std::shared_ptr<Function>>{});
   }
 
   std::shared_ptr<Database> GetDatabase(std::string_view database) const final {
@@ -604,7 +603,7 @@ class SnapshotImpl : public Snapshot {
                        std::shared_ptr<Object> new_object) {
     if (old_name != new_object->GetName()) {
       auto removed = _resolution_table.RemoveObject<Type>(parent_id, old_name);
-      SDB_ASSERT(removed.has_value());
+      SDB_ASSERT(removed);
       auto r = _resolution_table.AddObject<Type>(
         parent_id, new_object->GetName(), new_object->GetId(), false);
       if (!r.ok()) {
@@ -614,6 +613,7 @@ class SnapshotImpl : public Snapshot {
 
     auto it = _objects.find(new_object->GetId());
     SDB_ASSERT(it != _objects.end());
+    SDB_ASSERT((*it)->GetId() == new_object->GetId());
     const_cast<std::shared_ptr<Object>&>(*it) = std::move(new_object);
     return {};
   }
@@ -628,7 +628,8 @@ class SnapshotImpl : public Snapshot {
     return basics::downCast<T>(deps);
   }
 
-  void RemoveObjectDefinition(ObjectId parent_id, ObjectId id, bool root = true,
+  void RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
+                              bool root = false,
                               bool maybe_not_found = false) noexcept {
     auto node = _objects.extract(id);
     if (maybe_not_found && node.empty()) {
@@ -639,7 +640,7 @@ class SnapshotImpl : public Snapshot {
     SDB_ASSERT(obj);
     auto drop_childs = [&](const auto& deps) {
       for (auto child_id : deps) {
-        RemoveObjectDefinition(id, child_id, false);
+        RemoveObjectDefinition(id, child_id);
       }
     };
     // Drop from parent deps
@@ -672,11 +673,6 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->tables.erase(id);
         } break;
-        case ObjectType::TableShard: {
-          auto table_deps = GetDependency<TableDependency>(parent_id);
-          SDB_ASSERT(table_deps);
-          table_deps->shard_id = ObjectId::none();
-        } break;
         case ObjectType::View: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
@@ -701,14 +697,15 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Table: {
         auto table_deps = GetDependency<TableDependency>(id);
         if (table_deps->shard_id.isSet()) {
-          RemoveObjectDefinition(id, table_deps->shard_id, false, false);
+          RemoveObjectDefinition(id, table_deps->shard_id);
           table_deps->shard_id = ObjectId::none();
         }
         auto index_ids = table_deps->indexes;
         if (root) {
           for (auto index_id : index_ids) {
-            // indexes resolutions weren't erased in RemoveResulion
-            // So, we need to do it now
+            // While `DROP TABLE` statement indexes were not deleted from
+            // resolution table, because they were nested in schema scope.
+            // Therefore, we have to explicitly erase them here.
             auto index = GetObject<Index>(index_id);
             UnregisterObject(index, id, false);
           }
@@ -717,14 +714,16 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Index: {
         auto index_deps = GetDependency<IndexDependency>(id);
         if (index_deps->shard_id.isSet()) {
-          RemoveObjectDefinition(id, index_deps->shard_id, false, false);
+          RemoveObjectDefinition(id, index_deps->shard_id);
           index_deps->shard_id = ObjectId::none();
         }
       } break;
       case ObjectType::Function:
       case ObjectType::View:
+        break;
       case ObjectType::TableShard:
       case ObjectType::IndexShard:
+        SDB_ASSERT(!root);
         break;
       default:
         SDB_UNREACHABLE();

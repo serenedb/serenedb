@@ -6,5 +6,4 @@ target_sources(
         operation_options.cpp
         url_helper.cpp
         query_string.cpp
-        query_cache.cpp
 )

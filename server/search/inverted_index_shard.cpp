@@ -81,15 +81,28 @@ bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
 
 }  // namespace
 
-std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
+std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
+                                                  ObjectId schema_id,
                                                   ObjectId table_id,
                                                   ObjectId index_id,
                                                   ObjectId shard_id) {
-  std::filesystem::path path = GetSearchEngine().GetPersistedPath(db);
-  path /= absl::StrCat(schema);
-  path /= absl::StrCat(table_id);
-  path /= absl::StrCat(index_id);
-  path /= absl::StrCat(shard_id);
+  SDB_ASSERT(db_id.isSet());
+  auto path = search::GetSearchEngine().GetPersistedPath(db_id);
+  if (schema_id.isSet()) {
+    path /= absl::StrCat(schema_id);
+  }
+  if (table_id.isSet()) {
+    SDB_ASSERT(schema_id.isSet());
+    path /= absl::StrCat(table_id);
+  }
+  if (index_id.isSet()) {
+    SDB_ASSERT(table_id.isSet());
+    path /= absl::StrCat(index_id);
+  }
+  if (shard_id.isSet()) {
+    SDB_ASSERT(index_id.isSet());
+    path /= absl::StrCat(shard_id);
+  }
   return path;
 }
 

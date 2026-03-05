@@ -101,7 +101,7 @@ struct Point {
         resp.column_filters.emplace(pk_name, rhs_it->second);
         continue;
       }
-      if (rhs_it == lhs.column_filters.end()) {
+      if (rhs_it == rhs.column_filters.end()) {
         SDB_ASSERT(lhs_it != lhs.column_filters.end());
         resp.column_filters.emplace(pk_name, lhs_it->second);
         continue;

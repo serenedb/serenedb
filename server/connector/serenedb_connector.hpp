@@ -688,42 +688,61 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
     auto& transaction = serene_table_handle.GetTransaction();
 
+    const auto* filter = serene_table_handle.GetFilter().get();
+    SDB_ASSERT(filter);
+    auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+                               connector_query_ctx->connectorMemoryPool());
+
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
+
+#ifdef SDB_FAULT_INJECTION
+    // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
+    // bindable to allow parallel execution.
+    auto table_ptr =
+      transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+    SDB_ASSERT(table_ptr);
+    auto table_name = table_ptr->GetName();
+#endif
 
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     if (needs_read_your_own_writes) {
       auto& rocksdb_transaction = transaction.GetRocksDBTransaction();
       SDB_ASSERT(snapshot == rocksdb_transaction.GetSnapshot());
 
-#ifdef SDB_FAULT_INJECTION
-      // failpoints are per process so we make unique name to allow multiple
-      // sqlogic tests run in parallel without interference of failpoints
-      // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
-      // bindable to allow parallel execution.
-      auto table_ptr =
-        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
-      SDB_ASSERT(table_ptr);
-      auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
-      SDB_IF_FAILURE(fail_on_ryow) {
-        SDB_THROW(ERROR_DEBUG, fail_on_ryow, " condition failed");
+      SDB_IF_FAILURE(absl::StrCat(table_name, "_fail_on_ryow")) {
+        SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_fail_on_ryow"),
+                  " condition failed");
       }
-#endif
+
+      if (!points.empty()) {
+        return std::make_unique<RocksDBRYOWMultiGetDataSource>(
+          *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
+          output_type, column_oids, object_key, std::move(points));
+      }
+
+      SDB_IF_FAILURE(absl::StrCat(table_name, "_force_multiget_source")) {
+        SDB_THROW(ERROR_DEBUG,
+                  absl::StrCat(table_name, "_force_multiget_source"),
+                  " condition failed");
+      }
+
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
         *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
         object_key);
     }
 
-    SDB_ASSERT(serene_table_handle.GetFilter());
-    const auto* filter = serene_table_handle.GetFilter().get();
-    if (auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
-                                   connector_query_ctx->connectorMemoryPool());
-        !points.empty()) {
+    if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
         object_key, snapshot, std::move(points));
+    }
+
+    SDB_IF_FAILURE(absl::StrCat(table_name, "_force_multiget_source")) {
+      SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_force_multiget_source"),
+                " condition failed");
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

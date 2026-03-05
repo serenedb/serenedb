@@ -44,16 +44,14 @@ namespace analysis {
 ///       (default: false)
 ///       - skip: number of initial tokens to skip (default: 0)
 ////////////////////////////////////////////////////////////////////////////////
-class PathHierarchyTokenizer final
-  : public TypedAnalyzer<PathHierarchyTokenizer>,
-    private util::Noncopyable {
+class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
  public:
   struct OptionsT {
     char delimiter = '/';       // path separator
     char replacement = '/';     // replacement character for delimiter
     size_t buffer_size = 1024;  // term buffer size hint
-    bool reverse = false;  // reverse: domain hierarchies (e.g. example.com)
-    size_t skip = 0;       // skip first N tokens
+    bool reverse = false;       // reverse: domain hierarchies
+    size_t skip = 0;            // skip first N tokens
   };
 
   static constexpr std::string_view type_name() noexcept {
@@ -61,29 +59,27 @@ class PathHierarchyTokenizer final
   }
 
   static void init();  // trigger registration in static builds
+  static Analyzer::ptr make(OptionsT&& options);
 
-  explicit PathHierarchyTokenizer(const OptionsT& options);
+  ~PathHierarchyTokenizer() override;
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
-  bool next() final;
-  bool reset(std::string_view data) final;
 
- private:
+ protected:
+  explicit PathHierarchyTokenizer(OptionsT&& options) noexcept;
+
+  // Helper method for derived classes: replaces delimiter characters in input
+  // with replacement and stores result in term_attr using provided buffer.
   void apply_replacement(std::string_view input, TermAttr& term_attr,
-                         char delimiter, char replacement);
+                         char delimiter, char replacement,
+                         std::string& buffer) const;
 
   using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  struct StateT;
-  struct StateDeleterT {
-    void operator()(StateT*) const noexcept;
-  };
-
   attributes _attrs;
-  std::unique_ptr<StateT, StateDeleterT> _state;
-  bool _term_eof;
+  const OptionsT _options;
+
+  bool _term_eof = true;
   std::string _replace_buffer;
-  OptionsT _options;
 };
 
 }  // namespace analysis

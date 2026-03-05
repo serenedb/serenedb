@@ -33,290 +33,623 @@ class PathHierarchyTokenizerTests : public ::testing::Test {
   static void SetUpTestCase() { PathHierarchyTokenizer::init(); }
 };
 
+void AssertTokenStreamContents(
+  analysis::Analyzer* stream,
+  const std::vector<std::string_view>& expected_tokens,
+  const std::vector<size_t>& expected_start_offsets,
+  const std::vector<size_t>& expected_end_offsets,
+  const std::vector<int>& expected_pos_increments = {}) {
+  auto* term = irs::get<irs::TermAttr>(*stream);
+  auto* offset = irs::get<irs::OffsAttr>(*stream);
+  auto* inc = irs::get<irs::IncAttr>(*stream);
+
+  size_t token_idx = 0;
+  while (stream->next()) {
+    ASSERT_LT(token_idx, expected_tokens.size());
+    ASSERT_EQ(expected_tokens[token_idx], irs::ViewCast<char>(term->value));
+    ASSERT_EQ(expected_start_offsets[token_idx], offset->start);
+    ASSERT_EQ(expected_end_offsets[token_idx], offset->end);
+    if (!expected_pos_increments.empty()) {
+      ASSERT_EQ(expected_pos_increments[token_idx], inc->value);
+    }
+    ++token_idx;
+  }
+
+  ASSERT_EQ(token_idx, expected_tokens.size());
+  ASSERT_FALSE(stream->next());
+}
+
 TEST_F(PathHierarchyTokenizerTests, consts) {
   static_assert("path_hierarchy" == irs::Type<PathHierarchyTokenizer>::name());
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
+using OptionsT = PathHierarchyTokenizer::OptionsT;
 
-  // test default forward mode
+TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
   OptionsT options;
   options.reverse = false;
 
   std::string_view data = "/a/b/c";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_EQ(irs::Type<PathHierarchyTokenizer>::id(), stream.type());
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_EQ(irs::Type<PathHierarchyTokenizer>::id(), stream->type());
+  ASSERT_TRUE(stream->reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* payload = irs::get<irs::PayAttr>(stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* inc = irs::get<irs::IncAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  // First token: "/a" (up to first delimiter, excluding it)
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-  ASSERT_EQ("/a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, inc->value);
-
-  // Second token: "/a/b" (up to second delimiter, excluding it)
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-  ASSERT_EQ("/a/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, inc->value);
-
-  // Third token: "/a/b/c" (entire string)
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-  ASSERT_EQ("/a/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, inc->value);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  // test reverse mode (domain-like)
-
-  OptionsT options;
-  options.delimiter = '.';
-  options.replacement = '-';
-  options.reverse = true;
-
-  std::string_view data("www.example.com");
-  PathHierarchyTokenizer stream(options);
-
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* payload = irs::get<irs::PayAttr>(stream);
-  ASSERT_EQ(nullptr, payload);
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* inc = irs::get<irs::IncAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  // First token: "www.example.com"
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(15, offset->end);
-  ASSERT_EQ("www-example-com", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, inc->value);
-
-  // Second token: "example.com"
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(15, offset->end);
-  ASSERT_EQ("example-com", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, inc->value);
-
-  // Third token: "com"
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(12, offset->start);
-  ASSERT_EQ(15, offset->end);
-  ASSERT_EQ("com", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, inc->value);
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(stream.get(), {"/a", "/a/b", "/a/b/c"}, {0, 0, 0},
+                            {2, 4, 6}, {1, 1, 1});
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  // test single element (no delimiter)
-
   OptionsT options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = false;
 
   std::string_view data = "a";
-  PathHierarchyTokenizer stream(options);
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(stream.get(), {"a"}, {0}, {1}, {1});
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  // test custom delimiter
   OptionsT options;
   options.delimiter = '-';
   options.replacement = '-';
   options.reverse = false;
 
   std::string_view data = "a-b-c";
-  PathHierarchyTokenizer stream(options);
-
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  // For "a-b-c" with delims at [1,3] in Lucene:
-  // Token 0: "a" (0,1)
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-
-  // For "a-b-c" with delims at [1,3]:
-  // Token 0: up to delim[1] = 3 -> "a-b"
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-  ASSERT_EQ("a-b", irs::ViewCast<char>(term->value));
-
-  // Token 1: full text -> "a-b-c"
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-  ASSERT_EQ("a-b-c", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_load_json) {
-  // load JSON object with default options
-  {
-    std::string_view data = "/a/b/c";
-    auto stream = analyzers::Get(
-      "path_hierarchy", irs::Type<irs::text_format::Json>::get(), "{}");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* payload = irs::get<irs::PayAttr>(*stream);
-    ASSERT_EQ(nullptr, payload);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(2, offset->end);
-    ASSERT_EQ("/a", irs::ViewCast<char>(term->value));
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(4, offset->end);
-    ASSERT_EQ("/a/b", irs::ViewCast<char>(term->value));
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(6, offset->end);
-    ASSERT_EQ("/a/b/c", irs::ViewCast<char>(term->value));
-
-    ASSERT_FALSE(stream->next());
-  }
-
-  // with custom delimiter
-  {
-    std::string_view data = "a.b.c";
-    auto stream =
-      analyzers::Get("path_hierarchy", irs::Type<irs::text_format::Json>::get(),
-                     "{\"delimiter\":\".\" }");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    // For "a.b.c" with delims at [1,3]:
-    // Token 0:  "a" (0,1)
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(1, offset->end);
-    ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-
-    // Token 1: up to delim[1] = 3 -> "a.b"
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("a.b", irs::ViewCast<char>(term->value));
-
-    // Token 1: full text -> "a.b.c"
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(5, offset->end);
-    ASSERT_EQ("a.b.c", irs::ViewCast<char>(term->value));
-
-    ASSERT_FALSE(stream->next());
-  }
-
-  // with reverse mode
-  {
-    std::string_view data = "www.example.com";
-    auto stream = analyzers::Get(
-      "path_hierarchy", irs::Type<irs::text_format::Json>::get(),
-      "{\"reverse\": true, \"delimiter\": \".\", \"replacement\": \".\"}");
-
-    ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(15, offset->end);
-    ASSERT_EQ("www.example.com", irs::ViewCast<char>(term->value));
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(4, offset->start);
-    ASSERT_EQ(15, offset->end);
-    ASSERT_EQ("example.com", irs::ViewCast<char>(term->value));
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(12, offset->start);
-    ASSERT_EQ(15, offset->end);
-    ASSERT_EQ("com", irs::ViewCast<char>(term->value));
-
-    ASSERT_FALSE(stream->next());
-  }
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_load_vpack) {
-  // load VPack object
-  std::string_view data = "/a/b";
-  auto builder = vpack::Parser::fromJson(R"({"delimiter":"/"})");
-  std::string in_str;
-  in_str.assign(builder->slice().startAs<char>(), builder->slice().byteSize());
-  auto stream = analyzers::Get(
-    "path_hierarchy", irs::Type<irs::text_format::VPack>::get(), in_str);
-
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
   ASSERT_NE(nullptr, stream);
   ASSERT_TRUE(stream->reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(*stream);
-  auto* term = irs::get<irs::TermAttr>(*stream);
+  AssertTokenStreamContents(stream.get(), {"a", "a-b", "a-b-c"}, {0, 0, 0},
+                            {1, 3, 5}, {1, 1, 1});
+}
 
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-  ASSERT_EQ("/a", irs::ViewCast<char>(term->value));
+TEST_F(PathHierarchyTokenizerTests, test_reset_multiple_times) {
+  OptionsT options;
+  options.delimiter = '/';
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
 
-  ASSERT_TRUE(stream->next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-  ASSERT_EQ("/a/b", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream->reset("/a/b"));
+  AssertTokenStreamContents(stream.get(), {"/a", "/a/b"}, {0, 0}, {2, 4},
+                            {1, 1});
 
-  ASSERT_FALSE(stream->next());
+  ASSERT_TRUE(stream->reset("/xx/y1/z"));
+  AssertTokenStreamContents(stream.get(), {"/xx", "/xx/y1", "/xx/y1/z"},
+                            {0, 0, 0}, {3, 6, 8}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_empty_path) {
+  OptionsT options;
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(""));
+
+  AssertTokenStreamContents(stream.get(), {}, {}, {}, {});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
+  OptionsT options;
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset("/a/b/"));
+  AssertTokenStreamContents(stream.get(), {"/a", "/a/b", "/a/b/"}, {0, 0, 0},
+                            {2, 4, 5}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 5;
+  options.reverse = false;
+
+  std::string_view data = "/a/b";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {}, {}, {}, {});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 2;
+  options.reverse = false;
+
+  std::string_view data = "/a/b/c/d/e";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"/c", "/c/d", "/c/d/e"}, {4, 4, 4},
+                            {6, 8, 10}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
+  OptionsT options;
+  options.delimiter = '\0';
+  options.reverse = false;
+
+  std::string_view data = "abc";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"abc"}, {0}, {3}, {1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
+  OptionsT options;
+  options.delimiter = '/';
+
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset("/a/b"));
+  ASSERT_TRUE(stream->reset("/x/y"));
+
+  AssertTokenStreamContents(stream.get(), {"/x", "/x/y"}, {0, 0}, {2, 4},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.reverse = false;
+
+  std::string_view data = "/café/café/café";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(),
+                            {"/café", "/café/café", "/café/café/café"},
+                            {0, 0, 0}, {6, 12, 18}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '_';
+  options.reverse = false;
+
+  std::string_view data = "/a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"_a", "_a_b", "_a_b_c"}, {0, 0, 0},
+                            {2, 4, 6}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.reverse = false;
+
+  std::string_view data = "//a///b//";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(
+    stream.get(),
+    {"/", "//a", "//a/", "//a//", "//a///b", "//a///b/", "//a///b//"},
+    {0, 0, 0, 0, 0, 0, 0}, {1, 3, 4, 5, 7, 8, 9}, {1, 1, 1, 1, 1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.reverse = false;
+
+  std::string_view data = "a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"a", "a/b", "a/b/c"}, {0, 0, 0},
+                            {1, 3, 5}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.reverse = false;
+
+  std::string_view data = "/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"/"}, {0}, {1}, {1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.reverse = false;
+
+  std::string_view data = "//";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"/", "//"}, {0, 0}, {1, 2}, {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 1;
+  options.reverse = false;
+
+  std::string_view data = "/a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/b", "/b/c"}, {2, 2}, {4, 6},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 1;
+  options.reverse = false;
+
+  std::string_view data = "/a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/b", "/b/c", "/b/c/"}, {2, 2, 2},
+                            {4, 6, 7}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 1;
+  options.reverse = false;
+
+  std::string_view data = "a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/b", "/b/c"}, {1, 1}, {3, 5},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests,
+       test_forward_start_of_char_end_of_delimiter_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 1;
+  options.reverse = false;
+
+  std::string_view data = "a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/b", "/b/c", "/b/c/"}, {1, 1, 1},
+                            {3, 5, 6}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 1;
+  options.reverse = false;
+
+  std::string_view data = "/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {}, {}, {}, {});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.skip = 1;
+  options.reverse = false;
+
+  std::string_view data = "//";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/"}, {1}, {2}, {1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
+  OptionsT options;
+  options.delimiter = '\\';
+  options.replacement = '\\';
+  options.reverse = false;
+
+  std::string_view data = "c:\\a\\b\\c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(),
+                            {"c:", "c:\\a", "c:\\a\\b", "c:\\a\\b\\c"},
+                            {0, 0, 0, 0}, {2, 4, 6, 8}, {1, 1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
+  OptionsT options;
+  options.delimiter = '.';
+  options.replacement = '-';
+  options.reverse = true;
+
+  std::string_view data("www.example.com");
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(),
+                            {"www-example-com", "example-com", "com"},
+                            {0, 4, 12}, {15, 15, 15}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
+  OptionsT options;
+  options.delimiter = '.';
+  options.replacement = '-';
+  options.skip = 2;
+  options.reverse = true;
+
+  std::string_view data = "a.b.c.d.e";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a-b-c-", "b-c-", "c-"}, {0, 2, 4},
+                            {6, 6, 6}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.reverse = true;
+  options.skip = 0;
+
+  std::string_view data = "/a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/a/b/c", "a/b/c", "b/c", "c"},
+                            {0, 1, 3, 5}, {6, 6, 6, 6}, {1, 1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.reverse = true;
+  options.skip = 0;
+
+  std::string_view data = "/a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/a/b/c/", "a/b/c/", "b/c/", "c/"},
+                            {0, 1, 3, 5}, {7, 7, 7, 7}, {1, 1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests,
+       test_reverse_start_of_char_end_of_delimiter) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.reverse = true;
+  options.skip = 0;
+
+  std::string_view data = "a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a/b/c/", "b/c/", "c/"}, {0, 2, 4},
+                            {6, 6, 6}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.reverse = true;
+  options.skip = 0;
+
+  std::string_view data = "/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/"}, {0}, {1}, {1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.reverse = true;
+  options.skip = 0;
+
+  std::string_view data = "//";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"//", "/"}, {0, 1}, {2, 2}, {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.skip = 1;
+  options.reverse = true;
+
+  std::string_view data = "/a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/a/b/", "a/b/", "b/"}, {0, 1, 3},
+                            {5, 5, 5}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.skip = 1;
+  options.reverse = true;
+
+  std::string_view data = "/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {}, {}, {}, {});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.skip = 1;
+  options.reverse = true;
+
+  std::string_view data = "//";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/"}, {0}, {1}, {1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.reverse = false;
+
+  std::string_view data = "a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a", "a/b", "a/b/c", "a/b/c/"},
+                            {0, 0, 0, 0}, {1, 3, 5, 6}, {1, 1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
+  auto test =
+    [](std::string_view data, std::vector<std::string_view> expected_tokens,
+       std::vector<size_t> expected_starts, std::vector<size_t> expected_ends) {
+      auto stream = analyzers::Get(
+        "path_hierarchy", irs::Type<irs::text_format::Json>::get(), "{}");
+      ASSERT_NE(nullptr, stream);
+      ASSERT_TRUE(stream->reset(data));
+
+      std::vector<int> pos_increments(expected_tokens.size(), 1);
+      AssertTokenStreamContents(stream.get(), expected_tokens, expected_starts,
+                                expected_ends, pos_increments);
+    };
+
+  test("a/b/c", {"a", "a/b", "a/b/c"}, {0, 0, 0}, {1, 3, 5});
+  test("a/b/c/", {"a", "a/b", "a/b/c", "a/b/c/"}, {0, 0, 0, 0}, {1, 3, 5, 6});
+  test("/a/b/c", {"/a", "/a/b", "/a/b/c"}, {0, 0, 0}, {2, 4, 6});
+  test("/a/b/c/", {"/a", "/a/b", "/a/b/c", "/a/b/c/"}, {0, 0, 0, 0},
+       {2, 4, 6, 7});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.skip = 1;
+  options.reverse = true;
+
+  std::string_view data = "a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a/b/", "b/"}, {0, 2}, {4, 4},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests,
+       test_reverse_start_of_char_end_of_delimiter_skip) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.skip = 1;
+  options.reverse = true;
+
+  std::string_view data = "a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a/b/", "b/"}, {0, 2}, {4, 4},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_skip2) {
+  OptionsT options;
+  options.delimiter = '/';
+  options.replacement = '/';
+  options.skip = 2;
+  options.reverse = true;
+
+  std::string_view data = "/a/b/c/";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/a/", "a/"}, {0, 1}, {3, 3},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_reverse) {
+  auto test =
+    [](std::string_view data, std::vector<std::string_view> expected_tokens,
+       std::vector<size_t> expected_starts, std::vector<size_t> expected_ends) {
+      auto stream = analyzers::Get("path_hierarchy",
+                                   irs::Type<irs::text_format::Json>::get(),
+                                   "{\"reverse\": true}");
+      ASSERT_NE(nullptr, stream);
+      ASSERT_TRUE(stream->reset(data));
+
+      std::vector<int> pos_increments(expected_tokens.size(), 1);
+      AssertTokenStreamContents(stream.get(), expected_tokens, expected_starts,
+                                expected_ends, pos_increments);
+    };
+
+  test("a/b/c", {"a/b/c", "b/c", "c"}, {0, 2, 4}, {5, 5, 5});
+  test("a/b/c/", {"a/b/c/", "b/c/", "c/"}, {0, 2, 4}, {6, 6, 6});
+  test("/a/b/c", {"/a/b/c", "a/b/c", "b/c", "c"}, {0, 1, 3, 5}, {6, 6, 6, 6});
+  test("/a/b/c/", {"/a/b/c/", "a/b/c/", "b/c/", "c/"}, {0, 1, 3, 5},
+       {7, 7, 7, 7});
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_make_config_json) {
@@ -402,1043 +735,59 @@ TEST_F(PathHierarchyTokenizerTests, test_invalid_json) {
   }
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_reset_multiple_times) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
+TEST_F(PathHierarchyTokenizerTests, test_load_json) {
+  // load JSON object with default options
+  {
+    std::string_view data = "/a/b/c";
+    auto stream = analyzers::Get(
+      "path_hierarchy", irs::Type<irs::text_format::Json>::get(), "{}");
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset(data));
 
-  OptionsT options;
-  options.delimiter = '/';
-  PathHierarchyTokenizer stream(options);
+    AssertTokenStreamContents(stream.get(), {"/a", "/a/b", "/a/b/c"}, {0, 0, 0},
+                              {2, 4, 6}, {1, 1, 1});
+  }
 
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
+  // with custom delimiter
+  {
+    std::string_view data = "a.b.c";
+    auto stream =
+      analyzers::Get("path_hierarchy", irs::Type<irs::text_format::Json>::get(),
+                     "{\"delimiter\":\".\" }");
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset(data));
 
-  // First reset
-  ASSERT_TRUE(stream.reset("/a/b"));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-  ASSERT_FALSE(stream.next());
+    AssertTokenStreamContents(stream.get(), {"a", "a.b", "a.b.c"}, {0, 0, 0},
+                              {1, 3, 5}, {1, 1, 1});
+  }
 
-  // Second reset
-  ASSERT_TRUE(stream.reset("/xx/y1/z"));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/xx", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/xx/y1", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/xx/y1/z", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(8, offset->end);
-  ASSERT_FALSE(stream.next());
+  // with reverse mode
+  {
+    std::string_view data = "www.example.com";
+    auto stream = analyzers::Get(
+      "path_hierarchy", irs::Type<irs::text_format::Json>::get(),
+      "{\"reverse\": true, \"delimiter\": \".\", \"replacement\": \".\"}");
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset(data));
+
+    AssertTokenStreamContents(stream.get(),
+                              {"www.example.com", "example.com", "com"},
+                              {0, 4, 12}, {15, 15, 15}, {1, 1, 1});
+  }
 }
 
-TEST_F(PathHierarchyTokenizerTests, test_empty_path) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  PathHierarchyTokenizer stream(options);
-
-  ASSERT_TRUE(stream.reset(""));
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset("/a/b/"));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-  ASSERT_EQ("/a/b/", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 5;
-  options.reverse = false;
-
+TEST_F(PathHierarchyTokenizerTests, test_load_vpack) {
   std::string_view data = "/a/b";
-  PathHierarchyTokenizer stream(options);
-
-  ASSERT_TRUE(stream.reset(data));
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 2;
-  options.reverse = false;
-
-  std::string_view data = "/a/b/c/d/e";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  // With skip=2 in Lucene: tokens start from the 3rd level
-  // Delimiters at positions: [0, 2, 4, 6, 8]
-  // Skip 2 means we skip "/a" and "/a/b"
-  // First token: "/a/b/c" (from delimiter at pos 2 to delimiter at pos 4)
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/c/d", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(8, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/c/d/e", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(10, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-  OptionsT options;
-  options.delimiter = '.';
-  options.replacement = '-';
-  options.skip = 2;
-  options.reverse = true;
-
-  std::string_view data = "a.b.c.d.e";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a-b-c-", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b-c-", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c-", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '\0';
-  options.reverse = false;
-
-  std::string_view data = "abc";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-
-  PathHierarchyTokenizer stream(options);
-
-  ASSERT_TRUE(stream.reset("/a/b"));
-  ASSERT_TRUE(stream.reset("/x/y"));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/x", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/x/y", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  std::string_view data = "/café/café/café";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/café", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/café/café", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/café/café/café", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '_';
-  options.reverse = false;
-
-  std::string_view data = "/a/b/c";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("_a", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("_a_b", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("_a_b_c", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  std::string_view data = "//a///b//";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//a/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//a//", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//a///b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(7, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//a///b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(8, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//a///b//", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(9, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  std::string_view data = "a/b/c";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  std::string_view data = "/";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  std::string_view data = "//";
-  PathHierarchyTokenizer stream(options);
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.reset(data));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 1;
-  options.reverse = false;
-
-  std::string_view data = "/a/b/c";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* inc = irs::get<irs::IncAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(4, offset->end);
-  ASSERT_EQ(1, inc->value);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(6, offset->end);
-  ASSERT_EQ(1, inc->value);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 1;
-  options.reverse = false;
-
-  std::string_view data = "/a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(7, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 1;
-  options.reverse = false;
-
-  std::string_view data = "a/b/c";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests,
-       test_forward_start_of_char_end_of_delimiter_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 1;
-  options.reverse = false;
-
-  std::string_view data = "a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 1;
-  options.reverse = false;
-
-  std::string_view data = "/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.skip = 1;
-  options.reverse = false;
-
-  std::string_view data = "//";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(2, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '\\';
-  options.replacement = '\\';
-  options.reverse = false;
-
-  std::string_view data = "c:\\a\\b\\c";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c:", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c:\\a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c:\\a\\b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c:\\a\\b\\c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(8, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.reverse = true;
-  options.skip = 0;
-
-  std::string_view data = "/a/b/c";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(5, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.reverse = true;
-  options.skip = 0;
-
-  std::string_view data = "/a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a/b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(7, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(7, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(7, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(5, offset->start);
-  ASSERT_EQ(7, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests,
-       test_reverse_start_of_char_end_of_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.reverse = true;
-  options.skip = 0;
-
-  std::string_view data = "a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.reverse = true;
-  options.skip = 0;
-
-  std::string_view data = "/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.reverse = true;
-  options.skip = 0;
-
-  std::string_view data = "//";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("//", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(2, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(2, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.skip = 1;
-  options.reverse = true;
-
-  std::string_view data = "/a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a/b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.skip = 1;
-  options.reverse = true;
-
-  std::string_view data = "/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.skip = 1;
-  options.reverse = true;
-
-  std::string_view data = "//";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  std::string_view data = "a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/c", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/c/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(6, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
-  auto test =
-    [](std::string_view data, std::vector<std::string> expected_tokens,
-       std::vector<size_t> expected_starts, std::vector<size_t> expected_ends) {
-      auto stream = analyzers::Get(
-        "path_hierarchy", irs::Type<irs::text_format::Json>::get(), "{}");
-      ASSERT_NE(nullptr, stream);
-      ASSERT_TRUE(stream->reset(data));
-
-      auto* term = irs::get<irs::TermAttr>(*stream);
-      auto* offset = irs::get<irs::OffsAttr>(*stream);
-
-      for (size_t i = 0; i < expected_tokens.size(); ++i) {
-        ASSERT_TRUE(stream->next());
-        ASSERT_EQ(expected_tokens[i], irs::ViewCast<char>(term->value));
-        ASSERT_EQ(expected_starts[i], offset->start);
-        ASSERT_EQ(expected_ends[i], offset->end);
-      }
-      ASSERT_FALSE(stream->next());
-    };
-
-  test("a/b/c", {"a", "a/b", "a/b/c"}, {0, 0, 0}, {1, 3, 5});
-  test("a/b/c/", {"a", "a/b", "a/b/c", "a/b/c/"}, {0, 0, 0, 0}, {1, 3, 5, 6});
-  test("/a/b/c", {"/a", "/a/b", "/a/b/c"}, {0, 0, 0}, {2, 4, 6});
-  test("/a/b/c/", {"/a", "/a/b", "/a/b/c", "/a/b/c/"}, {0, 0, 0, 0},
-       {2, 4, 6, 7});
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.skip = 1;
-  options.reverse = true;
-
-  std::string_view data = "a/b/c";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests,
-       test_reverse_start_of_char_end_of_delimiter_skip) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.skip = 1;
-  options.reverse = true;
-
-  std::string_view data = "a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("b/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(4, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_reverse_skip2) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-  OptionsT options;
-  options.delimiter = '/';
-  options.replacement = '/';
-  options.skip = 2;
-  options.reverse = true;
-
-  std::string_view data = "/a/b/c/";
-  PathHierarchyTokenizer stream(options);
-  ASSERT_TRUE(stream.reset(data));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("/a/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("a/", irs::ViewCast<char>(term->value));
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(3, offset->end);
-
-  ASSERT_FALSE(stream.next());
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_random_strings_forward) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = false;
-
-  PathHierarchyTokenizer stream(options);
-  std::srand(static_cast<unsigned>(std::time(nullptr)));
-
-  for (size_t i = 0; i < 100; ++i) {
-    std::string s;
-    size_t len = std::rand() % 50 + 1;
-    for (size_t j = 0; j < len; ++j) {
-      char c = static_cast<char>(std::rand() % 95 + 32);
-      s.push_back(c);
-    }
-    ASSERT_TRUE(stream.reset(s));
-    size_t token_count = 0;
-    while (stream.next()) {
-      ++token_count;
-    }
-    ASSERT_GE(token_count, 0);
-  }
-}
-
-TEST_F(PathHierarchyTokenizerTests, test_random_strings_reverse) {
-  using OptionsT = PathHierarchyTokenizer::OptionsT;
-
-  OptionsT options;
-  options.delimiter = '/';
-  options.reverse = true;
-
-  PathHierarchyTokenizer stream(options);
-  std::srand(static_cast<unsigned>(std::time(nullptr)));
-
-  for (size_t i = 0; i < 100; ++i) {
-    std::string s;
-    size_t len = std::rand() % 50 + 1;
-    for (size_t j = 0; j < len; ++j) {
-      char c = static_cast<char>(std::rand() % 95 + 32);
-      s.push_back(c);
-    }
-    ASSERT_TRUE(stream.reset(s));
-    size_t token_count = 0;
-    while (stream.next()) {
-      ++token_count;
-    }
-    ASSERT_GE(token_count, 0);
-  }
+  auto builder = vpack::Parser::fromJson(R"({"delimiter":"/"})");
+  std::string in_str;
+  in_str.assign(builder->slice().startAs<char>(), builder->slice().byteSize());
+  auto stream = analyzers::Get(
+    "path_hierarchy", irs::Type<irs::text_format::VPack>::get(), in_str);
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"/a", "/a/b"}, {0, 0}, {2, 4},
+                            {1, 1});
 }
 
 }  // namespace irs::analysis

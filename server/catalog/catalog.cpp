@@ -58,6 +58,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "vpack/builder.h"
 #include "vpack/iterator.h"
@@ -397,7 +398,11 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto shard = index->CreateIndexShard(false, key.GetObjectId(), slice);
+      search::InvertedIndexShardOptions options;
+      if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
+        return r;
+      }
+      auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
       if (!shard) {
         return std::move(shard.error());
       }

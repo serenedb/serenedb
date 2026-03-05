@@ -5,6 +5,7 @@
 #include "basics/object_pool.hpp"
 #include "catalog/index.h"
 #include "catalog/search_analyzer_impl.h"
+#include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
 
@@ -32,7 +33,7 @@ class InvertedIndex final : public Index {
 
   void WriteInternal(vpack::Builder& builder) const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id, vpack::Slice args) const final;
+    bool is_new, ObjectId id, IndexShardOptions&) const final;
 
   ColumnAnalyzer GetColumnAnalyzer(catalog::Column::Id columnd_id) const;
 

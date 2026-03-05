@@ -48,33 +48,11 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-yaclib::Future<> UpdateIndexes(ExecContext& context,
-                               const PgListWrapper<VacuumRelation>& rels) {
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
-  auto current_database = context.GetDatabase();
-  const auto db = context.GetDatabaseId();
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto snapshot = catalog.GetSnapshot();
+yaclib::Future<> UpdateIndexes(
+  ExecContext& context, const std::shared_ptr<catalog::Snapshot>& snapshot,
+  const std::vector<std::shared_ptr<catalog::Table>>& tables) {
   std::vector<yaclib::Future<>> index_futures;
-  for (const auto& rel : rels) {
-    std::string_view schema_name = current_schema;
-    std::string_view rel_name;
-    if (rel->relation->catalogname) {
-      return yaclib::MakeFuture<>();
-    }
-    if (rel->relation->schemaname) {
-      schema_name = {rel->relation->schemaname};
-    }
-    SDB_ASSERT(rel->relation->relname);
-    rel_name = {rel->relation->relname};
-    auto table = snapshot->GetTable(db, schema_name, rel_name);
-    if (!table) {
-      return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "Relation '",
-                                        rel_name, "' not found.");
-    }
-    SDB_ASSERT(table);
+  for (const auto& table : tables) {
     for (auto index_shard : snapshot->GetIndexShardsByTable(table->GetId())) {
       SDB_ASSERT(index_shard);
       switch (index_shard->GetType()) {
@@ -100,27 +78,9 @@ yaclib::Future<> UpdateIndexes(ExecContext& context,
 }
 
 Result SyncStats(ExecContext& context,
-                 const PgListWrapper<VacuumRelation>& rels) {
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
-  auto current_database = context.GetDatabase();
-  const auto db = context.GetDatabaseId();
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto snapshot = catalog.GetSnapshot();
-  for (const auto& rel : rels) {
-    std::string_view schema_name = current_schema;
-    std::string_view rel_name;
-    if (rel->relation->catalogname) {
-      return {};
-    }
-    if (rel->relation->schemaname) {
-      schema_name = {rel->relation->schemaname};
-    }
-    SDB_ASSERT(rel->relation->relname);
-    rel_name = {rel->relation->relname};
-    auto table = snapshot->GetTable(db, schema_name, rel_name);
-    SDB_ASSERT(table);
+                 const std::shared_ptr<catalog::Snapshot>& snapshot,
+                 const std::vector<std::shared_ptr<catalog::Table>>& tables) {
+  for (const auto& table : tables) {
     auto shard = snapshot->GetTableShard(table->GetId());
     if (auto r = GetServerEngine().SyncTableShard(*shard); !r.ok()) {
       return r;
@@ -147,14 +107,40 @@ yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
     names.insert(elem->defname);
   }
   std::vector<yaclib::Future<Result>> res;
+  std::vector<std::shared_ptr<catalog::Table>> tables;
+  PgListWrapper<VacuumRelation> rels{stmt.rels};
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto current_database = context.GetDatabaseId();
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  for (auto rel : rels) {
+    ObjectId db_id = current_database;
+    std::string_view schema_name = current_schema;
+    std::string_view rel_name;
+    if (rel->relation->catalogname) {
+      db_id = snapshot->GetDatabase(rel->relation->catalogname)->GetId();
+    }
+    if (rel->relation->schemaname) {
+      schema_name = rel->relation->schemaname;
+    }
+    SDB_ASSERT(rel->relation->relname);
+    rel_name = rel->relation->relname;
+    auto table = snapshot->GetTable(db_id, schema_name, rel_name);
+    if (!table) {
+      return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "relation '",
+                                        rel_name, "' not found.");
+    }
+    SDB_ASSERT(table);
+    tables.push_back(std::move(table));
+  }
   if (names.contains("update_indexes")) {
-    auto f = UpdateIndexes(context, PgListWrapper<VacuumRelation>{stmt.rels})
-               .ThenInline([] { return Result{}; });
+    auto f = UpdateIndexes(context, snapshot, tables).ThenInline([] {
+      return Result{};
+    });
     res.push_back(std::move(f));
   }
   if (names.contains("sync_stats")) {
-    auto f = yaclib::MakeFuture(
-      SyncStats(context, PgListWrapper<VacuumRelation>{stmt.rels}));
+    auto f = yaclib::MakeFuture(SyncStats(context, snapshot, tables));
     res.push_back(std::move(f));
   }
 

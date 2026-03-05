@@ -40,10 +40,14 @@ namespace sdb::search {
 
 class InvertedIndexShard;
 
-struct InvertedIndexShardOptions {
-  size_t commit_interval_ms;
-  size_t consolidation_interval_ms;
-  size_t cleanup_interval_step;
+struct InvertedIndexShardOptions : public IndexShardOptions {
+  struct Base {
+    size_t commit_interval_ms;
+    size_t consolidation_interval_ms;
+    size_t cleanup_interval_step;
+  };
+
+  Base base;
 };
 
 struct ThreadPoolState {
@@ -150,7 +154,7 @@ class InvertedIndexShard final
                                        ObjectId table_id = ObjectId{0},
                                        ObjectId index_id = ObjectId{0},
                                        ObjectId shard_id = ObjectId{0});
-  
+
   static std::shared_ptr<InvertedIndexShard> Create(
     ObjectId id, const catalog::InvertedIndex& index,
     InvertedIndexShardOptions options, bool is_new);

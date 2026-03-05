@@ -29,6 +29,7 @@
 namespace sdb {
 
 class IndexShard;
+struct IndexShardOptions;
 
 namespace catalog {
 
@@ -53,8 +54,9 @@ class Index : public SchemaObject {
   }
   void WriteInternal(vpack::Builder& builder) const override;
 
+  // TODO(codeworse): support arguments for index shards
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id, vpack::Slice args) const = 0;
+    bool is_new, ObjectId id, IndexShardOptions& options) const = 0;
 
   virtual ~Index() = default;
 

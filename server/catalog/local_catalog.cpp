@@ -959,7 +959,8 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
                                  std::string_view relation_schema,
                                  std::string_view relation_name,
                                  const std::vector<std::string>& column_names,
-                                 IndexBaseOptions options, vpack::Slice args) {
+                                 IndexBaseOptions options,
+                                 IndexShardOptions& shard_options) {
   if (column_names.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
@@ -1020,8 +1021,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       if (!r.ok()) {
         return r;
       }
-      auto shard =
-        (*index)->CreateIndexShard(true, ObjectId{0}, std::move(args));
+      auto shard = (*index)->CreateIndexShard(true, ObjectId{0}, shard_options);
       if (!shard) {
         return std::move(shard).error();
       }

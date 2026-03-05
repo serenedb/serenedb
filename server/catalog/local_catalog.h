@@ -82,7 +82,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
                      const std::vector<std::string>& column_names,
-                     IndexBaseOptions options, vpack::Slice args) final;
+                     IndexBaseOptions options,
+                     IndexShardOptions& shard_options) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;

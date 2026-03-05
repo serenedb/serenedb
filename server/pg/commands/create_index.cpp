@@ -40,6 +40,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rest_server/serened_single.h"
+#include "search/inverted_index_shard.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -82,15 +83,33 @@ Result ParseIndexOptions(const IndexStmt& index,
   return {};
 }
 
-vpack::Slice ParseIndexArgs(pg::PgListWrapper<DefElem> args) {
-  vpack::Builder builder;
-  builder.openObject();
-  for (DefElem* elem : args) {
-    char* val = castNode(BitString, elem->arg)->bsval;
-    builder.add(elem->defname, val);
+Result ParseInvertedIndexShard(pg::PgListWrapper<DefElem> args,
+                               search::InvertedIndexShardOptions& options) {
+  options.base = {
+    .commit_interval_ms = 1000,
+    .consolidation_interval_ms = 1000,
+    .cleanup_interval_step = 1,
+  };
+  for (auto arg : args) {
+    std::string_view name{arg->defname};
+    if (name == "commit_interval") {
+      if (arg->arg->type != NodeTag::T_Integer) {
+        return Result{ERROR_BAD_PARAMETER, "incorrent parameter"};
+      }
+      options.base.commit_interval_ms = intVal(arg->arg);
+    } else if (name == "consolidation_interval") {
+      if (arg->arg->type != NodeTag::T_Integer) {
+        return Result{ERROR_BAD_PARAMETER, "incorrent parameter"};
+      }
+      options.base.consolidation_interval_ms = intVal(arg->arg);
+    } else if (name == "cleanup_interval_step") {
+      if (arg->arg->type != NodeTag::T_Integer) {
+        return Result{ERROR_BAD_PARAMETER, "incorrent parameter"};
+      }
+      options.base.cleanup_interval_step = intVal(arg->arg);
+    }
   }
-  builder.close();
-  return builder.slice();
+  return {};
 }
 
 }  // namespace
@@ -124,20 +143,28 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
     return yaclib::MakeFuture(std::move(r));
   }
 
-  pg::PgListWrapper<DefElem> pg_args{stmt.options};
-  auto args = ParseIndexArgs(pg_args);
+  if (options.type == IndexType::Inverted) {
+    search::InvertedIndexShardOptions shard_options;
+    pg::PgListWrapper<DefElem> pg_args{stmt.options};
+    auto r = ParseInvertedIndexShard(pg_args, shard_options);
+    if (!r.ok()) {
+      return yaclib::MakeFuture<Result>(std::move(r));
+    }
+    r = catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
+                            std::move(options), shard_options);
 
-  Result r =
-    catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
-                        std::move(options), std::move(args));
-
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    r = {};
-  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
+    if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+      r = {};
+    } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
+    }
+    return yaclib::MakeFuture(std::move(r));
+  } else {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("index type is not supported"));
   }
-  return yaclib::MakeFuture(std::move(r));
 }
 
 }  // namespace sdb::pg

@@ -125,10 +125,10 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
-  _tasks_settings.commit_interval_msec = _options.commit_interval_ms;
+  _tasks_settings.commit_interval_msec = _options.base.commit_interval_ms;
   _tasks_settings.consolidation_interval_msec =
-    _options.consolidation_interval_ms;
-  _tasks_settings.cleanup_interval_step = _options.cleanup_interval_step;
+    _options.base.consolidation_interval_ms;
+  _tasks_settings.cleanup_interval_step = _options.base.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
   const auto db_id = index.GetDatabaseId();
@@ -279,7 +279,7 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
 }
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
-  vpack::WriteTuple(builder, _options);
+  vpack::WriteTuple(builder, _options.base);
 }
 
 Snapshot InvertedIndexShard::GetSnapshot() const {

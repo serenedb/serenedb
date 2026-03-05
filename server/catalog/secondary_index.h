@@ -42,7 +42,7 @@ class SecondaryIndex : public Index {
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool, ObjectId, vpack::Slice) const final {
+    bool, ObjectId, IndexShardOptions&) const final {
     return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
                                    "Secondary Index Shard is not supported"};
   }

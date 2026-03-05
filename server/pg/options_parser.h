@@ -143,8 +143,8 @@ class OptionsParser {
     const auto* option = it->second;
     _options.erase(it);
     SDB_ASSERT(option);
-    if (!option->arg) {
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+    if (!option->arg) {      
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                       ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(info.name, " requires a parameter"));
     }

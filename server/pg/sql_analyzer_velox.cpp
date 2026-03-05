@@ -2000,8 +2000,10 @@ class CopyOptionsParser : public FileOptionsParser {
     auto format = ParseFileFormat();
     switch (format) {
       case FormatType::Text:
+        ParseTextFormatOptionsSpecified(false);
+        break;
       case FormatType::Csv:
-        ParseTextFormatOptionsSpecified(format == FormatType::Csv);
+        ParseTextFormatOptionsSpecified(true);
         break;
       case FormatType::Parquet:
       case FormatType::Dwrf:

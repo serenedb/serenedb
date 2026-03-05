@@ -22,9 +22,9 @@
 
 #include "pg/option_help.h"
 
-using namespace std::string_view_literals;
-
 namespace sdb::pg::file_option_groups {
+
+using namespace std::string_view_literals;
 
 enum class StorageType : uint8_t {
   Local = 0,

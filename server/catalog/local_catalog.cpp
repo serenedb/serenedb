@@ -126,7 +126,6 @@ class SnapshotImpl : public Snapshot {
   std::shared_ptr<SnapshotImpl> Clone() const {
     // TODO(gnusi): COW
     auto result = std::make_shared<SnapshotImpl>();
-    result->_roles = _roles;
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
     result->_object_dependencies = _object_dependencies;
@@ -199,21 +198,30 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition<DatabaseDependency>(parent_id, object);
+      return AddObjectDefinition<DatabaseDependency>(parent_id,
+                                                     std::move(object));
+    } else if constexpr (std::is_same_v<T, Role>) {
+      auto r = AddToResolution<ResolveType::Role>(parent_id, object->GetId(),
+                                                  object->GetName(), replace);
+      if (!r.ok()) {
+        return r;
+      }
+      return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Schema>) {
       auto r = AddToResolution<ResolveType::Schema>(parent_id, object->GetId(),
                                                     object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition<SchemaDependency>(parent_id, object);
+      return AddObjectDefinition<SchemaDependency>(parent_id,
+                                                   std::move(object));
     } else if constexpr (std::is_same_v<T, View>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, object);
+      return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Function>) {
       auto r = AddToResolution<ResolveType::Function>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -227,18 +235,18 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition<TableDependency>(parent_id, object);
+      return AddObjectDefinition<TableDependency>(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Index>) {
       auto r = AddToResolution<ResolveType::Relation>(
         object->GetSchemaId(), object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition<IndexDependency>(parent_id, object);
+      return AddObjectDefinition<IndexDependency>(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, TableShard>) {
-      return AddObjectDefinition(parent_id, object);
+      return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, IndexShard>) {
-      return AddObjectDefinition(parent_id, object);
+      return AddObjectDefinition(parent_id, std::move(object));
     } else {
       static_assert(false);
     }
@@ -248,6 +256,9 @@ class SnapshotImpl : public Snapshot {
   void UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
                         bool maybe_not_found = false) noexcept {
     if constexpr (std::is_same_v<T, Database>) {
+      RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
+                                                  maybe_not_found);
+    } else if constexpr (std::is_same_v<T, Role>) {
       RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Schema>) {
@@ -301,6 +312,7 @@ class SnapshotImpl : public Snapshot {
     SDB_ASSERT(object->GetId().isSet());
     switch (object->GetType()) {
       case ObjectType::Database:
+      case ObjectType::Role:
         break;
       case ObjectType::Schema: {
         auto db_deps = GetDependency<DatabaseDependency>(parent_id);
@@ -339,7 +351,13 @@ class SnapshotImpl : public Snapshot {
   }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
-    return {_roles.begin(), _roles.end()};
+    return _resolution_table.GetRoleIds() |
+           std::views::transform([&](ObjectId role_id) {
+             auto it = _objects.find(role_id);
+             SDB_ASSERT(it != _objects.end());
+             return basics::downCast<Role>(*it);
+           }) |
+           std::ranges::to<std::vector>();
   }
 
   std::vector<std::shared_ptr<Database>> GetDatabases() const final {
@@ -509,85 +527,15 @@ class SnapshotImpl : public Snapshot {
     return std::dynamic_pointer_cast<T>(*it);
   }
 
-  template<typename W>
-  Result RegisterRole(std::shared_ptr<Role> role, W&& writer) {
-    const auto [it, is_new] = _roles.emplace(role);
-
-    if (!is_new) {
-      return {ERROR_USER_DUPLICATE, "Role already exists: ", role->GetName()};
-    };
-
-    auto [_, inserted] = _objects.insert(role);
-    SDB_ASSERT(inserted);
-    return Result{ERROR_OK};
-  }
-
-  template<typename W>
-  Result DropRole(std::string_view name, W&& writer) {
-    return ResolveRole(name, [&](auto it) -> Result {
-      if (auto r = writer(*it); !r.ok()) {
-        return r;
-      }
-
-      _roles.erase(it);
-      return {};
-    });
-  }
-
-  // TODO(gnusi): unify wiht ReplaceObject
-  template<typename F, typename W>
-  Result ReplaceRole(std::string_view name, F&& factory, W&& writer) {
-    return ResolveRole(name, [&](auto object_it) -> Result {
-      std::shared_ptr<Role> new_object;
-      if (auto r = factory(**object_it, new_object); !r.ok()) {
-        return r;
-      }
-
-      if (!new_object) {
-        return {};  // Nothing to change
-      }
-
-      auto object = *object_it;
-      auto [new_object_it, is_new] = _roles.emplace(new_object);
-
-      if (!is_new && object_it != new_object_it) {
-        return {ERROR_USER_DUPLICATE,
-                "Role already exists: ", new_object->GetName()};
-      }
-
-      absl::Cleanup cleanup = [&] {
-        if (is_new) {
-          // Rollback only if we created a new object
-          _roles.erase(new_object_it);
-        }
-      };
-
-      if (auto r = writer(new_object); !r.ok()) {
-        return r;
-      }
-
-      if (is_new) {
-        _roles.erase(object);  // role_it might be invalidated
-      } else {
-        SDB_ASSERT(new_object->GetName() == (*object_it)->GetName());
-        const_cast<std::shared_ptr<Role>&>(*object_it) = new_object;
-      }
-
-      auto it = _objects.find(new_object->GetId());
-      SDB_ASSERT(it != _objects.end());
-      const_cast<std::shared_ptr<Object>&>(*it) = std::move(new_object);
-
-      std::move(cleanup).Cancel();
-      return {};
-    });
-  }
-
   std::shared_ptr<Role> GetRole(std::string_view name) const final {
-    const auto it = _roles.find(name);
-    if (it == _roles.end()) {
+    auto id =
+      _resolution_table.ResolveObject<ResolveType::Role>(id::kInstance, name);
+    if (!id) {
       return {};
     }
-    return *it;
+    auto role = GetObject<Role>(*id);
+    SDB_ASSERT(role);
+    return role;
   }
 
   std::shared_ptr<Database> GetDatabase(ObjectId database) const final {
@@ -647,6 +595,7 @@ class SnapshotImpl : public Snapshot {
     if (root) {
       switch (obj->GetType()) {
         case ObjectType::Database:
+        case ObjectType::Role:
           break;
         case ObjectType::Schema: {
           auto db_deps = GetDependency<DatabaseDependency>(parent_id);
@@ -657,11 +606,6 @@ class SnapshotImpl : public Snapshot {
           auto table_deps = GetDependency<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->indexes.erase(id);
-        } break;
-        case ObjectType::IndexShard: {
-          auto index_deps = GetDependency<IndexDependency>(parent_id);
-          SDB_ASSERT(index_deps);
-          index_deps->shard_id = ObjectId::none();
         } break;
         case ObjectType::Function: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
@@ -688,6 +632,8 @@ class SnapshotImpl : public Snapshot {
         auto db_deps = GetDependency<DatabaseDependency>(id);
         drop_childs(db_deps->schemas);
       } break;
+      case ObjectType::Role:
+        break;
       case ObjectType::Schema: {
         auto schema_deps = GetDependency<SchemaDependency>(id);
         drop_childs(schema_deps->functions);
@@ -775,7 +721,6 @@ class SnapshotImpl : public Snapshot {
     ObjectSetByName<SchemaObject> functions;
   };
 
-  ObjectSetByName<Role> _roles;
   ResolutionTable _resolution_table;
   containers::FlatHashMap<ObjectId, std::shared_ptr<ObjectDependencyBase>>
     _object_dependencies;
@@ -788,9 +733,10 @@ LocalCatalog::LocalCatalog(bool skip_background_errors)
     _skip_background_errors{skip_background_errors} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
+  SDB_INFO("xxxxx", Logger::FIXME, "Register role ", role->GetName());
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterRole(std::move(role), [](auto&) { return Result{}; });
+    return clone->RegisterObject(std::move(role), id::kInstance, false);
   });
 }
 
@@ -902,16 +848,24 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
-  auto r = [&] {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) {
-      return clone->RegisterRole(std::move(role), [&](auto& object) -> Result {
-        return _engine->CreateDefinition(
-          id::kInstance, RocksDBEntryType::Role, object->GetId(),
-          [&](bool) { return object->ToVPack(); });
-      });
-    });
-  }();
+  SDB_INFO("xxxxx", Logger::FIXME, "Creating role ", role->GetName());
+  absl::MutexLock lock{&_mutex};
+  auto r = Apply(
+    _snapshot,
+    [&](auto& clone) {
+      auto r = clone->RegisterObject(role, id::kInstance, false);
+      if (!r.ok()) {
+        return r;
+      }
+      vpack::Builder b;
+      b.openObject();
+      role->WriteInternal(b);
+      b.close();
+      return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
+                                       role->GetId(),
+                                       [&](bool) { return b.slice(); });
+    },
+    [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
 
   if (!r.ok()) {
     return r;
@@ -1052,7 +1006,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       }
       return Result{};
     },
-    [&](auto clone) {
+    [&](auto& clone) {
       clone->UnregisterObject(*index, (*index)->GetRelationId(), true);
     });
 }
@@ -1319,24 +1273,40 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
 
 Result LocalCatalog::ChangeRole(std::string_view name,
                                 ChangeCallback<Role> new_role) {
-  vpack::Builder b;
-
-  auto r = [&] {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) {
-      return clone->ReplaceRole(name, new_role, [&](auto& object) -> Result {
-        return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
-                                         object->GetId(), [&](bool) {
-                                           if (b.isEmpty()) {
-                                             b.openObject();
-                                             object->WriteInternal(b);
-                                             b.close();
-                                           }
-                                           return b.slice();
-                                         });
-      });
+  absl::MutexLock lock{&_mutex};
+  auto role = _snapshot->GetRole(name);
+  if (!role) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  std::shared_ptr<Role> new_role_ptr;
+  auto r = new_role(*role, new_role_ptr);
+  if (!r.ok()) {
+    return r;
+  }
+  r = Apply(
+    _snapshot,
+    [&](std::shared_ptr<SnapshotImpl>& clone) {
+      auto r = clone->ReplaceObject<ResolveType::Role>(id::kInstance, name,
+                                                       new_role_ptr);
+      if (!r.ok()) {
+        return r;
+      }
+      vpack::Builder b;
+      b.openObject();
+      new_role_ptr->WriteInternal(b);
+      b.close();
+      return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
+                                       new_role_ptr->GetId(),
+                                       [&](bool) { return b.slice(); });
+    },
+    [&](const std::shared_ptr<SnapshotImpl>& clone) {
+      auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
+      if (obj->GetName() == new_role_ptr->GetName()) {
+        auto r = clone->ReplaceObject<ResolveType::Relation>(
+          id::kInstance, new_role_ptr->GetName(), role);
+        SDB_ASSERT(r.ok());
+      }
     });
-  }();
 
   if (!r.ok()) {
     return r;
@@ -1441,15 +1411,16 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
 }
 
 Result LocalCatalog::DropRole(std::string_view role) {
-  auto r = [&] {
-    absl::MutexLock lock{&_mutex};
-    return Apply(_snapshot, [&](auto& clone) {
-      return clone->DropRole(role, [&](auto& object) -> Result {
-        return _engine->DropDefinition(id::kInstance, RocksDBEntryType::Role,
-                                       object->GetId());
-      });
-    });
-  }();
+  absl::MutexLock lock{&_mutex};
+  auto role_ptr = _snapshot->GetRole(role);
+  if (!role_ptr) {
+    return {ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto r = Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
+    clone->UnregisterObject(role_ptr, id::kInstance);
+    return _engine->DropDefinition(id::kInstance, RocksDBEntryType::Role,
+                                   role_ptr->GetId());
+  });
 
   if (!r.ok()) {
     return r;

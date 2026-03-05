@@ -21,6 +21,7 @@
 #pragma once
 
 #include <optional>
+#include <ranges>
 #include <string_view>
 
 #include "basics/assert.h"
@@ -40,6 +41,7 @@ namespace sdb::catalog {
 
 enum class ResolveType {
   Database = 0,
+  Role,
   Schema,
   Function,
   Relation,
@@ -53,6 +55,9 @@ class ResolutionTable {
     if constexpr (Type == ResolveType::Database) {
       auto it = _databases.find(object_name);
       return it == _databases.end() ? std::nullopt : std::optional{it->second};
+    } else if constexpr (Type == ResolveType::Role) {
+      auto it = _roles.find(object_name);
+      return it == _roles.end() ? std::nullopt : std::optional{it->second};
     } else {
       auto resolve =
         [](const auto& lookup_map, ObjectId parent_id,
@@ -92,6 +97,16 @@ class ResolutionTable {
       }
       auto [_, inserted] = _schemas.try_emplace(object_id);
       SDB_ASSERT(inserted);
+      return {};
+    } else if constexpr (Type == ResolveType::Role) {
+      if (!replace) {
+        auto [_, inserted] = _roles.try_emplace(object_name, object_id);
+        if (!inserted) {
+          return {ERROR_USER_DUPLICATE};
+        }
+      } else {
+        _roles.insert_or_assign(object_name, object_id);
+      }
       return {};
     } else {
       auto insert = [replace](auto& insert_map, ObjectId parent_id,
@@ -145,6 +160,14 @@ class ResolutionTable {
         RemoveObject<Type>(id, schema.first);
       }
       return {id};
+    } else if constexpr (Type == ResolveType::Role) {
+      auto object = _roles.extract(object_name);
+      if (object.empty()) {
+        return std::nullopt;
+      }
+      auto id = object.mapped();
+      SDB_ASSERT(id.isSet());
+      return {id};
     } else {
       auto remove = [](
                       auto& remove_map, ObjectId parent_id,
@@ -178,6 +201,8 @@ class ResolutionTable {
 
   auto GetDatabaseIds() const { return _databases | std::views::values; }
 
+  auto GetRoleIds() const { return _roles | std::views::values; }
+
   auto GetSchemaIds(ObjectId db_id) const {
     auto it = _schemas.find(db_id);
     SDB_ASSERT(it != _schemas.end());
@@ -202,6 +227,8 @@ class ResolutionTable {
   template<typename T>
   using MapById = containers::FlatHashMap<ObjectId, T>;
 
+  // role_name -> role_id
+  MapByName<ObjectId> _roles;
   // database_name -> database_id
   MapByName<ObjectId> _databases;
   // database_id -> (schema_name -> schema_id)

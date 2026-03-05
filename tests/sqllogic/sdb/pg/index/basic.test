@@ -29,6 +29,9 @@ c
 statement ok
 VACUUM (UPDATE_INDEXES) t;
 
+statement error
+VACUUM (UPDATE_INDEXES) wrong_t_name;
+
 
 query ok
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
@@ -149,3 +152,69 @@ CREATE INDEX index_ts on tstest USING inverted(b);
 
 statement ok
 DROP TABLE tstest;
+
+statement ok
+CREATE TABLE table_numeric_idx (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement ok
+CREATE INDEX test_index_numeric ON table_numeric_idx USING inverted (a, b);
+
+statement ok
+INSERT INTO table_numeric_idx VALUES (1,1), (2,3), (4,5);
+
+statement ok
+VACUUM (UPDATE_INDEXES) table_numeric_idx;
+
+query
+SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
+----
+a	b
+1	1
+2	3
+
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement count 3
+INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
+
+# With read_your_own_writes=on, we should fail
+query error
+SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (UPDATE_INDEXES) table_numeric_idx;
+
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+BEGIN;
+
+statement count 3
+INSERT INTO table_numeric_idx VALUES (23,1), (27,3), (28,5);
+
+query
+SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 OR a = 28 ORDER BY a;
+----
+a	b
+1	1
+2	3
+7	3
+17	5
+
+statement ok
+COMMIT;
+
+# restore default
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+DROP TABLE table_numeric_idx;

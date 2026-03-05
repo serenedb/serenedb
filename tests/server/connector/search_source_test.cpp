@@ -51,6 +51,11 @@ constexpr ObjectId kObjectKey{123456};
 class DataSourceWithSearchTest : public ::testing::Test,
                                  public velox::test::VectorTestBase {
  public:
+  static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
+    return {.analyzer = {std::make_unique<irs::StringTokenizer>()},
+            .features = irs::IndexFeatures::None};
+  }
+
   static void SetUpTestCase() {
     velox::memory::MemoryManager::testingSetInstance({});
     // TODO(Dronplane): make it to the main function of tests
@@ -144,7 +149,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
 
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkInsertWriter>(
-        index_transaction, col_idx));
+        index_transaction, AnalyzerProvider, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),

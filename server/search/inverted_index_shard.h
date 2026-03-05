@@ -43,6 +43,7 @@ class InvertedIndexShard;
 struct InvertedIndexShardOptions {
   size_t commit_interval_ms;
   size_t consolidation_interval_ms;
+  size_t cleanup_interval_step;
 };
 
 struct ThreadPoolState {
@@ -121,9 +122,16 @@ class Snapshot {
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
-class InvertedIndexShard
+class InvertedIndexShard final
   : public std::enable_shared_from_this<InvertedIndexShard>,
     public IndexShard {
+ private:
+  struct PrivateTag final {
+    explicit PrivateTag() = default;
+  };
+
+  void InitPostRecovery(bool is_new);
+
  public:
   struct Stats {
     // NOLINTBEGIN
@@ -141,8 +149,12 @@ class InvertedIndexShard
     uint64_t time_ms;
   };
 
-  InvertedIndexShard(const catalog::InvertedIndex& index,
+  InvertedIndexShard(PrivateTag, const catalog::InvertedIndex& index,
                      InvertedIndexShardOptions options, bool is_new);
+
+  static std::shared_ptr<InvertedIndexShard> Create(
+    const catalog::InvertedIndex& index, InvertedIndexShardOptions options,
+    bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db, ObjectId schema,
                                        ObjectId id);

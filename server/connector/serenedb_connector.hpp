@@ -48,6 +48,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/rocksdb_filter.hpp"
+#include "connector/search_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
@@ -73,13 +74,17 @@ inline bool HasColumnOverlap(
 template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   irs::IndexWriter::Transaction& transaction,
-  std::span<const catalog::Column::Id> columns) {
+  const catalog::InvertedIndex& index) {
+  auto analyzer_provider = [&](catalog::Column::Id column_id) {
+    return index.GetColumnAnalyzer(column_id);
+  };
+
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
-    return std::make_unique<search::SearchSinkInsertWriter>(transaction,
-                                                            columns);
+    return std::make_unique<search::SearchSinkInsertWriter>(
+      transaction, analyzer_provider, index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
-    return std::make_unique<search::SearchSinkUpdateWriter>(transaction,
-                                                            columns);
+    return std::make_unique<search::SearchSinkUpdateWriter>(
+      transaction, analyzer_provider, index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
@@ -93,15 +98,18 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
-  auto resolve_index_writer =
-    [&](auto& transaction, std::span<const catalog::Column::Id> columns) {
-      if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
-                                   irs::IndexWriter::Transaction>) {
-        writers.push_back(MakeInvertedIndexWriter<Kind>(transaction, columns));
-      } else {
-        SDB_UNREACHABLE();
-      }
-    };
+  auto resolve_index_writer = [&](auto& transaction,
+                                  const catalog::Index& index) {
+    if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
+                                 irs::IndexWriter::Transaction>) {
+      const auto& inverted_index =
+        basics::downCast<catalog::InvertedIndex>(index);
+      writers.push_back(
+        MakeInvertedIndexWriter<Kind>(transaction, inverted_index));
+    } else {
+      SDB_UNREACHABLE();
+    }
+  };
 
   if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     containers::FlatHashSet<catalog::Column::Id> update_column_ids;
@@ -167,9 +175,10 @@ class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
   catalog::Column::Id _id;
 };
 
-class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
+class SereneDBConnectorTableHandle
+  : public velox::connector::ConnectorTableHandle {
  public:
-  explicit SereneDBTableHandle(
+  explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
     std::unique_ptr<FilterNode> filter);
@@ -184,11 +193,22 @@ class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
     return _effective_column_id;
   }
 
+  void AddSearchQuery(ObjectId index_id, irs::Filter::Query::ptr&& query) {
+    SDB_ASSERT(!_search_query);
+    _search_query = std::move(query);
+    _index_id = index_id;
+  }
+
   auto& GetTransaction() const noexcept { return _transaction; }
 
   auto& GetPKType() const noexcept { return _pk_type; }
 
   auto& GetFilter() const noexcept { return _filter; }
+  const irs::Filter::Query* GetSearchQuery() const noexcept {
+    return _search_query.get();
+  }
+
+  ObjectId GetIndexId() const noexcept { return _index_id; }
 
  private:
   std::string _name;
@@ -197,6 +217,8 @@ class SereneDBTableHandle : public velox::connector::ConnectorTableHandle {
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
   std::unique_ptr<FilterNode> _filter;
+  irs::Filter::Query::ptr _search_query;
+  ObjectId _index_id = ObjectId::none();
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -256,7 +278,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final;
 };
 
-class RocksDBTable final : public axiom::connector::Table {
+class RocksDBTable : public axiom::connector::Table {
   struct Init {
     const catalog::Table& collection;
     velox::RowTypePtr pk_type;
@@ -376,57 +398,18 @@ class RocksDBTable final : public axiom::connector::Table {
   bool _bulk_insert = false;
 };
 
-inline velox::connector::ConnectorTableHandlePtr
-SereneDBTableLayout::createTableHandle(
-  const axiom::connector::ConnectorSessionPtr& session,
-  std::vector<velox::connector::ColumnHandlePtr> column_handles,
-  velox::core::ExpressionEvaluator& evaluator,
-  std::vector<velox::core::TypedExprPtr> filters,
-  std::vector<velox::core::TypedExprPtr>& rejected_filters) const {
-  if (const auto* read_file_table =
-        dynamic_cast<const ReadFileTable*>(&this->table())) {
-    double sample_rate = 1.0;
-    velox::common::SubfieldFilters subfield_filters;
-    std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
-    for (auto& filter : filters) {
-      auto remaining =
-        velox::connector::hive::extractFiltersFromRemainingFilter(
-          filter, &evaluator, subfield_filters, sample_rate);
-      if (remaining) {
-        remaining_conjuncts.push_back(remaining);
-        rejected_filters.push_back(std::move(remaining));
-      }
-    }
+class RocksDBInvertedIndexTable : public RocksDBTable {
+ public:
+  explicit RocksDBInvertedIndexTable(const catalog::Table& collection,
+                                     query::Transaction& transaction,
+                                     const catalog::InvertedIndex& index)
+    : RocksDBTable{collection, transaction}, _index{index} {}
 
-    velox::core::TypedExprPtr remaining_filter;
-    if (remaining_conjuncts.size() == 1) {
-      remaining_filter = std::move(remaining_conjuncts[0]);
-    } else if (remaining_conjuncts.size() > 1) {
-      remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
-        velox::BOOLEAN(), std::move(remaining_conjuncts),
-        velox::expression::kAnd);
-    }
+  const auto& GetIndex() const noexcept { return _index; }
 
-    return std::make_shared<FileTableHandle>(
-      read_file_table->GetSource(), read_file_table->GetOptions(),
-      std::move(subfield_filters), std::move(remaining_filter));
-  }
-
-  // Rejected filters are used to remove filters from plan as I see.
-  // Think about them better. For now assume we need all filters
-  // (useful filter) and
-  // (useless) -- ? Do not forget to handle this case
-
-  auto pk_type = basics::downCast<RocksDBTable>(table()).PKType();
-
-  auto filter = ParseFilters(filters);
-  rejected_filters = std::move(filters);
-  SDB_ASSERT(!table().columnMap().empty(),
-             "SereneDBFullScanTableHandle: need a column for count field");
-  // todo column names
-  return std::make_shared<SereneDBTableHandle>(session, *this,
-                                               std::move(filter));
-}
+ private:
+  const catalog::InvertedIndex& _index;
+};
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
  public:
@@ -462,8 +445,7 @@ class SereneDBConnectorSplitManager final
     if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_shared<FileSplitSource>(
-        file_handle->GetSource(), file_handle->GetOptions(),
-        StaticStrings::kSereneDBConnector, options);
+        file_handle->GetOptions(), StaticStrings::kSereneDBConnector, options);
     }
     return std::make_shared<SereneDBSplitSource>();
   }
@@ -548,7 +530,7 @@ class SereneDBConnectorMetadata final
           dynamic_cast<const WriteFileTable*>(table.get())) {
       SDB_ASSERT(kind == axiom::connector::WriteKind::kInsert);
       return std::make_shared<FileConnectorWriteHandle>(
-        write_file_table->GetSink(), write_file_table->GetOptions());
+        write_file_table->GetOptions());
     }
 
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
@@ -662,14 +644,14 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
-        file_handle->GetSource(), file_handle->GetOptions(),
-        file_handle->GetSubfieldFilters(), output_type, column_handles,
-        *connector_query_ctx->memoryPool(), file_handle->GetRemainingFilter(),
+        file_handle->GetOptions(), file_handle->GetSubfieldFilters(),
+        output_type, column_handles, *connector_query_ctx->memoryPool(),
+        file_handle->GetRemainingFilter(),
         connector_query_ctx->expressionEvaluator());
     }
 
     const auto& serene_table_handle =
-      basics::downCast<const SereneDBTableHandle>(*table_handle);
+      basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
     const auto& object_key = serene_table_handle.TableId();
 
     // need to remap names to oids
@@ -689,9 +671,10 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& transaction = serene_table_handle.GetTransaction();
 
     const auto* filter = serene_table_handle.GetFilter().get();
-    SDB_ASSERT(filter);
-    auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
-                               connector_query_ctx->connectorMemoryPool());
+
+    // We have search data source xor precalculated filter in rocksdb datasource
+    SDB_ASSERT(static_cast<bool>(filter) !=
+               static_cast<bool>(serene_table_handle.GetSearchQuery()));
 
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
@@ -710,12 +693,18 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (needs_read_your_own_writes) {
       auto& rocksdb_transaction = transaction.GetRocksDBTransaction();
       SDB_ASSERT(snapshot == rocksdb_transaction.GetSnapshot());
+      if (serene_table_handle.GetSearchQuery()) {
+        SDB_THROW(
+          ERROR_NOT_IMPLEMENTED,
+          "sdb_read_your_own_writes is not supported for inverted index");
+      }
 
       SDB_IF_FAILURE(absl::StrCat(table_name, "_fail_on_ryow")) {
         SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_fail_on_ryow"),
                   " condition failed");
       }
-
+      auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+                                 connector_query_ctx->connectorMemoryPool());
       if (!points.empty()) {
         return std::make_unique<RocksDBRYOWMultiGetDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
@@ -734,6 +723,18 @@ class SereneDBConnector final : public velox::connector::Connector {
         object_key);
     }
 
+    if (serene_table_handle.GetSearchQuery()) {
+      const auto& search_snapshot =
+        transaction.EnsureSearchSnapshot(serene_table_handle.GetIndexId());
+      return std::make_unique<search::SearchDataSource>(
+        *connector_query_ctx->memoryPool(),
+        search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,
+        column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
+        search_snapshot.reader, *serene_table_handle.GetSearchQuery());
+    }
+
+    auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+                               connector_query_ctx->connectorMemoryPool());
     if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
@@ -770,7 +771,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
           connector_insert_table_handle.get())) {
       return std::make_unique<FileDataSink>(
-        file_handle->GetSink(), file_handle->GetOptions(),
+        file_handle->GetOptions(), *connector_query_ctx->memoryPool(),
         *connector_query_ctx->connectorMemoryPool());
     }
 
@@ -800,10 +801,6 @@ class SereneDBConnector final : public velox::connector::Connector {
         [&]<bool IsUpdate>() -> std::unique_ptr<velox::connector::DataSink> {
           std::vector<velox::column_index_t> pk_indices;
           if constexpr (IsUpdate) {
-            // TODO(Dronplane) discard writers not affected by update. We can
-            // check meta and do not create writer if it is not interested in
-            // the updated columns
-            // TODO(Dronplane) if PK changes - all writers are affected!
             pk_indices.resize(table.PKType()->size());
             absl::c_iota(pk_indices, 0);
 #ifdef SDB_DEV

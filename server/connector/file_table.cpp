@@ -27,10 +27,19 @@
 #include <velox/dwio/common/FileSink.h>
 #include <velox/dwio/common/ReaderFactory.h>
 #include <velox/dwio/common/WriterFactory.h>
-#include <velox/dwio/parquet/reader/ParquetReader.h>
 
 #include "basics/down_cast.h"
 #include "serenedb_connector.hpp"
+
+namespace {
+
+auto CreateReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
+                  const velox::dwio::common::ReaderOptions& options) {
+  return velox::dwio::common::getReaderFactory(options.fileFormat())
+    ->createReader(std::move(input), options);
+}
+
+}  // namespace
 
 namespace sdb::connector {
 
@@ -56,16 +65,18 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
   _layout_handles.emplace_back(std::move(layout));
 }
 
-FileDataSink::FileDataSink(std::unique_ptr<velox::WriteFile> sink,
-                           std::shared_ptr<WriterOptions> options,
-                           velox::memory::MemoryPool& memory_pool) {
+FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
+                           velox::memory::MemoryPool& leaf_pool,
+                           velox::memory::MemoryPool& aggregate_pool) {
+  // S3 requiries leaf_pool
+  auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
     std::move(sink), "serenedb_sink");
   const auto& writer_factory =
-    velox::dwio::common::getWriterFactory(options->dwio->fileFormat);
-  options->dwio->memoryPool = &memory_pool;
+    velox::dwio::common::getWriterFactory(options->Writer()->fileFormat);
+  options->Writer()->memoryPool = &aggregate_pool;
   _writer = writer_factory->createWriter(std::move(write_sink),
-                                         std::move(options->dwio));
+                                         std::move(options->Writer()));
   SDB_ASSERT(_writer);
 }
 
@@ -100,7 +111,6 @@ void FileDataSink::abort() {
 }
 
 FileDataSource::FileDataSource(
-  std::shared_ptr<velox::ReadFile> source,
   std::shared_ptr<ReaderOptions> options,
   const velox::common::SubfieldFilters& subfield_filters,
   velox::RowTypePtr output_type,
@@ -109,12 +119,12 @@ FileDataSource::FileDataSource(
   const velox::core::TypedExprPtr& remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : _output_type{std::move(output_type)},
-    _source{std::move(source)},
-    _reader_options_dwio{options->dwio},
-    _row_reader_options{options->row_reader},
+    _source{options->storage_options->CreateFileSource({})},
+    _reader_options{options->Reader()},
+    _row_reader_options{options->RowReader()},
     _report_callback{options->report_callback} {
   SDB_ASSERT(_row_reader_options);
-  _reader_options_dwio->setMemoryPool(memory_pool);
+  _reader_options->setMemoryPool(memory_pool);
 
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
   const auto& names = _output_type->names();
@@ -141,12 +151,10 @@ FileDataSource::FileDataSource(
   _pool = &memory_pool;
 }
 
-FileSplitSource::FileSplitSource(std::shared_ptr<velox::ReadFile> source,
-                                 std::shared_ptr<ReaderOptions> options,
+FileSplitSource::FileSplitSource(std::shared_ptr<ReaderOptions> options,
                                  std::string connector_id,
                                  axiom::connector::SplitOptions split_options)
-  : _source{std::move(source)},
-    _options{std::move(options)},
+  : _options{std::move(options)},
     _connector_id{std::move(connector_id)},
     _split_options{split_options} {}
 
@@ -155,44 +163,40 @@ auto FileSplitSource::WholeFile() const -> std::vector<SplitAndGroup> {
           SplitAndGroup{}};
 }
 
-auto FileSplitSource::GetParquetSplits() const -> std::vector<SplitAndGroup> {
-  auto pool = velox::memory::memoryManager()->addLeafPool("file_split_source");
-  velox::dwio::common::ReaderOptions reader_opts(pool.get());
-  reader_opts.setFileFormat(velox::dwio::common::FileFormat::PARQUET);
-  auto input =
-    std::make_unique<velox::dwio::common::BufferedInput>(_source, *pool);
-  auto reader = velox::dwio::common::getReaderFactory(
-                  velox::dwio::common::FileFormat::PARQUET)
-                  ->createReader(std::move(input), reader_opts);
-
-  auto* parquet_reader =
-    basics::downCast<velox::parquet::ParquetReader>(reader.get());
-  const auto meta = parquet_reader->fileMetaData();
-  const int num_row_groups = meta.numRowGroups();
-  if (num_row_groups <= 1) {
+auto FileSplitSource::GetByteSplits() const -> std::vector<SplitAndGroup> {
+  auto source = _options->storage_options->CreateFileSource({});
+  const uint64_t file_size = source->size();
+  if (file_size == 0) {
     return WholeFile();
   }
 
-  auto row_group_offset = [&](int i) -> uint64_t {
-    const auto rg = meta.rowGroup(i);
-    if (rg.hasFileOffset()) {
-      return static_cast<uint64_t>(rg.fileOffset());
-    }
-    const auto col = rg.columnChunk(0);
-    return col.hasDictionaryPageOffset()
-             ? static_cast<uint64_t>(col.dictionaryPageOffset())
-             : static_cast<uint64_t>(col.dataPageOffset());
+  auto ceil_div = [](uint64_t x, uint64_t y) -> uint64_t {
+    return (x + y - 1) / y;
   };
 
-  const uint64_t file_size = _source->size();
+  uint64_t splits_per_file =
+    ceil_div(file_size, _split_options.fileBytesPerSplit);
+
+  if (_split_options.targetSplitCount > 0 &&
+      splits_per_file <
+        static_cast<uint64_t>(_split_options.targetSplitCount)) {
+    auto per_file = static_cast<uint64_t>(_split_options.targetSplitCount);
+    uint64_t bytes_in_split = ceil_div(file_size, per_file);
+    constexpr uint64_t kMinSplitSize = 32ULL << 20U;  // 32 MB
+    splits_per_file =
+      ceil_div(file_size, std::max(bytes_in_split, kMinSplitSize));
+  }
+
+  if (splits_per_file <= 1) {
+    return WholeFile();
+  }
+
+  const uint64_t split_size = ceil_div(file_size, splits_per_file);
   std::vector<SplitAndGroup> splits;
-  splits.reserve(num_row_groups + 1);
-  for (int i = 0; i < num_row_groups; ++i) {
-    const uint64_t start = row_group_offset(i);
-    const uint64_t end =
-      (i + 1 < num_row_groups) ? row_group_offset(i + 1) : file_size;
-    splits.emplace_back(
-      std::make_shared<FileConnectorSplit>(_connector_id, start, end - start));
+  splits.reserve(splits_per_file + 1);
+  for (uint64_t i = 0; i < splits_per_file; ++i) {
+    splits.emplace_back(std::make_shared<FileConnectorSplit>(
+      _connector_id, i * split_size, split_size));
   }
   splits.emplace_back();
 
@@ -210,10 +214,10 @@ auto FileSplitSource::getSplits(uint64_t /* target_bytes */)
     return WholeFile();
   }
 
-  switch (_options->dwio->fileFormat()) {
+  switch (_options->Reader()->fileFormat()) {
     using enum velox::dwio::common::FileFormat;
     case PARQUET:
-      return GetParquetSplits();
+      return GetByteSplits();
     default:
       return WholeFile();
   }
@@ -224,11 +228,10 @@ void FileDataSource::addSplit(
   auto file_split = basics::downCast<const FileConnectorSplit>(split.get());
   auto input =
     std::make_unique<velox::dwio::common::BufferedInput>(_source, *_pool);
-  _reader =
-    velox::dwio::common::getReaderFactory(_reader_options_dwio->fileFormat())
-      ->createReader(std::move(input), *_reader_options_dwio);
-  _row_reader_options->range(file_split->start, file_split->length);
-  _row_reader = _reader->createRowReader(*_row_reader_options);
+  _reader = CreateReader(std::move(input), *_reader_options);
+  auto opts = *_row_reader_options;
+  opts.range(file_split->start, file_split->length);
+  _row_reader = _reader->createRowReader(opts);
 }
 
 std::optional<velox::RowVectorPtr> FileDataSource::next(
@@ -240,7 +243,7 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  _completed_rows += rows_read;
+  _completed_rows += batch->size();
   if (_report_callback) {
     const auto now = std::chrono::high_resolution_clock::now();
     auto seconds_since_last_report =

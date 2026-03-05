@@ -39,16 +39,16 @@
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"
 #include "catalog/column_expr.h"
+#include "catalog/format_options.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/key_generator.h"
+#include "catalog/storage_options.h"
 #include "catalog/types.h"
 #include "catalog/validators.h"
-#include "pg/format_options.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
-#include "pg/storage_options.h"
 #include "query/utils.h"
 #include "utils/velox_vpack.h"
 
@@ -193,8 +193,8 @@ struct CheckConstraint {
 };
 
 struct FileInfo {
-  std::shared_ptr<pg::StorageOptions> storage_options;
-  std::shared_ptr<pg::FormatOptions> format_options;
+  std::shared_ptr<StorageOptions> storage_options;
+  std::shared_ptr<FormatOptions> format_options;
 };
 
 inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {

@@ -152,8 +152,6 @@ std::optional<T> TryGet(const Node& node);
 template<typename T>
 std::optional<T> TryGet(const List* list, size_t i);
 
-std::optional<bool> TryGetBoolOption(const Node* expr);
-
 }  // namespace pg
 }  // namespace sdb
 

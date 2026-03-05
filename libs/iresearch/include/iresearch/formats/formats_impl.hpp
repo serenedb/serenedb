@@ -70,6 +70,30 @@ extern "C" {
 
 namespace irs {
 
+template<typename It, typename T, typename Cmp = std::less<>>
+It branchless_lower_bound(It begin, It end, const T& value,
+                          Cmp&& compare = {}) {
+  size_t len = end - begin;
+  if (len == 0) {
+    return end;
+  }
+  size_t step = std::bit_floor(len);
+  if (step != len && compare(begin[step], value)) {
+    len -= step + 1;
+    if (len == 0) {
+      return end;
+    }
+    step = std::bit_ceil(len);
+    begin = end - step;
+  }
+  for (step /= 2; step != 0; step /= 2) {
+    if (compare(begin[step], value)) {
+      begin += step;
+    }
+  }
+  return begin + compare(*begin, value);
+}
+
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
 inline void WriteStrings(IndexOutput& out, const auto& strings) {
@@ -1165,10 +1189,7 @@ class PostingIteratorBase : public DocIterator {
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
-  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final {
-    SDB_ASSERT(target >= value());
-    return seek(target);
-  }
+  IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) final;
 
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -1278,11 +1299,9 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     return doc_value;
   }
 
-  if (_max_in_leaf < target) [[unlikely]] {
-    if (!SeekToBlock(target)) [[unlikely]] {
-      _left_in_leaf = 0;
-      return doc_value = doc_limits::eof();
-    }
+  if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+    _left_in_leaf = 0;
+    return doc_value = doc_limits::eof();
   }
 
   [[maybe_unused]] uint32_t notify = 0;
@@ -1315,9 +1334,58 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
 }
 
 template<typename IteratorTraits>
+doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
+  if constexpr (IteratorTraits::Position()) {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  } else {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    if (target <= doc_value) [[unlikely]] {
+      return doc_value;
+    }
+
+    auto seal = [&] IRS_FORCE_INLINE {
+      _left_in_leaf = 0;
+      return doc_value = doc_limits::eof();
+    };
+
+    if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+      return seal();
+    }
+
+    auto next = [&](uint32_t left_in_leaf, doc_id_t doc) IRS_FORCE_INLINE {
+      if constexpr (IteratorTraits::Frequency()) {
+        auto& freq_value = std::get<FreqAttr>(_attrs).value;
+        freq_value = *(std::end(_freqs) - left_in_leaf);
+      }
+      _left_in_leaf = left_in_leaf - 1;
+      return doc_value = doc;
+    };
+
+    // If this posting have only tail, this tail will be filled with garbage
+    // values, so we cannot use it.
+    if (_left_in_list != 0) [[likely]] {
+      auto it =
+        branchless_lower_bound(std::begin(_docs), std::end(_docs), target);
+      return next(std::end(_docs) - it, *it);
+    }
+
+    for (auto left_in_leaf = _left_in_leaf; left_in_leaf != 0; --left_in_leaf) {
+      const auto doc = *(std::end(_docs) - left_in_leaf);
+      if (target <= doc) {
+        return next(left_in_leaf, doc);
+      }
+    }
+    return seal();
+  }
+}
+
+template<typename IteratorTraits>
 std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
   const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT mask,
   FillBlockScoreContext score, FillBlockMatchContext match) {
+  SDB_ASSERT(!IteratorTraits::Position());
   SDB_ASSERT(min < max);
   auto& doc_value = std::get<DocAttr>(_attrs).value;
 
@@ -1669,8 +1737,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   this->Init(meta);
 
   auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
-  std::get<CostAttr>(this->_attrs)
-    .reset(term_state.docs_count);  // Estimate iterator
+  std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);
 
   if (term_state.docs_count > 1) {
     this->_left_in_list = term_state.docs_count;
@@ -3007,6 +3074,11 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   }
 
   const auto tail = docs_count % FieldTraits::kBlockSize;
+
+  if (!tail) {
+    return;
+  }
+
   const uint16_t size = doc_in.ReadI16();
   const auto* buf = doc_in.ReadView(size);
   if (!buf) {

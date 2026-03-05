@@ -83,6 +83,7 @@ void CommitTask::operator()() {
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
+    SDB_ASSERT(promise.Valid());
     std::move(promise).Set();
   };
   if (!data) {

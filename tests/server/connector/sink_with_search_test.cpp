@@ -53,6 +53,11 @@ constexpr ObjectId kObjectKey{123456};
 class DataSinkWithSearchTest : public ::testing::Test,
                                public velox::test::VectorTestBase {
  public:
+  static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
+    return {.analyzer = {std::make_unique<irs::StringTokenizer>()},
+            .features = irs::IndexFeatures::None};
+  }
+
   static void SetUpTestCase() {
     velox::memory::MemoryManager::testingSetInstance({});
     // TODO(Dronplane): make it to the main function of tests
@@ -209,7 +214,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     }
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkInsertWriter>(
-        index_transaction, col_idx));
+        index_transaction, AnalyzerProvider, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),
@@ -260,7 +265,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     std::vector<std::unique_ptr<SinkIndexWriter>> index_writers;
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkUpdateWriter>(
-        index_transaction, all_column_oids));
+        index_transaction, AnalyzerProvider, all_column_oids));
     size_t rows_affected = 0;
 
     RocksDBUpdateDataSink sink("", *data_transaction, *_cf_handles.front(),

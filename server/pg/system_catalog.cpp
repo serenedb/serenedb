@@ -108,6 +108,7 @@
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
+#include "search/functions.hpp"
 #include "vpack/serializer.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -412,6 +413,8 @@ constexpr auto kMapping =
     {"json_extract_path_text",
      {"pg_json_extract_path_text", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    // Search functions
+    {"phrase", {search::functions::kPhrase, false}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {

@@ -166,6 +166,7 @@ struct EqFilterNode final : FilterNode {
 };
 
 struct AnyFilterNode final : FilterNode {
+  AnyFilterNode() : FilterNode{FilterNodeKind::Any} {}
   virtual std::optional<Point> NextPoint(
     std::span<const std::string> pk_names) const final {
     if (sent)
@@ -176,8 +177,8 @@ struct AnyFilterNode final : FilterNode {
   mutable bool sent = false;
 };
 
-struct AndFilter final : FilterNode {
-  AndFilter(std::vector<std::unique_ptr<FilterNode>> filters)
+struct AndFilterNode final : FilterNode {
+  AndFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
     : FilterNode{FilterNodeKind::And}, filters{std::move(filters)} {}
   std::vector<std::unique_ptr<FilterNode>> filters;
 
@@ -254,8 +255,8 @@ struct AndFilter final : FilterNode {
   mutable std::vector<size_t> _indices;  // current index per filter
 };
 
-struct OrFilter final : FilterNode {
-  OrFilter(std::vector<std::unique_ptr<FilterNode>> filters)
+struct OrFilterNode final : FilterNode {
+  OrFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
     : FilterNode{FilterNodeKind::Or}, filters{std::move(filters)} {}
   std::vector<std::unique_ptr<FilterNode>> filters;
 
@@ -281,14 +282,14 @@ struct OrFilter final : FilterNode {
 inline std::unique_ptr<FilterNode> ParseFilter(
   const velox::core::TypedExprPtr& filter) {
   if (!filter->isCallKind()) {
-    return {};
+    return std::make_unique<AnyFilterNode>();
   }
   auto* func_call = filter->asUnchecked<velox::core::CallTypedExpr>();
   if (func_call->name() == "presto_eq") {
     SDB_ASSERT(func_call->inputs().size() == 2);
     if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
         func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
-      return {};
+      return std::make_unique<AnyFilterNode>();
     }
     auto field_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
       func_call->inputs()[0]);
@@ -298,7 +299,7 @@ inline std::unique_ptr<FilterNode> ParseFilter(
   }
   if (func_call->name() == "in") {
     if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess) {
-      return {};
+      return std::make_unique<AnyFilterNode>();
     }
     auto field_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
       func_call->inputs()[0]);
@@ -313,7 +314,7 @@ inline std::unique_ptr<FilterNode> ParseFilter(
       basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
     if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
       SDB_PRINT("[mkornaukhov] in() second arg is not an array constant");
-      return {};
+      return std::make_unique<AnyFilterNode>();
     }
 
     const auto elem_type = array_const->type()->childAt(0);
@@ -336,9 +337,22 @@ inline std::unique_ptr<FilterNode> ParseFilter(
       eqs.emplace_back(
         std::make_unique<EqFilterNode>(field_access->name(), elem_const));
     }
-    return std::make_unique<OrFilter>(std::move(eqs));
+    return std::make_unique<OrFilterNode>(std::move(eqs));
   }
-  return {};
+  if (func_call->name() == "and" || func_call->name() == "or") {
+    SDB_ASSERT(!func_call->inputs().empty(),
+               "and, or should have at least 1 child");
+    std::vector<std::unique_ptr<FilterNode>> children;
+    children.reserve(func_call->inputs().size());
+    for (const auto& input : func_call->inputs()) {
+      children.emplace_back(ParseFilter(input));
+    }
+    if (func_call->name() == "and") {
+      return std::make_unique<AndFilterNode>(std::move(children));
+    }
+    return std::make_unique<OrFilterNode>(std::move(children));
+  }
+  return std::make_unique<AnyFilterNode>();
 }
 
 inline std::unique_ptr<FilterNode> ParseFilters(
@@ -351,35 +365,7 @@ inline std::unique_ptr<FilterNode> ParseFilters(
     }
   }
 
-  return std::make_unique<AndFilter>(std::move(resp));
-}
-
-// Somehow need to pass kind of row {a: 42, b: "lol"}  into data source
-inline std::shared_ptr<velox::RowVector> TryGetPoint2(
-  const FilterNode& filter, velox::RowTypePtr pk_type,
-  velox::memory::MemoryPool* pool) {
-  SDB_ASSERT(pk_type->size() != 0);
-  SDB_ASSERT(filter.kind == FilterNodeKind::And);
-  auto& and_filter = basics::downCast<AndFilter>(filter);
-  absl::flat_hash_map<std::string, EqFilterNode*> cname2filter;
-  for (const auto& sub_filter : and_filter.filters) {
-    if (sub_filter->kind != FilterNodeKind::Eq)
-      continue;
-    auto* as_eq = basics::downCast<EqFilterNode>(sub_filter.get());
-    auto res = cname2filter.emplace(as_eq->column_name, as_eq);
-    SDB_ASSERT(res.second);
-  }
-
-  std::vector<velox::VectorPtr> children;
-  for (std::string_view pk_col_name : pk_type->names()) {
-    if (auto it = cname2filter.find(pk_col_name); it != cname2filter.end()) {
-      children.emplace_back(it->second->value->toConstantVector(pool));
-    } else {
-      return {};
-    }
-  }
-  return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
-                                            1, std::move(children));
+  return std::make_unique<AndFilterNode>(std::move(resp));
 }
 
 inline std::vector<velox::RowVectorPtr> TryGetPoints(

@@ -152,6 +152,7 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
 //          - (pk_i in (...)) and (pk_j in (...))
 //          - (pk_i = ... and pk_j = ...) or (pk_i = ... and pk_j = ...)
 //          - Looks like recursive? Carthesian tree?
+// 4. Tests with failure points, where full scan data source will be disabled.
 
 class RocksDBRYOWMultiGetDataSource final
   : public RocksDBRYOWFullScanDataSource {

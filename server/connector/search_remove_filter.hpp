@@ -62,14 +62,12 @@ class SearchRemoveFilterBase : public irs::Filter,
   irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return irs::Type<irs::DocAttr>::id() == id ? &_doc : nullptr;
+    return nullptr;
   }
-
-  irs::doc_id_t value() const noexcept final { return _doc.value; }
 
   irs::doc_id_t seek(irs::doc_id_t) noexcept final {
     SDB_ASSERT(false);
-    return _doc.value = irs::doc_limits::eof();
+    return _doc = irs::doc_limits::eof();
   }
 
   mutable const irs::SubReader* _segment{};
@@ -77,7 +75,6 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
-  mutable irs::DocAttr _doc;
   // TODO(Dronplane) use persistent velox memory pool for proper memory
   // accounting currently available query velox memory pool is discarded after
   // query execution but this allocations must survive until IndexWriter Commit.

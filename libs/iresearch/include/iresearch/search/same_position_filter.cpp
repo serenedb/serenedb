@@ -53,24 +53,22 @@ class SamePositionIterator : public DocIterator {
     return _approx.GetMutable(type);
   }
 
-  doc_id_t value() const noexcept final { return _approx.value(); }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || FindSamePosition()) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = this->value(); target <= doc) [[unlikely]] {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
   }
@@ -84,7 +82,7 @@ class SamePositionIterator : public DocIterator {
       return doc;
     }
     if (doc_limits::eof(doc) || FindSamePosition()) {
-      return doc;
+      return _doc = doc;
     }
     return doc + 1;
   }

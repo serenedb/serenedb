@@ -5,12 +5,12 @@ ar_detect_os(){
     local file="/etc/centos-release"
     local os="unknown release"
     if [ -f "$file" ]; then
-        os="centos"
-        if grep -q -s " 6" "$file" &>/dev/null ; then
-            os+="6"
-        elif grep -q -s " 7" "$file" &>/dev/null ; then
-            os+="7"
-        fi
+      os="centos"
+      if grep -q -s " 6" "$file" >/dev/null 2>&1; then
+        os="${os}6"
+      elif grep -q -s " 7" "$file" >/dev/null 2>&1; then
+        os="${os}7"
+      fi
     fi
     echo "$os"
 

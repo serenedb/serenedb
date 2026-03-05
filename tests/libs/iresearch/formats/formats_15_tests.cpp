@@ -89,7 +89,10 @@ class FreqThresholdDocIterator : public irs::DocIterator {
     : _impl{&impl},
       _freq{irs::get<irs::FreqAttr>(impl)},
       _threshold{threshold},
-      _is_strict{is_strict} {}
+      _is_strict{is_strict} {
+    SDB_ASSERT(_impl);
+    _doc = _impl->value();
+  }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     return _impl->GetMutable(id);

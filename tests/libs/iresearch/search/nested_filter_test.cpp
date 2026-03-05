@@ -41,7 +41,8 @@ struct ChildIterator : irs::DocIterator {
  public:
   ChildIterator(irs::DocIterator::ptr&& it, std::set<irs::doc_id_t> parents)
     : _it{std::move(it)}, _parents{std::move(parents)} {
-    EXPECT_NE(nullptr, _it);
+    SDB_ASSERT(_it);
+    _doc = _it->value();
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
@@ -78,6 +79,8 @@ struct ChildIterator : irs::DocIterator {
 class PrevDocWrapper : public irs::DocIterator {
  public:
   explicit PrevDocWrapper(DocIterator::ptr&& it) noexcept : _it{std::move(it)} {
+    SDB_ASSERT(_it);
+    _doc = _it->value();
     _prev_doc.reset(
       [](const void* ctx) { return *static_cast<const irs::doc_id_t*>(ctx); },
       &_doc);

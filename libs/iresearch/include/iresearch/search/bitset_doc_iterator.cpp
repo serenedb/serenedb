@@ -98,6 +98,11 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
   return advance();
 }
 
+doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) {
+  SDB_ASSERT(target >= value());
+  return seek(target);
+}
+
 uint32_t BitsetDocIterator::count() {
   uint32_t count = 0;
 
@@ -117,6 +122,20 @@ uint32_t BitsetDocIterator::count() {
     }
     count += std::popcount(*_next++);
   }
+}
+
+void BitsetDocIterator::Collect(const ScoreFunction& scorer,
+                                ColumnArgsFetcher& fetcher,
+                                ScoreCollector& collector) {
+  // TODO(mbkkt) optimize
+  return CollectImpl(*this, scorer, fetcher, collector);
+}
+
+std::pair<doc_id_t, bool> BitsetDocIterator::FillBlock(
+  doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
+  FillBlockMatchContext match) {
+  // TODO(mbkkt) optimize
+  return FillBlockImpl(*this, min, max, mask, score, match);
 }
 
 }  // namespace irs

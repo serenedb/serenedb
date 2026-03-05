@@ -24,9 +24,8 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/delimited_tokenizer.hpp>
-
 #include "gtest/gtest.h"
+#include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "tests_config.hpp"
 
 namespace {

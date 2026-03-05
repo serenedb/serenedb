@@ -33,7 +33,7 @@
 namespace sdb {
 namespace {
 
-constexpr auto kPrefix = RocksDBKey::objectIdSize();
+constexpr auto kPrefix = sizeof(ObjectId);
 
 int CompareImpl(const rocksdb::Slice& l, const rocksdb::Slice& r) {
   int res = memcmp(l.data(), r.data(), kPrefix);

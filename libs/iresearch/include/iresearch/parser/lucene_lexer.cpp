@@ -11,6 +11,18 @@
 #define FLEX_BETA
 #endif
 
+#ifdef yyget_lval
+#define yyget_lval_ALREADY_DEFINED
+#else
+#define yyget_lval yyget_lval
+#endif
+
+#ifdef yyset_lval
+#define yyset_lval_ALREADY_DEFINED
+#else
+#define yyset_lval yyset_lval
+#endif
+
 /* First, we deal with  platform-specific or compiler-specific issues. */
 
 /* begin standard C headers. */
@@ -508,6 +520,10 @@ int yyget_lineno(void);
 
 void yyset_lineno(int _line_number);
 
+YYSTYPE* yyget_lval(void);
+
+void yyset_lval(YYSTYPE* yylval_param);
+
 /* Macros after this point can all be overridden by user definitions in
  * section 1.
  */
@@ -619,9 +635,9 @@ static int input(void);
 #ifndef YY_DECL
 #define YY_DECL_IS_OURS 1
 
-extern int yylex(void);
+extern int yylex(YYSTYPE* yylval_param);
 
-#define YY_DECL int yylex(void)
+#define YY_DECL int yylex(YYSTYPE* yylval_param)
 #endif /* !YY_DECL */
 
 /* Code executed at the beginning of each rule, after yytext and yyleng
@@ -644,6 +660,10 @@ YY_DECL {
   yy_state_type yy_current_state;
   char *yy_cp, *yy_bp;
   int yy_act;
+
+  YYSTYPE* yylval;
+
+  yylval = yylval_param;
 
   if (!(yy_init)) {
     (yy_init) = 1;
@@ -770,13 +790,13 @@ YY_DECL {
           YY_BREAK
         case 17:
           YY_RULE_SETUP {
-            yylval.fnum = std::strtof(yytext, nullptr);
+            yylval->fnum = std::strtof(yytext, nullptr);
             return FLOAT;
           }
           YY_BREAK
         case 18:
           YY_RULE_SETUP {
-            yylval.num = std::atoi(yytext);
+            yylval->num = std::atoi(yytext);
             return NUMBER;
           }
           YY_BREAK
@@ -784,7 +804,7 @@ YY_DECL {
           /* rule 19 can match eol */
           YY_RULE_SETUP {
             /* Quoted phrase - point to content inside quotes */
-            yylval.sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
+            yylval->sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
             return PHRASE;
           }
           YY_BREAK
@@ -792,7 +812,7 @@ YY_DECL {
           /* rule 20 can match eol */
           YY_RULE_SETUP {
             /* Regex pattern - point to content inside slashes */
-            yylval.sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
+            yylval->sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
             return REGEX;
           }
           YY_BREAK
@@ -811,7 +831,7 @@ YY_DECL {
                 break;
               }
             }
-            yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+            yylval->sv = {yytext, static_cast<size_t>(yyleng)};
             return has_inner_wild ? WILDCARD : PREFIX;
           }
           YY_BREAK
@@ -830,34 +850,34 @@ YY_DECL {
                 break;
               }
             }
-            yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+            yylval->sv = {yytext, static_cast<size_t>(yyleng)};
             return has_inner_wild ? WILDCARD : SUFFIX;
           }
           YY_BREAK
         case 23:
           YY_RULE_SETUP {
             /* Standalone star (for range bounds) */
-            yylval.sv = {yytext, 1};
+            yylval->sv = {yytext, 1};
             return STAR;
           }
           YY_BREAK
         case 24:
           YY_RULE_SETUP {
             /* General wildcard pattern with * or ? */
-            yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+            yylval->sv = {yytext, static_cast<size_t>(yyleng)};
             return WILDCARD;
           }
           YY_BREAK
         case 25:
           YY_RULE_SETUP {
-            yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+            yylval->sv = {yytext, static_cast<size_t>(yyleng)};
             return TERM;
           }
           YY_BREAK
         case 26:
           YY_RULE_SETUP {
             /* Terms starting with digits (like dates) */
-            yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+            yylval->sv = {yytext, static_cast<size_t>(yyleng)};
             return TERM;
           }
           YY_BREAK

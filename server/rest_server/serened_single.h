@@ -50,6 +50,12 @@ class PostgresFeature;
 
 }  // namespace pg
 
+namespace search {
+
+class SearchEngine;
+
+}  // namespace search
+
 class LoggerFeature;
 class ServerOptionsFeature;
 class SslServerFeature;
@@ -119,6 +125,7 @@ using SerenedFeaturesList = type::List<
   LockfileFeature,
   RocksDBRecoveryManager,
   catalog::CatalogFeature,
+  search::SearchEngine,
   UpgradeFeature,
   ServerFeature,
   NetworkFeature,

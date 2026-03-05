@@ -164,6 +164,7 @@ bool SqlStatement::NextRoot(
   // After completing previous stmt
   // query could be non-nullptr
   query.reset();
+  connection_ctx->OnNewStatement();
   while (!query) {
     if (!ProcessNextRoot(connection_ctx)) {
       return false;

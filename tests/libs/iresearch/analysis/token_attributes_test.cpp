@@ -20,9 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/norm.hpp>
-
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/norm.hpp"
 #include "tests_shared.hpp"
 
 TEST(token_attributes_test, offset) {

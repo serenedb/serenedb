@@ -23,11 +23,11 @@
 
 #pragma once
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/field_meta.hpp>
 #include <unordered_set>
 
 #include "doc_generator.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/field_meta.hpp"
 
 namespace tests {
 

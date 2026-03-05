@@ -177,19 +177,12 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
   };
 
  public:
-  WALDumper(RocksDBEngineCatalog& engine, const WalAccess::Filter& filter,
-            const WalAccess::MarkerCallback& f, size_t max_response_size)
+  WALDumper(const WalAccess::Filter& filter, const WalAccess::MarkerCallback& f,
+            size_t max_response_size)
     : WalAccessContext{filter, f},
-      _engine{engine},
       _definitions_cf{RocksDBColumnFamilyManager::get(
                         RocksDBColumnFamilyManager::Family::Definitions)
                         ->GetID()},
-      _documents_cf{RocksDBColumnFamilyManager::get(
-                      RocksDBColumnFamilyManager::Family::Documents)
-                      ->GetID()},
-      _primary_cf{RocksDBColumnFamilyManager::get(
-                    RocksDBColumnFamilyManager::Family::PrimaryIndex)
-                    ->GetID()},
       _max_response_size{max_response_size} {}
 
   bool Continue() override {
@@ -511,50 +504,6 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
     if (column_family_id == _definitions_cf) {
       // reset everything immediately after DDL operations
       ResetTransientState();
-    } else if (column_family_id == _documents_cf) {
-      if (_state != kTransaction && _state != kSingleOperation) {
-        ResetTransientState();
-        return {};
-      }
-      SDB_ASSERT(_state != kSingleOperation || !_current_trx_id.isSet());
-      SDB_ASSERT(_state != kTransaction || _trx_db_id.isSet());
-
-      ObjectId cid{RocksDBKey::objectId(key)};
-
-      auto& catalog =
-        SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Local();
-      const auto obj = catalog.GetSnapshot()->GetObject<catalog::Table>(cid);
-      if (!obj) {
-        return {};
-      }
-
-      const auto dbid = obj->GetDatabaseId();
-
-      if (!shouldHandleCollection(dbid, cid)) {
-        // no reset here
-        return {};
-      }
-
-      SDB_ASSERT(_state != kTransaction || _trx_db_id == dbid);
-
-      if (auto* database = LoadDatabase(dbid); database) {
-        if (auto* col = loadCollection(dbid, cid); col) {
-          {
-            vpack::ObjectBuilder marker(&builder, true);
-            marker->add("tick", std::to_string(_current_sequence));
-            marker->add("type", kReplicationMarkerDocument);
-            marker->add("db", database->GetName());
-            marker->add("cuid", col->GetName());
-            marker->add("tid", std::to_string(_current_trx_id.id()));
-            marker->add("data", RocksDBValue::data(value));
-          }
-          PrintMarker();
-        }
-      }
-
-      if (_state == kSingleOperation) {
-        ResetTransientState();  // always reset after single op
-      }
     }
 
     return {};
@@ -565,58 +514,6 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
     _check_tick = true;
 #endif
     IncTick();
-
-    if (cf_id != _primary_cf) {
-      if (cf_id == _documents_cf) {
-        _removed_doc_rid = RocksDBKey::documentId(key);
-      }
-      return;  // ignore all document operations
-    }
-    auto removed_doc_rid = std::exchange(_removed_doc_rid, {});
-
-    if (_state != kTransaction && _state != kSingleOperation) {
-      ResetTransientState();
-      return;
-    }
-    SDB_ASSERT(_state != kSingleOperation || !_current_trx_id.isSet());
-    SDB_ASSERT(_state != kTransaction || _trx_db_id.isSet());
-
-    uint64_t object_id = RocksDBKey::objectId(key);
-    auto triple = _engine.mapObjectToIndex(object_id);
-    const ObjectId dbid{std::get<0>(triple)};
-    const ObjectId cid = std::get<1>(triple);
-
-    if (!shouldHandleCollection(dbid, cid) || !removed_doc_rid.isSet()) {
-      return;
-    }
-
-    std::string_view doc_key = RocksDBKey::primaryKey(key);
-    SDB_ASSERT(_state != kTransaction || _trx_db_id == dbid);
-
-    auto* database = LoadDatabase(dbid);
-    if (database != nullptr) {
-      catalog::Table* col = loadCollection(dbid, cid);
-      if (col != nullptr) {
-        {
-          vpack::ObjectBuilder marker(&builder, true);
-          marker->add("tick", std::to_string(_current_sequence));
-          marker->add("type", kReplicationMarkerRemove);
-          marker->add("db", database->GetName());
-          marker->add("cuid", col->GetName());
-          marker->add("tid", std::to_string(_current_trx_id.id()));
-
-          vpack::ObjectBuilder data(&builder, "data", true);
-          // TODO(mbkkt) we don't really need key here
-          data->add(StaticStrings::kKeyString, doc_key);
-          data->add(StaticStrings::kRevString, removed_doc_rid.toHLC());
-        }
-        PrintMarker();
-      }
-    }
-
-    if (_state == kSingleOperation) {
-      ResetTransientState();
-    }
   }
 
   rocksdb::Status DeleteCF(uint32_t column_family_id,
@@ -767,10 +664,7 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
   }
 
  private:
-  RocksDBEngineCatalog& _engine;
   const uint32_t _definitions_cf;
-  const uint32_t _documents_cf;
-  const uint32_t _primary_cf;
   const size_t _max_response_size;
   vpack::Builder _builder;
 
@@ -803,7 +697,7 @@ void RocksDBWalAccess::printWal(const Filter& filter, size_t chunk_size,
   size_t max_trx_chunk_size =
     filter.tick_last_scanned > 0 ? chunk_size : SIZE_MAX;
 
-  WALDumper dumper(_engine, filter, func, max_trx_chunk_size);
+  WALDumper dumper(filter, func, max_trx_chunk_size);
   const uint64_t since = dumper.SafeBeginTick();
   SDB_ASSERT(since <= filter.tick_start);
   SDB_ASSERT(since <= filter.tick_end);
@@ -891,7 +785,7 @@ WalAccessResult RocksDBWalAccess::tail(const Filter& filter, size_t chunk_size,
   size_t max_trx_chunk_size =
     filter.tick_last_scanned > 0 ? chunk_size : SIZE_MAX;
 
-  WALDumper dumper(_engine, filter, func, max_trx_chunk_size);
+  WALDumper dumper(filter, func, max_trx_chunk_size);
   const uint64_t since = dumper.SafeBeginTick();
   SDB_ASSERT(since <= filter.tick_start);
   SDB_ASSERT(since <= filter.tick_end);

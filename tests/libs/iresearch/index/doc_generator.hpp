@@ -28,14 +28,14 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <iresearch/analysis/analyzers.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/iterator.hpp>
 
 #include "basics/down_cast.h"
+#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/iterator.hpp"
 
 namespace irs {
 
@@ -690,11 +690,12 @@ class StringField : public tests::FieldBase {
 // field which uses simple analyzer without tokenization
 class StringViewField : public tests::FieldBase {
  public:
-  StringViewField(
-    const std::string& name,
-    irs::IndexFeatures extra_index_features = irs::IndexFeatures::None);
+  StringViewField(const std::string& name,
+                  irs::IndexFeatures index_features = irs::IndexFeatures::Freq |
+                                                      irs::IndexFeatures::Pos);
   StringViewField(const std::string& name, const std::string_view& value,
-                  irs::IndexFeatures index_features = irs::IndexFeatures::None);
+                  irs::IndexFeatures index_features = irs::IndexFeatures::Freq |
+                                                      irs::IndexFeatures::Pos);
 
   void value(std::string_view str);
   std::string_view value() const { return _value; }

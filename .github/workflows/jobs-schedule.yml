@@ -1,0 +1,8 @@
+name: Jobs Schedule
+on:
+  schedule:
+    - cron: "0 0 * * 0"   # раз в неделю, воскресенье 00:00 UTC
+
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml

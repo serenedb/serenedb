@@ -106,11 +106,22 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return advance();
   }
 
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
   void reset() noexcept final {
     _next = _begin;
     std::get<DocAttr>(_attrs).value = {};
     std::get<PayAttr>(_attrs).value = {};
   }
+
+  bytes_view GetPayload() const noexcept {
+    return std::get<PayAttr>(_attrs).value;
+  }
+
+  size_t Size() const noexcept { return _end - _begin; }
 
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;

@@ -24,11 +24,11 @@
 #pragma once
 
 #include <algorithm>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/field_meta.hpp>
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/field_meta.hpp"
 
 namespace tests {
 

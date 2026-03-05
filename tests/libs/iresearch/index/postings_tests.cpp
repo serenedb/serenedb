@@ -22,12 +22,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iostream>
-#include <iresearch/index/postings.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <memory>
 #include <set>
 #include <vector>
 
+#include "iresearch/index/postings.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

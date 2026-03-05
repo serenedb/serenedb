@@ -163,8 +163,6 @@ add_subdirectory(iresearch "${IRESEARCH_BUILD_DIR}" EXCLUDE_FROM_ALL)
 
 target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 
-target_link_libraries(iresearch-static PUBLIC vpack)
-
 ################################################################################
 ## serene
 ################################################################################

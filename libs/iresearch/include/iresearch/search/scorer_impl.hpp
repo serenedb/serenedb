@@ -26,6 +26,7 @@
 #include <iterator>
 #include <type_traits>
 
+#include "basics/misc.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -88,29 +89,5 @@ struct TermCollectorImpl final : TermCollector {
 };
 
 inline constexpr FreqAttr kEmptyFreq;
-
-template<typename Ctx>
-struct MakeScoreFunctionImpl {
-  template<bool HasFilterBoost, typename... Args>
-  static ScoreFunction Make(Args&&... args);
-};
-
-template<typename Ctx, typename... Args>
-ScoreFunction MakeScoreFunction(const FilterBoost* filter_boost,
-                                Args&&... args) noexcept {
-  if (filter_boost) {
-    return MakeScoreFunctionImpl<Ctx>::template Make<true>(
-      std::forward<Args>(args)..., filter_boost);
-  }
-  return MakeScoreFunctionImpl<Ctx>::template Make<false>(
-    std::forward<Args>(args)...);
-}
-
-enum class NormType {
-  // Norm values
-  Norm = 0,
-  // Norm values fit 1-byte
-  NormTiny,
-};
 
 }  // namespace irs

@@ -26,115 +26,105 @@
 #include <memory>
 #include <streambuf>
 
-#include "basics/bit_utils.hpp"
 #include "basics/noncopyable.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/io_utils.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-/// various hints for direct buffer access
-enum class BufferHint {
-  /// buffer is valid until the next read operation
-  NORMAL = 0,
+class DataInput {
+ public:
+  enum class Type {
+    Generic,
+    BytesViewInput,
+  };
 
-  /// stream guarantees that buffer is immutable and will reside
-  /// in memory while underlying stream is open
-  PERSISTENT,
-};
+  virtual byte_type ReadByte() = 0;
 
-struct DataInput {
+  virtual uint64_t Position() const noexcept = 0;
+  virtual uint64_t Length() const noexcept = 0;
+
+  virtual int16_t ReadI16() = 0;
+  virtual int32_t ReadI32() = 0;
+  virtual int64_t ReadI64() = 0;
+  virtual uint32_t ReadV32() = 0;
+  virtual uint64_t ReadV64() = 0;
+
+  virtual void Skip(uint64_t count) = 0;
+
+  // If supported, provides access to an internal buffer containing
+  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
+  // and will reside in memory while underlying stream is open
+  // and before the next read operation.
+  virtual const byte_type* ReadView(uint64_t count) = 0;
+
+  // If supported, provides access to an internal buffer containing
+  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
+  // and will reside in memory while underlying stream is open.
+  virtual const byte_type* ReadData(uint64_t count) = 0;
+
+  virtual size_t ReadBytes(byte_type* b, size_t count) = 0;
+
+  // @note calling "ReadByte()" on a stream in EOF state is undefined behavior
+  virtual bool IsEOF() const noexcept = 0;
+
+  virtual Type GetType() const noexcept { return Type::Generic; }
+
+  virtual ~DataInput() = default;
+
+  // TODO(mbkkt) Remove this
   using iterator_category = std::forward_iterator_tag;
   using value_type = byte_type;
   using pointer = void;
   using reference = void;
   using difference_type = ptrdiff_t;
 
-  virtual ~DataInput() = default;
-
-  virtual byte_type ReadByte() = 0;
-
-  virtual size_t ReadBytes(byte_type* b, size_t count) = 0;
-
-  /// if supported, provides access to an internal buffer containing
-  /// the requested 'count' of bytes
-  virtual const byte_type* ReadBuffer(size_t count, BufferHint hint) = 0;
-
-  virtual uint64_t Position() const = 0;
-
-  virtual uint64_t Length() const = 0;
-
-  /// @note calling "ReadByte()" on a stream in EOF state is undefined behavior
-  virtual bool IsEOF() const = 0;
-
-  virtual int16_t ReadI16() {
-    // important to read as unsigned
-    return irs::read<uint16_t>(*this);
+  IRS_FORCE_INLINE byte_type operator*(this auto& self) {
+    return self.ReadByte();
   }
-
-  virtual int32_t ReadI32() {
-    // important to read as unsigned
-    return irs::read<uint32_t>(*this);
+  IRS_FORCE_INLINE auto& operator++(this auto& self) noexcept { return self; }
+  IRS_FORCE_INLINE auto& operator++(this auto& self, int) noexcept {
+    return self;
   }
-
-  virtual int64_t ReadI64() {
-    // important to read as unsigned
-    return irs::read<uint64_t>(*this);
-  }
-
-  virtual uint32_t ReadV32() { return irs::vread<uint32_t>(*this); }
-
-  virtual uint64_t ReadV64() { return irs::vread<uint64_t>(*this); }
-
-  byte_type operator*() { return ReadByte(); }
-  DataInput& operator++() noexcept { return *this; }
-  DataInput& operator++(int) noexcept { return *this; }
 };
 
-struct IndexInput : public DataInput {
+class IndexInput : public DataInput {
  public:
   using ptr = std::unique_ptr<IndexInput>;
+
+  virtual void Seek(uint64_t pos) = 0;
+
+  using DataInput::ReadData;
+  virtual const byte_type* ReadData(uint64_t offset, uint64_t count) = 0;
+
+  using DataInput::ReadView;
+  virtual const byte_type* ReadView(uint64_t offset, uint64_t count) = 0;
+
+  using DataInput::ReadBytes;
+  virtual size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) = 0;
 
   // TODO(mbkkt) now they're both implemented the same they,
   // also it doesn't look like all users aware. Maybe we should remove dup?
   virtual ptr Dup() const = 0;     // thread-unsafe fd copy (offset preserved)
   virtual ptr Reopen() const = 0;  // thread-safe fd copy (offset preserved)
 
-  virtual void Seek(size_t pos) = 0;
-  virtual void Skip(size_t count) { Seek(Position() + count); }
-
-  using DataInput::ReadBytes;
-  virtual size_t ReadBytes(size_t offset, byte_type* b, size_t count) = 0;
-
-  using DataInput::ReadBuffer;
-
-  /// if supported, provides access to an internal buffer at the specified
-  /// 'offset' containing the requested 'count' of bytes
-  /// @note operation is atomic
-  /// @note in case of failure stream state doesn't change
-  virtual const byte_type* ReadBuffer(size_t offset, size_t count,
-                                      BufferHint hint) = 0;
-
-  /// checksum from the current position to a specified offset without changing
-  /// current position
-  virtual uint32_t Checksum(size_t offset) const = 0;
+  // Checksum from the current position to a specified offset
+  // without changing current position.
+  // TODO(mbkkt) Maybe change offset to count?
+  virtual uint32_t Checksum(uint64_t offset) const = 0;
 
   virtual uint64_t CountMappedMemory() const { return 0; }
+
+  IndexInput& operator=(const IndexInput&) = delete;
 
  protected:
   IndexInput() = default;
   IndexInput(const IndexInput&) = default;
-
- private:
-  IndexInput& operator=(const IndexInput&) = delete;
 };
 
 class InputBuf final : public std::streambuf, util::Noncopyable {
  public:
-  typedef std::streambuf::char_type char_type;
-  typedef std::streambuf::int_type int_type;
+  using char_type = std::streambuf::char_type;
+  using int_type = std::streambuf::int_type;
 
   explicit InputBuf(IndexInput* in);
 
@@ -155,45 +145,62 @@ class InputBuf final : public std::streambuf, util::Noncopyable {
 
 class BufferedIndexInput : public IndexInput {
  public:
+  const byte_type* ReadData(uint64_t count) noexcept final { return nullptr; }
+  const byte_type* ReadData(uint64_t offset, uint64_t count) noexcept final {
+    return nullptr;
+  }
+
+  const byte_type* ReadView(uint64_t count) final;
+  const byte_type* ReadView(uint64_t offset, uint64_t count) final {
+    if (count <= _buf_size && offset + count <= Length()) {
+      Seek(offset);
+      return ReadView(count);
+    }
+    return nullptr;
+  }
+
   byte_type ReadByte() final;
-
   size_t ReadBytes(byte_type* b, size_t count) final;
-
-  size_t ReadBytes(size_t offset, byte_type* b, size_t count) final {
+  size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) final {
     Seek(offset);
     return ReadBytes(b, count);
   }
 
-  const byte_type* ReadBuffer(size_t size, BufferHint hint) noexcept final;
-
-  const byte_type* ReadBuffer(size_t offset, size_t size,
-                              BufferHint hint) noexcept final;
+  int16_t ReadI16() final {
+    return Remain() < sizeof(uint16_t) ? irs::read<uint16_t>(*this)
+                                       : irs::read<uint16_t>(_begin);
+  }
+  int32_t ReadI32() final {
+    return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
+                                       : irs::read<uint32_t>(_begin);
+  }
+  int64_t ReadI64() final {
+    return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
+                                       : irs::read<uint64_t>(_begin);
+  }
+  uint32_t ReadV32() final {
+    return Remain() < bytes_io<uint32_t>::kMaxVSize
+             ? irs::vread<uint32_t>(*this)
+             : irs::vread<uint32_t>(_begin);
+  }
+  uint64_t ReadV64() final {
+    return Remain() < bytes_io<uint64_t>::kMaxVSize
+             ? irs::vread<uint64_t>(*this)
+             : irs::vread<uint64_t>(_begin);
+  }
 
   uint64_t Position() const noexcept final { return _start + Offset(); }
 
-  bool IsEOF() const final { return Position() >= Length(); }
+  void Skip(uint64_t count) final { Seek(Position() + count); }
+  void Seek(uint64_t pos) final;
 
-  void Seek(size_t pos) final;
-  void Skip(size_t pos) final;
-
-  int16_t ReadI16() final;
-
-  int32_t ReadI32() final;
-
-  int64_t ReadI64() final;
-
-  uint32_t ReadV32() final;
-
-  uint64_t ReadV64() final;
-
-  byte_type operator*() { return ReadByte(); }
-  BufferedIndexInput& operator++() noexcept { return *this; }
-  BufferedIndexInput& operator++(int) noexcept { return *this; }
+  BufferedIndexInput(const BufferedIndexInput&) = delete;
+  BufferedIndexInput& operator=(const BufferedIndexInput&) = delete;
 
  protected:
   BufferedIndexInput() = default;
 
-  void reset(byte_type* buf, size_t size, size_t start) noexcept {
+  void reset(byte_type* buf, uint64_t size, uint64_t start) noexcept {
     _buf = buf;
     _begin = buf;
     _end = buf;
@@ -201,37 +208,34 @@ class BufferedIndexInput : public IndexInput {
     _start = start;
   }
 
-  virtual void SeekInternal(size_t pos) = 0;
+  virtual void SeekInternal(uint64_t pos) = 0;
 
   virtual size_t ReadInternal(byte_type* b, size_t count) = 0;
 
   // returns number of reamining bytes in the buffer
-  IRS_FORCE_INLINE size_t Remain() const noexcept {
+  IRS_FORCE_INLINE uint64_t Remain() const noexcept {
     return std::distance(_begin, _end);
   }
 
  private:
-  BufferedIndexInput(const BufferedIndexInput&) = delete;
-  BufferedIndexInput& operator=(const BufferedIndexInput&) = delete;
+  // number of bytes between begin_ & end_
+  uint64_t Refill();
 
-  /// number of bytes between begin_ & end_
-  size_t Refill();
-
-  /// number of elements between current position and beginning of the buffer
-  IRS_FORCE_INLINE size_t Offset() const noexcept {
+  // number of elements between current position and beginning of the buffer
+  IRS_FORCE_INLINE uint64_t Offset() const noexcept {
     return std::distance(_buf, _begin);
   }
 
-  /// number of valid bytes in the buffer
-  IRS_FORCE_INLINE size_t Size() const noexcept {
+  // number of valid bytes in the buffer
+  IRS_FORCE_INLINE uint64_t Size() const noexcept {
     return std::distance(_buf, _end);
   }
 
-  byte_type* _buf{};        // buffer itself
-  byte_type* _begin{_buf};  // current position in the buffer
-  byte_type* _end{_buf};    // end of the valid bytes in the buffer
-  size_t _start{};          // position of the buffer in file
-  size_t _buf_size{};       // size of the buffer in bytes
+  byte_type* _buf = nullptr;  // buffer itself
+  byte_type* _begin = _buf;   // current position in the buffer
+  byte_type* _end = _buf;     // end of the valid bytes in the buffer
+  uint64_t _start = 0;        // position of the buffer in file
+  uint64_t _buf_size = 0;     // size of the buffer in bytes
 };
 
 }  // namespace irs

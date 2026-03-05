@@ -68,68 +68,20 @@ byte_type BufferedIndexInput::ReadByte() {
   return *_begin++;
 }
 
-int16_t BufferedIndexInput::ReadI16() {
-  return Remain() < sizeof(uint16_t) ? DataInput::ReadI16()
-                                     : irs::read<uint16_t>(_begin);
-}
-
-int32_t BufferedIndexInput::ReadI32() {
-  return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
-                                     : irs::read<uint32_t>(_begin);
-}
-
-int64_t BufferedIndexInput::ReadI64() {
-  return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
-                                     : irs::read<uint64_t>(_begin);
-}
-
-uint32_t BufferedIndexInput::ReadV32() {
-  return Remain() < bytes_io<uint32_t>::kMaxVSize
-           ? irs::vread<uint32_t>(*this)
-           : irs::vread<uint32_t>(_begin);
-}
-
-uint64_t BufferedIndexInput::ReadV64() {
-  return Remain() < bytes_io<uint64_t>::kMaxVSize
-           ? irs::vread<uint64_t>(*this)
-           : irs::vread<uint64_t>(_begin);
-}
-
-const byte_type* BufferedIndexInput::ReadBuffer(size_t size,
-                                                BufferHint hint) noexcept {
-  if (hint == BufferHint::PERSISTENT) {
-    // don't support persistent buffers
-    return nullptr;
-  }
-
-  if (size <= Remain()) {
+const byte_type* BufferedIndexInput::ReadView(uint64_t count) {
+  if (count <= Remain()) {
     auto begin = _begin;
-    _begin += size;
+    _begin += count;
     return begin;
   }
 
-  if (size <= std::min(_buf_size, Length() - Position())) {
+  if (count <= std::min(_buf_size, Length() - Position())) {
     SeekInternal(Position());
     Refill();
 
     auto begin = _begin;
-    _begin += size;
+    _begin += count;
     return begin;
-  }
-
-  return nullptr;
-}
-
-const byte_type* BufferedIndexInput::ReadBuffer(size_t offset, size_t size,
-                                                BufferHint hint) noexcept {
-  if (hint == BufferHint::PERSISTENT) {
-    // don't support persistent buffers
-    return nullptr;
-  }
-
-  if (size <= _buf_size && offset + size <= Length()) {
-    Seek(offset);
-    return ReadBuffer(size, hint);
   }
 
   return nullptr;
@@ -139,7 +91,7 @@ size_t BufferedIndexInput::ReadBytes(byte_type* b, size_t count) {
   SDB_ASSERT(_begin <= _end);
 
   // read remaining data from buffer
-  size_t read = std::min(count, Remain());
+  const auto read = std::min(count, Remain());
   if (read) {
     std::memcpy(b, _begin, sizeof(byte_type) * read);
     _begin += read;
@@ -149,7 +101,7 @@ size_t BufferedIndexInput::ReadBytes(byte_type* b, size_t count) {
     return read;  // it's enough for us
   }
 
-  size_t size = count - read;
+  auto size = count - read;
   b += read;
   if (size < _buf_size) {  // refill buffer & copy
     size = std::min(size, Refill());
@@ -161,10 +113,10 @@ size_t BufferedIndexInput::ReadBytes(byte_type* b, size_t count) {
     _begin = _end = _buf;  // will trigger refill on the next read
   }
 
-  return read += size;
+  return read + size;
 }
 
-size_t BufferedIndexInput::Refill() {
+uint64_t BufferedIndexInput::Refill() {
   const auto data_start = this->Position();
   const auto data_end = std::min(data_start + _buf_size, Length());
 
@@ -181,16 +133,14 @@ size_t BufferedIndexInput::Refill() {
   return data_size;
 }
 
-void BufferedIndexInput::Seek(size_t p) {
-  if (p >= _start && p < (_start + Size())) {
-    _begin = _buf + p - _start;
+void BufferedIndexInput::Seek(uint64_t pos) {
+  if (pos >= _start && pos < (_start + Size())) {
+    _begin = _buf + pos - _start;
   } else {
-    SeekInternal(p);
+    SeekInternal(pos);
     _begin = _end = _buf;
-    _start = p;
+    _start = pos;
   }
 }
-
-void BufferedIndexInput::Skip(size_t count) { Seek(Position() + count); }
 
 }  // namespace irs

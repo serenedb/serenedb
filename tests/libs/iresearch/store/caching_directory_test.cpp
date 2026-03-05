@@ -21,9 +21,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 // clang-format off
-#include <iresearch/store/caching_directory.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include "iresearch/store/caching_directory.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
 
 #include "tests_param.hpp"
 // clang-format on

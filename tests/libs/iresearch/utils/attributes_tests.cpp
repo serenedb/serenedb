@@ -21,9 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/attribute_provider.hpp>
-#include <iresearch/utils/attributes.hpp>
-
+#include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/attributes.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

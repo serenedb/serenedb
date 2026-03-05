@@ -25,10 +25,11 @@
 #include <absl/strings/str_split.h>
 #include <re2/re2.h>
 
-#include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
 #include <string_view>
 #include <utility>
+
+#include "iresearch/analysis/pipeline_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 
 namespace irs::analysis {
 namespace {

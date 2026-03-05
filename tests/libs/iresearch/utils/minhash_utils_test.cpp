@@ -20,8 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/minhash_utils.hpp>
-
+#include "iresearch/utils/minhash_utils.hpp"
 #include "tests_shared.hpp"
 
 TEST(MinHashTest, MaxSize) {

@@ -23,15 +23,12 @@
 #pragma once
 
 #include "basics/bit_utils.hpp"
-#include "basics/containers/bitset.hpp"
 #include "basics/math_utils.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/prev_doc.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -219,6 +216,8 @@ class SparseBitmapIterator : public ResettableDocIterator {
 
   doc_id_t seek(doc_id_t target) final;
 
+  doc_id_t LazySeek(doc_id_t target) final;
+
   void reset() final;
 
   // The value is undefined for
@@ -260,8 +259,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     };
   };
 
-  using Attributes =
-    std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr, ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr>;
 
   explicit SparseBitmapIterator(Ptr&& in, const Options& opts);
 

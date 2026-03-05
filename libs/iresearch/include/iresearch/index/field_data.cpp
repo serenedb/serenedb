@@ -288,8 +288,8 @@ class DocIteratorImpl : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t doc) final {
-    irs::seek(*this, doc);
-    return value();
+    SDB_ASSERT(false);
+    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
   }
 
  private:
@@ -392,8 +392,8 @@ class SortingDocIteratorImpl : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t doc) final {
-    irs::seek(*this, doc);
-    return value();
+    SDB_ASSERT(false);
+    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
   }
 
  private:
@@ -625,6 +625,10 @@ ResettableDocIterator::ptr CachedColumn::iterator(ColumnHint hint) const {
   // FIXME(gnusi): can avoid allocation with the help of managed_ptr
   return memory::make_managed<BufferedColumnIterator>(_stream.Index(),
                                                       _stream.Data());
+}
+
+NormReader::ptr CachedColumn::norms() const {
+  return MakeNormReader(payload(), _stream.Index(), _stream.Data());
 }
 
 FieldData::FieldData(std::string_view name,

@@ -18,10 +18,9 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
-
 #include "formats_test_case_base.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/store/directory_attributes.hpp"
 #include "tests_shared.hpp"
 
 namespace {

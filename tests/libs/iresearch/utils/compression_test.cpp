@@ -20,12 +20,12 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/delta_compression.hpp>
-#include <iresearch/utils/lz4compression.hpp>
 #include <numeric>
 #include <random>
 
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/delta_compression.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {

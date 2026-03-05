@@ -36,38 +36,11 @@ class RocksDBValue {
   static RocksDBValue Object(RocksDBEntryType type, vpack::Slice data) {
     return {type, data};
   }
-  static RocksDBValue PrimaryIndexValue(RevisionId doc_id);
-  static RocksDBValue EdgeIndexValue(std::string_view vertex_id);
-  static RocksDBValue VPackIndexValue();
-  static RocksDBValue VPackIndexValue(vpack::Slice data);
-  static RocksDBValue UniqueVPackIndexValue(RevisionId doc_id);
-  static RocksDBValue UniqueVPackIndexValue(RevisionId doc_id,
-                                            vpack::Slice data);
-  static RocksDBValue ReplicationApplierConfig(vpack::Slice data);
-  static RocksDBValue KeyGeneratorValue(vpack::Slice data);
 
   //////////////////////////////////////////////////////////////////////////////
   /// Used to construct an empty value of the given type for retrieval
   //////////////////////////////////////////////////////////////////////////////
   static RocksDBValue Empty(RocksDBEntryType type);
-
- public:
-  //////////////////////////////////////////////////////////////////////////////
-  /// Extracts the RevisionId from a value
-  ///
-  /// May be called only on PrimaryIndexValue values. Other types will throw.
-  //////////////////////////////////////////////////////////////////////////////
-
-  static RevisionId documentId(const RocksDBValue&);
-  static RevisionId documentId(const rocksdb::Slice&);
-  static RevisionId documentId(std::string_view);
-
-  //////////////////////////////////////////////////////////////////////////////
-  /// Extracts the vertex _to or _from ID (`_key`) from a value
-  ///
-  /// May be called only on EdgeIndexValue values. Other types will throw.
-  //////////////////////////////////////////////////////////////////////////////
-  static std::string_view vertexId(const rocksdb::Slice&);
 
   //////////////////////////////////////////////////////////////////////////////
   /// Extracts the VPack data from a value
@@ -78,9 +51,6 @@ class RocksDBValue {
   static vpack::Slice data(const RocksDBValue&);
   static vpack::Slice data(const rocksdb::Slice&);
   static vpack::Slice data(std::string_view);
-
-  static vpack::Slice uniqueIndexStoredValues(const rocksdb::Slice&);
-  static vpack::Slice indexStoredValues(const rocksdb::Slice&);
 
  public:
   RocksDBEntryType type() const noexcept { return _type; }
@@ -111,14 +81,9 @@ class RocksDBValue {
 
  private:
   explicit RocksDBValue(RocksDBEntryType type);
-  RocksDBValue(RocksDBEntryType type, RevisionId doc_id);
-  RocksDBValue(RocksDBEntryType type, RevisionId doc_id, vpack::Slice data);
   RocksDBValue(RocksDBEntryType type, vpack::Slice data);
-  RocksDBValue(RocksDBEntryType type, std::string_view data);
 
   static RocksDBEntryType type(const char* data, size_t size);
-  static RevisionId documentId(const char* data, uint64_t size);
-  static std::string_view vertexId(const char* data, size_t size);
   static vpack::Slice data(const char* data, size_t size);
 
   RocksDBEntryType _type;

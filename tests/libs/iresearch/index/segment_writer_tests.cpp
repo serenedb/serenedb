@@ -22,16 +22,16 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/index_reader.hpp>
-#include <iresearch/index/segment_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
 
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/segment_writer.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {

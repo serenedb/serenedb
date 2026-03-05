@@ -27,7 +27,6 @@
 namespace sdb::catalog {
 
 struct SecondaryIndexOptions {
-  std::vector<uint16_t> columns;
   bool unique = false;
 };
 
@@ -35,15 +34,18 @@ class SecondaryIndex : public Index {
  public:
   using Options = SecondaryIndexOptions;
 
-  SecondaryIndex(IndexOptions<SecondaryIndexOptions> options,
-                 ObjectId database_id);
+  SecondaryIndex(IndexOptions<SecondaryIndexOptions> options);
 
-  void WriteInternal(vpack::Builder& builder) const;
-  std::span<const uint16_t> GetColumns() const noexcept { return _columns; }
+  void WriteInternal(vpack::Builder& builder) const final;
   bool IsUnique() const noexcept { return _unique; }
 
+  ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
+    bool, vpack::Slice) const final {
+    return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
+                                   "Secondary Index Shard is not supported"};
+  }
+
  private:
-  std::vector<uint16_t> _columns;
   bool _unique;
 };
 

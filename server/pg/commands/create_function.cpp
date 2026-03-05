@@ -40,10 +40,7 @@
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
-#include "nodes/nodeFuncs.h"
-#include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
@@ -56,7 +53,7 @@ namespace {
 // For the PG14+ syntax function body is in the sql_body field of
 // CreateFunctionStmt.
 // Example: CREATE FUNCTION foo() RETURNS int LANGUAGE SQL BEGIN ATOMIC
-std::pair<std::string, catalog::FunctionOptions> ParseOptions(
+std::pair<std::string, catalog::FunctionOptions> ParseFunctionBodyAndOptions(
   const List* pg_options) {
   catalog::FunctionOptions options;
 
@@ -141,38 +138,32 @@ std::pair<std::string, catalog::FunctionOptions> ParseOptions(
 
 }  // namespace
 
-yaclib::Future<Result> CreateFunction(ExecContext& context,
-                                      const CreateFunctionStmt& stmt) {
-  // TODO: use correct schema
-  const auto db = context.GetDatabaseId();
-
+std::shared_ptr<catalog::Function> CreateFunctionImpl(
+  const Config* config, ObjectId database_id, std::string_view database_name,
+  std::string_view current_schema, const CreateFunctionStmt& stmt) {
   SDB_ASSERT(stmt.funcname);
 
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
-
-  auto [schema, function_name] =
-    ParseObjectName(stmt.funcname, context.GetDatabase(), current_schema);
-
-  auto& catalogs =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto& catalog = catalogs.Global();
+  auto function_name =
+    ParseObjectName(stmt.funcname, database_name, current_schema).relation;
 
   catalog::FunctionProperties properties;
   properties.name = std::string{function_name};
 
   std::string function_body;
-  std::tie(function_body, properties.options) = ParseOptions(stmt.options);
+  std::tie(function_body, properties.options) =
+    ParseFunctionBodyAndOptions(stmt.options);
   SDB_ASSERT(!function_body.empty() == !stmt.sql_body);
   if (stmt.sql_body) {
-    // all asserts are guaranteed by sql_analyzer_velox.cpp
-    SDB_ASSERT(IsA(stmt.sql_body, List));
+    // All checks for user functions are guaranteed by sql_analyzer_velox.cpp,
+    // but that is not the case for system functions, so throw if something in
+    // system functions is not OK.
+    SDB_ENSURE(IsA(stmt.sql_body, List), ERROR_INTERNAL);
     const auto* outer_list = castNode(List, stmt.sql_body);
-    SDB_ASSERT(list_length(outer_list) == 1);
+    SDB_ENSURE(list_length(outer_list) == 1, ERROR_INTERNAL);
     const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
-    SDB_ASSERT(IsA(inner_list_node, List));
+    SDB_ENSURE(IsA(inner_list_node, List), ERROR_INTERNAL);
     const auto* inner_list = castNode(List, inner_list_node);
-    SDB_ASSERT(list_length(inner_list) == 1);
+    SDB_ENSURE(list_length(inner_list) == 1, ERROR_INTERNAL);
     auto* body_stmt = list_nth_node(Node, inner_list, 0);
     function_body = pg::DeparseStmt(body_stmt);
   }
@@ -185,27 +176,56 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   }
 
   auto sql_impl = std::make_unique<pg::FunctionImpl>();
-  auto r = sql_impl->Init(db, function_name, std::move(function_body),
-                          stmt.is_procedure);
+  auto r = sql_impl->Init(database_id, function_name, std::move(function_body),
+                          stmt.is_procedure, config);
   if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
-  vpack::Builder builder;
-  sql_impl->ToVPack(builder);
-  properties.implementation = builder.slice();
 
-  auto function = std::make_shared<catalog::Function>(std::move(properties),
-                                                      std::move(sql_impl), db);
+  if (config) {
+    // Case for non system views
+    vpack::Builder builder;
+    sql_impl->ToVPack(builder);
+    properties.implementation = builder.slice();
+  }
 
-  r = catalog.CreateFunction(db, schema, function, stmt.replace);
+  return std::make_shared<catalog::Function>(std::move(properties),
+                                             std::move(sql_impl), database_id);
+}
+
+yaclib::Future<Result> CreateFunction(ExecContext& context,
+                                      const CreateFunctionStmt& stmt) {
+  SDB_ASSERT(stmt.funcname);
+
+  auto database_name = context.GetDatabase();
+  const auto database_id = context.GetDatabaseId();
+
+  auto& connection_context = basics::downCast<const ConnectionContext>(context);
+  auto current_schema = connection_context.GetCurrentSchema();
+  auto schema =
+    ParseObjectName(stmt.funcname, database_name, current_schema).schema;
+
+  auto function = CreateFunctionImpl(&connection_context, database_id,
+                                     database_name, current_schema, stmt);
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+
+  auto r = catalog.CreateFunction(database_id, schema, function, stmt.replace);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     SDB_ASSERT(!stmt.replace);
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                    ERR_MSG("relation \"", function_name, "\" already exists"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", function->GetName(), "\" already exists"));
   }
 
   return yaclib::MakeFuture(std::move(r));
+}
+
+std::shared_ptr<catalog::Function> CreateSystemFunction(
+  const CreateFunctionStmt& stmt) {
+  return CreateFunctionImpl(nullptr, id::kSystemDB, "", "", stmt);
 }
 
 }  // namespace sdb::pg

@@ -18,11 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <stdexcept>
 
 #include "gtest/gtest.h"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
 
 using WordnetSynonymsTokenizer = irs::analysis::WordnetSynonymsTokenizer;
 

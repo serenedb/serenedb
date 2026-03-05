@@ -29,14 +29,14 @@
 #include <utf8.h>
 
 #include <iomanip>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/index/field_data.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <numeric>
 #include <sstream>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/index/field_data.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace utf8 {
@@ -509,18 +509,16 @@ irs::Tokenizer& StringField::GetTokens() const {
 }
 
 StringViewField::StringViewField(const std::string& name,
-                                 irs::IndexFeatures extra_index_features) {
-  this->index_features =
-    (irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) | extra_index_features;
+                                 irs::IndexFeatures index_features) {
+  this->index_features = index_features;
   this->name = name;
 }
 
 StringViewField::StringViewField(const std::string& name,
                                  const std::string_view& value,
-                                 irs::IndexFeatures extra_index_features)
+                                 irs::IndexFeatures index_features)
   : _value(value) {
-  this->index_features =
-    (irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) | extra_index_features;
+  this->index_features = index_features;
   this->name = name;
 }
 

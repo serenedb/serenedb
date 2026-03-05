@@ -15,3 +15,7 @@
 /tests/sqllogic/*-junit.xml
 
 /perf.*
+
+/logs/
+*.pyc
+docker.env

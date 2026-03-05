@@ -23,6 +23,9 @@
 
 #pragma once
 
+#include <cstdlib>
+#include <ctime>
+
 namespace irs {
 
 inline const char* Getenv(const char* name) noexcept {

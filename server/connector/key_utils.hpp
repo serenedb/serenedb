@@ -42,7 +42,7 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
 // Prepare buffer for column key and call 'row_key_handle' on row_key
-template<bool IsInternalSSTKey = false, typename Func>
+template<typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
                    velox::vector_size_t row_idx, std::string_view object_id,
@@ -63,15 +63,6 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
-
-  if constexpr (IsInternalSSTKey) {
-    const auto key_size = key_buffer.size();
-    basics::StrAppend(key_buffer,
-                      sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
-    std::memcpy(key_buffer.data() + key_size,
-                &rocksdb::SstFileWriter::kInternalKeyFooter,
-                sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
-  }
 }
 
 // Takes buffer in format

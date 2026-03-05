@@ -24,9 +24,8 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/stopwords_tokenizer.hpp>
-
 #include "gtest/gtest.h"
+#include "iresearch/analysis/stopwords_tokenizer.hpp"
 
 TEST(token_stopwords_stream_tests, consts) {
   static_assert("stopwords" ==

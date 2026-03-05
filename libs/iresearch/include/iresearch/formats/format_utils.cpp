@@ -74,8 +74,8 @@ size_t HeaderLength(std::string_view format) noexcept {
          format.size();
 }
 
-int32_t CheckHeader(IndexInput& in, std::string_view req_format,
-                    int32_t min_ver, int32_t max_ver) {
+int32_t CheckHeader(DataInput& in, std::string_view req_format, int32_t min_ver,
+                    int32_t max_ver) {
   const ptrdiff_t left = in.Length() - in.Position();
 
   if (left < 0) {

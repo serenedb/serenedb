@@ -24,8 +24,6 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -40,7 +38,14 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   doc_id_t value() const noexcept final { return _doc.value; }
   doc_id_t advance() final;
   doc_id_t seek(doc_id_t target) final;
+  doc_id_t LazySeek(doc_id_t target) final;
   uint32_t count() final;
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final;
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final;
 
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept

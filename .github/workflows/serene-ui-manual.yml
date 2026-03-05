@@ -1,0 +1,7 @@
+name: SereneUI-Build-Manual
+on:
+  workflow_dispatch:
+
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml

@@ -22,27 +22,43 @@
 
 #include "tfidf.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
 #include <vpack/vpack.h>
 
 #include <cmath>
+#include <cstddef>
 #include <string_view>
 
 #include "basics/down_cast.h"
-#include "basics/math_utils.hpp"
+#include "basics/empty.hpp"
 #include "basics/misc.hpp"
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
+#include "vpack/serializer.h"
 
 namespace irs {
 namespace {
+
+template<typename T>
+constexpr const T* TryGetValue(const T* value) noexcept {
+  return value;
+}
+
+constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
+  return nullptr;
+}
 
 struct TFIDFFieldCollector final : FieldCollector {
   // number of documents containing the matched field
@@ -68,72 +84,46 @@ struct TFIDFFieldCollector final : FieldCollector {
   void write(DataOutput& out) const final { out.WriteV64(docs_with_field); }
 };
 
-const auto kSQRT = CacheFunc<uint32_t, 2048>(
-  0, [](uint32_t i) noexcept { return std::sqrt(static_cast<float_t>(i)); });
-
-const auto kRSQRT = CacheFunc<uint32_t, 2048>(1, [](uint32_t i) noexcept {
-  return 1.f / std::sqrt(static_cast<float_t>(i));
-});
-
 Scorer::ptr MakeFromBool(const vpack::Slice slice) {
   SDB_ASSERT(slice.isBool());
 
   return std::make_unique<TFIDF>(slice.getBool());
 }
 
-constexpr std::string_view kWithNormsParamName("withNorms");
+struct Params {
+  bool withNorms = TFIDF::WITH_NORMS();  // NOLINT
+};
 
 Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  SDB_ASSERT(slice.isObject());
-
-  auto normalize = TFIDF::WITH_NORMS();
-
-  if (auto v = slice.get(kWithNormsParamName); !v.isNone()) {
-    if (!v.isBool()) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("Non-boolean value in '", kWithNormsParamName,
-                     "' while constructing tfidf scorer from VPack arguments"));
-      return nullptr;
-    }
-    normalize = v.getBool();
+  Params params;
+  auto r = vpack::ReadObjectNothrow(slice, params,
+                                    {
+                                      .skip_unknown = true,
+                                      .strict = false,
+                                    });
+  if (!r.ok()) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat("Error '", r.errorMessage(),
+                   "' while constructing tfidf scorer from VPack arguments"));
+    return {};
   }
 
-  return std::make_unique<TFIDF>(normalize);
+  return std::make_unique<TFIDF>(params.withNorms);
 }
 
 Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  SDB_ASSERT(slice.isArray());
-
-  vpack::ArrayIterator array = vpack::ArrayIterator(slice);
-  vpack::ValueLength size = array.size();
-
-  if (size > 1) {
-    // wrong number of arguments
+  Params params;
+  auto r = vpack::ReadTupleNothrow(slice, params);
+  if (!r.ok()) {
     SDB_ERROR(
       "xxxxx", sdb::Logger::IRESEARCH,
-      "Wrong number of arguments while constructing tfidf scorer from VPack "
-      "arguments (must be <= 1)");
-    return nullptr;
+      absl::StrCat("Error '", r.errorMessage(),
+                   "' while constructing bm25 scorer from VPack arguments"));
+    return {};
   }
 
-  // default args
-  auto norms = TFIDF::WITH_NORMS();
-
-  // parse `withNorms` optional argument
-  for (auto arg_slice : array) {
-    if (!arg_slice.isBool()) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Non-bool value on position `0` while constructing tfidf scorer from "
-        "VPack arguments");
-      return nullptr;
-    }
-
-    norms = arg_slice.getBool();
-  }
-
-  return std::make_unique<TFIDF>(norms);
+  return std::make_unique<TFIDF>(params.withNorms);
 }
 
 Scorer::ptr MakeVPack(const vpack::Slice slice) {
@@ -185,78 +175,91 @@ Scorer::ptr MakeJson(std::string_view args) {
   }
 }
 
-IRS_FORCE_INLINE float_t Tfidf(uint32_t freq, float_t idf) noexcept {
-  return kSQRT.get<true>(freq) * idf;
+// Helper functions
+
+IRS_FORCE_INLINE score_t TfIdf(uint32_t freq, score_t idf) noexcept {
+  // TODO(gnusi): do we need sqrt?
+  return std::sqrt(static_cast<score_t>(freq)) * idf;
 }
 
-template<typename Norm>
-struct TFIDFContext final : public ScoreCtx {
-  TFIDFContext(Norm&& norm, score_t boost, TFIDFStats idf, const FreqAttr* freq,
-               const FilterBoost* filter_boost = nullptr) noexcept
-    : freq{freq ? *freq : kEmptyFreq},
+template<ScoreMergeType MergeType, bool HasNorm, bool HasBoost>
+IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
+                            const uint32_t* IRS_RESTRICT freq,
+                            [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
+                            [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                            score_t idf) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto r = [&] IRS_FORCE_INLINE {
+      if constexpr (HasNorm && HasBoost) {
+        return boost[i] * TfIdf(freq[i], idf) /
+               std::sqrt(static_cast<score_t>(norm[i]));
+      } else if constexpr (HasNorm) {
+        return TfIdf(freq[i], idf) / std::sqrt(static_cast<score_t>(norm[i]));
+      } else if constexpr (HasBoost) {
+        return boost[i] * TfIdf(freq[i], idf);
+      } else {
+        return TfIdf(freq[i], idf);
+      }
+    }();
+    Merge<MergeType>(res[i], r);
+  }
+}
+
+template<bool HasNorm, bool HasFilterBoost>
+struct TfIdfScore : public ScoreOperator {
+  TfIdfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
+             const FreqBlockAttr* freq,
+             const score_t* filter_boost = nullptr) noexcept
+    : freq{freq},
       filter_boost{filter_boost},
-      idf{boost * idf.value},
-      norm{std::move(norm)} {
-    SDB_ASSERT(freq);
+      norm{norm},
+      idf{boost * idf.value} {}
+
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
+                                  scores_size_t n) const noexcept {
+    TfIdf<MergeType, HasNorm, HasFilterBoost>(
+      res, n, freq->value, TryGetValue(norm), TryGetValue(filter_boost), idf);
   }
 
-  TFIDFContext(const TFIDFContext&) = delete;
-  TFIDFContext& operator=(const TFIDFContext&) = delete;
-
-  const FreqAttr& freq;
-  const FilterBoost* filter_boost;
-  float_t idf;  // precomputed : boost * idf
-  [[no_unique_address]] Norm norm;
-};
-
-template<typename Reader, NormType Type>
-struct TFIDFNormAdapter final {
-  explicit TFIDFNormAdapter(Reader&& reader) : reader{std::move(reader)} {}
-
-  IRS_FORCE_INLINE decltype(auto) operator()() {
-    return kRSQRT.get<Type != NormType::NormTiny>(reader());
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
+    return res;
   }
 
-  [[no_unique_address]] Reader reader;
-};
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
 
-template<NormType Type, typename Reader>
-auto MakeTFIDFNormAdapter(Reader&& reader) {
-  return TFIDFNormAdapter<Reader, Type>(std::move(reader));
-}
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
+  }
+
+  const FreqBlockAttr* freq;
+  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
+    filter_boost;
+  [[no_unique_address]] utils::Need<HasNorm, const uint32_t*> norm;
+  score_t idf;  // precomputed : boost * idf
+};
 
 }  // namespace
-
-template<typename Norm>
-struct MakeScoreFunctionImpl<TFIDFContext<Norm>> {
-  using Ctx = TFIDFContext<Norm>;
-
-  template<bool HasFilterBoost, typename... Args>
-  static auto Make(Args&&... args) {
-    return ScoreFunction::Make<Ctx>(
-      [](ScoreCtx* ctx, score_t* res) noexcept {
-        SDB_ASSERT(res);
-        SDB_ASSERT(ctx);
-
-        auto& state = *static_cast<Ctx*>(ctx);
-
-        float_t idf;
-        if constexpr (HasFilterBoost) {
-          SDB_ASSERT(state.filter_boost);
-          idf = state.idf * state.filter_boost->value;
-        } else {
-          idf = state.idf;
-        }
-
-        if constexpr (std::is_same_v<Norm, utils::Empty>) {
-          *res = Tfidf(state.freq.value, idf);
-        } else {
-          *res = Tfidf(state.freq.value, idf) * state.norm();
-        }
-      },
-      ScoreFunction::DefaultMin, std::forward<Args>(args)...);
-  }
-};
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
                     const TermCollector* term) const {
@@ -267,75 +270,52 @@ void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
   const auto docs_with_field = field_ptr ? field_ptr->docs_with_field : 0;
   // nullptr possible if e.g.'by_column_existence' filter
   const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
-  // TODO(mbkkt) SEARCH-464 SDB_ASSERT(docs_with_field >= docs_with_term);
+  // TODO(mbkkt) SDB_ASSERT(docs_with_field >= docs_with_term);
 
   auto* idf = stats_cast(stats_buf);
-  idf->value += static_cast<float_t>(
+  idf->value += static_cast<score_t>(
     std::log1p((docs_with_field + 1.0) / (docs_with_term + 1.0)));
-  // TODO(mbkkt) SEARCH-444 SDB_ASSERT(idf.value >= 0.f);
+  // TODO(mbkkt) SDB_ASSERT(idf.value >= 0.f);
 }
 
-ScoreFunction TFIDF::PrepareScorer(const ColumnProvider& segment,
-                                   const FieldProperties& meta,
-                                   const byte_type* stats_buf,
-                                   const AttributeProvider& doc_attrs,
-                                   score_t boost) const {
-  auto* freq = irs::get<FreqAttr>(doc_attrs);
+ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
+  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
 
   if (!freq) {
-    if (!_boost_as_score || 0.f == boost) {
-      return ScoreFunction::Default(1);
+    if (!_boost_as_score || 0.f == ctx.boost) {
+      return ScoreFunction::Default();
     }
 
     // if there is no frequency then all the
     // scores will be the same (e.g. filter irs::all)
-    return ScoreFunction::Constant(boost);
+    return ScoreFunction::Constant(ctx.boost);
   }
 
-  const auto* stats = stats_cast(stats_buf);
-  auto* filter_boost = irs::get<FilterBoost>(doc_attrs);
+  auto* filter_boost = [&] {
+    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+    return attr ? attr->value : nullptr;
+  }();
 
-  // add norm attribute if requested
+  const uint32_t* norm = nullptr;
   if (_normalize) {
-    auto prepare_norm_scorer =
-      [&]<typename Norm>(Norm&& norm) -> ScoreFunction {
-      return MakeScoreFunction<TFIDFContext<Norm>>(
-        filter_boost, std::move(norm), boost, *stats, freq);
-    };
-
-    // Check if norms are present in attributes
-    if (auto* norm = irs::get<Norm>(doc_attrs); norm) {
-      return prepare_norm_scorer(MakeTFIDFNormAdapter<NormType::Norm>(
-        [norm]() noexcept { return norm->value; }));
-    }
+    norm = [&] {
+      auto* attr = irs::get<Norm>(ctx.doc_attrs);
+      return attr ? &attr->value : nullptr;
+    }();
 
     // Fallback to reading from columnstore
-    auto* doc = irs::get<DocAttr>(doc_attrs);
-
-    if (!doc) [[unlikely]] {
-      // we need 'document' attribute to be exposed
-      return ScoreFunction::Default(1);
-    }
-
-    if (field_limits::valid(meta.norm)) {
-      if (Norm::Context ctx; ctx.Reset(segment, meta.norm, *doc)) {
-        if (ctx.max_num_bytes == sizeof(byte_type)) {
-          return Norm::MakeReader(std::move(ctx), [&](auto&& reader) {
-            return prepare_norm_scorer(
-              MakeTFIDFNormAdapter<NormType::NormTiny>(std::move(reader)));
-          });
-        }
-
-        return Norm::MakeReader(std::move(ctx), [&](auto&& reader) {
-          return prepare_norm_scorer(
-            MakeTFIDFNormAdapter<NormType::Norm>(std::move(reader)));
-        });
-      }
+    if (!norm && ctx.fetcher) {
+      norm = ctx.fetcher->AddNorms(ctx.segment.column(ctx.field.norm));
     }
   }
 
-  return MakeScoreFunction<TFIDFContext<utils::Empty>>(
-    filter_boost, utils::Empty{}, boost, *stats, freq);
+  return ResolveBool(norm != nullptr, [&]<bool HasNorms>() {
+    return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+      const auto* stats = stats_cast(ctx.stats);
+      return ScoreFunction::Make<TfIdfScore<HasNorms, HasBoost>>(
+        norm, ctx.boost, *stats, freq, filter_boost);
+    });
+  });
 }
 
 TermCollector::ptr TFIDF::PrepareTermCollector() const {

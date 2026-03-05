@@ -20,8 +20,7 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/ngram_match_utils.hpp>
-
+#include "iresearch/utils/ngram_match_utils.hpp"
 #include "tests_shared.hpp"
 
 TEST(ngram_match_utils_test, test_similarity_empty_left) {

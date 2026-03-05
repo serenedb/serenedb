@@ -38,10 +38,10 @@ namespace sdb {
 static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
 
 struct IndexTombstone {
+  ObjectId old_database;
+  ObjectId old_schema;
   ObjectId id;
-  IndexType type = IndexType::kTypeUnknown;
-  uint64_t number_documents = kRead;
-  bool unique = false;
+  IndexType type = IndexType::Unknown;
 };
 
 struct TableTombstone {
@@ -104,6 +104,7 @@ class Table : public SchemaObject {
     SDB_ASSERT(_sharding_strategy);
     return *_sharding_strategy;
   }
+  const auto& GetFileInfo() const noexcept { return _file_info; }
 
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
@@ -141,6 +142,7 @@ class Table : public SchemaObject {
   // writes will be disallowed if we know we cannot fulfill it.
   // _write_concern <= _replication_factor
   uint32_t _write_concern = 1;
+  FileInfo _file_info;
 };
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

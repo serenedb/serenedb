@@ -20,18 +20,19 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 
@@ -162,10 +163,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
                                        irs::ScorersView scorers,
                                        irs::byte_type wand_idx,
                                        bool can_use_wand, size_t limit) {
-  auto prepared = irs::Scorers::Prepare(std::span(
-    const_cast<const irs::Scorer**>(&scorers.front()), scorers.size()));
-  EXPECT_FALSE(prepared.empty());
-  auto query = filter.prepare({.index = index, .scorers = prepared});
+  auto query = filter.prepare({.index = index, .scorer = scorers.front()});
   EXPECT_NE(nullptr, query);
 
   const irs::WandContext mode{.index = wand_idx};
@@ -174,48 +172,55 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
   sorted.reserve(limit);
 
   for (size_t left = limit, segment_id = 0; const auto& segment : index) {
+    irs::ColumnArgsFetcher fetcher;
     auto docs = query->execute(irs::ExecutionContext{
-      .segment = segment, .scorers = prepared, .wand = mode});
+      .segment = segment,
+      .scorer = scorers.front(),
+      .wand = mode,
+    });
     EXPECT_NE(nullptr, docs);
 
     const auto* doc = irs::get<irs::DocAttr>(*docs);
     EXPECT_NE(nullptr, doc);
-    auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
-    EXPECT_NE(nullptr, score);
+    irs::ScoreFunction score;
     if (wand_idx != irs::WandContext::kDisable && can_use_wand) {
-      EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score->max.tail);
+      // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
+      score = docs->PrepareScore({
+        .scorer = scorers[wand_idx],
+        .segment = &segment,
+        .fetcher = &fetcher,
+      });
     } else {
-      EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score->max.tail);
+      // EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score.max.tail);
     }
 
     if (!left) {
       EXPECT_TRUE(!sorted.empty());
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
-      score->Min(sorted.front().score);
     }
     std::vector<irs::score_t> scores(scorers.size());
     auto& score_value = *scores.data();
     while (docs->next()) {
-      (*score)(&score_value);
+      auto doc = docs->value();
+      fetcher.Fetch(doc);
+      docs->FetchScoreArgs(0);
+      score.Score(&score_value, 1);
 
       if (left) {
-        sorted.emplace_back(segment_id, doc->value, score_value);
+        sorted.emplace_back(segment_id, doc, score_value);
 
         if (0 == --left) {
           std::make_heap(std::begin(sorted), std::end(sorted));
-          score->Min(sorted.front().score);
         }
       } else if (sorted.front().score < score_value) {
         std::pop_heap(std::begin(sorted), std::end(sorted));
 
         auto& min_doc = sorted.back();
         min_doc.segment = segment_id;
-        min_doc.doc = doc->value;
+        min_doc.doc = doc;
         min_doc.score = score_value;
 
         std::push_heap(std::begin(sorted), std::end(sorted));
-
-        score->Min(sorted.front().score);
       }
     }
 

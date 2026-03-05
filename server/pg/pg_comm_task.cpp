@@ -366,7 +366,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
 void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
   // Crash injection for recovery testing
-  SDB_IF_FAILURE("crash_on_packet") { exit(1); }
+  SDB_IF_FAILURE("crash_on_packet") { SDB_IMMEDIATE_ABORT(); }
 
   // 1 byte type + 4 byte length
   SDB_ASSERT(packet.size() >= 5);
@@ -1025,7 +1025,7 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   decoded_columns.reserve(batch_columns);
   for (uint16_t i = 0; i < batch_columns; ++i) {
     const auto& column = *batch->childAt(i);
-    decoded_columns.emplace_back().decode(column, false);
+    decoded_columns.emplace_back().decode(column, true);
   }
 
   for (velox::vector_size_t row = 0; row < batch_rows; ++row) {
@@ -1304,10 +1304,15 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
     _send.WriteUncommitted({"\0W", 2});
     _send.WriteUncommitted(context);
   }
-  if (query.size() > 1) {
-    _send.WriteUncommitted({"\0q", 2});
-    _send.WriteUncommitted({query.data(), query.size() - 1});
-  }
+
+  // TODO: 'q' (internal query) and 'p' (internal position) fields should only
+  // be sent for errors originating from internally-generated queries
+  // (e.g. PL/pgSQL functions, triggers).
+  // if (query.size() > 1) {
+  //   _send.WriteUncommitted({"\0q", 2});
+  //   _send.WriteUncommitted({query.data(), query.size() - 1});
+  // }
+
   if (cursor_pos > 0) {
     _send.WriteUncommitted({"\0P", 2});
     // TODO: zero copy serialization here
@@ -1341,12 +1346,13 @@ void PgSQLCommTask<T>::Start() {
 }
 
 template<rest::SocketType T>
-void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
+void PgSQLCommTask<T>::SendAsync(message::SequenceView data) noexcept {
   if (_send_should_close.load(std::memory_order_acquire)) {
     Base::Close(this->_close_error);
     return;
   }
   if (data.Empty()) {
+    this->_send.FlushDone();
     return;
   }
   SDB_LOG_PGSQL("Sending Packet:", data.Print());

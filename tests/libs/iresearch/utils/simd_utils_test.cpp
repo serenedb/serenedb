@@ -22,9 +22,9 @@
 
 #include <basics/std.hpp>
 #include <cstring>
-#include <iresearch/utils/simd_utils.hpp>
 
 #include "basics/misc.hpp"
+#include "iresearch/utils/simd_utils.hpp"
 #include "tests_shared.hpp"
 
 TEST(simd_utils_test, delta32) {

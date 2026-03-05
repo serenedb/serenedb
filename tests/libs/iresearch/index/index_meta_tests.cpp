@@ -21,11 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

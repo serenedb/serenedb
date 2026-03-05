@@ -22,7 +22,12 @@
 
 #include "boost_scorer.hpp"
 
+#include <absl/container/inlined_vector.h>
+
+#include "basics/shared.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/score_function.hpp"
 
 namespace irs {
 namespace {
@@ -31,36 +36,74 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
   return std::make_unique<BoostScore>();
 }
 
-struct VolatileBoostScoreCtx final : ScoreCtx {
-  VolatileBoostScoreCtx(const FilterBoost* volatile_boost,
-                        score_t boost) noexcept
-    : boost{boost}, volatile_boost{volatile_boost} {
+template<ScoreMergeType MergeType>
+IRS_FORCE_INLINE void Impl(score_t* IRS_RESTRICT res, scores_size_t n,
+                           const score_t* IRS_RESTRICT volatile_boost,
+                           score_t boost) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto r = volatile_boost[i] * boost;
+    Merge<MergeType>(res[i], r);
+  }
+}
+
+class VolatileBoostScore : public ScoreOperator {
+ public:
+  VolatileBoostScore(const score_t* volatile_boost, score_t boost) noexcept
+    : _const_boost{boost}, _volatile_boost{volatile_boost} {
     SDB_ASSERT(volatile_boost);
   }
 
-  score_t boost;
-  const FilterBoost* volatile_boost;
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res, size_t n) const noexcept {
+    Impl<MergeType>(res, n, _volatile_boost, _const_boost);
+  }
+
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
+    return res;
+  }
+
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
+  }
+
+ private:
+  score_t _const_boost;
+  const score_t* _volatile_boost;
 };
 
 }  // namespace
 
-ScoreFunction BoostScore::PrepareScorer(const ColumnProvider& /*segment*/,
-                                        const FieldProperties& /*meta*/,
-                                        const byte_type* /*stats*/,
-                                        const AttributeProvider& attrs,
-                                        score_t boost) const {
-  const auto* volatile_boost = irs::get<FilterBoost>(attrs);
+ScoreFunction BoostScore::PrepareScorer(const ScoreContext& ctx) const {
+  const auto* volatile_boost = irs::get<BoostBlockAttr>(ctx.doc_attrs);
 
-  if (volatile_boost == nullptr) {
-    return ScoreFunction::Constant(boost);
+  if (!volatile_boost) {
+    return ScoreFunction::Constant(ctx.boost);
   }
 
-  return ScoreFunction::Make<VolatileBoostScoreCtx>(
-    [](ScoreCtx* ctx, score_t* res) noexcept {
-      auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
-      *res = state.volatile_boost->value * state.boost;
-    },
-    ScoreFunction::DefaultMin, volatile_boost, boost);
+  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value,
+                                                 ctx.boost);
 }
 
 void BoostScore::init() { REGISTER_SCORER_JSON(BoostScore, MakeJson); }

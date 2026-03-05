@@ -20,99 +20,170 @@
 
 #include "query/transaction.h"
 
+#include <absl/cleanup/cleanup.h>
+
+#include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 
-Result Transaction::Begin() {
-  SDB_ASSERT(!HasTransactionBegin());
-  CreateRocksDBTransaction();
-  _state |= State::HasTransactionBegin;
-  return {};
+void Transaction::OnNewStatement() {
+  if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
+    _rocksdb_snapshot = nullptr;
+  }
 }
 
 Result Transaction::Commit() {
-  SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Commit();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to commit RocksDB transaction: ", status.ToString()};
+  const uint64_t num_ops = _rocksdb_transaction
+                             ? _rocksdb_transaction->GetNumPuts() +
+                                 _rocksdb_transaction->GetNumDeletes()
+                             : 0;
+  SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
+             "We do not expect merges for now");
+
+  if (num_ops > 0) [[likely]] {
+    for (auto& search_transaction : _search_transactions) {
+      // tie iresearch transaction's active segment to current flush context in
+      // writer and let IndexWriter know that he need to wait for this
+      // transaction to settle before proceeding with commit. That is important
+      // as we are committing "on tick" and must ensure that if we mark this
+      // transaction with tick (see below commit calls) writer will not commit
+      // without it. This could happend if background index commit will start
+      // AFTER RocksDB commit but before transaction commit. But as we told
+      // index writer to wait, we are safe.
+      search_transaction.second->RegisterFlush();
+    }
+    absl::Cleanup rollback = [&] {
+      for (auto& search_transaction : _search_transactions) {
+        search_transaction.second->Abort();
+      }
+      RollbackVariables();
+      Destroy();
+    };
+
+    SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
+    auto status = _rocksdb_transaction->Commit();
+    SDB_IF_FAILURE("crash_after_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
+
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to commit RocksDB transaction: ", status.ToString()};
+    }
+
+    // id is first write operation seqno in the WAL
+    auto post_commit_seq = _rocksdb_transaction->GetId();
+    // add number of operations to get last operation seqno
+    post_commit_seq += num_ops - 1;
+
+    std::move(rollback).Cancel();
+
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Commit(post_commit_seq);
+    }
+    ApplyTableStatsDiffs();
   }
-  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
   return {};
 }
 
 Result Transaction::Rollback() {
-  SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Rollback();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to rollback RocksDB transaction: ", status.ToString()};
+  absl::Cleanup rollback = [&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  };
+
+  if (_rocksdb_transaction) {
+    auto status = _rocksdb_transaction->Rollback();
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to rollback RocksDB transaction: ", status.ToString()};
+    }
   }
-  RollbackVariables();
-  Destroy();
   return {};
 }
 
 void Transaction::AddRocksDBRead() noexcept { _state |= State::HasRocksDBRead; }
 
+bool Transaction::HasRocksDBRead() const noexcept {
+  return (_state & State::HasRocksDBRead) != State::None;
+}
+
 void Transaction::AddRocksDBWrite() noexcept {
   _state |= State::HasRocksDBWrite;
+}
+
+bool Transaction::HasRocksDBWrite() const noexcept {
+  return (_state & State::HasRocksDBWrite) != State::None;
+}
+
+void Transaction::AddTransactionBegin() noexcept {
+  SDB_ASSERT(!HasTransactionBegin());
+  _state |= State::HasTransactionBegin;
 }
 
 bool Transaction::HasTransactionBegin() const noexcept {
   return (_state & State::HasTransactionBegin) != State::None;
 }
 
-rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
-  return _rocksdb_transaction.get();
+const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
+  ObjectId index_id) {
+  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
+  auto it = _search_snapshots.find(index_id);
+  if (it == _search_snapshots.end()) {
+    auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
+    SDB_ASSERT(index_shard);
+    SDB_ASSERT(index_shard->GetType() == IndexType::Inverted,
+               "Expected inverted index shard");
+    auto& inverted_index_shard =
+      basics::downCast<search::InvertedIndexShard>(*index_shard.get());
+    it = _search_snapshots
+           .emplace(index_id, inverted_index_shard.GetInvertedIndexSnapshot())
+           .first;
+  }
+  return *it->second;
 }
 
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
-  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
+  SDB_ASSERT(HasRocksDBRead());
   if (!_rocksdb_snapshot) {
-    if ((_state & State::HasRocksDBWrite) != State::None) {
-      CreateRocksDBTransaction();
+    if (HasRocksDBWrite() || HasTransactionBegin()) {
+      EnsureRocksDBTransaction();
     } else {
-      CreateStorageSnapshot();
+      SDB_ASSERT(!_storage_snapshot);
+      _storage_snapshot = GetServerEngine().currentSnapshot();
+      SDB_ASSERT(_storage_snapshot);
+      _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
+      SDB_ASSERT(_rocksdb_snapshot);
     }
   }
   return *_rocksdb_snapshot;
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
-  if (!_rocksdb_transaction) {
-    CreateRocksDBTransaction();
+  SDB_ASSERT(HasRocksDBWrite() || HasTransactionBegin());
+  if (!_rocksdb_transaction) [[unlikely]] {
+    SDB_ASSERT(!_rocksdb_snapshot);
+    auto* db = GetServerEngine().db();
+    SDB_ASSERT(db);
+    rocksdb::WriteOptions write_options;
+    rocksdb::TransactionOptions txn_options;
+    txn_options.skip_concurrency_control = true;
+    _rocksdb_transaction.reset(
+      db->BeginTransaction(write_options, txn_options));
+    SDB_ASSERT(_rocksdb_transaction);
+  }
+  if (!_rocksdb_snapshot) {
+    _rocksdb_transaction->SetSnapshot();
+    _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
+    SDB_ASSERT(_rocksdb_snapshot);
   }
   return *_rocksdb_transaction;
-}
-
-void Transaction::CreateStorageSnapshot() {
-  SDB_ASSERT(!_rocksdb_snapshot);
-  SDB_ASSERT(!_storage_snapshot);
-  _storage_snapshot = GetServerEngine().currentSnapshot();
-  SDB_ASSERT(_storage_snapshot != nullptr);
-  _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
-  SDB_ASSERT(_rocksdb_snapshot != nullptr);
-}
-
-void Transaction::CreateRocksDBTransaction() {
-  SDB_ASSERT(!_rocksdb_snapshot);
-  SDB_ASSERT(!_rocksdb_transaction);
-  auto* db = GetServerEngine().db();
-  SDB_ASSERT(db != nullptr);
-  rocksdb::WriteOptions write_options;
-  rocksdb::TransactionOptions txn_options;
-  txn_options.skip_concurrency_control = true;
-  _rocksdb_transaction.reset(db->BeginTransaction(write_options, txn_options));
-  SDB_ASSERT(_rocksdb_transaction != nullptr);
-  _rocksdb_transaction->SetSnapshot();
-  _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
-  SDB_ASSERT(_rocksdb_snapshot != nullptr);
 }
 
 void Transaction::Destroy() noexcept {
@@ -120,11 +191,14 @@ void Transaction::Destroy() noexcept {
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+  _search_transactions.clear();
+  _table_rows_deltas.clear();
+  _search_snapshots.clear();
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   // TODO(codeworse): manage catalog snapshot in transaction
-  auto table_shard = catalog::GetTableShard(table_id);
+  auto table_shard = GetCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,
               "Table shard not found for table id: ", table_id);
@@ -132,7 +206,7 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   return table_shard->GetTableStats();
 }
 
-void Transaction::ApplyTableStatsDiffs() {
+void Transaction::ApplyTableStatsDiffs() noexcept {
   for (const auto& [table_id, delta] : _table_rows_deltas) {
     auto table_shard = catalog::GetTableShard(table_id);
     SDB_ASSERT(table_shard);

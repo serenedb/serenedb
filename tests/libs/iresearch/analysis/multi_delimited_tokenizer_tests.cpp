@@ -20,9 +20,8 @@
 
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/multi_delimited_tokenizer.hpp>
-
 #include "gtest/gtest.h"
+#include "iresearch/analysis/multi_delimited_tokenizer.hpp"
 #include "tests_config.hpp"
 
 using namespace vpack;

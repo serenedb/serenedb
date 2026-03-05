@@ -32,7 +32,8 @@ class PSQLExecutor:
         try:
             result = subprocess.run(
                 cmd,
-                capture_output=True,
+                capture_output=False,
+                stdout=subprocess.DEVNULL,
                 text=True,
                 timeout=timeout,
                 check=False
@@ -45,7 +46,8 @@ class PSQLExecutor:
             if result.stderr:
                 output += f"\nSTDERR: {result.stderr}"
 
-            return result.returncode, output.strip(), duration
+            # return result.returncode, output.strip(), duration
+            return result.returncode, "", duration
 
         except subprocess.TimeoutExpired:
             duration = time.time() - start_time
@@ -61,11 +63,11 @@ def main():
         'database': 'postgres',
         'user': 'postgres',
         'port': 6162,
-        'sql': 'insert into t1 select a2.x * 1000 + a3.x, a2.x, a3.x from generate_series(1, 1000) as a2(x), generate_series(1, 1000) as a3(x);',
+        'sql': 'select count(a + b + c) from t1;',
         'iterations': 30,
         'timeout': 30,
         # Optional: SQL to run after each iteration (not measured). E.g., 'delete from t1;'
-        'post_iteration_sql': 'delete from t1;',
+        'post_iteration_sql': None,
     }
 
     executor = PSQLExecutor(
@@ -220,7 +222,12 @@ def analyze(case):
 
 if __name__ == "__main__":
     # main()
+    analyze2('with.async.count.log', 'fixed.without.async.count.log', 'select count(*) from t1 (10\'000\'000 rows)')
+    # analyze2('with.async.select.log', 'fixed.without.async.select.log', 'select (*) from t1 (10\'000\'000 rows)')
+    # analyze2('without.async.select.log', 'fixed.without.async.select.log', 'select select(*) from t1 (10\'000\'000 rows)')
+    # analyze2('without.async.select.log', 'with.async.select.log', 'select select(*) from t1 (10\'000\'000 rows)')
+    # analyze2('without.async.select.log', 'with.async.select.log', 'select * from t1 (10\'000\'000 rows)')
     # analyze2('main.replace.log', 'my.replace.log', 'replace diff')
-    analyze2('my.replace.log', 'my.do_nothing.log', 'replace vs do_nothing')
-    analyze2('my.replace.log', 'my.emit_error.log', 'replace vs emit_error')
-    analyze2('my.do_nothing.log', 'my.emit_error.log', 'do_nothing vs emit_error')
+    # analyze2('my.replace.log', 'my.do_nothing.log', 'replace vs do_nothing')
+    # analyze2('my.replace.log', 'my.emit_error.log', 'replace vs emit_error')
+    # analyze2('my.do_nothing.log', 'my.emit_error.log', 'do_nothing vs emit_error')

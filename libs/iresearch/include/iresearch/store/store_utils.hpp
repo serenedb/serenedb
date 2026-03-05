@@ -190,141 +190,145 @@ IRS_FORCE_INLINE T ShiftUnpack32(uint32_t in, U& out) noexcept {
 class BytesViewInput : public IndexInput {
  public:
   BytesViewInput() = default;
-  explicit BytesViewInput(bytes_view data) noexcept
-    : _data(data), _pos(_data.data()) {}
+  explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
 
-  void Skip(size_t size) noexcept final {
-    SDB_ASSERT(_pos + size <= _data.data() + _data.size());
-    _pos += size;
+  IRS_FORCE_INLINE const byte_type* ReadData(uint64_t count) noexcept final {
+    const auto* begin = _pos;
+    _pos = begin + count;
+    SDB_ASSERT(_pos <= _data.data() + _data.size());
+    return begin;
+  }
+  IRS_FORCE_INLINE const byte_type* ReadData(uint64_t offset,
+                                             uint64_t count) noexcept final {
+    const auto* begin = _data.data() + offset;
+    _pos = begin + count;
+    SDB_ASSERT(_pos <= _data.data() + _data.size());
+    return begin;
   }
 
-  void Seek(size_t pos) noexcept override {
+  IRS_FORCE_INLINE const byte_type* ReadView(uint64_t count) noexcept final {
+    return ReadData(count);
+  }
+  IRS_FORCE_INLINE const byte_type* ReadView(uint64_t offset,
+                                             uint64_t count) noexcept final {
+    return ReadData(offset, count);
+  }
+
+  IRS_FORCE_INLINE byte_type ReadByte() noexcept final {
+    SDB_ASSERT(_pos < _data.data() + _data.size());
+    return *_pos++;
+  }
+  size_t ReadBytes(byte_type* b, size_t count) noexcept final;
+  size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) noexcept final;
+  void ReadBytes(bstring& buf, size_t count);
+
+  int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
+  int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }
+  int64_t ReadI64() noexcept final { return irs::read<uint64_t>(_pos); }
+  uint32_t ReadV32() noexcept final { return irs::vread<uint32_t>(_pos); }
+  uint64_t ReadV64() noexcept final { return irs::vread<uint64_t>(_pos); }
+
+  IRS_FORCE_INLINE uint64_t Position() const noexcept final {
+    return std::distance(_data.data(), _pos);
+  }
+  IRS_FORCE_INLINE uint64_t Length() const noexcept final {
+    return _data.size();
+  }
+  IRS_FORCE_INLINE bool IsEOF() const noexcept final {
+    return Position() >= Length();
+  }
+
+  IRS_FORCE_INLINE void Skip(uint64_t count) noexcept final {
+    SDB_ASSERT(_pos + count <= _data.data() + _data.size());
+    _pos += count;
+  }
+  IRS_FORCE_INLINE void Seek(uint64_t pos) noexcept final {
     SDB_ASSERT(_data.data() + pos <= _data.data() + _data.size());
     _pos = _data.data() + pos;
   }
 
-  uint64_t Position() const noexcept override {
-    return std::distance(_data.data(), _pos);
-  }
+  Type GetType() const noexcept final { return Type::BytesViewInput; }
 
-  uint64_t Length() const noexcept final { return _data.size(); }
+  ptr Dup() const override { return std::make_unique<BytesViewInput>(*this); }
+  ptr Reopen() const final { return Dup(); }
 
-  bool IsEOF() const noexcept final {
-    return _pos >= _data.data() + _data.size();
-  }
-
-  byte_type ReadByte() noexcept final {
-    SDB_ASSERT(_pos < _data.data() + _data.size());
-    return *_pos++;
-  }
-
-  const byte_type* ReadBuffer(size_t offset, size_t size,
-                              BufferHint /*hint*/) noexcept override {
-    const auto begin = _data.data() + offset;
-    const auto end = begin + size;
-
-    if (end <= _data.data() + _data.size()) {
-      _pos = end;
-      return begin;
-    }
-
-    return nullptr;
-  }
-
-  const byte_type* ReadBuffer(size_t size, BufferHint /*hint*/) noexcept final {
-    const auto* pos = _pos + size;
-
-    if (pos <= _data.data() + _data.size()) {
-      std::swap(pos, _pos);
-      return pos;
-    }
-
-    return nullptr;
-  }
-
-  size_t ReadBytes(byte_type* b, size_t size) noexcept final;
-
-  size_t ReadBytes(size_t offset, byte_type* b, size_t size) noexcept override;
-
-  // append to buf
-  void ReadBytes(bstring& buf, size_t size);
+  uint32_t Checksum(uint64_t offset) const final;
 
   void reset(const byte_type* data, size_t size) noexcept {
     _data = bytes_view(data, size);
     _pos = data;
   }
-
   void reset(bytes_view ref) noexcept { reset(ref.data(), ref.size()); }
-
-  ptr Dup() const override { return std::make_unique<BytesViewInput>(*this); }
-
-  ptr Reopen() const override { return Dup(); }
-
-  int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
-
-  int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }
-
-  int64_t ReadI64() noexcept final { return irs::read<uint64_t>(_pos); }
-
-  uint64_t ReadV64() noexcept final { return irs::vread<uint64_t>(_pos); }
-
-  uint32_t ReadV32() noexcept final { return irs::vread<uint32_t>(_pos); }
-
-  uint32_t Checksum(size_t offset) const override;
 
  private:
   bytes_view _data;
-  const byte_type* _pos{_data.data()};
+  const byte_type* _pos = _data.data();
 };
 
-// same as bytes_view_input but with support of adress remapping
+// same as BytesViewInput but with support of adress remapping
 // usable when original data offses needs to be persistent
 // NOTE: remapped data blocks may have gaps but should not overlap!
-class RemappedBytesViewInput : public BytesViewInput {
+class RemappedBytesViewInput final : public IndexInput {
  public:
-  using mapping_value = std::pair<size_t, size_t>;
-  using mapping = std::vector<mapping_value>;
+  using MappingValue = std::pair<uint64_t, uint64_t>;
+  using Mapping = std::vector<MappingValue>;
 
-  explicit RemappedBytesViewInput(const bytes_view& data, mapping&& mapping)
-    : BytesViewInput(data), _mapping{std::move(mapping)} {
+  explicit RemappedBytesViewInput(bytes_view data, Mapping&& mapping)
+    : _input{data}, _mapping{std::move(mapping)} {
     absl::c_sort(_mapping, [](const auto& lhs, const auto& rhs) {
       return lhs.first < rhs.first;
     });
   }
 
-  RemappedBytesViewInput(const RemappedBytesViewInput& other)
-    : BytesViewInput(other), _mapping{other._mapping} {}
-
-  uint32_t Checksum(size_t offset) const final {
-    return BytesViewInput::Checksum(src_to_internal(offset));
+  const byte_type* ReadData(uint64_t count) noexcept final {
+    return _input.ReadData(count);
+  }
+  const byte_type* ReadData(uint64_t offset, uint64_t count) noexcept final {
+    return _input.ReadData(SourceToInternal(offset), count);
   }
 
-  void Seek(size_t pos) noexcept final {
-    BytesViewInput::Seek(src_to_internal(pos));
+  const byte_type* ReadView(uint64_t count) noexcept final {
+    return _input.ReadView(count);
   }
+  const byte_type* ReadView(uint64_t offset, uint64_t count) noexcept final {
+    return _input.ReadView(SourceToInternal(offset), count);
+  }
+
+  byte_type ReadByte() noexcept final { return _input.ReadByte(); }
+  size_t ReadBytes(byte_type* b, size_t size) noexcept final {
+    return _input.ReadBytes(b, size);
+  }
+  size_t ReadBytes(uint64_t offset, byte_type* b, size_t size) noexcept final {
+    return _input.ReadBytes(SourceToInternal(offset), b, size);
+  }
+
+  int16_t ReadI16() noexcept final { return _input.ReadI16(); }
+  int32_t ReadI32() noexcept final { return _input.ReadI32(); }
+  int64_t ReadI64() noexcept final { return _input.ReadI64(); }
+  uint32_t ReadV32() noexcept final { return _input.ReadV32(); }
+  uint64_t ReadV64() noexcept final { return _input.ReadV64(); }
 
   uint64_t Position() const noexcept final;
+  uint64_t Length() const noexcept final { return _input.Length(); }
+  bool IsEOF() const noexcept final { return _input.IsEOF(); }
+
+  void Skip(uint64_t count) noexcept final { _input.Skip(count); }
+  void Seek(uint64_t pos) noexcept final { _input.Seek(SourceToInternal(pos)); }
 
   ptr Dup() const final {
     return std::make_unique<RemappedBytesViewInput>(*this);
   }
+  ptr Reopen() const final { return Dup(); }
 
-  const byte_type* ReadBuffer(size_t offset, size_t size,
-                              BufferHint hint) noexcept final {
-    return BytesViewInput::ReadBuffer(src_to_internal(offset), size, hint);
-  }
-
-  using BytesViewInput::ReadBuffer;
-  using BytesViewInput::ReadBytes;
-
-  size_t ReadBytes(size_t offset, byte_type* b, size_t size) noexcept final {
-    return BytesViewInput::ReadBytes(src_to_internal(offset), b, size);
+  uint32_t Checksum(uint64_t offset) const final {
+    return _input.Checksum(SourceToInternal(offset));
   }
 
  private:
-  size_t src_to_internal(size_t t) const noexcept;
+  uint64_t SourceToInternal(uint64_t offset) const noexcept;
 
-  mapping _mapping;
+  BytesViewInput _input;
+  Mapping _mapping;
 };
 
 namespace encode::delta {

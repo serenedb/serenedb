@@ -59,6 +59,9 @@ constexpr std::string_view kDblPosNaN{"\xFF\xF8\x00\x00\x00\x00\x00\x00", 8};
 template<velox::TypeKind Kind>
 void AppendKeyValue(std::string& key, const velox::BaseVector& column,
                     velox::vector_size_t idx) {
+  // PKs parts are default sorted - so we can not accept type that has custom
+  // comparison or we will break expectations that data is read in PK order.
+  SDB_ASSERT(!column.typeUsesCustomComparison());
   using T = velox::TypeTraits<Kind>::NativeType;
   if (column.isNullAt(idx)) {
     // Postgresql requires PK columns to be non NULL so do we

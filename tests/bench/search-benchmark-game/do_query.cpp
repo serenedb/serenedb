@@ -12,7 +12,6 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter.hpp>
-#include <iresearch/search/score.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/store/directory.hpp>
@@ -108,39 +107,33 @@ class Executor {
                                      .scorers = {&_scorer_ptr, 1},
                                    })} {}
 
-  size_t ExecuteTopK(size_t k, std::string_view query, bool full_count) {
+  size_t ExecuteTopK(size_t k, std::string_view query) {
     auto filter = ParseFilter(query);
     if (!filter) {
       return 0;
     }
 
-    auto execute = [&]<size_t K> {
-      irs::WandContext wand;
-      if (!full_count) {
-        wand.index = 0;
-        wand.strict = true;
-      }
+    _results.resize(irs::BlockSize(k));
+    return irs::ExecuteTopK(_reader, *filter, *_scorer, k,
+                            {.index = 0, .strict = true}, std::span{_results});
+  }
 
-      return irs::ExecuteTopK(
-        _reader, *filter, _scorers, wand, k,
-        std::span<std::pair<irs::score_t, irs::doc_id_t>, K>{_results});
-    };
-
-    _results.resize(k * 2);
-    if (k == 10) {
-      return execute.template operator()<20>();
-    } else if (k == 100) {
-      return execute.template operator()<200>();
-    } else {
-      return execute.template operator()<std::dynamic_extent>();
+  size_t ExecuteTopKWithCount(size_t k, std::string_view query) {
+    auto filter = ParseFilter(query);
+    if (!filter) {
+      return 0;
     }
+
+    _results.resize(irs::BlockSize(k));
+    return irs::ExecuteTopKWithCount(_reader, *filter, *_scorer, k,
+                                     std::span{_results});
   }
 
   size_t ExecuteCount(std::string_view query) {
     size_t count = 0;
     auto prepared = PrepareFilter(query);
     for (auto& segment : _reader) {
-      auto docs = prepared->execute(irs::ExecutionContext{.segment = segment});
+      auto docs = prepared->execute({.segment = segment});
       count += docs->count();
     }
     return count;
@@ -153,17 +146,17 @@ class Executor {
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopK(10, query, false);
+        return ExecuteTopK(10, query);
       case QueryType::Top100:
-        return ExecuteTopK(100, query, false);
+        return ExecuteTopK(100, query);
       case QueryType::Top1000:
-        return ExecuteTopK(1000, query, false);
+        return ExecuteTopK(1000, query);
       case QueryType::Top10Count:
-        return ExecuteTopK(10, query, true);
+        return ExecuteTopKWithCount(10, query);
       case QueryType::Top100Count:
-        return ExecuteTopK(100, query, true);
+        return ExecuteTopKWithCount(100, query);
       case QueryType::Top1000Count:
-        return ExecuteTopK(1000, query, true);
+        return ExecuteTopKWithCount(1000, query);
       default:
         return 0;
     }
@@ -177,27 +170,31 @@ class Executor {
     }
     return filter->prepare({
       .index = _reader,
-      .scorers = _scorers,
+      .scorer = _scorer.get(),
     });
   }
 
   irs::Filter::ptr ParseFilter(std::string_view str) {
-    auto root = std::make_unique<irs::Or>();
+    auto root = std::make_unique<irs::MixedBooleanFilter>();
     sdb::ParserContext context{*root, "text", *_tokenizer};
     auto r = sdb::ParseQuery(context, str);
     if (!r.ok()) {
       return {};
     }
-    if (root->size() == 1) {
-      return root->PopBack();
+    auto& opt = root->GetOptional();
+    auto& req = root->GetRequired();
+    if (opt.size() == 1 && req.empty()) {
+      return opt.PopBack();
+    }
+    if (req.size() == 1 && opt.empty()) {
+      return req.PopBack();
     }
     return root;
   }
 
-  std::vector<std::pair<float_t, irs::doc_id_t>> _results;
+  std::vector<irs::ScoreDoc> _results;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::Scorers _scorers{irs::Scorers::Prepare(std::span{&_scorer, 1})};
   irs::analysis::Analyzer::ptr _tokenizer;
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;

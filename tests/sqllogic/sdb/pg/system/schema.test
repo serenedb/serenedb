@@ -8,3 +8,40 @@ statement error
 CREATE SCHEMA information_schema;
 ----
 db error: ERROR: unacceptable schema name "information_schema"
+
+
+# Check that function creation code respects search_path
+
+statement ok
+create schema s2;
+
+statement ok
+create table s2.t (a int primary key);
+
+statement ok
+insert into s2.t values (2);
+
+statement ok
+set search_path to s2, public;
+
+# t only exists in s2, not in public
+statement ok
+create function f1() returns table(a int) language sql
+begin atomic
+  select * from t;
+end;
+
+query
+select * from f1();
+----
+a
+2
+
+statement ok
+drop table t;
+
+statement ok
+drop function f1;
+
+statement ok
+drop schema s2;

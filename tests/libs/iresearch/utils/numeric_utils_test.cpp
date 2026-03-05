@@ -23,9 +23,9 @@
 
 #include <algorithm>
 #include <basics/bit_utils.hpp>
-#include <iresearch/utils/numeric_utils.hpp>
 #include <vector>
 
+#include "iresearch/utils/numeric_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

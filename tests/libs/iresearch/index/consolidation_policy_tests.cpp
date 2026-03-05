@@ -21,11 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/composite_reader_impl.hpp>
-#include <iresearch/index/index_meta.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/index_utils.hpp>
-
+#include "iresearch/index/composite_reader_impl.hpp"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -28,9 +28,6 @@ endpoint = pgsql+tcp://0.0.0.0:8529
 # number of threads automatically, based on available CPUs
 # maximal-threads = 0
 
-# gather server statistics
-statistics = true
-
 @DEFINEUID@uid = serenedb
 
 [log]

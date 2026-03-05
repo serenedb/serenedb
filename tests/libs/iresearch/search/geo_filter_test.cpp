@@ -415,15 +415,11 @@ TEST(GeoFilterTest, query) {
         continue;
       }
 
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      EXPECT_NE(nullptr, doc);
-      EXPECT_FALSE(irs::doc_limits::valid(doc->value));
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
       while (it->next()) {
         auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
-        EXPECT_EQ(doc_id, doc->value);
         EXPECT_EQ(doc_id, values->seek(doc_id));
         EXPECT_FALSE(irs::IsNull(value->value));
 
@@ -781,9 +777,6 @@ TEST(GeoFilterTest, checkScorer) {
       });
       EXPECT_FALSE(score.IsDefault());
 
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      EXPECT_NE(nullptr, doc);
-      EXPECT_FALSE(irs::doc_limits::valid(doc->value));
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
       cur_it = it.get();
       while (it->next()) {
@@ -791,7 +784,6 @@ TEST(GeoFilterTest, checkScorer) {
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, column_it->seek(doc_id));
-        EXPECT_EQ(doc_id, doc->value);
         EXPECT_FALSE(irs::IsNull(payload->value));
 
         irs::score_t score_value;

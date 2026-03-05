@@ -192,10 +192,20 @@ db error: ERROR: column "iamdegenereted" is a generated column
 DETAIL: Generated columns cannot be used in COPY.
 
 
+onlyif serenedb
 statement error
 COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (LABUDABUDABDAB rick);
 ----
 db error: ERROR: option "labudabudabdab" not recognized
+HINT: Use WITH (HELP) to see available options
+
+
+onlyif serenedb
+statement error
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (HELL true);
+----
+db error: ERROR: option "hell" not recognized, did you mean "help"?
+HINT: Use WITH (HELP) to see available options
 
 
 statement count 100000

@@ -136,7 +136,10 @@ class OptionsParser {
     std::string_view best;
     uint8_t best_distance = max_distance;
 
-    for (auto known : AllOptionNames(_option_groups)) {
+    auto known_names = AllOptionNames(_option_groups);
+    known_names.emplace_back("help");
+
+    for (const auto& known : known_names) {
       uint8_t distance =
         absl::strings_internal::CappedDamerauLevenshteinDistance(
           absl::string_view{name.data(), name.size()},

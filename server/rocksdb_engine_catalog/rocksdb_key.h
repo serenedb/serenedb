@@ -65,8 +65,6 @@ class DefinitionKey : public RocksDBKey {
 class SettingsKey : public RocksDBKey {
  public:
   static std::string Create(RocksDBSettingsType settings_type);
-  RocksDBSettingsType GetSettingsType() const;
-  RocksDBEntryType GetEntryType() const;
 };
 
 template<typename Key>

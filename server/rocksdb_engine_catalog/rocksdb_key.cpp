@@ -101,17 +101,4 @@ std::string SettingsKey::Create(RocksDBSettingsType settings_type) {
   return key;
 }
 
-RocksDBSettingsType SettingsKey::GetSettingsType() const {
-  SDB_ASSERT(_key.size() ==
-             sizeof(RocksDBEntryType) + sizeof(RocksDBSettingsType));
-  return static_cast<RocksDBSettingsType>(
-    _key.data()[sizeof(RocksDBEntryType)]);
-}
-
-RocksDBEntryType SettingsKey::GetEntryType() const {
-  SDB_ASSERT(_key.size() ==
-             sizeof(RocksDBEntryType) + sizeof(RocksDBSettingsType));
-  return static_cast<RocksDBEntryType>(*_key.data());
-}
-
 }  // namespace sdb

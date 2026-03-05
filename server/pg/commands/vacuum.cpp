@@ -161,6 +161,9 @@ yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
   if (res.size() == 0) {
     return yaclib::MakeFuture<Result>();
   }
+  if (res.size() == 1) {
+    return std::move(res[0]);
+  }
   return yaclib::Join(res.begin(), res.size()).ThenInline([] {
     return Result{};
   });

@@ -32,6 +32,7 @@
 #include <queue>
 #include <string_view>
 #include <utility>
+#include <yaclib/async/connect.hpp>
 #include <yaclib/async/contract.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/util/type_traits.hpp>
@@ -77,9 +78,11 @@ class Scheduler {
     // yaclib::IExecutor
     if constexpr (yaclib::is_future_base_v<R>) {
       // Use future unwrap
-      auto [f, p] = yaclib::MakeContract<>();
-      queue(lane, [p = std::move(p)] mutable { std::move(p).Set(); });
-      return std::move(f).ThenInline(std::forward<Func>(func));
+      auto [f, p] = yaclib::MakeContract<yaclib::async_value_t<R>>();
+      queue(lane, [p = std::move(p), func = std::forward<Func>(func)] mutable {
+        yaclib::Connect(std::forward<Func>(func)(), std::move(p));
+      });
+      return std::move(f);
     } else {
       auto [f, p] = yaclib::MakeContract<R>();
       queue(lane, [p = std::move(p), func = std::forward<Func>(func)] mutable {

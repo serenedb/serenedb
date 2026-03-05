@@ -174,6 +174,23 @@ jobs:
       - name: Build Docker environment file
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 
+      # ==================== GTEST PARALLEL CACHE ====================
+      - name: Restore gtest-parallel timing cache
+        id: gtest-cache
+        uses: actions/cache@v4
+        with:
+          path: .gtest-parallel-cache
+          key: gtest-times-${{ inputs.PRESET }}-${{ inputs.BRANCH }}-${{ github.run_number }}
+          restore-keys: |
+            gtest-times-${{ inputs.PRESET }}-${{ inputs.BRANCH }}-
+            gtest-times-${{ inputs.PRESET }}-main-
+            gtest-times-${{ inputs.PRESET }}-
+
+      - name: Prepare gtest-parallel cache directory
+        run: |
+          mkdir -p .gtest-parallel-cache
+          echo "GTEST_PARALLEL_CACHE_DIR=${WORKSPACE}/.gtest-parallel-cache" >> $GITHUB_ENV
+
       # ==================== BUILD ====================
       # if selected, DOCKER_BUILD_IMAGES owns the build
       - name: SereneDB build

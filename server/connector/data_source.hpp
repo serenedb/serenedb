@@ -215,10 +215,11 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
 
     std::vector<velox::VectorPtr> columns;
     columns.reserve(num_columns);
-    for (size_t c = 0; c < num_columns; ++c) {
-      const auto& type = _row_type->childAt(c);
+    for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
+      const auto& type = _row_type->childAt(column_idx);
       columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-        ReadColumnValues, type->kind(), c, num_points, statuses, raw_values));
+        ReadColumnValues, type->kind(), column_idx, num_points, statuses,
+        raw_values));
     }
 
     _produced += num_points;
@@ -273,7 +274,7 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
                   res.errorMessage());
       }
       if (status.IsNotFound()) {
-        result->setNull(point_idx, true);
+        continue;
       } else {
         if constexpr (std::is_same_v<T, velox::StringView>) {
           const size_t offset = value[0] == 0 ? 1 : 0;

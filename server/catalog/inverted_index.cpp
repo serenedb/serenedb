@@ -1,9 +1,8 @@
 #include "catalog/inverted_index.h"
 
-#include <expected>
+#include <iresearch/analysis/analyzers.hpp>
 
 #include "search/inverted_index_shard.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 
@@ -16,14 +15,30 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
       return std::unexpected<Result>(std::in_place, r.errorNumber(),
                                      r.errorMessage());
     }
+  } else {
+    options.commit_interval_ms = 1000;
+    options.consolidation_interval_ms = 1000;
+    options.cleanup_interval_step = 1;
   }
   auto inverted_index_shard =
-    std::make_shared<search::InvertedIndexShard>(id, *this, options, is_new);
+    search::InvertedIndexShard::Create(id, *this, options, is_new);
   return inverted_index_shard;
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
   Index::WriteInternal(builder);
+}
+
+ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
+  catalog::Column::Id column_id) const {
+  // TODO(Dronplane): implement analyzer pool for caching. And do not create
+  // analyzer on demand! implement analyzer options storage - store in catalog
+  // or smth.
+  auto options = vpack::Slice::emptyObjectSlice();
+  return {.analyzer = irs::analysis::analyzers::Get(
+            _options.analyzer_name, irs::Type<irs::text_format::VPack>::get(),
+            {options.startAs<char>(), options.byteSize()}),
+          .features = _options.features};
 }
 
 }  // namespace sdb::catalog

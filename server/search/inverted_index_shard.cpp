@@ -106,6 +106,16 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
   return path;
 }
 
+std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
+  ObjectId id, const catalog::InvertedIndex& index,
+  InvertedIndexShardOptions options, bool is_new) {
+  auto shard = std::make_shared<InvertedIndexShard>(id, index, options, is_new);
+  // TODO(Dronpane) use actual is_new value when indexing of existing table
+  // would be implemented
+  shard->InitPostRecovery(false);
+  return shard;
+}
+
 InvertedIndexShard::InvertedIndexShard(ObjectId id,
                                        const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
@@ -115,6 +125,10 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
+  _tasks_settings.commit_interval_msec = _options.commit_interval_ms;
+  _tasks_settings.consolidation_interval_msec =
+    _options.consolidation_interval_ms;
+  _tasks_settings.cleanup_interval_step = _options.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
   const auto db_id = index.GetDatabaseId();
@@ -221,10 +235,13 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   if (!server.hasFeature<RocksDBRecoveryManager>()) {
     return;
   }
+}
 
+void InvertedIndexShard::InitPostRecovery(bool is_new) {
+  auto& server = SerenedServer::Instance();
   auto res =
     server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(
-      [weak_self = weak_from_this(), path_exists]() -> Result {
+      [weak_self = weak_from_this(), is_new]() -> Result {
         auto self = weak_self.lock();
         if (!self) {
           // Index was dropped during recovery
@@ -245,8 +262,9 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
                    "of sync");
         }
 
-        // Register flush subscription
-        if (path_exists) {
+        // Register flush subscription if we are loading existing index
+        // If not finishCreation would be called later when indexing finishes
+        if (!is_new) {
           self->FinishCreation();
         }
 

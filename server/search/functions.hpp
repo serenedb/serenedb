@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,28 +20,12 @@
 
 #pragma once
 
-#include <catalog/inverted_index.h>
-#include <velox/core/ExpressionEvaluator.h>
+#include <string>
 
-#include "axiom/connectors/ConnectorMetadata.h"
-#include "basics/fwd.h"
-#include "basics/result.h"
-#include "connector/serenedb_connector.hpp"
-#include "iresearch/search/boolean_filter.hpp"
-#include "velox/core/ITypedExpr.h"
+namespace sdb::search::functions {
 
-namespace sdb::connector::search {
+constexpr inline std::string_view kPhrase = "sdb_phrase";
 
-struct ColumnInfo {
-  const SereneDBColumn& info;
-  catalog::ColumnAnalyzer analyzer;
-};
+void registerSearchFunctions();
 
-using ColumnGetter =
-  absl::AnyInvocable<std::optional<ColumnInfo>(std::string_view) const>;
-
-Result MakeSearchFilter(irs::And& root,
-                        std::span<velox::core::TypedExprPtr> conjuncts,
-                        const ColumnGetter& column_getter);
-
-}  // namespace sdb::connector::search
+}  // namespace sdb::search::functions

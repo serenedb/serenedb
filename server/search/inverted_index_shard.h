@@ -41,8 +41,9 @@ namespace sdb::search {
 class InvertedIndexShard;
 
 struct InvertedIndexShardOptions {
-  size_t commit_interval_ms = 1000;
-  size_t consolidation_interval_ms = 1000;
+  size_t commit_interval_ms;
+  size_t consolidation_interval_ms;
+  size_t cleanup_interval_step;
 };
 
 struct ThreadPoolState {
@@ -121,7 +122,7 @@ class Snapshot {
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
-class InvertedIndexShard
+class InvertedIndexShard final
   : public std::enable_shared_from_this<InvertedIndexShard>,
     public IndexShard {
  public:
@@ -149,6 +150,10 @@ class InvertedIndexShard
                                        ObjectId table_id = ObjectId{0},
                                        ObjectId index_id = ObjectId{0},
                                        ObjectId shard_id = ObjectId{0});
+  
+  static std::shared_ptr<InvertedIndexShard> Create(
+    ObjectId id, const catalog::InvertedIndex& index,
+    InvertedIndexShardOptions options, bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
 
@@ -218,6 +223,7 @@ class InvertedIndexShard
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
   Result CleanupUnsafeImpl();
+  void InitPostRecovery(bool is_new);
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;

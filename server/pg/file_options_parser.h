@@ -41,21 +41,13 @@ class FileOptionsParser : public OptionsParser {
  protected:
   std::unique_ptr<StorageOptions> ParseStorageOptions() {
     using namespace file_option_groups;
-    std::string_view storage = kStorage.DefaultValue<std::string_view>();
-    if (const auto* option = EraseOption(kStorage)) {
-      auto maybe_storage = TryGet<std::string_view>(option->arg);
-      if (!maybe_storage ||
-          (*maybe_storage != "local" && *maybe_storage != "s3")) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("storage must be \"local\" or \"s3\""));
-      }
-      storage = *maybe_storage;
-    } else if (auto detected = TryStorageFromContext(); !detected.empty()) {
-      storage = detected;
+    bool explicit_storage = HasOption(kStorage.base);
+    auto storage = EraseOptionOrDefault<kStorage>();
+    if (!explicit_storage) {
+      storage = TryStorageFromContext();
     }
 
-    if (storage == "s3") {
+    if (storage == StorageType::S3) {
       return ParseS3StorageOptions();
     }
     return std::make_unique<LocalStorageOptions>(std::string{_file_path});
@@ -92,26 +84,14 @@ class FileOptionsParser : public OptionsParser {
       ssl_enabled, use_creds);
   }
 
-  [[noreturn]] void UnrecognizedFormat(std::string_view format, int location) {
-    THROW_SQL_ERROR(
-      CURSOR_POS(ErrorPosition(location)), ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG(_operation, " format \"", format, "\" not recognized"));
-  }
-
-  std::string_view TryFormatFromFile() const {
-    // text format is default so detecting it here would be redundant
+  std::optional<file_option_groups::FormatType> TryFormatFromFile() const {
+    using namespace file_option_groups;
     const auto pos = _file_path.rfind('.');
     if (pos == std::string_view::npos) {
-      return {};
+      return std::nullopt;
     }
-
-    const auto file_format = _file_path.substr(pos + 1);
-    if (file_format == "csv" || file_format == "parquet" ||
-        file_format == "dwrf" || file_format == "orc") {
-      return file_format;
-    }
-
-    return {};
+    return magic_enum::enum_cast<FormatType>(_file_path.substr(pos + 1),
+                                             magic_enum::case_insensitive);
   }
 
   static bool IsS3Path(std::string_view path) {
@@ -120,62 +100,32 @@ class FileOptionsParser : public OptionsParser {
            path.starts_with("cos://") || path.starts_with("cosn://");
   }
 
-  std::string_view TryStorageFromContext() const {
+  file_option_groups::StorageType TryStorageFromContext() const {
     using namespace file_option_groups;
-    // local is the default so detecting it here would be redundant
-    if (IsS3Path(_file_path)) {
-      return "s3";
+    auto has_option = [&](const OptionInfo& info) { return HasOption(info); };
+    if (IsS3Path(_file_path) ||
+        absl::c_any_of(kS3ConnectionOptions, has_option) ||
+        absl::c_any_of(kS3AuthOptions, has_option)) {
+      return StorageType::S3;
     }
-    for (const auto& info : kS3AuthOptions) {
-      if (_options.contains(info.name)) {
-        return "s3";
-      }
-    }
-    for (const auto& info : kS3ConnectionOptions) {
-      if (_options.contains(info.name)) {
-        return "s3";
-      }
-    }
-    return {};
+
+    return StorageType::Local;
   }
 
-  struct ParsedFileFormat {
-    FileFormat underlying_format;
-    std::string_view format;
-    int location;
-  };
-
-  ParsedFileFormat ParseFileFormat() {
+  file_option_groups::FormatType ParseFileFormat() {
     using namespace file_option_groups;
-    const containers::FlatHashMap<std::string_view, FileFormat>
-      format2underlying{{"csv", FileFormat::Text},
-                        {"text", FileFormat::Text},
-                        {"parquet", FileFormat::Parquet},
-                        {"dwrf", FileFormat::Dwrf},
-                        {"orc", FileFormat::Orc}};
-
-    int location = -1;
-    std::string_view format = kFormat.DefaultValue<std::string_view>();
-    if (const auto* option = EraseOption(kFormat)) {
-      location = ExprLocation(&option);
-      auto maybe_format = TryGet<std::string_view>(option->arg);
-      if (!maybe_format) {
-        UnrecognizedFormat(DeparseValue(option->arg), location);
+    bool explicit_format = HasOption(kFormat.base);
+    auto format = EraseOptionOrDefault<kFormat>();
+    if (!explicit_format) {
+      if (auto detected = TryFormatFromFile()) {
+        format = *detected;
+        WriteNotice(absl::StrCat(
+          "Format \"", magic_enum::enum_name(format),
+          "\" was auto-detected from the file extension. To override, "
+          "explicitly specify the format using the WITH (FORMAT ...) clause."));
       }
-      format = *maybe_format;
-    } else if (auto maybe_format = TryFormatFromFile(); !maybe_format.empty()) {
-      format = maybe_format;
-      WriteNotice(absl::StrCat(
-        "Format \"", format,
-        "\" was auto-detected from the file extension. To override, "
-        "explicitly specify the format using the WITH (FORMAT ...) clause."));
     }
-
-    auto it = format2underlying.find(format);
-    if (it == format2underlying.end()) {
-      UnrecognizedFormat(format, location);
-    }
-    return {it->second, format, location};
+    return format;
   }
 
   std::shared_ptr<TextFormatOptions> ParseTextFormatOptions(bool is_csv) {
@@ -233,18 +183,19 @@ class FileOptionsParser : public OptionsParser {
   }
 
   std::shared_ptr<FormatOptions> ParseFormatOptions(
-    std::string_view format_name, FileFormat format) {
+    file_option_groups::FormatType format) {
+    using namespace file_option_groups;
     switch (format) {
-      case FileFormat::Text:
-        return ParseTextFormatOptions(format_name == "csv");
-      case FileFormat::Parquet:
+      case FormatType::Text:
+        return ParseTextFormatOptions(false);
+      case FormatType::Csv:
+        return ParseTextFormatOptions(true);
+      case FormatType::Parquet:
         return ParseParquetFormatOptions();
-      case FileFormat::Dwrf:
+      case FormatType::Dwrf:
         return ParseDwrfFormatOptions();
-      case FileFormat::Orc:
+      case FormatType::Orc:
         return ParseOrcFormatOptions();
-      case FileFormat::None:
-        SDB_UNREACHABLE();
     }
   }
 

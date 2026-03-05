@@ -1054,7 +1054,7 @@ External:
 
 Storage:
   Common:
-    storage (string) [default: local] - Storage backend: local, s3
+    storage (enum) [default: Local, values: Local, S3] - Storage backend
   S3:
     Authentication:
       s3_access_key (string) - AWS access key ID (used with s3_secret_key)
@@ -1071,7 +1071,7 @@ Storage:
 
 Format:
   Common:
-    format (string) [default: text] - File format: text, csv, parquet, dwrf, orc
+    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
   Text:
     delimiter (character) [default: \t] - Column delimiter character
     escape (character) [default: \\] - Escape character

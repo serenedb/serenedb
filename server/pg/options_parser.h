@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/internal/damerau_levenshtein_distance.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <basics/containers/flat_hash_map.h>
 
 #include <functional>
@@ -79,6 +81,8 @@ class OptionsParser {
 
   template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
   T EraseOptionOrDefault() {
+    static_assert(Info.type != OptionInfo::Type::Enum,
+                  "Use EnumOptionInfo overload for enum options");
     if (const auto* option = EraseOption(Info)) {
       auto value = TryGet<T>(option->arg);
       if (!value) {
@@ -91,6 +95,44 @@ class OptionsParser {
     }
 
     return Info.DefaultValue<T>();
+  }
+
+  template<const auto& Info>
+    requires std::is_enum_v<
+      typename std::remove_cvref_t<decltype(Info)>::enum_type>
+  auto EraseOptionOrDefault() {
+    using E = typename std::remove_cvref_t<decltype(Info)>::enum_type;
+
+    auto make_hint = [&] {
+      return absl::StrCat(
+        "Allowed values: ",
+        absl::StrJoin(Info.base.enum_values, ", ",
+                      [](std::string* out, std::string_view v) {
+                        absl::StrAppend(out, absl::AsciiStrToUpper(v));
+                      }));
+    };
+
+    if (const auto* option = EraseOption(Info.base)) {
+      auto raw = TryGet<std::string_view>(option->arg);
+      if (!raw) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(Info.base.ErrorMessage(
+                          _operation, DeparseValue(option->arg))),
+                        ERR_HINT(make_hint()));
+      }
+      auto result =
+        magic_enum::enum_cast<E>(*raw, magic_enum::case_insensitive);
+      if (!result) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG(Info.base.ErrorMessage(_operation, *raw)),
+                        ERR_HINT(make_hint()));
+      }
+      return *result;
+    }
+
+    return Info.base.template DefaultValue<E>();
   }
 
   const DefElem* EraseOption(const OptionInfo& info) {

@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <cassert>
+#include <magic_enum/magic_enum.hpp>
 #include <span>
 #include <string>
 #include <string_view>
@@ -31,8 +34,14 @@
 
 namespace sdb::pg {
 
+namespace detail {
+template<typename E>
+  requires std::is_enum_v<E>
+inline constexpr auto kEnumNames = magic_enum::enum_names<E>();
+}  // namespace detail
+
 struct OptionInfo {
-  enum class Type : uint8_t { String, Boolean, Integer, Character };
+  enum class Type : uint8_t { String, Boolean, Integer, Character, Enum };
 
   std::string_view name;
   Type type;
@@ -44,6 +53,8 @@ struct OptionInfo {
     int int_val;
     char char_val;
   };
+
+  std::span<const std::string_view> enum_values;
 
   consteval OptionInfo(std::string_view name, std::string_view def,
                        std::string_view desc)
@@ -61,10 +72,10 @@ struct OptionInfo {
   template<typename T>
   constexpr T DefaultValue() const {
     if constexpr (std::is_same_v<T, std::string_view>) {
-      assert(type == Type::String);
+      assert(type == Type::String || type == Type::Enum);
       return string_val;
     } else if constexpr (std::is_same_v<T, std::string>) {
-      assert(type == Type::String);
+      assert(type == Type::String || type == Type::Enum);
       return std::string{string_val};
     } else if constexpr (std::is_same_v<T, bool>) {
       assert(type == Type::Boolean);
@@ -76,6 +87,12 @@ struct OptionInfo {
     } else if constexpr (std::is_same_v<T, int>) {
       assert(type == Type::Integer);
       return int_val;
+    } else if constexpr (std::is_enum_v<T>) {
+      assert(type == Type::Enum);
+      auto result =
+        magic_enum::enum_cast<T>(string_val, magic_enum::case_insensitive);
+      assert(result.has_value());
+      return *result;
     } else {
       static_assert(false, "Unsupported type for DefaultValue");
     }
@@ -83,7 +100,7 @@ struct OptionInfo {
 
   template<Type V>
   using CppType = std::conditional_t<
-    V == Type::String, std::string,
+    V == Type::String || V == Type::Enum, std::string,
     std::conditional_t<V == Type::Boolean, bool,
                        std::conditional_t<V == Type::Integer, int, char>>>;
 
@@ -97,6 +114,8 @@ struct OptionInfo {
         return "integer";
       case Type::Character:
         return "character";
+      case Type::Enum:
+        return "enum";
     }
   }
 
@@ -114,8 +133,27 @@ struct OptionInfo {
                             " must be a single one-byte character");
       case Type::String:
         return absl::StrCat(operation, " ", name, " must be a string");
+      case Type::Enum:
+        return absl::StrCat(operation, " ", absl::AsciiStrToUpper(name), " \"",
+                            raw_value, "\" not recognized");
     }
   }
+};
+
+template<typename E>
+  requires std::is_enum_v<E>
+struct EnumOptionInfo {
+  using enum_type = E;
+
+  OptionInfo base;
+
+  consteval EnumOptionInfo(std::string_view name, E def, std::string_view desc)
+    : base{name, magic_enum::enum_name(def), desc} {
+    base.type = OptionInfo::Type::Enum;
+    base.enum_values = detail::kEnumNames<E>;
+  }
+
+  consteval operator OptionInfo() const { return base; }
 };
 
 struct OptionGroup {

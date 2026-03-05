@@ -274,6 +274,7 @@ statement error
 COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR labudadadab);
 ----
 db error: ERROR: COPY ON_ERROR "labudadadab" not recognized
+HINT: Allowed values: STOP, IGNORE
 
 
 statement count 10
@@ -412,13 +413,15 @@ imarelav,10
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
 ----
-db error: ERROR: COPY format "1" not recognized
+db error: ERROR: COPY FORMAT "1" not recognized
+HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC
 
 
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
 ----
 db error: ERROR: COPY LOG_VERBOSITY "228.228" not recognized
+HINT: Allowed values: SILENT, DEFAULT, VERBOSE
 
 
 onlyif serenedb
@@ -428,7 +431,7 @@ COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
 db error: ERROR: 
 Storage:
   Common:
-    storage (string) [default: local] - Storage backend: local, s3
+    storage (enum) [default: Local, values: Local, S3] - Storage backend
   S3:
     Authentication:
       s3_access_key (string) - AWS access key ID (used with s3_secret_key)
@@ -445,24 +448,24 @@ Storage:
 
 Format:
   Common:
-    format (string) [default: text] - File format: text, csv, parquet, dwrf, orc
+    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
     progress (boolean) [default: false] - Show progress notices during COPY
   Text:
     delimiter (character) [default: \t] - Column delimiter character
     escape (character) [default: \\] - Escape character
     null (string) [default: \N] - String representing NULL
     header (boolean) [default: false] - First line is a header row
-    on_error (string) [default: stop] - Error handling: stop, ignore
+    on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
     reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
-    log_verbosity (string) [default: default] - Logging level: default, verbose, silent
+    log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
   CSV:
     delimiter (character) [default: ,] - Column delimiter character
     escape (character) [default: "] - Escape character
     null (string) - String representing NULL
     header (boolean) [default: false] - First line is a header row
-    on_error (string) [default: stop] - Error handling: stop, ignore
+    on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
     reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
-    log_verbosity (string) [default: default] - Logging level: default, verbose, silent
+    log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
   Parquet:
     (no additional options)
   DWRF:

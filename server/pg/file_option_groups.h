@@ -26,10 +26,34 @@ using namespace std::string_view_literals;
 
 namespace sdb::pg::file_option_groups {
 
+enum class StorageType : uint8_t {
+  Local = 0,
+  S3 = 1,
+};
+
+enum class CopyOnError : uint8_t {
+  Stop = 0,
+  Ignore = 1,
+};
+
+enum class CopyLogVerbosity : uint8_t {
+  Silent = 0,
+  Default = 1,
+  Verbose = 2,
+};
+
+enum class FormatType : uint8_t {
+  Text,
+  Csv,
+  Parquet,
+  Dwrf,
+  Orc,
+};
+
 // Storage
 
-inline constexpr OptionInfo kStorage{"storage", "local"sv,
-                                     "Storage backend: local, s3"};
+inline constexpr EnumOptionInfo<StorageType> kStorage{
+  "storage", StorageType::Local, "Storage backend"};
 
 inline constexpr OptionInfo kS3AccessKey{
   "s3_access_key", ""sv, "AWS access key ID (used with s3_secret_key)"};
@@ -68,8 +92,8 @@ inline constexpr OptionGroup kStorageSubgroups[] = {kCommonStorageGroup,
                                                     kS3Group, kLocalGroup};
 inline constexpr OptionGroup kStorageGroup{"Storage", {}, kStorageSubgroups};
 
-inline constexpr OptionInfo kFormat{
-  "format", "text"sv, "File format: text, csv, parquet, dwrf, orc"};
+inline constexpr EnumOptionInfo<FormatType> kFormat{"format", FormatType::Text,
+                                                    "File format"};
 
 inline constexpr OptionInfo kCommonFormatOptions[] = {kFormat};
 
@@ -94,12 +118,12 @@ inline constexpr OptionInfo kCsvOptions[] = {kCsvDelimiter, kCsvEscape,
 
 inline constexpr OptionInfo kProgress{"progress", false,
                                       "Show progress notices during COPY"};
-inline constexpr OptionInfo kOnError{"on_error", "stop"sv,
-                                     "Error handling: stop, ignore"};
+inline constexpr EnumOptionInfo<CopyOnError> kOnError{
+  "on_error", CopyOnError::Stop, "Error handling"};
 inline constexpr OptionInfo kRejectLimit{
   "reject_limit", 0, "Max rows to skip (requires on_error = ignore)"};
-inline constexpr OptionInfo kLogVerbosity{
-  "log_verbosity", "default"sv, "Logging level: default, verbose, silent"};
+inline constexpr EnumOptionInfo<CopyLogVerbosity> kLogVerbosity{
+  "log_verbosity", CopyLogVerbosity::Default, "Logging level"};
 
 inline constexpr OptionInfo kCommonCopyFormatOptions[] = {kFormat, kProgress};
 

@@ -81,9 +81,8 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
 
     _storage_options = ParseStorageOptions();
 
-    auto [underlying_format, format_name, _] = ParseFileFormat();
-    _parsed_format = underlying_format;
-    _format_options = ParseFormatOptions(format_name, underlying_format);
+    auto format = ParseFileFormat();
+    _format_options = ParseFormatOptions(format);
 
     CheckUnrecognizedOptions();
   }
@@ -94,7 +93,6 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   }
 
  private:
-  FileFormat _parsed_format;
   std::shared_ptr<StorageOptions> _storage_options;
   std::shared_ptr<FormatOptions> _format_options;
 };

@@ -21,6 +21,7 @@
 #include "pg/option_help.h"
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 namespace sdb::pg {
 
@@ -65,6 +66,12 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
               &out, " [default: ", std::string_view{&opt.char_val, 1}, "]");
             break;
         }
+        break;
+      case OptionInfo::Type::Enum:
+        absl::StrAppend(&out, " [default: ", opt.string_val,
+                        ", values: ", absl::StrJoin(opt.enum_values, ", "),
+                        "]");
+        break;
     }
     absl::StrAppend(&out, " - ", opt.description, "\n");
   }

@@ -1821,7 +1821,7 @@ void WriteNoticeInBuffer(message::Buffer& send, std::string_view message) {
 
 class CopyRowRejector {
  public:
-  enum class LogVerbosity { Silent = 0, Default = 1, Verbose = 2 };
+  using LogVerbosity = file_option_groups::CopyLogVerbosity;
 
   CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
                   std::string_view table_name, uint64_t reject_limit)
@@ -1997,23 +1997,22 @@ class CopyOptionsParser : public FileOptionsParser {
 
     ParseDataSource();
 
-    auto [underlying, format, location] = ParseFileFormat();
-    switch (underlying) {
-      case FileFormat::Text:
-        ParseTextFormatOptionsSpecified(format == "csv");
+    auto format = ParseFileFormat();
+    switch (format) {
+      case FormatType::Text:
+      case FormatType::Csv:
+        ParseTextFormatOptionsSpecified(format == FormatType::Csv);
         break;
-      case FileFormat::Parquet:
-      case FileFormat::Dwrf:
-      case FileFormat::Orc: {
-        auto options = ParseFormatOptions(format, underlying);
+      case FormatType::Parquet:
+      case FormatType::Dwrf:
+      case FormatType::Orc: {
+        auto options = ParseFormatOptions(format);
         if (_is_writer) {
           _writer_options->dwio = options->createWriterOptions(_row_type);
         } else {
           _reader_options->dwio = options->createReaderOptions(_row_type);
         }
       } break;
-      case FileFormat::None:
-        SDB_UNREACHABLE();
     }
 
     auto show_progress = EraseOptionOrDefault<kProgress>();
@@ -2034,37 +2033,24 @@ class CopyOptionsParser : public FileOptionsParser {
     using namespace file_option_groups;
     auto text_format = ParseTextFormatOptions(is_csv);
 
-    uint64_t reject_limit = 0;
-    auto on_error = kOnError.DefaultValue<std::string_view>();
-    if (const auto* option = EraseOption(kOnError)) {
-      if (_is_writer) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
-      }
-
-      auto maybe_on_error = TryGet<std::string_view>(option->arg);
-      if (!maybe_on_error) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR \"", DeparseValue(option->arg),
-                                "\" not recognized"));
-      }
-      if (*maybe_on_error == "stop") {
-        reject_limit = 0;
-      } else if (*maybe_on_error == "ignore") {
-        reject_limit = std::numeric_limits<uint64_t>::max();
-      } else {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY ON_ERROR \"", *maybe_on_error, "\" not recognized"));
-      }
-      on_error = *maybe_on_error;
+    if (_is_writer && HasOption(kOnError)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
     }
 
+    auto log_verbosity = EraseOptionOrDefault<kLogVerbosity>();
+    auto on_error = EraseOptionOrDefault<kOnError>();
+    auto reject_limit = [&] -> uint64_t {
+      switch (on_error) {
+        case CopyOnError::Ignore:
+          return std::numeric_limits<uint64_t>::max();
+        case CopyOnError::Stop:
+          return 0;
+      }
+    }();
+
     if (const auto* option = EraseOption(kRejectLimit)) {
-      if (on_error != "ignore") {
+      if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -2084,31 +2070,6 @@ class CopyOptionsParser : public FileOptionsParser {
                                 ") must be greater than zero"));
       }
       reject_limit = *maybe_reject_limit;
-    }
-
-    auto log_verbosity = CopyRowRejector::LogVerbosity::Default;
-    if (const auto* option = EraseOption(kLogVerbosity)) {
-      auto maybe_verbosity = TryGet<std::string_view>(option->arg);
-      if (!maybe_verbosity) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY LOG_VERBOSITY \"", DeparseValue(option->arg),
-                  "\" not recognized"));
-      }
-
-      if (*maybe_verbosity == "verbose") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Verbose;
-      } else if (*maybe_verbosity == "default") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Default;
-      } else if (*maybe_verbosity == "silent") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Silent;
-      } else {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("COPY LOG_VERBOSITY \"", *maybe_verbosity,
-                                "\" not recognized"));
-      }
     }
 
     for (const auto& info : kUnsupportedTextCsvOptions) {

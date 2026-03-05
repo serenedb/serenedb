@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Environment Configuration:
-#   DOCKER_TAG_OVERRIDE      Set version (default: from find_version.bash)
+#   DOCKER_TAG               Set version (default: from find_version.bash)
 #   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
 #   PUSH_IMAGES_2_REGISTRY   'true' to push to registry after build
 #   DOCKER_REGISTRY          Registry URL (default: registry.serenedb.com:5000)
@@ -20,34 +20,15 @@ IMAGE_NAME="serenedb"
 
 : "${DOCKER_REGISTRY:=registry.serenedb.com:5000}"
 : "${DOCKER_PLATFORM:=linux/amd64}"
+: "${PUSH_IMAGES_2_REGISTRY:=false}"
 
 # Parse DOCKER_EXTRA_TAGS into a bash array (handles commas and spaces)
 IFS=', ' read -r -a EXTRA_TAGS_ARRAY <<<"${DOCKER_EXTRA_TAGS:-}"
 
-log() {
-	echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-}
-
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 error() {
 	echo "[ERROR] $*" >&2
 	exit 1
-}
-
-get_version_and_tag() {
-	# Source find_version.bash to populate all version variables
-	if [ -f "${SCRIPT_DIR}/find_version.bash" ]; then
-		# Source it in a subshell and capture the variables we need
-		local version_output
-		version_output=$(bash -c "source '${SCRIPT_DIR}/find_version.bash' >/dev/null 2>&1 && echo \"\$DOCKER_TAG\"")
-
-		if [ -z "$version_output" ]; then
-			error "Failed to determine version from find_version.bash"
-		fi
-
-		echo "$version_output"
-	else
-		error "find_version.bash not found at ${SCRIPT_DIR}/find_version.bash"
-	fi
 }
 
 # Determine version and Docker tag
@@ -63,10 +44,13 @@ else
 	VERSION=$(get_version_and_tag)
 	log "Using version from find_version.bash: ${VERSION}"
 fi
+# -----------------------------------------------------------------------------
+[ -z "${DOCKER_TAG:-}" ] && source "${SCRIPT_DIR}/find_version.bash"
+[ -z "${DOCKER_TAG:-}" ] && error "Failed to determine DOCKER_TAG"
+VERSION="$DOCKER_TAG"
 
 FULL_IMAGE_NAME="${DOCKER_REGISTRY}/${IMAGE_NAME}"
 BUILD_DIR=$(mktemp -d)
-
 trap "rm -rf ${BUILD_DIR}" EXIT
 
 log "=== SereneDB Docker Build ==="

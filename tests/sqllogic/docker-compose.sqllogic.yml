@@ -14,12 +14,6 @@ services:
           size: 16G
     networks:
       - test-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
     command: ["postgres", "-c", "max_connections=900"]
 
   serenedb-single:
@@ -38,12 +32,6 @@ services:
       - BUILD_DIR
     networks:
       - test-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 7777"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
     command: >
         sh -c '
           if ! id serenedb >/dev/null 2>&1; then

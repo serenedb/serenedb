@@ -42,13 +42,12 @@ namespace {
 struct Position {
   template<typename Iterator>
   explicit Position(Iterator& itr) noexcept
-    : pos{&PosAttr::get(itr)}, doc{irs::get<DocAttr>(itr)} {
+    : doc{itr.value()}, pos{&PosAttr::get(itr)} {
     SDB_ASSERT(pos);
-    SDB_ASSERT(doc);
   }
 
+  const doc_id_t& doc;
   PosAttr* pos;
-  const DocAttr* doc;
 };
 
 struct PositionWithOffset : Position {
@@ -247,7 +246,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 
   _seq_freq.value = 0;
   for (const auto& pos_iterator : _pos) {
-    if (pos_iterator.doc->value == doc) {
+    if (pos_iterator.doc == doc) {
       auto& pos = *pos_iterator.pos;
       if (potential <= longest_sequence_len || potential < _min_match_count) {
         // this term could not start largest (or long enough) sequence.
@@ -467,9 +466,6 @@ class NGramSimilarityDocIterator : public DocIterator {
                min_match_count, collect_all_states},
       // we are not interested in disjunction`s // scoring
       _approx{std::move(itrs), min_match_count} {
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
@@ -519,15 +515,11 @@ class NGramSimilarityDocIterator : public DocIterator {
     return attr != nullptr ? attr : _checker.GetMutableAttr(type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
@@ -538,7 +530,7 @@ class NGramSimilarityDocIterator : public DocIterator {
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
   }
@@ -552,7 +544,7 @@ class NGramSimilarityDocIterator : public DocIterator {
       return doc;
     }
     if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-      return doc;
+      return _doc = doc;
     }
     return doc + 1;
   }
@@ -579,8 +571,8 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
  private:
-  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>,
-                                BoostBlockAttr, FreqBlockAttr>;
+  using Attributes =
+    std::tuple<AttributePtr<CostAttr>, BoostBlockAttr, FreqBlockAttr>;
 
   const byte_type* _stats{};
   score_t _boost{1.0f};

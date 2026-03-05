@@ -98,15 +98,11 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column_it = column->iterator(irs::ColumnHint::Normal);
       auto filter_it = prepared->execute({.segment = segment});
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
-        ASSERT_EQ(filter_it->value(), doc->value);
       }
       ASSERT_FALSE(column_it->next());
     }
@@ -134,14 +130,10 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       size_t docs_count = 0;
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
-        ASSERT_EQ(filter_it->value(), doc->value);
         ++docs_count;
       }
       ASSERT_FALSE(column_it->next());
@@ -206,9 +198,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       size_t docs_count = 0;
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
@@ -243,9 +232,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
@@ -276,9 +262,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
@@ -305,9 +288,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
-
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
 
       ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
       ASSERT_FALSE(filter_it->next());
@@ -348,15 +328,11 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column_it = column->iterator(irs::ColumnHint::Normal);
       auto filter_it = prepared->execute({.segment = segment});
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
-        ASSERT_EQ(filter_it->value(), doc->value);
       }
       ASSERT_FALSE(column_it->next());
     }
@@ -384,14 +360,10 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       size_t docs_count = 0;
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
-        ASSERT_EQ(filter_it->value(), doc->value);
         ++docs_count;
       }
       ASSERT_FALSE(column_it->next());
@@ -456,9 +428,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       size_t docs_count = 0;
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
@@ -493,9 +462,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
@@ -526,9 +492,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
-
       while (filter_it->next()) {
         ASSERT_TRUE(column_it->next());
         ASSERT_EQ(filter_it->value(), column_it->value());
@@ -555,9 +518,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
-
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
 
       ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
       ASSERT_FALSE(filter_it->next());
@@ -601,9 +561,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_NE(nullptr, value);
 
       auto it = prepared->execute({.segment = segment});
-
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      ASSERT_TRUE(bool(doc));
 
       // #(foo) + #(foobar) + #(foobaz) + #(fookar)
       ASSERT_EQ(8 + 9 + 1 + 10, irs::CostAttr::extract(*it));
@@ -675,9 +632,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       auto it = prepared->execute({.segment = segment});
 
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      ASSERT_TRUE(bool(doc));
-
       // #(koobar) + #(koobaz)
       ASSERT_EQ(4 + 2, irs::CostAttr::extract(*it));
 
@@ -723,9 +677,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_NE(nullptr, value);
 
       auto it = prepared->execute({.segment = segment});
-
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      ASSERT_TRUE(bool(doc));
 
       // #(oobar) + #(oobaz)
       ASSERT_EQ(5 + 3, irs::CostAttr::extract(*it));
@@ -773,9 +724,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       auto it = prepared->execute({.segment = segment});
 
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      ASSERT_TRUE(bool(doc));
-
       // #(collection)
       ASSERT_EQ(4, irs::CostAttr::extract(*it));
 
@@ -813,9 +761,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       auto filter_it = prepared->execute({.segment = segment});
       ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
-
-      auto* doc = irs::get<irs::DocAttr>(*filter_it);
-      ASSERT_TRUE(bool(doc));
 
       ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
       ASSERT_FALSE(filter_it->next());
@@ -891,9 +836,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
         prepared_filter->execute({.segment = segment, .scorer = &sort});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
 
-      auto* doc = irs::get<irs::DocAttr>(*filter_itr);
-      ASSERT_TRUE(bool(doc));
-
       size_t docs_count = 0;
       auto score = column_itr->PrepareScore({
         .scorer = &sort,
@@ -908,7 +850,6 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
         scored_result.emplace(score_value, filter_itr->value());
         ASSERT_TRUE(column_itr->next());
         ASSERT_EQ(filter_itr->value(), column_itr->value());
-        ASSERT_EQ(filter_itr->value(), doc->value);
         ++docs_count;
       }
 
@@ -1626,16 +1567,12 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     auto column_it = column->iterator(irs::ColumnHint::PrevDoc);
     auto filter_it = prepared->execute({.segment = segment});
 
-    auto* doc = irs::get<irs::DocAttr>(*filter_it);
-    ASSERT_TRUE(bool(doc));
-
     ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
     for (auto& seek : seeks) {
       irs::seek(*filter_it, std::get<0>(seek));
       irs::seek(*column_it, std::get<0>(seek));
       ASSERT_EQ(filter_it->value(), column_it->value());
-      ASSERT_EQ(filter_it->value(), doc->value);
-      ASSERT_EQ(std::get<1>(seek), doc->value);
+      ASSERT_EQ(std::get<1>(seek), filter_it->value());
     }
   }
   EXPECT_EQ(counter.current, 0);
@@ -1659,16 +1596,12 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     auto column_it = column->iterator(irs::ColumnHint::PrevDoc);
     auto filter_it = prepared->execute({.segment = segment});
 
-    auto* doc = irs::get<irs::DocAttr>(*filter_it);
-    ASSERT_TRUE(bool(doc));
-
     ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_it));
     for (auto& seek : seeks) {
       ASSERT_EQ(std::get<1>(seek), filter_it->seek(std::get<0>(seek)));
       ASSERT_EQ(std::get<1>(seek), column_it->seek(std::get<0>(seek)));
       ASSERT_EQ(filter_it->value(), column_it->value());
-      ASSERT_EQ(filter_it->value(), doc->value);
-      ASSERT_EQ(std::get<1>(seek), doc->value);
+      ASSERT_EQ(std::get<1>(seek), filter_it->value());
     }
   }
   EXPECT_EQ(counter.current, 0);

@@ -43,58 +43,66 @@
 namespace irs {
 
 // Adapter to use DocIterator::ptr with conjunction and disjunction.
-struct ScoreAdapter {
+struct [[clang::trivial_abi]] ScoreAdapter {
   ScoreAdapter() = default;
 
   ScoreAdapter(DocIterator::ptr it) noexcept : _it{std::move(it)} {
-    const auto* doc = irs::get<DocAttr>(*this->_it);
-    SDB_ASSERT(doc);
-    _doc = &doc->value;
+    SDB_ASSERT(_it);
   }
 
   ScoreAdapter(ScoreAdapter&&) noexcept = default;
   ScoreAdapter& operator=(ScoreAdapter&&) noexcept = default;
 
   IRS_FORCE_INLINE operator DocIterator::ptr&&() && noexcept {
+    SDB_ASSERT(_it);
     return std::move(_it);
   }
 
-  IRS_FORCE_INLINE explicit operator bool() const noexcept {
-    return _it != nullptr;
-  }
-
   IRS_FORCE_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept {
+    SDB_ASSERT(_it);
     return _it->GetMutable(type);
   }
 
-  IRS_FORCE_INLINE doc_id_t value() const noexcept { return *_doc; }
+  IRS_FORCE_INLINE const doc_id_t& value() const noexcept {
+    SDB_ASSERT(_it);
+    return _it->value();
+  }
 
-  IRS_FORCE_INLINE doc_id_t advance() { return _it->advance(); }
+  IRS_FORCE_INLINE doc_id_t advance() {
+    SDB_ASSERT(_it);
+    return _it->advance();
+  }
 
-  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) { return _it->seek(target); }
+  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) {
+    SDB_ASSERT(_it);
+    return _it->seek(target);
+  }
 
   IRS_FORCE_INLINE doc_id_t LazySeek(doc_id_t target) {
+    SDB_ASSERT(_it);
     return _it->LazySeek(target);
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
+    SDB_ASSERT(_it);
     return _it->FetchScoreArgs(index);
   }
 
   IRS_FORCE_INLINE ScoreFunction
   PrepareScore(const PrepareScoreContext& ctx) const noexcept {
+    SDB_ASSERT(_it);
     return _it->PrepareScore(ctx);
   }
 
   IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
     doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
     FillBlockMatchContext match) {
+    SDB_ASSERT(_it);
     return _it->FillBlock(min, max, mask, score, match);
   }
 
  private:
   DocIterator::ptr _it;
-  const doc_id_t* _doc{};
 };
 
 using ScoreAdapters = std::vector<ScoreAdapter>;
@@ -228,15 +236,12 @@ struct ConjunctionBase : public DocIterator {
 template<typename Adapter>
 class Conjunction : public ConjunctionBase<Adapter> {
   using Base = ConjunctionBase<Adapter>;
-  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>>;
+  using Attributes = std::tuple<AttributePtr<CostAttr>>;
 
  public:
   explicit Conjunction(ScoreMergeType merge_type, std::vector<Adapter>&& itrs)
     : Base{merge_type, std::move(itrs)} {
     SDB_ASSERT(!this->_itrs.empty());
-
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&this->_itrs[0]);
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&this->_itrs[0]);
   }
@@ -255,10 +260,6 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return irs::GetMutable(_attrs, type);
   }
 
-  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final { return converge(this->_itrs[0].advance()); }
 
   doc_id_t seek(doc_id_t target) final {
@@ -268,14 +269,14 @@ class Conjunction : public ConjunctionBase<Adapter> {
   doc_id_t LazySeek(doc_id_t target) final {
     // TODO(mbkkt) should be SDB_ASSERT(target > value())
     // but depends on underlying iterator implementation
-    SDB_ASSERT(target >= value());
+    SDB_ASSERT(target >= this->value());
     for (auto& it : this->_itrs) {
       const auto doc = it.LazySeek(target);
       if (doc != target) {
         return doc;
       }
     }
-    return target;
+    return this->_doc = target;
   }
 
   uint32_t count() final { return DocIterator::CountImpl(*this); }
@@ -293,7 +294,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
     const auto end = this->_itrs.end();
   restart:
     if (doc_limits::eof(target)) [[unlikely]] {
-      return doc_limits::eof();
+      return this->_doc = doc_limits::eof();
     }
     for (auto it = begin; it != end; ++it) {
       const auto doc = it->LazySeek(target);
@@ -302,7 +303,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
         goto restart;
       }
     }
-    return target;
+    return this->_doc = target;
   }
 
   Attributes _attrs;

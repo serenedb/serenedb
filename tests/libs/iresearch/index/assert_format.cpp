@@ -54,17 +54,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
@@ -418,8 +414,6 @@ class DocIteratorImpl : public irs::DocIterator {
  public:
   DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
 
-  irs::doc_id_t value() const noexcept final { return _doc.value; }
-
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
     const auto it = _attrs.find(type);
     return it == _attrs.end() ? nullptr : it->second;
@@ -427,15 +421,15 @@ class DocIteratorImpl : public irs::DocIterator {
 
   irs::doc_id_t advance() final {
     if (_next == _data.postings.end()) {
-      return _doc.value = irs::doc_limits::eof();
+      return _doc = irs::doc_limits::eof();
     }
 
     _prev = _next, ++_next;
-    _doc.value = _prev->id();
+    _doc = _prev->id();
     _freq.value = static_cast<uint32_t>(_prev->positions().size());
     _pos.Clear();
 
-    return _doc.value;
+    return _doc;
   }
 
   irs::doc_id_t seek(irs::doc_id_t id) final {
@@ -448,10 +442,10 @@ class DocIteratorImpl : public irs::DocIterator {
 
     _prev = it;
     _next = ++it;
-    _doc.value = _prev->id();
+    _doc = _prev->id();
     _pos.Clear();
 
-    return _doc.value;
+    return _doc;
   }
 
  private:
@@ -505,7 +499,6 @@ class DocIteratorImpl : public irs::DocIterator {
 
   const tests::Term& _data;
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
-  irs::DocAttr _doc;
   irs::FreqAttr _freq;
   irs::CostAttr _cost;
   PosIterator _pos;
@@ -520,8 +513,6 @@ DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
 
   _cost.reset(_data.postings.size());
   _attrs[irs::Type<irs::CostAttr>::id()] = &_cost;
-
-  _attrs[irs::Type<irs::DocAttr>::id()] = &_doc;
 
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
     _attrs[irs::Type<irs::FreqAttr>::id()] = &_freq;
@@ -973,8 +964,6 @@ void AssertPk(const irs::ColumnReader& actual_reader,
     auto actual_seek_it = actual_reader.iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, actual_seek_it);
 
-    auto* actual_key = irs::get<irs::DocAttr>(*actual_it);
-    ASSERT_NE(nullptr, actual_key);
     auto* actual_value = irs::get<irs::PayAttr>(*actual_it);
     ASSERT_NE(nullptr, actual_value);
 
@@ -986,7 +975,6 @@ void AssertPk(const irs::ColumnReader& actual_reader,
       ASSERT_NE(nullptr, actual_stateless_seek_it);
 
       ASSERT_EQ(expected_key, actual_it->value());
-      ASSERT_EQ(expected_key, actual_key->value);
       ASSERT_EQ(expected_value, actual_value->value);
       ASSERT_EQ(expected_key, actual_seek_it->seek(expected_key));
       ASSERT_EQ(expected_key, actual_stateless_seek_it->seek(expected_key));
@@ -1042,8 +1030,6 @@ void AssertColumn(const irs::ColumnReader* actual_reader,
     auto actual_seek_it = actual_reader->iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, actual_seek_it);
 
-    auto* actual_key = irs::get<irs::DocAttr>(*actual_it);
-    ASSERT_NE(nullptr, actual_key);
     auto* actual_value = irs::get<irs::PayAttr>(*actual_it);
     ASSERT_NE(nullptr, actual_value);
 
@@ -1055,7 +1041,6 @@ void AssertColumn(const irs::ColumnReader* actual_reader,
       ASSERT_NE(nullptr, actual_stateless_seek_it);
 
       ASSERT_EQ(expected_key, actual_it->value());
-      ASSERT_EQ(expected_key, actual_key->value);
       ASSERT_EQ(expected_value, actual_value->value);
       ASSERT_EQ(expected_key, actual_seek_it->seek(expected_key));
       ASSERT_EQ(expected_key, actual_stateless_seek_it->seek(expected_key));

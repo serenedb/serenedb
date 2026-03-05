@@ -116,7 +116,7 @@ class FileOptionsParser {
 
     if (access_key.empty() != secret_key.empty()) {
       THROW_SQL_ERROR(
-        CURSOR_POS(0), ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("s3_access_key and s3_secret_key must be specified together"));
     }
 
@@ -131,14 +131,26 @@ class FileOptionsParser {
       ssl_enabled, use_creds);
   }
 
+  void HandleHelp(std::span<const OptionGroup> groups) {
+    using namespace file_option_groups;
+    auto it = _options.find(kHelp.name);
+    if (it == _options.end()) {
+      return;
+    }
+    auto help = absl::StrCat("\n", FormatHelp(groups));
+    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
+                    ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(help));
+  }
+
   template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
   T EraseOptionOrDefault() {
     if (const auto* option = EraseOption(Info)) {
       auto value = TryGet<T>(option->arg);
       if (!value) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(Info.name, " must be ", Info.TypeName()));
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(Info.ErrorMessage(_operation, DeparseValue(option->arg))));
       }
       return *value;
     }
@@ -146,20 +158,7 @@ class FileOptionsParser {
     return Info.DefaultValue<T>();
   }
 
-  void HandleHelp(std::span<const OptionGroup> groups) {
-    using namespace file_option_groups;
-    const auto* option = EraseOption(kHelp, false);
-    if (!option) {
-      return;
-    }
-
-    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                    ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG(FormatHelp(groups)));
-  }
-
-  const DefElem* EraseOption(const OptionInfo& info,
-                             bool param_required = true) {
+  const DefElem* EraseOption(const OptionInfo& info) {
     auto it = _options.find(info.name);
     if (it == _options.end()) {
       return nullptr;
@@ -167,7 +166,7 @@ class FileOptionsParser {
     const auto* option = it->second;
     _options.erase(it);
     SDB_ASSERT(option);
-    if (!option->arg && param_required) {
+    if (!option->arg) {
       THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                       ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(info.name, " requires a parameter"));
@@ -283,45 +282,22 @@ class FileOptionsParser {
   }
 
   std::shared_ptr<TextFormatOptions> ParseTextFormatOptions(bool is_csv) {
+    return is_csv ? ParseTextFormatOptionsImpl<true>()
+                  : ParseTextFormatOptionsImpl<false>();
+  }
+
+  template<bool IsCsv>
+  std::shared_ptr<TextFormatOptions> ParseTextFormatOptionsImpl() {
     using namespace file_option_groups;
-    const auto& delim_opt = is_csv ? kCsvDelimiter : kTextDelimiter;
-    uint8_t delim = delim_opt.DefaultValue<uint8_t>();
-    if (const auto* option = EraseOption(delim_opt)) {
-      auto maybe_delim = TryGet<char>(option->arg);
-      if (!maybe_delim) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG(_operation,
-                  " delimiter must be a single one-byte character"));
-      }
-      delim = *maybe_delim;
-    }
 
-    const auto& escape_opt = is_csv ? kCsvEscape : kTextEscape;
-    auto escape = escape_opt.DefaultValue<uint8_t>();
-    if (const auto* option = EraseOption(escape_opt)) {
-      auto maybe_escape = TryGet<char>(option->arg);
-      if (!maybe_escape) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG(_operation, " escape must be a single one-byte character"));
-      }
-      escape = *maybe_escape;
-    }
+    constexpr auto& kDelim = IsCsv ? kCsvDelimiter : kTextDelimiter;
+    uint8_t delim = EraseOptionOrDefault<kDelim>();
 
-    const auto& null_opt = is_csv ? kCsvNull : kTextNull;
-    auto null_string = null_opt.DefaultValue<std::string>();
-    if (const auto* option = EraseOption(null_opt)) {
-      auto maybe_null = TryGet<std::string_view>(option->arg);
-      if (!maybe_null) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(_operation, " null must be a string"));
-      }
-      null_string = std::string{*maybe_null};
-    }
+    constexpr auto& kEscape = IsCsv ? kCsvEscape : kTextEscape;
+    uint8_t escape = EraseOptionOrDefault<kEscape>();
+
+    constexpr auto& kNull = IsCsv ? kCsvNull : kTextNull;
+    auto null_string = EraseOptionOrDefault<kNull>();
 
     auto header = kHeader.DefaultValue<bool>();
     if (const auto* option = EraseOption(kHeader)) {
@@ -343,8 +319,8 @@ class FileOptionsParser {
       header = *maybe_header;
     }
 
-    return std::make_shared<TextFormatOptions>(delim, escape,
-                                               std::move(null_string), header);
+    return std::make_shared<TextFormatOptions>(
+      delim, escape, std::string{null_string}, header);
   }
 
   std::shared_ptr<ParquetFormatOptions> ParseParquetFormatOptions() {

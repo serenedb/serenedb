@@ -84,7 +84,6 @@ std::string FormatHelp(std::span<const OptionGroup> groups) {
   std::string result;
   result.reserve(1024);
 
-  result.push_back('\n');
   for (const auto& group : groups) {
     FormatGroup(result, group, 0);
     absl::StrAppend(&result, "\n");

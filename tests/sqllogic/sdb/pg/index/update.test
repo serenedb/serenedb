@@ -22,7 +22,7 @@ DELETE FROM  idx_update_pk WHERE a = 2;
 statement ok
 SET sdb_fault_idx_update_pk_connector_must_one_index TO DEFAULT;
 
-statement ok
+statement error db error: ERROR: failure point 'idx_update_pk_connector_must_two_index' not set so cannot remove
 RESET sdb_fault_idx_update_pk_connector_must_two_index;
 
 statement ok

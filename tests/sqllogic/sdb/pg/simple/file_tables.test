@@ -1048,7 +1048,7 @@ WITH (
   HELP
 );
 ----
-db error: ERROR:
+db error: ERROR: 
 External:
   path (string) - Path to external file (required)
 

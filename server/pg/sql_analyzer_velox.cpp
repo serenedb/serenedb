@@ -2004,18 +2004,7 @@ class CopyOptionsParser : public FileOptionsParser {
         SDB_UNREACHABLE();
     }
 
-    auto show_progress = kProgress.DefaultValue<bool>();
-    if (const auto* option = EraseOption(kProgress)) {
-      auto maybe_progress = TryGet<bool>(option->arg);
-      if (!maybe_progress) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid value for parameter \"progress\": \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      show_progress = *maybe_progress;
-    }
-
+    auto show_progress = EraseOptionOrDefault<kProgress>();
     if (!_is_writer) {  // TODO: make same for writer
       if (show_progress) {
         _reader_options->report_callback =

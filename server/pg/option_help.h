@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <cassert>
 #include <span>
 #include <string>
@@ -94,6 +96,23 @@ struct OptionInfo {
         return "integer";
       case Type::Character:
         return "character";
+    }
+  }
+
+  std::string ErrorMessage(std::string_view operation,
+                           std::string_view raw_value) const {
+    switch (type) {
+      case Type::Boolean:
+        return absl::StrCat("invalid value for ", operation, " parameter \"",
+                            name, "\": \"", raw_value, "\"");
+      case Type::Integer:
+        return absl::StrCat("invalid input syntax for type integer: \"",
+                            raw_value, "\"");
+      case Type::Character:
+        return absl::StrCat(operation, " ", name,
+                            " must be a single one-byte character");
+      case Type::String:
+        return absl::StrCat(operation, " ", name, " must be a string");
     }
   }
 };

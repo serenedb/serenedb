@@ -415,7 +415,7 @@ onlyif serenedb
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
 ----
-db error: ERROR:
+db error: ERROR: 
 Storage:
   Common:
     storage (string) [default: local] - Storage backend: local, s3

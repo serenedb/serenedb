@@ -103,7 +103,7 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
   uint64_t _produced = 0;
 };
 
-// RocksDB Read Your Own Writes DataSource
+// Read-Your-Own-Write
 class RocksDBRYOWFullScanDataSource : public RocksDBFullScanDataSource {
  public:
   RocksDBRYOWFullScanDataSource(velox::memory::MemoryPool& memory_pool,
@@ -136,67 +136,26 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
   rocksdb::DB& _db;  // NOLINT
 };
 
-// TODO
-// 1. Do not derive full scan. Make own base class
-// 2. Solve problem with rejected filters. Looks like we need to pass pk_type
+// TODOs
+// - Tests with failure points, where full scan data source will be disabled.
+// - Solve problem with rejected filters. Looks like we need to pass pk_type
 // into creating table handle to decide whether to take a filter into account or
-// not. It's possible only after traversin all the filters.
-// 3. Structurize patterns in filter logics, support multiple points:
-//    - (pk1 = C1 and pk2 = C2) and 1 = 1 -- shuld work, it's presto_and()
-//    - (pk1 = C1 and pk2 = C2) or (pk1 = C3 and pk2 = C3) -- should work ok, 2
-//    points
-//    - pk1 in (C1, C2, C3) -- should work, it's presto_in(), should be
-//    transformed into or-s, multiple points
-//    - (pk1 = C1 or pk1 = C2) and (pk2 = C3 or pk2 = C4) -- should work
-// Patterns
-//          - (pk_i in (...)) and (pk_j in (...))
-//          - (pk_i = ... and pk_j = ...) or (pk_i = ... and pk_j = ...)
-//          - Looks like recursive? Carthesian tree?
-// 4. Tests with failure points, where full scan data source will be disabled.
+// not. It's possible only after traversing all the filters.
+// - Solve other TODOs across this PR (mainly perf and design related)
 
-class RocksDBRYOWMultiGetDataSource final
-  : public RocksDBRYOWFullScanDataSource {
+class RocksDBPointLookupDataSource : public velox::connector::DataSource {
  public:
-  RocksDBRYOWMultiGetDataSource(velox::memory::MemoryPool& memory_pool,
-                                rocksdb::Transaction& transaction,
-                                rocksdb::ColumnFamilyHandle& cf,
-                                velox::RowTypePtr row_type,
-                                std::vector<catalog::Column::Id> column_ids,
-                                catalog::Column::Id effective_column_id,
-                                ObjectId object_key)
-    : RocksDBRYOWFullScanDataSource{
-        memory_pool, transaction,         cf,        row_type,
-        column_ids,  effective_column_id, object_key} {}
-  RocksDBRYOWMultiGetDataSource(const RocksDBRYOWMultiGetDataSource&) = default;
-  RocksDBRYOWMultiGetDataSource(RocksDBRYOWMultiGetDataSource&&) = default;
-
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
-    // VELOX_UNSUPPORTED();
-    // Just do nothing? Or store for check that next is not called before next
-  }
-  std::optional<velox::RowVectorPtr> next(uint64_t size,
-                                          velox::ContinueFuture& future) final {
+  void addDynamicFilter(velox::column_index_t,
+                        const std::shared_ptr<velox::common::Filter>&) final {
     VELOX_UNSUPPORTED();
+  }
+  uint64_t getCompletedBytes() final { return 0; }
+  uint64_t getCompletedRows() final { return _produced; }
+  std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats()
+    final {
     return {};
   }
-};
-
-class RocksDBSnapshotMultiGetDataSource final
-  : public RocksDBSnapshotFullScanDataSource {
- public:
-  RocksDBSnapshotMultiGetDataSource(
-    velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
-    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-    std::vector<catalog::Column::Id> column_ids,
-    catalog::Column::Id effective_column_id, ObjectId object_key,
-    const rocksdb::Snapshot* snapshot, std::vector<velox::RowVectorPtr> values)
-    : RocksDBSnapshotFullScanDataSource{memory_pool, db,
-                                        cf,          row_type,
-                                        column_ids,  effective_column_id,
-                                        object_key,  snapshot},
-      _values{std::move(values)} {
-    SDB_PRINT("[mkornaukhov] creating RocksDBSnapshotMultiGetDataSource");
-  }
+  void cancel() final {}
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
     SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
@@ -215,32 +174,33 @@ class RocksDBSnapshotMultiGetDataSource final
       return nullptr;
     }
 
-    if (_values.empty()) {
+    if (_values.empty()) [[unlikely]] {
       _current_split.reset();
       return nullptr;
     }
 
+    SDB_PRINT("row_type=", _row_type->toString());
     const auto num_columns = _row_type->size();
-    // TODO support count(*), it does not work yet
+
+    // For now, we do not reject filters, so this data source is reading at
+    // least 1 column, even for queries like
+    // SELECT count(*) FROM t WHERE a = 1;
+    // In this example column a will be read. When we'll properly reject some
+    // filters, this assert may be failed, so we have to store and use effective
+    // column id.
     SDB_ASSERT(num_columns > 0);
 
     const auto num_points = _values.size();
     const size_t total_keys = num_points * num_columns;
 
-    // Build per-point primary keys
-    std::vector<std::string> pks(num_points);
-    for (size_t p = 0; p < num_points; ++p) {
-      primary_key::Create(*_values[p], 0, pks[p]);
-    }
-
-    // Build all keys laid out as [point * num_columns + col]
+    // Build all keys laid out as [point_idx * num_columns + col_idx]
     std::vector<std::string> keys(total_keys);
-    for (size_t p = 0; p < num_points; ++p) {
-      for (size_t c = 0; c < num_columns; ++c) {
+    for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
+      for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
         std::string key = key_utils::PrepareTableKey(_object_key);
-        key_utils::AppendColumnKey(key, _column_ids[c]);
-        key += pks[p];
-        keys[p * num_columns + c] = std::move(key);
+        key_utils::AppendColumnKey(key, _column_ids[col_idx]);
+        primary_key::Create(*_values[point_idx], 0, key);
+        keys[point_idx * num_columns + col_idx] = std::move(key);
       }
     }
 
@@ -249,13 +209,9 @@ class RocksDBSnapshotMultiGetDataSource final
       key_slices[i] = keys[i];
     }
 
-    rocksdb::ReadOptions ro;
-    ro.async_io = IsIOUringEnabled();
-    ro.snapshot = _snapshot;
-
     std::vector<rocksdb::ColumnFamilyHandle*> cfs(total_keys, &_cf);
     std::vector<std::string> raw_values(total_keys);
-    const auto statuses = _db.MultiGet(ro, cfs, key_slices, &raw_values);
+    const auto statuses = DoMultiGet(cfs, key_slices, raw_values);
 
     std::vector<velox::VectorPtr> columns;
     columns.reserve(num_columns);
@@ -271,9 +227,28 @@ class RocksDBSnapshotMultiGetDataSource final
                                               num_points, std::move(columns));
   }
 
+ protected:
+  RocksDBPointLookupDataSource(velox::memory::MemoryPool& memory_pool,
+                               rocksdb::ColumnFamilyHandle& cf,
+                               velox::RowTypePtr row_type,
+                               std::vector<catalog::Column::Id> column_ids,
+                               ObjectId object_key,
+                               std::vector<velox::RowVectorPtr> values)
+    : _memory_pool{memory_pool},
+      _cf{cf},
+      _row_type{std::move(row_type)},
+      _column_ids{std::move(column_ids)},
+      _object_key{object_key},
+      _values{std::move(values)} {}
+
+  // Perform the batched read. Keys are laid out as [point * num_columns + col].
+  virtual std::vector<rocksdb::Status> DoMultiGet(
+    const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
+    const std::vector<rocksdb::Slice>& key_slices,
+    std::vector<std::string>& raw_values) = 0;
+
  private:
   // Builds a FlatVector<T> of size num_points for column col_idx.
-  // Keys are laid out as statuses[p * num_columns + col_idx].
   template<velox::TypeKind Kind>
   velox::VectorPtr ReadColumnValues(
     size_t col_idx, size_t num_points,
@@ -286,8 +261,8 @@ class RocksDBSnapshotMultiGetDataSource final
     auto result = velox::BaseVector::create<velox::FlatVector<T>>(
       velox::Type::create<Kind>(), num_points, &_memory_pool);
 
-    for (size_t p = 0; p < num_points; ++p) {
-      const size_t idx = p * num_columns + col_idx;
+    for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
+      const size_t idx = point_idx * num_columns + col_idx;
       const auto& status = statuses[idx];
       const auto& value = values[idx];
 
@@ -297,31 +272,97 @@ class RocksDBSnapshotMultiGetDataSource final
                   "Failed to read value by PK with point data source: ",
                   res.errorMessage());
       }
-      if (status.IsNotFound() || value.empty()) {
-        result->setNull(p, true);
+      if (status.IsNotFound()) {
+        result->setNull(point_idx, true);
       } else {
         if constexpr (std::is_same_v<T, velox::StringView>) {
           const size_t offset = value[0] == 0 ? 1 : 0;
-          result->set(
-            p, velox::StringView(value.data() + offset, value.size() - offset));
+          result->set(point_idx, velox::StringView(value.data() + offset,
+                                                   value.size() - offset));
         } else if constexpr (std::is_same_v<T, bool>) {
           SDB_ASSERT(
             value.size() == kTrueValue.size(),
             "RocksDBDataSource: unexpected value size for bool column");
-          result->set(p, value == kTrueValue);
+          result->set(point_idx, value == kTrueValue);
         } else {
           SDB_ASSERT(
             value.size() == sizeof(T),
             "RocksDBDataSource: unexpected value size for scalar column");
           T tmp;
           memcpy(&tmp, value.data(), sizeof(T));
-          result->set(p, tmp);
+          result->set(point_idx, tmp);
         }
       }
     }
     return result;
   }
 
+  velox::memory::MemoryPool& _memory_pool;
+  rocksdb::ColumnFamilyHandle& _cf;
+  velox::RowTypePtr _row_type;
+  std::vector<catalog::Column::Id> _column_ids;
+  ObjectId _object_key;
+  std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
+  uint64_t _produced = 0;
   std::vector<velox::RowVectorPtr> _values;
+};
+
+class RocksDBRYOWMultiGetDataSource final
+  : public RocksDBPointLookupDataSource {
+ public:
+  RocksDBRYOWMultiGetDataSource(velox::memory::MemoryPool& memory_pool,
+                                rocksdb::Transaction& transaction,
+                                rocksdb::ColumnFamilyHandle& cf,
+                                velox::RowTypePtr row_type,
+                                std::vector<catalog::Column::Id> column_ids,
+                                ObjectId object_key,
+                                std::vector<velox::RowVectorPtr> values)
+    : RocksDBPointLookupDataSource{memory_pool,         cf,
+                                   std::move(row_type), std::move(column_ids),
+                                   object_key,          std::move(values)},
+      _transaction{transaction} {}
+
+ protected:
+  std::vector<rocksdb::Status> DoMultiGet(
+    const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
+    const std::vector<rocksdb::Slice>& key_slices,
+    std::vector<std::string>& raw_values) override {
+    rocksdb::ReadOptions ro;
+    ro.async_io = IsIOUringEnabled();
+    return _transaction.MultiGet(ro, cfs, key_slices, &raw_values);
+  }
+
+ private:
+  rocksdb::Transaction& _transaction;
+};
+
+class RocksDBSnapshotMultiGetDataSource final
+  : public RocksDBPointLookupDataSource {
+ public:
+  RocksDBSnapshotMultiGetDataSource(
+    velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
+    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+    std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
+    const rocksdb::Snapshot* snapshot, std::vector<velox::RowVectorPtr> values)
+    : RocksDBPointLookupDataSource{memory_pool,         cf,
+                                   std::move(row_type), std::move(column_ids),
+                                   object_key,          std::move(values)},
+      _db{db},
+      _snapshot{snapshot} {}
+
+ protected:
+  std::vector<rocksdb::Status> DoMultiGet(
+    const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
+    const std::vector<rocksdb::Slice>& key_slices,
+    std::vector<std::string>& raw_values) override {
+    rocksdb::ReadOptions ro;
+    ro.async_io = IsIOUringEnabled();
+    ro.snapshot = _snapshot;
+    return _db.MultiGet(ro, cfs, key_slices, &raw_values);
+  }
+
+ private:
+  rocksdb::DB& _db;
+  const rocksdb::Snapshot* _snapshot;
 };
 }  // namespace sdb::connector

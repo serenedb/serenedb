@@ -723,8 +723,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         !points.empty()) {
       return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
-        serene_table_handle.GetEffectiveColumnId(), object_key, snapshot,
-        std::move(points));
+        object_key, snapshot, std::move(points));
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

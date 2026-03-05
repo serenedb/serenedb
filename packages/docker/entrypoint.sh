@@ -1,8 +1,4 @@
 #!/bin/sh
-# =============================================================================
-# SereneDB Docker Entrypoint
-# Handles initialization and startup of the database server
-# =============================================================================
 set -e
 
 # Configuration

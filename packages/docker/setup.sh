@@ -1,8 +1,4 @@
 #!/bin/sh
-# =============================================================================
-# SereneDB Docker Setup Script
-# Runs during image build to configure the environment
-# =============================================================================
 set -e
 
 echo "=== SereneDB Docker Setup ==="
@@ -25,9 +21,6 @@ if [ -f "$CONFIG_FILE" ]; then
 
 	# Log to stdout instead of file (Docker best practice)
 	sed -i -e 's!^\(file\s*=\s*\).*!\1 -!' "$CONFIG_FILE"
-
-	# Remove uid setting (allow running as arbitrary user)
-	sed -i -e 's~^uid = .*$~~' "$CONFIG_FILE"
 else
 	echo "WARNING: Config file not found: $CONFIG_FILE"
 fi

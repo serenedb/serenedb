@@ -54,8 +54,32 @@ class Exclusion : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final {
     SDB_ASSERT(target >= value());
-    // TODO: optimize
-    return seek(target);
+    const auto doc = _incl.LazySeek(target);
+    if (doc != target) {
+      return doc;
+    }
+    if constexpr (requires { _excl.begin(); }) {
+      for (auto& it : _excl) {
+        auto excl = it.value();
+        if (excl < doc) {
+          excl = it.seek(doc);
+        }
+        if (excl == doc) {
+          return doc + 1;
+        }
+        SDB_ASSERT(excl > doc);
+      }
+    } else {
+      auto excl = _excl.value();
+      if (excl < doc) {
+        excl = _excl.seek(doc);
+      }
+      if (excl == doc) {
+        return doc + 1;
+      }
+      SDB_ASSERT(excl > doc);
+    }
+    return doc;
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {

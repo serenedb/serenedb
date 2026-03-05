@@ -1,7 +1,5 @@
 #!/bin/bash
-#
-# build-deb.sh - Build SereneDB Debian Package
-#
+
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/serenedb}"

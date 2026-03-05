@@ -1,6 +1,3 @@
-# =============================================================================
-# SereneDB Docker Image
-# =============================================================================
 FROM ubuntu:24.04
 
 LABEL maintainer="SereneDB"
@@ -41,7 +38,7 @@ RUN echo "UTC" > /etc/timezone
 # Permissions for OpenShift compatibility
 # OpenShift runs containers with random UID and GID 0
 RUN chgrp -R 0 /var/lib/serenedb \
-    && chmod -R 775 /var/lib/serenedb \
+    && chmod -R 775 /var/lib/serenedb
 
 # Volumes
 VOLUME ["/var/lib/serenedb"]

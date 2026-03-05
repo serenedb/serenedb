@@ -1,7 +1,5 @@
 #!/bin/bash
-# =============================================================================
-# SereneDB Docker Image Build Script
-#
+
 # Environment Configuration:
 #   DOCKER_TAG_OVERRIDE      Set version (default: from find_version.bash)
 #   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
@@ -10,12 +8,10 @@
 #   DOCKER_PLATFORM          Target platform (default: linux/amd64)
 #   DOCKER_USERNAME          Registry username (for push)
 #   DOCKER_PASSWORD          Registry password (for push)
-# =============================================================================
+
 set -e
 
-# -----------------------------------------------------------------------------
 # Configuration from Environment Variables
-# -----------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKER_DIR="${SCRIPT_DIR}/docker"
@@ -54,9 +50,7 @@ get_version_and_tag() {
 	fi
 }
 
-# -----------------------------------------------------------------------------
 # Determine version and Docker tag
-# -----------------------------------------------------------------------------
 if [ -n "${DOCKER_TAG_OVERRIDE:-}" ]; then
 	VERSION="$DOCKER_TAG_OVERRIDE"
 	log "Using version override: ${VERSION}"

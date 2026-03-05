@@ -1261,18 +1261,17 @@ class PostingIteratorBase : public DocIterator {
       }
 
       fill_block_done:
-        auto& doc_value = std::get<DocAttr>(_attrs).value;
         if (_left_in_leaf > 0) {
-          doc_value = *(std::end(_docs) - _left_in_leaf);
+          _doc = *(std::end(_docs) - _left_in_leaf);
           --_left_in_leaf;
         } else {
-          doc_value = doc_limits::eof();
+          _doc = doc_limits::eof();
         }
 
         if constexpr (IteratorTraits::Frequency()) {
           std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
         }
-        return std::pair{doc_value, empty};
+        return std::pair{_doc, empty};
       });
     });
   }
@@ -1478,7 +1477,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
   }
 
   _left_in_leaf = 0;
-  return doc_value = doc_limits::eof();
+  return _doc = doc_limits::eof();
 }
 
 template<typename IteratorTraits>

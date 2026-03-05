@@ -366,7 +366,7 @@ class BlockDisjunction : public DocIterator {
                                   window_base, kNumBlocks);
         }
       }
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      _doc = doc_limits::eof();
     });
   }
 

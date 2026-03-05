@@ -51,25 +51,19 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   CreateTableUsingExternalOptions(const List* options,
                                   ConnectionContext& conn_ctx)
     : FileOptionsParser{
-        "CREATE TABLE", {}, {}, [&conn_ctx](std::string msg) {
+        "CREATE TABLE",
+        {},
+        {},
+        [&conn_ctx](std::string msg) {
           conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
-        }} {
-    VisitNodes(options, [&](const DefElem& option) {
-      auto [_, emplaced] =
-        _options.try_emplace(std::string_view{option.defname}, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(&option)),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-
+        },
+        OptionsParser::MakeOptions(options, {}),
+        file_option_groups::kCreateExternalParserGroups} {
     Parse();
   }
 
   void Parse() {
     using namespace file_option_groups;
-    HandleHelp(kCreateExternalParserGroups);
 
     if (const auto* path_option = EraseOption(kPath)) {
       auto maybe_path = TryGet<std::string_view>(path_option->arg);

@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace sdb::pg {
 
@@ -121,7 +122,26 @@ struct OptionGroup {
   std::string_view name;
   std::span<const OptionInfo> options;     // leaf options in this group
   std::span<const OptionGroup> subgroups;  // nested groups
+
+  std::vector<std::string_view> AllNames() const {
+    std::vector<std::string_view> names;
+    CollectOptionNames(names);
+    return names;
+  }
+
+ private:
+  void CollectOptionNames(std::vector<std::string_view>& names) const {
+    for (const auto& opt : options) {
+      names.push_back(opt.name);
+    }
+    for (const auto& subgroup : subgroups) {
+      subgroup.CollectOptionNames(names);
+    }
+  }
 };
+
+std::vector<std::string_view> AllOptionNames(
+  std::span<const OptionGroup> groups);
 
 std::string FormatHelp(std::span<const OptionGroup> groups);
 

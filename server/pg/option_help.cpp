@@ -92,4 +92,14 @@ std::string FormatHelp(std::span<const OptionGroup> groups) {
   return result;
 }
 
+std::vector<std::string_view> AllOptionNames(
+  std::span<const OptionGroup> groups) {
+  std::vector<std::string_view> names;
+  for (const auto& group : groups) {
+    auto group_names = group.AllNames();
+    names.insert(names.end(), group_names.begin(), group_names.end());
+  }
+  return names;
+}
+
 }  // namespace sdb::pg

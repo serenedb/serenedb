@@ -20,33 +20,23 @@
 
 #pragma once
 
-#include <absl/strings/str_cat.h>
-#include <basics/containers/flat_hash_map.h>
-
-#include <functional>
-#include <type_traits>
-
 #include "catalog/format_options.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
 #include "pg/file_option_groups.h"
-#include "pg/pg_list_utils.h"
-#include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
+#include "pg/options_parser.h"
 
 namespace sdb::pg {
 
-using Options = containers::FlatHashMap<std::string_view, const DefElem*>;
-
-class FileOptionsParser {
+class FileOptionsParser : public OptionsParser {
  public:
   FileOptionsParser(std::string_view operation, std::string_view query_string,
                     std::string_view file_path,
-                    std::function<void(std::string)> notice)
-    : _query_string{query_string},
-      _file_path{file_path},
-      _operation{operation},
-      _notice{std::move(notice)} {}
+                    std::function<void(std::string)> notice, Options options,
+                    std::span<const OptionGroup> option_groups)
+    : OptionsParser{operation, query_string, std::move(notice),
+                    std::move(options), option_groups},
+      _file_path{file_path} {}
 
  protected:
   std::unique_ptr<StorageOptions> ParseStorageOptions() {
@@ -74,51 +64,22 @@ class FileOptionsParser {
   std::unique_ptr<S3StorageOptions> ParseS3StorageOptions() {
     using namespace file_option_groups;
 
-    std::string access_key;
-    if (const auto* option = EraseOption(kS3AccessKey)) {
-      auto maybe_value = TryGet<std::string_view>(option->arg);
-      if (!maybe_value) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(kS3AccessKey.name, " must be a string"));
-      }
-      access_key = std::string{*maybe_value};
+    if (HasOption(kS3AccessKey) != HasOption(kS3SecretKey)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG(kS3AccessKey.name, " and ", kS3SecretKey.name,
+                              " must be specified together"));
     }
 
-    std::string secret_key;
-    if (const auto* option = EraseOption(kS3SecretKey)) {
-      auto maybe_value = TryGet<std::string_view>(option->arg);
-      if (!maybe_value) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(kS3SecretKey.name, " must be a string"));
-      }
-      secret_key = std::string{*maybe_value};
-    }
-
-    std::string iam_role;
-    if (const auto* option = EraseOption(kS3IamRole)) {
-      auto maybe_value = TryGet<std::string_view>(option->arg);
-      if (!maybe_value) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(kS3IamRole.name, " must be a string"));
-      }
-      if (!access_key.empty() || !secret_key.empty()) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("s3_access_key/s3_secret_key and s3_iam_role are mutually "
-                  "exclusive"));
-      }
-      iam_role = std::string{*maybe_value};
-    }
-
-    if (access_key.empty() != secret_key.empty()) {
+    if (HasOption(kS3AccessKey) && HasOption(kS3IamRole)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("s3_access_key and s3_secret_key must be specified together"));
+        ERR_MSG(kS3AccessKey.name, "/", kS3SecretKey.name, " and ",
+                kS3IamRole.name, " cannot be specified together"));
     }
+
+    auto access_key = EraseOptionOrDefault<kS3AccessKey>();
+    auto secret_key = EraseOptionOrDefault<kS3SecretKey>();
+    auto iam_role = EraseOptionOrDefault<kS3IamRole>();
 
     auto endpoint = EraseOptionOrDefault<kS3Endpoint>();
     auto region = EraseOptionOrDefault<kS3Region>();
@@ -129,60 +90,6 @@ class FileOptionsParser {
       std::string{_file_path}, std::move(access_key), std::move(secret_key),
       std::move(endpoint), std::move(region), std::move(iam_role), path_style,
       ssl_enabled, use_creds);
-  }
-
-  void HandleHelp(std::span<const OptionGroup> groups) {
-    using namespace file_option_groups;
-    auto it = _options.find(kHelp.name);
-    if (it == _options.end()) {
-      return;
-    }
-    auto help = absl::StrCat("\n", FormatHelp(groups));
-    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
-                    ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(help));
-  }
-
-  template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
-  T EraseOptionOrDefault() {
-    if (const auto* option = EraseOption(Info)) {
-      auto value = TryGet<T>(option->arg);
-      if (!value) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG(Info.ErrorMessage(_operation, DeparseValue(option->arg))));
-      }
-      return *value;
-    }
-
-    return Info.DefaultValue<T>();
-  }
-
-  const DefElem* EraseOption(const OptionInfo& info) {
-    auto it = _options.find(info.name);
-    if (it == _options.end()) {
-      return nullptr;
-    }
-    const auto* option = it->second;
-    _options.erase(it);
-    SDB_ASSERT(option);
-    if (!option->arg) {
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG(info.name, " requires a parameter"));
-    }
-    return option;
-  }
-
-  void CheckUnrecognizedOptions() const {
-    if (_options.empty()) {
-      return;
-    }
-
-    auto [name, option] = *_options.begin();
-    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                    ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("option \"", name, "\" not recognized"));
   }
 
   [[noreturn]] void UnrecognizedFormat(std::string_view format, int location) {
@@ -230,16 +137,6 @@ class FileOptionsParser {
       }
     }
     return {};
-  }
-
-  int ErrorPosition(int location) const {
-    return ::sdb::pg::ErrorPosition(_query_string, location);
-  }
-
-  void WriteNotice(std::string msg) {
-    if (_notice) {
-      _notice(std::move(msg));
-    }
   }
 
   struct ParsedFileFormat {
@@ -351,11 +248,7 @@ class FileOptionsParser {
     }
   }
 
-  std::string_view _query_string;
   std::string_view _file_path;
-  containers::FlatHashMap<std::string_view, const DefElem*> _options;
-  std::string _operation;
-  std::function<void(std::string)> _notice;
 };
 
 }  // namespace sdb::pg

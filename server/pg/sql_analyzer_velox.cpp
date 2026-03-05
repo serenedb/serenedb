@@ -1927,10 +1927,14 @@ class CopyOptionsParser : public FileOptionsParser {
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
                     NameToOption& explain_options)
-    : FileOptionsParser{"COPY", query_string, file_path,
+    : FileOptionsParser{"COPY",
+                        query_string,
+                        file_path,
                         [&send_buffer](std::string msg) {
                           WriteNoticeInBuffer(send_buffer, msg);
-                        }},
+                        },
+                        MakeCopyOptions(options, query_string, explain_options),
+                        file_option_groups::kCopyParserGroups},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1941,29 +1945,6 @@ class CopyOptionsParser : public FileOptionsParser {
     } else {
       _reader_options = std::make_shared<connector::ReaderOptions>();
     }
-    _options.reserve(list_length(options));
-    VisitNodes(options, [&](const DefElem& option) {
-      std::string_view option_name = option.defname;
-      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
-      if (option_name == "explain") {
-        auto maybe_explain = TryGet<std::string_view>(option.arg);
-        if (!maybe_explain) {
-          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                          ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
-        }
-        explain_options.emplace(*maybe_explain, true);
-        return;
-      }
-
-      auto [_, emplaced] = _options.try_emplace(option_name, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
 
     Parse();
   }
@@ -1979,9 +1960,40 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
  private:
+  static Options MakeCopyOptions(const List* options,
+                                 std::string_view query_string,
+                                 NameToOption& explain_options) {
+    Options result;
+    result.reserve(list_length(options));
+    VisitNodes(options, [&](const DefElem& option) {
+      std::string_view option_name = option.defname;
+      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
+      if (option_name == "explain") {
+        auto maybe_explain = TryGet<std::string_view>(option.arg);
+        if (!maybe_explain) {
+          THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
+                            query_string, ExprLocation(&option))),
+                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                          ERR_MSG("invalid value for parameter \"explain\": \"",
+                                  DeparseValue(option.arg), "\""));
+        }
+        explain_options.emplace(*maybe_explain, true);
+        return;
+      }
+
+      auto [_, emplaced] = result.try_emplace(option_name, &option);
+      if (!emplaced) {
+        THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
+                          query_string, ExprLocation(&option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    });
+    return result;
+  }
+
   void Parse() {
     using namespace file_option_groups;
-    HandleHelp(kCopyParserGroups);
 
     ParseDataSource();
 

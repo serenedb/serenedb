@@ -29,45 +29,45 @@ IMAGE_NAME="serenedb"
 IFS=', ' read -r -a EXTRA_TAGS_ARRAY <<<"${DOCKER_EXTRA_TAGS:-}"
 
 log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+	echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
 error() {
-  echo "[ERROR] $*" >&2
-  exit 1
+	echo "[ERROR] $*" >&2
+	exit 1
 }
 
 get_version_and_tag() {
-  # Source find_version.bash to populate all version variables
-  if [ -f "${SCRIPT_DIR}/find_version.bash" ]; then
-    # Source it in a subshell and capture the variables we need
-    local version_output
-    version_output=$(bash -c "source '${SCRIPT_DIR}/find_version.bash' >/dev/null 2>&1 && echo \"\$DOCKER_TAG\"")
+	# Source find_version.bash to populate all version variables
+	if [ -f "${SCRIPT_DIR}/find_version.bash" ]; then
+		# Source it in a subshell and capture the variables we need
+		local version_output
+		version_output=$(bash -c "source '${SCRIPT_DIR}/find_version.bash' >/dev/null 2>&1 && echo \"\$DOCKER_TAG\"")
 
-    if [ -z "$version_output" ]; then
-      error "Failed to determine version from find_version.bash"
-    fi
+		if [ -z "$version_output" ]; then
+			error "Failed to determine version from find_version.bash"
+		fi
 
-    echo "$version_output"
-  else
-    error "find_version.bash not found at ${SCRIPT_DIR}/find_version.bash"
-  fi
+		echo "$version_output"
+	else
+		error "find_version.bash not found at ${SCRIPT_DIR}/find_version.bash"
+	fi
 }
 
 # -----------------------------------------------------------------------------
 # Determine version and Docker tag
 # -----------------------------------------------------------------------------
 if [ -n "${DOCKER_TAG_OVERRIDE:-}" ]; then
-  VERSION="$DOCKER_TAG_OVERRIDE"
-  log "Using version override: ${VERSION}"
+	VERSION="$DOCKER_TAG_OVERRIDE"
+	log "Using version override: ${VERSION}"
 elif [ -n "${DOCKER_TAG:-}" ]; then
-  # DOCKER_TAG already set in environment
-  VERSION="$DOCKER_TAG"
-  log "Using DOCKER_TAG from environment: ${VERSION}"
+	# DOCKER_TAG already set in environment
+	VERSION="$DOCKER_TAG"
+	log "Using DOCKER_TAG from environment: ${VERSION}"
 else
-  # Get from find_version.bash
-  VERSION=$(get_version_and_tag)
-  log "Using version from find_version.bash: ${VERSION}"
+	# Get from find_version.bash
+	VERSION=$(get_version_and_tag)
+	log "Using version from find_version.bash: ${VERSION}"
 fi
 
 FULL_IMAGE_NAME="${DOCKER_REGISTRY}/${IMAGE_NAME}"
@@ -87,12 +87,12 @@ log "Checking prerequisites..."
 # Check for tarball
 TARBALL="${TARBALL_DIR}/install.tar.gz"
 if [ ! -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; then
-  # Try alternative location
-  TARBALL="${PROJECT_ROOT}/package_all/install.tar.gz"
+	# Try alternative location
+	TARBALL="${PROJECT_ROOT}/package_all/install.tar.gz"
 fi
 
 if [ ! -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; then
-  error "install.tar.gz not found. Run build_targz.bash first."
+	error "install.tar.gz not found. Run build_targz.bash first."
 fi
 
 log "  Tarball: ${TARBALL} ($(du -h "$TARBALL" | cut -f1))"
@@ -111,20 +111,20 @@ log "  Context size: $(du -sh "${BUILD_DIR}" | cut -f1)"
 log "Building Docker image..."
 
 BUILD_ARGS=(
-  --platform "${DOCKER_PLATFORM}"
-  --tag "${FULL_IMAGE_NAME}:${VERSION}"
-  --label "org.opencontainers.image.version=${VERSION}"
-  --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  --label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
-  --file "${BUILD_DIR}/Dockerfile"
-  --no-cache
+	--platform "${DOCKER_PLATFORM}"
+	--tag "${FULL_IMAGE_NAME}:${VERSION}"
+	--label "org.opencontainers.image.version=${VERSION}"
+	--label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	--label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
+	--file "${BUILD_DIR}/Dockerfile"
+	--no-cache
 )
 
 # Add extra tags
 for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
-  if [ -n "$tag" ]; then
-    BUILD_ARGS+=(--tag "${FULL_IMAGE_NAME}:${tag}")
-  fi
+	if [ -n "$tag" ]; then
+		BUILD_ARGS+=(--tag "${FULL_IMAGE_NAME}:${tag}")
+	fi
 done
 
 docker build "${BUILD_ARGS[@]}" "${BUILD_DIR}"
@@ -142,35 +142,35 @@ log "=== Testing Image ==="
 
 # Quick smoke test
 if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
-  log "  ✓ Version check passed"
+	log "  ✓ Version check passed"
 else
-  error "  ✗ Version check failed"
+	error "  ✗ Version check failed"
 fi
 
 # Push to registry
 if [ "${PUSH_IMAGES_2_REGISTRY:=false}" = true ]; then
-  log ""
-  log "=== Pushing to Registry ==="
+	log ""
+	log "=== Pushing to Registry ==="
 
-  # Login if credentials provided
-  if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
-    log "Logging in to ${DOCKER_REGISTRY}..."
-    echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
-  fi
+	# Login if credentials provided
+	if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
+		log "Logging in to ${DOCKER_REGISTRY}..."
+		echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+	fi
 
-  # Push version tag
-  log "Pushing ${FULL_IMAGE_NAME}:${VERSION}..."
-  docker push "${FULL_IMAGE_NAME}:${VERSION}"
+	# Push version tag
+	log "Pushing ${FULL_IMAGE_NAME}:${VERSION}..."
+	docker push "${FULL_IMAGE_NAME}:${VERSION}"
 
-  # Push extra tags
-  for tag in "${DOCKER_EXTRA_TAGS[@]}"; do
-    if [ -n "$tag" ]; then
-      log "Pushing ${FULL_IMAGE_NAME}:${tag}..."
-      docker push "${FULL_IMAGE_NAME}:${tag}"
-    fi
-  done
+	# Push extra tags
+	for tag in "${DOCKER_EXTRA_TAGS[@]}"; do
+		if [ -n "$tag" ]; then
+			log "Pushing ${FULL_IMAGE_NAME}:${tag}..."
+			docker push "${FULL_IMAGE_NAME}:${tag}"
+		fi
+	done
 
-  log "Push complete!"
+	log "Push complete!"
 fi
 
 # Summary

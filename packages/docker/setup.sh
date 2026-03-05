@@ -20,16 +20,16 @@ echo "Patching configuration..."
 CONFIG_FILE="/etc/serenedb/serened.conf"
 
 if [ -f "$CONFIG_FILE" ]; then
-  # Bind to all interfaces (required for container networking)
-  sed -i -e 's~^endpoint.*8529$~endpoint = tcp://0.0.0.0:8529~' "$CONFIG_FILE"
+	# Bind to all interfaces (required for container networking)
+	sed -i -e 's~^endpoint.*8529$~endpoint = tcp://0.0.0.0:8529~' "$CONFIG_FILE"
 
-  # Log to stdout instead of file (Docker best practice)
-  sed -i -e 's!^\(file\s*=\s*\).*!\1 -!' "$CONFIG_FILE"
+	# Log to stdout instead of file (Docker best practice)
+	sed -i -e 's!^\(file\s*=\s*\).*!\1 -!' "$CONFIG_FILE"
 
-  # Remove uid setting (allow running as arbitrary user)
-  sed -i -e 's~^uid = .*$~~' "$CONFIG_FILE"
+	# Remove uid setting (allow running as arbitrary user)
+	sed -i -e 's~^uid = .*$~~' "$CONFIG_FILE"
 else
-  echo "WARNING: Config file not found: $CONFIG_FILE"
+	echo "WARNING: Config file not found: $CONFIG_FILE"
 fi
 
 # Install rclone for backup functionality

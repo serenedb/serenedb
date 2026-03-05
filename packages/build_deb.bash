@@ -29,10 +29,10 @@ cp -a "install_all" "${BASE}/install"
 
 # Process templates
 for f in serenedb.init serenedb.service compat config templates preinst prerm postinst postrm rules; do
-  [[ -f "${SOURCE}/common/$f" ]] && {
-    cp "${SOURCE}/common/$f" "${TARGET}/$f"
-    sed -i "s/@EDITION@/${EDITION}/g" "${TARGET}/$f"
-  }
+	[[ -f "${SOURCE}/common/$f" ]] && {
+		cp "${SOURCE}/common/$f" "${TARGET}/$f"
+		sed -i "s/@EDITION@/${EDITION}/g" "${TARGET}/$f"
+	}
 done
 
 # Copy source format
@@ -40,12 +40,12 @@ cp -a "${SOURCE}/common/source" "$TARGET/"
 
 # Generate changelog
 {
-  echo "${EDITION} (${VERSION}) UNRELEASED; urgency=medium"
-  echo ""
-  echo "  * New version."
-  echo ""
-  echo -n " -- SereneDB  "
-  date -R
+	echo "${EDITION} (${VERSION}) UNRELEASED; urgency=medium"
+	echo ""
+	echo "  * New version."
+	echo ""
+	echo -n " -- SereneDB  "
+	date -R
 } >"${TARGET}/changelog"
 
 # Set architecture

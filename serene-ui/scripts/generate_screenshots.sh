@@ -1,10 +1,10 @@
 #!/bin/bash
-set -e  # Stop on error
+set -e # Stop on error
 set -o pipefail
 
 echo "ℹ️ Starting serene-ui Docker container..."
 docker compose -f docker-compose.test.yaml up --build -d serene-ui
-sleep 10  # Wait for it to start
+sleep 10 # Wait for it to start
 
 echo "ℹ️ Generating screenshots..."
 docker exec serene-ui npm run --prefix /test-app/apps/web test-storybook:renew

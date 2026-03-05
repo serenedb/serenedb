@@ -161,6 +161,14 @@ Result TableDrop::Finalize() {
 AsyncResult TableDrop::operator()() {
   std::vector<AsyncResult> async_results;
   async_results.reserve(indexes.size());
+  if (is_root && !indexes.empty()) {
+    ObjectId db_id = indexes.back()->db_id;
+    ObjectId schema_id = indexes.back()->schema_id;
+    auto r = RemoveIndexShards(db_id, schema_id, id);
+    if (!r.ok()) {
+      co_return co_await Schedule(shared_from_this());
+    }
+  }
   for (auto& index : indexes) {
     async_results.push_back(Schedule(index));
   }
@@ -201,6 +209,12 @@ Result SchemaDrop::Finalize() {
 
 AsyncResult SchemaDrop::operator()() {
   std::vector<AsyncResult> async_results;
+  if (is_root) {
+    auto r = RemoveIndexShards(parent_id, id);
+    if (!r.ok()) {
+      co_return co_await Schedule(shared_from_this());
+    }
+  }
   async_results.reserve(tables.size());
   for (auto& table : tables) {
     async_results.push_back(Schedule(table));
@@ -229,6 +243,10 @@ Result DatabaseDrop::Finalize() {
 
 AsyncResult DatabaseDrop::operator()() {
   SDB_ASSERT(is_root);
+  auto r = RemoveIndexShards(id);
+  if (!r.ok()) {
+    co_return co_await Schedule(shared_from_this());
+  }
   std::vector<AsyncResult> async_results;
   async_results.reserve(schemas.size());
   for (auto& schema : schemas) {

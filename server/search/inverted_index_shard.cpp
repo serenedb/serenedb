@@ -135,10 +135,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
-  std::filesystem::path path = _search.GetPersistedPath(db_id);
-  path /= absl::StrCat(schema_id);
-  path /= absl::StrCat(index.GetRelationId());
-  path /= absl::StrCat(index_id);
+  std::filesystem::path path =
+    GetPath(db_id, schema_id, index.GetRelationId(), index_id, GetId());
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {

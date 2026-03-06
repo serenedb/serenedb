@@ -25,7 +25,7 @@ select 1;
 
 
 connection new1
-query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT c.relname AS table_name, (SELECT relname FROM pg_class WHERE pg_class.oid = i.indexrelid) AS index_name FROM pg_class AS c JOIN pg_index AS i ON c.oid = i.indrelid AND c.relkind = 'r';
 ----
 table_name	index_name
@@ -43,7 +43,7 @@ DROP INDEX index_t;
 
 
 connection new2
-query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT COUNT(*) from pg_class WHERE relname = 't';
 ----
 count

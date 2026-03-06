@@ -1393,6 +1393,10 @@ std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
 
   return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
     return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+      // value() was consumed by advance/seek/previous FillBlock
+      // but still sits in _docs just before the leftover range
+      SDB_ASSERT(_left_in_leaf < kPostingBlock);
+
       bool empty = true;
 
       // leftover from previous call
@@ -1400,8 +1404,7 @@ std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
         auto count = _left_in_leaf;
 
         // after seek/advance value() is not in leftover, include it
-        if (const auto* p = std::end(_docs) - count;
-            p > std::begin(_docs) && *std::prev(p) == value()) {
+        if (*(std::end(_docs) - _left_in_leaf - 1) == value()) {
           ++count;
         }
 
@@ -1785,7 +1788,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
       freq_block.value = this->_collected_freqs;
     }
 
-    *(std::end(this->_docs) - 1) = doc_limits::min();
     GetDocIn().Seek(term_state.doc_start);
     SDB_ASSERT(!GetDocIn().IsEOF());
   } else {

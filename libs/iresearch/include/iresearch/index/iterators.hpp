@@ -256,7 +256,19 @@ struct DocIterator : AttributeProvider {
 
   virtual uint32_t count() { return CountImpl(*this); }
 
-  // TODO(mbkkt) Maybe implement FillBlock for all iterators?
+  // Fill a bitmap window [min, max) with documents from this iterator.
+  // Preconditions:
+  //   - min < max
+  //   - value() >= min (iterator must be positioned at or after window start)
+  // For each doc in [value(), max):
+  //   - Sets bit (doc - min) in mask
+  //   - If TrackMatch: increments match count, sets bit only when threshold met
+  //   - If scoring: accumulates scores into score.score_window
+  // Returns {next_doc, empty}:
+  //   - next_doc: first doc >= max (next unprocessed), or eof() if exhausted
+  //   - empty: true if no documents matched (always false when !TrackMatch)
+  // Postcondition:
+  //   - value() == next_doc
   virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
                                               uint64_t* mask,
                                               FillBlockScoreContext score,

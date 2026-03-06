@@ -162,7 +162,7 @@ struct DocIterator : AttributeProvider {
 
   [[nodiscard]] static DocIterator::ptr empty() noexcept;
 
-  virtual doc_id_t value() const noexcept = 0;
+  IRS_FORCE_INLINE const doc_id_t& value() const noexcept { return _doc; }
 
   virtual doc_id_t advance() = 0;
 
@@ -174,6 +174,16 @@ struct DocIterator : AttributeProvider {
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
+
+  // Can be mixed with other API only after return target
+  // In general doing seek but if it understands that seek to target impossible
+  // return doc that is greater than target, and this doc less or equal than
+  // first doc in iterator that is greater than target.
+  // In other words: `target <= LazySeek(target) <= seek(target)`
+  virtual doc_id_t LazySeek(doc_id_t target) {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
 
   virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                        ScoreCollector& collector) {
@@ -197,6 +207,8 @@ struct DocIterator : AttributeProvider {
   }
 
  protected:
+  mutable doc_id_t _doc = doc_limits::invalid();
+
   IRS_FORCE_INLINE static uint32_t CountImpl(auto& self) {
     uint32_t count = 0;
     while (self.next()) {

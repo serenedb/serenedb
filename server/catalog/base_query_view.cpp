@@ -49,7 +49,8 @@ template<typename ImplQueryView>
 Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
                                           ObjectId database_id,
                                           ViewOptions&& options,
-                                          ViewContext ctx) {
+                                          ViewContext ctx,
+                                          const Config* config) {
   Internal meta;
   auto r = [&] -> Result {
     if (ctx != ViewContext::Internal) {
@@ -75,7 +76,8 @@ Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
   }
 
   if (ctx == ViewContext::User) {
-    r = ImplQueryView::Check(database_id, options.meta.name, *state);
+    SDB_ASSERT(config);
+    r = ImplQueryView::Check(database_id, options.meta.name, *state, *config);
     if (!r.ok()) {
       return r;
     }
@@ -114,12 +116,6 @@ Result BaseQueryView<ImplQueryView>::Rename(
   std::shared_ptr<catalog::View>& new_view, std::string_view new_name) const {
   SDB_ASSERT(new_name != GetName());
 
-  auto r = ImplQueryView::Check(ObjectId{GetDatabaseId()}, new_name, *_state);
-
-  if (!r.ok()) {
-    return r;
-  }
-
   new_view = std::make_shared<BaseQueryView>(GetDatabaseId(),
                                              ViewMeta{
                                                .id = GetId().id(),
@@ -132,7 +128,8 @@ Result BaseQueryView<ImplQueryView>::Rename(
 
 template<typename ImplQueryView>
 Result BaseQueryView<ImplQueryView>::Update(
-  std::shared_ptr<catalog::View>& new_view, vpack::Slice new_options) const {
+  std::shared_ptr<catalog::View>& new_view, vpack::Slice new_options,
+  const Config* config) const {
   Internal new_meta;
   auto r = vpack::ReadObjectNothrow(new_options, new_meta);
   if (!r.ok()) {
@@ -151,10 +148,12 @@ Result BaseQueryView<ImplQueryView>::Update(
     return r;
   }
 
-  r = ImplQueryView::Check(ObjectId{GetDatabaseId()}, GetName(), *new_state);
-
-  if (!r.ok()) {
-    return r;
+  if (config) {
+    r = ImplQueryView::Check(ObjectId{GetDatabaseId()}, GetName(), *new_state,
+                             *config);
+    if (!r.ok()) {
+      return r;
+    }
   }
 
   new_view =

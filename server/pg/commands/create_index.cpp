@@ -35,9 +35,13 @@
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rest_server/serened_single.h"
+#include "search/inverted_index_shard.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -80,16 +84,41 @@ Result ParseIndexOptions(const IndexStmt& index,
   return {};
 }
 
-vpack::Slice ParseIndexArgs(pg::PgListWrapper<DefElem> args) {
-  vpack::Builder builder;
-  builder.openObject();
-  for (DefElem* elem : args) {
-    char* val = castNode(BitString, elem->arg)->bsval;
-    builder.add(elem->defname, val);
+constexpr OptionInfo kCommitInterval{"commit_interval", 1000,
+                                     "Commit interval in milliseconds"};
+constexpr OptionInfo kConsolidationInterval{
+  "consolidation_interval", 1000, "Consolidation interval in milliseconds"};
+constexpr OptionInfo kCleanupIntervalStep{"cleanup_interval_step", 1,
+                                          "Cleanup interval step"};
+constexpr OptionInfo kIndexOptions[] = {kCommitInterval, kConsolidationInterval,
+                                        kCleanupIntervalStep};
+constexpr OptionGroup kIndexGroup{"Index", kIndexOptions, {}};
+constexpr OptionGroup kIndexOptionGroups[] = {kIndexGroup};
+
+class CreateIndexOptionsParser : public OptionsParser {
+ public:
+  CreateIndexOptionsParser(const List* options)
+    : OptionsParser{
+        "CREATE INDEX", {}, {}, MakeOptions(options, {}), kIndexOptionGroups} {
+    Parse();
   }
-  builder.close();
-  return builder.slice();
-}
+
+  search::InvertedIndexShardOptions GetOptions() && {
+    return std::move(_shard_options);
+  }
+
+ private:
+  void Parse() {
+    _shard_options.base.commit_interval_ms =
+      EraseOptionOrDefault<kCommitInterval>();
+    _shard_options.base.consolidation_interval_ms =
+      EraseOptionOrDefault<kConsolidationInterval>();
+    _shard_options.base.cleanup_interval_step =
+      EraseOptionOrDefault<kCleanupIntervalStep>();
+  }
+
+  search::InvertedIndexShardOptions _shard_options;
+};
 
 }  // namespace
 
@@ -122,17 +151,26 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
     return yaclib::MakeFuture(std::move(r));
   }
 
-  pg::PgListWrapper<DefElem> pg_args{stmt.options};
-  auto args = ParseIndexArgs(pg_args);
+  if (options.type == IndexType::Inverted) {
+    CreateIndexOptionsParser parser{stmt.options};
+    auto shard_options = std::move(parser).GetOptions();
+    auto r =
+      catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
+                          std::move(options), shard_options);
 
-  Result r =
-    catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
-                        std::move(options), std::move(args));
+    if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+      r = {};
 
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    r = {};
+    } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
+    }
+    return yaclib::MakeFuture(std::move(r));
+  } else {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("index type is not supported"));
   }
-  return yaclib::MakeFuture(std::move(r));
 }
 
 }  // namespace sdb::pg

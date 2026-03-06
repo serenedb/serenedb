@@ -41,6 +41,8 @@ enum class ObjectType : uint8_t {
   Schema,
   Database,
   Virtual,
+  TableShard,
+  IndexShard,
 };
 
 // https://www.postgresql.org/docs/current/sql-grant.html

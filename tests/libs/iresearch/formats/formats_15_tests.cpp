@@ -89,13 +89,14 @@ class FreqThresholdDocIterator : public irs::DocIterator {
     : _impl{&impl},
       _freq{irs::get<irs::FreqAttr>(impl)},
       _threshold{threshold},
-      _is_strict{is_strict} {}
+      _is_strict{is_strict} {
+    SDB_ASSERT(_impl);
+    _doc = _impl->value();
+  }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     return _impl->GetMutable(id);
   }
-
-  irs::doc_id_t value() const noexcept final { return _impl->value(); }
 
   irs::doc_id_t advance() final {
     while (_impl->next()) {
@@ -103,7 +104,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
         break;
       }
     }
-    return value();
+    return _doc = _impl->value();
   }
 
   irs::doc_id_t seek(irs::doc_id_t target) final {
@@ -114,14 +115,14 @@ class FreqThresholdDocIterator : public irs::DocIterator {
     target = _impl->seek(target);
 
     if (irs::doc_limits::eof(target)) {
-      return irs::doc_limits::eof();
+      return _doc = irs::doc_limits::eof();
     }
 
     if (_freq && Less()) {
       next();
     }
 
-    return value();
+    return _doc = _impl->value();
   }
 
   void FetchScoreArgs(uint16_t index) final { _impl->FetchScoreArgs(index); }

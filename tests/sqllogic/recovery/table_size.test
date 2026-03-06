@@ -1,0 +1,40 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT);
+
+
+statement ok
+INSERT INTO t VALUES (1, 'Sniff'), (2, 'Snufkin'), (3, 'Snork');
+
+
+statement ok
+INSERT INTO t VALUES (4, 'Moomintroll'), (5, 'Moominpappa'), (6, 'Moominmamma');
+
+
+query ok
+SELECT reltuples FROM pg_class WHERE relname = 't';
+----
+reltuples
+6
+
+
+statement ok
+VACUUM (SYNC_STATS) t;
+
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+
+query error connection closed
+SELECT 1;
+
+
+connection after_reboot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT reltuples FROM pg_class WHERE relname = 't';
+----
+reltuples
+6

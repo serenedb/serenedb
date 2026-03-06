@@ -91,20 +91,20 @@ Result SqlQueryViewImpl::Parse(State& state, ObjectId database_id,
 }
 
 Result SqlQueryViewImpl::Check(ObjectId database, std::string_view name,
-                               const State& state) {
+                               const State& state, const Config& config) {
   SDB_ASSERT(state.stmt);
   if (state.stmt->stmt->type != T_SelectStmt) {
     return {ERROR_BAD_PARAMETER,
             "sql query view should contains select statement"};
   }
 
-  auto search_path = Config().Get<VariableType::PgSearchPath>("search_path");
+  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
 
   return basics::SafeCall([&] {
     pg::Objects objects;
     pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
     pg::ResolveQueryView(database, search_path, objects, disallowed,
-                         state.objects);
+                         state.objects, config);
   });
 }
 

@@ -190,7 +190,7 @@ class RangeColumnIterator : public ResettableDocIterator,
   // FIXME(gnusi):
   //  * don't expose payload for noop_value_reader?
   //  * don't expose prev_doc if not requested?
-  using Attributes = std::tuple<DocAttr, CostAttr, PrevDocAttr, PayAttr>;
+  using Attributes = std::tuple<CostAttr, PrevDocAttr, PayAttr>;
 
  public:
   template<typename... Args>
@@ -207,7 +207,7 @@ class RangeColumnIterator : public ResettableDocIterator,
       std::get<PrevDocAttr>(_attrs).reset(
         [](const void* ctx) noexcept {
           auto* self = static_cast<const RangeColumnIterator*>(ctx);
-          const auto value = self->value();
+          const auto value = self->DocIterator::value();
           const auto max_doc = self->_max_doc;
 
           if (self->_min_base < value && value <= max_doc) [[likely]] {
@@ -228,29 +228,25 @@ class RangeColumnIterator : public ResettableDocIterator,
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
     if (_min_doc <= _max_doc) {
       std::get<PayAttr>(_attrs).value = this->payload(_min_doc - _min_base);
-      return std::get<DocAttr>(_attrs).value = _min_doc++;
+      return _doc = _min_doc++;
     }
     std::get<PayAttr>(_attrs).value = {};
-    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t doc) final {
     if (_min_doc <= doc && doc <= _max_doc) [[likely]] {
-      std::get<DocAttr>(_attrs).value = doc;
+      _doc = doc;
       _min_doc = doc + 1;
       std::get<PayAttr>(_attrs).value = this->payload(doc - _min_base);
       return doc;
     }
 
     if (!doc_limits::valid(value())) {
-      std::get<DocAttr>(_attrs).value = _min_doc++;
+      _doc = _min_doc++;
       std::get<PayAttr>(_attrs).value = this->payload(value() - _min_base);
       return value();
     }
@@ -258,7 +254,7 @@ class RangeColumnIterator : public ResettableDocIterator,
     if (value() < doc) {
       _max_doc = doc_limits::invalid();
       _min_doc = doc_limits::eof();
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      _doc = doc_limits::eof();
       std::get<PayAttr>(_attrs).value = {};
       return doc_limits::eof();
     }
@@ -266,11 +262,16 @@ class RangeColumnIterator : public ResettableDocIterator,
     return value();
   }
 
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
   void reset() noexcept final {
     _min_doc = _min_base;
     _max_doc = _min_doc +
                static_cast<doc_id_t>(std::get<CostAttr>(_attrs).estimate() - 1);
-    std::get<DocAttr>(_attrs).value = doc_limits::invalid();
+    _doc = doc_limits::invalid();
   }
 
   bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
@@ -289,8 +290,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
  private:
   using PayloadReader = PayloadReaderImpl;
 
-  using Attributes = std::tuple<AttributePtr<DocAttr>, CostAttr,
-                                AttributePtr<PrevDocAttr>, PayAttr>;
+  using Attributes = std::tuple<CostAttr, AttributePtr<PrevDocAttr>, PayAttr>;
 
  public:
   template<typename... Args>
@@ -300,8 +300,6 @@ class BitmapColumnIterator : public ResettableDocIterator,
     : PayloadReader{std::forward<Args>(args)...},
       _bitmap{std::move(bitmap_in), opts, cost} {
     std::get<CostAttr>(_attrs).reset(cost);
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_bitmap);
     std::get<AttributePtr<PrevDocAttr>>(_attrs) =
       irs::GetMutable<PrevDocAttr>(&_bitmap);
   }
@@ -310,17 +308,13 @@ class BitmapColumnIterator : public ResettableDocIterator,
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
 
   doc_id_t advance() final {
     const auto doc = _bitmap.advance();
     std::get<PayAttr>(_attrs).value =
       doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
-    return doc;
+    return _doc = doc;
   }
 
   doc_id_t seek(doc_id_t doc) final {
@@ -329,7 +323,12 @@ class BitmapColumnIterator : public ResettableDocIterator,
     doc = _bitmap.seek(doc);
     std::get<PayAttr>(_attrs).value =
       doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
-    return doc;
+    return _doc = doc;
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
   }
 
   void reset() final { _bitmap.reset(); }
@@ -381,10 +380,12 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
 
   SparseBitmapIterator::Options BitmapIteratorOptions(
     ColumnHint hint) const noexcept {
-    return {.version = ToSparseBitmapVersion(Header().props),
-            .track_prev_doc = TrackPrevDoc(hint),
-            .use_block_index = true,
-            .blocks = _index};
+    return {
+      .version = ToSparseBitmapVersion(Header().props),
+      .track_prev_doc = TrackPrevDoc(hint),
+      .use_block_index = true,
+      .blocks = _index,
+    };
   }
 
   const IndexInput& Stream() const noexcept {

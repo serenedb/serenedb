@@ -81,31 +81,62 @@ bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
 
 }  // namespace
 
-std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
-                                                  ObjectId id) {
-  std::filesystem::path path = GetSearchEngine().GetPersistedPath(db);
-  path /= absl::StrCat(schema);
-  path /= absl::StrCat(id);
+std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
+                                                  ObjectId schema_id,
+                                                  ObjectId table_id,
+                                                  ObjectId index_id,
+                                                  ObjectId shard_id) {
+  SDB_ASSERT(db_id.isSet());
+  auto path = search::GetSearchEngine().GetPersistedPath(db_id);
+  if (schema_id.isSet()) {
+    path /= absl::StrCat(schema_id);
+  }
+  if (table_id.isSet()) {
+    SDB_ASSERT(schema_id.isSet());
+    path /= absl::StrCat(table_id);
+  }
+  if (index_id.isSet()) {
+    SDB_ASSERT(table_id.isSet());
+    path /= absl::StrCat(index_id);
+  }
+  if (shard_id.isSet()) {
+    SDB_ASSERT(index_id.isSet());
+    path /= absl::StrCat(shard_id);
+  }
   return path;
 }
 
-InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
+std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
+  ObjectId id, const catalog::InvertedIndex& index,
+  InvertedIndexShardOptions options, bool is_new) {
+  auto shard = std::make_shared<InvertedIndexShard>(id, index, options, is_new);
+  // TODO(Dronpane) use actual is_new value when indexing of existing table
+  // would be implemented
+  shard->InitPostRecovery(false);
+  return shard;
+}
+
+InvertedIndexShard::InvertedIndexShard(ObjectId id,
+                                       const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
-  : IndexShard{index},
+  : IndexShard{id, index.GetId(), IndexType::Inverted},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
+  _tasks_settings.commit_interval_msec = _options.base.commit_interval_ms;
+  _tasks_settings.consolidation_interval_msec =
+    _options.base.consolidation_interval_ms;
+  _tasks_settings.cleanup_interval_step = _options.base.cleanup_interval_step;
   auto& server = SerenedServer::Instance();
 
   const auto db_id = index.GetDatabaseId();
   const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
-  std::filesystem::path path = _search.GetPersistedPath(db_id);
-  path /= absl::StrCat(schema_id);
-  path /= absl::StrCat(index_id);
+  std::filesystem::path path =
+    GetPath(db_id, schema_id, index.GetRelationId(), index_id, GetId());
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
@@ -202,10 +233,13 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
   if (!server.hasFeature<RocksDBRecoveryManager>()) {
     return;
   }
+}
 
+void InvertedIndexShard::InitPostRecovery(bool is_new) {
+  auto& server = SerenedServer::Instance();
   auto res =
     server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(
-      [weak_self = weak_from_this(), path_exists]() -> Result {
+      [weak_self = weak_from_this(), is_new]() -> Result {
         auto self = weak_self.lock();
         if (!self) {
           // Index was dropped during recovery
@@ -224,14 +258,11 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
                    recovery_tick,
                    ", it seems WAL tail was lost and index is out "
                    "of sync");
-
-          if (self->SetOutOfSync()) {
-            self->MarkOutOfSyncUnsafe();
-          }
         }
 
-        // Register flush subscription
-        if (path_exists) {
+        // Register flush subscription if we are loading existing index
+        // If not finishCreation would be called later when indexing finishes
+        if (!is_new) {
           self->FinishCreation();
         }
 
@@ -246,15 +277,10 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
 }
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
-  vpack::WriteTuple(builder, _options);
+  vpack::WriteTuple(builder, _options.base);
 }
 
 Snapshot InvertedIndexShard::GetSnapshot() const {
-  if (FailQueriesOnOutOfSync() && IsOutOfSync()) {
-    SDB_THROW(ERROR_CLUSTER_AQL_COLLECTION_OUT_OF_SYNC, "Search index '",
-              GetId(), "' is out of sync and needs to be recreated");
-  }
-
   return {shared_from_this(), GetInvertedIndexSnapshot()};
 }
 
@@ -363,19 +389,6 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
   SDB_IF_FAILURE("Search::FailOnCommit") {
     // intentionally mark the commit as failed
     result.reset(ERROR_DEBUG);
-  }
-
-  if (result.fail() && SetOutOfSync()) {
-    try {
-      MarkOutOfSyncUnsafe();
-    } catch (const std::exception& e) {
-      // We couldn't persist the outOfSync flag,
-      // but we can't mark the inverted index shard as "not outOfSync" again.
-      // Not much we can do except logging.
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "failed to store 'outOfSync' flag for Search index '",
-               GetId().id(), "': ", e.what());
-    }
   }
 
   if (bool ok = result.ok(); !ok && _num_failed_commits != nullptr) {
@@ -514,38 +527,6 @@ Result InvertedIndexShard::CommitUnsafeImpl(
             GetId().id(), "'"};
   }
   return {};
-}
-
-bool InvertedIndexShard::SetOutOfSync() noexcept {
-  SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  auto error = _error.load(std::memory_order_relaxed);
-  return error == Error::NoError &&
-         _error.compare_exchange_strong(error, Error::OutOfSync,
-                                        std::memory_order_relaxed,
-                                        std::memory_order_relaxed);
-}
-
-void InvertedIndexShard::MarkOutOfSyncUnsafe() {
-  _search.trackOutOfSyncLink();
-
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto snapshot = catalog.Local().GetSnapshot();
-  auto c = snapshot->GetObject<catalog::Table>(GetId());
-  auto shard = snapshot->GetTableShard(GetId());
-  if (!c) {
-    return;
-  }
-
-  _engine.ChangeTable(*c, *shard);
-}
-
-bool InvertedIndexShard::IsOutOfSync() const noexcept {
-  return _error.load(std::memory_order_relaxed) == Error::OutOfSync;
-}
-
-bool InvertedIndexShard::FailQueriesOnOutOfSync() const noexcept {
-  return _search.failQueriesOnOutOfSync();
 }
 
 void InvertedIndexShard::FinishCreation() {

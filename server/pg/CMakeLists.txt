@@ -24,4 +24,6 @@ target_sources(
         sql_parser.cpp
         sql_resolver.cpp
         sql_utils.cpp
+        isolation_level.cpp
+        option_help.cpp
 )

@@ -104,7 +104,8 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     }
 
     return ResolveMergeType(
-      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+      ctx.scorer ? ScoreMergeType::Sum : ScoreMergeType::Noop,
+      [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
         using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
         return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs));
       });

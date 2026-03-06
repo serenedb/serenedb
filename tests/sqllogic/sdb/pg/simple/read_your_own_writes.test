@@ -157,6 +157,23 @@ id	value
 4	400
 5	500
 
+# Expect RYOW Data Source will not be used
+statement ok
+SET sdb_fault_t_ryow_fail_on_ryow TO DEFAULT;
+
+query
+SELECT * FROM t_ryow ORDER BY id;
+----
+id	value
+1	100
+2	200
+3	300
+4	400
+5	500
+
+statement ok
+RESET sdb_fault_t_ryow_fail_on_ryow;
+
 statement ok
 DROP TABLE t_ryow;
 

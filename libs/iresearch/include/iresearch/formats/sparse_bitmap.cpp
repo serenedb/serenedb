@@ -143,7 +143,7 @@ struct container_iterator;
 template<bool TrackPrev>
 struct container_iterator<kBtRange, TrackPrev> {
   static bool Seek(SparseBitmapIterator* self, doc_id_t target) noexcept {
-    std::get<DocAttr>(self->_attrs).value = target;
+    self->_doc = target;
 
     auto& index = std::get<ValueIndex>(self->_attrs).value;
     index = target - self->_ctx.all.missing;
@@ -167,7 +167,7 @@ struct container_iterator<kBtSparse, TrackPrev> {
     auto& ctx = self->_ctx.sparse;
     const doc_id_t index_max = self->_index_max;
 
-    [[maybe_unused]] doc_id_t prev = std::get<DocAttr>(self->_attrs).value;
+    [[maybe_unused]] doc_id_t prev = self->_doc;
 
     for (; ctx.index < index_max; ++ctx.index) {
       doc_id_t doc;
@@ -185,7 +185,7 @@ struct container_iterator<kBtSparse, TrackPrev> {
       }
 
       if (doc >= target) {
-        std::get<DocAttr>(self->_attrs).value = self->_block | doc;
+        self->_doc = self->_block | doc;
         std::get<ValueIndex>(self->_attrs).value = ctx.index;
 
         if constexpr (TrackPrev) {
@@ -278,7 +278,7 @@ struct container_iterator<kBtDense, false> {
 
     if (left) {
       const doc_id_t offset = std::countr_zero(left);
-      std::get<DocAttr>(self->_attrs).value = target + offset;
+      self->_doc = target + offset;
 
       auto& index = std::get<ValueIndex>(self->_attrs).value;
       index = ctx.popcnt - std::popcount(left);
@@ -309,7 +309,7 @@ struct container_iterator<kBtDense, false> {
 
         const doc_id_t offset = std::countr_zero(ctx.word);
 
-        std::get<DocAttr>(self->_attrs).value =
+        self->_doc =
           self->_block + ctx.word_idx * BitsRequired<uint64_t>() + offset;
         auto& index = std::get<ValueIndex>(self->_attrs).value;
         index = ctx.popcnt;
@@ -440,7 +440,7 @@ SparseBitmapIterator::SparseBitmapIterator(Ptr&& in, const Options& opts)
 }
 
 void SparseBitmapIterator::reset() {
-  std::get<DocAttr>(_attrs).value = irs::doc_limits::invalid();
+  _doc = irs::doc_limits::invalid();
   _seek_func = &SparseBitmapIterator::initial_seek;
   _cont_begin = _origin;
   _index_max = 0;
@@ -555,6 +555,11 @@ doc_id_t SparseBitmapIterator::seek(doc_id_t target) {
   _seek_func(this, _block);
 
   return value();
+}
+
+doc_id_t SparseBitmapIterator::LazySeek(doc_id_t target) {
+  SDB_ASSERT(target >= value());
+  return seek(target);
 }
 
 }  // namespace irs

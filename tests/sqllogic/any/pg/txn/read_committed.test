@@ -1,0 +1,607 @@
+statement ok
+CREATE TABLE t(key INT PRIMARY KEY, value INT);
+
+statement ok
+INSERT INTO t VALUES (1, 10), (2, 20), (3, 30);
+
+
+###############################################################################
+# 1. Syntax for read committed isolation level
+###############################################################################
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+COMMIT;
+
+
+statement ok
+START TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+###############################################################################
+# 2. Read your own writes
+###############################################################################
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+INSERT INTO t VALUES (4, 40);
+
+statement ok
+UPDATE t SET value = 99 WHERE key = 1;
+
+query
+SELECT * FROM t ORDER BY key;
+----
+key	value
+1	99
+2	20
+3	30
+4	40
+
+statement ok
+ROLLBACK;
+
+
+###############################################################################
+# 3. No dirty reads
+#    conn2 must NOT see uncommitted writes from conn1
+###############################################################################
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+INSERT INTO t VALUES (5, 50);
+
+statement ok
+UPDATE t SET value = 999 WHERE key = 1;
+
+# conn2 starts its own transaction and reads — must see only committed data
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+connection conn2
+query
+SELECT * FROM t ORDER BY key;
+----
+key	value
+1	10
+2	20
+3	30
+
+connection conn2
+statement ok
+COMMIT;
+
+# conn1 rolls back its dirty writes
+statement ok
+ROLLBACK;
+
+
+###############################################################################
+# 4. Nonrepeatable reads ARE allowed
+#    conn2 reads a row, conn1 updates and commits it,
+#    conn2 reads the same row again — WILL see the new value
+###############################################################################
+
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# First read by conn2
+connection conn2
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+10
+
+# conn1 updates and commits
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+UPDATE t SET value = 999 WHERE key = 1;
+
+statement ok
+COMMIT;
+
+# Second read by conn2 — sees the updated value (read committed allows this)
+connection conn2
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+999
+
+connection conn2
+statement ok
+COMMIT;
+
+# Verify the update is visible outside both transactions
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+999
+
+# Restore original value
+statement ok
+UPDATE t SET value = 10 WHERE key = 1;
+
+
+###############################################################################
+# 5. Phantom reads ARE allowed
+#    conn2 runs a range query, conn1 inserts a new row and commits,
+#    conn2 runs the same range query — WILL see the new row
+###############################################################################
+
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# First range query by conn2
+connection conn2
+query
+SELECT * FROM t WHERE key >= 1 AND key <= 10 ORDER BY key;
+----
+key	value
+1	10
+2	20
+3	30
+
+# conn1 inserts a new row that matches the range and commits
+statement ok
+INSERT INTO t VALUES (5, 50);
+
+# Second range query by conn2 — sees the new row (read committed allows this)
+connection conn2
+query
+SELECT * FROM t WHERE key >= 1 AND key <= 10 ORDER BY key;
+----
+key	value
+1	10
+2	20
+3	30
+5	50
+
+connection conn2
+statement ok
+COMMIT;
+
+# Outside both transactions, the inserted row is visible
+query
+SELECT * FROM t WHERE key >= 1 AND key <= 10 ORDER BY key;
+----
+key	value
+1	10
+2	20
+3	30
+5	50
+
+
+###############################################################################
+# 6. Read-your-own-writes edge cases
+###############################################################################
+
+# 6a. Multiple updates to the same row — final read sees last update
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+UPDATE t SET value = 100 WHERE key = 1;
+
+statement ok
+UPDATE t SET value = 200 WHERE key = 1;
+
+statement ok
+UPDATE t SET value = 300 WHERE key = 1;
+
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+300
+
+statement ok
+ROLLBACK;
+
+# 6b. DELETE then SELECT — row should be gone
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+DELETE FROM t WHERE key = 2;
+
+query
+SELECT * FROM t WHERE key = 2;
+----
+key	value
+
+statement ok
+ROLLBACK;
+
+# 6c. INSERT, UPDATE the inserted row, then SELECT
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+INSERT INTO t VALUES (100, 1);
+
+statement ok
+UPDATE t SET value = 2 WHERE key = 100;
+
+query
+SELECT * FROM t WHERE key = 100;
+----
+key	value
+100	2
+
+statement ok
+ROLLBACK;
+
+# 6d. INSERT, DELETE the inserted row, then SELECT — row should be gone
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+INSERT INTO t VALUES (100, 1);
+
+statement ok
+DELETE FROM t WHERE key = 100;
+
+query
+SELECT * FROM t WHERE key = 100;
+----
+key	value
+
+statement ok
+ROLLBACK;
+
+
+###############################################################################
+# 7. Aggregates reflect concurrent commits
+#    Unlike repeatable read, aggregates WILL change after concurrent commits
+###############################################################################
+
+query
+SELECT * FROM t ORDER BY key;
+----
+key	value
+1	10
+2	20
+3	30
+5	50
+
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# First aggregate reads by conn2
+connection conn2
+query
+SELECT COUNT(*) AS cnt FROM t;
+----
+cnt
+4
+
+connection conn2
+query
+SELECT SUM(value) AS total FROM t;
+----
+total
+110
+
+# conn1 inserts rows and commits
+statement ok
+INSERT INTO t VALUES (6, 60), (7, 70);
+
+# Aggregates by conn2 reflect the committed inserts
+connection conn2
+query
+SELECT COUNT(*) AS cnt FROM t;
+----
+cnt
+6
+
+connection conn2
+query
+SELECT SUM(value) AS total FROM t;
+----
+total
+240
+
+connection conn2
+statement ok
+COMMIT;
+
+# Outside the transaction, new rows are visible
+query
+SELECT COUNT(*) AS cnt FROM t;
+----
+cnt
+6
+
+
+###############################################################################
+# 8. Rollback visibility
+#    conn1 updates and rolls back, conn2 must never see the intermediate state
+###############################################################################
+
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# conn2 reads original value
+connection conn2
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+10
+
+# conn1 updates in a transaction then rolls back
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+UPDATE t SET value = 777 WHERE key = 1;
+
+statement ok
+ROLLBACK;
+
+# conn2 reads again — must still see the original value (not 777)
+connection conn2
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+10
+
+connection conn2
+statement ok
+COMMIT;
+
+# Outside all transactions, value is still original (rollback had no effect)
+query
+SELECT value FROM t WHERE key = 1;
+----
+value
+10
+
+
+###############################################################################
+# 9. Autocommit vs snapshot
+#    Multiple autocommit writes by conn1 between two reads by conn2
+#    Under read committed, conn2 WILL see autocommit changes on re-read
+###############################################################################
+
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+connection conn2
+query
+SELECT * FROM t ORDER BY key;
+----
+key	value
+1	10
+2	20
+3	30
+5	50
+6	60
+7	70
+
+# conn1 does multiple autocommit writes
+statement ok
+INSERT INTO t VALUES (8, 80);
+
+statement ok
+UPDATE t SET value = 999 WHERE key = 1;
+
+statement ok
+DELETE FROM t WHERE key = 2;
+
+# conn2 re-reads — sees all autocommit changes (read committed)
+connection conn2
+query
+SELECT * FROM t ORDER BY key;
+----
+key	value
+1	999
+3	30
+5	50
+6	60
+7	70
+8	80
+
+connection conn2
+statement ok
+COMMIT;
+
+# Restore: undo conn1 autocommit changes for subsequent tests
+statement ok
+UPDATE t SET value = 10 WHERE key = 1;
+
+statement ok
+INSERT INTO t VALUES (2, 20);
+
+# Clean up key 8 which was inserted above
+statement ok
+DELETE FROM t WHERE key = 8;
+
+
+###############################################################################
+# 10. Empty table / boundary cases
+###############################################################################
+
+statement ok
+CREATE TABLE t_empty(id INT PRIMARY KEY, val INT);
+
+# conn2 starts txn on empty table
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+connection conn2
+query
+SELECT * FROM t_empty;
+----
+id	val
+
+# conn1 inserts into the empty table and commits
+statement ok
+INSERT INTO t_empty VALUES (1, 100);
+
+# conn2 sees the insert (read committed — fresh snapshot per statement)
+connection conn2
+query
+SELECT * FROM t_empty;
+----
+id	val
+1	100
+
+connection conn2
+statement ok
+COMMIT;
+
+# Outside the transaction, the row is visible
+query
+SELECT * FROM t_empty;
+----
+id	val
+1	100
+
+
+###############################################################################
+# 11. Snapshot timing: each statement gets a fresh snapshot
+#     (unlike repeatable read, there is no pinning at first data-access)
+###############################################################################
+
+# conn2 BEGINs, conn1 inserts+commits BEFORE conn2's first read.
+connection conn2
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# conn1 inserts and commits AFTER conn2's BEGIN but BEFORE conn2's first read
+statement ok
+INSERT INTO t_empty VALUES (2, 200);
+
+# conn2's first read — sees key=2
+connection conn2
+query
+SELECT * FROM t_empty ORDER BY id;
+----
+id	val
+1	100
+2	200
+
+# Now conn1 inserts another row and commits
+statement ok
+INSERT INTO t_empty VALUES (3, 300);
+
+# conn2's second read — ALSO sees key=3 (no snapshot pinning in read committed)
+connection conn2
+query
+SELECT * FROM t_empty ORDER BY id;
+----
+id	val
+1	100
+2	200
+3	300
+
+connection conn2
+statement ok
+COMMIT;
+
+# Outside the transaction, all rows are visible
+query
+SELECT * FROM t_empty ORDER BY id;
+----
+id	val
+1	100
+2	200
+3	300
+
+
+###############################################################################
+# 12. UPDATE sees concurrent inserts (write uses fresh snapshot)
+#     conn1 SELECTs and sees N rows, conn2 inserts+commits a new row,
+#     conn1 UPDATEs all rows — affects N+1 rows (including conn2's insert)
+###############################################################################
+
+statement ok
+CREATE TABLE t_upd(key INT PRIMARY KEY, value INT);
+
+statement ok
+INSERT INTO t_upd VALUES (1, 10), (2, 20);
+
+# conn1 begins and reads — sees 2 rows
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	10
+2	20
+
+# conn2 inserts a third row and commits
+connection conn2
+statement ok
+INSERT INTO t_upd VALUES (3, 30);
+
+# conn1 updates all rows — affects 3 rows (including conn2's committed insert)
+statement count 3
+UPDATE t_upd SET value = value + 100;
+
+# conn1 sees all 3 rows updated
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	110
+2	120
+3	130
+
+statement ok
+COMMIT;
+
+# Outside the transaction, all updates are visible
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	110
+2	120
+3	130

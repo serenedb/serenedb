@@ -22,8 +22,8 @@
 
 #pragma once
 
+#include "basics/down_cast.h"
 #include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 // Writer for storing skip-list in a directory
@@ -117,6 +117,7 @@ void SkipWriter::Skip(doc_id_t count, Writer&& write) {
 }
 
 // Base object for searching in skip-lists
+template<typename InputType = IndexInput>
 class SkipReaderBase : util::Noncopyable {
  public:
   // Returns number of elements to skip at the 0 level
@@ -129,26 +130,31 @@ class SkipReaderBase : util::Noncopyable {
   size_t NumLevels() const noexcept { return std::size(_levels); }
 
   // Prepare skip_reader using a specified data stream
-  void Prepare(IndexInput::ptr&& in, doc_id_t left);
+  void Prepare(std::unique_ptr<InputType> in_ptr, doc_id_t left);
 
   // Reset skip reader internal state
-  void Reset();
+  void Reset(doc_id_t left);
 
  protected:
   static constexpr size_t kUndefined = std::numeric_limits<size_t>::max();
 
   struct Level final {
-    Level(IndexInput::ptr&& stream, doc_id_t step, doc_id_t left,
-          uint64_t begin) noexcept;
+    Level(std::unique_ptr<InputType> stream, doc_id_t step, doc_id_t left,
+          uint64_t begin) noexcept
+      : stream{std::move(stream)},  // thread-safe input
+        begin{begin},
+        left{left},
+        step{step} {}
+
     Level(Level&&) = default;
     Level& operator=(Level&&) = delete;
 
     // Level data stream.
-    IndexInput::ptr stream;
+    std::unique_ptr<InputType> stream;
     // Where level starts.
     uint64_t begin;
     // Pointer to child level.
-    uint64_t child{};
+    uint64_t child = 0;
     // Number of documents left at a level.
     // int64_t to be able to go below 0.
     int64_t left;
@@ -177,22 +183,83 @@ class SkipReaderBase : util::Noncopyable {
   std::vector<Level> _levels;  // input streams for skip-list levels
   const doc_id_t _skip_0;      // skip interval for 0 level
   const doc_id_t _skip_n;      // skip interval for 1..n levels
-  doc_id_t _docs_count{};
 };
+
+template<typename InputType>
+void SkipReaderBase<InputType>::Prepare(std::unique_ptr<InputType> skip_ptr,
+                                        const doc_id_t left) {
+  SDB_ASSERT(skip_ptr);
+  auto& skip = *skip_ptr;
+  auto max_levels = skip.ReadV32();
+  if (max_levels == 0) {
+    return;
+  }
+
+  decltype(_levels) levels;
+  levels.reserve(max_levels);
+
+  auto load_level = [&](auto level_ptr, doc_id_t step) {
+    SDB_ASSERT(level_ptr);
+    auto& level = *level_ptr;
+
+    const auto length = level.ReadV64();
+    if (length == 0) {
+      throw IndexError("while loading level, error: zero length");
+    }
+
+    const auto begin = level.Position();
+    levels.emplace_back(std::move(level_ptr), step, left, begin);
+    return begin + length;
+  };
+
+  // skip step of the level
+  auto step = _skip_0 * static_cast<uint32_t>(std::pow(_skip_n, --max_levels));
+
+  // load levels from n down to 1
+  for (; max_levels; --max_levels) {
+    std::unique_ptr<InputType> level_ptr{
+      sdb::basics::downCast<InputType>(skip.Dup().release())};
+    const auto offset = load_level(std::move(level_ptr), step);
+
+    // seek to the next level
+    skip.Seek(offset);
+
+    step /= _skip_n;
+  }
+
+  // load 0 level
+  load_level(std::move(skip_ptr), _skip_0);
+  levels.back().child = kUndefined;
+
+  _levels = std::move(levels);
+}
+
+template<typename InputType>
+void SkipReaderBase<InputType>::Reset(doc_id_t left) {
+  for (auto& level : _levels) {
+    level.stream->Seek(level.begin);
+    if (level.child != kUndefined) {
+      level.child = 0;
+    }
+    level.left = left;
+  }
+}
 
 // The reader for searching in skip-lists written by `SkipWriter`.
 // `Read` is a function object is called when reading of next skip. Accepts
 // the following parameters: index of the level in a skip-list, where a data
 // stream ends, stream where level data resides and  readed key if stream is
 // not exhausted, doc_limits::eof() otherwise
-template<typename ReaderType>
-class SkipReader final : public SkipReaderBase {
+template<typename ReaderType, typename InputType = IndexInput>
+class SkipReader final : public SkipReaderBase<InputType> {
+  using Base = SkipReaderBase<InputType>;
+
  public:
   // skip_0: skip interval for level 0
   // skip_n: skip interval for levels 1..n
-  template<typename T>
-  SkipReader(doc_id_t skip_0, doc_id_t skip_n, T&& reader)
-    : SkipReaderBase{skip_0, skip_n}, _reader{std::forward<T>(reader)} {}
+  template<typename... Args>
+  SkipReader(doc_id_t skip_0, doc_id_t skip_n, Args&&... args)
+    : Base{skip_0, skip_n}, _reader{std::forward<Args>(args)...} {}
 
   // Seeks to the specified target.
   // Returns Number of elements skipped from upper bound
@@ -205,10 +272,10 @@ class SkipReader final : public SkipReaderBase {
   ReaderType _reader;
 };
 
-template<typename Read>
-doc_id_t SkipReader<Read>::Seek(doc_id_t target) {
-  SDB_ASSERT(!_levels.empty());
-  const size_t size = std::size(_levels);
+template<typename Read, typename InputType>
+doc_id_t SkipReader<Read, InputType>::Seek(doc_id_t target) {
+  SDB_ASSERT(!this->_levels.empty());
+  const size_t size = std::size(this->_levels);
   size_t id = 0;
 
   // Returns the highest level with the value not less than a target
@@ -220,10 +287,10 @@ doc_id_t SkipReader<Read>::Seek(doc_id_t target) {
 
   while (id != size) {
     id = _reader.AdjustLevel(id);
-    auto& level = _levels[id];
+    auto& level = this->_levels[id];
     auto& stream = *level.stream;
     uint64_t child_ptr = level.child;
-    const bool is_leaf = (child_ptr == kUndefined);
+    const bool is_leaf = (child_ptr == Base::kUndefined);
 
     if (const auto left = (level.left -= level.step); left > 0) [[likely]] {
       _reader.Read(id, stream);
@@ -239,12 +306,12 @@ doc_id_t SkipReader<Read>::Seek(doc_id_t target) {
     ++id;
     if (!is_leaf) {
       SDB_ASSERT(id < size);
-      SeekToChild(_levels[id], child_ptr, level);
+      Base::SeekToChild(this->_levels[id], child_ptr, level);
       _reader.MoveDown(id);
     }
   }
 
-  auto& level_0 = _levels.back();
+  auto& level_0 = this->_levels.back();
   return static_cast<doc_id_t>(level_0.left + level_0.step);
 }
 

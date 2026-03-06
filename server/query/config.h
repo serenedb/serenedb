@@ -36,7 +36,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
-#include "catalog/table_options.h"
+#include "catalog/types.h"
 
 namespace sdb {
 
@@ -54,11 +54,17 @@ enum class VariableType {
   PgExtraFloatDigits,
   PgByteaOutput,
   SdbWriteConflictPolicy,
+  SdbTransactionIsolation,
 };
 
 enum class ByteaOutput : uint8_t {
   Hex,
   Escape,
+};
+
+enum class IsolationLevel : uint8_t {
+  ReadCommitted,
+  RepeatableRead,
 };
 
 struct VariableDescription {
@@ -128,6 +134,15 @@ class Config : public velox::config::IConfig {
                    "bytea_output is not validated");
         return ByteaOutput::Escape;
       }
+    } else if constexpr (T == VariableType::SdbTransactionIsolation) {
+      SDB_ASSERT(key == "default_transaction_isolation" ||
+                 key == "transaction_isolation");
+      if (absl::EqualsIgnoreCase("repeatable read", *value_str)) {
+        return IsolationLevel::RepeatableRead;
+      }
+      SDB_ASSERT(absl::EqualsIgnoreCase("read committed", *value_str),
+                 "default_transaction_isolation is not validated");
+      return IsolationLevel::ReadCommitted;
     } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
       SDB_ASSERT(key == "sdb_write_conflict_policy");
       if (absl::EqualsIgnoreCase("emit_error", *value_str)) {
@@ -183,7 +198,7 @@ class Config : public velox::config::IConfig {
  protected:
   // Used by TxnState(transaction state) to commit/rollback transaction
   // variables
-  void CommitVariables();
+  void CommitVariables() noexcept;
   void RollbackVariables() noexcept { _transaction.clear(); }
 
  private:

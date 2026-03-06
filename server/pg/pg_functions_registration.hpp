@@ -47,6 +47,7 @@
 #include "basics/fwd.h"
 #include "pg/functions.h"
 #include "query/types.h"
+#include "search/functions.hpp"
 
 namespace sdb::pg {
 
@@ -128,6 +129,7 @@ inline void RegisterVeloxFunctionsAndTypes() {
   pg::RegisterTypes();
   pg::functions::registerFunctions("pg_");
   velox::TypeCoercer::registerCoercions(AllowedCoercions());
+  search::functions::registerSearchFunctions();
 }
 
 }  // namespace sdb::pg

@@ -691,7 +691,7 @@ void IndexWriter::Transaction::Reset() noexcept {
   }
 }
 
-void IndexWriter::Transaction::RegisterFlush() {
+void IndexWriter::Transaction::RegisterFlush() noexcept {
   if (_active.Segment() != nullptr && _active.Flush() == nullptr) {
     _writer->GetFlushContext()->AddToPending(_active);
   }

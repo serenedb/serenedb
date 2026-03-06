@@ -35,9 +35,9 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   BitsetDocIterator(const word_t* begin, const word_t* end) noexcept;
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept override;
-  doc_id_t value() const noexcept final { return _doc.value; }
   doc_id_t advance() final;
   doc_id_t seek(doc_id_t target) final;
+  doc_id_t LazySeek(doc_id_t target) final;
   uint32_t count() final;
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final;
@@ -48,7 +48,7 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
 
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept
-    : _cost(cost), _doc(doc_limits::invalid()), _begin(nullptr), _end(nullptr) {
+    : _cost{cost}, _begin{nullptr}, _end{nullptr} {
     reset();
   }
 
@@ -67,7 +67,6 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   }
 
   CostAttr _cost;
-  DocAttr _doc;
   const word_t* _begin;
   const word_t* _end;
   const word_t* _next;

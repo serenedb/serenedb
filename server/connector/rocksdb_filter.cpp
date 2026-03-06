@@ -203,15 +203,15 @@ std::optional<Point> EqFilterNode::NextPoint() {
 }
 
 AndFilterNode::AndFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
-  : _filters{std::move(filters)} {}
+  : _children{std::move(filters)} {}
 
 bool AndFilterNode::EnsureChildPoint(size_t child_idx, size_t needed_idx) {
-  auto& cache = _all_points[child_idx];
-  while (cache.size() <= needed_idx) {
+  auto& child_points = _children_points[child_idx];
+  while (child_points.size() <= needed_idx) {
     if (_exhausted[child_idx])
       return false;
-    if (auto p = _filters[child_idx]->NextPoint()) {
-      cache.push_back(std::move(*p));
+    if (auto p = _children[child_idx]->NextPoint()) {
+      child_points.push_back(std::move(*p));
     } else {
       _exhausted[child_idx] = true;
       return false;
@@ -221,39 +221,40 @@ bool AndFilterNode::EnsureChildPoint(size_t child_idx, size_t needed_idx) {
 }
 
 bool AndFilterNode::Advance() {
-  for (int i = static_cast<int>(_indices.size()) - 1; i >= 0; --i) {
-    ++_indices[i];
-    if (EnsureChildPoint(i, _indices[i])) {
+  for (int child_idx = static_cast<int>(_indices.size()) - 1; child_idx >= 0;
+       --child_idx) {
+    ++_indices[child_idx];
+    if (EnsureChildPoint(child_idx, _indices[child_idx])) {
       return true;
     }
     // Child exhausted at this depth: carry left, reset right.
-    _indices[i] = 0;
+    _indices[child_idx] = 0;
   }
   return false;
 }
 
 std::optional<Point> AndFilterNode::TryMerge() const {
-  std::optional<Point> result{_all_points[0][_indices[0]]};
-  for (size_t i = 1; i < _all_points.size(); ++i) {
-    result = Point::Intersect(*result, _all_points[i][_indices[i]]);
+  std::optional<Point> result{_children_points[0][_indices[0]]};
+  for (size_t i = 1; i < _children_points.size(); ++i) {
+    result = Point::Intersect(*result, _children_points[i][_indices[i]]);
     if (!result)
       return {};
   }
   return result;
 }
 
+// TODO check how works
 std::optional<Point> AndFilterNode::NextPoint() {
-  if (_filters.empty() || _state == State::Done)
+  if (_children.empty() || _state == State::Done)
     return {};
 
   if (_state == State::NotStarted) {
     _state = State::Running;
-    _all_points.resize(_filters.size());
-    _exhausted.assign(_filters.size(), false);
-    _indices.assign(_filters.size(), 0);
-    // Prime the first point for each child.
-    for (size_t i = 0; i < _filters.size(); ++i) {
-      if (!EnsureChildPoint(i, 0)) {
+    _children_points.resize(_children.size());
+    _exhausted.resize(_children.size(), false);
+    _indices.resize(_children.size(), 0);
+    for (size_t child_idx = 0; child_idx < _children.size(); ++child_idx) {
+      if (!EnsureChildPoint(child_idx, 0)) {
         _state = State::Done;
         return {};
       }

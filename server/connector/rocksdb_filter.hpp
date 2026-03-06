@@ -104,13 +104,13 @@ class AndFilterNode final : public FilterNode {
   // Intersect points at the current indices; returns nullopt on conflict.
   [[nodiscard]] std::optional<Point> TryMerge() const;
 
-  std::vector<std::unique_ptr<FilterNode>> _filters;
+  std::vector<std::unique_ptr<FilterNode>> _children;
 
   enum class State : uint8_t { NotStarted, Running, Done };
   State _state = State::NotStarted;
 
   std::vector<std::vector<Point>>
-    _all_points;                 // lazy per-child cache [filter_idx][point_idx]
+    _children_points;            // lazy per-child cache [filter_idx][point_idx]
   std::vector<bool> _exhausted;  // true when child fully drained
   std::vector<size_t> _indices;  // current index per filter
 };

@@ -83,7 +83,13 @@ class OptionsParser {
   T EraseOptionOrDefault() {
     static_assert(Info.type != OptionInfo::Type::Enum,
                   "Use EnumOptionInfo overload for enum options");
-    if (const auto* option = EraseOption(Info)) {
+    constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
+    if (const auto* option = EraseOption(Info, !kIsBool)) {
+      if constexpr (kIsBool) {
+        if (!option->arg) {
+          return true;
+        }
+      }
       auto value = TryGet<T>(option->arg);
       if (!value) {
         THROW_SQL_ERROR(
@@ -135,7 +141,9 @@ class OptionsParser {
     return Info.base.template DefaultValue<E>();
   }
 
-  const DefElem* EraseOption(const OptionInfo& info) {
+  // requires_parameter == presence flag like ... WITH (FLAG)
+  const DefElem* EraseOption(const OptionInfo& info,
+                             bool requires_parameter = true) {
     auto it = _options.find(info.name);
     if (it == _options.end()) {
       return nullptr;
@@ -143,7 +151,7 @@ class OptionsParser {
     const auto* option = it->second;
     _options.erase(it);
     SDB_ASSERT(option);
-    if (!option->arg) {      
+    if (requires_parameter && !option->arg) {
       THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                       ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(info.name, " requires a parameter"));
@@ -153,6 +161,16 @@ class OptionsParser {
 
   bool HasOption(const OptionInfo& info) const {
     return _options.contains(info.name);
+  }
+
+  int OptionLocation(const OptionInfo& info) const {
+    auto it = _options.find(info.name);
+    if (it == _options.end()) {
+      return -1;
+    }
+
+    SDB_ASSERT(it->second);
+    return it->second->location;
   }
 
   void CheckUnrecognizedOptions() const {

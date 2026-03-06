@@ -67,6 +67,9 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
             break;
         }
         break;
+      case OptionInfo::Type::Double:
+        absl::StrAppend(&out, " [default: ", opt.double_val, "]");
+        break;
       case OptionInfo::Type::Enum:
         absl::StrAppend(&out, " [default: ", opt.string_val,
                         ", values: ", absl::StrJoin(opt.enum_values, ", "),

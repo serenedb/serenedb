@@ -2036,7 +2036,8 @@ class CopyOptionsParser : public FileOptionsParser {
     auto text_format = ParseTextFormatOptions(is_csv);
 
     if (_is_writer && HasOption(kOnError)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(OptionLocation(kOnError))),
+                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
     }
 

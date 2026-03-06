@@ -41,7 +41,14 @@ inline constexpr auto kEnumNames = magic_enum::enum_names<E>();
 }  // namespace detail
 
 struct OptionInfo {
-  enum class Type : uint8_t { String, Boolean, Integer, Character, Enum };
+  enum class Type : uint8_t {
+    String,
+    Boolean,
+    Integer,
+    Double,
+    Character,
+    Enum
+  };
 
   std::string_view name;
   Type type;
@@ -51,6 +58,7 @@ struct OptionInfo {
     std::string_view string_val;
     bool bool_val;
     int int_val;
+    double double_val;
     char char_val;
   };
 
@@ -68,6 +76,9 @@ struct OptionInfo {
 
   consteval OptionInfo(std::string_view name, int def, std::string_view desc)
     : name{name}, type{Type::Integer}, description{desc}, int_val{def} {}
+
+  consteval OptionInfo(std::string_view name, double def, std::string_view desc)
+    : name{name}, type{Type::Double}, description{desc}, double_val{def} {}
 
   template<typename T>
   constexpr T DefaultValue() const {
@@ -87,6 +98,9 @@ struct OptionInfo {
     } else if constexpr (std::is_same_v<T, int>) {
       assert(type == Type::Integer);
       return int_val;
+    } else if constexpr (std::is_same_v<T, double>) {
+      assert(type == Type::Double);
+      return double_val;
     } else if constexpr (std::is_enum_v<T>) {
       assert(type == Type::Enum);
       auto result =
@@ -101,8 +115,10 @@ struct OptionInfo {
   template<Type V>
   using CppType = std::conditional_t<
     V == Type::String || V == Type::Enum, std::string,
-    std::conditional_t<V == Type::Boolean, bool,
-                       std::conditional_t<V == Type::Integer, int, char>>>;
+    std::conditional_t<
+      V == Type::Boolean, bool,
+      std::conditional_t<V == Type::Integer, int,
+                         std::conditional_t<V == Type::Double, double, char>>>>;
 
   constexpr std::string_view TypeName() const {
     switch (type) {
@@ -112,6 +128,8 @@ struct OptionInfo {
         return "boolean";
       case Type::Integer:
         return "integer";
+      case Type::Double:
+        return "double";
       case Type::Character:
         return "character";
       case Type::Enum:
@@ -127,6 +145,9 @@ struct OptionInfo {
                             name, "\": \"", raw_value, "\"");
       case Type::Integer:
         return absl::StrCat("invalid input syntax for type integer: \"",
+                            raw_value, "\"");
+      case Type::Double:
+        return absl::StrCat("invalid input syntax for type double: \"",
                             raw_value, "\"");
       case Type::Character:
         return absl::StrCat(operation, " ", name,

@@ -29,6 +29,7 @@
 #include "catalog/sql_function_impl.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "pg/sql_collector.h"
@@ -47,94 +48,104 @@ namespace sdb::pg {
 
 namespace {
 
+using namespace std::string_view_literals;
+
+inline constexpr EnumOptionInfo<catalog::FunctionLanguage> kLanguage{
+  "language", catalog::FunctionLanguage::SQL,
+  "Function language (only SQL is supported)"};
+inline constexpr EnumOptionInfo<catalog::FunctionState> kVolatility{
+  "volatility", catalog::FunctionState::Volatile, "Volatility category"};
+inline constexpr EnumOptionInfo<catalog::FunctionParallel> kParallel{
+  "parallel", catalog::FunctionParallel::Unsafe, "Parallel safety"};
+inline constexpr OptionInfo kStrict{"strict", false,
+                                    "Returns NULL on NULL input"};
+inline constexpr OptionInfo kSecurity{"security", false, "Security definer"};
+inline constexpr OptionInfo kCost{"cost", 1.0, "Estimated execution cost"};
+inline constexpr OptionInfo kRows{"rows", 0.0, "Estimated number of rows"};
+inline constexpr OptionInfo kWindow{"window", false, "Window function"};
+inline constexpr OptionInfo kLeakproof{"leakproof", false, "Leakproof"};
+inline constexpr OptionInfo kFunctionOptions[] = {
+  kLanguage, kVolatility, kParallel, kStrict,   kSecurity,
+  kCost,     kRows,       kWindow,   kLeakproof};
+inline constexpr OptionGroup kFunctionGroup{"Function", kFunctionOptions, {}};
+inline constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
+
 // Parses options and return function body and catalog options.
 // For the pre-PG14 syntax function body is stored in the "as" option.
 // Example: CREATE FUNCTION foo() RETURNS int AS $$ SELECT 1; $$ LANGUAGE
 // For the PG14+ syntax function body is in the sql_body field of
 // CreateFunctionStmt.
 // Example: CREATE FUNCTION foo() RETURNS int LANGUAGE SQL BEGIN ATOMIC
-std::pair<std::string, catalog::FunctionOptions> ParseFunctionBodyAndOptions(
-  const List* pg_options) {
-  catalog::FunctionOptions options;
+class CreateFunctionOptionsParser : public OptionsParser {
+ public:
+  CreateFunctionOptionsParser(const List* pg_options)
+    : OptionsParser{"CREATE FUNCTION",
+                    {},
+                    {},
+                    MakeOptions(pg_options, {}),
+                    kFunctionOptionGroups} {
+    Parse();
+  }
 
-  options.language = catalog::FunctionLanguage::SQL;
-  options.state = catalog::FunctionState::Volatile;
-  options.parallel = catalog::FunctionParallel::Unsafe;
-  options.type = catalog::FunctionType::Compute;
-  options.kind = catalog::FunctionKind::Scalar;
-  options.internal = false;
+  std::pair<std::string, catalog::FunctionOptions> Result() && {
+    return {std::move(_function_body), std::move(_func_options)};
+  }
 
-  std::string function_body;
-  VisitNodes(pg_options, [&](const DefElem& option) {
-    std::string_view opt_name = option.defname;
-
-    if (opt_name == "language") {
-      std::string_view lang = strVal(option.arg);
-      if (lang == "sql") {
-        options.language = catalog::FunctionLanguage::SQL;
-      } else {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("language \"", lang, "\" does not exist"));
-      }
-    } else if (opt_name == "volatility") {
-      std::string_view vol = strVal(option.arg);
-      if (vol == "immutable") {
-        options.state = catalog::FunctionState::Immutable;
-      } else if (vol == "stable") {
-        options.state = catalog::FunctionState::Stable;
-      } else if (vol == "volatile") {
-        options.state = catalog::FunctionState::Volatile;
-      } else {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("invalid volatility: ", vol));
-      }
-    } else if (opt_name == "parallel") {
-      std::string_view par = strVal(option.arg);
-      if (par == "safe") {
-        options.parallel = catalog::FunctionParallel::Safe;
-      } else if (par == "restricted") {
-        options.parallel = catalog::FunctionParallel::Restricted;
-      } else if (par == "unsafe") {
-        options.parallel = catalog::FunctionParallel::Unsafe;
-      } else {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("invalid parallel mode: ", par));
-      }
-    } else if (opt_name == "strict") {
-      options.strict = boolVal(option.arg);
-    } else if (opt_name == "security") {
-      options.security = boolVal(option.arg);
-    } else if (opt_name == "cost") {
-      options.cost = floatVal(option.arg);
-    } else if (opt_name == "rows") {
-      options.rows = floatVal(option.arg);
-    } else if (opt_name == "window") {
-      options.kind = catalog::FunctionKind::Window;
-    } else if (opt_name == "leakproof") {
-    } else if (opt_name == "as") {
-      if (IsA(option.arg, List)) {
-        List* list = castNode(List, option.arg);
-        function_body = strVal(castNode(Node, list_nth(list, 0)));
-      } else if (IsA(option.arg, String)) {
-        function_body = strVal(option.arg);
-      }
-    } else if (opt_name == "transform") {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("TRANSFORM option is not supported"));
-    } else if (opt_name == "support") {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("SUPPORT option is not supported"));
-    } else if (opt_name == "set") {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("SET option is not supported"));
-    } else {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("unknown function option: ", opt_name));
+ private:
+  void Parse() {
+    _func_options.language = EraseOptionOrDefault<kLanguage>();
+    if (_func_options.language != catalog::FunctionLanguage::SQL) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("only SQL language is supported for user functions"));
     }
-  });
 
-  return {std::move(function_body), std::move(options)};
-}
+    _func_options.state = EraseOptionOrDefault<kVolatility>();
+    _func_options.parallel = EraseOptionOrDefault<kParallel>();
+    _func_options.strict = EraseOptionOrDefault<kStrict>();
+    _func_options.security = EraseOptionOrDefault<kSecurity>();
+    _func_options.type = catalog::FunctionType::Compute;
+    _func_options.internal = false;
+    _func_options.cost = EraseOptionOrDefault<kCost>();
+    _func_options.rows = EraseOptionOrDefault<kRows>();
+
+    auto window_location = OptionLocation(kWindow);
+    if (EraseOptionOrDefault<kWindow>()) {
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(window_location)),
+                      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("WINDOW functions are not supported"));
+    }
+
+    auto leakproof_location = OptionLocation(kLeakproof);
+    if (EraseOptionOrDefault<kLeakproof>()) {
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(leakproof_location)),
+                      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("LEAKPROOF functions are not supported"));
+    }
+
+    ParseFunctionBody();
+
+    CheckUnrecognizedOptions();
+  }
+
+  void ParseFunctionBody() {
+    auto it = _options.find("as");
+    if (it == _options.end()) {
+      return;
+    }
+    const auto* option = it->second;
+    _options.erase(it);
+    if (IsA(option->arg, List)) {
+      List* list = castNode(List, option->arg);
+      _function_body = strVal(castNode(Node, list_nth(list, 0)));
+    } else if (IsA(option->arg, String)) {
+      _function_body = strVal(option->arg);
+    }
+  }
+
+  std::string _function_body;
+  catalog::FunctionOptions _func_options;
+};
 
 }  // namespace
 
@@ -151,7 +162,7 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
 
   std::string function_body;
   std::tie(function_body, properties.options) =
-    ParseFunctionBodyAndOptions(stmt.options);
+    CreateFunctionOptionsParser{stmt.options}.Result();
   SDB_ASSERT(!function_body.empty() == !stmt.sql_body);
   if (stmt.sql_body) {
     // All checks for user functions are guaranteed by sql_analyzer_velox.cpp,

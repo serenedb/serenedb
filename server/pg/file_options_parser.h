@@ -57,13 +57,17 @@ class FileOptionsParser : public OptionsParser {
     using namespace file_option_groups;
 
     if (HasOption(kS3AccessKey) != HasOption(kS3SecretKey)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      auto location = HasOption(kS3AccessKey) ? OptionLocation(kS3AccessKey)
+                                              : OptionLocation(kS3SecretKey);
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(location)),
+                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(kS3AccessKey.name, " and ", kS3SecretKey.name,
                               " must be specified together"));
     }
 
     if (HasOption(kS3AccessKey) && HasOption(kS3IamRole)) {
       THROW_SQL_ERROR(
+        CURSOR_POS(ErrorPosition(OptionLocation(kS3IamRole))),
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG(kS3AccessKey.name, "/", kS3SecretKey.name, " and ",
                 kS3IamRole.name, " cannot be specified together"));
@@ -146,6 +150,7 @@ class FileOptionsParser : public OptionsParser {
     constexpr auto& kNull = IsCsv ? kCsvNull : kTextNull;
     auto null_string = EraseOptionOrDefault<kNull>();
 
+    // TODO: make variant option info
     auto header = kHeader.DefaultValue<bool>();
     if (const auto* option = EraseOption(kHeader)) {
       if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
@@ -156,14 +161,19 @@ class FileOptionsParser : public OptionsParser {
             ERR_MSG("match option for header is not supported yet"));
         }
       }
-      auto maybe_header = TryGet<bool>(option->arg);
-      if (!maybe_header) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("header requires a Boolean value or \"match\""));
+
+      if (!option->arg) {
+        header = true;
+      } else {
+        auto maybe_header = TryGet<bool>(option->arg);
+        if (!maybe_header) {
+          THROW_SQL_ERROR(
+            CURSOR_POS(ErrorPosition(ExprLocation(option))),
+            ERR_CODE(ERRCODE_SYNTAX_ERROR),
+            ERR_MSG("header requires a Boolean value or \"match\""));
+        }
+        header = *maybe_header;
       }
-      header = *maybe_header;
     }
 
     return std::make_shared<TextFormatOptions>(

@@ -1214,10 +1214,7 @@ class PostingIteratorBase : public DocIterator {
   }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    // TODO(gnusi): optimize
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
+               ScoreCollector& collector) final;
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
@@ -1238,6 +1235,33 @@ class PostingIteratorBase : public DocIterator {
 
   virtual void ReadBlock(doc_id_t prev_doc) = 0;
   virtual bool SeekToBlock(doc_id_t target) = 0;
+
+  template<size_t N>
+  IRS_FORCE_INLINE const score_t* ScoreBlock(std::span<const doc_id_t, N> docs,
+                                             const ScoreFunction& score,
+                                             ColumnArgsFetcher* fetcher) {
+    if constexpr (N == kPostingBlock) {
+      if (fetcher) {
+        fetcher->FetchPostingBlock(docs);
+      }
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
+      }
+      auto p = reinterpret_cast<score_t*>(EncBufEnd() - N);
+      score.ScorePostingBlock(p);
+      return p;
+    } else {
+      if (fetcher) {
+        fetcher->Fetch(docs);
+      }
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
+      }
+      auto p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
+      score.Score(p, docs.size());
+      return p;
+    }
+  }
 
   template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
   bool ProcessBatch(std::span<const doc_id_t, N> docs, const doc_id_t min,
@@ -1462,37 +1486,50 @@ std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
 }
 
 template<typename IteratorTraits>
+void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
+                                                  ColumnArgsFetcher& fetcher,
+                                                  ScoreCollector& collector) {
+  ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
+    auto add = [&]<size_t N>(std::span<const doc_id_t, N> docs,
+                             const score_t* scores) {
+      // TODO(gnusi): bulk threshold check will make it faster
+      for (size_t i = 0; i < docs.size(); ++i) {
+        collector.Add(scores[i], docs[i]);
+      }
+    };
+
+    *(std::end(_docs) - 1) = _doc;
+
+    while (_left_in_list >= kPostingBlock) {
+      ReadBlock(*(std::end(_docs) - 1));
+      std::span<const doc_id_t, kPostingBlock> docs{_docs, kPostingBlock};
+      const auto* scores = ScoreBlock(docs, scorer, &fetcher);
+      add(docs, scores);
+    }
+
+    if (_left_in_list) {
+      ReadBlock(*(std::end(_docs) - 1));
+      std::span<const doc_id_t> docs{std::end(_docs) - _left_in_leaf,
+                                     _left_in_leaf};
+      const auto* scores = ScoreBlock(docs, scorer, &fetcher);
+      add(docs, scores);
+      _left_in_leaf = 0;
+    }
+  });
+
+  _doc = doc_limits::eof();
+}
+
+template<typename IteratorTraits>
 template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
 bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
   std::span<const doc_id_t, N> docs, const doc_id_t min,
   uint64_t* IRS_RESTRICT doc_mask, [[maybe_unused]] FillBlockScoreContext score,
   [[maybe_unused]] FillBlockMatchContext match) {
   [[maybe_unused]] auto* IRS_RESTRICT const score_window = score.score_window;
-
   [[maybe_unused]] const score_t* IRS_RESTRICT score_ptr;
   if constexpr (MergeType != ScoreMergeType::Noop) {
-    [[maybe_unused]] const auto* IRS_RESTRICT score_end =
-      reinterpret_cast<score_t*>(EncBufEnd());
-    if constexpr (N == kPostingBlock) {
-      if (score.fetcher) {
-        score.fetcher->FetchPostingBlock(docs);
-      }
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
-      }
-      score.score->ScorePostingBlock(
-        reinterpret_cast<score_t*>(EncBufEnd() - N));
-    } else {
-      if (score.fetcher) {
-        score.fetcher->Fetch(docs);
-      }
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
-      }
-      score.score->Score(reinterpret_cast<score_t*>(EncBufEnd() - docs.size()),
-                         docs.size());
-    }
-    score_ptr = score_end - docs.size();
+    score_ptr = ScoreBlock(docs, *score.score, score.fetcher);
   }
 
   if constexpr (!TrackMatch && MergeType == ScoreMergeType::Noop) {

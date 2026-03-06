@@ -28,7 +28,7 @@
 #include "catalog/table_options.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
-#include "pg/file_option_groups.h"
+#include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
@@ -58,12 +58,12 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
           conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
         },
         OptionsParser::MakeOptions(options, {}),
-        file_option_groups::kCreateExternalParserGroups} {
+        file_options::kCreateExternalParserGroups} {
     Parse();
   }
 
   void Parse() {
-    using namespace file_option_groups;
+    using namespace file_options;
 
     if (const auto* path_option = EraseOption(kPath)) {
       auto maybe_path = TryGet<std::string_view>(path_option->arg);

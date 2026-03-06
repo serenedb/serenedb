@@ -23,7 +23,7 @@
 #include "catalog/format_options.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
-#include "pg/file_option_groups.h"
+#include "pg/file_options.h"
 #include "pg/options_parser.h"
 
 namespace sdb::pg {
@@ -40,7 +40,7 @@ class FileOptionsParser : public OptionsParser {
 
  protected:
   std::unique_ptr<StorageOptions> ParseStorageOptions() {
-    using namespace file_option_groups;
+    using namespace file_options;
     bool explicit_storage = HasOption(kStorage.base);
     auto storage = EraseOptionOrDefault<kStorage>();
     if (!explicit_storage) {
@@ -54,7 +54,7 @@ class FileOptionsParser : public OptionsParser {
   }
 
   std::unique_ptr<S3StorageOptions> ParseS3StorageOptions() {
-    using namespace file_option_groups;
+    using namespace file_options;
 
     if (HasOption(kS3AccessKey) != HasOption(kS3SecretKey)) {
       auto location = HasOption(kS3AccessKey) ? OptionLocation(kS3AccessKey)
@@ -88,8 +88,8 @@ class FileOptionsParser : public OptionsParser {
       ssl_enabled, use_creds);
   }
 
-  std::optional<file_option_groups::FormatType> TryFormatFromFile() const {
-    using namespace file_option_groups;
+  std::optional<file_options::FormatType> TryFormatFromFile() const {
+    using namespace file_options;
     const auto pos = _file_path.rfind('.');
     if (pos == std::string_view::npos) {
       return std::nullopt;
@@ -104,20 +104,22 @@ class FileOptionsParser : public OptionsParser {
            path.starts_with("cos://") || path.starts_with("cosn://");
   }
 
-  file_option_groups::StorageType TryStorageFromContext() const {
-    using namespace file_option_groups;
-    auto has_option = [&](const OptionInfo& info) { return HasOption(info); };
+  file_options::StorageType TryStorageFromContext() const {
+    using namespace file_options;
+
     if (IsS3Path(_file_path) ||
-        absl::c_any_of(kS3ConnectionOptions, has_option) ||
-        absl::c_any_of(kS3AuthOptions, has_option)) {
+        absl::c_any_of(kS3Group.FlatOptions(),
+                       [&](const OptionInfo& option) {
+                         return HasOption(option);
+                       })) {
       return StorageType::S3;
     }
 
     return StorageType::Local;
   }
 
-  file_option_groups::FormatType ParseFileFormat() {
-    using namespace file_option_groups;
+  file_options::FormatType ParseFileFormat() {
+    using namespace file_options;
     bool explicit_format = HasOption(kFormat.base);
     auto format = EraseOptionOrDefault<kFormat>();
     if (!explicit_format) {
@@ -139,7 +141,7 @@ class FileOptionsParser : public OptionsParser {
 
   template<bool IsCsv>
   std::shared_ptr<TextFormatOptions> ParseTextFormatOptionsImpl() {
-    using namespace file_option_groups;
+    using namespace file_options;
 
     constexpr auto& kDelim = IsCsv ? kCsvDelimiter : kTextDelimiter;
     uint8_t delim = EraseOptionOrDefault<kDelim>();
@@ -193,8 +195,8 @@ class FileOptionsParser : public OptionsParser {
   }
 
   std::shared_ptr<FormatOptions> ParseFormatOptions(
-    file_option_groups::FormatType format) {
-    using namespace file_option_groups;
+    file_options::FormatType format) {
+    using namespace file_options;
     switch (format) {
       case FormatType::Text:
         return ParseTextFormatOptions(false);

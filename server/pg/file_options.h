@@ -22,7 +22,7 @@
 
 #include "pg/option_help.h"
 
-namespace sdb::pg::file_option_groups {
+namespace sdb::pg::file_options {
 
 using namespace std::string_view_literals;
 
@@ -190,4 +190,4 @@ inline constexpr OptionGroup kCopyParserGroups[] = {kStorageGroup,
 inline constexpr OptionGroup kCreateExternalParserGroups[] = {
   kCreateExternalGroup, kStorageGroup, kFormatGroup};
 
-}  // namespace sdb::pg::file_option_groups
+}  // namespace sdb::pg::file_options

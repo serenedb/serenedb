@@ -75,7 +75,7 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
-#include "pg/file_option_groups.h"
+#include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
@@ -1821,7 +1821,7 @@ void WriteNoticeInBuffer(message::Buffer& send, std::string_view message) {
 
 class CopyRowRejector {
  public:
-  using LogVerbosity = file_option_groups::CopyLogVerbosity;
+  using LogVerbosity = file_options::CopyLogVerbosity;
 
   CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
                   std::string_view table_name, uint64_t reject_limit)
@@ -1934,7 +1934,7 @@ class CopyOptionsParser : public FileOptionsParser {
                           WriteNoticeInBuffer(send_buffer, msg);
                         },
                         MakeCopyOptions(options, query_string, explain_options),
-                        file_option_groups::kCopyParserGroups},
+                        file_options::kCopyParserGroups},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1993,7 +1993,7 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
   void Parse() {
-    using namespace file_option_groups;
+    using namespace file_options;
 
     ParseDataSource();
 
@@ -2032,7 +2032,7 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {
-    using namespace file_option_groups;
+    using namespace file_options;
     auto text_format = ParseTextFormatOptions(is_csv);
 
     if (_is_writer && HasOption(kOnError)) {

@@ -26,6 +26,7 @@
 
 #include <cassert>
 #include <magic_enum/magic_enum.hpp>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -182,19 +183,22 @@ struct OptionGroup {
   std::span<const OptionInfo> options;     // leaf options in this group
   std::span<const OptionGroup> subgroups;  // nested groups
 
-  std::vector<std::string_view> AllNames() const {
-    std::vector<std::string_view> names;
-    CollectOptionNames(names);
-    return names;
+  std::vector<OptionInfo> FlatOptions() const {
+    std::vector<OptionInfo> result;
+    CollectOptions(result);
+    return result;
+  }
+
+  std::vector<std::string_view> FlatNames() const {
+    return FlatOptions() | std::views::transform(&OptionInfo::name) |
+           std::ranges::to<std::vector>();
   }
 
  private:
-  void CollectOptionNames(std::vector<std::string_view>& names) const {
-    for (const auto& opt : options) {
-      names.push_back(opt.name);
-    }
+  void CollectOptions(std::vector<OptionInfo>& result) const {
+    result.insert(result.end(), options.begin(), options.end());
     for (const auto& subgroup : subgroups) {
-      subgroup.CollectOptionNames(names);
+      subgroup.CollectOptions(result);
     }
   }
 };

@@ -84,7 +84,7 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
       })) {
     auto& first_term_filter = sdb::basics::downCast<ByTerm>(*_filters.front());
     ByTermsOptions options;
-    options.merge_type = ctx.scorer ? _merge_type : ScoreMergeType::Noop;
+    options.merge_type = _merge_type;
     bool has_duplicates = false;
     for (const auto& filter : *this) {
       auto& term_filter = sdb::basics::downCast<ByTerm>(*filter);
@@ -239,9 +239,7 @@ Filter::Query::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
     return incl.front()->prepare(sub_ctx);
   }
   auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  const auto merge_type =
-    sub_ctx.scorer ? this->merge_type() : ScoreMergeType::Noop;
-  q->prepare(sub_ctx, merge_type, incl, excl);
+  q->prepare(sub_ctx, merge_type(), incl, excl);
   return q;
 }
 

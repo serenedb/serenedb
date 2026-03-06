@@ -118,9 +118,7 @@ class ResolutionTable {
           it->second.erase(object_name);
         }
         auto [_, inserted] = it->second.try_emplace(object_name, object_id);
-        if (replace) {
-          SDB_ASSERT(inserted);
-        }
+        SDB_ASSERT(!replace || inserted);
         return inserted;
       };
       if constexpr (Type == ResolveType::Function) {
@@ -156,14 +154,11 @@ class ResolutionTable {
       }
       auto id = object.mapped();
       SDB_ASSERT(id.isSet());
-      std::vector<std::string_view> delete_schemas;
       auto it = _schemas.find(id);
       SDB_ASSERT(it != _schemas.end());
-      delete_schemas.reserve(it->second.size());
-      for (const auto& [name, _] : it->second) {
-        delete_schemas.push_back(name);
-      }
-      for (auto schema : delete_schemas) {
+      auto delete_schema_names =
+        it->second | std::views::keys | std::ranges::to<std::vector>();
+      for (auto schema : delete_schema_names) {
         RemoveObject<ResolveType::Schema>(id, schema);
       }
       return {id};

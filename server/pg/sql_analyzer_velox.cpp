@@ -1929,14 +1929,15 @@ class CopyOptionsParser : public FileOptionsParser {
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
                     NameToOption& explain_options)
-    : FileOptionsParser{"COPY",
-                        query_string,
-                        file_path,
-                        [&send_buffer](std::string msg) {
-                          WriteNoticeInBuffer(send_buffer, msg);
-                        },
+    : FileOptionsParser{file_path,
                         MakeCopyOptions(options, query_string, explain_options),
-                        file_options::kCopyParserGroups},
+                        file_options::kCopyParserGroups,
+                        {.operation = "COPY",
+                         .query_string = query_string,
+                         .notice =
+                           [&send_buffer](std::string msg) {
+                             WriteNoticeInBuffer(send_buffer, msg);
+                           }}},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1948,7 +1949,7 @@ class CopyOptionsParser : public FileOptionsParser {
       _reader_options = std::make_shared<connector::ReaderOptions>();
     }
 
-    Parse();
+    ParseOptions([&] { Parse(); });
   }
 
   auto GetWriterOptions() && {

@@ -159,7 +159,7 @@ class ResolutionTable {
       std::vector<std::string_view> delete_schemas;
       auto it = _schemas.find(id);
       SDB_ASSERT(it != _schemas.end());
-      delete_schemas.reserve(it->second.size());;
+      delete_schemas.reserve(it->second.size());
       for (const auto& [name, _] : it->second) {
         delete_schemas.push_back(name);
       }

@@ -414,6 +414,14 @@ class FixedPhraseFrequency {
   }
 
   uint32_t NextPosition() {
+    if constexpr (HasIntervals) {
+      return NextPositionGeneric();
+    } else {
+      return NextPositionOptimized();
+    }
+  }
+
+  uint32_t NextPositionGeneric() {
     uint32_t phrase_freq = 0;
     auto& lead = *_pos.front().first;
     lead.next();
@@ -475,6 +483,47 @@ class FixedPhraseFrequency {
     }
 
     return phrase_freq;
+  }
+
+  uint32_t NextPositionOptimized() {
+    auto begin = _pos.begin();
+    auto end = _pos.end();
+    std::sort(begin, end, [](const auto& l, const auto& r) {
+      return l.first->DocFreq() < r.first->DocFreq();
+    });
+
+    const auto new_lead_offset = begin->second.lead_offset;
+    auto& lead = *begin->first;
+    ++begin;
+    auto lead_pos = lead.seek(pos_limits::min() + new_lead_offset);
+
+    uint32_t phrase_freq = 0;
+    while (true) {
+    restart:
+      if (pos_limits::eof(lead_pos)) [[unlikely]] {
+        return phrase_freq;
+      }
+      for (auto it = begin; it != end; ++it) {
+        const auto target =
+          (lead_pos - new_lead_offset) + it->second.lead_offset;
+        const auto sought = it->first->seek(target);
+        if (sought != target) {
+          if (pos_limits::eof(sought)) [[unlikely]] {
+            return phrase_freq;
+          }
+          lead_pos =
+            lead.seek((sought - it->second.lead_offset) + new_lead_offset);
+          goto restart;
+        }
+      }
+      if constexpr (OneShot) {
+        return 1;
+      } else {
+        ++phrase_freq;
+        lead.next();
+        lead_pos = lead.value();
+      }
+    }
   }
 
   // list of desired positions along with corresponding attributes

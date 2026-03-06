@@ -114,12 +114,14 @@ class ResolutionTable {
                               ObjectId object_id) {
         auto it = insert_map.find(parent_id);
         SDB_ASSERT(it != insert_map.end());
-        if (!replace) {
-          auto [_, inserted] = it->second.try_emplace(object_name, object_id);
-          return inserted;
+        if (replace) {
+          it->second.erase(object_name);
         }
-        it->second.insert_or_assign(object_name, object_id);
-        return true;
+        auto [_, inserted] = it->second.try_emplace(object_name, object_id);
+        if (replace) {
+          SDB_ASSERT(inserted);
+        }
+        return inserted;
       };
       if constexpr (Type == ResolveType::Function) {
         return insert(_functions, parent_id, object_name, object_id)
@@ -154,10 +156,15 @@ class ResolutionTable {
       }
       auto id = object.mapped();
       SDB_ASSERT(id.isSet());
-      auto schemas = _schemas.extract(id);
-      SDB_ASSERT(!schemas.empty());
-      for (auto& schema : schemas.mapped()) {
-        RemoveObject<Type>(id, schema.first);
+      std::vector<std::string_view> delete_schemas;
+      auto it = _schemas.find(id);
+      SDB_ASSERT(it != _schemas.end());
+      delete_schemas.reserve(it->second.size());;
+      for (const auto& [name, _] : it->second) {
+        delete_schemas.push_back(name);
+      }
+      for (auto schema : delete_schemas) {
+        RemoveObject<ResolveType::Schema>(id, schema);
       }
       return {id};
     } else if constexpr (Type == ResolveType::Role) {

@@ -259,8 +259,8 @@ class SnapshotImpl : public Snapshot {
       RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Role>) {
-      RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
-                                                  maybe_not_found);
+      RemoveFromResolution<ResolveType::Role>(parent_id, object->GetName(),
+                                              maybe_not_found);
     } else if constexpr (std::is_same_v<T, Schema>) {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
@@ -557,6 +557,12 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
+    } else {
+      // Name unchanged, but must refresh the string_view to point to new
+      // object's _name
+      auto r = _resolution_table.AddObject<Type>(
+        parent_id, new_object->GetName(), new_object->GetId(), true);
+      SDB_ASSERT(r.ok());
     }
 
     auto it = _objects.find(new_object->GetId());
@@ -886,7 +892,9 @@ ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
 
   absl::MutexLock lock{&_mutex};
 
-  auto r = _snapshot->RegisterObject(*index, relation_id, false);
+  auto r = Apply(_snapshot, [&](auto& clone) {
+    return _snapshot->RegisterObject(*index, relation_id, false);
+  });
   if (!r.ok()) {
     return std::unexpected<Result>(std::in_place, r.errorNumber(),
                                    r.errorMessage());

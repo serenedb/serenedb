@@ -344,9 +344,7 @@ Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
     q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, adjusted_min_match);
   }
 
-  const auto merge_type =
-    sub_ctx.scorer ? this->merge_type() : ScoreMergeType::Noop;
-  q->prepare(sub_ctx, merge_type, incl, excl);
+  q->prepare(sub_ctx, merge_type(), incl, excl);
   return q;
 }
 

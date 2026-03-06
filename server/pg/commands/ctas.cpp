@@ -17,6 +17,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_resolver.h"
 #include "pg/sql_utils.h"
+#include "connector/serenedb_connector.hpp"
 #include "query/transaction.h"
 #include "storage_engine/engine_feature.h"
 
@@ -74,6 +75,7 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   auto* object = objects.getRelation(schema, _table_name);
   SDB_ASSERT(object);
   object->EnsureTable(_transaction);
+  basics::downCast<connector::RocksDBTable>(object->table)->BulkInsert() = true;
   _write.setTable(object->table);
 
   _table_created = true;

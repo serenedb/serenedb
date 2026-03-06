@@ -17,7 +17,7 @@ SELECT * FROM vedernikoff;
 30003 values hashing to 4054c492260f852b8162b374b3e41700
 
 
-statement error db error: ERROR: Object already exists: vedernikoff
+statement error db error: ERROR: duplicate name
 CREATE TABLE vedernikoff AS SELECT 1 AS id;
 
 
@@ -64,5 +64,4 @@ db error: ERROR: im gonna fail dis sheet(i mean a peace of paper)
 query error
 SELECT * FROM vedernikoff;
 ----
-
-
+db error: ERROR: relation "vedernikoff" does not exist

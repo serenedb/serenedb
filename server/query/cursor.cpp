@@ -28,7 +28,9 @@
 #include <velox/vector/VariantToVector.h>
 
 #include "app/app_server.h"
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
+#include "basics/system-compiler.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
@@ -343,6 +345,9 @@ Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
         } catch (...) {
           ctas_cmd->Rollback();
           throw;
+        }
+        SDB_IF_FAILURE("crash_ctas_before_remove_tombstone") {
+          SDB_IMMEDIATE_ABORT();
         }
         auto r = ctas_cmd->RemoveTombstone();
         if (!r.ok()) {

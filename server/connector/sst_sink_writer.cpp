@@ -26,6 +26,7 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
@@ -362,6 +363,7 @@ void SSTSinkWriter<IsGeneratedPK>::Finish() {
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));
   }
+  SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
 }
 
 template<bool IsGeneratedPK>

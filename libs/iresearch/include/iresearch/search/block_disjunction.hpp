@@ -362,8 +362,8 @@ class BlockDisjunction : public DocIterator {
       if constexpr (kHasScore) {
         while (RefillImpl()) {
           const doc_id_t window_base = _max - kWindow;
-          collector.CollectWindow(_score_buf.score_window.data(), _mask,
-                                  window_base, kNumBlocks);
+          collector.AddWindow(_score_buf.score_window.data(), _mask,
+                              window_base, kNumBlocks);
         }
       }
       _doc = doc_limits::eof();

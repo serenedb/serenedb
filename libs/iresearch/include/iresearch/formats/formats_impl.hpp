@@ -1403,7 +1403,6 @@ std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
       {
         auto count = _left_in_leaf;
 
-        // after seek/advance value() is not in leftover, include it
         if (*(std::end(_docs) - count - 1) == value()) {
           ++count;
         }

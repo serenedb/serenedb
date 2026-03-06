@@ -75,8 +75,8 @@ class ScoreCollector {
 
   virtual void Add(score_t score, doc_id_t doc) = 0;
 
-  virtual void CollectWindow(const score_t* scores, const uint64_t* mask,
-                             doc_id_t min, size_t num_blocks) = 0;
+  virtual void AddWindow(const score_t* scores, const uint64_t* mask,
+                         doc_id_t min, size_t num_blocks) = 0;
 
  protected:
   explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}
@@ -123,8 +123,8 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     return _count;
   }
 
-  void CollectWindow(const score_t* scores, const uint64_t* mask, doc_id_t min,
-                     size_t num_blocks) final {
+  void AddWindow(const score_t* scores, const uint64_t* mask, doc_id_t min,
+                 size_t num_blocks) final {
     uint64_t block_mask = 0;
     for (size_t i = 0; i < num_blocks; ++i) {
       if (mask[i]) {

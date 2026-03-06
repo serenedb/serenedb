@@ -1660,8 +1660,6 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
   class ReadSkip : private WandExtent {
    public:
-    using StreamType = InputType;
-
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
       Disable();  // Prevent using skip-list by default
     }
@@ -2710,8 +2708,6 @@ class SingleWandIterator : public DocIterator {
  private:
   class WandReadSkip {
    public:
-    using StreamType = InputType;
-
     explicit WandReadSkip(WandExtent extent)
       : _skip_levels(1),
         _skip_scores(1, std::numeric_limits<score_t>::max()),

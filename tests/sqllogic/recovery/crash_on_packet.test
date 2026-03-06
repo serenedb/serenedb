@@ -31,7 +31,7 @@ SELECT 1;
 
 # ==== TRY TO RECONNECT ====
 connection new
-query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 select * from t;
 ----
 key	value

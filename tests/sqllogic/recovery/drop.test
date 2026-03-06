@@ -34,7 +34,7 @@ DROP INDEX s1.i;
 
 
 connection after_index_drop
-query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT COUNT(*) FROM pg_class WHERE relname = 'i';
 ----
 count
@@ -83,7 +83,7 @@ DROP TABLE s1.t;
 
 
 connection after_table_drop
-query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT COUNT(*) FROM pg_class WHERE relname = 'i' OR relname = 't';
 ----
 count
@@ -129,7 +129,7 @@ DROP SCHEMA s1 CASCADE;
 
 
 connection after_schema_drop
-query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT COUNT(*) FROM pg_class WHERE relname = 't';
 ----
 count

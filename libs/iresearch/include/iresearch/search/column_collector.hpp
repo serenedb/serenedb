@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include <iresearch/search/score_function.hpp>
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
 #include "iresearch/formats/norm_reader.hpp"
+#include "iresearch/search/score_function.hpp"
 
 namespace irs {
 

@@ -25,8 +25,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/overload.h>
 
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <limits>
 #include <utility>
 
@@ -42,6 +40,8 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/compression.hpp"
 

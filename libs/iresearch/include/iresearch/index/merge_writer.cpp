@@ -23,13 +23,13 @@
 
 #include "merge_writer.hpp"
 
-#include <iresearch/index/norm.hpp>
 #include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/small_vector.h"
 #include "basics/down_cast.h"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/utils/string.hpp"
 
 #if defined(SDB_DEV) && !defined(__clang__)

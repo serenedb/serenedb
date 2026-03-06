@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "basics/assert.h"
 #include "basics/shared.hpp"
 
 namespace irs {

@@ -3,12 +3,15 @@ target_sources(
     PRIVATE
         column_expr.cpp
         database.cpp
+        drop_task.cpp
         schema.cpp
         databases.cpp
         local_catalog.cpp
         catalog.cpp
         object.cpp
         table_options.cpp
+        format_options.cpp
+        storage_options.cpp
         key_generator.cpp
         search_analyzer_impl.cpp
         sql_function_impl.cpp

@@ -23,6 +23,7 @@
 
 #include <iresearch/index/index_writer.hpp>
 
+#include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "primary_key.hpp"
 #include "search_remove_filter.hpp"
@@ -32,9 +33,13 @@ namespace sdb::connector::search {
 
 class SearchRemoveFilterBase;
 
+using AnalyzerProvider =
+  absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
+
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
+                           AnalyzerProvider&& analyzer_provider,
                            std::span<const catalog::Column::Id> columns);
 
   void InitImpl(size_t batch_size);
@@ -63,8 +68,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     }
 
     irs::Tokenizer& GetTokens() const noexcept {
-      SDB_ASSERT(analyzer);
-      return *analyzer;
+      SDB_ASSERT(analyzer || string_analyzer);
+      SDB_ASSERT((analyzer == nullptr) || (string_analyzer == nullptr));
+      return analyzer ? *analyzer : *string_analyzer;
     }
 
     bool Write(irs::DataOutput& out) const {
@@ -74,7 +80,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
       return true;
     }
-    void PrepareForStringValue();
+
+    void PrepareForVerbatimStringValue();
+    void PrepareForStringValue(sdb::catalog::ColumnAnalyzer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -88,6 +96,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void SetNullValue();
 
     sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
+    irs::analysis::Analyzer::ptr string_analyzer;
     std::string_view name;
     irs::bytes_view value;
     irs::IndexFeatures index_features;
@@ -122,6 +131,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   template<velox::TypeKind Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
+  AnalyzerProvider _analyzer_provider;
   Field _field;
   Field _pk_field;
   Field _null_field;
@@ -155,8 +165,9 @@ class SearchSinkInsertWriter final : public SinkIndexWriter,
                                      public SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx,
+                         AnalyzerProvider&& analyzer_provider,
                          std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl{trx, columns} {}
+    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider), columns} {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
@@ -195,8 +206,10 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
                                      public SearchSinkDeleteBaseImpl {
  public:
   SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx,
+                         AnalyzerProvider&& analyzer_provider,
                          std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl{trx, columns}, SearchSinkDeleteBaseImpl{trx} {}
+    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider), columns},
+      SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(size_t batch_size) final {
     SearchSinkInsertBaseImpl::InitImpl(batch_size);

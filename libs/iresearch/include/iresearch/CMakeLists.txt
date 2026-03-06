@@ -78,7 +78,6 @@ set(IResearch_core_sources
     ./formats/skip_list.cpp
     ./formats/sparse_bitmap.cpp
     ./formats/format_block_128.cpp
-    ./formats/format_block_256.cpp
     ./formats/formats_burst_trie.cpp
     ./formats/hnsw_index.cpp
     ./index/buffered_column.cpp

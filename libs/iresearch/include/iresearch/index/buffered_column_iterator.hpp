@@ -59,32 +59,26 @@ class BufferedColumnIterator : public ResettableDocIterator {
     }
     std::get<CostAttr>(_attrs).reset(values.size());
     std::get<PayAttr>(_attrs).value = {};
-    std::get<DocAttr>(_attrs).value = {};
+    _doc = doc_limits::invalid();
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() noexcept final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
     if (_next == _end) [[unlikely]] {
-      return doc_value = doc_limits::eof();
+      return _doc = doc_limits::eof();
     }
 
     auto& payload = std::get<PayAttr>(_attrs);
 
-    doc_value = _next->key;
+    _doc = _next->key;
     payload.value = {_data.data() + _next->begin, _next->size};
 
     ++_next;
 
-    return doc_value;
+    return _doc;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
@@ -106,9 +100,14 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return advance();
   }
 
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
   void reset() noexcept final {
     _next = _begin;
-    std::get<DocAttr>(_attrs).value = {};
+    _doc = doc_limits::invalid();
     std::get<PayAttr>(_attrs).value = {};
   }
 
@@ -119,7 +118,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
   size_t Size() const noexcept { return _end - _begin; }
 
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;
+  using Attributes = std::tuple<CostAttr, PayAttr>;
 
   Attributes _attrs;
   const BufferedValue* _begin;

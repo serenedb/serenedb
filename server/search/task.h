@@ -63,7 +63,7 @@ class Task {
   template<IndexTaskType Self>
   void ScheduleContinue(this const Self& self, absl::Duration delay = {}) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "Scheduling task: ", Self::TaskName());
-    self._engine->Queue(Self::ThreadGroup(), delay, self.GetContinuos());
+    self.GetContinuos().Schedule(delay).Detach();
   }
 
  protected:

@@ -40,9 +40,14 @@ namespace sdb::search {
 
 class InvertedIndexShard;
 
-struct InvertedIndexShardOptions {
-  size_t commit_interval_ms;
-  size_t consolidation_interval_ms;
+struct InvertedIndexShardOptions : public IndexShardOptions {
+  struct Base {
+    size_t commit_interval_ms;
+    size_t consolidation_interval_ms;
+    size_t cleanup_interval_step;
+  };
+
+  Base base;
 };
 
 struct ThreadPoolState {
@@ -121,7 +126,7 @@ class Snapshot {
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
-class InvertedIndexShard
+class InvertedIndexShard final
   : public std::enable_shared_from_this<InvertedIndexShard>,
     public IndexShard {
  public:
@@ -141,11 +146,18 @@ class InvertedIndexShard
     uint64_t time_ms;
   };
 
-  InvertedIndexShard(const catalog::InvertedIndex& index,
+  InvertedIndexShard(ObjectId id, const catalog::InvertedIndex& index,
                      InvertedIndexShardOptions options, bool is_new);
 
-  static std::filesystem::path GetPath(ObjectId db, ObjectId schema,
-                                       ObjectId id);
+  static std::filesystem::path GetPath(ObjectId db_id,
+                                       ObjectId schema_id = ObjectId{0},
+                                       ObjectId table_id = ObjectId{0},
+                                       ObjectId index_id = ObjectId{0},
+                                       ObjectId shard_id = ObjectId{0});
+
+  static std::shared_ptr<InvertedIndexShard> Create(
+    ObjectId id, const catalog::InvertedIndex& index,
+    InvertedIndexShardOptions options, bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
 
@@ -168,15 +180,10 @@ class InvertedIndexShard
   yaclib::Future<> CommitWait();
 
   ObjectId GetId() const noexcept { return _id; }
-  ObjectId GetRelationId() const noexcept { return _relation_id; }
   auto GetState() const noexcept { return _state; }
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
-  bool SetOutOfSync() noexcept;
-  void MarkOutOfSyncUnsafe();
-  bool IsOutOfSync() const noexcept;
-  bool FailQueriesOnOutOfSync() const noexcept;
 
   auto& GetMutex() { return _mutex; }
   Snapshot GetSnapshot() const;
@@ -220,6 +227,7 @@ class InvertedIndexShard
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
   Result CleanupUnsafeImpl();
+  void InitPostRecovery(bool is_new);
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;

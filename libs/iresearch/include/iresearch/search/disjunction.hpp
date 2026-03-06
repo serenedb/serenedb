@@ -60,11 +60,15 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
     return _it.GetMutable(type);
   }
 
-  doc_id_t value() const noexcept final { return _it.value(); }
+  doc_id_t advance() final { return this->_doc = _it.advance(); }
 
-  doc_id_t advance() final { return _it.advance(); }
+  doc_id_t seek(doc_id_t target) final { return this->_doc = _it.seek(target); }
 
-  doc_id_t seek(doc_id_t target) final { return _it.seek(target); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    const auto doc = _it.LazySeek(target);
+    this->_doc = _it.value();
+    return doc;
+  }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -79,11 +83,7 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 template<typename Adapter>
 class BasicDisjunction : public CompoundDocIterator<Adapter> {
  public:
-  using adapter = Adapter;
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
-  BasicDisjunction(adapter&& lhs, adapter&& rhs)
+  BasicDisjunction(Adapter&& lhs, Adapter&& rhs)
     : BasicDisjunction{std::move(lhs), std::move(rhs),
                        [this] noexcept {
                          return CostAttr::extract(_itrs[0], 0) +
@@ -99,30 +99,29 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
     NextImpl(_itrs[0]);
     NextImpl(_itrs[1]);
 
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    return doc_value = std::min(_itrs[0].value(), _itrs[1].value());
+    return this->_doc = std::min(_itrs[0].value(), _itrs[1].value());
   }
 
   doc_id_t seek(doc_id_t target) final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (target <= doc_value) [[unlikely]] {
-      return doc_value;
+    if (target <= this->_doc) [[unlikely]] {
+      return this->_doc;
     }
 
     if (SeekImpl(_itrs[0], target) || SeekImpl(_itrs[1], target)) {
-      return doc_value = target;
+      return this->_doc = target;
     }
 
-    return doc_value = std::min(_itrs[0].value(), _itrs[1].value());
+    return this->_doc = std::min(_itrs[0].value(), _itrs[1].value());
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= this->value());
+    // TODO: optimize
+    return seek(target);
   }
 
   uint32_t count() final {
@@ -149,16 +148,15 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
 
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
     // assume that seek or next has been called
-    SDB_ASSERT(_itrs[0].value() >= doc_value);
+    SDB_ASSERT(_itrs[0].value() >= this->_doc);
 
-    if (_itrs[0].value() == doc_value && !visitor(ctx, _itrs[0])) {
+    if (_itrs[0].value() == this->_doc && !visitor(ctx, _itrs[0])) {
       return;
     }
 
-    SeekImpl(_itrs[1], doc_value);
-    if (_itrs[1].value() == doc_value) {
+    SeekImpl(_itrs[1], this->_doc);
+    if (_itrs[1].value() == this->_doc) {
       visitor(ctx, _itrs[1]);
     }
   }
@@ -178,19 +176,18 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   void NextImpl(Adapter& it) {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
     const auto value = it.value();
 
-    if (doc_value == value) {
+    if (this->_doc == value) {
       it.advance();
-    } else if (value < doc_value) {
-      it.seek(doc_value + doc_id_t(!doc_limits::eof(doc_value)));
+    } else if (value < this->_doc) {
+      it.seek(this->_doc + doc_id_t(!doc_limits::eof(this->_doc)));
     }
   }
 
-  using Attributes = std::tuple<DocAttr, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
 
-  mutable std::array<adapter, 2> _itrs;
+  mutable std::array<Adapter, 2> _itrs;
   Attributes _attrs;
 };
 
@@ -209,9 +206,6 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
  public:
   using Adapters = std::vector<Adapter>;
 
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
   SmallDisjunction(Adapters&& itrs, CostAttr::Type est)
     : SmallDisjunction{std::move(itrs), est, ResolveOverloadTag{}} {}
   explicit SmallDisjunction(Adapters&& itrs)
@@ -229,37 +223,30 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
-  bool next_iterator_impl(Adapter& it) {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
+  bool NextImpl(Adapter& it) {
     const auto value = it.value();
 
-    if (value == doc_value) {
+    if (value == this->_doc) {
       return !doc_limits::eof(it.advance());
-    } else if (value < doc_value) {
-      return !doc_limits::eof(it.seek(doc_value + 1));
+    } else if (value < this->_doc) {
+      return !doc_limits::eof(it.seek(this->_doc + 1));
     }
 
     return true;
   }
 
   doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (doc_limits::eof(doc_value)) {
-      return doc_value;
+    if (doc_limits::eof(this->_doc)) {
+      return this->_doc;
     }
 
     doc_id_t min = doc_limits::eof();
 
     for (auto begin = _begin; begin != _end;) {
       auto& it = *begin;
-      if (!next_iterator_impl(it)) {
-        if (!remove_iterator(begin)) {
-          return doc_value = doc_limits::eof();
+      if (!NextImpl(it)) {
+        if (!RemoveIterator(begin)) {
+          return this->_doc = doc_limits::eof();
         }
       } else {
         min = std::min(min, it.value());
@@ -267,14 +254,12 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
       }
     }
 
-    return doc_value = min;
+    return this->_doc = min;
   }
 
   doc_id_t seek(doc_id_t target) final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (doc_limits::eof(doc_value)) {
-      return doc_value;
+    if (doc_limits::eof(this->_doc)) {
+      return this->_doc;
     }
 
     doc_id_t min = doc_limits::eof();
@@ -286,11 +271,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
         const auto value = it.seek(target);
 
         if (value == target) {
-          return doc_value = value;
+          return this->_doc = value;
         } else if (doc_limits::eof(value)) {
-          if (!remove_iterator(begin)) {
+          if (!RemoveIterator(begin)) {
             // exhausted
-            return doc_value = doc_limits::eof();
+            return this->_doc = doc_limits::eof();
           }
           continue;  // don't need to increment 'begin' here
         }
@@ -300,16 +285,21 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
       ++begin;
     }
 
-    return doc_value = min;
+    return this->_doc = min;
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= this->value());
+    // TODO: optimize
+    return seek(target);
   }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
     hitch_all_iterators();
     for (auto it = _begin; it != _end; ++it) {
-      if (it->value() == doc_value && !visitor(ctx, *it)) {
+      if (it->value() == this->_doc && !visitor(ctx, *it)) {
         return;
       }
     }
@@ -324,7 +314,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      this->_doc = doc_limits::eof();
     }
 
     auto rbegin = _itrs.rbegin();
@@ -334,7 +324,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
     }
   }
 
-  bool remove_iterator(typename Adapters::iterator it) {
+  bool RemoveIterator(typename Adapters::iterator it) {
     std::swap(*it, *_begin);
     ++_begin;
 
@@ -342,22 +332,20 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
   }
 
   void hitch_all_iterators() {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (_last_hitched_doc == doc_value) {
+    if (_last_hitched_doc == this->_doc) {
       return;  // nothing to do
     }
     for (auto begin = _begin; begin != _end; ++begin) {
       auto& it = *begin;
-      if (it.value() < doc_value && doc_limits::eof(it.seek(doc_value))) {
-        [[maybe_unused]] auto r = remove_iterator(begin);
+      if (it.value() < this->_doc && doc_limits::eof(it.seek(this->_doc))) {
+        [[maybe_unused]] auto r = RemoveIterator(begin);
         SDB_ASSERT(r);
       }
     }
-    _last_hitched_doc = doc_value;
+    _last_hitched_doc = this->_doc;
   }
 
-  using Attributes = std::tuple<DocAttr, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
   using Iterator = typename Adapters::iterator;
 
   doc_id_t _last_hitched_doc{doc_limits::invalid()};
@@ -384,8 +372,6 @@ class Disjunction : public CompoundDocIterator<Adapter> {
   using Heap = std::vector<size_t>;
   using Iterator = Heap::iterator;
 
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
   static constexpr size_t kSmallDisjunctionUpperBound = 5;
 
   Disjunction(Adapters&& itrs, CostAttr::Type est)
@@ -406,51 +392,49 @@ class Disjunction : public CompoundDocIterator<Adapter> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (doc_limits::eof(doc_value)) {
-      return doc_value;
+    if (doc_limits::eof(this->_doc)) {
+      return this->_doc;
     }
 
-    while (lead().value() <= doc_value) {
-      const auto target = lead().value() == doc_value
+    while (lead().value() <= this->_doc) {
+      const auto target = lead().value() == this->_doc
                             ? lead().advance()
-                            : lead().seek(doc_value + 1);
+                            : lead().seek(this->_doc + 1);
       const bool exhausted = doc_limits::eof(target);
 
       if (exhausted && !remove_lead()) {
-        return doc_value = doc_limits::eof();
+        return this->_doc = doc_limits::eof();
       }
 
       refresh_lead();
     }
 
-    return doc_value = lead().value();
+    return this->_doc = lead().value();
   }
 
   doc_id_t seek(doc_id_t target) final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (doc_limits::eof(doc_value)) {
-      return doc_value;
+    if (doc_limits::eof(this->_doc)) {
+      return this->_doc;
     }
 
     while (lead().value() < target) {
       const auto value = lead().seek(target);
 
       if (doc_limits::eof(value) && !remove_lead()) {
-        return doc_value = doc_limits::eof();
+        return this->_doc = doc_limits::eof();
       } else if (value != target) {
         refresh_lead();
       }
     }
 
-    return doc_value = lead().value();
+    return this->_doc = lead().value();
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= this->value());
+    // TODO: optimize
+    return seek(target);
   }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
@@ -480,7 +464,7 @@ class Disjunction : public CompoundDocIterator<Adapter> {
  private:
   struct ResolveOverloadTag {};
 
-  using Attributes = std::tuple<DocAttr, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
 
   template<typename Estimation>
   Disjunction(Adapters&& itrs, Estimation&& estimation, ResolveOverloadTag)
@@ -492,7 +476,7 @@ class Disjunction : public CompoundDocIterator<Adapter> {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      this->_doc = doc_limits::eof();
     }
 
     // prepare external heap
@@ -555,9 +539,8 @@ class Disjunction : public CompoundDocIterator<Adapter> {
     SDB_ASSERT(!_heap.empty());
     auto begin = _heap.begin(), end = _heap.end() - 1;
 
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    while (begin != end && top().value() < doc_value) {
-      const auto value = top().seek(doc_value);
+    while (begin != end && top().value() < this->_doc) {
+      const auto value = top().seek(this->_doc);
 
       if (doc_limits::eof(value)) {
         // remove top
@@ -658,33 +641,26 @@ class MinMatchDisjunction : public DocIterator {
     return irs::GetMutable(_attrs, id);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (doc_limits::eof(doc_value)) {
-      return doc_value;
+    if (doc_limits::eof(_doc)) {
+      return _doc;
     }
 
     while (CheckSize()) {
       // start next iteration. execute next for all lead iterators
       // and move them to head
       if (!PopLead()) {
-        return doc_value = doc_limits::eof();
+        return _doc = doc_limits::eof();
       }
 
       // make step for all head iterators less or equal current doc (doc_)
-      while (Top().value() <= doc_value) {
-        const auto target = Top().value() == doc_value
-                              ? Top().advance()
-                              : Top().seek(doc_value + 1);
+      while (Top().value() <= _doc) {
+        const auto target =
+          Top().value() == _doc ? Top().advance() : Top().seek(_doc + 1);
         const bool exhausted = doc_limits::eof(target);
 
         if (exhausted && !RemoveTop()) {
-          return doc_value = doc_limits::eof();
+          return _doc = doc_limits::eof();
         }
         RefreshTop();
       }
@@ -695,19 +671,17 @@ class MinMatchDisjunction : public DocIterator {
       do {
         AddLead();
         if (_lead >= _min_match_count) {
-          return doc_value = top;
+          return _doc = top;
         }
       } while (top == Top().value());
     }
 
-    return doc_value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t target) final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (target <= doc_value) [[unlikely]] {
-      return doc_value;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
 
     // execute seek for all lead iterators and
@@ -721,7 +695,7 @@ class MinMatchDisjunction : public DocIterator {
 
         // iterator exhausted
         if (!RemoveLead(it)) {
-          return doc_value = doc_limits::eof();
+          return _doc = doc_limits::eof();
         }
 
         it = Lead();
@@ -738,7 +712,7 @@ class MinMatchDisjunction : public DocIterator {
 
     // check if we still satisfy search criteria
     if (_lead >= _min_match_count) {
-      return doc_value = target;
+      return _doc = target;
     }
 
     // main search loop
@@ -749,13 +723,13 @@ class MinMatchDisjunction : public DocIterator {
         if (doc_limits::eof(doc)) {
           // iterator exhausted
           if (!RemoveTop()) {
-            return doc_value = doc_limits::eof();
+            return _doc = doc_limits::eof();
           }
         } else if (doc == target) {
           // valid iterator, doc == target
           AddLead();
           if (_lead >= _min_match_count) {
-            return doc_value = target;
+            return _doc = target;
           }
         } else {
           // invalid iterator, doc != target
@@ -767,9 +741,15 @@ class MinMatchDisjunction : public DocIterator {
       // start next iteration. execute next for all lead iterators
       // and move them to head
       if (!PopLead()) {
-        return doc_value = doc_limits::eof();
+        return _doc = doc_limits::eof();
       }
     }
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: optimize
+    return seek(target);
   }
 
   // Calculates total count of matched iterators. This value could be
@@ -782,21 +762,19 @@ class MinMatchDisjunction : public DocIterator {
   }
 
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
 
   // Push all valid iterators to lead.
   void PushValidToLead() {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
     for (auto lead = Lead(), begin = _heap.begin();
-         lead != begin && Top().value() <= doc_value;) {
+         lead != begin && Top().value() <= _doc;) {
       // hitch head
-      if (Top().value() == doc_value) {
+      if (Top().value() == _doc) {
         // got hit here
         AddLead();
         --lead;
       } else {
-        if (doc_limits::eof(Top().seek(doc_value))) {
+        if (doc_limits::eof(Top().seek(_doc))) {
           // iterator exhausted
           RemoveTop();
           lead = Lead();

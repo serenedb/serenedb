@@ -414,6 +414,14 @@ class FixedPhraseFrequency {
   }
 
   uint32_t NextPosition() {
+    if constexpr (HasIntervals) {
+      return NextPositionGeneric();
+    } else {
+      return NextPositionOptimized();
+    }
+  }
+
+  uint32_t NextPositionGeneric() {
     uint32_t phrase_freq = 0;
     auto& lead = *_pos.front().first;
     lead.next();
@@ -475,6 +483,47 @@ class FixedPhraseFrequency {
     }
 
     return phrase_freq;
+  }
+
+  uint32_t NextPositionOptimized() {
+    auto begin = _pos.begin();
+    auto end = _pos.end();
+    std::sort(begin, end, [](const auto& l, const auto& r) {
+      return l.first->DocFreq() < r.first->DocFreq();
+    });
+
+    const auto new_lead_offset = begin->second.lead_offset;
+    auto& lead = *begin->first;
+    ++begin;
+    auto lead_pos = lead.seek(pos_limits::min() + new_lead_offset);
+
+    uint32_t phrase_freq = 0;
+    while (true) {
+    restart:
+      if (pos_limits::eof(lead_pos)) [[unlikely]] {
+        return phrase_freq;
+      }
+      for (auto it = begin; it != end; ++it) {
+        const auto target =
+          (lead_pos - new_lead_offset) + it->second.lead_offset;
+        const auto sought = it->first->seek(target);
+        if (sought != target) {
+          if (pos_limits::eof(sought)) [[unlikely]] {
+            return phrase_freq;
+          }
+          lead_pos =
+            lead.seek((sought - it->second.lead_offset) + new_lead_offset);
+          goto restart;
+        }
+      }
+      if constexpr (OneShot) {
+        return 1;
+      } else {
+        ++phrase_freq;
+        lead.next();
+        lead_pos = lead.value();
+      }
+    }
   }
 
   // list of desired positions along with corresponding attributes
@@ -925,9 +974,6 @@ class PhraseIterator : public DocIterator {
                 return std::move(itrs);
               }(std::forward<Adapters>(itrs))},
       _freq{std::move(pos)} {
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
@@ -983,15 +1029,11 @@ class PhraseIterator : public DocIterator {
     return attr ? attr : irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
@@ -1002,9 +1044,23 @@ class PhraseIterator : public DocIterator {
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    // TODO(mbkkt) should be SDB_ASSERT(target > value())
+    // but depends on underlying iterator implementation
+    SDB_ASSERT(target >= value());
+    const auto doc = _approx.LazySeek(target);
+    if (target != doc) {
+      return doc;
+    }
+    if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+      return _doc = doc;
+    }
+    return doc + 1;
   }
 
   uint32_t count() final { return CountImpl(*this); }
@@ -1028,8 +1084,7 @@ class PhraseIterator : public DocIterator {
   }
 
  private:
-  using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, FreqBlockAttr>;
+  using Attributes = std::tuple<AttributePtr<CostAttr>, FreqBlockAttr>;
 
   const byte_type* _stats{};
   score_t _boost{1.0f};

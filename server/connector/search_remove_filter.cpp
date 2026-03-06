@@ -32,7 +32,7 @@ irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   _pk_field = _segment->field(kPkFieldName);
   SDB_ASSERT(_pk_field);
   _pos = 0;
-  _doc.value = irs::doc_limits::invalid();
+  _doc = irs::doc_limits::invalid();
   return irs::memory::to_managed<irs::DocIterator>(
     const_cast<SearchRemoveFilterBase&>(*this));
 }
@@ -40,7 +40,7 @@ irs::DocIterator::ptr SearchRemoveFilterBase::execute(
 irs::doc_id_t SearchRemoveFilter::advance() {
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
-      _doc.value = irs::doc_limits::eof();
+      _doc = irs::doc_limits::eof();
       if (_pks.empty()) [[unlikely]] {
         _pks = {};
       }
@@ -90,7 +90,7 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // if PK found alive it should be the only one in the entire index.
     pk = _pks.back();
     _pks.pop_back();
-    _doc.value = doc;
+    _doc = doc;
     return doc;
   }
 }

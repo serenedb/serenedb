@@ -24,6 +24,7 @@
 #include <string_view>
 
 #include "basics/system-compiler.h"
+#include "pg/sql_utils.h"
 #include "query/config.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN

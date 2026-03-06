@@ -40,19 +40,22 @@ class AllIterator : public DocIterator {
     : _max_doc{doc_limits::min() + docs_count - 1} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<DocAttr>::id() == type ? &_doc : nullptr;
+    return nullptr;
   }
 
-  doc_id_t value() const noexcept final { return _doc.value; }
-
   doc_id_t advance() noexcept final {
-    _doc.value = _doc.value < _max_doc ? _doc.value + 1 : doc_limits::eof();
-    return _doc.value;
+    _doc = _doc < _max_doc ? _doc + 1 : doc_limits::eof();
+    return _doc;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
-    _doc.value = target <= _max_doc ? target : doc_limits::eof();
-    return _doc.value;
+    _doc = target <= _max_doc ? target : doc_limits::eof();
+    return _doc;
+  }
+
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
   }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
@@ -62,16 +65,15 @@ class AllIterator : public DocIterator {
   }
 
   uint32_t count() noexcept final {
-    if (doc_limits::eof(_doc.value)) {
+    if (doc_limits::eof(_doc)) {
       return 0;
     }
-    const auto count = _max_doc - _doc.value;
-    _doc.value = doc_limits::eof();
+    const auto count = _max_doc - _doc;
+    _doc = doc_limits::eof();
     return count;
   }
 
  private:
-  DocAttr _doc;
   const doc_id_t _max_doc;  // largest valid doc_id
 };
 
@@ -84,13 +86,11 @@ class MaskDocIterator : public DocIterator {
     return _it->GetMutable(type);
   }
 
-  doc_id_t value() const noexcept final { return _it->value(); }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _it->advance();
       if (!_mask.contains(doc)) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
@@ -98,9 +98,15 @@ class MaskDocIterator : public DocIterator {
   doc_id_t seek(doc_id_t target) final {
     const auto doc = _it->seek(target);
     if (!_mask.contains(doc)) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO(mbkkt): optimize
+    return seek(target);
   }
 
   uint32_t count() final { return CountImpl(*this); }
@@ -127,22 +133,20 @@ class MaskedDocIterator : public DocIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<DocAttr>::id() == type ? &_current : nullptr;
+    return nullptr;
   }
 
-  doc_id_t value() const noexcept final { return _current.value; }
-
-  doc_id_t advance() final {
+  doc_id_t advance() noexcept final {
     while (_next < _end) {
-      _current.value = _next++;
-      if (!_docs_mask.contains(_current.value)) {
-        return _current.value;
+      _doc = _next++;
+      if (!_docs_mask.contains(_doc)) {
+        return _doc;
       }
     }
-    return _current.value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
-  doc_id_t seek(doc_id_t target) final {
+  doc_id_t seek(doc_id_t target) noexcept final {
     if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
@@ -150,7 +154,12 @@ class MaskedDocIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return CountImpl(*this); }
+  doc_id_t LazySeek(doc_id_t target) noexcept final {
+    SDB_ASSERT(target >= value());
+    return seek(target);
+  }
+
+  uint32_t count() noexcept final { return CountImpl(*this); }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
@@ -160,7 +169,6 @@ class MaskedDocIterator : public DocIterator {
 
  private:
   const DocumentMask& _docs_mask;
-  DocAttr _current;
   const doc_id_t _end;  // past last valid doc_id
   doc_id_t _next;
 };

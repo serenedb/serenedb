@@ -1063,3 +1063,10 @@ select ~('-1'::integer);
 ----
 ?column?
 0
+
+
+query
+SELECT '80' || '14' || 'vedernikof';
+----
+?column?
+8014vedernikof

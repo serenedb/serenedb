@@ -509,18 +509,16 @@ irs::Tokenizer& StringField::GetTokens() const {
 }
 
 StringViewField::StringViewField(const std::string& name,
-                                 irs::IndexFeatures extra_index_features) {
-  this->index_features =
-    (irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) | extra_index_features;
+                                 irs::IndexFeatures index_features) {
+  this->index_features = index_features;
   this->name = name;
 }
 
 StringViewField::StringViewField(const std::string& name,
                                  const std::string_view& value,
-                                 irs::IndexFeatures extra_index_features)
+                                 irs::IndexFeatures index_features)
   : _value(value) {
-  this->index_features =
-    (irs::IndexFeatures::Freq | irs::IndexFeatures::Pos) | extra_index_features;
+  this->index_features = index_features;
   this->name = name;
 }
 

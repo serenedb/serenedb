@@ -20,6 +20,8 @@
 
 #include "pg_feature.h"
 
+#include <velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h>
+
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
@@ -86,11 +88,14 @@ void PostgresFeature::prepare() {
   velox::memory::MemoryManager::initialize(
     velox::memory::MemoryManager::Options{});
 
+  velox::filesystems::registerS3FileSystem();
+
   RegisterVeloxFunctionsAndTypes();
 }
 
 void PostgresFeature::start() {
-  pg::RegisterSystemViews();
+  RegisterSystemFunctions();
+  RegisterSystemViews();
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
     auto& engine = GetServerEngine();
@@ -109,6 +114,7 @@ void PostgresFeature::start() {
 }
 
 void PostgresFeature::unprepare() {
+  velox::filesystems::finalizeS3FileSystem();
   folly::SingletonVault::singleton()->destroyInstancesFinal();
 }
 

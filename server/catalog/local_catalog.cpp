@@ -106,8 +106,9 @@ namespace {
 Result Apply(
   auto& snapshot, auto&& f,
   std::function<void(const std::shared_ptr<SnapshotImpl>&)> rollback = {}) {
-  auto self = std::atomic_load_explicit(&snapshot, std::memory_order_relaxed);
+  auto self = std::atomic_load_explicit(&snapshot, std::memory_order_acquire);
   std::shared_ptr<SnapshotImpl> clone = self->Clone();
+  self.reset();
   if (auto r = f(clone); !r.ok()) {
     if (rollback) {
       rollback(clone);

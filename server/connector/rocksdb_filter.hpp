@@ -121,7 +121,7 @@ class OrFilterNode final : public FilterNode {
   [[nodiscard]] std::vector<Point> NextPoints() final;
 
  private:
-  std::vector<std::unique_ptr<FilterNode>> _filters;
+  std::vector<std::unique_ptr<FilterNode>> _children;
   size_t _current = 0;
 };
 

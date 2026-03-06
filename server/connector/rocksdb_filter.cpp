@@ -49,6 +49,87 @@ velox::VectorPtr BuildPointColumn(const std::string& col_name,
 }
 
 std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
+                                        std::span<const std::string> pk_names);
+
+std::unique_ptr<FilterNode> ParseEq(const velox::core::CallTypedExpr* func_call,
+                                    std::span<const std::string> pk_names) {
+  SDB_ASSERT(func_call->inputs().size() == 2);
+  if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
+      func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
+    return nullptr;
+  }
+  auto field_access =
+    basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
+  auto const_val =
+    basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
+  return std::make_unique<EqFilterNode>(field_access->name(), const_val,
+                                        pk_names);
+}
+
+std::unique_ptr<FilterNode> ParseIn(const velox::core::CallTypedExpr* func_call,
+                                    std::span<const std::string> pk_names) {
+  if (func_call->inputs().size() != 2) {
+    return nullptr;
+  }
+  if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
+      func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
+    return nullptr;
+  }
+  auto field_access =
+    basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
+  auto array_const =
+    basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
+  if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
+    return nullptr;
+  }
+  SDB_ASSERT(array_const->valueVector()->typeKind() == velox::TypeKind::ARRAY);
+  auto const_vec = basics::downCast<velox::ConstantVector<velox::ComplexType>>(
+    array_const->valueVector());
+  auto array_vec =
+    basics::downCast<velox::ArrayVector>(const_vec->valueVector());
+  const auto offset = array_vec->offsetAt(const_vec->index());
+  const auto size = array_vec->sizeAt(const_vec->index());
+  const auto& elements = array_vec->elements();
+
+  std::vector<std::unique_ptr<FilterNode>> children;
+  children.reserve(size);
+  for (velox::vector_size_t i = 0; i < size; ++i) {
+    auto elem_const = std::make_shared<velox::core::ConstantTypedExpr>(
+      velox::BaseVector::wrapInConstant(1, offset + i, elements));
+    children.emplace_back(std::make_unique<EqFilterNode>(
+      field_access->name(), std::move(elem_const), pk_names));
+  }
+  return std::make_unique<OrFilterNode>(std::move(children));
+}
+
+std::unique_ptr<FilterNode> ParseAndOr(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
+  SDB_ASSERT(!func_call->inputs().empty(), "and/or must have at least 1 child");
+  const bool is_or = func_call->name() == "or";
+
+  std::vector<std::unique_ptr<FilterNode>> children;
+  children.reserve(func_call->inputs().size());
+  for (const auto& input : func_call->inputs()) {
+    auto child = ParseFilter(input, pk_names);
+    if (is_or && !child) {
+      // Unconstrained child makes the entire OR unconstrained.
+      return nullptr;
+    }
+    if (child) {
+      children.emplace_back(std::move(child));
+    }
+  }
+  if (children.empty()) {
+    return nullptr;
+  }
+  if (!is_or) {
+    return std::make_unique<AndFilterNode>(std::move(children));
+  }
+  return std::make_unique<OrFilterNode>(std::move(children));
+}
+
+std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
                                         std::span<const std::string> pk_names) {
   if (!expr->isCallKind()) {
     return nullptr;
@@ -56,85 +137,14 @@ std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
   const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
 
   if (func_call->name() == "presto_eq") {
-    SDB_ASSERT(func_call->inputs().size() == 2);
-    if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
-        func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
-      return nullptr;
-    }
-    auto field_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
-      func_call->inputs()[0]);
-    auto const_val =
-      basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
-    return std::make_unique<EqFilterNode>(field_access->name(), const_val,
-                                          pk_names);
+    return ParseEq(func_call, pk_names);
   }
-
   if (func_call->name() == "in") {
-    if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess) {
-      return nullptr;
-    }
-    auto field_access = basics::downCast<velox::core::FieldAccessTypedExpr>(
-      func_call->inputs()[0]);
-
-    SDB_ASSERT(func_call->inputs().size() == 2,
-               "in() expected exactly 2 inputs: field + array constant");
-    if (func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
-      return nullptr;
-    }
-    auto array_const =
-      basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
-    if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
-      return nullptr;
-    }
-
-    SDB_ASSERT(array_const->valueVector()->typeKind() ==
-               velox::TypeKind::ARRAY);
-    auto const_vec =
-      basics::downCast<velox::ConstantVector<velox::ComplexType>>(
-        array_const->valueVector());
-    auto array_vec =
-      basics::downCast<velox::ArrayVector>(const_vec->valueVector());
-    const auto offset = array_vec->offsetAt(const_vec->index());
-    const auto size = array_vec->sizeAt(const_vec->index());
-    const auto& elements = array_vec->elements();
-
-    std::vector<std::unique_ptr<FilterNode>> eqs;
-    eqs.reserve(size);
-    for (velox::vector_size_t i = 0; i < size; ++i) {
-      auto elem_const = std::make_shared<velox::core::ConstantTypedExpr>(
-        velox::BaseVector::wrapInConstant(1, offset + i, elements));
-      eqs.emplace_back(std::make_unique<EqFilterNode>(
-        field_access->name(), std::move(elem_const), pk_names));
-    }
-    return std::make_unique<OrFilterNode>(std::move(eqs));
+    return ParseIn(func_call, pk_names);
   }
-
   if (func_call->name() == "and" || func_call->name() == "or") {
-    SDB_ASSERT(!func_call->inputs().empty(),
-               "and/or must have at least 1 child");
-    const bool is_or = func_call->name() == "or";
-
-    std::vector<std::unique_ptr<FilterNode>> children;
-    children.reserve(func_call->inputs().size());
-    for (const auto& input : func_call->inputs()) {
-      auto child = ParseFilter(input, pk_names);
-      if (is_or && !child) {
-        // Unconstrained child makes the entire OR unconstrained.
-        return nullptr;
-      }
-      if (child) {
-        children.emplace_back(std::move(child));
-      }
-    }
-    if (children.empty()) {
-      return nullptr;
-    }
-    if (!is_or) {
-      return std::make_unique<AndFilterNode>(std::move(children));
-    }
-    return std::make_unique<OrFilterNode>(std::move(children));
+    return ParseAndOr(func_call, pk_names);
   }
-
   return nullptr;
 }
 
@@ -277,11 +287,11 @@ std::vector<Point> AndFilterNode::NextPoints() {
 }
 
 OrFilterNode::OrFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
-  : _filters{std::move(filters)} {}
+  : _children{std::move(filters)} {}
 
 std::vector<Point> OrFilterNode::NextPoints() {
-  while (_current < _filters.size()) {
-    auto pts = _filters[_current]->NextPoints();
+  while (_current < _children.size()) {
+    auto pts = _children[_current]->NextPoints();
     if (!pts.empty()) {
       return pts;
     }

@@ -893,7 +893,7 @@ ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
   absl::MutexLock lock{&_mutex};
 
   auto r = Apply(_snapshot, [&](auto& clone) {
-    return _snapshot->RegisterObject(*index, relation_id, false);
+    return clone->RegisterObject(*index, relation_id, false);
   });
   if (!r.ok()) {
     return std::unexpected<Result>(std::in_place, r.errorNumber(),

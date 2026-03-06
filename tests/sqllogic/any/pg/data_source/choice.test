@@ -10,6 +10,7 @@ CREATE TABLE t_choice (id INTEGER PRIMARY KEY, val INTEGER);
 statement ok
 INSERT INTO t_choice VALUES (1, 10), (2, 20), (3, 30);
 
+onlyif serenedb
 statement ok
 SET sdb_fault_t_choice_force_multiget_source TO DEFAULT;
 
@@ -19,9 +20,11 @@ SELECT * FROM t_choice WHERE id = 2;
 id	val
 2	20
 
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice ORDER BY id;
 
+onlyif serenedb
 statement ok
 RESET sdb_fault_t_choice_force_multiget_source;
 
@@ -35,6 +38,7 @@ id	val
 3	30
 
 
+onlyif serenedb
 statement ok
 SET sdb_read_your_own_writes = 1;
 
@@ -44,6 +48,8 @@ BEGIN;
 statement count 1
 INSERT INTO t_choice VALUES (4, 40);
 
+
+onlyif serenedb
 statement ok
 SET sdb_fault_t_choice_force_multiget_source TO DEFAULT;
 
@@ -53,15 +59,19 @@ SELECT * FROM t_choice WHERE id = 4;
 id	val
 4	40
 
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice ORDER BY id;
 
+onlyif serenedb
 statement ok
 RESET sdb_fault_t_choice_force_multiget_source;
 
 statement ok
 ROLLBACK;
 
+
+onlyif serenedb
 statement ok
 SET sdb_read_your_own_writes = 0;
 
@@ -73,6 +83,7 @@ CREATE TABLE t_choice_cpk (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b)
 statement ok
 INSERT INTO t_choice_cpk VALUES (1, 2, 10), (3, 4, 20), (5, 6, 30);
 
+onlyif serenedb
 statement ok
 SET sdb_fault_t_choice_cpk_force_multiget_source TO DEFAULT;
 
@@ -84,14 +95,16 @@ a	b	val
 3	4	20
 
 # Partial PK filter (not a point)
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 
 
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice_cpk ORDER BY a;
 
-
+onlyif serenedb
 statement ok
 RESET sdb_fault_t_choice_cpk_force_multiget_source;
 
@@ -113,6 +126,7 @@ a	b	val
 3	6	32
 5	6	30
 
+onlyif serenedb
 statement ok
 SET sdb_fault_t_choice_cpk_force_multiget_source TO DEFAULT;
 
@@ -140,16 +154,19 @@ a	b	val
 
 # 1=1 is not a call expression -> AnyFilterNode (no constraints).
 # Cartesian of {a:1},{b:2} x {IsNoFilters} stays partial -> not specific -> full scan.
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1} (partial) -> full scan.
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1, b:2}, but
 # AnyFilterNode or {a:1, b:2} -> Any point -> full scan
-statement error
+onlyif serenedb
+query error
 SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
 
 # a IN (1,3) -> OrFilter({a:1},{a:3}); b IN (2,6) -> OrFilter({b:2},{b:6}).
@@ -163,6 +180,7 @@ a	b	val
 3	2	30
 3	6	32
 
+onlyif serenedb
 statement ok
 RESET sdb_fault_t_choice_cpk_force_multiget_source;
 

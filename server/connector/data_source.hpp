@@ -137,10 +137,6 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
 };
 
 // TODOs
-// - Tests with failure points, where full scan data source will be disabled.
-// - Solve problem with rejected filters. Looks like we need to pass pk_type
-// into creating table handle to decide whether to take a filter into account or
-// not. It's possible only after traversing all the filters.
 // - Solve other TODOs across this PR (mainly perf and design related)
 
 class RocksDBPointLookupDataSource : public velox::connector::DataSource {

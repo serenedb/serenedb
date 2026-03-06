@@ -45,7 +45,7 @@ services:
         '
 
   tests:
-    image: rust:latest
+    image: ${BUILD_IMAGE}
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
@@ -55,13 +55,6 @@ services:
       - serenedb-single
     environment:
       - COMPOSE_NETWORK=sqllogic_test-network
-    command:
-      - bash
-      - -c
-      - |
-        curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
-          | tar xz --strip-components=1 -C /usr/local/bin docker/docker &&
-        exec sqllogic/run_serene_and_pg.sh
     networks:
       - test-network
     command: sqllogic/run_serene_and_pg.sh

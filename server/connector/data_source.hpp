@@ -191,6 +191,8 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   uint64_t _produced = 0;
   size_t _offset = 0;
   velox::RowVectorPtr _values;
+  std::vector<std::string> _keys;
+  std::vector<rocksdb::Slice> _key_slices;
 };
 
 class RocksDBRYOWPointLookupDataSource final

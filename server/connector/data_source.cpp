@@ -31,7 +31,6 @@
 #include "connector/primary_key.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
-#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -423,7 +422,6 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
   SDB_ASSERT(_values->size() > 0,
              "Case of empty filters should be processed in connector");
 
-  SDB_PRINT("row_type=", _row_type->toString());
   const auto num_columns = _row_type->size();
 
   // For now, we do not reject filters, so this data source is reading at
@@ -446,25 +444,26 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
   const size_t total_keys = batch_size * num_columns;
 
   // Build keys for [_offset, _offset + batch_size), laid out as
-  // [point_idx * num_columns + col_idx]
-  std::vector<std::string> keys(total_keys);
+  // [point_idx * num_columns + col_idx].
+  _keys.resize(total_keys);
   for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
     for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      std::string key = key_utils::PrepareTableKey(_object_key);
+      auto& key = _keys[point_idx * num_columns + col_idx];
+      key.clear();
+      key_utils::AppendTableKey(key, _object_key);
       key_utils::AppendColumnKey(key, _column_ids[col_idx]);
       primary_key::Create(*_values, _offset + point_idx, key);
-      keys[point_idx * num_columns + col_idx] = std::move(key);
     }
   }
 
-  std::vector<rocksdb::Slice> key_slices(total_keys);
+  _key_slices.resize(total_keys);
   for (size_t i = 0; i < total_keys; ++i) {
-    key_slices[i] = keys[i];
+    _key_slices[i] = _keys[i];
   }
 
   std::vector<rocksdb::ColumnFamilyHandle*> cfs(total_keys, &_cf);
   std::vector<std::string> raw_values(total_keys);
-  const auto statuses = DoMultiGet(cfs, key_slices, raw_values);
+  const auto statuses = DoMultiGet(cfs, _key_slices, raw_values);
 
   std::vector<velox::VectorPtr> columns;
   columns.reserve(num_columns);

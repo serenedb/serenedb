@@ -26,7 +26,6 @@
 #include <velox/vector/ComplexVector.h>
 
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -67,7 +66,7 @@ class FilterNode {
  public:
   virtual ~FilterNode() = default;
 
-  [[nodiscard]] virtual std::optional<Point> NextPoint() = 0;
+  [[nodiscard]] virtual std::vector<Point> NextPoints() = 0;
 
  protected:
   FilterNode() = default;
@@ -78,7 +77,7 @@ class EqFilterNode final : public FilterNode {
   EqFilterNode(std::string column_name, velox::core::ConstantTypedExprPtr value,
                std::span<const std::string> pk_names);
 
-  [[nodiscard]] std::optional<Point> NextPoint() final;
+  [[nodiscard]] std::vector<Point> NextPoints() final;
 
  private:
   std::string _column_name;
@@ -91,7 +90,7 @@ class AndFilterNode final : public FilterNode {
  public:
   explicit AndFilterNode(std::vector<std::unique_ptr<FilterNode>> filters);
 
-  [[nodiscard]] std::optional<Point> NextPoint() final;
+  [[nodiscard]] std::vector<Point> NextPoints() final;
 
  private:
   // Ensure _all_points[child_idx] has an entry at needed_idx (lazy drain).
@@ -119,7 +118,7 @@ class OrFilterNode final : public FilterNode {
  public:
   explicit OrFilterNode(std::vector<std::unique_ptr<FilterNode>> filters);
 
-  [[nodiscard]] std::optional<Point> NextPoint() final;
+  [[nodiscard]] std::vector<Point> NextPoints() final;
 
  private:
   std::vector<std::unique_ptr<FilterNode>> _filters;

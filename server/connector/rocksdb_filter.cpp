@@ -79,13 +79,11 @@ std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
     SDB_ASSERT(func_call->inputs().size() == 2,
                "in() expected exactly 2 inputs: field + array constant");
     if (func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
-      SDB_PRINT("[mkornaukhov] in() second arg is not a constant");
       return nullptr;
     }
     auto array_const =
       basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
     if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
-      SDB_PRINT("[mkornaukhov] in() second arg is not an array constant");
       return nullptr;
     }
 
@@ -178,7 +176,7 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
       continue;
     }
     if (lhs_f->value() != rhs_f->value()) {
-      // a = 1 AND a = 2 → contradiction
+      // a = 1 AND a = 2 -> contradiction
       return {};
     }
     result._column_filters.emplace(pk_name, lhs_f);
@@ -193,13 +191,13 @@ EqFilterNode::EqFilterNode(std::string column_name,
     _value{std::move(value)},
     _pk_names{pk_names} {}
 
-std::optional<Point> EqFilterNode::NextPoint() {
+std::vector<Point> EqFilterNode::NextPoints() {
   if (_sent)
     return {};
   _sent = true;
   Point p{_pk_names};
   p.AddEqFilter(_column_name, _value.get());
-  return p;
+  return {std::move(p)};
 }
 
 AndFilterNode::AndFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
@@ -210,12 +208,12 @@ bool AndFilterNode::EnsureChildPoint(size_t child_idx, size_t needed_idx) {
   while (child_points.size() <= needed_idx) {
     if (_exhausted[child_idx])
       return false;
-    if (auto p = _children[child_idx]->NextPoint()) {
-      child_points.push_back(std::move(*p));
-    } else {
+    auto pts = _children[child_idx]->NextPoints();
+    if (pts.empty()) {
       _exhausted[child_idx] = true;
       return false;
     }
+    std::ranges::move(pts, std::back_inserter(child_points));
   }
   return true;
 }
@@ -244,7 +242,7 @@ std::optional<Point> AndFilterNode::TryMerge() const {
 }
 
 // TODO check how works
-std::optional<Point> AndFilterNode::NextPoint() {
+std::vector<Point> AndFilterNode::NextPoints() {
   if (_children.empty() || _state == State::Done)
     return {};
 
@@ -268,8 +266,9 @@ std::optional<Point> AndFilterNode::NextPoint() {
 
   // Skip conflicting combinations.
   while (true) {
-    if (auto result = TryMerge())
-      return result;
+    if (auto result = TryMerge()) {
+      return {std::move(*result)};
+    }
     if (!Advance()) {
       _state = State::Done;
       return {};
@@ -280,10 +279,11 @@ std::optional<Point> AndFilterNode::NextPoint() {
 OrFilterNode::OrFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
   : _filters{std::move(filters)} {}
 
-std::optional<Point> OrFilterNode::NextPoint() {
+std::vector<Point> OrFilterNode::NextPoints() {
   while (_current < _filters.size()) {
-    if (auto p = _filters[_current]->NextPoint()) {
-      return p;
+    auto pts = _filters[_current]->NextPoints();
+    if (!pts.empty()) {
+      return pts;
     }
     ++_current;
   }
@@ -296,7 +296,6 @@ std::unique_ptr<FilterNode> ParseFilters(
   std::vector<std::unique_ptr<FilterNode>> nodes;
   nodes.reserve(filters.size());
   for (const auto& filter : filters) {
-    SDB_PRINT("filter=", filter->toString());
     if (auto node = ParseFilter(filter, pk_names)) {
       nodes.emplace_back(std::move(node));
     }
@@ -310,12 +309,16 @@ velox::RowVectorPtr TryGetPoints(FilterNode& filter, velox::RowTypePtr pk_type,
 
   // Drain all specific points first.
   std::vector<Point> points;
-  while (auto point = filter.NextPoint()) {
-    if (!point->IsSpecific()) {
-      SDB_PRINT("[mkornaukhov] point filter is not specific, too wide");
-      return nullptr;
+  while (true) {
+    auto pts = filter.NextPoints();
+    if (pts.empty())
+      break;
+    for (auto& point : pts) {
+      if (!point.IsSpecific()) {
+        return nullptr;
+      }
+      points.push_back(std::move(point));
     }
-    points.push_back(std::move(*point));
   }
   if (points.empty()) {
     return nullptr;

@@ -20,15 +20,13 @@ directory = @LOCALSTATEDIR@/lib/serenedb
 #   endpoint = tcp://[::]:8529
 #   endpoint = tcp://[fe80::21a:5df1:aede:98cf]:8529
 #
-endpoint = pgsql+tcp://0.0.0.0:8529
+endpoint = pgsql+tcp://127.0.0.1:8529
 
 # reuse a port on restart or wait until it is freed by the operating system
 # reuse-address = false
 # number of maximal server threads. use 0 to make serened determine the
 # number of threads automatically, based on available CPUs
 # maximal-threads = 0
-
-@DEFINEUID@uid = serenedb
 
 [log]
 level = info

@@ -416,11 +416,11 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
       return {};
 
     auto it = column->iterator(irs::ColumnHint::Normal);
-    auto* doc_attr = irs::get<irs::DocAttr>(*it);
     auto* payload = irs::get<irs::PayAttr>(*it);
 
-    while (it->next()) {
-      auto idx = base + doc_attr->value - irs::doc_limits::min();
+    for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
+         doc = it->advance()) {
+      auto idx = base + doc - irs::doc_limits::min();
       EXPECT_LT(idx, id_map.size()) << "doc_id out of range";
       id_map[idx] = irs::ToString<std::string_view>(payload->value.data());
     }

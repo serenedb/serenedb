@@ -76,15 +76,7 @@ class ScoreCollector {
   virtual void Add(score_t score, doc_id_t doc) = 0;
 
   virtual void CollectWindow(const score_t* scores, const uint64_t* mask,
-                             doc_id_t min, size_t num_blocks) {
-    for (size_t i = 0; i < num_blocks; ++i) {
-      const doc_id_t base = min + static_cast<doc_id_t>(i * kBlockSize);
-      for (auto word = mask[i]; word; word &= word - 1) {
-        const doc_id_t bit = std::countr_zero(word);
-        Add(scores[i * kBlockSize + bit], base + bit);
-      }
-    }
-  }
+                             doc_id_t min, size_t num_blocks) = 0;
 
  protected:
   explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}

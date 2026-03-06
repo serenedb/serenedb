@@ -31,6 +31,7 @@ fi
 # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
 mkdir -p "$WORKSPACE/sanitizers"
 mkdir -p "$WORKSPACE/build/coverage"
+mkdir -p "$WORKSPACE/logs"
 
 if test -z "$BUILD_IMAGE"; then
     export BUILD_IMAGE=10.serenedb.com:5000/serenedb-build-ubuntu:latest

@@ -328,7 +328,7 @@ WITH (
   S3_ENDPOINT 'localhost:${MINIO_PORT}'
 );
 ----
-db error: ERROR: s3_access_key/s3_secret_key and s3_iam_role are mutually exclusive
+db error: ERROR: s3_access_key/s3_secret_key and s3_iam_role cannot be specified together
 
 
 statement error

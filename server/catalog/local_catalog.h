@@ -108,7 +108,7 @@ class LocalCatalog final : public LogicalCatalog,
                    std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
-  std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
+  std::shared_ptr<const Snapshot> GetSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;
@@ -116,7 +116,7 @@ class LocalCatalog final : public LogicalCatalog,
 
  private:
   mutable absl::Mutex _mutex;
-  std::shared_ptr<SnapshotImpl> _snapshot;
+  std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
   bool _skip_background_errors;
 };

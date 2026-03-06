@@ -55,17 +55,27 @@ launch_s3() {
   }
   trap cleanup_minio EXIT
 
-  echo "Starting MinIO on port $MINIO_PORT..."
+  local network_args=()
+  if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+    network_args=(--network "$COMPOSE_NETWORK")
+    export MINIO_HOST="$MINIO_CONTAINER_NAME"
+    export MINIO_PORT=9000
+  else
+    network_args=(-p "$MINIO_PORT:9000")
+    export MINIO_HOST="localhost"
+  fi
+
+  echo "Starting MinIO (host=$MINIO_HOST, port=$MINIO_PORT)..."
   docker run -d \
     --name "$MINIO_CONTAINER_NAME" \
-    -p "$MINIO_PORT:9000" \
+    "${network_args[@]}" \
     -e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
     -e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
     minio/minio:latest server /data
 
   echo "Waiting for MinIO to be ready..."
   for i in $(seq 1 30); do
-    if curl -sf "http://localhost:$MINIO_PORT/minio/health/ready" >/dev/null 2>&1; then
+    if curl -sf "http://${MINIO_HOST}:${MINIO_PORT}/minio/health/ready" >/dev/null 2>&1; then
       echo "MinIO is ready."
       break
     fi
@@ -82,7 +92,7 @@ launch_s3() {
   docker exec "$MINIO_CONTAINER_NAME" \
     mc mb "local/$MINIO_BUCKET" >/dev/null 2>&1 || true
 
-  echo "MinIO running on port $MINIO_PORT, bucket '$MINIO_BUCKET' created."
+  echo "MinIO running (host=$MINIO_HOST, port=$MINIO_PORT), bucket '$MINIO_BUCKET' created."
   echo
 }
 

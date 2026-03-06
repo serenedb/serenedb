@@ -21,7 +21,7 @@ WITH (
   HEADER true,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -40,7 +40,7 @@ WITH (
   HEADER true,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -68,7 +68,7 @@ WITH (
   HEADER true,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 )
 WHERE id != 2 AND id != 4;
 
@@ -89,7 +89,7 @@ COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.tsv'
 WITH (
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -106,7 +106,7 @@ COPY s3_tsv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack
 WITH (
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -129,7 +129,7 @@ WITH (
   FORMAT parquet,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -147,7 +147,7 @@ WITH (
   FORMAT parquet,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -278,7 +278,7 @@ WITH (
   HEADER true,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -297,7 +297,7 @@ WITH (
   HEADER true,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 
 
@@ -325,7 +325,7 @@ WITH (
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
   S3_IAM_ROLE 'arn:aws:iam::123456789012:role/test',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 ----
 db error: ERROR: s3_access_key/s3_secret_key and s3_iam_role cannot be specified together
@@ -336,7 +336,7 @@ COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
 WITH (
   FORMAT csv,
   S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 ----
 db error: ERROR: s3_access_key and s3_secret_key must be specified together
@@ -347,7 +347,7 @@ COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
 WITH (
   FORMAT csv,
   S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT 'localhost:${MINIO_PORT}'
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
 );
 ----
 db error: ERROR: s3_access_key and s3_secret_key must be specified together

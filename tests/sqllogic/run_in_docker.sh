@@ -54,7 +54,7 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
   }
   trap cleanup EXIT
 
-  docker network create --driver overlay --attachable "$NETWORK_NAME"
+  docker network inspect "$NETWORK_NAME" &>/dev/null || docker network create --driver overlay --attachable "$NETWORK_NAME"
   docker volume create "$VOLUME_NAME"
 
   docker service create \

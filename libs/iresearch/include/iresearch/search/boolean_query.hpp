@@ -29,6 +29,8 @@
 
 namespace irs {
 
+class BooleanFilter;
+
 // Base class for boolean queries
 class BooleanQuery : public Filter::Query {
  public:
@@ -37,7 +39,7 @@ class BooleanQuery : public Filter::Query {
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final;
 
-  void visit(const irs::SubReader& segment, irs::PreparedStateVisitor& visitor,
+  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
              score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
@@ -100,6 +102,26 @@ class MinMatchQuery : public BooleanQuery {
 
  private:
   size_t _min_match_count;
+};
+
+class BoostQuery : public Filter::Query {
+ public:
+  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+
+  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
+             score_t boost) const final;
+
+  score_t Boost() const noexcept final {
+    SDB_ASSERT(false);
+    return {};
+  }
+
+  void Prepare(const PrepareContext& ctx, const BooleanFilter& req,
+               const BooleanFilter& opt);
+
+ private:
+  Query::ptr _req;
+  Query::ptr _opt;
 };
 
 }  // namespace irs

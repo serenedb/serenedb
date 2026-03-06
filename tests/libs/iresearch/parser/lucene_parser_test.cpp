@@ -1749,4 +1749,34 @@ TEST_F(LuceneParserTest, ComplexMultiFieldNested) {
   AssertTerm(g2.GetOptional()[1], "author", "bar");
 }
 
+// Query: "+open source software licenses"
+// Expected: required=[open], optional=[source, software, licenses]
+TEST_F(LuceneParserTest, RequiredWithOptionals) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "+open source software licenses").ok());
+  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_EQ(3, OptionalRoot().size());
+
+  AssertTerm(RequiredRoot()[0], "content", "open");
+  AssertTerm(OptionalRoot()[0], "content", "source");
+  AssertTerm(OptionalRoot()[1], "content", "software");
+  AssertTerm(OptionalRoot()[2], "content", "licenses");
+}
+
+// Query: "+open" — required only, no optional
+TEST_F(LuceneParserTest, RequiredOnly) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "+open").ok());
+  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(OptionalRoot().empty());
+  AssertTerm(RequiredRoot()[0], "content", "open");
+}
+
+// Query: "open source" — optional only (no + prefix), no required
+TEST_F(LuceneParserTest, OptionalOnly) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "open source").ok());
+  ASSERT_TRUE(RequiredRoot().empty());
+  ASSERT_EQ(2, OptionalRoot().size());
+  AssertTerm(OptionalRoot()[0], "content", "open");
+  AssertTerm(OptionalRoot()[1], "content", "source");
+}
+
 }  // namespace

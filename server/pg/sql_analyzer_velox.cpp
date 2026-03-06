@@ -75,6 +75,7 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
@@ -1822,7 +1823,7 @@ void WriteNoticeInBuffer(message::Buffer& send, std::string_view message) {
 
 class CopyRowRejector {
  public:
-  enum class LogVerbosity { Silent = 0, Default = 1, Verbose = 2 };
+  using LogVerbosity = file_options::CopyLogVerbosity;
 
   CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
                   std::string_view table_name, uint64_t reject_limit)
@@ -1928,10 +1929,14 @@ class CopyOptionsParser : public FileOptionsParser {
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
                     NameToOption& explain_options)
-    : FileOptionsParser{"COPY", query_string, file_path,
+    : FileOptionsParser{"COPY",
+                        query_string,
+                        file_path,
                         [&send_buffer](std::string msg) {
                           WriteNoticeInBuffer(send_buffer, msg);
-                        }},
+                        },
+                        MakeCopyOptions(options, query_string, explain_options),
+                        file_options::kCopyParserGroups},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1942,29 +1947,6 @@ class CopyOptionsParser : public FileOptionsParser {
     } else {
       _reader_options = std::make_shared<connector::ReaderOptions>();
     }
-    _options.reserve(list_length(options));
-    VisitNodes(options, [&](const DefElem& option) {
-      std::string_view option_name = option.defname;
-      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
-      if (option_name == "explain") {
-        auto maybe_explain = TryGet<std::string_view>(option.arg);
-        if (!maybe_explain) {
-          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                          ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
-        }
-        explain_options.emplace(*maybe_explain, true);
-        return;
-      }
-
-      auto [_, emplaced] = _options.try_emplace(option_name, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
 
     Parse();
   }
@@ -1980,40 +1962,64 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
  private:
+  static Options MakeCopyOptions(const List* options,
+                                 std::string_view query_string,
+                                 NameToOption& explain_options) {
+    Options result;
+    result.reserve(list_length(options));
+    VisitNodes(options, [&](const DefElem& option) {
+      std::string_view option_name = option.defname;
+      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
+      if (option_name == "explain") {
+        auto maybe_explain = TryGet<std::string_view>(option.arg);
+        if (!maybe_explain) {
+          THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
+                            query_string, ExprLocation(&option))),
+                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                          ERR_MSG("invalid value for parameter \"explain\": \"",
+                                  DeparseValue(option.arg), "\""));
+        }
+        explain_options.emplace(*maybe_explain, true);
+        return;
+      }
+
+      auto [_, emplaced] = result.try_emplace(option_name, &option);
+      if (!emplaced) {
+        THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
+                          query_string, ExprLocation(&option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    });
+    return result;
+  }
+
   void Parse() {
+    using namespace file_options;
+
     ParseDataSource();
 
-    auto [underlying, format, location] = ParseFileFormat();
-    switch (underlying) {
-      case FileFormat::Text:
-        ParseTextFormatOptionsSpecified(format == "csv");
+    auto format = ParseFileFormat();
+    switch (format) {
+      case FormatType::Text:
+        ParseTextFormatOptionsSpecified(false);
         break;
-      case FileFormat::Parquet:
-      case FileFormat::Dwrf:
-      case FileFormat::Orc: {
-        auto options = ParseFormatOptions(format, underlying);
+      case FormatType::Csv:
+        ParseTextFormatOptionsSpecified(true);
+        break;
+      case FormatType::Parquet:
+      case FormatType::Dwrf:
+      case FormatType::Orc: {
+        auto options = ParseFormatOptions(format);
         if (_is_writer) {
           _writer_options->dwio = options->createWriterOptions(_row_type);
         } else {
           _reader_options->dwio = options->createReaderOptions(_row_type);
         }
       } break;
-      case FileFormat::None:
-        SDB_UNREACHABLE();
     }
 
-    bool show_progress = false;
-    if (const auto* option = EraseOption("progress")) {
-      auto maybe_progress = TryGet<bool>(option->arg);
-      if (!maybe_progress) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid value for parameter \"progress\": \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      show_progress = *maybe_progress;
-    }
-
+    auto show_progress = EraseOptionOrDefault<kProgress>();
     if (!_is_writer) {  // TODO: make same for writer
       if (show_progress) {
         _reader_options->report_callback =
@@ -2023,44 +2029,31 @@ class CopyOptionsParser : public FileOptionsParser {
           };
       }
     }
-
-    CheckUnrecognizedOptions();
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {
+    using namespace file_options;
     auto text_format = ParseTextFormatOptions(is_csv);
 
-    uint64_t reject_limit = 0;
-    std::string_view on_error = "stop";
-    if (const auto* option = EraseOption("on_error")) {
-      if (_is_writer) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
-      }
-
-      auto maybe_on_error = TryGet<std::string_view>(option->arg);
-      if (!maybe_on_error) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR \"", DeparseValue(option->arg),
-                                "\" not recognized"));
-      }
-      if (*maybe_on_error == "stop") {
-        reject_limit = 0;
-      } else if (*maybe_on_error == "ignore") {
-        reject_limit = std::numeric_limits<uint64_t>::max();
-      } else {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY ON_ERROR \"", *maybe_on_error, "\" not recognized"));
-      }
-      on_error = *maybe_on_error;
+    if (_is_writer && HasOption(kOnError)) {
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(OptionLocation(kOnError))),
+                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
     }
 
-    if (const auto* option = EraseOption("reject_limit")) {
-      if (on_error != "ignore") {
+    auto log_verbosity = EraseOptionOrDefault<kLogVerbosity>();
+    auto on_error = EraseOptionOrDefault<kOnError>();
+    auto reject_limit = [&] -> uint64_t {
+      switch (on_error) {
+        case CopyOnError::Ignore:
+          return std::numeric_limits<uint64_t>::max();
+        case CopyOnError::Stop:
+          return 0;
+      }
+    }();
+
+    if (const auto* option = EraseOption(kRejectLimit)) {
+      if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -2082,39 +2075,12 @@ class CopyOptionsParser : public FileOptionsParser {
       reject_limit = *maybe_reject_limit;
     }
 
-    auto log_verbosity = CopyRowRejector::LogVerbosity::Default;
-    if (const auto* option = EraseOption("log_verbosity")) {
-      auto maybe_verbosity = TryGet<std::string_view>(option->arg);
-      if (!maybe_verbosity) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY LOG_VERBOSITY \"", DeparseValue(option->arg),
-                  "\" not recognized"));
-      }
-
-      if (*maybe_verbosity == "verbose") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Verbose;
-      } else if (*maybe_verbosity == "default") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Default;
-      } else if (*maybe_verbosity == "silent") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Silent;
-      } else {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("COPY LOG_VERBOSITY \"", *maybe_verbosity,
-                                "\" not recognized"));
-      }
-    }
-
-    for (const auto& option_name :
-         {"default", "quote", "force_quote", "force_not_null", "force_null",
-          "encoding"}) {
-      if (const auto* option = EraseOption(option_name)) {
+    for (const auto& info : kUnsupportedTextCsvOptions) {
+      if (const auto* option = EraseOption(info)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("COPY option \"", option_name, "\" is not supported yet for ",
+          ERR_MSG("COPY option \"", info.name, "\" is not supported yet for ",
                   is_csv ? "CSV" : "TEXT", " format"));
       }
     }

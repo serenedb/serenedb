@@ -1080,6 +1080,8 @@ class PositionImpl final : public PosAttr {
     ClearAttributes();
   }
 
+  uint32_t DocFreq() const noexcept { return *_freq; }
+
  private:
   void Skip(uint64_t count) {
     SDB_ASSERT(count != 0);

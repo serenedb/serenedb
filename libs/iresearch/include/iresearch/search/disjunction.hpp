@@ -83,9 +83,6 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 template<typename Adapter>
 class BasicDisjunction : public CompoundDocIterator<Adapter> {
  public:
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
   BasicDisjunction(Adapter&& lhs, Adapter&& rhs)
     : BasicDisjunction{std::move(lhs), std::move(rhs),
                        [this] noexcept {
@@ -208,9 +205,6 @@ template<typename Adapter>
 class SmallDisjunction : public CompoundDocIterator<Adapter> {
  public:
   using Adapters = std::vector<Adapter>;
-
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
   SmallDisjunction(Adapters&& itrs, CostAttr::Type est)
     : SmallDisjunction{std::move(itrs), est, ResolveOverloadTag{}} {}
@@ -378,8 +372,6 @@ class Disjunction : public CompoundDocIterator<Adapter> {
   using Heap = std::vector<size_t>;
   using Iterator = Heap::iterator;
 
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
   static constexpr size_t kSmallDisjunctionUpperBound = 5;
 
   Disjunction(Adapters&& itrs, CostAttr::Type est)

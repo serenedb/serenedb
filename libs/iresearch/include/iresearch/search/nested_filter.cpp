@@ -618,7 +618,8 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+    ctx.scorer ? _merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
       return ResolveMatchType<MergeType>(
         rdr, _match, _none_boost,
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {

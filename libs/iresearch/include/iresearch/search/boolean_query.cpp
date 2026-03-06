@@ -78,11 +78,13 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
-    using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-    return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                        std::forward<Args>(args)...);
-  });
+  return ResolveMergeType(
+    ctx.scorer ? merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType> {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+      return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                          std::forward<Args>(args)...);
+    });
 }
 
 // Returns conjunction iterator created from the specified queries
@@ -105,7 +107,8 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return MakeConjunction(merge_type, ctx.wand, std::move(itrs),
+  return MakeConjunction(ctx.scorer ? merge_type : ScoreMergeType::Noop,
+                         ctx.wand, std::move(itrs),
                          std::forward<Args>(args)...);
 }
 
@@ -284,12 +287,14 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type(), [&]<ScoreMergeType MergeType>() {
-    // FIXME(gnusi): use FAST version
-    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
-    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            min_match_count);
-  });
+  return ResolveMergeType(ctx.scorer ? merge_type() : ScoreMergeType::Noop,
+                          [&]<ScoreMergeType MergeType> {
+                            // FIXME(gnusi): use FAST version
+                            using Disjunction =
+                              MinMatchIterator<ScoreAdapter, MergeType>;
+                            return MakeWeakDisjunction<Disjunction>(
+                              ctx.wand, std::move(itrs), min_match_count);
+                          });
 }
 
 }  // namespace irs

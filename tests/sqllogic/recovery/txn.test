@@ -80,7 +80,7 @@ SELECT 1;
 # key=3 deleted by committed txn 2
 # Uncommitted: keys 6,7 gone; key=2 still 20; key=4 still present
 connection rr_after
-query ok $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM t_rr ORDER BY key;
 ----
 key	value
@@ -132,7 +132,7 @@ COMMIT;
 
 # Reconnect and verify: key=2 must NOT be present
 connection rr_pre
-query ok $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM t_pre_commit ORDER BY key;
 ----
 key	value
@@ -181,7 +181,7 @@ COMMIT;
 
 # Reconnect and verify: key=2 MUST be present (RocksDB committed it)
 connection rr_post
-query ok $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM t_post_commit ORDER BY key;
 ----
 key	value

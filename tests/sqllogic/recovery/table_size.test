@@ -33,7 +33,7 @@ SELECT 1;
 
 
 connection after_reboot
-query ok $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT reltuples FROM pg_class WHERE relname = 't';
 ----
 reltuples

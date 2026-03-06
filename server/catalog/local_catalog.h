@@ -78,7 +78,6 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
-  Result PersistTable(ObjectId table_id) final;
 
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
@@ -107,6 +106,8 @@ class LocalCatalog final : public LogicalCatalog,
                       std::string_view name) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
+  Result RemoveTableTombstone(ObjectId database_id, std::string_view schema,
+                              std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;

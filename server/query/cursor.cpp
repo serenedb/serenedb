@@ -335,34 +335,18 @@ Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
         continue;
       }
       case VeloxRunning: {
-        auto process = ExecuteVelox(batch);
-        if (process != Process::Done) {
-          return process;
+        try {
+          auto process = ExecuteVelox(batch);
+          if (process != Process::Done) {
+            return process;
+          }
+        } catch (...) {
+          ctas_cmd->Rollback();
+          throw;
         }
-        auto f = ctas_cmd->PersistTableDefinition();
-        if (!f.Ready()) {
-          ctas_cmd->SetStage(PersistWaiting);
-          std::move(f).DetachInline(
-            [ctas_cmd, user_task = _user_task](yaclib::Result<Result>&& r) {
-              std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
-              ctas_cmd->StoreAsyncResult(std::move(r));
-              user_task();
-            });
-          return Process::Wait;
-        }
-        auto r = std::move(f).Touch().Ok();
+        auto r = ctas_cmd->RemoveTombstone();
         if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
-        return Process::Done;
-      }
-      case PersistWaiting: {
-        std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
-        if (!ctas_cmd->IsAsyncResultReady()) {
-          return Process::Wait;
-        }
-        auto r = ctas_cmd->TakeAsyncResult().Ok();
-        if (!r.ok()) {
+          ctas_cmd->Rollback();
           SDB_THROW(std::move(r));
         }
         return Process::Done;

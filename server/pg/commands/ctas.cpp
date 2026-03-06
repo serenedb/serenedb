@@ -60,9 +60,8 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   }
 
   catalog::CreateTableOperationOptions table_operation;
-  table_operation.in_memory_only = true;
   table_operation.create_with_tombstone = true;
-  
+
   r = catalog.CreateTable(_db, _schema, std::move(options), table_operation);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _stmt.if_not_exists) {
     r = {};
@@ -76,26 +75,24 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   SDB_ASSERT(object);
   object->EnsureTable(_transaction);
   _write.setTable(object->table);
-  _created_table_id = object->object->GetId();
 
   _table_created = true;
   return yaclib::MakeFuture(std::move(r));
 }
 
 void CTASCommand::Rollback() {
-  if (!_table_created || _is_persisted) {
+  if (!_table_created) {
     return;
   }
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  std::ignore = catalog.DropTable(_db, _schema, _table_name, nullptr);
+  std::ignore = catalog.DropTable(_db, _schema, _table_name);
 }
 
-yaclib::Future<Result> CTASCommand::PersistTableDefinition() {
+Result CTASCommand::RemoveTombstone() {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  _is_persisted = true;
-  return yaclib::MakeFuture(catalog.PersistTable(_created_table_id));
+  return catalog.RemoveTableTombstone(_db, _schema, _table_name);
 }
 
 }  // namespace sdb::pg

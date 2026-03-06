@@ -47,7 +47,6 @@ class CTASCommand {
     None,
     CreateTableWaiting,
     VeloxRunning,
-    PersistWaiting,
   };
 
   CTASCommand(const ExecContext& context, query::Transaction& transaction,
@@ -60,10 +59,7 @@ class CTASCommand {
 
   yaclib::Future<Result> CreateTable();
 
-  yaclib::Future<Result> PersistTableDefinition();
-
   bool IsTableCreated() const { return _table_created; }
-  bool IsPersisted() const { return _is_persisted; }
 
   Stage GetStage() const { return _stage; }
   void SetStage(Stage s) { _stage = s; }
@@ -81,6 +77,7 @@ class CTASCommand {
   }
 
   void Rollback();
+  Result RemoveTombstone();
 
  private:
   const ExecContext& _context;
@@ -92,9 +89,7 @@ class CTASCommand {
   std::string_view _table_name;
   ObjectId _db;
 
-  ObjectId _created_table_id;
   bool _table_created = false;
-  bool _is_persisted = false;
 
   Stage _stage = Stage::None;
   yaclib::Result<Result> _async_result;

@@ -57,7 +57,6 @@ using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
 struct CreateTableOperationOptions {
   bool wait_for_sync_replication = false;
   bool enforce_replication_factor = false;
-  bool in_memory_only = false;
   bool create_with_tombstone = false;
 };
 
@@ -179,7 +178,6 @@ struct LogicalCatalog {
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
-  virtual Result PersistTable(ObjectId table_id) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
                              const std::vector<std::string>& column_names,
@@ -212,6 +210,9 @@ struct LogicalCatalog {
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name) = 0;
+  virtual Result RemoveTableTombstone(ObjectId database,
+                                      std::string_view schema,
+                                      std::string_view name) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 

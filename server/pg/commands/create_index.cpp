@@ -35,6 +35,7 @@
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -83,34 +84,41 @@ Result ParseIndexOptions(const IndexStmt& index,
   return {};
 }
 
-Result ParseInvertedIndexShard(pg::PgListWrapper<DefElem> args,
-                               search::InvertedIndexShardOptions& options) {
-  options.base = {
-    .commit_interval_ms = 1000,
-    .consolidation_interval_ms = 1000,
-    .cleanup_interval_step = 1,
-  };
-  for (auto arg : args) {
-    std::string_view name{arg->defname};
-    if (name == "commit_interval") {
-      if (arg->arg->type != NodeTag::T_Integer) {
-        return Result{ERROR_BAD_PARAMETER, "incorrent parameter"};
-      }
-      options.base.commit_interval_ms = intVal(arg->arg);
-    } else if (name == "consolidation_interval") {
-      if (arg->arg->type != NodeTag::T_Integer) {
-        return Result{ERROR_BAD_PARAMETER, "incorrent parameter"};
-      }
-      options.base.consolidation_interval_ms = intVal(arg->arg);
-    } else if (name == "cleanup_interval_step") {
-      if (arg->arg->type != NodeTag::T_Integer) {
-        return Result{ERROR_BAD_PARAMETER, "incorrent parameter"};
-      }
-      options.base.cleanup_interval_step = intVal(arg->arg);
-    }
+constexpr OptionInfo kCommitInterval{"commit_interval", 1000,
+                                     "Commit interval in milliseconds"};
+constexpr OptionInfo kConsolidationInterval{
+  "consolidation_interval", 1000, "Consolidation interval in milliseconds"};
+constexpr OptionInfo kCleanupIntervalStep{"cleanup_interval_step", 1,
+                                          "Cleanup interval step"};
+constexpr OptionInfo kIndexOptions[] = {kCommitInterval, kConsolidationInterval,
+                                        kCleanupIntervalStep};
+constexpr OptionGroup kIndexGroup{"Index", kIndexOptions, {}};
+constexpr OptionGroup kIndexOptionGroups[] = {kIndexGroup};
+
+class CreateIndexOptionsParser : public OptionsParser {
+ public:
+  CreateIndexOptionsParser(const List* options)
+    : OptionsParser{
+        "CREATE INDEX", {}, {}, MakeOptions(options, {}), kIndexOptionGroups} {
+    Parse();
   }
-  return {};
-}
+
+  search::InvertedIndexShardOptions GetOptions() && {
+    return std::move(_shard_options);
+  }
+
+ private:
+  void Parse() {
+    _shard_options.base.commit_interval_ms =
+      EraseOptionOrDefault<kCommitInterval>();
+    _shard_options.base.consolidation_interval_ms =
+      EraseOptionOrDefault<kConsolidationInterval>();
+    _shard_options.base.cleanup_interval_step =
+      EraseOptionOrDefault<kCleanupIntervalStep>();
+  }
+
+  search::InvertedIndexShardOptions _shard_options;
+};
 
 }  // namespace
 
@@ -144,17 +152,15 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   }
 
   if (options.type == IndexType::Inverted) {
-    search::InvertedIndexShardOptions shard_options;
-    pg::PgListWrapper<DefElem> pg_args{stmt.options};
-    auto r = ParseInvertedIndexShard(pg_args, shard_options);
-    if (!r.ok()) {
-      return yaclib::MakeFuture<Result>(std::move(r));
-    }
-    r = catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
-                            std::move(options), shard_options);
+    CreateIndexOptionsParser parser{stmt.options};
+    auto shard_options = std::move(parser).GetOptions();
+    auto r =
+      catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
+                          std::move(options), shard_options);
 
     if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
       r = {};
+
     } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_OBJECT),

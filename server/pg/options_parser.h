@@ -26,6 +26,7 @@
 #include <absl/strings/str_join.h>
 #include <basics/containers/flat_hash_map.h>
 
+#include <algorithm>
 #include <functional>
 #include <type_traits>
 
@@ -49,6 +50,7 @@ class OptionsParser {
       _options{std::move(options)},
       _option_groups{option_groups} {
     HandleHelp(option_groups);
+    CheckUnrecognizedOptions();
   }
 
  protected:
@@ -174,30 +176,32 @@ class OptionsParser {
   }
 
   void CheckUnrecognizedOptions() const {
-    if (_options.empty()) {
-      return;
-    }
+    auto known_names = AllOptionNames(_option_groups);
+    known_names.emplace_back("help");
 
-    auto [name, option] = *_options.begin();
-    auto hint = FindClosestOption(name);
-    auto msg =
-      hint.empty()
-        ? absl::StrCat("option \"", name, "\" not recognized")
-        : absl::StrCat("option \"", name, "\" not recognized, did you mean \"",
-                       hint, "\"?");
-    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                    ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(msg),
-                    ERR_HINT("Use WITH (HELP) to see available options"));
+    for (const auto& [name, option] : _options) {
+      if (absl::c_contains(known_names, name)) {
+        continue;
+      }
+      auto hint = FindClosestOption(known_names, name);
+      auto msg =
+        hint.empty()
+          ? absl::StrCat("option \"", name, "\" not recognized")
+          : absl::StrCat("option \"", name,
+                         "\" not recognized, did you mean \"", hint, "\"?");
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                      ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(msg),
+                      ERR_HINT("Use WITH (HELP) to see available options"));
+    }
   }
 
-  std::string_view FindClosestOption(std::string_view name) const {
+  std::string_view FindClosestOption(
+    std::span<const std::string_view> known_names,
+    std::string_view name) const {
     const uint8_t max_distance =
       static_cast<uint8_t>(std::min<size_t>(name.size() / 2 + 1, 3));
     std::string_view best;
     uint8_t best_distance = max_distance;
-
-    auto known_names = AllOptionNames(_option_groups);
-    known_names.emplace_back("help");
 
     for (const auto& known : known_names) {
       uint8_t distance =

@@ -83,8 +83,6 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
 
     auto format = ParseFileFormat();
     _format_options = ParseFormatOptions(format);
-
-    CheckUnrecognizedOptions();
   }
 
   catalog::FileInfo GetFileInfo() && {

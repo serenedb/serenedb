@@ -50,25 +50,25 @@ namespace {
 
 using namespace std::string_view_literals;
 
-inline constexpr EnumOptionInfo<catalog::FunctionLanguage> kLanguage{
+constexpr EnumOptionInfo<catalog::FunctionLanguage> kLanguage{
   "language", catalog::FunctionLanguage::SQL,
   "Function language (only SQL is supported)"};
-inline constexpr EnumOptionInfo<catalog::FunctionState> kVolatility{
+constexpr EnumOptionInfo<catalog::FunctionState> kVolatility{
   "volatility", catalog::FunctionState::Volatile, "Volatility category"};
-inline constexpr EnumOptionInfo<catalog::FunctionParallel> kParallel{
+constexpr EnumOptionInfo<catalog::FunctionParallel> kParallel{
   "parallel", catalog::FunctionParallel::Unsafe, "Parallel safety"};
-inline constexpr OptionInfo kStrict{"strict", false,
-                                    "Returns NULL on NULL input"};
-inline constexpr OptionInfo kSecurity{"security", false, "Security definer"};
-inline constexpr OptionInfo kCost{"cost", 1.0, "Estimated execution cost"};
-inline constexpr OptionInfo kRows{"rows", 0.0, "Estimated number of rows"};
-inline constexpr OptionInfo kWindow{"window", false, "Window function"};
-inline constexpr OptionInfo kLeakproof{"leakproof", false, "Leakproof"};
-inline constexpr OptionInfo kFunctionOptions[] = {
-  kLanguage, kVolatility, kParallel, kStrict,   kSecurity,
-  kCost,     kRows,       kWindow,   kLeakproof};
-inline constexpr OptionGroup kFunctionGroup{"Function", kFunctionOptions, {}};
-inline constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
+constexpr OptionInfo kStrict{"strict", false, "Returns NULL on NULL input"};
+constexpr OptionInfo kSecurity{"security", false, "Security definer"};
+constexpr OptionInfo kCost{"cost", 1.0, "Estimated execution cost"};
+constexpr OptionInfo kRows{"rows", 0.0, "Estimated number of rows"};
+constexpr OptionInfo kWindow{"window", false, "Window function"};
+constexpr OptionInfo kLeakproof{"leakproof", false, "Leakproof"};
+constexpr OptionInfo kAs{"as", ""sv, "Function body"};
+constexpr OptionInfo kFunctionOptions[] = {
+  kLanguage, kVolatility, kParallel, kStrict,    kSecurity,
+  kCost,     kRows,       kWindow,   kLeakproof, kAs};
+constexpr OptionGroup kFunctionGroup{"Function", kFunctionOptions, {}};
+constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
 
 // Parses options and return function body and catalog options.
 // For the pre-PG14 syntax function body is stored in the "as" option.
@@ -87,8 +87,8 @@ class CreateFunctionOptionsParser : public OptionsParser {
     Parse();
   }
 
-  std::pair<std::string, catalog::FunctionOptions> Result() && {
-    return {std::move(_function_body), std::move(_func_options)};
+  auto Result() && {
+    return std::pair{std::move(_function_body), std::move(_func_options)};
   }
 
  private:
@@ -124,17 +124,13 @@ class CreateFunctionOptionsParser : public OptionsParser {
     }
 
     ParseFunctionBody();
-
-    CheckUnrecognizedOptions();
   }
 
   void ParseFunctionBody() {
-    auto it = _options.find("as");
-    if (it == _options.end()) {
+    const auto* option = EraseOption(kAs);
+    if (!option) {
       return;
     }
-    const auto* option = it->second;
-    _options.erase(it);
     if (IsA(option->arg, List)) {
       List* list = castNode(List, option->arg);
       _function_body = strVal(castNode(Node, list_nth(list, 0)));

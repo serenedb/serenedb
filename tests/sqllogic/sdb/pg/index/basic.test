@@ -125,7 +125,7 @@ statement ok
 DROP INDEX test_index;
 
 
-query ok
+query ??
 SELECT indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid
@@ -228,3 +228,17 @@ SET sdb_read_your_own_writes = 1;
 
 statement ok
 DROP TABLE table_numeric_idx;
+
+
+statement ok
+CREATE TABLE help_test(r text);
+
+
+statement error
+CREATE INDEX help_idx ON help_test USING inverted(r) WITH (HELP);
+----
+db error: ERROR: 
+Index:
+  commit_interval (integer) [default: 1000] - Commit interval in milliseconds
+  consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
+  cleanup_interval_step (integer) [default: 1] - Cleanup interval step

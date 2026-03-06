@@ -119,7 +119,7 @@ class FileOptionsParser : public OptionsParser {
 
   file_options::FormatType ParseFileFormat() {
     using namespace file_options;
-    bool explicit_format = HasOption(kFormat.base);
+    bool explicit_format = HasOption(kFormat);
     auto format = EraseOptionOrDefault<kFormat>();
     if (!explicit_format) {
       if (auto detected = TryFormatFromFile()) {

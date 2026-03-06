@@ -2029,8 +2029,6 @@ class CopyOptionsParser : public FileOptionsParser {
           };
       }
     }
-
-    CheckUnrecognizedOptions();
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {

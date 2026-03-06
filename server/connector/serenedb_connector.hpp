@@ -670,7 +670,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
     auto& transaction = serene_table_handle.GetTransaction();
 
-    const auto* filter = serene_table_handle.GetFilter().get();
+    auto* filter = serene_table_handle.GetFilter().get();
 
     // We have search data source xor precalculated filter in rocksdb datasource
     SDB_ASSERT(static_cast<bool>(filter) !=
@@ -704,9 +704,9 @@ class SereneDBConnector final : public velox::connector::Connector {
                   " condition failed");
       }
       auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
-                                 connector_query_ctx->connectorMemoryPool());
-      if (!points.empty()) {
-        return std::make_unique<RocksDBRYOWMultiGetDataSource>(
+                                 connector_query_ctx->memoryPool());
+      if (points) {
+        return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
           output_type, column_oids, object_key, std::move(points));
       }
@@ -734,9 +734,9 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
 
     auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
-                               connector_query_ctx->connectorMemoryPool());
-    if (!points.empty()) {
-      return std::make_unique<RocksDBSnapshotMultiGetDataSource>(
+                               connector_query_ctx->memoryPool());
+    if (points) {
+      return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
         object_key, snapshot, std::move(points));
     }

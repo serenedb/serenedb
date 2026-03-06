@@ -136,9 +136,6 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
   rocksdb::DB& _db;  // NOLINT
 };
 
-// TODOs
-// - Solve other TODOs across this PR (mainly perf and design related)
-
 class RocksDBPointLookupDataSource : public velox::connector::DataSource {
  public:
   void addDynamicFilter(velox::column_index_t,
@@ -160,6 +157,7 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
                 "RocksDBDataSource: a split is already being processed");
     }
     _current_split = std::move(split);
+    _offset = 0;
   }
 
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -170,10 +168,12 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
       return nullptr;
     }
 
-    if (_values.empty()) [[unlikely]] {
+    if (!_values) [[unlikely]] {
       _current_split.reset();
       return nullptr;
     }
+    SDB_ASSERT(_values->size() > 0,
+               "Case of empty filters should be processed in connector");
 
     SDB_PRINT("row_type=", _row_type->toString());
     const auto num_columns = _row_type->size();
@@ -186,16 +186,25 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
     // column id.
     SDB_ASSERT(num_columns > 0);
 
-    const auto num_points = _values.size();
-    const size_t total_keys = num_points * num_columns;
+    const auto total_points = static_cast<size_t>(_values->size());
+    const auto batch_size =
+      std::min(static_cast<size_t>(size), total_points - _offset);
 
-    // Build all keys laid out as [point_idx * num_columns + col_idx]
+    if (batch_size == 0) {
+      _current_split.reset();
+      return nullptr;
+    }
+
+    const size_t total_keys = batch_size * num_columns;
+
+    // Build keys for [_offset, _offset + batch_size), laid out as
+    // [point_idx * num_columns + col_idx]
     std::vector<std::string> keys(total_keys);
-    for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
+    for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
       for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
         std::string key = key_utils::PrepareTableKey(_object_key);
         key_utils::AppendColumnKey(key, _column_ids[col_idx]);
-        primary_key::Create(*_values[point_idx], 0, key);
+        primary_key::Create(*_values, _offset + point_idx, key);
         keys[point_idx * num_columns + col_idx] = std::move(key);
       }
     }
@@ -214,14 +223,18 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
     for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
       const auto& type = _row_type->childAt(column_idx);
       columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-        ReadColumnValues, type->kind(), column_idx, num_points, statuses,
+        ReadColumnValues, type->kind(), column_idx, batch_size, statuses,
         raw_values));
     }
 
-    _produced += num_points;
-    _current_split.reset();
+    _produced += batch_size;
+    _offset += batch_size;
+    if (_offset >= total_points) {
+      _current_split.reset();
+      _offset = 0;
+    }
     return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
-                                              num_points, std::move(columns));
+                                              batch_size, std::move(columns));
   }
 
  protected:
@@ -229,8 +242,7 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
                                rocksdb::ColumnFamilyHandle& cf,
                                velox::RowTypePtr row_type,
                                std::vector<catalog::Column::Id> column_ids,
-                               ObjectId object_key,
-                               std::vector<velox::RowVectorPtr> values)
+                               ObjectId object_key, velox::RowVectorPtr values)
     : _memory_pool{memory_pool},
       _cf{cf},
       _row_type{std::move(row_type)},
@@ -301,19 +313,20 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   ObjectId _object_key;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   uint64_t _produced = 0;
-  std::vector<velox::RowVectorPtr> _values;
+  size_t _offset = 0;
+  velox::RowVectorPtr _values;
 };
 
-class RocksDBRYOWMultiGetDataSource final
+class RocksDBRYOWPointLookupDataSource final
   : public RocksDBPointLookupDataSource {
  public:
-  RocksDBRYOWMultiGetDataSource(velox::memory::MemoryPool& memory_pool,
-                                rocksdb::Transaction& transaction,
-                                rocksdb::ColumnFamilyHandle& cf,
-                                velox::RowTypePtr row_type,
-                                std::vector<catalog::Column::Id> column_ids,
-                                ObjectId object_key,
-                                std::vector<velox::RowVectorPtr> values)
+  RocksDBRYOWPointLookupDataSource(velox::memory::MemoryPool& memory_pool,
+                                   rocksdb::Transaction& transaction,
+                                   rocksdb::ColumnFamilyHandle& cf,
+                                   velox::RowTypePtr row_type,
+                                   std::vector<catalog::Column::Id> column_ids,
+                                   ObjectId object_key,
+                                   velox::RowVectorPtr values)
     : RocksDBPointLookupDataSource{memory_pool,         cf,
                                    std::move(row_type), std::move(column_ids),
                                    object_key,          std::move(values)},
@@ -333,14 +346,14 @@ class RocksDBRYOWMultiGetDataSource final
   rocksdb::Transaction& _transaction;
 };
 
-class RocksDBSnapshotMultiGetDataSource final
+class RocksDBSnapshotPointLookupDataSource final
   : public RocksDBPointLookupDataSource {
  public:
-  RocksDBSnapshotMultiGetDataSource(
+  RocksDBSnapshotPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
     std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
-    const rocksdb::Snapshot* snapshot, std::vector<velox::RowVectorPtr> values)
+    const rocksdb::Snapshot* snapshot, velox::RowVectorPtr values)
     : RocksDBPointLookupDataSource{memory_pool,         cf,
                                    std::move(row_type), std::move(column_ids),
                                    object_key,          std::move(values)},

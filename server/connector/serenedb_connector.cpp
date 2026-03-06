@@ -146,7 +146,7 @@ SereneDBTableLayout::createTableHandle(
 
   auto pk_type = basics::downCast<RocksDBTable>(table()).PKType();
 
-  auto filter = ParseFilters(filters);
+  auto filter = ParseFilters(filters, pk_type->names());
   rejected_filters = std::move(filters);
   SDB_ASSERT(!table().columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");

@@ -190,3 +190,40 @@ DROP TABLE t_choice;
 
 statement ok
 DROP TABLE t_choice_cpk;
+
+# 4-column primary key, large Cartesian IN query (batching test)
+
+statement ok
+CREATE TABLE t_big4pk (a INTEGER, b INTEGER, c INTEGER, d INTEGER, PRIMARY KEY (a, b, c, d));
+
+statement ok
+INSERT INTO t_big4pk
+SELECT a.x, b.x, c.x, d.x FROM
+  generate_series(1, 11) as a(x),
+  generate_series(1, 11) as b(x),
+  generate_series(1, 11) as c(x),
+  generate_series(1, 11) as d(x);
+
+onlyif serenedb
+statement ok
+SET sdb_fault_t_big4pk_force_multiget_source TO DEFAULT;
+
+# a IN (1..10) AND b IN (1..10) AND c IN (1..10) AND d IN (1..10) 
+# -> 10^4 = 10000 specific points
+# This exercises the batching path in RocksDBPointLookupDataSource.
+query
+SELECT count(*) FROM t_big4pk WHERE
+  a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  d IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+----
+count
+10000
+
+onlyif serenedb
+statement ok
+RESET sdb_fault_t_big4pk_force_multiget_source;
+
+statement ok
+DROP TABLE t_big4pk;

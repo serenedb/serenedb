@@ -87,8 +87,10 @@ launch_s3() {
 }
 
 launch_external() {
+  shopt -s globstar
   local test_files
   test_files=$(compgen -G "$test" 2>/dev/null || true)
+  shopt -u globstar
   if echo "$test_files" | grep -q '_s3\.'; then
     launch_s3
   fi

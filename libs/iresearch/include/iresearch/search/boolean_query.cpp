@@ -23,6 +23,8 @@
 #include "iresearch/search/boolean_query.hpp"
 
 #include "iresearch/formats/formats_impl.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boost_iterator.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/make_disjunction.hpp"
@@ -78,11 +80,13 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
-    using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-    return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                        std::forward<Args>(args)...);
-  });
+  return ResolveMergeType(
+    ctx.scorer ? merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType> {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+      return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                          std::forward<Args>(args)...);
+    });
 }
 
 // Returns conjunction iterator created from the specified queries
@@ -105,7 +109,8 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return MakeConjunction(merge_type, ctx.wand, std::move(itrs),
+  return MakeConjunction(ctx.scorer ? merge_type : ScoreMergeType::Noop,
+                         ctx.wand, std::move(itrs),
                          std::forward<Args>(args)...);
 }
 
@@ -284,12 +289,40 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type(), [&]<ScoreMergeType MergeType>() {
-    // FIXME(gnusi): use FAST version
-    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
-    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            min_match_count);
-  });
+  return ResolveMergeType(ctx.scorer ? merge_type() : ScoreMergeType::Noop,
+                          [&]<ScoreMergeType MergeType> {
+                            // FIXME(gnusi): use FAST version
+                            using Disjunction =
+                              MinMatchIterator<ScoreAdapter, MergeType>;
+                            return MakeWeakDisjunction<Disjunction>(
+                              ctx.wand, std::move(itrs), min_match_count);
+                          });
+}
+
+void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
+                         const BooleanFilter& opt) {
+  SDB_ASSERT(!req.empty());
+  _req = req.prepare(ctx);
+  _opt = opt.prepare(ctx);
+}
+
+DocIterator::ptr BoostQuery::execute(const ExecutionContext& ctx) const {
+  auto req = _req->execute(ctx);
+  if (!ctx.scorer || doc_limits::eof(req->value())) {
+    return req;
+  }
+  auto opt = _opt->execute(ctx);
+  if (doc_limits::eof(opt->value())) {
+    return req;
+  }
+  // TODO(mbkkt) Optimize with term adapters specializations
+  return memory::make_managed<BoostIterator<ScoreAdapter, ScoreAdapter>>(
+    ScoreAdapter{std::move(req)}, ScoreAdapter{std::move(opt)});
+}
+
+void BoostQuery::visit(const SubReader& segment, PreparedStateVisitor& visitor,
+                       score_t boost) const {
+  _req->visit(segment, visitor, boost);
 }
 
 }  // namespace irs

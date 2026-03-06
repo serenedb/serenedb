@@ -363,13 +363,10 @@ void NormTestCase::AssertNormColumn(
   ASSERT_NE(nullptr, values);
   auto* payload = irs::get<irs::PayAttr>(*values);
   ASSERT_NE(nullptr, payload);
-  auto* doc = irs::get<irs::DocAttr>(*values);
-  ASSERT_NE(nullptr, doc);
 
   for (auto expected_doc = std::begin(expected_docs); values->next();
        ++expected_doc) {
     ASSERT_EQ(expected_doc->first, values->value());
-    ASSERT_EQ(expected_doc->first, doc->value);
     ASSERT_EQ(sizeof(T), payload->value.size());
 
     const auto value = irs::Norm::Read(payload->value);

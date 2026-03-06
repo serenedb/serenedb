@@ -221,11 +221,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       irs::BySamePosition q;
       auto prepared = q.prepare({.index = index});
       auto docs = prepared->execute({.segment = segment});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs->value(), doc->value);
       ASSERT_FALSE(docs->next());
-      ASSERT_EQ(docs->value(), doc->value);
     }
 
     // { a: 100 } - equal to 'by_term'
@@ -243,16 +239,12 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       auto expected_prepared = expected_query.prepare({.index = index});
 
       auto docs = prepared->execute({.segment = segment});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs->value(), doc->value);
       auto expected_docs = prepared->execute({.segment = segment});
 
       ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
       while (expected_docs->next()) {
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(expected_docs->value(), docs->value());
-        ASSERT_EQ(docs->value(), doc->value);
       }
       ASSERT_FALSE(docs->next());
       ASSERT_EQ(irs::doc_limits::eof(), docs->value());
@@ -270,8 +262,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         "c", irs::ViewCast<irs::byte_type>(std::string_view("9")));
       auto prepared = q.prepare({.index = index});
       auto docs = prepared->execute({.segment = segment});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_EQ(docs->value(), doc->value);
       ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(1, docs->value());
@@ -297,9 +287,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -321,9 +308,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ((irs::doc_limits::min)() + 6,
                   docs->seek((irs::doc_limits::min)()));
@@ -363,9 +347,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -387,9 +368,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ((irs::doc_limits::min)() + 91, docs->seek(27));
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -422,9 +400,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -490,9 +465,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -530,9 +502,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       // seek to the end
       {
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ(irs::doc_limits::eof(), docs->seek(irs::doc_limits::eof()));
         ASSERT_FALSE(docs->next());

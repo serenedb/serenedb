@@ -162,7 +162,7 @@ struct DocIterator : AttributeProvider {
 
   [[nodiscard]] static DocIterator::ptr empty() noexcept;
 
-  virtual doc_id_t value() const noexcept = 0;
+  IRS_FORCE_INLINE const doc_id_t& value() const noexcept { return _doc; }
 
   virtual doc_id_t advance() = 0;
 
@@ -207,6 +207,8 @@ struct DocIterator : AttributeProvider {
   }
 
  protected:
+  mutable doc_id_t _doc = doc_limits::invalid();
+
   IRS_FORCE_INLINE static uint32_t CountImpl(auto& self) {
     uint32_t count = 0;
     while (self.next()) {

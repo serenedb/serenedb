@@ -28,6 +28,7 @@
 #include "catalog/table_options.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
@@ -50,24 +51,21 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   CreateTableUsingExternalOptions(const List* options,
                                   ConnectionContext& conn_ctx)
     : FileOptionsParser{
-        "CREATE TABLE", {}, {}, [&conn_ctx](std::string msg) {
+        "CREATE TABLE",
+        {},
+        {},
+        [&conn_ctx](std::string msg) {
           conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
-        }} {
-    VisitNodes(options, [&](const DefElem& option) {
-      auto [_, emplaced] =
-        _options.try_emplace(std::string_view{option.defname}, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(&option)),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-
+        },
+        OptionsParser::MakeOptions(options, {}),
+        file_options::kCreateExternalParserGroups} {
     Parse();
   }
 
   void Parse() {
-    if (const auto* path_option = EraseOption("path")) {
+    using namespace file_options;
+
+    if (const auto* path_option = EraseOption(kPath)) {
       auto maybe_path = TryGet<std::string_view>(path_option->arg);
       if (!maybe_path) {
         THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
@@ -83,11 +81,8 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
 
     _storage_options = ParseStorageOptions();
 
-    auto [underlying_format, format_name, _] = ParseFileFormat();
-    _parsed_format = underlying_format;
-    _format_options = ParseFormatOptions(format_name, underlying_format);
-
-    CheckUnrecognizedOptions();
+    auto format = ParseFileFormat();
+    _format_options = ParseFormatOptions(format);
   }
 
   catalog::FileInfo GetFileInfo() && {
@@ -96,7 +91,6 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   }
 
  private:
-  FileFormat _parsed_format;
   std::shared_ptr<StorageOptions> _storage_options;
   std::shared_ptr<FormatOptions> _format_options;
 };
@@ -440,6 +434,10 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   r = catalog.CreateTable(db, schema, std::move(options), {});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", stmt.relation->relname, "\" already exists"));
   }
   return yaclib::MakeFuture(std::move(r));
 }

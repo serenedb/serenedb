@@ -226,7 +226,7 @@ class FreqNormProducer : public AttributeProvider {
     }
 
     if constexpr (kNorm) {
-      _doc = irs::get<DocAttr>(attrs);
+      _doc = irs::get<ValueIndex>(attrs);
 
       if (!_doc) [[unlikely]] {
         return false;
@@ -273,15 +273,15 @@ class FreqNormProducer : public AttributeProvider {
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (irs::Type<FreqAttr>::id() == type) {
-      return const_cast<irs::FreqAttr*>(_freq);
+      return const_cast<FreqAttr*>(_freq);
     }
     if constexpr (kNorm) {
       if (irs::Type<Norm>::id() == type) {
         return &_norm;
       }
     }
-    if (irs::Type<DocAttr>::id() == type) {
-      return const_cast<irs::DocAttr*>(_doc);
+    if (irs::Type<ValueIndex>::id() == type) {
+      return const_cast<ValueIndex*>(_doc);
     }
     return nullptr;
   }
@@ -330,8 +330,8 @@ class FreqNormProducer : public AttributeProvider {
     }
   }
 
-  const irs::FreqAttr* _freq{};
-  const irs::DocAttr* _doc{};
+  const FreqAttr* _freq{};
+  const ValueIndex* _doc{};
   [[no_unique_address]]
   utils::Need<kNorm, Norm> _norm;
   [[no_unique_address]]

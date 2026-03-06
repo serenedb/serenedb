@@ -82,13 +82,6 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     SDB_ASSERT(_parent);
     SDB_ASSERT(prev_parent);
     SDB_ASSERT(_child);
-
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(_parent.get());
-    SDB_ASSERT(std::get<AttributePtr<DocAttr>>(_attrs).ptr);
-
-    _child_doc = irs::get<DocAttr>(*_child);
-
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_child.get());
   }
@@ -97,13 +90,9 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return irs::GetMutable(_attrs, id);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final {
     const auto parent = _parent->advance();
-    return SeekInternal(parent);
+    return _doc = SeekInternal(parent);
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -111,7 +100,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
       return doc;
     }
     const auto parent = _parent->seek(target);
-    return SeekInternal(parent);
+    return _doc = SeekInternal(parent);
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
@@ -123,7 +112,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
       return parent;
     }
     // TODO: optimize
-    return SeekInternal(parent);
+    return _doc = SeekInternal(parent);
   }
 
   uint32_t count() final { return CountImpl(*this); }
@@ -144,7 +133,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
  private:
   friend Matcher;
 
-  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>>;
+  using Attributes = std::tuple<AttributePtr<CostAttr>>;
 
   // Returns min possible first child given the current parent.
   doc_id_t FirstChildApprox() const {
@@ -166,15 +155,13 @@ class ChildToParentJoin : public DocIterator, private Matcher {
         return doc_limits::eof();
       }
     }
-
-    return value();
+    return _parent->value();
   }
 
   DocIterator::ptr _parent;
   DocIterator::ptr _child;
   Attributes _attrs;
   const PrevDocAttr* _prev_parent{};
-  const DocAttr* _child_doc{};
 };
 
 template<typename Matcher>
@@ -185,7 +172,7 @@ ScoreFunction ChildToParentJoin<Matcher>::PrepareScore(
   } else if constexpr (!Matcher::kHasScore) {
     return ScoreFunction::Default();
   } else {
-    if (!ctx.scorer || !this->_child_doc) {
+    if (!ctx.scorer) {
       return ScoreFunction::Default();
     }
 
@@ -371,9 +358,6 @@ class PredMatcher : protected MatcherBase<MergeType> {
     if (!_pred) [[unlikely]] {
       _pred = DocIterator::empty();
     }
-
-    _pred_doc = irs::get<DocAttr>(*_pred);
-    SDB_ASSERT(_pred_doc);
   }
 
   doc_id_t Accept(const doc_id_t first_child, const doc_id_t parent) {
@@ -415,7 +399,6 @@ class PredMatcher : protected MatcherBase<MergeType> {
 
  private:
   DocIterator::ptr _pred;
-  const DocAttr* _pred_doc;
 };
 
 template<ScoreMergeType MergeType>
@@ -635,7 +618,8 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+    ctx.scorer ? _merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
       return ResolveMatchType<MergeType>(
         rdr, _match, _none_boost,
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {

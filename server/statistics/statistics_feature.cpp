@@ -630,7 +630,7 @@ class StatisticsThread final : public ServerThread<SerenedServer> {
 
 StatisticsFeature::StatisticsFeature(Server& server)
   : SerenedFeature{server, name()},
-    _statistics(true),
+    _statistics(false),
     _descriptions(server),
     _request_statistics_memory_usage{
       server.getFeature<metrics::MetricsFeature>().add(

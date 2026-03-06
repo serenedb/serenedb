@@ -180,8 +180,6 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     });
     EXPECT_NE(nullptr, docs);
 
-    const auto* doc = irs::get<irs::DocAttr>(*docs);
-    EXPECT_NE(nullptr, doc);
     irs::ScoreFunction score;
     if (wand_idx != irs::WandContext::kDisable && can_use_wand) {
       // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);

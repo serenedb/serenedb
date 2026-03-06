@@ -19,7 +19,7 @@ INSERT INTO foo values (4, 'quick brown fox jumps over big dog', 'value b');
 statement ok
 VACUUM (UPDATE_INDEXES) foo;
 
-query ok
+query ??
 SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR PHRASE(b, 'red fox') ORDER BY a;
 ----
 a	b
@@ -27,7 +27,7 @@ a	b
 3	quick red fox jumps over big dog
 4	quick brown fox jumps over big dog
 
-query ok
+query ??
 SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR a = 1 ORDER BY a;
 ----
 a	b
@@ -35,7 +35,7 @@ a	b
 3	quick red fox jumps over big dog
 4	quick brown fox jumps over big dog
 
-query ok
+query ??
 SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value b') AND PHRASE(b, 'over big dog');
 ----
 a	b	c
@@ -48,7 +48,7 @@ UPDATE foo SET c = 'value abc' WHERE a = 3;
 statement ok
 VACUUM (UPDATE_INDEXES) foo;
 
-query ok
+query ??
 SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value abc') AND PHRASE(b, 'over big dog');
 ----
 a	b	c

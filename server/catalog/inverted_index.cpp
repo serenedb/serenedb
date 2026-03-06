@@ -2,19 +2,19 @@
 
 #include <iresearch/analysis/analyzers.hpp>
 
+#include "basics/down_cast.h"
+#include "catalog/index.h"
 #include "search/inverted_index_shard.h"
+#include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
-  bool is_new, vpack::Slice args) const {
-  // TODO(codeworse): parse args into InvertedIndexShardOptions
-  search::InvertedIndexShardOptions options;
-  options.commit_interval_ms = 1000;
-  options.consolidation_interval_ms = 1000;
-  options.cleanup_interval_step = 1;
+  bool is_new, ObjectId id, IndexShardOptions& options) const {
+  auto& shard_options =
+    basics::downCast<search::InvertedIndexShardOptions>(options);
   auto inverted_index_shard =
-    search::InvertedIndexShard::Create(*this, options, is_new);
+    search::InvertedIndexShard::Create(id, *this, shard_options, is_new);
   return inverted_index_shard;
 }
 

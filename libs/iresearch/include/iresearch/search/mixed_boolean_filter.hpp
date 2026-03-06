@@ -27,7 +27,8 @@ namespace irs {
 class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
                                  public AllDocsProvider {
  public:
-  MixedBooleanFilter() : _and{&_root.add<And>()}, _or{&_root.add<Or>()} {}
+  MixedBooleanFilter()
+    : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {}
 
   auto& GetRequired(this auto& self) noexcept { return *self._and; }
 
@@ -37,13 +38,12 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
- protected:
+ private:
   bool equals(const Filter& rhs) const noexcept final;
 
- private:
   And _root;
-  And* _and;
-  Or* _or;
+  std::unique_ptr<And> _and;
+  std::unique_ptr<Or> _or;
 };
 
 }  // namespace irs

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
 
@@ -27,15 +29,22 @@ namespace sdb::catalog {
 
 struct ObjectDependencyBase {
   virtual ~ObjectDependencyBase() = default;
+  virtual std::shared_ptr<ObjectDependencyBase> Clone() const = 0;
 };
 
 struct TableDependency : public ObjectDependencyBase {
   ObjectId shard_id;
   containers::FlatHashSet<ObjectId> indexes;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<TableDependency>(*this);
+  }
 };
 
 struct IndexDependency : public ObjectDependencyBase {
   ObjectId shard_id;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<IndexDependency>(*this);
+  }
 };
 
 struct SchemaDependency : public ObjectDependencyBase {
@@ -45,10 +54,16 @@ struct SchemaDependency : public ObjectDependencyBase {
   bool Empty() const {
     return tables.empty() && functions.empty() && views.empty();
   }
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<SchemaDependency>(*this);
+  }
 };
 
 struct DatabaseDependency : public ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<DatabaseDependency>(*this);
+  }
 };
 
 }  // namespace sdb::catalog

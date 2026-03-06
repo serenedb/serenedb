@@ -38,7 +38,7 @@ class BufferedNormReader : public NormReader {
     : _sum{sum}, _it{values, data} {}
 
   void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
-    GetImpl(docs, values);
+    GetBlockImpl(docs, values);
   }
 
   uint32_t Get(doc_id_t doc) final {
@@ -50,11 +50,26 @@ class BufferedNormReader : public NormReader {
     return Norm::Read<Encoding>(payload);
   }
 
+  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                       std::span<uint32_t, kPostingBlock> values) final {
+    GetBlockImpl(docs, values);
+  }
+
   score_t GetAvg() const noexcept final {
     return static_cast<double>(_sum) / _it.Size();
   }
 
  private:
+  template<size_t N>
+  void GetBlockImpl(std::span<const doc_id_t, N> docs,
+                    std::span<uint32_t, N> values) {
+    SDB_ASSERT(docs.size() <= values.size());
+    const auto size = docs.size();
+    for (size_t i = 0; i < size; ++i) {
+      values[i] = Get(docs[i]);
+    }
+  }
+
   uint64_t _sum;
   BufferedColumnIterator _it;
 };

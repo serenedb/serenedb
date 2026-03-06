@@ -106,15 +106,17 @@ namespace {
 Result Apply(
   auto& snapshot, auto&& f,
   std::function<void(const std::shared_ptr<SnapshotImpl>&)> rollback = {}) {
-  auto clone =
-    std::atomic_load_explicit(&snapshot, std::memory_order_relaxed)->Clone();
+  auto self = std::atomic_load_explicit(&snapshot, std::memory_order_acquire);
+  std::shared_ptr<SnapshotImpl> clone = self->Clone();
+  self.reset();
   if (auto r = f(clone); !r.ok()) {
     if (rollback) {
       rollback(clone);
     }
     return r;
   }
-  std::atomic_store_explicit(&snapshot, std::move(clone),
+  std::shared_ptr<const SnapshotImpl> clone_const = std::move(clone);
+  std::atomic_store_explicit(&snapshot, std::move(clone_const),
                              std::memory_order_release);
   return {};
 }
@@ -128,7 +130,10 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
-    result->_object_dependencies = _object_dependencies;
+    result->_object_dependencies.reserve(_object_dependencies.size());
+    for (auto& [id, dep] : _object_dependencies) {
+      result->_object_dependencies.emplace(id, dep->Clone());
+    }
     return result;
   }
 
@@ -259,8 +264,8 @@ class SnapshotImpl : public Snapshot {
       RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Role>) {
-      RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
-                                                  maybe_not_found);
+      RemoveFromResolution<ResolveType::Role>(parent_id, object->GetName(),
+                                              maybe_not_found);
     } else if constexpr (std::is_same_v<T, Schema>) {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
@@ -514,7 +519,7 @@ class SnapshotImpl : public Snapshot {
 
   template<ResolveType Type>
   std::optional<ObjectId> GetObjectId(ObjectId parent_id,
-                                      std::string_view name) {
+                                      std::string_view name) const {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
@@ -557,6 +562,12 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
+    } else {
+      // Name unchanged, but must refresh the string_view to point to new
+      // object's _name
+      auto r = _resolution_table.AddObject<Type>(
+        parent_id, new_object->GetName(), new_object->GetId(), true);
+      SDB_ASSERT(r.ok());
     }
 
     auto it = _objects.find(new_object->GetId());
@@ -886,7 +897,9 @@ ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
 
   absl::MutexLock lock{&_mutex};
 
-  auto r = _snapshot->RegisterObject(*index, relation_id, false);
+  auto r = Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(*index, relation_id, false);
+  });
   if (!r.ok()) {
     return std::unexpected<Result>(std::in_place, r.errorNumber(),
                                    r.errorMessage());
@@ -1588,7 +1601,7 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-std::shared_ptr<Snapshot> LocalCatalog::GetSnapshot() const noexcept {
+std::shared_ptr<const Snapshot> LocalCatalog::GetSnapshot() const noexcept {
   return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
 }
 

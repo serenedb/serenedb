@@ -93,6 +93,8 @@ class Transaction : public Config {
 
   rocksdb::Transaction& EnsureRocksDBTransaction();
 
+  const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
+
   const rocksdb::Snapshot& EnsureRocksDBSnapshot();
 
   void Destroy() noexcept;
@@ -107,7 +109,8 @@ class Transaction : public Config {
                catalog::ObjectType::Table);
 
     for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
-      auto index = snapshot->GetObject<catalog::Index>(index_shard->GetId());
+      auto index =
+        snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
@@ -125,9 +128,9 @@ class Transaction : public Config {
           transaction = std::make_unique<irs::IndexWriter::Transaction>(
             inverted_index_shard.GetTransaction());
         }
-        visit(*transaction, index->GetColumnIds());
+        visit(*transaction, *index);
       } else {
-        visit(EnsureRocksDBTransaction(), index->GetColumnIds());
+        visit(EnsureRocksDBTransaction(), *index);
       }
     }
   }
@@ -142,6 +145,8 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
+  containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
+    _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
 

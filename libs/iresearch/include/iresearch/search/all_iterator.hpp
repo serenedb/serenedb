@@ -40,20 +40,14 @@ class AllIterator : public DocIterator {
     return irs::GetMutable(_attrs, id);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() noexcept final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = doc_value < _max_doc ? doc_value + 1 : doc_limits::eof();
-    return doc_value;
+    _doc = _doc < _max_doc ? _doc + 1 : doc_limits::eof();
+    return _doc;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = target <= _max_doc ? target : doc_limits::eof();
-    return doc_value;
+    _doc = target <= _max_doc ? target : doc_limits::eof();
+    return _doc;
   }
 
   doc_id_t LazySeek(doc_id_t target) noexcept final {
@@ -76,17 +70,16 @@ class AllIterator : public DocIterator {
   }
 
   uint32_t count() noexcept final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    if (doc_limits::eof(doc_value)) {
+    if (doc_limits::eof(_doc)) {
       return 0;
     }
-    const auto count = _max_doc - doc_value;
-    doc_value = doc_limits::eof();
+    const auto count = _max_doc - _doc;
+    _doc = doc_limits::eof();
     return count;
   }
 
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
 
   score_t _boost = {};
   const byte_type* _stats = nullptr;

@@ -1,0 +1,174 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA s1;
+
+
+statement ok
+CREATE SCHEMA s2;
+
+
+statement ok
+CREATE TABLE s1.t(id INTEGER);
+
+
+statement ok
+CREATE FUNCTION s1.f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
+
+
+statement ok
+CREATE INDEX i ON s1.t USING inverted(id);
+
+
+statement ok
+INSERT INTO s1.t VALUES (1), (2), (3);
+
+
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+statement error connection closed
+DROP INDEX s1.i;
+
+
+connection after_index_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM pg_class WHERE relname = 'i';
+----
+count
+0
+
+
+connection after_index_drop
+query ok
+SELECT * FROM s1.f();
+----
+f
+1
+
+
+connection after_index_drop
+query ok
+SELECT COUNT(*) FROM pg_class WHERE relname = 't';
+----
+count
+1
+
+
+connection after_index_drop
+query ok
+SELECT * FROM s1.t;
+----
+id
+1
+2
+3
+
+
+connection after_index_drop
+statement ok
+CREATE INDEX i ON s1.t USING inverted(id);
+
+
+connection after_index_drop
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+connection after_index_drop
+statement error connection closed
+DROP TABLE s1.t;
+
+
+connection after_table_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM pg_class WHERE relname = 'i' OR relname = 't';
+----
+count
+0
+
+
+connection after_table_drop
+query ok
+SELECT pg_schema_size('s1');
+----
+pg_schema_size
+0
+
+
+connection after_table_drop
+statement ok
+CREATE TABLE s1.t(id INTEGER);
+
+
+connection after_table_drop
+statement ok
+CREATE INDEX i on s1.t USING inverted(id);
+
+
+connection after_table_drop
+statement ok
+CREATE TABLE s2.t(id INTEGER);
+
+
+connection after_table_drop
+statement ok
+CREATE VIEW s2.v AS SELECT id + 1 FROM s2.t;
+
+
+connection after_table_drop
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+connection after_table_drop
+statement error connection closed
+DROP SCHEMA s1 CASCADE;
+
+
+connection after_schema_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM pg_class WHERE relname = 't';
+----
+count
+1
+
+
+connection after_schema_drop
+query ok
+SELECT COUNT(*) FROM pg_class WHERE relname = 'v';
+----
+count
+1
+
+
+connection after_schema_drop
+statement ok
+CREATE SCHEMA s1;
+
+
+connection after_schema_drop
+statement ok
+CREATE DATABASE db;
+
+
+connection after_schema_drop
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+connection after_schema_drop
+statement error connection closed
+DROP DATABASE db;
+
+
+connection after_database_drop
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE DATABASE db;
+
+
+connection after_database_drop
+statement ok
+DROP DATABASE db;

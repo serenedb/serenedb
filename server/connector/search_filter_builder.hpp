@@ -20,20 +20,28 @@
 
 #pragma once
 
+#include <catalog/inverted_index.h>
 #include <velox/core/ExpressionEvaluator.h>
 
 #include "axiom/connectors/ConnectorMetadata.h"
 #include "basics/fwd.h"
 #include "basics/result.h"
+#include "connector/serenedb_connector.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "velox/core/ITypedExpr.h"
 
 namespace sdb::connector::search {
 
-// Convert Velox expression to IResearch filter
-Result ExprToFilter(
-  irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
-  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
-    columns_map);
+struct ColumnInfo {
+  const SereneDBColumn& info;
+  catalog::ColumnAnalyzer analyzer;
+};
+
+using ColumnGetter =
+  absl::AnyInvocable<std::optional<ColumnInfo>(std::string_view) const>;
+
+Result MakeSearchFilter(irs::And& root,
+                        std::span<velox::core::TypedExprPtr> conjuncts,
+                        const ColumnGetter& column_getter);
 
 }  // namespace sdb::connector::search

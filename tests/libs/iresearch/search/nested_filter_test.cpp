@@ -41,20 +41,19 @@ struct ChildIterator : irs::DocIterator {
  public:
   ChildIterator(irs::DocIterator::ptr&& it, std::set<irs::doc_id_t> parents)
     : _it{std::move(it)}, _parents{std::move(parents)} {
-    EXPECT_NE(nullptr, _it);
+    SDB_ASSERT(_it);
+    _doc = _it->value();
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     return _it->GetMutable(id);
   }
 
-  irs::doc_id_t value() const noexcept final { return _it->value(); }
-
   irs::doc_id_t advance() final {
     while (true) {
       const auto doc = _it->advance();
       if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
@@ -65,7 +64,7 @@ struct ChildIterator : irs::DocIterator {
     }
     const auto doc = _it->seek(target);
     if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
   }
@@ -80,9 +79,11 @@ struct ChildIterator : irs::DocIterator {
 class PrevDocWrapper : public irs::DocIterator {
  public:
   explicit PrevDocWrapper(DocIterator::ptr&& it) noexcept : _it{std::move(it)} {
+    SDB_ASSERT(_it);
+    _doc = _it->value();
     _prev_doc.reset(
       [](const void* ctx) { return *static_cast<const irs::doc_id_t*>(ctx); },
-      &_prev);
+      &_doc);
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
@@ -92,19 +93,16 @@ class PrevDocWrapper : public irs::DocIterator {
     return _it->GetMutable(id);
   }
 
-  irs::doc_id_t value() const noexcept final { return _it->value(); }
-
-  irs::doc_id_t advance() final { return _prev = _it->advance(); }
+  irs::doc_id_t advance() final { return _doc = _it->advance(); }
 
   irs::doc_id_t seek(irs::doc_id_t target) final {
-    return _prev = _it->seek(target);
+    return _doc = _it->seek(target);
   }
 
   void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
 
  private:
   DocIterator::ptr _it;
-  irs::doc_id_t _prev{irs::doc_limits::invalid()};
   irs::PrevDocAttr _prev_doc;
 };
 

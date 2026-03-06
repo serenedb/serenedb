@@ -37,13 +37,10 @@ namespace {
 
 // Represents an iterator with no documents
 struct EmptyDocIterator : ResettableDocIterator {
+  EmptyDocIterator() { _doc = doc_limits::eof(); }
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    if (Type<DocAttr>::id() == id) {
-      return &_doc;
-    }
     return Type<CostAttr>::id() == id ? &_cost : nullptr;
   }
-  doc_id_t value() const noexcept final { return doc_limits::eof(); }
   doc_id_t advance() noexcept final { return doc_limits::eof(); }
   doc_id_t seek(doc_id_t /*target*/) noexcept final {
     return doc_limits::eof();
@@ -56,7 +53,6 @@ struct EmptyDocIterator : ResettableDocIterator {
 
  private:
   CostAttr _cost{0};
-  DocAttr _doc{doc_limits::eof()};
 };
 
 EmptyDocIterator gEmptyDocIterator;

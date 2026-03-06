@@ -5,7 +5,7 @@ CREATE DATABASE db;
 query error
 CREATE DATABASE db;
 ----
-db error: ERROR: Database already exists: db
+db error: ERROR: database "db" already exists
 
 
 statement ok
@@ -15,7 +15,7 @@ DROP DATABASE db;
 query error
 DROP DATABASE db;
 ----
-db error: ERROR: Database not found: db
+db error: ERROR: database "db" does not exist
 
 
 statement ok

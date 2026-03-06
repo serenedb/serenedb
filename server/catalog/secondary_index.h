@@ -34,13 +34,15 @@ class SecondaryIndex : public Index {
  public:
   using Options = SecondaryIndexOptions;
 
-  SecondaryIndex(IndexOptions<SecondaryIndexOptions> options);
+  SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
+                 ObjectId relation_id,
+                 IndexOptions<SecondaryIndexOptions> options);
 
   void WriteInternal(vpack::Builder& builder) const final;
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool, vpack::Slice) const final {
+    bool, ObjectId, IndexShardOptions&) const final {
     return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
                                    "Secondary Index Shard is not supported"};
   }

@@ -37,6 +37,7 @@
 #include "pg/functions/extract.h"
 #include "pg/functions/interval.h"
 #include "pg/functions/json.h"
+#include "pg/functions/size.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -633,6 +634,13 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
                           int32_t, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "error"});
+
+  velox::registerFunction<PgDatabaseSize, int64_t, velox::Varchar>(
+    {prefix + "database_size"});
+  velox::registerFunction<PgSchemaSize, int64_t, velox::Varchar>(
+    {prefix + "schema_size"});
+  velox::registerFunction<PgTableSize, int64_t, velox::Varchar>(
+    {prefix + "table_size"});
   registerExtractFunctions(prefix);
 }
 

@@ -42,7 +42,7 @@ count
 
 
 connection after_index_drop
-query ok
+query
 SELECT * FROM s1.f();
 ----
 f
@@ -50,7 +50,7 @@ f
 
 
 connection after_index_drop
-query ok
+query
 SELECT COUNT(*) FROM pg_class WHERE relname = 't';
 ----
 count
@@ -58,7 +58,7 @@ count
 
 
 connection after_index_drop
-query ok
+query
 SELECT * FROM s1.t;
 ----
 id
@@ -91,7 +91,7 @@ count
 
 
 connection after_table_drop
-query ok
+query
 SELECT pg_schema_size('s1');
 ----
 pg_schema_size
@@ -137,7 +137,7 @@ count
 
 
 connection after_schema_drop
-query ok
+query
 SELECT COUNT(*) FROM pg_class WHERE relname = 'v';
 ----
 count

@@ -13,7 +13,7 @@ statement ok
 INSERT INTO t VALUES (4, 'Moomintroll'), (5, 'Moominpappa'), (6, 'Moominmamma');
 
 
-query ok
+query
 SELECT reltuples FROM pg_class WHERE relname = 't';
 ----
 reltuples

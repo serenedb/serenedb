@@ -44,8 +44,17 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
   VOLUME_NAME="serenedb-recovery-datadir"
 
   docker swarm init 2>/dev/null || true
-  docker network create --driver overlay --attachable "$NETWORK_NAME" 2>/dev/null || true
-  # Named volume persists across Swarm task restarts (unlike /tmp which is per-container)
+
+  cleanup() {
+    docker service scale --detach=false "$SERVICE_NAME"=0
+    docker service rm "$SERVICE_NAME"
+    docker ps -a --filter "label=com.docker.swarm.service.name=$SERVICE_NAME" -q | xargs -r docker rm
+    docker network rm "$NETWORK_NAME"
+    docker volume rm "$VOLUME_NAME"
+  }
+  trap cleanup EXIT
+
+  docker network create --driver overlay --attachable "$NETWORK_NAME"
   docker volume create "$VOLUME_NAME"
 
   docker service create \
@@ -89,10 +98,6 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
     docker service logs "$SERVICE_NAME"
     echo "serened service log end!"
   fi
-
-  docker service rm "$SERVICE_NAME"
-  docker network rm "$NETWORK_NAME"
-  docker volume rm "$VOLUME_NAME"
 else
   COMPOSE_FILE="docker-compose.$TEST_KIND.yml"
   # Validate that compose file exists
@@ -101,16 +106,20 @@ else
       exit 255
   fi
 
-  # can be useful to run from container: docker compose run tests bash
+  cleanup() {
+    docker compose -f "$COMPOSE_FILE" down --volumes
+  }
+  trap cleanup EXIT
+
   docker compose -f "$COMPOSE_FILE" up --attach tests --exit-code-from tests --remove-orphans
   test_exit_code=$?
+
   if ! test "${test_exit_code}" -eq "0"; then
     echo "$TEST_KIND tests failed!"
     echo "serenedb-single container log begin:"
     docker compose -f "$COMPOSE_FILE" logs serenedb-single
     echo "serenedb-single container log end!"
   fi
-  docker compose -f "$COMPOSE_FILE" down --volumes
 fi
 
 exit "$test_exit_code"

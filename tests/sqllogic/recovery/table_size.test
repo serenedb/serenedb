@@ -13,7 +13,7 @@ statement ok
 INSERT INTO t VALUES (4, 'Moomintroll'), (5, 'Moominpappa'), (6, 'Moominmamma');
 
 
-query ok
+query
 SELECT reltuples FROM pg_class WHERE relname = 't';
 ----
 reltuples
@@ -33,7 +33,7 @@ SELECT 1;
 
 
 connection after_reboot
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+query retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT reltuples FROM pg_class WHERE relname = 't';
 ----
 reltuples

@@ -163,7 +163,7 @@ class ResolutionTable {
       SDB_ASSERT(id.isSet());
       auto node = _schemas.extract(id);
       SDB_ASSERT(!node.empty());
-      for (const auto& [_, id] : node.mapped()) {
+      for (auto [_, id] : node.mapped()) {
         _relations.erase(id);
         _functions.erase(id);
       }

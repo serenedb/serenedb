@@ -108,10 +108,9 @@ class FileOptionsParser : public OptionsParser {
     using namespace file_options;
 
     if (IsS3Path(_file_path) ||
-        absl::c_any_of(kS3Group.FlatOptions(),
-                       [&](const OptionInfo& option) {
-                         return HasOption(option);
-                       })) {
+        absl::c_any_of(kS3Group.FlatOptions(), [&](const OptionInfo& option) {
+          return HasOption(option);
+        })) {
       return StorageType::S3;
     }
 

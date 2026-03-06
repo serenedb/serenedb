@@ -106,15 +106,16 @@ namespace {
 Result Apply(
   auto& snapshot, auto&& f,
   std::function<void(const std::shared_ptr<SnapshotImpl>&)> rollback = {}) {
-  auto clone =
-    std::atomic_load_explicit(&snapshot, std::memory_order_relaxed)->Clone();
+  auto self = std::atomic_load_explicit(&snapshot, std::memory_order_relaxed);
+  std::shared_ptr<SnapshotImpl> clone = self->Clone();
   if (auto r = f(clone); !r.ok()) {
     if (rollback) {
       rollback(clone);
     }
     return r;
   }
-  std::atomic_store_explicit(&snapshot, std::move(clone),
+  std::shared_ptr<const SnapshotImpl> clone_const = std::move(clone);
+  std::atomic_store_explicit(&snapshot, std::move(clone_const),
                              std::memory_order_release);
   return {};
 }
@@ -128,7 +129,10 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
-    result->_object_dependencies = _object_dependencies;
+    result->_object_dependencies.reserve(_object_dependencies.size());
+    for (auto& [id, dep] : _object_dependencies) {
+      result->_object_dependencies.emplace(id, dep->Clone());
+    }
     return result;
   }
 
@@ -514,7 +518,7 @@ class SnapshotImpl : public Snapshot {
 
   template<ResolveType Type>
   std::optional<ObjectId> GetObjectId(ObjectId parent_id,
-                                      std::string_view name) {
+                                      std::string_view name) const {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
@@ -1596,7 +1600,7 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-std::shared_ptr<Snapshot> LocalCatalog::GetSnapshot() const noexcept {
+std::shared_ptr<const Snapshot> LocalCatalog::GetSnapshot() const noexcept {
   return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
 }
 

@@ -204,9 +204,6 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
  public:
   using Adapters = std::vector<Adapter>;
 
-  static constexpr auto kMergeType = ScoreMergeType::Noop;
-  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
-
   SmallDisjunction(Adapters&& itrs, doc_id_t docs_count)
     : SmallDisjunction{std::move(itrs),
                        [this, docs_count] noexcept {

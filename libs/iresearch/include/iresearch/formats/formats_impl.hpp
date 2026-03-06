@@ -1199,82 +1199,7 @@ class PostingIteratorBase : public DocIterator {
   std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
                                       uint64_t* IRS_RESTRICT const doc_mask,
                                       FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    SDB_ASSERT(!IteratorTraits::Position());
-    SDB_ASSERT(min < max);
-    SDB_ASSERT(value() >= min);
-
-    if (!score.score || score.score->IsDefault()) {
-      score.merge_type = ScoreMergeType::Noop;
-    }
-
-    return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
-      return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
-        bool empty = true;
-
-        // leftover from previous call
-        {
-          auto count = _left_in_leaf;
-
-          // after seek/advance value() is not in leftover, include it
-          if (const auto* p = std::end(_docs) - count;
-              p > std::begin(_docs) && *std::prev(p) == value()) {
-            ++count;
-          }
-
-          if (count > 0) {
-            if (*(std::end(_docs) - 1) >= max) {
-              _left_in_leaf = count;
-              goto fill_block_tail;
-            }
-            empty &= ProcessBatch<MergeType, TrackMatch>(
-              std::span<const doc_id_t>{std::end(_docs) - count, count}, min,
-              doc_mask, score, match);
-          }
-        }
-
-        // full blocks only
-        for (;;) {
-          if (_left_in_list == 0) [[unlikely]] {
-            _left_in_leaf = 0;
-            goto fill_block_done;
-          }
-          ReadBlock(*(std::end(_docs) - 1));
-          if (*(std::end(_docs) - 1) >= max || _left_in_leaf != kPostingBlock) {
-            goto fill_block_tail;
-          }
-          empty &= ProcessBatch<MergeType, TrackMatch>(
-            std::span<const doc_id_t, kPostingBlock>{std::begin(_docs),
-                                                     kPostingBlock},
-            min, doc_mask, score, match);
-        }
-
-      fill_block_tail: {
-        const auto* begin = std::end(_docs) - _left_in_leaf;
-        const auto* tail_end = std::find_if(
-          begin, std::cend(_docs), [&](doc_id_t doc) { return doc >= max; });
-        if (tail_end != begin) {
-          empty &= ProcessBatch<MergeType, TrackMatch>(
-            std::span{begin, tail_end}, min, doc_mask, score, match);
-        }
-        _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - tail_end);
-      }
-
-      fill_block_done:
-        if (_left_in_leaf > 0) {
-          _doc = *(std::end(_docs) - _left_in_leaf);
-          --_left_in_leaf;
-        } else {
-          _doc = doc_limits::eof();
-        }
-
-        if constexpr (IteratorTraits::Frequency()) {
-          std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
-        }
-        return std::pair{_doc, empty};
-      });
-    });
-  }
+                                      FillBlockMatchContext match) final;
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
@@ -1340,78 +1265,6 @@ class PostingIteratorBase : public DocIterator {
   IndexInput::ptr _doc_in;
   Attributes _attrs;
 };
-
-template<typename IteratorTraits>
-template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
-bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
-  std::span<const doc_id_t, N> docs, const doc_id_t min,
-  uint64_t* IRS_RESTRICT doc_mask, [[maybe_unused]] FillBlockScoreContext score,
-  [[maybe_unused]] FillBlockMatchContext match) {
-  [[maybe_unused]] auto* IRS_RESTRICT const score_window = score.score_window;
-
-  [[maybe_unused]] const score_t* IRS_RESTRICT score_ptr;
-  if constexpr (MergeType != ScoreMergeType::Noop) {
-    [[maybe_unused]] const auto* IRS_RESTRICT score_end =
-      reinterpret_cast<score_t*>(EncBufEnd());
-    if constexpr (N == kPostingBlock) {
-      if (score.fetcher) {
-        score.fetcher->FetchPostingBlock(docs);
-      }
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
-      }
-      score.score->ScorePostingBlock(
-        reinterpret_cast<score_t*>(EncBufEnd() - N));
-    } else {
-      if (score.fetcher) {
-        score.fetcher->Fetch(docs);
-      }
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
-      }
-      score.score->Score(reinterpret_cast<score_t*>(EncBufEnd() - docs.size()),
-                         docs.size());
-    }
-    score_ptr = score_end - docs.size();
-  }
-
-  if constexpr (!TrackMatch && MergeType == ScoreMergeType::Noop) {
-    const size_t first = (docs.front() - min) / BitsRequired<uint64_t>();
-    const size_t last = (docs.back() - min) / BitsRequired<uint64_t>();
-    if (last - first <= 1) [[likely]] {
-      uint64_t words[2] = {};
-      for (size_t i = 0; i < docs.size(); ++i) {
-        const size_t offset = docs[i] - min;
-        SetBit(words[(offset / BitsRequired<uint64_t>()) - first],
-               offset % BitsRequired<uint64_t>());
-      }
-      doc_mask[first] |= words[0];
-      doc_mask[last] |= words[1];
-      return false;
-    }
-  }
-
-  bool empty = true;
-  for (size_t i = 0; i < docs.size(); ++i) {
-    const size_t offset = docs[i] - min;
-    if constexpr (!TrackMatch) {
-      SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
-             offset % BitsRequired<uint64_t>());
-    } else {
-      const bool has_match = ++match.matches[offset] >= match.min_match_count;
-      SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
-             offset % BitsRequired<uint64_t>(), has_match);
-      empty &= !has_match;
-    }
-    if constexpr (MergeType != ScoreMergeType::Noop) {
-      Merge<MergeType>(score_window[offset], score_ptr[i]);
-    }
-  }
-  if constexpr (!TrackMatch) {
-    empty = false;
-  }
-  return empty;
-}
 
 template<typename IteratorTraits>
 doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
@@ -1524,6 +1377,158 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
     }
     return seal();
   }
+}
+
+template<typename IteratorTraits>
+std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
+  const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT const doc_mask,
+  FillBlockScoreContext score, FillBlockMatchContext match) {
+  SDB_ASSERT(!IteratorTraits::Position());
+  SDB_ASSERT(min < max);
+  SDB_ASSERT(value() >= min);
+
+  if (!score.score || score.score->IsDefault()) {
+    score.merge_type = ScoreMergeType::Noop;
+  }
+
+  return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
+    return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+      bool empty = true;
+
+      // leftover from previous call
+      {
+        auto count = _left_in_leaf;
+
+        // after seek/advance value() is not in leftover, include it
+        if (const auto* p = std::end(_docs) - count;
+            p > std::begin(_docs) && *std::prev(p) == value()) {
+          ++count;
+        }
+
+        if (count > 0) {
+          if (*(std::end(_docs) - 1) >= max) {
+            _left_in_leaf = count;
+            goto fill_block_tail;
+          }
+          empty &= ProcessBatch<MergeType, TrackMatch>(
+            std::span<const doc_id_t>{std::end(_docs) - count, count}, min,
+            doc_mask, score, match);
+        }
+      }
+
+      // full blocks only
+      for (;;) {
+        if (_left_in_list == 0) [[unlikely]] {
+          _left_in_leaf = 0;
+          goto fill_block_done;
+        }
+        ReadBlock(*(std::end(_docs) - 1));
+        if (*(std::end(_docs) - 1) >= max || _left_in_leaf != kPostingBlock) {
+          goto fill_block_tail;
+        }
+        empty &= ProcessBatch<MergeType, TrackMatch>(
+          std::span<const doc_id_t, kPostingBlock>{std::begin(_docs),
+                                                   kPostingBlock},
+          min, doc_mask, score, match);
+      }
+
+    fill_block_tail: {
+      const auto* begin = std::end(_docs) - _left_in_leaf;
+      const auto* tail_end = std::find_if(
+        begin, std::cend(_docs), [&](doc_id_t doc) { return doc >= max; });
+      if (tail_end != begin) {
+        empty &= ProcessBatch<MergeType, TrackMatch>(
+          std::span{begin, tail_end}, min, doc_mask, score, match);
+      }
+      _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - tail_end);
+    }
+
+    fill_block_done:
+      if (_left_in_leaf > 0) {
+        _doc = *(std::end(_docs) - _left_in_leaf);
+        --_left_in_leaf;
+      } else {
+        _doc = doc_limits::eof();
+      }
+
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
+      }
+      return std::pair{_doc, empty};
+    });
+  });
+}
+
+template<typename IteratorTraits>
+template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
+bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
+  std::span<const doc_id_t, N> docs, const doc_id_t min,
+  uint64_t* IRS_RESTRICT doc_mask, [[maybe_unused]] FillBlockScoreContext score,
+  [[maybe_unused]] FillBlockMatchContext match) {
+  [[maybe_unused]] auto* IRS_RESTRICT const score_window = score.score_window;
+
+  [[maybe_unused]] const score_t* IRS_RESTRICT score_ptr;
+  if constexpr (MergeType != ScoreMergeType::Noop) {
+    [[maybe_unused]] const auto* IRS_RESTRICT score_end =
+      reinterpret_cast<score_t*>(EncBufEnd());
+    if constexpr (N == kPostingBlock) {
+      if (score.fetcher) {
+        score.fetcher->FetchPostingBlock(docs);
+      }
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
+      }
+      score.score->ScorePostingBlock(
+        reinterpret_cast<score_t*>(EncBufEnd() - N));
+    } else {
+      if (score.fetcher) {
+        score.fetcher->Fetch(docs);
+      }
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
+      }
+      score.score->Score(reinterpret_cast<score_t*>(EncBufEnd() - docs.size()),
+                         docs.size());
+    }
+    score_ptr = score_end - docs.size();
+  }
+
+  if constexpr (!TrackMatch && MergeType == ScoreMergeType::Noop) {
+    const size_t first = (docs.front() - min) / BitsRequired<uint64_t>();
+    const size_t last = (docs.back() - min) / BitsRequired<uint64_t>();
+    if (last - first <= 1) [[likely]] {
+      uint64_t words[2] = {};
+      for (size_t i = 0; i < docs.size(); ++i) {
+        const size_t offset = docs[i] - min;
+        SetBit(words[(offset / BitsRequired<uint64_t>()) - first],
+               offset % BitsRequired<uint64_t>());
+      }
+      doc_mask[first] |= words[0];
+      doc_mask[last] |= words[1];
+      return false;
+    }
+  }
+
+  bool empty = true;
+  for (size_t i = 0; i < docs.size(); ++i) {
+    const size_t offset = docs[i] - min;
+    if constexpr (!TrackMatch) {
+      SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
+             offset % BitsRequired<uint64_t>());
+    } else {
+      const bool has_match = ++match.matches[offset] >= match.min_match_count;
+      SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
+             offset % BitsRequired<uint64_t>(), has_match);
+      empty &= !has_match;
+    }
+    if constexpr (MergeType != ScoreMergeType::Noop) {
+      Merge<MergeType>(score_window[offset], score_ptr[i]);
+    }
+  }
+  if constexpr (!TrackMatch) {
+    empty = false;
+  }
+  return empty;
 }
 
 static_assert(kMaxScorers < WandContext::kDisable);

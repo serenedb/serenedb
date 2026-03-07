@@ -102,11 +102,9 @@ bool SqlStatement::ProcessNextRoot(
   }
 
   if (query_desc.type == pg::SqlCommandType::CTAS) {
-    SDB_ASSERT(query_desc.root);
     SDB_ASSERT(query_desc.pgsql_node);
+    SDB_ASSERT(query_desc.root);
     SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
-    SDB_ASSERT(nodeTag(query_desc.pgsql_node) == T_CreateTableAsStmt ||
-               nodeTag(query_desc.pgsql_node) == T_SelectStmt);
 
     const IntoClause* into = nullptr;
     bool if_not_exists = false;
@@ -116,6 +114,7 @@ bool SqlStatement::ProcessNextRoot(
       into = ctas_stmt.into;
       if_not_exists = ctas_stmt.if_not_exists;
     } else {
+      SDB_ASSERT(nodeTag(query_desc.pgsql_node) == T_SelectStmt);
       const auto& select_stmt = *castNode(SelectStmt, query_desc.pgsql_node);
       into = select_stmt.intoClause;
     }

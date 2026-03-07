@@ -1596,10 +1596,10 @@ void CommonSkipWandData(WandExtent extent, Input& in) {
   }
 }
 
-template<typename WandExtent>
+template<typename WandExtent, typename InputType>
 IRS_FORCE_INLINE score_t CommonReadWandData(WandExtent wextent, uint8_t index,
                                             const ScoreFunction& func,
-                                            WandSource& ctx, DataInput& in) {
+                                            WandSource& ctx, InputType& in) {
   const auto extent = wextent.GetExtent();
   SDB_ASSERT(extent);
   SDB_ASSERT(index < extent);
@@ -2797,7 +2797,7 @@ class SingleWandIterator : public DocIterator {
       return _skip_levels.back().doc;
     }
 
-    score_t ReadWandScore(IndexInput& in) {
+    score_t ReadWandScore(InputType& in) {
       return CommonReadWandData(_wand_extent, _wand_index, _wand_func,
                                 *_wand_source, in);
     }
@@ -3076,6 +3076,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                                        Factory&& factory);
 };
 
+// TODO(mbkkt) Add BytesViewInput specialization
 template<typename FieldTraits, size_t N>
 void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
                   uint32_t (&enc_buf)[N], size_t* set) {
@@ -3442,8 +3443,9 @@ struct FormatTraits128 {
   static constexpr auto kEncBufSize =
     (kEncBufByteSize + sizeof(uint32_t)) / sizeof(uint32_t);
 
-  IRS_FORCE_INLINE static void write_block_delta(DataOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
+  IRS_FORCE_INLINE static void write_block_delta(BufferedOutput& out,
+                                                 uint32_t* in, uint32_t prev,
+                                                 uint32_t* buf) {
     DeltaEncode<kBlockSize>(in, prev);
     bitpack::write_block32(
       [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
@@ -3454,8 +3456,8 @@ struct FormatTraits128 {
       out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void write_block(DataOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
+  IRS_FORCE_INLINE static void write_block(BufferedOutput& out,
+                                           const uint32_t* in, uint32_t* buf) {
     bitpack::write_block32(
       [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
          uint32_t bits) IRS_FORCE_INLINE {
@@ -3489,7 +3491,8 @@ struct FormatTraits128 {
       in, buf, out, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void skip_block(DataInput& in) {
+  template<typename InputType>
+  IRS_FORCE_INLINE static void skip_block(InputType& in) {
     bitpack::skip_block32(in, kBlockSize);
   }
 };

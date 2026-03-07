@@ -54,7 +54,8 @@ constexpr bool rl(const uint32_t bits) noexcept { return kAllEqual == bits; }
 
 // skip block of the specified size that was previously
 // written with the corresponding 'write_block' function
-IRS_FORCE_INLINE inline void skip_block32(DataInput& in, uint32_t size) {
+template<typename InputType>
+IRS_FORCE_INLINE inline void skip_block32(InputType& in, uint32_t size) {
   SDB_ASSERT(size);
 
   const uint32_t bits = in.ReadByte();
@@ -70,7 +71,7 @@ IRS_FORCE_INLINE inline void skip_block32(DataInput& in, uint32_t size) {
 //   otherwise            -> bit packing
 // returns number of bits used to encoded the block (0 == RL)
 template<typename PackFunc>
-IRS_FORCE_INLINE uint32_t write_block32(PackFunc&& pack, DataOutput& out,
+IRS_FORCE_INLINE uint32_t write_block32(PackFunc&& pack, BufferedOutput& out,
                                         const uint32_t* IRS_RESTRICT decoded,
                                         uint32_t* IRS_RESTRICT encoded,
                                         uint32_t size) {
@@ -107,7 +108,7 @@ IRS_FORCE_INLINE uint32_t write_block32(PackFunc&& pack, DataOutput& out,
 //   otherwise            -> bit packing
 // returns number of bits used to encoded the block (0 == RL)
 template<typename PackFunc>
-IRS_FORCE_INLINE uint32_t write_block64(PackFunc&& pack, DataOutput& out,
+IRS_FORCE_INLINE uint32_t write_block64(PackFunc&& pack, BufferedOutput& out,
                                         const uint64_t* IRS_RESTRICT decoded,
                                         uint64_t size,
                                         uint64_t* IRS_RESTRICT encoded) {

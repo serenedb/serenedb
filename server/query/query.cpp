@@ -270,8 +270,6 @@ Query::Query(std::unique_ptr<ExternalExecutor> executor,
              const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _executor{std::move(executor)} {}
 
-Query::~Query() {}
-
 std::string Query::GetLogicalPlan() const {
   SDB_ASSERT(_logical_plan);
   return axiom::logical_plan::PlanPrinter::toText(*_logical_plan);

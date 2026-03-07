@@ -32,13 +32,10 @@
 #include <optional>
 
 #include "basics/fwd.h"
+#include "pg/commands/ctas.h"
 #include "query/context.h"
 #include "query/external_executor.h"
 #include "query/runner.h"
-
-namespace sdb::pg {
-class CTASCommand;
-}
 
 namespace sdb::query {
 
@@ -119,9 +116,6 @@ class Query {
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;
   std::string _physical_plan;
-
- public:
-  ~Query();
 };
 
 using QueryPtr = std::unique_ptr<Query>;

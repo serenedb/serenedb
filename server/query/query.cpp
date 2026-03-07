@@ -120,7 +120,7 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
     _logical_plan{root},
     _output_type{root->outputType()},
     _ctas_command{std::move(ctas_command)} {
-  // Compilation is deferred until after table creation in Cursor::ExecuteCTAS.
+  // Compilation is deferred until after table creation.
 }
 
 void Query::CompileQuery() {

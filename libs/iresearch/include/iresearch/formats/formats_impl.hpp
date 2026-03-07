@@ -1239,29 +1239,7 @@ class PostingIteratorBase : public DocIterator {
   template<size_t N>
   IRS_FORCE_INLINE const score_t* ScoreBlock(std::span<const doc_id_t, N> docs,
                                              const ScoreFunction& score,
-                                             ColumnArgsFetcher* fetcher) {
-    if constexpr (N == kPostingBlock) {
-      if (fetcher) {
-        fetcher->FetchPostingBlock(docs);
-      }
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
-      }
-      auto p = reinterpret_cast<score_t*>(EncBufEnd() - N);
-      score.ScorePostingBlock(p);
-      return p;
-    } else {
-      if (fetcher) {
-        fetcher->Fetch(docs);
-      }
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
-      }
-      auto p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
-      score.Score(p, docs.size());
-      return p;
-    }
-  }
+                                             ColumnArgsFetcher* fetcher);
 
   template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
   bool ProcessBatch(std::span<const doc_id_t, N> docs, const doc_id_t min,
@@ -1491,8 +1469,8 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
                                                   ScoreCollector& collector) {
   ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
     auto add = [&]<size_t N>(std::span<const doc_id_t, N> docs,
-                             const score_t* scores) {
-      // TODO(gnusi): bulk threshold check will make it faster
+                             const score_t* scores) IRS_FORCE_INLINE {
+      // TODO(mbkkt): bulk threshold check will make it faster
       for (size_t i = 0; i < docs.size(); ++i) {
         collector.Add(scores[i], docs[i]);
       }
@@ -1518,6 +1496,34 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
   });
 
   _doc = doc_limits::eof();
+}
+
+template<typename IteratorTraits>
+template<size_t N>
+const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
+  std::span<const doc_id_t, N> docs, const ScoreFunction& score,
+  ColumnArgsFetcher* fetcher) {
+  if constexpr (N == kPostingBlock) {
+    if (fetcher) {
+      fetcher->FetchPostingBlock(docs);
+    }
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
+    }
+    auto p = reinterpret_cast<score_t*>(EncBufEnd() - N);
+    score.ScorePostingBlock(p);
+    return p;
+  } else {
+    if (fetcher) {
+      fetcher->Fetch(docs);
+    }
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
+    }
+    auto p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
+    score.Score(p, docs.size());
+    return p;
+  }
 }
 
 template<typename IteratorTraits>

@@ -564,7 +564,6 @@ void RocksDBEngineCatalog::start() {
     }
   }
 
-  // Clean up leftover bulk insert directories from a previous crash
   {
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(_path, ec)) {

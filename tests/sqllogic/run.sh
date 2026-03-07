@@ -47,6 +47,7 @@ validate_boolean() {
 
 launch_s3() {
 	MINIO_CONTAINER_NAME="serenedb-test-minio-$$"
+	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio.log"
 	export MINIO_ACCESS_KEY="minioadmin"
 	export MINIO_SECRET_KEY="minioadmin"
 	export MINIO_BUCKET="testbucket"
@@ -55,6 +56,8 @@ launch_s3() {
 
 	cleanup_minio() {
 		if [[ -n "${MINIO_CONTAINER_NAME:-}" ]]; then
+			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
+			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
 			echo "Stopping MinIO container..."
 			docker rm -f "$MINIO_CONTAINER_NAME" 2>/dev/null || true
 		fi
@@ -81,7 +84,7 @@ launch_s3() {
 
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do
-		if curl -sf "http://${MINIO_HOST}:${MINIO_PORT}/minio/health/ready" >/dev/null 2>&1; then
+		if bash -c "echo > /dev/tcp/${MINIO_HOST}/${MINIO_PORT}" 2>/dev/null; then
 			echo "MinIO is ready."
 			break
 		fi

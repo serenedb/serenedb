@@ -130,7 +130,7 @@ else
 	if ! test "${test_exit_code}" -eq "0"; then
 		echo "$TEST_KIND tests failed!"
 		echo "serenedb-single container log begin:"
-		docker compose -f "$COMPOSE_FILE" logs serenedb-single
+		docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" logs serenedb-single
 		echo "serenedb-single container log end!"
 	fi
 fi

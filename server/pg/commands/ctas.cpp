@@ -92,7 +92,7 @@ void CTASCommand::Rollback() {
 Result CTASCommand::RemoveTombstone() {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  return catalog.RemoveTableTombstone(_db, _schema, _table_name);
+  return catalog.RemoveTombstone(_db, _schema, _table_name);
 }
 
 }  // namespace sdb::pg

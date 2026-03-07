@@ -210,9 +210,8 @@ struct LogicalCatalog {
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name) = 0;
-  virtual Result RemoveTableTombstone(ObjectId database,
-                                      std::string_view schema,
-                                      std::string_view name) = 0;
+  virtual Result RemoveTombstone(ObjectId database, std::string_view schema,
+                                 std::string_view name) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 

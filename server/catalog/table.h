@@ -91,9 +91,6 @@ class Table : public SchemaObject {
     return *_sharding_strategy;
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
-  bool IsTombstoned() const noexcept { return _tombstoned; }
-  void SetTombstoned(bool v) noexcept { _tombstoned = v; }
-
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {
@@ -131,7 +128,6 @@ class Table : public SchemaObject {
   // _write_concern <= _replication_factor
   uint32_t _write_concern = 1;
   FileInfo _file_info;
-  bool _tombstoned = false;
 };
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

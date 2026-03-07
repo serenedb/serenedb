@@ -168,6 +168,9 @@ class SchemaObject : public DatabaseObject {
   // TODO(gnusi): remove it after schema management is done
   void SetSchemaId(ObjectId schema_id) noexcept { _schema_id = schema_id; }
 
+  bool Tombstoned() const noexcept { return _tombstoned; }
+  void SetTombstoned(bool v) noexcept { _tombstoned = v; }
+
  protected:
   SchemaObject(ObjectId owner_id, ObjectId database_id, ObjectId schema_id,
                ObjectId id, std::string_view name, ObjectType type)
@@ -176,6 +179,7 @@ class SchemaObject : public DatabaseObject {
 
  private:
   ObjectId _schema_id;
+  bool _tombstoned = false;
 };
 
 struct ObjectMeta {

@@ -1531,9 +1531,9 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::RemoveTableTombstone(ObjectId db_id,
-                                          std::string_view schema_name,
-                                          std::string_view name) {
+Result LocalCatalog::RemoveTombstone(ObjectId db_id,
+                                     std::string_view schema_name,
+                                     std::string_view name) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
@@ -1545,9 +1545,10 @@ Result LocalCatalog::RemoveTableTombstone(ObjectId db_id,
   if (!table_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto table = _snapshot->GetObject<Table>(*table_id);
-  if (table) {
-    table->SetTombstoned(false);
+  auto object = _snapshot->GetObject(*table_id);
+  if (object) {
+    auto& schema_obj = basics::downCast<SchemaObject>(*object);
+    schema_obj.SetTombstoned(false);
   }
   return _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone,
                                  *table_id);

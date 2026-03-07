@@ -191,12 +191,13 @@ void ResolveRelation(ObjectId database,
               name.FullName(), "\" does not exist");
   }
 
+  if (data.object->Tombstoned()) {
+    SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
+              name.FullName(), "\" does not exist");
+  }
+
   if (data.object->GetType() == catalog::ObjectType::Table) {
     auto& table = basics::downCast<catalog::Table>(*data.object);
-    if (table.IsTombstoned()) {
-      SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
-                name.FullName(), "\" does not exist");
-    }
     for (const auto& column : table.Columns()) {
       if (const auto& default_value = column.expr) {
         const auto& default_value_objects = default_value->GetObjects();

@@ -320,17 +320,32 @@ void TestSeekSkipFillBlock(const irs::DirectoryReader& reader,
 
 struct QueryResult {
   std::string query;
-  std::vector<std::string> tags;
   uint64_t count{0};
   uint64_t top_100{0};
-  std::vector<std::string> top_100_ids;
-  std::vector<std::string> top_100_count_ids;
+  std::vector<std::string> top_100_result;
+  std::vector<std::string> top_100_count_result;
 };
 
 struct ParsedQuery {
   std::string query;
   std::vector<std::string> tags;
 };
+
+std::string HashIds(const std::vector<std::string>& ids) {
+  sdb::Sha256Functor sha;
+  for (const auto& id : ids) {
+    sha(id.data(), id.size());
+    sha("\n", 1);
+  }
+  return sha.finalize();
+}
+
+void HashResults(std::vector<QueryResult>& results) {
+  for (auto& r : results) {
+    r.top_100_result = {HashIds(r.top_100_result)};
+    r.top_100_count_result = {HashIds(r.top_100_count_result)};
+  }
+}
 
 std::string SerializeResults(const std::vector<QueryResult>& results) {
   vpack::Builder builder;
@@ -459,21 +474,20 @@ std::vector<QueryResult> ExecuteAllQueries(
                  << "query[" << i << "] \"" << q.query << "\"");
     QueryResult r;
     r.query = q.query;
-    r.tags = q.tags;
     r.count = executor.ExecuteCount(q.query);
     EXPECT_GT(r.count, 0) << "COUNT returned 0";
     r.top_100 = executor.ExecuteTopK(kTopK, q.query);
     SCOPED_TRACE(testing::Message()
                  << "count=" << r.count << " top_100=" << r.top_100
                  << " results=" << executor.GetResults().size());
-    collect_ids("TOP_100", executor.GetResults(), r.top_100_ids);
+    collect_ids("TOP_100", executor.GetResults(), r.top_100_result);
 
     auto top_100_count = executor.ExecuteTopKWithCount(kTopK, q.query);
     EXPECT_EQ(r.count, top_100_count) << "TOP_100_COUNT differs from COUNT";
     SCOPED_TRACE(testing::Message()
                  << "top_100_count=" << top_100_count
                  << " results=" << executor.GetResults().size());
-    collect_ids("TOP_100_COUNT", executor.GetResults(), r.top_100_count_ids);
+    collect_ids("TOP_100_COUNT", executor.GetResults(), r.top_100_count_result);
 
     results.emplace_back(std::move(r));
   }
@@ -517,8 +531,8 @@ class SearchBenchTest : public TestBase {
  protected:
   enum class Mode {
     Validate,
+    GenerateHash,
     GenerateJson,
-    GenerateGzip,
   };
 
   void SetUp() override {
@@ -529,7 +543,11 @@ class SearchBenchTest : public TestBase {
     }
     std::string gen;
     if (sdb::SdbGETENV("GENERATE_REFERENCE", gen)) {
-      _mode = gen == "json" ? Mode::GenerateJson : Mode::GenerateGzip;
+      _mode = gen == "json" ? Mode::GenerateJson : Mode::GenerateHash;
+    }
+    std::string gzip;
+    if (sdb::SdbGETENV("GENERATE_GZIP", gzip)) {
+      _gzip = gzip != "0";
     }
     if (!std::filesystem::exists(_corpus_path)) {
       GTEST_SKIP() << "Path does not exist: " << _corpus_path;
@@ -574,27 +592,33 @@ class SearchBenchTest : public TestBase {
     auto results = ExecuteAllQueries(*_executor, queries, _id_map);
     ASSERT_FALSE(results.empty()) << "No query results produced";
 
+    if (_mode == Mode::GenerateHash) {
+      HashResults(results);
+    }
+    auto json_output = SerializeResults(results);
+
+    if (_gzip) {
+      std::filesystem::create_directories(res_dir);
+      auto gz_path = (res_dir / "reference.json.gz").string();
+      gzFile gz = gzopen(gz_path.c_str(), "wb");
+      ASSERT_NE(gz, nullptr) << "Cannot write: " << gz_path;
+      gzwrite(gz, json_output.data(), json_output.size());
+      gzclose(gz);
+      std::cout << absl::StrCat("Gzip written to \"", gz_path, "\"\n");
+    }
+
     if (_mode != Mode::Validate) {
       std::filesystem::create_directories(res_dir);
-      auto json_output = SerializeResults(results);
-      std::string ref_path;
-      if (_mode == Mode::GenerateGzip) {
-        ref_path = (res_dir / "reference.json.gz").string();
-        gzFile gz = gzopen(ref_path.c_str(), "wb");
-        ASSERT_NE(gz, nullptr) << "Cannot write: " << ref_path;
-        gzwrite(gz, json_output.data(), json_output.size());
-        gzclose(gz);
-      } else {
-        ref_path = (res_dir / "reference.json").string();
-        std::ofstream out{ref_path};
-        ASSERT_TRUE(out.is_open()) << "Cannot write: " << ref_path;
-        out << json_output;
-      }
-      std::cout << absl::StrCat("Reference written to \"", ref_path, "\" (",
+      auto json_path = (res_dir / "reference.json").string();
+      std::ofstream out{json_path};
+      ASSERT_TRUE(out.is_open()) << "Cannot write: " << json_path;
+      out << json_output;
+      std::cout << absl::StrCat("JSON written to \"", json_path, "\" (",
                                 results.size(), " queries)\n");
       return;
     }
 
+    auto json_path = res_dir / "reference.json";
     std::string ref_str;
     auto gz_path = res_dir / "reference.json.gz";
     if (std::filesystem::exists(gz_path)) {
@@ -606,6 +630,7 @@ class SearchBenchTest : public TestBase {
         << "Reference file not found: " << raw_path;
     }
     auto expected = DeserializeResults(ref_str);
+    HashResults(results);
 
     ASSERT_EQ(results.size(), expected.size()) << "Query count mismatch";
 
@@ -621,22 +646,22 @@ class SearchBenchTest : public TestBase {
       EXPECT_EQ(a.top_100, e.top_100)
         << "TOP_100 mismatch for query[" << i << "] \"" << a.query << "\"";
 
-      ASSERT_EQ(a.top_100_ids.size(), e.top_100_ids.size())
+      ASSERT_EQ(a.top_100_result.size(), e.top_100_result.size())
         << "TOP_100 id count mismatch for query[" << i << "] \"" << a.query
         << "\"";
 
-      for (size_t j = 0; j < a.top_100_ids.size(); ++j) {
-        EXPECT_EQ(a.top_100_ids[j], e.top_100_ids[j])
+      for (size_t j = 0; j < a.top_100_result.size(); ++j) {
+        EXPECT_EQ(a.top_100_result[j], e.top_100_result[j])
           << "TOP_100 id[" << j << "] mismatch for query[" << i << "] \""
           << a.query << "\"";
       }
 
-      ASSERT_EQ(a.top_100_count_ids.size(), e.top_100_count_ids.size())
+      ASSERT_EQ(a.top_100_count_result.size(), e.top_100_count_result.size())
         << "TOP_100_COUNT id count mismatch for query[" << i << "] \""
         << a.query << "\"";
 
-      for (size_t j = 0; j < a.top_100_count_ids.size(); ++j) {
-        EXPECT_EQ(a.top_100_count_ids[j], e.top_100_count_ids[j])
+      for (size_t j = 0; j < a.top_100_count_result.size(); ++j) {
+        EXPECT_EQ(a.top_100_count_result[j], e.top_100_count_result[j])
           << "TOP_100_COUNT id[" << j << "] mismatch for query[" << i << "] \""
           << a.query << "\"";
       }
@@ -647,6 +672,7 @@ class SearchBenchTest : public TestBase {
   std::unique_ptr<bench::Executor> _executor;
   std::vector<std::string> _id_map;
   Mode _mode = Mode::Validate;
+  bool _gzip = false;
   bool _drop_index = true;
 };
 

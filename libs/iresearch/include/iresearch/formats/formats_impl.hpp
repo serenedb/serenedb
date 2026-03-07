@@ -30,6 +30,8 @@
 #include <bit>
 #include <limits>
 #include <memory>
+#include <span>
+#include <utility>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
@@ -1468,32 +1470,32 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
                                                   ColumnArgsFetcher& fetcher,
                                                   ScoreCollector& collector) {
   ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
-    auto add = [&]<size_t N>(std::span<const doc_id_t, N> docs,
-                             const score_t* scores) IRS_FORCE_INLINE {
+    auto process_block = [&]<size_t N>(size_t left_in_leaf) IRS_FORCE_INLINE {
+      std::span<const doc_id_t, N> docs{std::end(_docs) - left_in_leaf,
+                                        left_in_leaf};
+      const auto* scores = ScoreBlock(docs, scorer, &fetcher);
       // TODO(mbkkt): bulk threshold check will make it faster
       for (size_t i = 0; i < docs.size(); ++i) {
         collector.Add(scores[i], docs[i]);
       }
     };
 
-    *(std::end(_docs) - 1) = _doc;
-
-    while (_left_in_list) {
-      ReadBlock(*(std::end(_docs) - 1));
-      if (_left_in_leaf != kPostingBlock) {
-        break;
-      }
-      std::span<const doc_id_t, kPostingBlock> docs{_docs, kPostingBlock};
-      const auto* scores = ScoreBlock(docs, scorer, &fetcher);
-      add(docs, scores);
+    if (const auto left_in_leaf = std::exchange(_left_in_leaf, 0))
+      [[unlikely]] {
+      process_block.template operator()<std::dynamic_extent>(left_in_leaf);
+    } else {
+      *(std::end(_docs) - 1) = _doc;
     }
 
-    if (_left_in_leaf) {
-      std::span<const doc_id_t> docs{std::end(_docs) - _left_in_leaf,
-                                     _left_in_leaf};
-      const auto* scores = ScoreBlock(docs, scorer, &fetcher);
-      add(docs, scores);
-      _left_in_leaf = 0;
+    while (_left_in_list >= kPostingBlock) {
+      ReadBlock(*(std::end(_docs) - 1));
+      process_block.template operator()<kPostingBlock>(kPostingBlock);
+    }
+
+    if (_left_in_list) {
+      ReadBlock(*(std::end(_docs) - 1));
+      process_block.template operator()<std::dynamic_extent>(
+        std::exchange(_left_in_leaf, 0));
     }
   });
 

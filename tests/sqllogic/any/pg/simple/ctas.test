@@ -11,14 +11,16 @@ FROM
   generate_series(1, 100) AS serenedb(salary);
 
 
-query ???
+query
 SELECT * FROM vedernikoff;
 ----
 30003 values hashing to 4054c492260f852b8162b374b3e41700
 
 
-statement error db error: ERROR: duplicate name
+statement error
 CREATE TABLE vedernikoff AS SELECT 1 AS id;
+----
+db error: ERROR: relation "vedernikoff" already exists
 
 
 statement error

@@ -66,6 +66,13 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   r = catalog.CreateTable(_db, _schema, std::move(options), table_operation);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _stmt.if_not_exists) {
     r = {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", _table_name, "\" already exists"));
+  }
+
+  if (!r.ok()) {
+    return yaclib::MakeFuture(std::move(r));
   }
 
   auto snapshot = catalog.GetSnapshot();

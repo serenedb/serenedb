@@ -304,10 +304,9 @@ class BlockDisjunction : public DocIterator {
     if constexpr (kHasScore) {
       SDB_ASSERT(doc_limits::valid(value()));
       SDB_ASSERT(!doc_limits::eof(value()));
+      // TODO(gnusi): make better
       _score_buf.FetchScoreArgs(
-        static_cast<uint16_t>(_buf_offset + value() -
-                              _doc_base),  // TODO(gnusi): make better
-        index);
+        static_cast<uint16_t>(_buf_offset + (value() - _doc_base)), index);
     }
   }
 
@@ -358,16 +357,18 @@ class BlockDisjunction : public DocIterator {
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
-    ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
-      if constexpr (kHasScore) {
+    if constexpr (kHasScore) {
+      ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
         while (RefillImpl()) {
           const doc_id_t window_base = _max - kWindow;
           collector.AddWindow(_score_buf.score_window.data(), _mask,
                               window_base, kNumBlocks);
         }
-      }
+      });
       _doc = doc_limits::eof();
-    });
+    } else {
+      SDB_ASSERT(false);
+    }
   }
 
   template<typename Estimation>

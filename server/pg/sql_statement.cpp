@@ -105,15 +105,31 @@ bool SqlStatement::ProcessNextRoot(
     SDB_ASSERT(query_desc.root);
     SDB_ASSERT(query_desc.pgsql_node);
     SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+    SDB_ASSERT(nodeTag(query_desc.pgsql_node) == T_CreateTableAsStmt ||
+               nodeTag(query_desc.pgsql_node) == T_SelectStmt);
 
-    const auto& ctas_stmt = *castNode(CreateTableAsStmt, query_desc.pgsql_node);
+    const IntoClause* into = nullptr;
+    bool if_not_exists = false;
+    if (nodeTag(query_desc.pgsql_node) == T_CreateTableAsStmt) {
+      const auto& ctas_stmt =
+        *castNode(CreateTableAsStmt, query_desc.pgsql_node);
+      into = ctas_stmt.into;
+      if_not_exists = ctas_stmt.if_not_exists;
+    } else {
+      const auto& select_stmt =
+        *castNode(SelectStmt, query_desc.pgsql_node);
+      into = select_stmt.intoClause;
+    }
+    SDB_ASSERT(into);
+
     auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
       basics::downCast<const axiom::logical_plan::TableWriteNode>(
         *query_desc.root));
 
     auto ctas_cmd = std::make_unique<CTASCommand>(
       static_cast<const ExecContext&>(*connection_ctx),
-      static_cast<query::Transaction&>(*connection_ctx), write_node, ctas_stmt);
+      static_cast<query::Transaction&>(*connection_ctx), write_node, *into,
+      if_not_exists);
 
     query_ctx.command_type.Add(query::CommandType::CTAS);
     query =

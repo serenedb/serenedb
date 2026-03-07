@@ -455,7 +455,8 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
     return;
   }
   if (stmt->intoClause) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED, "SELECT INTO is not supported yet");
+    // SELECT INTO is handled like CTAS — the target table will be created,
+    // so we don't collect it as an existing relation.
   }
   CollectWithClause(state, stmt->withClause);
 

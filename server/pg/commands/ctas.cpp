@@ -28,7 +28,7 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
 
-  const auto& rel = *_stmt.into->rel;
+  const auto& rel = *_into.rel;
   _schema = rel.schemaname ? rel.schemaname : std::move(current_schema);
   if (_schema.empty()) {
     return yaclib::MakeFuture<Result>(
@@ -64,7 +64,7 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   table_operation.create_with_tombstone = true;
 
   r = catalog.CreateTable(_db, _schema, std::move(options), table_operation);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _stmt.if_not_exists) {
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _if_not_exists) {
     r = {};
   } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),

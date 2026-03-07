@@ -714,7 +714,8 @@ class SqlAnalyzer {
   VeloxQuery ProcessRoot(State& state, const Node& node);
 
  private:
-  SqlCommandType ProcessStmt(State& state, const Node& node);
+  SqlCommandType ProcessStmt(State& state, const Node& node,
+                             bool allowed_select_into = false);
 
   void MakeTableWrite(State& state, const Node& stmt,
                       const Objects::ObjectData& object,
@@ -735,9 +736,7 @@ class SqlAnalyzer {
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
 
-  using ColumnNamesAndExprs =
-    std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>;
-  ColumnNamesAndExprs ProcessIntoClause(State& state, const IntoClause& into);
+  void ProcessIntoClause(State& state, const IntoClause& into);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -1265,6 +1264,12 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
 }
 
 void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
+  if (stmt.intoClause) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
+                    ERR_MSG("SELECT ... INTO is not allowed here"));
+  }
+
   if (stmt.lockingClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "LOCK clause is not implemented yet");
   }
@@ -1274,9 +1279,6 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
     ProcessValuesList(state, stmt.valuesLists);
     ProcessSortClause(state, stmt.sortClause, {});
   } else if (stmt.op == SETOP_NONE) {
-    if (stmt.intoClause) {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "INTO clause is not implemented yet");
-    }
     ProcessPipeline(state, stmt);
   } else {
     ProcessPipelineSet(state, stmt);
@@ -2529,15 +2531,10 @@ void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
 
   const SelectStmt& select = *castNode(SelectStmt, stmt.query);
   ProcessSelectStmt(state, select);
-  auto [column_names, column_exprs] = ProcessIntoClause(state, *stmt.into);
-  state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), nullptr,
-    axiom::connector::WriteKind::kInsert, std::move(column_names),
-    std::move(column_exprs));
+  ProcessIntoClause(state, *stmt.into);
 }
 
-SqlAnalyzer::ColumnNamesAndExprs SqlAnalyzer::ProcessIntoClause(
-  State& state, const IntoClause& into) {
+void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
   SDB_ASSERT(state.root);
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
@@ -2548,7 +2545,7 @@ SqlAnalyzer::ColumnNamesAndExprs SqlAnalyzer::ProcessIntoClause(
   if (output.size() < list_length(into.colNames)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
                     CURSOR_POS(ErrorPosition(ExprLocation(&into))),
-                    ERR_MSG("too many column names specified"));
+                    ERR_MSG("too many column names were specified"));
   }
 
   auto add_column = [&](std::string_view alias, size_t idx) {
@@ -2605,15 +2602,33 @@ SqlAnalyzer::ColumnNamesAndExprs SqlAnalyzer::ProcessIntoClause(
                     ERR_MSG("WITH NO DATA is not supported"));
   }
 
-  return {std::move(column_names), std::move(column_exprs)};
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(state.root), nullptr,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
 }
 
-SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
+SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
+                                        bool allowed_select_into) {
   switch (node.type) {
     case T_SelectStmt: {
       const auto& stmt = *castNode(SelectStmt, &node);
       ProcessSelectStmt(state, stmt);
-      return SqlCommandType::Select;
+
+      if (!stmt.intoClause) {
+        return SqlCommandType::Select;
+      }
+
+      if (!allowed_select_into) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
+          ERR_MSG("SELECT ... INTO is not allowed here"));
+      }
+
+      ProcessIntoClause(state, *stmt.intoClause);
+      state.pgsql_node = &node;
+      return SqlCommandType::CTAS;
     }
     case T_InsertStmt: {
       const auto& stmt = *castNode(InsertStmt, &node);
@@ -5825,7 +5840,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAIndirection(State& state,
 }
 
 VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
-  auto command_type = ProcessStmt(state, node);
+  auto command_type = ProcessStmt(state, node, true);
   return {
     .root = std::move(state.root),
     .options = std::move(_options),

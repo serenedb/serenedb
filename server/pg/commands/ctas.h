@@ -32,7 +32,7 @@
 #include "utils/exec_context.h"
 #include "yaclib/async/future.hpp"
 
-struct CreateTableAsStmt;
+struct IntoClause;
 
 namespace sdb::query {
 class Transaction;
@@ -51,11 +51,12 @@ class CTASCommand {
 
   CTASCommand(const ExecContext& context, query::Transaction& transaction,
               axiom::logical_plan::TableWriteNode& write,
-              const CreateTableAsStmt& stmt)
+              const IntoClause& into, bool if_not_exists)
     : _context{context},
       _transaction{transaction},
       _write{write},
-      _stmt{stmt} {}
+      _into{into},
+      _if_not_exists{if_not_exists} {}
 
   yaclib::Future<Result> CreateTable();
 
@@ -83,7 +84,8 @@ class CTASCommand {
   const ExecContext& _context;
   query::Transaction& _transaction;
   axiom::logical_plan::TableWriteNode& _write;
-  const CreateTableAsStmt& _stmt;
+  const IntoClause& _into;
+  bool _if_not_exists;
 
   std::string _schema;
   std::string_view _table_name;

@@ -32,7 +32,7 @@ db error: ERROR: relation "vedernikoff" already exists
 statement error
 CREATE TABLE lmao(iq, lmao) AS SELECT 1;
 ----
-db error: ERROR: too many column names specified
+db error: ERROR: too many column names were specified
 
 
 statement error
@@ -76,6 +76,93 @@ SELECT
   iq,
   CONCAT('salary ', salary::text, '$') AS salary,
   'i do nothing and gain money' AS description
+FROM
+  generate_series(1, 100) AS clickclack(iq),
+  generate_series(1, 100) AS serenedb(salary);
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+# SELECT INTO tests
+
+statement count 10000
+SELECT
+  iq,
+  CONCAT('salary ', salary::text, '$') AS salary,
+  'i do nothing and gain money' AS description
+INTO vedernikoff
+FROM
+  generate_series(1, 100) AS clickclack(iq),
+  generate_series(1, 100) AS serenedb(salary);
+
+
+query
+SELECT * FROM vedernikoff;
+----
+30003 values hashing to 4054c492260f852b8162b374b3e41700
+
+
+statement error
+SELECT 1 AS id INTO vedernikoff;
+----
+db error: ERROR: relation "vedernikoff" already exists
+
+
+statement error
+CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
+----
+db error: ERROR: relation "vedernikoff" already exists
+
+
+statement error
+SELECT 1 AS x, 2 AS x INTO lmao;
+----
+db error: ERROR: column "x" specified more than once
+
+
+statement error
+CREATE TABLE lmao AS SELECT * INTO lmao FROM vedernikoff;
+----
+db error: ERROR: SELECT ... INTO is not allowed here
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+query error
+SELECT * FROM vedernikoff;
+----
+db error: ERROR: relation "vedernikoff" does not exist
+
+
+onlyif serenedb
+statement error
+SELECT
+  CASE WHEN iq > 500 THEN iq
+  ELSE fail('im gonna fail dis sheet(i mean a peace of paper)')
+  END as rakamakaka
+INTO vedernikoff
+FROM
+  generate_series(1, 10000) AS clickclack(iq);
+----
+db error: ERROR: im gonna fail dis sheet(i mean a peace of paper)
+
+
+query error
+SELECT * FROM vedernikoff;
+----
+db error: ERROR: relation "vedernikoff" does not exist
+
+
+statement count 10000
+SELECT
+  iq,
+  CONCAT('salary ', salary::text, '$') AS salary,
+  'i do nothing and gain money' AS description
+INTO vedernikoff
 FROM
   generate_series(1, 100) AS clickclack(iq),
   generate_series(1, 100) AS serenedb(salary);

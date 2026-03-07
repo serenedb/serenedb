@@ -103,7 +103,7 @@ class Query {
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
-  // use for CreateCTAS (defers compilation until after table is created)
+  // use for CreateCTAS
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx,
         std::unique_ptr<pg::CTASCommand> ctas_command);

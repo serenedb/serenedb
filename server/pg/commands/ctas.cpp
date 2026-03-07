@@ -8,6 +8,7 @@
 #include "catalog/database.h"
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
+#include "connector/serenedb_connector.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
@@ -17,7 +18,6 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_resolver.h"
 #include "pg/sql_utils.h"
-#include "connector/serenedb_connector.hpp"
 #include "query/transaction.h"
 #include "storage_engine/engine_feature.h"
 
@@ -68,15 +68,13 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
     r = {};
   }
 
-  Objects objects;
-  std::string_view schema{_schema};
-  objects.ensureRelation(schema, _table_name);
-  Resolve(_db, objects, conn_ctx);
-  auto* object = objects.getRelation(schema, _table_name);
-  SDB_ASSERT(object);
-  object->EnsureTable(_transaction);
-  basics::downCast<connector::RocksDBTable>(object->table)->BulkInsert() = true;
-  _write.setTable(object->table);
+  auto snapshot = catalog.GetSnapshot();
+  auto catalog_table = snapshot->GetTable(_db, _schema, _table_name);
+  SDB_ASSERT(catalog_table);
+  auto axiom_table =
+    std::make_shared<connector::RocksDBTable>(*catalog_table, _transaction);
+  axiom_table->BulkInsert() = true;
+  _write.setTable(std::move(axiom_table));
 
   _table_created = true;
   return yaclib::MakeFuture(std::move(r));

@@ -1121,6 +1121,9 @@ Result LocalCatalog::CreateTable(
     }
   }
   auto table = std::make_shared<Table>(std::move(options), database_id);
+  if (operation_options.create_with_tombstone) {
+    table->SetTombstoned(true);
+  }
   auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   absl::MutexLock lock{&_mutex};
@@ -1541,6 +1544,10 @@ Result LocalCatalog::RemoveTableTombstone(ObjectId db_id,
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
   if (!table_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto table = _snapshot->GetObject<Table>(*table_id);
+  if (table) {
+    table->SetTombstoned(false);
   }
   return _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone,
                                  *table_id);

@@ -726,7 +726,8 @@ class SqlAnalyzer {
 
   lp::ExprPtr GetDefaultValue(State& state, const catalog::Column& column);
 
-  void ProcessSelectStmt(State& state, const SelectStmt& stmt);
+  void ProcessSelectStmt(State& state, const SelectStmt& stmt,
+                         bool allowed_select_into = false);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
   void ProcessUpdateStmt(State& state, const UpdateStmt& stmt);
   void ProcessDeleteStmt(State& state, const DeleteStmt& stmt);
@@ -1263,8 +1264,9 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
 }
 
-void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
-  if (stmt.intoClause) {
+void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
+                                    bool allowed_select_into) {
+  if (!allowed_select_into && stmt.intoClause) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                     CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
                     ERR_MSG("SELECT ... INTO is not allowed here"));
@@ -2613,7 +2615,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
   switch (node.type) {
     case T_SelectStmt: {
       const auto& stmt = *castNode(SelectStmt, &node);
-      ProcessSelectStmt(state, stmt);
+      ProcessSelectStmt(state, stmt, allowed_select_into);
 
       if (!stmt.intoClause) {
         return SqlCommandType::Select;

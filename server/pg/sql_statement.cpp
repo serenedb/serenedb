@@ -116,8 +116,7 @@ bool SqlStatement::ProcessNextRoot(
       into = ctas_stmt.into;
       if_not_exists = ctas_stmt.if_not_exists;
     } else {
-      const auto& select_stmt =
-        *castNode(SelectStmt, query_desc.pgsql_node);
+      const auto& select_stmt = *castNode(SelectStmt, query_desc.pgsql_node);
       into = select_stmt.intoClause;
     }
     SDB_ASSERT(into);

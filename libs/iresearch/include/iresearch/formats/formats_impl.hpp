@@ -1478,15 +1478,17 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
 
     *(std::end(_docs) - 1) = _doc;
 
-    while (_left_in_list >= kPostingBlock) {
+    while (_left_in_list) {
       ReadBlock(*(std::end(_docs) - 1));
+      if (_left_in_leaf != kPostingBlock) {
+        break;
+      }
       std::span<const doc_id_t, kPostingBlock> docs{_docs, kPostingBlock};
       const auto* scores = ScoreBlock(docs, scorer, &fetcher);
       add(docs, scores);
     }
 
-    if (_left_in_list) {
-      ReadBlock(*(std::end(_docs) - 1));
+    if (_left_in_leaf) {
       std::span<const doc_id_t> docs{std::end(_docs) - _left_in_leaf,
                                      _left_in_leaf};
       const auto* scores = ScoreBlock(docs, scorer, &fetcher);

@@ -136,9 +136,20 @@ void Query::CompileQuery() {
   const bool needs_execution =
     _query_ctx.explain_params.Has(ExplainWith::Execution);
 
+  irs::Finally set_output_type = [&] noexcept {
+    if (_query_ctx.command_type.Has(CommandType::Explain)) {
+      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
+    } else if (_execution_plan) {
+      const auto& fragments = _execution_plan->fragments();
+      SDB_ASSERT(!fragments.empty());
+      const auto& gather_fragment = fragments.back().fragment.planNode;
+      SDB_ASSERT(gather_fragment);
+      _output_type = gather_fragment->outputType();
+    }
+  };
+
   if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&
       !needs_physical && !needs_execution) {
-    _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
     return;
   }
 
@@ -216,7 +227,6 @@ void Query::CompileQuery() {
       axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
     if (only_explain && !needs_final_query_graph && !needs_physical &&
         !needs_execution) {
-      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
       return;
     }
   }
@@ -227,7 +237,6 @@ void Query::CompileQuery() {
     _final_query_graph_plan =
       axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
     if (only_explain && !needs_physical && !needs_execution) {
-      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
       return;
     }
   }
@@ -245,7 +254,6 @@ void Query::CompileQuery() {
         *best->op, {.includeCost = include_cost});
     }
     if (only_explain && !needs_execution) {
-      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
       return;
     }
   }
@@ -253,17 +261,6 @@ void Query::CompileQuery() {
   auto result = optimization.toVeloxPlan(best->op);
   _execution_plan = std::move(result.plan);
   _finish_write = std::move(result.finishWrite);
-
-  if (_query_ctx.command_type.Has(CommandType::Explain)) {
-    _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
-  } else {
-    SDB_ASSERT(_execution_plan);
-    const auto& fragments = _execution_plan->fragments();
-    SDB_ASSERT(!fragments.empty());
-    const auto& gather_fragment = fragments.back().fragment.planNode;
-    SDB_ASSERT(gather_fragment);
-    _output_type = gather_fragment->outputType();
-  }
 }
 
 Query::Query(std::unique_ptr<ExternalExecutor> executor,

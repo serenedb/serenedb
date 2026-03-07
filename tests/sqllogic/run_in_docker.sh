@@ -64,6 +64,7 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 	docker volume create "$VOLUME_NAME"
 
 	docker service create \
+		--detach \
 		--name "$SERVICE_NAME" \
 		--restart-condition on-failure \
 		--replicas 1 \
@@ -94,7 +95,7 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 		-e "SERVICE_HOST=$SERVICE_NAME" \
 		-v "$SQLLOGIC_DIR:/sqllogic" \
 		-v "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs" \
-		rust:latest \
+		${BUILD_IMAGE} \
 		bash -c 'exec sqllogic/run_recovery.sh'
 	test_exit_code=$?
 

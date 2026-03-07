@@ -114,10 +114,6 @@ class NthPartitionScoreCollector final : public ScoreCollector {
       return;
     }
     AddImpl(score, doc);
-    if (_hits_it != _hits_end) {
-      return;
-    }
-    Partition();
   }
 
   IRS_FORCE_INLINE uint64_t Finalize() {
@@ -145,31 +141,29 @@ class NthPartitionScoreCollector final : public ScoreCollector {
       while (word != 0) {
         const doc_id_t bit = std::countr_zero(word);
         word = PopBit(word);
-        AddImpl(score_base[bit], doc_base + bit);
-        if (_hits_it != _hits_end) {
-          continue;
+        if (AddImpl(score_base[bit], doc_base + bit)) {
+          threshold = _mm256_set1_ps(*_score_threshold);
+          word &= GetScoreMask(score_base, threshold);
         }
-        Partition();
-        threshold = _mm256_set1_ps(*_score_threshold);
-        word &= GetScoreMask(score_base, threshold);
       }
     }
   }
 
  private:
-  IRS_FORCE_INLINE void AddImpl(score_t score, doc_id_t doc) noexcept {
+  IRS_FORCE_INLINE bool AddImpl(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(*_score_threshold < score);
     *_hits_it = {score, doc};
     ++_hits_it;
-  }
-
-  IRS_FORCE_INLINE void Partition() noexcept {
+    if (_hits_it != _hits_end) {
+      return false;
+    }
     _hits_it = _hits_pivot;
     std::nth_element(_hits_begin, _hits_pivot, _hits_end,
                      [](const auto& l, const auto& r) {
                        return std::get<score_t>(l) > std::get<score_t>(r);
                      });
     *_score_threshold = std::get<score_t>(*_hits_pivot);
+    return true;
   }
 
   IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,

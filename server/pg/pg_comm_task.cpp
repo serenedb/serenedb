@@ -149,6 +149,18 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
+CommandTag GetCommandTag(Node* node) {
+  if (nodeTag(node) == T_RawStmt) {
+    auto* stmt = castNode(RawStmt, node)->stmt;
+    if (nodeTag(stmt) == T_CreateTableAsStmt) {
+      // PostgreSQL returns SELECT N for CTAS
+      return CMDTAG_SELECT;
+    }
+  }
+  const auto tag = CreateCommandTag(node);
+  return tag;
+}
+
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
@@ -1081,7 +1093,7 @@ void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree,
   SDB_ASSERT(tree.root_idx);
   auto* root = castNode(Node, tree.GetRoot());
 
-  const auto command_tag = CreateCommandTag(root);
+  const auto command_tag = GetCommandTag(root);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
   {

@@ -43,6 +43,7 @@
 #include <vpack/iterator.h>
 
 #include <atomic>
+#include <filesystem>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -80,6 +81,7 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
+#include "connector/sst_sink_writer.hpp"
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
@@ -559,6 +561,19 @@ void RocksDBEngineCatalog::start() {
       SDB_FATAL("xxxxx", Logger::ENGINES,
                 "unable to create RocksDB data directory '", _path,
                 "': ", system_error_str);
+    }
+  }
+
+  {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(_path, ec)) {
+      if (entry.is_directory() && entry.path().filename().string().starts_with(
+                                    connector::kBulkInsertDirPrefix)) {
+        SDB_TRACE("xxxxx", Logger::ENGINES,
+                  "removing leftover bulk insert directory '",
+                  entry.path().string(), "'");
+        std::filesystem::remove_all(entry.path(), ec);
+      }
     }
   }
 

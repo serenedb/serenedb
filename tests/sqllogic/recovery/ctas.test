@@ -1,0 +1,144 @@
+control substitution on
+
+# crash before tombstone removal, table should be gone
+
+statement ok
+SET sdb_fault_crash_ctas_before_remove_tombstone TO DEFAULT;
+
+statement error connection closed
+CREATE TABLE vedernikoff AS
+SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
+FROM generate_series(1, 100) AS clickclack(iq),
+     generate_series(1, 10) AS serenedb(salary);
+
+connection ctas_after_1
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM vedernikoff;
+
+
+# crash mid-write after SST ingest, table should be gone
+
+connection ctas_after_1
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection ctas_after_1
+statement ok
+SET sdb_fault_crash_sst_sink_after_ingest TO DEFAULT;
+
+connection ctas_after_1
+statement error connection closed
+CREATE TABLE vedernikoff AS
+SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
+FROM generate_series(1, 100) AS clickclack(iq),
+     generate_series(1, 10) AS serenedb(salary);
+
+connection ctas_after_2
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM vedernikoff;
+
+
+# completed CTAS should survive crash
+
+connection ctas_after_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection ctas_after_2
+statement ok
+CREATE TABLE vedernikoff AS
+SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
+FROM generate_series(1, 100) AS clickclack(iq),
+     generate_series(1, 10) AS serenedb(salary);
+
+connection ctas_after_2
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+connection ctas_after_2
+query error connection closed
+SELECT 1;
+
+connection ctas_final
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM vedernikoff;
+----
+count
+1000
+
+connection ctas_final
+statement ok
+DROP TABLE vedernikoff;
+
+
+# SELECT INTO: crash before tombstone removal, table should be gone
+
+connection ctas_final
+statement ok
+SET sdb_fault_crash_ctas_before_remove_tombstone TO DEFAULT;
+
+connection ctas_final
+statement error connection closed
+SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
+INTO vedernikoff
+FROM generate_series(1, 100) AS clickclack(iq),
+     generate_series(1, 10) AS serenedb(salary);
+
+connection select_into_after_1
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM vedernikoff;
+
+
+# SELECT INTO: crash mid-write after SST ingest, table should be gone
+
+connection select_into_after_1
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection select_into_after_1
+statement ok
+SET sdb_fault_crash_sst_sink_after_ingest TO DEFAULT;
+
+connection select_into_after_1
+statement error connection closed
+SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
+INTO vedernikoff
+FROM generate_series(1, 100) AS clickclack(iq),
+     generate_series(1, 10) AS serenedb(salary);
+
+connection select_into_after_2
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM vedernikoff;
+
+
+# SELECT INTO: completed should survive crash
+
+connection select_into_after_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection select_into_after_2
+statement ok
+SELECT iq, CONCAT('salary ', salary::text, ' bucks') AS salary
+INTO vedernikoff
+FROM generate_series(1, 100) AS clickclack(iq),
+     generate_series(1, 10) AS serenedb(salary);
+
+connection select_into_after_2
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+connection select_into_after_2
+query error connection closed
+SELECT 1;
+
+connection select_into_final
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM vedernikoff;
+----
+count
+1000
+
+connection select_into_final
+statement ok
+DROP TABLE vedernikoff;

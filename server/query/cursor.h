@@ -52,9 +52,10 @@ class Cursor {
   Process ExecuteStmt();
   Process ExecuteShow(velox::RowVectorPtr& batch);
   Process ExecuteShowAll(velox::RowVectorPtr& batch);
+  Process ExecuteCTAS(velox::RowVectorPtr& batch);
 
   friend class Query;
-  Cursor(std::function<void()>&& user_task, const Query& query);
+  Cursor(std::function<void()>&& user_task, Query& query);
 
   void BuildBatch(velox::RowVectorPtr& batch,
                   std::span<const std::vector<std::string>> data);
@@ -62,7 +63,7 @@ class Cursor {
   std::shared_ptr<velox::memory::MemoryPool> _data_memory_pool;
   std::function<void()> _user_task;
   Runner _runner;
-  const Query& _query;
+  Query& _query;
 
   yaclib::Result<Result> _stmt_result;
   absl::Mutex _stmt_result_mutex;

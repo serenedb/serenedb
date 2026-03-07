@@ -76,6 +76,7 @@ class ObjectCollector {
   void CollectViewStmt(State& state, const ViewStmt& stmt);
   void CollectCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void CollectCreateStmt(State& state, const CreateStmt& stmt);
+  void CollectCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
   void CollectCopyStmt(State& state, const CopyStmt& stmt);
 
   void CollectRangeVar(const State& state, const RangeVar* var);
@@ -454,7 +455,8 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
     return;
   }
   if (stmt->intoClause) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED, "SELECT INTO is not supported yet");
+    // SELECT INTO is handled like CTAS — the target table will be created,
+    // so we don't collect it as an existing relation.
   }
   CollectWithClause(state, stmt->withClause);
 
@@ -532,6 +534,11 @@ void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
   });
 }
 
+void ObjectCollector::CollectCreateTableAsStmt(State& state,
+                                               const CreateTableAsStmt& stmt) {
+  CollectStmt(&state, stmt.query);
+}
+
 void ObjectCollector::CollectCopyStmt(State& state, const CopyStmt& stmt) {
   CollectRangeVar(state, stmt.relation);
   CollectStmt(&state, stmt.query);
@@ -565,6 +572,9 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
                                        *castNode(CreateFunctionStmt, node));
     case T_CreateStmt:
       return CollectCreateStmt(state, *castNode(CreateStmt, node));
+    case T_CreateTableAsStmt:
+      return CollectCreateTableAsStmt(state,
+                                      *castNode(CreateTableAsStmt, node));
     case T_CopyStmt:
       return CollectCopyStmt(state, *castNode(CopyStmt, node));
     default:

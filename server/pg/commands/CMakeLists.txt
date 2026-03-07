@@ -8,6 +8,7 @@ target_sources(
         create_schema.cpp
         create_view.cpp
         create_index.cpp
+        ctas.cpp
         drop_object.cpp
         transaction.cpp
         variable_set.cpp

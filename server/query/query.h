@@ -29,8 +29,10 @@
 #include <velox/exec/Task.h>
 
 #include <memory>
+#include <optional>
 
 #include "basics/fwd.h"
+#include "pg/commands/ctas.h"
 #include "query/context.h"
 #include "query/external_executor.h"
 #include "query/runner.h"
@@ -53,6 +55,11 @@ class Query {
 
   static std::unique_ptr<Query> CreateShowAll(const QueryContext& query_ctx);
 
+  static std::unique_ptr<Query> CreateCTAS(
+    const axiom::logical_plan::LogicalPlanNodePtr& root,
+    const QueryContext& query_ctx,
+    std::unique_ptr<pg::CTASCommand> ctas_command);
+
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
   std::string GetLogicalPlan() const;
@@ -73,9 +80,13 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
-  std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task) const;
+  pg::CTASCommand* GetCTASCommand() const { return _ctas_command.get(); }
+
+  std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task);
 
   Runner MakeRunner() const;
+
+  void CompileQuery();
 
  private:
   // use for CreateQuery
@@ -89,7 +100,10 @@ class Query {
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
-  void CompileQuery();
+  // use for CreateCTAS
+  Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
+        const QueryContext& query_ctx,
+        std::unique_ptr<pg::CTASCommand> ctas_command);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;
@@ -97,6 +111,7 @@ class Query {
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
   std::unique_ptr<ExternalExecutor> _executor;
+  std::unique_ptr<pg::CTASCommand> _ctas_command;
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;

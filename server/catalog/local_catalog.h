@@ -106,6 +106,8 @@ class LocalCatalog final : public LogicalCatalog,
                       std::string_view name) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
+  Result RemoveTombstone(ObjectId database_id, std::string_view schema,
+                         std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
   std::shared_ptr<const Snapshot> GetSnapshot() const noexcept final;

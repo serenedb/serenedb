@@ -54,7 +54,7 @@ services:
       - postgres
       - serenedb-single
     environment:
-      - COMPOSE_NETWORK=sqllogic_test-network
+      - COMPOSE_NETWORK=${COMPOSE_PROJECT_NAME}_test-network
     networks:
       - test-network
     command: sqllogic/run_serene_and_pg.sh
@@ -62,3 +62,4 @@ services:
 networks:
   test-network:
     driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_test-network

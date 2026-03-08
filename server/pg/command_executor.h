@@ -27,9 +27,9 @@ struct Node;
 
 namespace sdb::pg {
 
-class Executor final : public query::Executor {
+class CommandExecutor final : public query::Executor {
  public:
-  explicit Executor(std::shared_ptr<ExecContext> context, const Node& node);
+  explicit CommandExecutor(std::shared_ptr<ExecContext> context, const Node& node);
 
   void Init(query::Query&) final {}
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;

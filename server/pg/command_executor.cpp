@@ -18,22 +18,22 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/executor.h"
+#include "pg/command_executor.h"
 
 #include "pg/commands.h"
 #include "yaclib/async/make.hpp"
 
 namespace sdb::pg {
 
-Executor::Executor(std::shared_ptr<ExecContext> context, const Node& node)
+CommandExecutor::CommandExecutor(std::shared_ptr<ExecContext> context, const Node& node)
   : _context{std::move(context)}, _node{node} {}
 
-yaclib::Future<> Executor::RequestCancel() {
+yaclib::Future<> CommandExecutor::RequestCancel() {
   _context->cancel();
   return {};
 }
 
-yaclib::Future<> Executor::Execute(velox::RowVectorPtr&) {
+yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr&) {
   if (_fired) {
     return {};
   }
@@ -49,7 +49,7 @@ yaclib::Future<> Executor::Execute(velox::RowVectorPtr&) {
   });
 }
 
-yaclib::Future<Result> Executor::ExecuteCommand() {
+yaclib::Future<Result> CommandExecutor::ExecuteCommand() {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);

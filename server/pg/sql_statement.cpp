@@ -26,7 +26,7 @@
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
 #include "pg/commands/ctas.h"
-#include "pg/executor.h"
+#include "pg/command_executor.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
@@ -152,7 +152,7 @@ bool SqlStatement::ProcessNextRoot(
   if (query_desc.pgsql_node) {
     SDB_ASSERT(query_desc.pgsql_node);
     auto executor =
-      std::make_unique<Executor>(connection_ctx, *query_desc.pgsql_node);
+      std::make_unique<CommandExecutor>(connection_ctx, *query_desc.pgsql_node);
     query = query::Query::CreateDDL(std::move(executor), query_ctx);
     return true;
   }

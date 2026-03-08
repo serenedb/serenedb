@@ -671,9 +671,8 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     auto* filter = serene_table_handle.GetFilter().get();
 
-    // We have search data source xor precalculated filter in rocksdb datasource
-    SDB_ASSERT(static_cast<bool>(filter) !=
-               static_cast<bool>(serene_table_handle.GetSearchQuery()));
+    // We cannot have precalculated rocksdb filter for search query
+    SDB_ASSERT(!filter || !serene_table_handle.GetSearchQuery());
 
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
@@ -701,7 +700,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 #endif
 
-      auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+      auto points = TryGetPoints(filter, serene_table_handle.GetPKType(),
                                  connector_query_ctx->memoryPool());
       if (points) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
@@ -725,7 +724,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         search_snapshot.reader, *serene_table_handle.GetSearchQuery());
     }
 
-    auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+    auto points = TryGetPoints(filter, serene_table_handle.GetPKType(),
                                connector_query_ctx->memoryPool());
     if (points) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(

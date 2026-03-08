@@ -133,7 +133,7 @@ class OrFilterNode final : public FilterNode {
 
 // Returns a RowVector with one row per specific point, or nullptr if the filter
 // is not a set of specific PK points (-> caller should use full scan).
-[[nodiscard]] velox::RowVectorPtr TryGetPoints(FilterNode& filter,
+[[nodiscard]] velox::RowVectorPtr TryGetPoints(FilterNode* filter,
                                                velox::RowTypePtr pk_type,
                                                velox::memory::MemoryPool* pool);
 

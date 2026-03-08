@@ -311,17 +311,29 @@ std::unique_ptr<FilterNode> ParseFilters(
       nodes.emplace_back(std::move(node));
     }
   }
+
+  if (nodes.empty()) {
+    return nullptr;
+  }
+
+  if (nodes.size() == 1) {
+    return std::move(nodes[0]);
+  }
+
   return std::make_unique<AndFilterNode>(std::move(nodes));
 }
 
-velox::RowVectorPtr TryGetPoints(FilterNode& filter, velox::RowTypePtr pk_type,
+velox::RowVectorPtr TryGetPoints(FilterNode* filter, velox::RowTypePtr pk_type,
                                  velox::memory::MemoryPool* pool) {
+  if (!filter) {
+    return {};
+  }
   SDB_ASSERT(pk_type->size() != 0);
 
   // Drain all specific points first.
   std::vector<Point> points;
   while (true) {
-    auto pts = filter.NextPoints();
+    auto pts = filter->NextPoints();
     if (pts.empty())
       break;
     for (auto& point : pts) {

@@ -139,13 +139,7 @@ SereneDBTableLayout::createTableHandle(
                                              std::move(remaining_filter));
   }
 
-  // Rejected filters are used to remove filters from plan as I see.
-  // Think about them better. For now assume we need all filters
-  // (useful filter) and
-  // (useless) -- ? Do not forget to handle this case
-
-  auto pk_type = basics::downCast<RocksDBTable>(table()).PKType();
-
+  const auto& pk_type = basics::downCast<RocksDBTable>(table()).PKType();
   auto filter = ParseFilters(filters, pk_type->names());
   rejected_filters = std::move(filters);
   SDB_ASSERT(!table().columnMap().empty(),

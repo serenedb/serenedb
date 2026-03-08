@@ -27,6 +27,7 @@
 #include "general_server/state.h"
 #include "pg/commands/ctas.h"
 #include "pg/executor.h"
+#include "query/ctas_executor.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
@@ -130,8 +131,10 @@ bool SqlStatement::ProcessNextRoot(
       if_not_exists);
 
     query_ctx.command_type.Add(query::CommandType::CTAS);
-    query =
-      query::Query::CreateCTAS(query_desc.root, query_ctx, std::move(ctas_cmd));
+    auto ctas_executor =
+      std::make_unique<query::CTASExecutor>(std::move(ctas_cmd));
+    query = query::Query::CreateWithBatchExecutor(
+      query_desc.root, query_ctx, std::move(ctas_executor));
     return true;
   }
 

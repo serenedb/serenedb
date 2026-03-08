@@ -37,7 +37,6 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/serenedb_connector.hpp"
-#include "pg/commands/ctas.h"
 #include "pg/sql_collector.h"
 #include "query/config.h"
 #include "query/query.h"
@@ -59,7 +58,9 @@ std::string ProcessPlan(std::string plan, bool clean_column_names) {
 }  // namespace
 
 void Cursor::RequestCancel() {
-  if (_runner) {
+  if (_batch_executor) {
+    _batch_executor->RequestCancel();
+  } else if (_runner) {
     SDB_ASSERT(!_query.HasExternal());
     _runner.RequestCancel();
   } else if (_query.HasExternal()) {
@@ -75,8 +76,8 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
     return ExecuteStmt();
   }
 
-  if (query_ctx.command_type.Has(CommandType::CTAS)) {
-    return ExecuteCTAS(batch);
+  if (_batch_executor) {
+    return _batch_executor->Next(batch, _user_task);
   }
 
   if (query_ctx.command_type.Has(CommandType::Show)) {
@@ -294,78 +295,12 @@ void Cursor::BuildBatch(velox::RowVectorPtr& batch,
                                              batch_rows, std::move(vectors));
 }
 
-Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
-  auto* ctas_cmd = _query.GetCTASCommand();
-  SDB_ASSERT(ctas_cmd);
-
-  for (;;) {
-    switch (ctas_cmd->GetStage()) {
-      using enum pg::CTASCommand::Stage;
-      case None: {
-        auto f = ctas_cmd->CreateTable();
-        if (!f.Ready()) {
-          ctas_cmd->SetStage(CreateTableWaiting);
-          std::move(f).DetachInline(
-            [ctas_cmd, user_task = _user_task](yaclib::Result<Result>&& r) {
-              std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
-              ctas_cmd->StoreAsyncResult(std::move(r));
-              user_task();
-            });
-          return Process::Wait;
-        }
-        auto r = std::move(f).Touch().Ok();
-        if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
-        ctas_cmd->SetStage(VeloxRunning);
-        _query.CompileQuery();
-        _runner = _query.MakeRunner();
-        continue;
-      }
-      case CreateTableWaiting: {
-        std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
-        if (!ctas_cmd->IsAsyncResultReady()) {
-          return Process::Wait;
-        }
-        auto r = ctas_cmd->TakeAsyncResult().Ok();
-        if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
-        ctas_cmd->SetStage(VeloxRunning);
-        _query.CompileQuery();
-        _runner = _query.MakeRunner();
-        continue;
-      }
-      case VeloxRunning: {
-        try {
-          auto process = ExecuteVelox(batch);
-          if (process != Process::Done) {
-            return process;
-          }
-        } catch (...) {
-          ctas_cmd->Rollback();
-          throw;
-        }
-        SDB_IF_FAILURE("crash_ctas_before_remove_tombstone") {
-          SDB_IMMEDIATE_ABORT();
-        }
-        auto r = ctas_cmd->RemoveTombstone();
-        if (!r.ok()) {
-          ctas_cmd->Rollback();
-          SDB_THROW(std::move(r));
-        }
-        return Process::Done;
-      }
-    }
-    SDB_UNREACHABLE();
-  }
-}
-
 Cursor::Cursor(std::function<void()>&& user_task, Query& query)
   : _data_memory_pool{query.GetContext().velox_query_ctx->pool()->addLeafChild(
       "data_memory_pool")},
     _user_task{std::move(user_task)},
-    _query{query} {
+    _query{query},
+    _batch_executor{query.TakeBatchExecutor()} {
   if (_query.GetContext().command_type.Has(query::CommandType::Query)) {
     _runner = _query.MakeRunner();
   }

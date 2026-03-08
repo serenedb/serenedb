@@ -20,51 +20,30 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-#include <basics/exceptions.h>
-#include <velox/exec/Task.h>
-#include <velox/vector/ComplexVector.h>
+#include <memory>
 
-#include <yaclib/util/result.hpp>
-
+#include "pg/commands/ctas.h"
 #include "query/batch_executor.h"
-#include "query/context.h"
 #include "query/runner.h"
 
 namespace sdb::query {
 
 class Query;
 
-class Cursor {
+class CTASExecutor final : public BatchExecutor {
  public:
-  using Process = query::Process;
+  explicit CTASExecutor(std::unique_ptr<pg::CTASCommand> ctas_command);
 
-  Process Next(velox::RowVectorPtr& batch);
+  void SetQuery(Query& query) { _query = &query; }
 
-  void RequestCancel();
-
-  ~Cursor();
+  Process Next(velox::RowVectorPtr& batch,
+               std::function<void()> user_task) final;
+  void RequestCancel() final;
 
  private:
-  Process ExecuteVelox(velox::RowVectorPtr& batch);
-  Process ExecuteStmt();
-  Process ExecuteShow(velox::RowVectorPtr& batch);
-  Process ExecuteShowAll(velox::RowVectorPtr& batch);
-
-  friend class Query;
-  Cursor(std::function<void()>&& user_task, Query& query);
-
-  void BuildBatch(velox::RowVectorPtr& batch,
-                  std::span<const std::vector<std::string>> data);
-
-  std::shared_ptr<velox::memory::MemoryPool> _data_memory_pool;
-  std::function<void()> _user_task;
+  std::unique_ptr<pg::CTASCommand> _ctas_command;
+  Query* _query = nullptr;
   Runner _runner;
-  Query& _query;
-  std::unique_ptr<BatchExecutor> _batch_executor;
-
-  yaclib::Result<Result> _stmt_result;
-  absl::Mutex _stmt_result_mutex;
 };
 
 }  // namespace sdb::query

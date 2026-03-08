@@ -34,7 +34,6 @@
 
 #include "catalog/table.h"
 #include "connector/serenedb_connector.hpp"
-#include "pg/commands/ctas.h"
 #include "pg/sql_resolver.h"
 #include "query/cursor.h"
 
@@ -98,13 +97,12 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
   });
 }
 
-std::unique_ptr<Query> Query::CreateCTAS(
+std::unique_ptr<Query> Query::CreateWithBatchExecutor(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx,
-  std::unique_ptr<pg::CTASCommand> ctas_command) {
-  SDB_ASSERT(root->kind() == axiom::logical_plan::NodeKind::kTableWrite);
+  std::unique_ptr<BatchExecutor> batch_executor) {
   return std::unique_ptr<Query>(
-    new Query{root, query_ctx, std::move(ctas_command)});
+    new Query{root, query_ctx, std::move(batch_executor)});
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
@@ -115,12 +113,12 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx,
-             std::unique_ptr<pg::CTASCommand> ctas_command)
+             std::unique_ptr<BatchExecutor> batch_executor)
   : _query_ctx{query_ctx},
     _logical_plan{root},
     _output_type{root->outputType()},
-    _ctas_command{std::move(ctas_command)} {
-  // Compilation is deferred until after table creation.
+    _batch_executor{std::move(batch_executor)} {
+  _batch_executor->SetQuery(*this);
 }
 
 void Query::CompileQuery() {

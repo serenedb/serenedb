@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         query.cpp
         cursor.cpp
+        ctas_executor.cpp
         config.cpp
         utils.cpp
         config_variables.cpp

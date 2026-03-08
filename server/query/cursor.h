@@ -44,7 +44,7 @@ class Cursor {
 
   Process Next(velox::RowVectorPtr& batch);
 
-  void RequestCancel();
+  yaclib::Future<> RequestCancel();
 
   ~Cursor();
 

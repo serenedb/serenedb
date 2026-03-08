@@ -24,10 +24,11 @@
 
 namespace sdb::query {
 
-void Cursor::RequestCancel() {
+yaclib::Future<> Cursor::RequestCancel() {
   if (_current < _executors.size()) {
-    _executors[_current]->RequestCancel();
+    return _executors[_current]->RequestCancel();
   }
+  return {};
 }
 
 Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
@@ -61,7 +62,7 @@ Cursor::Cursor(std::function<void()>&& user_task, Query& query)
 
 Cursor::~Cursor() {
   if (_current < _executors.size()) {
-    _executors[_current]->RequestCancel();
+    std::ignore = _executors[_current]->RequestCancel().Get();
   }
   // TODO: it doesn't look as correct place to do this
   if (!_query.GetContext().transaction->HasTransactionBegin()) {

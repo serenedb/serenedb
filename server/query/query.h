@@ -58,7 +58,7 @@ class Query {
   static std::unique_ptr<Query> CreateWithBatchExecutor(
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx,
-    std::unique_ptr<BatchExecutor> batch_executor);
+    std::vector<std::unique_ptr<BatchExecutor>> batch_executors);
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }

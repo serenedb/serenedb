@@ -28,7 +28,10 @@ namespace sdb::pg {
 Executor::Executor(std::shared_ptr<ExecContext> context, const Node& node)
   : _context{std::move(context)}, _node{node} {}
 
-void Executor::RequestCancel() { _context->cancel(); }
+yaclib::Future<> Executor::RequestCancel() {
+  _context->cancel();
+  return {};
+}
 
 yaclib::Future<> Executor::Execute(velox::RowVectorPtr&) {
   if (_fired) {

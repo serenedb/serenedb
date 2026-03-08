@@ -28,71 +28,90 @@
 
 namespace sdb::query {
 
-CTASExecutor::CTASExecutor(std::unique_ptr<pg::CTASCommand> ctas_command)
+// CreateTableExecutor
+
+CreateTableExecutor::CreateTableExecutor(
+  std::unique_ptr<pg::CTASCommand> ctas_command)
   : _ctas_command{std::move(ctas_command)} {}
 
-yaclib::Future<> CTASExecutor::Execute(velox::RowVectorPtr& batch) {
-  SDB_ASSERT(_ctas_command);
+yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
   SDB_ASSERT(_query);
+  SDB_ASSERT(_ctas_command);
 
-  for (;;) {
-    switch (_ctas_command->GetStage()) {
-      using enum pg::CTASCommand::Stage;
-      case None: {
-        auto f = _ctas_command->CreateTable();
-        if (!f.Ready()) {
-          _ctas_command->SetStage(VeloxRunning);
-          return std::move(f).ThenInline([this](Result&& r) {
-            if (!r.ok()) {
-              SDB_THROW(std::move(r));
-            }
-            _query->CompileQuery();
-            _runner = _query->MakeRunner();
-          });
-        }
-        auto r = std::move(f).Touch().Ok();
-        if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
-        _ctas_command->SetStage(VeloxRunning);
-        _query->CompileQuery();
-        _runner = _query->MakeRunner();
-        continue;
-      }
-      case CreateTableWaiting: {
-        SDB_UNREACHABLE();
-      }
-      case VeloxRunning: {
-        try {
-          SDB_ASSERT(_runner);
-          yaclib::Future<> wait;
-          batch = _runner.Next(wait);
-          if (wait.Valid()) {
-            SDB_ASSERT(!batch);
-            return wait;
-          }
-          if (batch) {
-            return yaclib::MakeFuture();
-          }
-        } catch (...) {
-          _ctas_command->Rollback();
-          throw;
-        }
-        SDB_IF_FAILURE("crash_ctas_before_remove_tombstone") {
-          SDB_IMMEDIATE_ABORT();
-        }
-        auto r = _ctas_command->RemoveTombstone();
-        if (!r.ok()) {
-          _ctas_command->Rollback();
-          SDB_THROW(std::move(r));
-        }
-        return {};
-      }
-    }
-    SDB_UNREACHABLE();
+  if (_fired) {
+    return {};
   }
+  _fired = true;
+
+  auto f = _ctas_command->CreateTable();
+  if (!f.Ready()) {
+    return std::move(f).ThenInline([this](Result&& r) {
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      _query->CompileQuery();
+    });
+  }
+  auto r = std::move(f).Touch().Ok();
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  _query->CompileQuery();
+  return {};
 }
 
-void CTASExecutor::RequestCancel() { _runner.RequestCancel(); }
+// CTASVeloxExecutor
+
+CTASVeloxExecutor::CTASVeloxExecutor(pg::CTASCommand& ctas_command)
+  : _ctas_command{ctas_command} {}
+
+yaclib::Future<> CTASVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
+  SDB_ASSERT(_query);
+  if (!_runner) {
+    _runner = _query->MakeRunner();
+  }
+  try {
+    yaclib::Future<> wait;
+    batch = _runner.Next(wait);
+    if (wait.Valid()) {
+      SDB_ASSERT(!batch);
+      return wait;
+    }
+    if (batch) {
+      return yaclib::MakeFuture();
+    }
+  } catch (...) {
+    _ctas_command.Rollback();
+    throw;
+  }
+  return {};
+}
+
+yaclib::Future<> CTASVeloxExecutor::RequestCancel() {
+  _runner.RequestCancel();
+  return {};
+}
+
+// RemoveTombstoneExecutor
+
+RemoveTombstoneExecutor::RemoveTombstoneExecutor(pg::CTASCommand& ctas_command)
+  : _ctas_command{ctas_command} {}
+
+yaclib::Future<> RemoveTombstoneExecutor::Execute(velox::RowVectorPtr& batch) {
+  if (_fired) {
+    return {};
+  }
+  _fired = true;
+
+  SDB_IF_FAILURE("crash_ctas_before_remove_tombstone") {
+    SDB_IMMEDIATE_ABORT();
+  }
+  auto r = _ctas_command.RemoveTombstone();
+  if (!r.ok()) {
+    _ctas_command.Rollback();
+    SDB_THROW(std::move(r));
+  }
+  return {};
+}
 
 }  // namespace sdb::query

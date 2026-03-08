@@ -30,19 +30,50 @@ namespace sdb::query {
 
 class Query;
 
-class CTASExecutor final : public BatchExecutor {
+class CreateTableExecutor final : public BatchExecutor {
  public:
-  explicit CTASExecutor(std::unique_ptr<pg::CTASCommand> ctas_command);
+  explicit CreateTableExecutor(std::unique_ptr<pg::CTASCommand> ctas_command);
 
   void SetQuery(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-  void RequestCancel() final;
+  yaclib::Future<> RequestCancel() final { return {}; }
+
+  pg::CTASCommand& GetCommand() { return *_ctas_command; }
 
  private:
   std::unique_ptr<pg::CTASCommand> _ctas_command;
   Query* _query = nullptr;
+  bool _fired = false;
+};
+
+class CTASVeloxExecutor final : public BatchExecutor {
+ public:
+  explicit CTASVeloxExecutor(pg::CTASCommand& ctas_command);
+
+  void SetQuery(Query& query) final { _query = &query; }
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+  yaclib::Future<> RequestCancel() final;
+
+ private:
+  pg::CTASCommand& _ctas_command;
+  Query* _query = nullptr;
   Runner _runner;
+};
+
+class RemoveTombstoneExecutor final : public BatchExecutor {
+ public:
+  explicit RemoveTombstoneExecutor(pg::CTASCommand& ctas_command);
+
+  void SetQuery(Query&) final {}
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+  yaclib::Future<> RequestCancel() final { return {}; }
+
+ private:
+  pg::CTASCommand& _ctas_command;
+  bool _fired = false;
 };
 
 }  // namespace sdb::query

@@ -131,10 +131,21 @@ bool SqlStatement::ProcessNextRoot(
       if_not_exists);
 
     query_ctx.command_type.Add(query::CommandType::CTAS);
-    auto ctas_executor =
-      std::make_unique<query::CTASExecutor>(std::move(ctas_cmd));
+
+    auto create_table =
+      std::make_unique<query::CreateTableExecutor>(std::move(ctas_cmd));
+    auto& cmd = create_table->GetCommand();
+    auto velox_exec = std::make_unique<query::CTASVeloxExecutor>(cmd);
+    auto remove_tombstone =
+      std::make_unique<query::RemoveTombstoneExecutor>(cmd);
+
+    std::vector<std::unique_ptr<query::BatchExecutor>> executors;
+    executors.push_back(std::move(create_table));
+    executors.push_back(std::move(velox_exec));
+    executors.push_back(std::move(remove_tombstone));
+
     query = query::Query::CreateWithBatchExecutor(query_desc.root, query_ctx,
-                                                  std::move(ctas_executor));
+                                                  std::move(executors));
     return true;
   }
 

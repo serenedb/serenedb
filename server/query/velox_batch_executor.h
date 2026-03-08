@@ -30,7 +30,7 @@ class VeloxBatchExecutor final : public BatchExecutor {
   void SetQuery(Query& query) final;
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-  void RequestCancel() final;
+  yaclib::Future<> RequestCancel() final;
 
   Runner& GetRunner() { return _runner; }
 

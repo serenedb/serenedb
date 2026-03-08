@@ -21,10 +21,7 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
 #include <axiom/logical_plan/LogicalPlanNode.h>
-
-#include <yaclib/util/result.hpp>
 
 #include "basics/fwd.h"
 #include "basics/result.h"
@@ -43,12 +40,6 @@ namespace sdb::pg {
 // create table as stmt command
 class CTASCommand {
  public:
-  enum class Stage {
-    None,
-    CreateTableWaiting,
-    VeloxRunning,
-  };
-
   CTASCommand(const ExecContext& context, query::Transaction& transaction,
               axiom::logical_plan::TableWriteNode& write,
               const IntoClause& into, bool if_not_exists)
@@ -61,21 +52,6 @@ class CTASCommand {
   yaclib::Future<Result> CreateTable();
 
   bool IsTableCreated() const { return _table_created; }
-
-  Stage GetStage() const { return _stage; }
-  void SetStage(Stage s) { _stage = s; }
-
-  absl::Mutex& AsyncResultMutex() { return _async_result_mutex; }
-
-  bool IsAsyncResultReady() const {
-    return _async_result.State() != yaclib::ResultState::Empty;
-  }
-
-  yaclib::Result<Result> TakeAsyncResult() { return std::move(_async_result); }
-
-  void StoreAsyncResult(yaclib::Result<Result>&& r) {
-    _async_result = std::move(r);
-  }
 
   void Rollback();
   Result RemoveTombstone();
@@ -92,10 +68,6 @@ class CTASCommand {
   ObjectId _db;
 
   bool _table_created = false;
-
-  Stage _stage = Stage::None;
-  yaclib::Result<Result> _async_result;
-  absl::Mutex _async_result_mutex;
 };
 
 }  // namespace sdb::pg

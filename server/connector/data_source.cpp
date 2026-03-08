@@ -411,13 +411,11 @@ template<typename Derived>
 std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   uint64_t size, velox::ContinueFuture&) {
   SDB_ASSERT(size);
-  if (!_current_split)
-    return nullptr;
-
-  if (!_values) [[unlikely]] {
-    _current_split.reset();
+  if (!_current_split) {
     return nullptr;
   }
+
+  SDB_ASSERT(_values);
   SDB_ASSERT(_values->size() > 0,
              "Case of empty filters should be processed in connector");
 

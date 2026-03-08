@@ -714,14 +714,6 @@ class SereneDBConnector final : public velox::connector::Connector {
           output_type, column_oids, object_key, std::move(points));
       }
 
-#ifdef SDB_FAULT_INJECTION
-      SDB_IF_FAILURE(absl::StrCat(table_name, "_force_multiget_source")) {
-        SDB_THROW(ERROR_DEBUG,
-                  absl::StrCat(table_name, "_force_multiget_source"),
-                  " condition failed");
-      }
-#endif
-
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
         *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
@@ -745,13 +737,6 @@ class SereneDBConnector final : public velox::connector::Connector {
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
         object_key, snapshot, std::move(points));
     }
-
-#ifdef SDB_FAULT_INJECTION
-    SDB_IF_FAILURE(absl::StrCat(table_name, "_force_multiget_source")) {
-      SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_force_multiget_source"),
-                " condition failed");
-    }
-#endif
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,

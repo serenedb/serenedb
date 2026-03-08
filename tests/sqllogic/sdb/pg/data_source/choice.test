@@ -1,7 +1,8 @@
 # Tests that point lookups are chosen when the point filter fully covers
 # the primary key, and that the full scan variants are chosen otherwise.
+# Uses EXPLAIN (ANALYZE) to verify the number of rows read by the TableScan.
 
-# ATTENTION: if some constant folding optimization will be made, some tests 
+# ATTENTION: if some constant folding optimization will be made, some tests
 # may fail, especially ones that check that point lookup data source cannot be used.
 
 statement ok
@@ -10,10 +11,7 @@ CREATE TABLE t_choice (id INTEGER PRIMARY KEY, val INTEGER);
 statement ok
 INSERT INTO t_choice VALUES (1, 10), (2, 20), (3, 30);
 
-onlyif serenedb
-statement ok
-SET sdb_fault_t_choice_force_multiget_source TO DEFAULT;
-
+# Point lookup: WHERE id = 2 -> 1 specific point -> reads 1 row.
 query
 SELECT * FROM t_choice WHERE id = 2;
 ----
@@ -21,14 +19,20 @@ id	val
 2	20
 
 onlyif serenedb
-query error
-SELECT * FROM t_choice ORDER BY id;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice WHERE id = 2;
+----
+QUERY PLAN
+<slt:ignore>Output: 1 rows <slt:ignore>
 
+# Full scan: no filter -> reads all 3 rows.
 onlyif serenedb
-statement ok
-RESET sdb_fault_t_choice_force_multiget_source;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice ORDER BY id;
+----
+QUERY PLAN
+<slt:ignore>Output: 3 rows <slt:ignore>
 
-# Verify scan works normally after reset.
 query
 SELECT * FROM t_choice ORDER BY id;
 ----
@@ -48,11 +52,7 @@ BEGIN;
 statement count 1
 INSERT INTO t_choice VALUES (4, 40);
 
-
-onlyif serenedb
-statement ok
-SET sdb_fault_t_choice_force_multiget_source TO DEFAULT;
-
+# Point lookup within transaction (RYOW): reads 1 row.
 query
 SELECT * FROM t_choice WHERE id = 4;
 ----
@@ -60,16 +60,14 @@ id	val
 4	40
 
 onlyif serenedb
-query error
-SELECT * FROM t_choice ORDER BY id;
-
-onlyif serenedb
-statement ok
-RESET sdb_fault_t_choice_force_multiget_source;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice WHERE id = 4;
+----
+QUERY PLAN
+<slt:ignore>Output: 1 rows <slt:ignore>
 
 statement ok
 ROLLBACK;
-
 
 onlyif serenedb
 statement ok
@@ -83,30 +81,35 @@ CREATE TABLE t_choice_cpk (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b)
 statement ok
 INSERT INTO t_choice_cpk VALUES (1, 2, 10), (3, 4, 20), (5, 6, 30);
 
-onlyif serenedb
-statement ok
-SET sdb_fault_t_choice_cpk_force_multiget_source TO DEFAULT;
-
-# Full PK filter
+# Full PK filter -> 1 specific point -> reads 1 row.
 query
 SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
 ----
 a	b	val
 3	4	20
 
-# Partial PK filter (not a point)
 onlyif serenedb
-query error
-SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
+----
+QUERY PLAN
+<slt:ignore>Output: 1 rows <slt:ignore>
 
-
+# Partial PK filter (not a point) -> full scan -> reads all 3 rows.
 onlyif serenedb
-query error
-SELECT * FROM t_choice_cpk ORDER BY a;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>Output: 3 rows <slt:ignore>
 
+# No filter -> full scan -> reads all 3 rows.
 onlyif serenedb
-statement ok
-RESET sdb_fault_t_choice_cpk_force_multiget_source;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>Output: 3 rows <slt:ignore>
 
 
 statement ok
@@ -126,11 +129,6 @@ a	b	val
 3	6	32
 5	6	30
 
-onlyif serenedb
-statement ok
-SET sdb_fault_t_choice_cpk_force_multiget_source TO DEFAULT;
-
-
 # OrFilter of two complete PK conjunctions -> 2 specific points -> MultiGet.
 query
 SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
@@ -138,6 +136,13 @@ SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
 a	b	val
 1	2	10
 3	4	20
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>Output: 2 rows <slt:ignore>
 
 # Cartesian product of {a:1},{b:2} x {a:2},{b:4}:
 #   {a:1} and {a:2} = contradiction
@@ -152,22 +157,39 @@ a	b	val
 1	4	11
 2	2	21
 
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND (a=2 OR b=4) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>Output: 2 rows <slt:ignore>
+
 # 1=1 is not a call expression -> AnyFilterNode (no constraints).
 # Cartesian of {a:1},{b:2} x {IsNoFilters} stays partial -> not specific -> full scan.
+# Reads all 8 rows from the table.
 onlyif serenedb
-query error
-SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>Output: 8 rows <slt:ignore>
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1} (partial) -> full scan.
 onlyif serenedb
-query error
-SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>Output: 8 rows <slt:ignore>
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1, b:2}, but
 # AnyFilterNode or {a:1, b:2} -> Any point -> full scan
 onlyif serenedb
-query error
-SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>Output: 8 rows <slt:ignore>
 
 # a IN (1,3) -> OrFilter({a:1},{a:3}); b IN (2,6) -> OrFilter({b:2},{b:6}).
 # Cartesian product -> (1,2),(1,6),(3,2),(3,6) — all specific -> MultiGet.
@@ -181,8 +203,11 @@ a	b	val
 3	6	32
 
 onlyif serenedb
-statement ok
-RESET sdb_fault_t_choice_cpk_force_multiget_source;
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a IN (1,3) AND b IN (2,6) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>Output: 4 rows <slt:ignore>
 
 
 statement ok
@@ -204,11 +229,7 @@ SELECT a.x, b.x, c.x, d.x FROM
   generate_series(1, 11) as c(x),
   generate_series(1, 11) as d(x);
 
-onlyif serenedb
-statement ok
-SET sdb_fault_t_big4pk_force_multiget_source TO DEFAULT;
-
-# a IN (1..10) AND b IN (1..10) AND c IN (1..10) AND d IN (1..10) 
+# a IN (1..10) AND b IN (1..10) AND c IN (1..10) AND d IN (1..10)
 # -> 10^4 = 10000 specific points
 # This exercises the batching path in RocksDBPointLookupDataSource.
 query
@@ -222,8 +243,23 @@ count
 10000
 
 onlyif serenedb
-statement ok
-RESET sdb_fault_t_big4pk_force_multiget_source;
+query
+EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk WHERE
+  a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  d IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+----
+QUERY PLAN
+<slt:ignore>[t_big4pk]<slt:ignore>Output: 10000 rows <slt:ignore>
+
+# Full scan: reads all 14641 rows.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk;
+----
+QUERY PLAN
+<slt:ignore>[t_big4pk]<slt:ignore>Output: 14641 rows <slt:ignore>
 
 statement ok
 DROP TABLE t_big4pk;

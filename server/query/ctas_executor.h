@@ -23,14 +23,14 @@
 #include <memory>
 
 #include "pg/commands/ctas.h"
-#include "query/batch_executor.h"
+#include "query/executor.h"
 #include "query/runner.h"
 
 namespace sdb::query {
 
 class Query;
 
-class CreateTableExecutor final : public BatchExecutor {
+class CreateTableExecutor final : public Executor {
  public:
   explicit CreateTableExecutor(std::unique_ptr<pg::CTASCommand> ctas_command);
 
@@ -47,7 +47,7 @@ class CreateTableExecutor final : public BatchExecutor {
   bool _fired = false;
 };
 
-class CTASVeloxExecutor final : public BatchExecutor {
+class CTASVeloxExecutor final : public Executor {
  public:
   explicit CTASVeloxExecutor(pg::CTASCommand& ctas_command);
 
@@ -62,7 +62,7 @@ class CTASVeloxExecutor final : public BatchExecutor {
   Runner _runner;
 };
 
-class RemoveTombstoneExecutor final : public BatchExecutor {
+class RemoveTombstoneExecutor final : public Executor {
  public:
   explicit RemoveTombstoneExecutor(pg::CTASCommand& ctas_command);
 

@@ -20,14 +20,14 @@
 
 #pragma once
 
-#include "query/batch_executor.h"
+#include "query/executor.h"
 #include "utils/exec_context.h"
 
 struct Node;
 
 namespace sdb::pg {
 
-class Executor final : public query::BatchExecutor {
+class Executor final : public query::Executor {
  public:
   explicit Executor(std::shared_ptr<ExecContext> context, const Node& node);
 

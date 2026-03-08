@@ -26,8 +26,8 @@
 
 #include <vector>
 
-#include "query/batch_executor.h"
 #include "query/context.h"
+#include "query/executor.h"
 #include "query/runner.h"
 
 namespace sdb::query {
@@ -54,7 +54,7 @@ class Cursor {
 
   std::function<void()> _user_task;
   Query& _query;
-  std::vector<std::unique_ptr<BatchExecutor>> _executors;
+  std::vector<std::unique_ptr<Executor>> _executors;
   size_t _current = 0;
 };
 

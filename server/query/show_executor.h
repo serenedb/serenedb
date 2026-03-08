@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include "query/batch_executor.h"
+#include "query/executor.h"
 
 namespace sdb::query {
 
-class ShowBatchExecutor final : public BatchExecutor {
+class ShowExecutor final : public Executor {
  public:
   void SetQuery(Query& query) final;
 
@@ -35,7 +35,7 @@ class ShowBatchExecutor final : public BatchExecutor {
   velox::RowVectorPtr _result;
 };
 
-class ShowAllBatchExecutor final : public BatchExecutor {
+class ShowAllExecutor final : public Executor {
  public:
   void SetQuery(Query& query) final;
 

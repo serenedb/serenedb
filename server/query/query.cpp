@@ -36,9 +36,9 @@
 #include "connector/serenedb_connector.hpp"
 #include "pg/sql_resolver.h"
 #include "query/cursor.h"
-#include "query/explain_batch_executor.h"
-#include "query/show_batch_executor.h"
-#include "query/velox_batch_executor.h"
+#include "query/explain_executor.h"
+#include "query/show_executor.h"
+#include "query/velox_executor.h"
 
 namespace sdb::query {
 namespace {
@@ -79,17 +79,17 @@ std::unique_ptr<Query> Query::CreateQuery(
   auto query = std::unique_ptr<Query>(new Query{root, query_ctx});
 
   if (query_ctx.command_type.Has(CommandType::Query)) {
-    auto velox = std::make_unique<VeloxBatchExecutor>();
+    auto velox = std::make_unique<VeloxExecutor>();
     if (query_ctx.command_type.Has(CommandType::Explain)) {
       velox->IgnoreOutput() = true;
-      auto explain = std::make_unique<ExplainBatchExecutor>(velox.get());
+      auto explain = std::make_unique<ExplainExecutor>(velox.get());
       query->_executors.emplace_back(std::move(velox));
       query->_executors.emplace_back(std::move(explain));
     } else {
       query->_executors.emplace_back(std::move(velox));
     }
   } else if (query_ctx.command_type.Has(CommandType::Explain)) {
-    query->_executors.emplace_back(std::make_unique<ExplainBatchExecutor>());
+    query->_executors.emplace_back(std::make_unique<ExplainExecutor>());
   }
 
   for (auto& executor : query->_executors) {
@@ -98,7 +98,7 @@ std::unique_ptr<Query> Query::CreateQuery(
   return query;
 }
 
-std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<BatchExecutor> executor,
+std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<Executor> executor,
                                         const QueryContext& query_ctx) {
   auto query =
     std::unique_ptr<Query>(new Query{velox::RowTypePtr{}, query_ctx});
@@ -113,7 +113,7 @@ std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
     velox::ROW({std::string{show_variable}}, {velox::VARCHAR()}),
     query_ctx,
   });
-  query->_executors.emplace_back(std::make_unique<ShowBatchExecutor>());
+  query->_executors.emplace_back(std::make_unique<ShowExecutor>());
   query->_executors.back()->SetQuery(*query);
   return query;
 }
@@ -124,17 +124,17 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
-  query->_executors.emplace_back(std::make_unique<ShowAllBatchExecutor>());
+  query->_executors.emplace_back(std::make_unique<ShowAllExecutor>());
   query->_executors.back()->SetQuery(*query);
   return query;
 }
 
-std::unique_ptr<Query> Query::CreateWithBatchExecutor(
+std::unique_ptr<Query> Query::CreateWithExecutor(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx,
-  std::vector<std::unique_ptr<BatchExecutor>> batch_executors) {
+  std::vector<std::unique_ptr<Executor>> executors) {
   return std::unique_ptr<Query>(
-    new Query{root, query_ctx, std::move(batch_executors)});
+    new Query{root, query_ctx, std::move(executors)});
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
@@ -145,7 +145,7 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx,
-             std::vector<std::unique_ptr<BatchExecutor>> executors)
+             std::vector<std::unique_ptr<Executor>> executors)
   : _query_ctx{query_ctx},
     _logical_plan{root},
     _output_type{root->outputType()},

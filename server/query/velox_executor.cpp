@@ -18,31 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "query/velox_executor.h"
 
-#include <velox/vector/ComplexVector.h>
+#include <yaclib/async/make.hpp>
 
-#include <yaclib/async/future.hpp>
-
-#include "basics/fwd.h"
+#include "basics/assert.h"
+#include "query/query.h"
 
 namespace sdb::query {
 
-class Query;
+void VeloxExecutor::SetQuery(Query& query) {
+  _query = &query;
+  _runner = query.MakeRunner();
+}
 
-class BatchExecutor {
- public:
-  virtual void SetQuery(Query& query) = 0;
-  virtual yaclib::Future<> Execute(velox::RowVectorPtr& batch) = 0;
-  virtual yaclib::Future<> RequestCancel() = 0;
-  virtual ~BatchExecutor() = default;
-
-  decltype(auto) IgnoreOutput(this auto&& self) noexcept {
-    return (self._ignore_output);
+yaclib::Future<> VeloxExecutor::Execute(velox::RowVectorPtr& batch) {
+  SDB_ASSERT(_runner);
+  yaclib::Future<> wait;
+  batch = _runner.Next(wait);
+  if (wait.Valid()) {
+    SDB_ASSERT(!batch);
+    return wait;
   }
+  if (batch) {
+    return yaclib::MakeFuture();
+  }
+  return {};
+}
 
- protected:
-  [[maybe_unused]] bool _ignore_output = false;
-};
+yaclib::Future<> VeloxExecutor::RequestCancel() {
+  _runner.RequestCancel();
+  return {};
+}
 
 }  // namespace sdb::query

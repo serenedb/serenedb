@@ -18,37 +18,31 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/velox_batch_executor.h"
+#pragma once
 
-#include <yaclib/async/make.hpp>
+#include <optional>
 
-#include "basics/assert.h"
-#include "query/query.h"
+#include "query/executor.h"
 
 namespace sdb::query {
 
-void VeloxBatchExecutor::SetQuery(Query& query) {
-  _query = &query;
-  _runner = query.MakeRunner();
-}
+class VeloxExecutor;
 
-yaclib::Future<> VeloxBatchExecutor::Execute(velox::RowVectorPtr& batch) {
-  SDB_ASSERT(_runner);
-  yaclib::Future<> wait;
-  batch = _runner.Next(wait);
-  if (wait.Valid()) {
-    SDB_ASSERT(!batch);
-    return wait;
-  }
-  if (batch) {
-    return yaclib::MakeFuture();
-  }
-  return {};
-}
+class ExplainExecutor final : public Executor {
+ public:
+  explicit ExplainExecutor(VeloxExecutor* velox = nullptr);
 
-yaclib::Future<> VeloxBatchExecutor::RequestCancel() {
-  _runner.RequestCancel();
-  return {};
-}
+  void SetQuery(Query& query) final;
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+  yaclib::Future<> RequestCancel() final { return {}; }
+
+ private:
+  velox::RowVectorPtr BuildExplainBatch();
+
+  VeloxExecutor* _velox = nullptr;
+  Query* _query = nullptr;
+  std::optional<velox::RowVectorPtr> _result;
+};
 
 }  // namespace sdb::query

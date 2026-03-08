@@ -20,23 +20,29 @@
 
 #pragma once
 
-#include "query/batch_executor.h"
-#include "query/runner.h"
+#include <velox/vector/ComplexVector.h>
+
+#include <yaclib/async/future.hpp>
+
+#include "basics/fwd.h"
 
 namespace sdb::query {
 
-class VeloxBatchExecutor final : public BatchExecutor {
+class Query;
+
+class Executor {
  public:
-  void SetQuery(Query& query) final;
+  virtual void SetQuery(Query& query) = 0;
+  virtual yaclib::Future<> Execute(velox::RowVectorPtr& batch) = 0;
+  virtual yaclib::Future<> RequestCancel() = 0;
+  virtual ~Executor() = default;
 
-  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-  yaclib::Future<> RequestCancel() final;
+  decltype(auto) IgnoreOutput(this auto&& self) noexcept {
+    return (self._ignore_output);
+  }
 
-  Runner& GetRunner() { return _runner; }
-
- private:
-  Query* _query = nullptr;
-  Runner _runner;
+ protected:
+  [[maybe_unused]] bool _ignore_output = false;
 };
 
 }  // namespace sdb::query

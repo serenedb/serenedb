@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/show_batch_executor.h"
+#include "query/show_executor.h"
 
 #include <absl/algorithm/container.h>
 
@@ -59,7 +59,7 @@ velox::RowVectorPtr BuildBatch(
 
 }  // namespace
 
-void ShowBatchExecutor::SetQuery(Query& query) {
+void ShowExecutor::SetQuery(Query& query) {
   SDB_ASSERT(
     query.GetOutputType()->equivalent(*velox::ROW({velox::VARCHAR()})));
   const auto& config = query.GetContext().velox_query_ctx->queryConfig();
@@ -96,7 +96,7 @@ void ShowBatchExecutor::SetQuery(Query& query) {
   _result = BuildBatch(query.GetOutputType(), pool, {std::move(column)});
 }
 
-yaclib::Future<> ShowBatchExecutor::Execute(velox::RowVectorPtr& batch) {
+yaclib::Future<> ShowExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {
     return {};
   }
@@ -104,7 +104,7 @@ yaclib::Future<> ShowBatchExecutor::Execute(velox::RowVectorPtr& batch) {
   return yaclib::MakeFuture();
 }
 
-void ShowAllBatchExecutor::SetQuery(Query& query) {
+void ShowAllExecutor::SetQuery(Query& query) {
   SDB_ASSERT(query.GetOutputType()->equivalent(
     *velox::ROW({velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()})));
   const auto& query_config = query.GetContext().velox_query_ctx->queryConfig();
@@ -127,7 +127,7 @@ void ShowAllBatchExecutor::SetQuery(Query& query) {
                        });
 }
 
-yaclib::Future<> ShowAllBatchExecutor::Execute(velox::RowVectorPtr& batch) {
+yaclib::Future<> ShowAllExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {
     return {};
   }

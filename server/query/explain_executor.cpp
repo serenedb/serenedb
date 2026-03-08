@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "query/explain_batch_executor.h"
+#include "query/explain_executor.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_split.h>
@@ -28,7 +28,7 @@
 #include "basics/assert.h"
 #include "basics/string_utils.h"
 #include "query/query.h"
-#include "query/velox_batch_executor.h"
+#include "query/velox_executor.h"
 #include "utils.h"
 
 namespace sdb::query {
@@ -43,12 +43,12 @@ std::string ProcessPlan(std::string plan, bool clean_column_names) {
 
 }  // namespace
 
-ExplainBatchExecutor::ExplainBatchExecutor(VeloxBatchExecutor* velox)
+ExplainExecutor::ExplainExecutor(VeloxExecutor* velox)
   : _velox{velox} {}
 
-void ExplainBatchExecutor::SetQuery(Query& query) { _query = &query; }
+void ExplainExecutor::SetQuery(Query& query) { _query = &query; }
 
-yaclib::Future<> ExplainBatchExecutor::Execute(velox::RowVectorPtr& batch) {
+yaclib::Future<> ExplainExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {
     _result = BuildExplainBatch();
     batch = std::move(*_result);
@@ -57,7 +57,7 @@ yaclib::Future<> ExplainBatchExecutor::Execute(velox::RowVectorPtr& batch) {
   return {};
 }
 
-velox::RowVectorPtr ExplainBatchExecutor::BuildExplainBatch() {
+velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
   const auto& query_ctx = _query->GetContext();
   const bool clean_column_names =
     !query_ctx.explain_params.Has(ExplainWith::Registers);

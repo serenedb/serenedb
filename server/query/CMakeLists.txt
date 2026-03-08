@@ -4,9 +4,9 @@ target_sources(
         query.cpp
         cursor.cpp
         ctas_executor.cpp
-        explain_batch_executor.cpp
-        show_batch_executor.cpp
-        velox_batch_executor.cpp
+        explain_executor.cpp
+        show_executor.cpp
+        velox_executor.cpp
         config.cpp
         utils.cpp
         config_variables.cpp

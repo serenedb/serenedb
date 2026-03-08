@@ -139,13 +139,13 @@ bool SqlStatement::ProcessNextRoot(
     auto remove_tombstone =
       std::make_unique<query::RemoveTombstoneExecutor>(cmd);
 
-    std::vector<std::unique_ptr<query::BatchExecutor>> executors;
+    std::vector<std::unique_ptr<query::Executor>> executors;
     executors.push_back(std::move(create_table));
     executors.push_back(std::move(velox_exec));
     executors.push_back(std::move(remove_tombstone));
 
-    query = query::Query::CreateWithBatchExecutor(query_desc.root, query_ctx,
-                                                  std::move(executors));
+    query = query::Query::CreateWithExecutor(query_desc.root, query_ctx,
+                                             std::move(executors));
     return true;
   }
 

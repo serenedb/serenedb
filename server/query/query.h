@@ -33,8 +33,8 @@
 #include <vector>
 
 #include "basics/fwd.h"
-#include "query/batch_executor.h"
 #include "query/context.h"
+#include "query/executor.h"
 #include "query/runner.h"
 
 namespace sdb::query {
@@ -47,18 +47,18 @@ class Query {
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx);
 
-  static std::unique_ptr<Query> CreateDDL(
-    std::unique_ptr<BatchExecutor> executor, const QueryContext& query_ctx);
+  static std::unique_ptr<Query> CreateDDL(std::unique_ptr<Executor> executor,
+                                          const QueryContext& query_ctx);
 
   static std::unique_ptr<Query> CreateShow(std::string_view show_variable,
                                            const QueryContext& query_ctx);
 
   static std::unique_ptr<Query> CreateShowAll(const QueryContext& query_ctx);
 
-  static std::unique_ptr<Query> CreateWithBatchExecutor(
+  static std::unique_ptr<Query> CreateWithExecutor(
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx,
-    std::vector<std::unique_ptr<BatchExecutor>> batch_executors);
+    std::vector<std::unique_ptr<Executor>> executors);
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
@@ -76,7 +76,7 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
-  std::vector<std::unique_ptr<BatchExecutor>> TakeExecutors() {
+  std::vector<std::unique_ptr<Executor>> TakeExecutors() {
     return std::move(_executors);
   }
 
@@ -94,17 +94,17 @@ class Query {
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
-  // use for CreateWithBatchExecutor
+  // use for CreateWithExecutor
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx,
-        std::vector<std::unique_ptr<BatchExecutor>> executors);
+        std::vector<std::unique_ptr<Executor>> executors);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;
   axiom::runner::MultiFragmentPlanPtr _execution_plan;
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
-  std::vector<std::unique_ptr<BatchExecutor>> _executors;
+  std::vector<std::unique_ptr<Executor>> _executors;
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;

@@ -22,7 +22,6 @@
 
 #include <memory>
 
-#include "basics/result.h"
 #include "catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
@@ -36,36 +35,32 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-yaclib::Future<Result> CreateDatabase(ExecContext& ctx,
-                                      const CreatedbStmt& stmt);
+yaclib::Future<> CreateDatabase(ExecContext& ctx, const CreatedbStmt& stmt);
 
-yaclib::Future<Result> CreateSchema(ExecContext& ctx,
-                                    const CreateSchemaStmt& stmt);
+yaclib::Future<> CreateSchema(ExecContext& ctx, const CreateSchemaStmt& stmt);
 
-yaclib::Future<Result> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
+yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 
-yaclib::Future<Result> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
+yaclib::Future<> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
 
-yaclib::Future<Result> CreateIndex(ExecContext& ctx, const IndexStmt& stmt);
+yaclib::Future<> CreateIndex(ExecContext& ctx, const IndexStmt& stmt);
 
-yaclib::Future<Result> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
+yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
 std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt);
 
-yaclib::Future<Result> DropObject(ExecContext& ctx, const DropStmt& stmt);
+yaclib::Future<> DropObject(ExecContext& ctx, const DropStmt& stmt);
 
-yaclib::Future<Result> Transaction(ExecContext& ctx,
-                                   const TransactionStmt& stmt);
+yaclib::Future<> Transaction(ExecContext& ctx, const TransactionStmt& stmt);
 
-yaclib::Future<Result> VariableSet(ExecContext& ctx,
-                                   const VariableSetStmt& stmt);
+yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt);
 
-yaclib::Future<Result> CreateFunction(ExecContext& ctx,
-                                      const CreateFunctionStmt& stmt);
+yaclib::Future<> CreateFunction(ExecContext& ctx,
+                                const CreateFunctionStmt& stmt);
 
 std::shared_ptr<catalog::Function> CreateSystemFunction(
   const CreateFunctionStmt& stmt);
 
-yaclib::Future<Result> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
+yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 }  // namespace sdb::pg

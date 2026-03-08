@@ -117,8 +117,7 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
 enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
 
 // TODO: use ErrorPosition in ThrowSqlError
-yaclib::Future<Result> CreateTable(ExecContext& context,
-                                   const CreateStmt& stmt) {
+yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -126,8 +125,8 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
   if (schema.empty()) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
   const std::string_view table = stmt.relation->relname;
 
@@ -429,17 +428,20 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                             database->GetReplicationFactor(),
                             database->GetWriteConcern(), {});
   if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
   r = catalog.CreateTable(db, schema, std::move(options), {});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    r = {};
+    return {};
   } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_TABLE),
       ERR_MSG("relation \"", stmt.relation->relname, "\" already exists"));
   }
-  return yaclib::MakeFuture(std::move(r));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 }  // namespace sdb::pg

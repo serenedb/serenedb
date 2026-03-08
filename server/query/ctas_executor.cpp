@@ -45,17 +45,9 @@ yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
 
   auto f = _ctas_command->CreateTable();
   if (!f.Ready()) {
-    return std::move(f).ThenInline([this](Result&& r) {
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
-      _query->CompileQuery();
-    });
+    return std::move(f).ThenInline([this] { _query->CompileQuery(); });
   }
-  auto r = std::move(f).Touch().Ok();
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  std::move(f).Touch().Ok();
   _query->CompileQuery();
   return {};
 }

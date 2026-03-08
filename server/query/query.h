@@ -93,7 +93,7 @@ class Query {
     std::span<const std::vector<std::string_view>> columns) const;
 
  private:
-  template <typename StringType>
+  template<typename StringType>
   velox::RowVectorPtr BuildBatchImpl(
     std::span<const std::vector<StringType>> columns) const;
 

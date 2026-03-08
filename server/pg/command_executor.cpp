@@ -21,11 +21,11 @@
 #include "pg/command_executor.h"
 
 #include "pg/commands.h"
-#include "yaclib/async/make.hpp"
 
 namespace sdb::pg {
 
-CommandExecutor::CommandExecutor(std::shared_ptr<ExecContext> context, const Node& node)
+CommandExecutor::CommandExecutor(std::shared_ptr<ExecContext> context,
+                                 const Node& node)
   : _context{std::move(context)}, _node{node} {}
 
 yaclib::Future<> CommandExecutor::RequestCancel() {
@@ -33,23 +33,7 @@ yaclib::Future<> CommandExecutor::RequestCancel() {
   return {};
 }
 
-yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr&) {
-  if (_fired) {
-    return {};
-  }
-  _fired = true;
-  auto f = ExecuteCommand();
-  if (!f.Valid()) {
-    return yaclib::MakeFuture();
-  }
-  return std::move(f).ThenInline([](Result&& r) {
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
-  });
-}
-
-yaclib::Future<Result> CommandExecutor::ExecuteCommand() {
+yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);
@@ -98,6 +82,8 @@ yaclib::Future<Result> CommandExecutor::ExecuteCommand() {
     default:
       SDB_UNREACHABLE();
   }
+
+  return {};
 }
 
 }  // namespace sdb::pg

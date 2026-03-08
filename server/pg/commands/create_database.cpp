@@ -28,15 +28,18 @@
 
 namespace sdb::pg {
 
-yaclib::Future<Result> CreateDatabase(ExecContext& context,
-                                      const CreatedbStmt& stmt) {
+yaclib::Future<> CreateDatabase(ExecContext& context,
+                                const CreatedbStmt& stmt) {
   auto r = catalog::CreateDatabase(
     context, catalog::DatabaseOptions{.name = stmt.dbname});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
                     ERR_MSG("database \"", stmt.dbname, "\" already exists"));
   }
-  return yaclib::MakeFuture(std::move(r));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 }  // namespace sdb::pg

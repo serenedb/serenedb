@@ -29,18 +29,18 @@ namespace sdb::pg {
 
 class CommandExecutor final : public query::Executor {
  public:
-  explicit CommandExecutor(std::shared_ptr<ExecContext> context, const Node& node);
+  explicit CommandExecutor(std::shared_ptr<ExecContext> context,
+                           const Node& node);
 
   void Init(query::Query&) final {}
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final;
 
  private:
-  yaclib::Future<Result> ExecuteCommand();
+  yaclib::Future<> ExecuteCommand();
 
   std::shared_ptr<ExecContext> _context;
   const Node& _node;
-  bool _fired = false;
 };
 
 }  // namespace sdb::pg

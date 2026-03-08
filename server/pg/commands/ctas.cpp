@@ -23,7 +23,7 @@
 
 namespace sdb::pg {
 
-yaclib::Future<Result> CTASCommand::CreateTable() {
+yaclib::Future<> CTASCommand::CreateTable() {
   _db = _context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -31,8 +31,8 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   const auto& rel = *_into.rel;
   _schema = rel.schemaname ? rel.schemaname : std::move(current_schema);
   if (_schema.empty()) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
   _table_name = rel.relname;
 
@@ -57,7 +57,7 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
                             database->GetReplicationFactor(),
                             database->GetWriteConcern(), {});
   if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
 
   catalog::CreateTableOperationOptions table_operation;
@@ -65,14 +65,14 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
 
   r = catalog.CreateTable(_db, _schema, std::move(options), table_operation);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _if_not_exists) {
-    r = {};
+    return {};
   } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("relation \"", _table_name, "\" already exists"));
   }
 
   if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
 
   auto snapshot = catalog.GetSnapshot();
@@ -84,7 +84,7 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   _write.setTable(std::move(axiom_table));
 
   _table_created = true;
-  return yaclib::MakeFuture(std::move(r));
+  return {};
 }
 
 void CTASCommand::Rollback() {

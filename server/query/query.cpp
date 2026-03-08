@@ -327,7 +327,7 @@ Runner Query::MakeRunner() const {
                 _query_ctx.query_memory_pool};
 }
 
-template <typename StringType>
+template<typename StringType>
 velox::RowVectorPtr Query::BuildBatchImpl(
   std::span<const std::vector<StringType>> columns) const {
   SDB_ASSERT(_output_type->isRow());

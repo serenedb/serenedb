@@ -49,7 +49,7 @@ class CTASCommand {
       _into{into},
       _if_not_exists{if_not_exists} {}
 
-  yaclib::Future<Result> CreateTable();
+  yaclib::Future<> CreateTable();
 
   bool IsTableCreated() const { return _table_created; }
 

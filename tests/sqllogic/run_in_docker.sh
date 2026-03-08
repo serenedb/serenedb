@@ -59,13 +59,14 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 		docker network rm "$NETWORK_NAME"
 		docker volume rm "$VOLUME_NAME"
 	}
-	trap cleanup EXIT
+	trap cleanup EXIT INT TERM
 
 	docker network create --driver overlay --attachable "$NETWORK_NAME"
 	docker volume create "$VOLUME_NAME"
 
 	docker service create \
 		--name "$SERVICE_NAME" \
+		--env BUILD_DIR="$BUILD_DIR" \
 		--restart-condition on-failure \
 		--replicas 1 \
 		--restart-delay 1ns \
@@ -113,7 +114,7 @@ else
 	fi
 
 	cleanup() {
-		docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans --timeout 30
+		docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans
 	}
 	trap cleanup EXIT INT TERM
 

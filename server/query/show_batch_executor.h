@@ -28,7 +28,7 @@ class ShowBatchExecutor final : public BatchExecutor {
  public:
   void SetQuery(Query& query) final;
 
-  yaclib::Future<velox::RowVectorPtr> Execute() final;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   void RequestCancel() final {}
 
  private:
@@ -39,7 +39,7 @@ class ShowAllBatchExecutor final : public BatchExecutor {
  public:
   void SetQuery(Query& query) final;
 
-  yaclib::Future<velox::RowVectorPtr> Execute() final;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   void RequestCancel() final {}
 
  private:

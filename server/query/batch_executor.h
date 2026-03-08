@@ -33,7 +33,7 @@ class Query;
 class BatchExecutor {
  public:
   virtual void SetQuery(Query& query) = 0;
-  virtual yaclib::Future<velox::RowVectorPtr> Execute() = 0;
+  virtual yaclib::Future<> Execute(velox::RowVectorPtr& batch) = 0;
   virtual void RequestCancel() = 0;
   virtual ~BatchExecutor() = default;
 

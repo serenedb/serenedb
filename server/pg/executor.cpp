@@ -30,16 +30,19 @@ Executor::Executor(std::shared_ptr<ExecContext> context, const Node& node)
 
 void Executor::RequestCancel() { _context->cancel(); }
 
-yaclib::Future<velox::RowVectorPtr> Executor::Execute() {
+yaclib::Future<> Executor::Execute(velox::RowVectorPtr&) {
   if (_fired) {
     return {};
   }
   _fired = true;
-  return ExecuteCommand().ThenInline([](Result&& r) -> velox::RowVectorPtr {
+  auto f = ExecuteCommand();
+  if (!f.Valid()) {
+    return yaclib::MakeFuture();
+  }
+  return std::move(f).ThenInline([](Result&& r) {
     if (!r.ok()) {
       SDB_THROW(std::move(r));
     }
-    return nullptr;
   });
 }
 

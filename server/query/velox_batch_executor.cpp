@@ -32,17 +32,16 @@ void VeloxBatchExecutor::SetQuery(Query& query) {
   _runner = query.MakeRunner();
 }
 
-yaclib::Future<velox::RowVectorPtr> VeloxBatchExecutor::Execute() {
+yaclib::Future<> VeloxBatchExecutor::Execute(velox::RowVectorPtr& batch) {
   SDB_ASSERT(_runner);
   yaclib::Future<> wait;
-  auto batch = _runner.Next(wait);
+  batch = _runner.Next(wait);
   if (wait.Valid()) {
     SDB_ASSERT(!batch);
-    return std::move(wait).ThenInline(
-      [](auto&&) -> velox::RowVectorPtr { return nullptr; });
+    return wait;
   }
   if (batch) {
-    return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(batch));
+    return yaclib::MakeFuture();
   }
   return {};
 }

@@ -96,11 +96,12 @@ void ShowBatchExecutor::SetQuery(Query& query) {
   _result = BuildBatch(query.GetOutputType(), pool, {std::move(column)});
 }
 
-yaclib::Future<velox::RowVectorPtr> ShowBatchExecutor::Execute() {
+yaclib::Future<> ShowBatchExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {
     return {};
   }
-  return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(_result));
+  batch = std::move(_result);
+  return yaclib::MakeFuture();
 }
 
 void ShowAllBatchExecutor::SetQuery(Query& query) {
@@ -126,11 +127,12 @@ void ShowAllBatchExecutor::SetQuery(Query& query) {
                        });
 }
 
-yaclib::Future<velox::RowVectorPtr> ShowAllBatchExecutor::Execute() {
+yaclib::Future<> ShowAllBatchExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {
     return {};
   }
-  return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(_result));
+  batch = std::move(_result);
+  return yaclib::MakeFuture();
 }
 
 }  // namespace sdb::query

@@ -48,10 +48,11 @@ ExplainBatchExecutor::ExplainBatchExecutor(VeloxBatchExecutor* velox)
 
 void ExplainBatchExecutor::SetQuery(Query& query) { _query = &query; }
 
-yaclib::Future<velox::RowVectorPtr> ExplainBatchExecutor::Execute() {
+yaclib::Future<> ExplainBatchExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {
     _result = BuildExplainBatch();
-    return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(*_result));
+    batch = std::move(*_result);
+    return yaclib::MakeFuture();
   }
   return {};
 }

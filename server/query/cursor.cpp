@@ -36,23 +36,20 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
       return Process::Done;
     }
     auto& executor = _executors[_current];
-    auto f = executor->Execute();
+    auto f = executor->Execute(batch);
     if (!f.Valid()) {
       ++_current;
       continue;
     }
     if (f.Ready()) {
-      auto result = std::move(f).Touch().Ok();
-      if (result && !executor->IgnoreOutput()) {
-        batch = std::move(result);
+      std::ignore = std::move(f).Touch().Ok();
+      if (batch && !executor->IgnoreOutput()) {
         return Process::More;
       }
       continue;
     }
     std::move(f).DetachInline(
-      [user_task = _user_task](yaclib::Result<velox::RowVectorPtr>&&) {
-        user_task();
-      });
+      [user_task = _user_task](yaclib::Result<void>&&) { user_task(); });
     return Process::Wait;
   }
 }

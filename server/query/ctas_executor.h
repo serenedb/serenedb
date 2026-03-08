@@ -36,7 +36,7 @@ class CTASExecutor final : public BatchExecutor {
 
   void SetQuery(Query& query) final { _query = &query; }
 
-  yaclib::Future<velox::RowVectorPtr> Execute() final;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   void RequestCancel() final;
 
  private:

@@ -51,15 +51,13 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   CreateTableUsingExternalOptions(const List* options,
                                   ConnectionContext& conn_ctx)
     : FileOptionsParser{
-        "CREATE TABLE",
         {},
-        {},
-        [&conn_ctx](std::string msg) {
-          conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
-        },
         OptionsParser::MakeOptions(options, {}),
-        file_options::kCreateExternalParserGroups} {
-    Parse();
+        file_options::kCreateExternalParserGroups,
+        {.operation = "CREATE TABLE", .notice = [&conn_ctx](std::string msg) {
+           conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
+         }}} {
+    ParseOptions([&] { Parse(); });
   }
 
   void Parse() {

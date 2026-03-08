@@ -39,18 +39,22 @@ namespace sdb::pg {
 
 using Options = containers::FlatHashMap<std::string_view, const DefElem*>;
 
+struct OptionsContext {
+  std::string_view operation;
+  std::string_view query_string;
+  std::function<void(std::string)> notice;
+};
+
 class OptionsParser {
  public:
-  OptionsParser(std::string_view operation, std::string_view query_string,
-                std::function<void(std::string)> notice, Options options,
-                std::span<const OptionGroup> option_groups)
-    : _query_string{query_string},
-      _operation{operation},
-      _notice{std::move(notice)},
+  OptionsParser(Options options, std::span<const OptionGroup> option_groups,
+                OptionsContext context)
+    : _query_string{context.query_string},
+      _operation{context.operation},
+      _notice{std::move(context.notice)},
       _options{std::move(options)},
       _option_groups{option_groups} {
     HandleHelp(option_groups);
-    CheckUnrecognizedOptions();
   }
 
  protected:
@@ -175,13 +179,24 @@ class OptionsParser {
     return it->second->location;
   }
 
+  template<typename F>
+  void ParseOptions(F&& parse) {
+    parse();
+    CheckUnrecognizedOptions();
+  }
+
+ private:
   void CheckUnrecognizedOptions() const {
     auto known_names = AllOptionNames(_option_groups);
     known_names.emplace_back("help");
 
     for (const auto& [name, option] : _options) {
       if (absl::c_contains(known_names, name)) {
-        continue;
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("option \"", name, "\" is not applicable in this context"),
+          ERR_HINT("Use WITH (HELP) to see available options"));
       }
       auto hint = FindClosestOption(known_names, name);
       auto msg =
@@ -216,6 +231,7 @@ class OptionsParser {
     return best;
   }
 
+ protected:
   int ErrorPosition(int location) const {
     return ::sdb::pg::ErrorPosition(_query_string, location);
   }

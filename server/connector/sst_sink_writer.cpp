@@ -27,9 +27,9 @@
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
-#include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
+#include "catalog/identifiers/revision_id.h"
 #include "catalog/table_options.h"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
@@ -225,12 +225,8 @@ template class SSTBlockBuilder<true>;
 template class SSTBlockBuilder<false>;
 
 std::string GenerateSSTDirPath() {
-  auto now = std::chrono::system_clock::now();
-  auto timestamp =
-    std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
-      .count();
-  return absl::StrCat(GetServerEngine().path(), "/", kBulkInsertDirPrefix,
-                      timestamp, "_", random::RandU64());
+  return absl::StrCat(GetServerEngine().path(), "/", kBulkInsertDirName, "/",
+                      RevisionId::create().id());
 }
 
 template<bool IsGeneratedPK>

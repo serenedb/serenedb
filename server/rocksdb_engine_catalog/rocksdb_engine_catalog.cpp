@@ -565,32 +565,16 @@ void RocksDBEngineCatalog::start() {
   }
 
   {
+    auto bulk_insert_dir =
+      std::filesystem::path(_path) / connector::kBulkInsertDirName;
     std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(_path, ec)) {
-      if (entry.is_directory() && entry.path().filename().string().starts_with(
-                                    connector::kBulkInsertDirPrefix)) {
-        SDB_TRACE("xxxxx", Logger::ENGINES,
-                  "removing leftover bulk insert directory '",
-                  entry.path().string(), "'");
-        std::filesystem::remove_all(entry.path(), ec);
-      }
+    if (std::filesystem::is_directory(bulk_insert_dir, ec)) {
+      SDB_TRACE("xxxxx", Logger::ENGINES,
+                "removing leftover bulk insert directory '",
+                bulk_insert_dir.string(), "'");
+      std::filesystem::remove_all(bulk_insert_dir, ec);
     }
   }
-
-#ifdef USE_SST_INGESTION
-  _idx_path = basics::file_utils::BuildFilename(_path, "tmp-idx-creation");
-  if (basics::file_utils::isDirectory(_idx_path)) {
-    for (const auto& fileName : SdbFullTreeDirectory(_idx_path.c_str())) {
-      SdbUnlinkFile(basics::file_utils::BuildFilename(path, fileName).data());
-    }
-  } else {
-    auto errorMsg = ERROR_OK;
-    if (!basics::file_utils::createDirectory(_idx_path, &errorMsg)) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "Cannot create tmp-idx-creation directory: ", LastError());
-    }
-  }
-#endif
 
   uint64_t total_space;
   uint64_t free_space;

@@ -33,12 +33,14 @@ namespace sdb::connector {
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout)
+  const axiom::connector::TableLayout& layout,
+  std::unique_ptr<FilterNode> filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     _transaction{
-      basics::downCast<RocksDBTable>(layout.table()).GetTransaction()} {
+      basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
+    _filter{std::move(filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
@@ -55,6 +57,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                              std::next(column_map.begin())->second)
                              ->Id();
   }
+  _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
+
   _transaction.AddRocksDBRead();
 }
 
@@ -96,7 +100,7 @@ SereneDBTableLayout::createTableHandle(
 
     SDB_ASSERT(!conjunct_root.empty());
     auto handle =
-      std::make_shared<SereneDBConnectorTableHandle>(session, *this);
+      std::make_shared<SereneDBConnectorTableHandle>(session, *this, nullptr);
     const auto& snapshot =
       inverted_index_table->GetTransaction().EnsureSearchSnapshot(
         inverted_index_table->GetIndex().GetId());
@@ -135,11 +139,20 @@ SereneDBTableLayout::createTableHandle(
                                              std::move(remaining_filter));
   }
 
+  // Rejected filters are used to remove filters from plan as I see.
+  // Think about them better. For now assume we need all filters
+  // (useful filter) and
+  // (useless) -- ? Do not forget to handle this case
+
+  auto pk_type = basics::downCast<RocksDBTable>(table()).PKType();
+
+  auto filter = ParseFilters(filters, pk_type->names());
   rejected_filters = std::move(filters);
   SDB_ASSERT(!table().columnMap().empty(),
-             "SereneDBConnectorTableHandle: need a column for count field");
-
-  return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
+             "SereneDBFullScanTableHandle: need a column for count field");
+  // todo column names
+  return std::make_shared<SereneDBConnectorTableHandle>(session, *this,
+                                                        std::move(filter));
 }
 
 }  // namespace sdb::connector

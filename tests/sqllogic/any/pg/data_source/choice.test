@@ -1,0 +1,229 @@
+# Tests that point lookups are chosen when the point filter fully covers
+# the primary key, and that the full scan variants are chosen otherwise.
+
+# ATTENTION: if some constant folding optimization will be made, some tests 
+# may fail, especially ones that check that point lookup data source cannot be used.
+
+statement ok
+CREATE TABLE t_choice (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_choice VALUES (1, 10), (2, 20), (3, 30);
+
+onlyif serenedb
+statement ok
+SET sdb_fault_t_choice_force_multiget_source TO DEFAULT;
+
+query
+SELECT * FROM t_choice WHERE id = 2;
+----
+id	val
+2	20
+
+onlyif serenedb
+query error
+SELECT * FROM t_choice ORDER BY id;
+
+onlyif serenedb
+statement ok
+RESET sdb_fault_t_choice_force_multiget_source;
+
+# Verify scan works normally after reset.
+query
+SELECT * FROM t_choice ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO t_choice VALUES (4, 40);
+
+
+onlyif serenedb
+statement ok
+SET sdb_fault_t_choice_force_multiget_source TO DEFAULT;
+
+query
+SELECT * FROM t_choice WHERE id = 4;
+----
+id	val
+4	40
+
+onlyif serenedb
+query error
+SELECT * FROM t_choice ORDER BY id;
+
+onlyif serenedb
+statement ok
+RESET sdb_fault_t_choice_force_multiget_source;
+
+statement ok
+ROLLBACK;
+
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+# --- Compound PK ---
+
+statement ok
+CREATE TABLE t_choice_cpk (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_choice_cpk VALUES (1, 2, 10), (3, 4, 20), (5, 6, 30);
+
+onlyif serenedb
+statement ok
+SET sdb_fault_t_choice_cpk_force_multiget_source TO DEFAULT;
+
+# Full PK filter
+query
+SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
+----
+a	b	val
+3	4	20
+
+# Partial PK filter (not a point)
+onlyif serenedb
+query error
+SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
+
+
+onlyif serenedb
+query error
+SELECT * FROM t_choice_cpk ORDER BY a;
+
+onlyif serenedb
+statement ok
+RESET sdb_fault_t_choice_cpk_force_multiget_source;
+
+
+statement ok
+INSERT INTO t_choice_cpk VALUES (1, 4, 11), (1, 6, 12), (2, 2, 21), (3, 2, 30), (3, 6, 32);
+
+
+query
+SELECT * FROM t_choice_cpk ORDER BY a, b;
+----
+a	b	val
+1	2	10
+1	4	11
+1	6	12
+2	2	21
+3	2	30
+3	4	20
+3	6	32
+5	6	30
+
+onlyif serenedb
+statement ok
+SET sdb_fault_t_choice_cpk_force_multiget_source TO DEFAULT;
+
+
+# OrFilter of two complete PK conjunctions -> 2 specific points -> MultiGet.
+query
+SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
+----
+a	b	val
+1	2	10
+3	4	20
+
+# Cartesian product of {a:1},{b:2} x {a:2},{b:4}:
+#   {a:1} and {a:2} = contradiction
+#   {a:1} and {b:4} = (1,4) <- specific point
+#   {b:2} and {a:2} = (2,2) <- specific point
+#   {b:2} and {b:4} = contradiction
+# -> 2 specific points -> MultiGet.
+query
+SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND (a=2 OR b=4) ORDER BY a, b;
+----
+a	b	val
+1	4	11
+2	2	21
+
+# 1=1 is not a call expression -> AnyFilterNode (no constraints).
+# Cartesian of {a:1},{b:2} x {IsNoFilters} stays partial -> not specific -> full scan.
+onlyif serenedb
+query error
+SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
+
+# 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1} (partial) -> full scan.
+onlyif serenedb
+query error
+SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
+
+# 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1, b:2}, but
+# AnyFilterNode or {a:1, b:2} -> Any point -> full scan
+onlyif serenedb
+query error
+SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
+
+# a IN (1,3) -> OrFilter({a:1},{a:3}); b IN (2,6) -> OrFilter({b:2},{b:6}).
+# Cartesian product -> (1,2),(1,6),(3,2),(3,6) — all specific -> MultiGet.
+query
+SELECT * FROM t_choice_cpk WHERE a IN (1,3) AND b IN (2,6) ORDER BY a, b;
+----
+a	b	val
+1	2	10
+1	6	12
+3	2	30
+3	6	32
+
+onlyif serenedb
+statement ok
+RESET sdb_fault_t_choice_cpk_force_multiget_source;
+
+
+statement ok
+DROP TABLE t_choice;
+
+statement ok
+DROP TABLE t_choice_cpk;
+
+# 4-column primary key, large Cartesian IN query (batching test)
+
+statement ok
+CREATE TABLE t_big4pk (a INTEGER, b INTEGER, c INTEGER, d INTEGER, PRIMARY KEY (a, b, c, d));
+
+statement ok
+INSERT INTO t_big4pk
+SELECT a.x, b.x, c.x, d.x FROM
+  generate_series(1, 11) as a(x),
+  generate_series(1, 11) as b(x),
+  generate_series(1, 11) as c(x),
+  generate_series(1, 11) as d(x);
+
+onlyif serenedb
+statement ok
+SET sdb_fault_t_big4pk_force_multiget_source TO DEFAULT;
+
+# a IN (1..10) AND b IN (1..10) AND c IN (1..10) AND d IN (1..10) 
+# -> 10^4 = 10000 specific points
+# This exercises the batching path in RocksDBPointLookupDataSource.
+query
+SELECT count(*) FROM t_big4pk WHERE
+  a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  d IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+----
+count
+10000
+
+onlyif serenedb
+statement ok
+RESET sdb_fault_t_big4pk_force_multiget_source;
+
+statement ok
+DROP TABLE t_big4pk;

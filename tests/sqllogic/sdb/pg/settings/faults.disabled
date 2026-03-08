@@ -1,3 +1,5 @@
+# Disabled for now because affects other tests
+
 statement ok
 RESET sdb_faults;
 

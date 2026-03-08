@@ -47,6 +47,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/rocksdb_filter.hpp"
 #include "connector/search_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
@@ -174,12 +175,13 @@ class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
   catalog::Column::Id _id;
 };
 
-class SereneDBConnectorTableHandle final
+class SereneDBConnectorTableHandle
   : public velox::connector::ConnectorTableHandle {
  public:
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout);
+    const axiom::connector::TableLayout& layout,
+    std::unique_ptr<FilterNode> filter);
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -199,6 +201,9 @@ class SereneDBConnectorTableHandle final
 
   auto& GetTransaction() const noexcept { return _transaction; }
 
+  auto& GetPKType() const noexcept { return _pk_type; }
+
+  auto& GetFilter() const noexcept { return _filter; }
   const irs::Filter::Query* GetSearchQuery() const noexcept {
     return _search_query.get();
   }
@@ -210,6 +215,8 @@ class SereneDBConnectorTableHandle final
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
+  velox::RowTypePtr _pk_type;
+  std::unique_ptr<FilterNode> _filter;
   irs::Filter::Query::ptr _search_query;
   ObjectId _index_id = ObjectId::none();
 };
@@ -262,6 +269,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
       basics::downCast<const SereneDBColumn>(findColumn(column_name))->Id());
   }
 
+  // TODO here
   velox::connector::ConnectorTableHandlePtr createTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     std::vector<velox::connector::ColumnHandlePtr> column_handles,
@@ -662,9 +670,24 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
     auto& transaction = serene_table_handle.GetTransaction();
 
+    auto* filter = serene_table_handle.GetFilter().get();
+
+    // We have search data source xor precalculated filter in rocksdb datasource
+    SDB_ASSERT(static_cast<bool>(filter) !=
+               static_cast<bool>(serene_table_handle.GetSearchQuery()));
+
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
+
+#ifdef SDB_FAULT_INJECTION
+    // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
+    // bindable to allow parallel execution.
+    auto table_ptr =
+      transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+    SDB_ASSERT(table_ptr);
+    auto table_name = table_ptr->GetName();
+#endif
 
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     if (needs_read_your_own_writes) {
@@ -677,20 +700,29 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 
 #ifdef SDB_FAULT_INJECTION
-      // failpoints are per process so we make unique name to allow multiple
-      // sqlogic tests run in parallel without interference of failpoints
-      // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
-      // bindable to allow parallel execution.
-      auto table_ptr =
-        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
-      SDB_ASSERT(table_ptr);
-      auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
-      SDB_IF_FAILURE(fail_on_ryow) {
-        SDB_THROW(ERROR_DEBUG, fail_on_ryow, " condition failed");
+      SDB_IF_FAILURE(absl::StrCat(table_name, "_fail_on_ryow")) {
+        SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_fail_on_ryow"),
+                  " condition failed");
       }
 #endif
 
-      return std::make_unique<RocksDBRYOWDataSource>(
+      auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+                                 connector_query_ctx->memoryPool());
+      if (points) {
+        return std::make_unique<RocksDBRYOWPointLookupDataSource>(
+          *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
+          output_type, column_oids, object_key, std::move(points));
+      }
+
+#ifdef SDB_FAULT_INJECTION
+      SDB_IF_FAILURE(absl::StrCat(table_name, "_force_multiget_source")) {
+        SDB_THROW(ERROR_DEBUG,
+                  absl::StrCat(table_name, "_force_multiget_source"),
+                  " condition failed");
+      }
+#endif
+
+      return std::make_unique<RocksDBRYOWFullScanDataSource>(
         *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
         object_key);
@@ -706,7 +738,22 @@ class SereneDBConnector final : public velox::connector::Connector {
         search_snapshot.reader, *serene_table_handle.GetSearchQuery());
     }
 
-    return std::make_unique<RocksDBSnapshotDataSource>(
+    auto points = TryGetPoints(*filter, serene_table_handle.GetPKType(),
+                               connector_query_ctx->memoryPool());
+    if (points) {
+      return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
+        *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
+        object_key, snapshot, std::move(points));
+    }
+
+#ifdef SDB_FAULT_INJECTION
+    SDB_IF_FAILURE(absl::StrCat(table_name, "_force_multiget_source")) {
+      SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_force_multiget_source"),
+                " condition failed");
+    }
+#endif
+
+    return std::make_unique<RocksDBSnapshotFullScanDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
       serene_table_handle.GetEffectiveColumnId(), object_key, snapshot);
   }

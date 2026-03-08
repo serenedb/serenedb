@@ -336,9 +336,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
               std::string_view{"9001", 4}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -392,9 +392,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
   }
 
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -446,9 +446,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
               std::string_view{"9001", 4}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -488,9 +488,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
               std::string_view{"9001_updated", 12}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -550,9 +550,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
               std::string_view{"3", 1}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -594,9 +594,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
               std::string_view{"4", 1}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -657,9 +657,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
               std::string_view{"3", 1}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -704,9 +704,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
               std::string_view{"4", 1}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -766,9 +766,9 @@ TEST_F(DataSinkWithSearchTest,
               std::string_view{"3", 1}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -807,9 +807,9 @@ TEST_F(DataSinkWithSearchTest,
               std::string_view{"42", 2}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey);
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 

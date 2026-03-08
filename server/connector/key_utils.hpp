@@ -38,6 +38,9 @@ std::string PrepareTableKey(ObjectId id);
 // Same as above but base part is constructed for specific column.
 std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 
+// Appends table key to constructed string
+void AppendTableKey(std::string& key, ObjectId id);
+
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 

@@ -57,8 +57,8 @@ constexpr std::string_view kDblPosNaN{"\xFF\xF8\x00\x00\x00\x00\x00\x00", 8};
 // TODO(Dronplane) make code vector specific, e.g. FlatVector will work faster
 // clang-format on
 template<velox::TypeKind Kind>
-void AppendKeyValue(std::string& key, const velox::BaseVector& column,
-                    velox::vector_size_t idx) {
+void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
+                        velox::vector_size_t idx) {
   // PKs parts are default sorted - so we can not accept type that has custom
   // comparison or we will break expectations that data is read in PK order.
   SDB_ASSERT(!column.typeUsesCustomComparison());
@@ -142,6 +142,12 @@ void AppendKeyValue(std::string& key, const velox::BaseVector& column,
 }
 }  // namespace
 
+void AppendKeyValue(std::string& key, const velox::BaseVector& column,
+                    velox::vector_size_t idx) {
+  VELOX_DYNAMIC_TYPE_DISPATCH(AppendKeyValueImpl, column.typeKind(), key,
+                              column, idx);
+}
+
 void Create(const velox::RowVector& data,
             std::span<const velox::column_index_t> key_childs, Keys& buffer) {
   buffer.reserve(data.size());
@@ -169,7 +175,7 @@ void Create(const velox::RowVector& data,
             velox::vector_size_t idx, std::string& key) {
   for (size_t child_idx : key_childs) {
     const auto column = data.childAt(child_idx);
-    VELOX_DYNAMIC_TYPE_DISPATCH(AppendKeyValue, column->typeKind(), key,
+    VELOX_DYNAMIC_TYPE_DISPATCH(AppendKeyValueImpl, column->typeKind(), key,
                                 *column, idx);
   }
 }
@@ -177,7 +183,7 @@ void Create(const velox::RowVector& data,
 void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key) {
   for (const auto& column : data.children()) {
-    VELOX_DYNAMIC_TYPE_DISPATCH(AppendKeyValue, column->typeKind(), key,
+    VELOX_DYNAMIC_TYPE_DISPATCH(AppendKeyValueImpl, column->typeKind(), key,
                                 *column, idx);
   }
 }

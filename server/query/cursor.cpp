@@ -38,7 +38,6 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
     }
     auto& executor = _executors[_current];
     auto f = executor->Execute(batch);
-
     if (f.Valid()) {
       std::move(f).DetachInline(
         [user_task = _user_task](auto&&) { user_task(); });

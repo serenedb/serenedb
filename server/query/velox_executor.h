@@ -25,16 +25,16 @@
 
 namespace sdb::query {
 
-class VeloxExecutor final : public Executor {
+class VeloxExecutor : public Executor {
  public:
-  void SetQuery(Query& query) final;
+  void SetQuery(Query& query) override;
 
-  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-  yaclib::Future<> RequestCancel() final;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> RequestCancel() override;
 
   Runner& GetRunner() { return _runner; }
 
- private:
+ protected:
   Query* _query = nullptr;
   Runner _runner;
 };

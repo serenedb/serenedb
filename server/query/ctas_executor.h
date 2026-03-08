@@ -24,7 +24,7 @@
 
 #include "pg/commands/ctas.h"
 #include "query/executor.h"
-#include "query/runner.h"
+#include "query/velox_executor.h"
 
 namespace sdb::query {
 
@@ -47,19 +47,16 @@ class CreateTableExecutor final : public Executor {
   bool _fired = false;
 };
 
-class CTASVeloxExecutor final : public Executor {
+class CTASVeloxExecutor final : public VeloxExecutor {
  public:
   explicit CTASVeloxExecutor(pg::CTASCommand& ctas_command);
 
   void SetQuery(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-  yaclib::Future<> RequestCancel() final;
 
  private:
   pg::CTASCommand& _ctas_command;
-  Query* _query = nullptr;
-  Runner _runner;
 };
 
 class RemoveTombstoneExecutor final : public Executor {

@@ -71,25 +71,11 @@ yaclib::Future<> CTASVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
     _runner = _query->MakeRunner();
   }
   try {
-    yaclib::Future<> wait;
-    batch = _runner.Next(wait);
-    if (wait.Valid()) {
-      SDB_ASSERT(!batch);
-      return wait;
-    }
-    if (batch) {
-      return yaclib::MakeFuture();
-    }
+    return VeloxExecutor::Execute(batch);
   } catch (...) {
     _ctas_command.Rollback();
     throw;
   }
-  return {};
-}
-
-yaclib::Future<> CTASVeloxExecutor::RequestCancel() {
-  _runner.RequestCancel();
-  return {};
 }
 
 // RemoveTombstoneExecutor

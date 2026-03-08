@@ -61,9 +61,9 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
     --name "$SERVICE_NAME" \
     --restart-condition on-failure \
     --replicas 1 \
-    --restart-delay 0s \
+    --restart-delay 1ns \
     --restart-max-attempts 1 \
-    --restart-window 1s \
+    --restart-window 1ns \
     --network "$NETWORK_NAME" \
     --mount type=bind,src="$WORKSPACE",dst=/serenedb \
     --mount type=bind,src="$WORKSPACE/logs",dst=/var/log/serenedb \
@@ -78,7 +78,6 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
       chown serenedb:serenedb /serenedb_datadir &&
       exec /serenedb/build/bin/serened /serenedb_datadir \
         --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-        --server.endpoint tcp://0.0.0.0:8529 \
         --server.authentication 0
     '
 

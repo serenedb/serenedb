@@ -27,16 +27,10 @@ namespace sdb::query {
 void Cursor::RequestCancel() {
   if (_current < _executors.size()) {
     _executors[_current]->RequestCancel();
-  } else if (_query.HasExternal()) {
-    _query.GetExternalExecutor().RequestCancel().Detach();
   }
 }
 
 Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
-  if (_query.GetContext().command_type.Has(CommandType::External)) {
-    return ExecuteStmt();
-  }
-
   for (;;) {
     if (_current >= _executors.size()) {
       return Process::Done;
@@ -63,48 +57,14 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
   }
 }
 
-Cursor::Process Cursor::ExecuteStmt() {
-  {
-    std::lock_guard lock{_stmt_result_mutex};
-    if (_stmt_result.State() != yaclib::ResultState::Empty) {
-      auto r = std::move(_stmt_result).Ok();
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
-      return Process::Done;
-    }
-  }
-  auto f = _query.GetExternalExecutor().Execute();
-  if (!f.Valid()) {
-    return Process::Done;
-  }
-  if (f.Ready()) {
-    auto r = std::move(f).Touch().Ok();
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
-    return Process::Done;
-  }
-
-  std::move(f).DetachInline(
-    [&, user_task = _user_task](yaclib::Result<Result>&& r) {
-      {
-        std::lock_guard lock{_stmt_result_mutex};
-        _stmt_result = std::move(r);
-      }
-      user_task();
-    });
-  return Process::Wait;
-}
-
 Cursor::Cursor(std::function<void()>&& user_task, Query& query)
   : _user_task{std::move(user_task)},
     _query{query},
     _executors{query.TakeExecutors()} {}
 
 Cursor::~Cursor() {
-  if (_query.HasExternal()) {
-    std::ignore = _query.GetExternalExecutor().RequestCancel().Get();
+  if (_current < _executors.size()) {
+    _executors[_current]->RequestCancel();
   }
   // TODO: it doesn't look as correct place to do this
   if (!_query.GetContext().transaction->HasTransactionBegin()) {

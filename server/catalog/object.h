@@ -179,7 +179,7 @@ class SchemaObject : public DatabaseObject {
 
  private:
   ObjectId _schema_id;
-  bool _tombstoned = false;
+  std::atomic_bool _tombstoned = false;
 };
 
 struct ObjectMeta {

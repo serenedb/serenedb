@@ -35,7 +35,6 @@
 #include "basics/fwd.h"
 #include "query/batch_executor.h"
 #include "query/context.h"
-#include "query/external_executor.h"
 #include "query/runner.h"
 
 namespace sdb::query {
@@ -48,8 +47,8 @@ class Query {
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx);
 
-  static std::unique_ptr<Query> CreateExternal(
-    std::unique_ptr<ExternalExecutor> executor, const QueryContext& query_ctx);
+  static std::unique_ptr<Query> CreateDDL(
+    std::unique_ptr<BatchExecutor> executor, const QueryContext& query_ctx);
 
   static std::unique_ptr<Query> CreateShow(std::string_view show_variable,
                                            const QueryContext& query_ctx);
@@ -70,10 +69,6 @@ class Query {
   const auto& GetFinalQueryGraphPlan() const { return _final_query_graph_plan; }
   const auto& GetPhysicalPlan() const { return _physical_plan; }
   std::string GetExecutionPlan() const;
-  ExternalExecutor& GetExternalExecutor() const;
-
-  bool HasExternal() const { return _executor != nullptr; }
-
   bool IsDML() const {
     return _logical_plan &&
            _logical_plan->is(axiom::logical_plan::NodeKind::kTableWrite);
@@ -96,10 +91,6 @@ class Query {
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx);
 
-  // use for CreateExternal
-  Query(std::unique_ptr<ExternalExecutor> executor,
-        const QueryContext& query_ctx);
-
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
@@ -113,7 +104,6 @@ class Query {
   axiom::runner::MultiFragmentPlanPtr _execution_plan;
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
-  std::unique_ptr<ExternalExecutor> _executor;
   std::vector<std::unique_ptr<BatchExecutor>> _executors;
 
   std::string _initial_query_graph_plan;

@@ -28,13 +28,22 @@ namespace sdb::pg {
 Executor::Executor(std::shared_ptr<ExecContext> context, const Node& node)
   : _context{std::move(context)}, _node{node} {}
 
-yaclib::Future<> Executor::RequestCancel() {
-  // TODO(mbkkt) connect ExecContext::cancel should return Future
-  _context->cancel();
-  return yaclib::MakeFuture();
+void Executor::RequestCancel() { _context->cancel(); }
+
+yaclib::Future<velox::RowVectorPtr> Executor::Execute() {
+  if (_fired) {
+    return {};
+  }
+  _fired = true;
+  return ExecuteCommand().ThenInline([](Result&& r) -> velox::RowVectorPtr {
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+    return nullptr;
+  });
 }
 
-yaclib::Future<Result> Executor::Execute() {
+yaclib::Future<Result> Executor::ExecuteCommand() {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);

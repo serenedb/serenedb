@@ -142,8 +142,7 @@ bool SqlStatement::ProcessNextRoot(
     SDB_ASSERT(query_desc.pgsql_node);
     auto executor =
       std::make_unique<Executor>(connection_ctx, *query_desc.pgsql_node);
-    query_ctx.command_type.Add(query::CommandType::External);
-    query = query::Query::CreateExternal(std::move(executor), query_ctx);
+    query = query::Query::CreateDDL(std::move(executor), query_ctx);
     return true;
   }
 

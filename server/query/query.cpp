@@ -98,9 +98,13 @@ std::unique_ptr<Query> Query::CreateQuery(
   return query;
 }
 
-std::unique_ptr<Query> Query::CreateExternal(
-  std::unique_ptr<ExternalExecutor> executor, const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{std::move(executor), query_ctx});
+std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<BatchExecutor> executor,
+                                        const QueryContext& query_ctx) {
+  auto query =
+    std::unique_ptr<Query>(new Query{velox::RowTypePtr{}, query_ctx});
+  query->_executors.push_back(std::move(executor));
+  query->_executors.back()->SetQuery(*query);
+  return query;
 }
 
 std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
@@ -296,10 +300,6 @@ void Query::CompileQuery() {
   }
 }
 
-Query::Query(std::unique_ptr<ExternalExecutor> executor,
-             const QueryContext& query_ctx)
-  : _query_ctx{query_ctx}, _executor{std::move(executor)} {}
-
 std::string Query::GetLogicalPlan() const {
   SDB_ASSERT(_logical_plan);
   return axiom::logical_plan::PlanPrinter::toText(*_logical_plan);
@@ -311,11 +311,6 @@ Query::Query(velox::RowTypePtr output_type, const QueryContext& query_ctx)
 std::string Query::GetExecutionPlan() const {
   SDB_ASSERT(_execution_plan);
   return _execution_plan->toString(true);
-}
-
-ExternalExecutor& Query::GetExternalExecutor() const {
-  SDB_ASSERT(_executor);
-  return *_executor;
 }
 
 std::unique_ptr<Cursor> Query::MakeCursor(std::function<void()>&& user_task) {

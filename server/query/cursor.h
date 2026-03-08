@@ -21,12 +21,10 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
-#include <basics/exceptions.h>
 #include <velox/exec/Task.h>
 #include <velox/vector/ComplexVector.h>
 
 #include <vector>
-#include <yaclib/util/result.hpp>
 
 #include "query/batch_executor.h"
 #include "query/context.h"
@@ -51,8 +49,6 @@ class Cursor {
   ~Cursor();
 
  private:
-  Process ExecuteStmt();
-
   friend class Query;
   Cursor(std::function<void()>&& user_task, Query& query);
 
@@ -60,9 +56,6 @@ class Cursor {
   Query& _query;
   std::vector<std::unique_ptr<BatchExecutor>> _executors;
   size_t _current = 0;
-
-  yaclib::Result<Result> _stmt_result;
-  absl::Mutex _stmt_result_mutex;
 };
 
 }  // namespace sdb::query

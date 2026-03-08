@@ -20,6 +20,8 @@
 
 #include "query/ctas_executor.h"
 
+#include <yaclib/async/make.hpp>
+
 #include "basics/assert.h"
 #include "basics/system-compiler.h"
 #include "query/query.h"
@@ -29,8 +31,7 @@ namespace sdb::query {
 CTASExecutor::CTASExecutor(std::unique_ptr<pg::CTASCommand> ctas_command)
   : _ctas_command{std::move(ctas_command)} {}
 
-Process CTASExecutor::Next(velox::RowVectorPtr& batch,
-                           std::function<void()> user_task) {
+yaclib::Future<velox::RowVectorPtr> CTASExecutor::Execute() {
   SDB_ASSERT(_ctas_command);
   SDB_ASSERT(_query);
 
@@ -40,15 +41,16 @@ Process CTASExecutor::Next(velox::RowVectorPtr& batch,
       case None: {
         auto f = _ctas_command->CreateTable();
         if (!f.Ready()) {
-          _ctas_command->SetStage(CreateTableWaiting);
-          std::move(f).DetachInline(
-            [ctas_cmd = _ctas_command.get(),
-             user_task](yaclib::Result<Result>&& r) {
-              std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
-              ctas_cmd->StoreAsyncResult(std::move(r));
-              user_task();
+          _ctas_command->SetStage(VeloxRunning);
+          return std::move(f).ThenInline(
+            [this](Result&& r) -> velox::RowVectorPtr {
+              if (!r.ok()) {
+                SDB_THROW(std::move(r));
+              }
+              _query->CompileQuery();
+              _runner = _query->MakeRunner();
+              return nullptr;
             });
-          return Process::Wait;
         }
         auto r = std::move(f).Touch().Ok();
         if (!r.ok()) {
@@ -60,33 +62,20 @@ Process CTASExecutor::Next(velox::RowVectorPtr& batch,
         continue;
       }
       case CreateTableWaiting: {
-        std::lock_guard lock{_ctas_command->AsyncResultMutex()};
-        if (!_ctas_command->IsAsyncResultReady()) {
-          return Process::Wait;
-        }
-        auto r = _ctas_command->TakeAsyncResult().Ok();
-        if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
-        _ctas_command->SetStage(VeloxRunning);
-        _query->CompileQuery();
-        _runner = _query->MakeRunner();
-        continue;
+        SDB_UNREACHABLE();
       }
       case VeloxRunning: {
         try {
-          SDB_ASSERT(!batch);
           SDB_ASSERT(_runner);
           yaclib::Future<> wait;
-          batch = _runner.Next(wait);
+          auto batch = _runner.Next(wait);
           if (wait.Valid()) {
             SDB_ASSERT(!batch);
-            std::move(wait).DetachInline(
-              [user_task](auto&&) { user_task(); });
-            return Process::Wait;
+            return std::move(wait).ThenInline(
+              [](auto&&) -> velox::RowVectorPtr { return nullptr; });
           }
           if (batch) {
-            return Process::More;
+            return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(batch));
           }
         } catch (...) {
           _ctas_command->Rollback();
@@ -100,15 +89,13 @@ Process CTASExecutor::Next(velox::RowVectorPtr& batch,
           _ctas_command->Rollback();
           SDB_THROW(std::move(r));
         }
-        return Process::Done;
+        return {};
       }
     }
     SDB_UNREACHABLE();
   }
 }
 
-void CTASExecutor::RequestCancel() {
-  _runner.RequestCancel();
-}
+void CTASExecutor::RequestCancel() { _runner.RequestCancel(); }
 
 }  // namespace sdb::query

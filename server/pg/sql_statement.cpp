@@ -27,7 +27,6 @@
 #include "general_server/state.h"
 #include "pg/commands/ctas.h"
 #include "pg/executor.h"
-#include "query/ctas_executor.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
@@ -35,6 +34,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_resolver.h"
 #include "pg/sql_statement.h"
+#include "query/ctas_executor.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -133,8 +133,8 @@ bool SqlStatement::ProcessNextRoot(
     query_ctx.command_type.Add(query::CommandType::CTAS);
     auto ctas_executor =
       std::make_unique<query::CTASExecutor>(std::move(ctas_cmd));
-    query = query::Query::CreateWithBatchExecutor(
-      query_desc.root, query_ctx, std::move(ctas_executor));
+    query = query::Query::CreateWithBatchExecutor(query_desc.root, query_ctx,
+                                                  std::move(ctas_executor));
     return true;
   }
 

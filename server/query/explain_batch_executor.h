@@ -20,47 +20,31 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-#include <basics/exceptions.h>
-#include <velox/exec/Task.h>
-#include <velox/vector/ComplexVector.h>
-
-#include <yaclib/util/result.hpp>
+#include <memory>
 
 #include "query/batch_executor.h"
-#include "query/context.h"
-#include "query/runner.h"
 
 namespace sdb::query {
 
-class Query;
+class VeloxBatchExecutor;
 
-class Cursor {
+class ExplainBatchExecutor final : public BatchExecutor {
  public:
-  enum class Process {
-    Wait = 0,
-    More,
-    Done,
-  };
+  explicit ExplainBatchExecutor(
+    std::unique_ptr<VeloxBatchExecutor> inner);
 
-  Process Next(velox::RowVectorPtr& batch);
+  void SetQuery(Query& query) final;
 
-  void RequestCancel();
-
-  ~Cursor();
+  yaclib::Future<velox::RowVectorPtr> Execute() final;
+  void RequestCancel() final;
 
  private:
-  Process ExecuteStmt();
+  velox::RowVectorPtr BuildExplainBatch();
 
-  friend class Query;
-  Cursor(std::function<void()>&& user_task, Query& query);
-
-  std::function<void()> _user_task;
-  Query& _query;
-  std::unique_ptr<BatchExecutor> _batch_executor;
-
-  yaclib::Result<Result> _stmt_result;
-  absl::Mutex _stmt_result_mutex;
+  std::unique_ptr<VeloxBatchExecutor> _inner;
+  Query* _query = nullptr;
+  velox::RowVectorPtr _result;
+  bool _velox_done = false;
 };
 
 }  // namespace sdb::query

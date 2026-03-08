@@ -36,6 +36,9 @@
 #include "connector/serenedb_connector.hpp"
 #include "pg/sql_resolver.h"
 #include "query/cursor.h"
+#include "query/explain_batch_executor.h"
+#include "query/show_batch_executor.h"
+#include "query/velox_batch_executor.h"
 
 namespace sdb::query {
 namespace {
@@ -73,7 +76,24 @@ class NoopHistory final : public axiom::optimizer::History {
 std::unique_ptr<Query> Query::CreateQuery(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{root, query_ctx});
+  auto query = std::unique_ptr<Query>(new Query{root, query_ctx});
+
+  if (query_ctx.command_type.Has(CommandType::Query)) {
+    auto velox = std::make_unique<VeloxBatchExecutor>();
+    if (query_ctx.command_type.Has(CommandType::Explain)) {
+      auto explain = std::make_unique<ExplainBatchExecutor>(std::move(velox));
+      query->_batch_executor = std::move(explain);
+    } else {
+      query->_batch_executor = std::move(velox);
+    }
+  } else if (query_ctx.command_type.Has(CommandType::Explain)) {
+    query->_batch_executor = std::make_unique<ExplainBatchExecutor>(nullptr);
+  }
+
+  if (query->_batch_executor) {
+    query->_batch_executor->SetQuery(*query);
+  }
+  return query;
 }
 
 std::unique_ptr<Query> Query::CreateExternal(
@@ -83,18 +103,24 @@ std::unique_ptr<Query> Query::CreateExternal(
 
 std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
                                          const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{
+  auto query = std::unique_ptr<Query>(new Query{
     velox::ROW({std::string{show_variable}}, {velox::VARCHAR()}),
     query_ctx,
   });
+  query->_batch_executor = std::make_unique<ShowBatchExecutor>();
+  query->_batch_executor->SetQuery(*query);
+  return query;
 }
 
 std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{
+  auto query = std::unique_ptr<Query>(new Query{
     velox::ROW({"name", "value", "description"},
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
+  query->_batch_executor = std::make_unique<ShowAllBatchExecutor>();
+  query->_batch_executor->SetQuery(*query);
+  return query;
 }
 
 std::unique_ptr<Query> Query::CreateWithBatchExecutor(

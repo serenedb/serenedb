@@ -18,49 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "query/velox_batch_executor.h"
 
-#include <absl/functional/any_invocable.h>
-#include <basics/exceptions.h>
-#include <velox/exec/Task.h>
-#include <velox/vector/ComplexVector.h>
+#include <yaclib/async/make.hpp>
 
-#include <yaclib/util/result.hpp>
-
-#include "query/batch_executor.h"
-#include "query/context.h"
-#include "query/runner.h"
+#include "basics/assert.h"
+#include "query/query.h"
 
 namespace sdb::query {
 
-class Query;
+void VeloxBatchExecutor::SetQuery(Query& query) {
+  _query = &query;
+  _runner = query.MakeRunner();
+}
 
-class Cursor {
- public:
-  enum class Process {
-    Wait = 0,
-    More,
-    Done,
-  };
+yaclib::Future<velox::RowVectorPtr> VeloxBatchExecutor::Execute() {
+  SDB_ASSERT(_runner);
+  yaclib::Future<> wait;
+  auto batch = _runner.Next(wait);
+  if (wait.Valid()) {
+    SDB_ASSERT(!batch);
+    return std::move(wait).ThenInline(
+      [](auto&&) -> velox::RowVectorPtr { return nullptr; });
+  }
+  if (batch) {
+    return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(batch));
+  }
+  return {};
+}
 
-  Process Next(velox::RowVectorPtr& batch);
-
-  void RequestCancel();
-
-  ~Cursor();
-
- private:
-  Process ExecuteStmt();
-
-  friend class Query;
-  Cursor(std::function<void()>&& user_task, Query& query);
-
-  std::function<void()> _user_task;
-  Query& _query;
-  std::unique_ptr<BatchExecutor> _batch_executor;
-
-  yaclib::Result<Result> _stmt_result;
-  absl::Mutex _stmt_result_mutex;
-};
+void VeloxBatchExecutor::RequestCancel() {
+  _runner.RequestCancel();
+}
 
 }  // namespace sdb::query

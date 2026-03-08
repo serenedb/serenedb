@@ -22,7 +22,7 @@
 
 #include <velox/vector/ComplexVector.h>
 
-#include <functional>
+#include <yaclib/async/future.hpp>
 
 #include "basics/fwd.h"
 
@@ -30,17 +30,10 @@ namespace sdb::query {
 
 class Query;
 
-enum class Process {
-  Wait = 0,
-  More,
-  Done,
-};
-
 class BatchExecutor {
  public:
   virtual void SetQuery(Query& query) = 0;
-  virtual Process Next(velox::RowVectorPtr& batch,
-                       std::function<void()> user_task) = 0;
+  virtual yaclib::Future<velox::RowVectorPtr> Execute() = 0;
   virtual void RequestCancel() = 0;
   virtual ~BatchExecutor() = default;
 };

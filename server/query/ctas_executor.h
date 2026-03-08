@@ -34,10 +34,9 @@ class CTASExecutor final : public BatchExecutor {
  public:
   explicit CTASExecutor(std::unique_ptr<pg::CTASCommand> ctas_command);
 
-  void SetQuery(Query& query) { _query = &query; }
+  void SetQuery(Query& query) final { _query = &query; }
 
-  Process Next(velox::RowVectorPtr& batch,
-               std::function<void()> user_task) final;
+  yaclib::Future<velox::RowVectorPtr> Execute() final;
   void RequestCancel() final;
 
  private:

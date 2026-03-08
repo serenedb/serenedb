@@ -132,7 +132,6 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
                          const Callback& func);
 
- private:
   velox::RowTypePtr _row_type;
   std::vector<std::string> _column_keys;
   std::string _upper_bound_keys_data;
@@ -150,7 +149,7 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
   uint64_t _produced = 0;
 };
 
-// Read-Your-Own-Write
+// Read Your Own Writes
 class RocksDBRYOWFullScanDataSource : public RocksDBFullScanDataSource {
  public:
   RocksDBRYOWFullScanDataSource(velox::memory::MemoryPool& memory_pool,

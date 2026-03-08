@@ -20,6 +20,7 @@
 
 #include "query/query.h"
 
+#include <absl/algorithm/container.h>
 #include <axiom/logical_plan/PlanPrinter.h>
 #include <axiom/optimizer/DerivedTablePrinter.h>
 #include <axiom/optimizer/Optimization.h>
@@ -325,4 +326,40 @@ Runner Query::MakeRunner() const {
                   axiom::connector::SplitOptions{}),
                 _query_ctx.query_memory_pool};
 }
+
+template <typename StringType>
+velox::RowVectorPtr Query::BuildBatchImpl(
+  std::span<const std::vector<StringType>> columns) const {
+  SDB_ASSERT(_output_type->isRow());
+  SDB_ASSERT(absl::c_all_of(_output_type->children(), [](const auto& ptr) {
+    return ptr == velox::VARCHAR();
+  }));
+  auto* pool = _query_ctx.query_memory_pool.get();
+  std::vector<velox::VectorPtr> vectors;
+  vectors.reserve(columns.size());
+  size_t batch_rows = 0;
+  for (size_t i = 0; i < columns.size(); ++i) {
+    auto vector =
+      velox::BaseVector::create<velox::FlatVector<velox::StringView>>(
+        _output_type->children()[i], columns[i].size(), pool);
+    for (size_t j = 0; j < columns[i].size(); ++j) {
+      vector->set(j, velox::StringView(columns[i][j]));
+    }
+    batch_rows = std::max(batch_rows, columns[i].size());
+    vectors.push_back(std::move(vector));
+  }
+  return std::make_shared<velox::RowVector>(pool, _output_type, nullptr,
+                                            batch_rows, std::move(vectors));
+}
+
+velox::RowVectorPtr Query::BuildBatch(
+  std::span<const std::vector<std::string>> columns) const {
+  return BuildBatchImpl(columns);
+}
+
+velox::RowVectorPtr Query::BuildBatch(
+  std::span<const std::vector<std::string_view>> columns) const {
+  return BuildBatchImpl(columns);
+}
+
 }  // namespace sdb::query

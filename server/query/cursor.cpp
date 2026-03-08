@@ -42,13 +42,13 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
       std::move(f).DetachInline(
         [user_task = _user_task](auto&&) { user_task(); });
       return Process::Wait;
-    }
 
-    if (batch) {
-      return Process::More;
-    }
+      if (batch) {
+        return Process::More;
+      }
 
-    ++_current;
+      ++_current;
+    }
   }
 }
 

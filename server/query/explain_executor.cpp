@@ -20,7 +20,6 @@
 
 #include "query/explain_executor.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/str_split.h>
 
 #include <yaclib/async/make.hpp>
@@ -32,39 +31,38 @@
 #include "utils.h"
 
 namespace sdb::query {
-namespace {
-
-std::string ProcessPlan(std::string plan, bool clean_column_names) {
-  if (clean_column_names) {
-    plan = CleanColumnNames(std::move(plan));
-  }
-  return plan;
-}
-
-}  // namespace
 
 ExplainExecutor::ExplainExecutor(VeloxExecutor* velox) : _velox{velox} {}
 
 void ExplainExecutor::Init(Query& query) { _query = &query; }
 
 yaclib::Future<> ExplainExecutor::Execute(velox::RowVectorPtr& batch) {
-  if (!_result) {
-    _result = BuildExplainBatch();
-    batch = std::move(*_result);
-    return yaclib::MakeFuture();
-  }
+  BuildExplainBatch();
+  batch = std::move(_result);
   return {};
 }
 
-velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
+void ExplainExecutor::BuildExplainBatch() {
+  if (!_query) {  // we have already built the explain
+    return;
+  }
+
   const auto& query_ctx = _query->GetContext();
   const bool clean_column_names =
     !query_ctx.explain_params.Has(ExplainWith::Registers);
 
-  std::vector<std::string> data;
+  std::vector<std::string> plans;
+  static constexpr size_t kMaxPlanCount = 5;
+  plans.reserve(kMaxPlanCount);
+  std::vector<std::string_view> data;
 
-  auto post_process_plan = [&](std::string_view plan) {
-    for (auto line : absl::StrSplit(plan, '\n')) {
+  auto process_plan = [&](std::string plan) {
+    if (clean_column_names) {
+      plan = CleanColumnNames(std::move(plan));
+    }
+    SDB_ASSERT(plans.size() < kMaxPlanCount);
+    auto& stored = plans.emplace_back(std::move(plan));
+    for (auto line : absl::StrSplit(stored, '\n')) {
       line = basics::string_utils::RTrim(line);
       if (!line.empty()) {
         data.emplace_back(line);
@@ -74,52 +72,38 @@ velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
 
   if (query_ctx.explain_params.Has(ExplainWith::Logical)) {
     data.emplace_back("LOGICAL PLAN:");
-    post_process_plan(
-      ProcessPlan(_query->GetLogicalPlan(), clean_column_names));
+    process_plan(_query->GetLogicalPlan());
   }
 
   if (query_ctx.explain_params.Has(ExplainWith::InitialQueryGraph)) {
     data.emplace_back("INITIAL QUERY GRAPH:");
-    post_process_plan(
-      ProcessPlan(_query->GetInitialQueryGraphPlan(), clean_column_names));
+    process_plan(_query->GetInitialQueryGraphPlan());
   }
 
   if (query_ctx.explain_params.Has(ExplainWith::FinalQueryGraph)) {
     data.emplace_back("FINAL QUERY GRAPH:");
-    post_process_plan(
-      ProcessPlan(_query->GetFinalQueryGraphPlan(), clean_column_names));
+    process_plan(_query->GetFinalQueryGraphPlan());
   }
 
   if (query_ctx.explain_params.Has(ExplainWith::Physical)) {
     data.emplace_back("PHYSICAL PLAN:");
-    post_process_plan(
-      ProcessPlan(_query->GetPhysicalPlan(), clean_column_names));
+    process_plan(_query->GetPhysicalPlan());
   }
 
   if (query_ctx.explain_params.Has(ExplainWith::Execution)) {
     if (query_ctx.explain_params.Has(ExplainWith::Stats)) {
       SDB_ASSERT(_velox);
       data.emplace_back("EXECUTION PLAN WITH STATS:");
-      post_process_plan(ProcessPlan(_velox->GetRunner().PrintPlanWithStats(),
-                                    clean_column_names));
+      process_plan(_velox->GetRunner().PrintPlanWithStats());
     } else {
       data.emplace_back("EXECUTION PLAN:");
-      post_process_plan(
-        ProcessPlan(_query->GetExecutionPlan(), clean_column_names));
+      process_plan(_query->GetExecutionPlan());
     }
   }
 
-  // Build the VARCHAR batch
-  auto output_type = _query->GetOutputType();
-  auto* pool = _query->GetContext().query_memory_pool.get();
-  auto vector = velox::BaseVector::create<velox::FlatVector<velox::StringView>>(
-    output_type->children()[0], data.size(), pool);
-  for (size_t j = 0; j < data.size(); ++j) {
-    vector->set(j, velox::StringView(data[j]));
-  }
-  return std::make_shared<velox::RowVector>(
-    pool, output_type, nullptr, data.size(),
-    std::vector<velox::VectorPtr>{std::move(vector)});
+  _result = _query->BuildBatch({data});
+  _query = nullptr;
+  return;
 }
 
 }  // namespace sdb::query

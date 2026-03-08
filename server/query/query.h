@@ -30,6 +30,9 @@
 
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "basics/fwd.h"
@@ -84,9 +87,18 @@ class Query {
 
   Runner MakeRunner() const;
 
-  void CompileQuery();
+  velox::RowVectorPtr BuildBatch(
+    std::span<const std::vector<std::string>> columns) const;
+  velox::RowVectorPtr BuildBatch(
+    std::span<const std::vector<std::string_view>> columns) const;
 
  private:
+  template <typename StringType>
+  velox::RowVectorPtr BuildBatchImpl(
+    std::span<const std::vector<StringType>> columns) const;
+
+  void CompileQuery();
+
   // use for CreateQuery
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx);

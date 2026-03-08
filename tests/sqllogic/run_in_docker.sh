@@ -64,20 +64,20 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 	docker network create --driver overlay --attachable "$NETWORK_NAME"
 	docker volume create "$VOLUME_NAME"
 
-  docker service create \
-    --name "$SERVICE_NAME" \
-    --restart-condition on-failure \
-    --replicas 1 \
-    --restart-delay 1ns \
-    --restart-max-attempts 1 \
-    --restart-window 1ns \
-    --network "$NETWORK_NAME" \
-    --mount type=bind,src="$WORKSPACE",dst=/serenedb \
-    --mount type=bind,src="$WORKSPACE/logs",dst=/var/log/serenedb \
-    --mount type=volume,src="$VOLUME_NAME",dst=/serenedb_datadir \
-    "${env_args[@]}" \
-    "$BUILD_IMAGE" \
-    sh -c '
+	docker service create \
+		--name "$SERVICE_NAME" \
+		--restart-condition on-failure \
+		--replicas 1 \
+		--restart-delay 1ns \
+		--restart-max-attempts 1 \
+		--restart-window 1ns \
+		--network "$NETWORK_NAME" \
+		--mount type=bind,src="$WORKSPACE",dst=/serenedb \
+		--mount type=bind,src="$WORKSPACE/logs",dst=/var/log/serenedb \
+		--mount type=volume,src="$VOLUME_NAME",dst=/serenedb_datadir \
+		"${env_args[@]}" \
+		"$BUILD_IMAGE" \
+		sh -c '
       if ! id serenedb >/dev/null 2>&1; then
         useradd serenedb &&
         chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR}/coverage

@@ -37,7 +37,63 @@ namespace {
 
 constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
+template<velox::TypeKind Kind>
+velox::VectorPtr ReadPointColumnValues(
+  size_t col_idx, size_t num_points, size_t num_columns,
+  const std::vector<rocksdb::Status>& statuses,
+  const std::vector<std::string>& values,
+  velox::memory::MemoryPool& memory_pool) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+
+  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
+    velox::Type::create<Kind>(), num_points, &memory_pool);
+
+  for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
+    const size_t idx = point_idx * num_columns + col_idx;
+    const auto& status = statuses[idx];
+    const auto& value = values[idx];
+
+    if (status.IsNotFound()) {
+      // Filtered point is not found, it's OK, just skip
+      continue;
+    }
+
+    if (!status.ok()) {
+      auto res = rocksutils::ConvertStatus(status);
+      SDB_THROW(std::move(res));
+    }
+
+    if constexpr (std::is_same_v<T, velox::StringView>) {
+      const size_t offset = value[0] == 0 ? 1 : 0;
+      result->set(point_idx, velox::StringView(value.data() + offset,
+                                               value.size() - offset));
+    } else if constexpr (std::is_same_v<T, bool>) {
+      SDB_ASSERT(value.size() == kTrueValue.size(),
+                 "RocksDBDataSource: unexpected value size for bool column");
+      result->set(point_idx, value == kTrueValue);
+    } else {
+      SDB_ASSERT(value.size() == sizeof(T),
+                 "RocksDBDataSource: unexpected value size for scalar column");
+      T tmp;
+      memcpy(&tmp, value.data(), sizeof(T));
+      result->set(point_idx, tmp);
+    }
+  }
+  return result;
+}
+
 }  // namespace
+
+void MultiGetContext::ExtractValues(size_t count, size_t dest_start,
+                                    std::vector<std::string>& values) {
+  for (size_t i = 0; i < count; ++i) {
+    if (_pinnable[i].IsPinned()) {
+      values[dest_start + i] = _pinnable[i].ToStringView();
+    } else {
+      values[dest_start + i] = std::move(*_pinnable[i].GetSelf());
+    }
+  }
+}
 
 RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
@@ -351,69 +407,12 @@ uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
   return vector_size;
 }
 
-void RocksDBPointLookupDataSource::addSplit(
-  std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
-  if (_current_split) {
-    SDB_THROW(ERROR_INTERNAL,
-              "RocksDBDataSource: a split is already being processed");
-  }
-  _current_split = std::move(split);
-  _offset = 0;
-}
-
-template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBPointLookupDataSource::ReadColumnValues(
-  size_t col_idx, size_t num_points,
-  const std::vector<rocksdb::Status>& statuses,
-  const std::vector<std::string>& values) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  static constexpr std::string_view kTrueValue{"\1", 1};
-  const size_t num_columns = _row_type->size();
-
-  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), num_points, &_memory_pool);
-
-  for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
-    const size_t idx = point_idx * num_columns + col_idx;
-    const auto& status = statuses[idx];
-    const auto& value = values[idx];
-
-    if (!status.ok() && !status.IsNotFound()) {
-      auto res = rocksutils::ConvertStatus(status);
-      SDB_THROW(res.errorNumber(),
-                "Failed to read value by PK with point data source: ",
-                res.errorMessage());
-    }
-    if (status.IsNotFound()) {
-      continue;
-    }
-    if constexpr (std::is_same_v<T, velox::StringView>) {
-      const size_t offset = value[0] == 0 ? 1 : 0;
-      result->set(point_idx, velox::StringView(value.data() + offset,
-                                               value.size() - offset));
-    } else if constexpr (std::is_same_v<T, bool>) {
-      SDB_ASSERT(value.size() == kTrueValue.size(),
-                 "RocksDBDataSource: unexpected value size for bool column");
-      result->set(point_idx, value == kTrueValue);
-    } else {
-      SDB_ASSERT(value.size() == sizeof(T),
-                 "RocksDBDataSource: unexpected value size for scalar column");
-      T tmp;
-      memcpy(&tmp, value.data(), sizeof(T));
-      result->set(point_idx, tmp);
-    }
-  }
-  return result;
-}
-
-std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
-  uint64_t size, velox::ContinueFuture& /*future*/) {
+template<typename Derived>
+std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
+  uint64_t size, velox::ContinueFuture&) {
   SDB_ASSERT(size);
-
-  if (!_current_split) {
+  if (!_current_split)
     return nullptr;
-  }
 
   if (!_values) [[unlikely]] {
     _current_split.reset();
@@ -423,13 +422,6 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
              "Case of empty filters should be processed in connector");
 
   const auto num_columns = _row_type->size();
-
-  // For now, we do not reject filters, so this data source is reading at
-  // least 1 column, even for queries like
-  // SELECT count(*) FROM t WHERE a = 1;
-  // In this example column a will be read. When we'll properly reject some
-  // filters, this assert may be failed, so we have to store and use effective
-  // column id.
   SDB_ASSERT(num_columns > 0);
 
   const auto total_points = static_cast<size_t>(_values->size());
@@ -443,8 +435,6 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
 
   const size_t total_keys = batch_size * num_columns;
 
-  // Build keys for [_offset, _offset + batch_size), laid out as
-  // [point_idx * num_columns + col_idx].
   _keys.resize(total_keys);
   for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
     for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
@@ -461,17 +451,26 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
     _key_slices[i] = _keys[i];
   }
 
-  std::vector<rocksdb::ColumnFamilyHandle*> cfs(total_keys, &_cf);
-  std::vector<std::string> raw_values(total_keys);
-  const auto statuses = DoMultiGet(cfs, _key_slices, raw_values);
+  _ctx.MultiGet(
+    _cf, _key_slices, _raw_values, _statuses,
+    [this](rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
+           rocksdb::PinnableSlice* value, rocksdb::Status* status) {
+      static_cast<Derived*>(this)->DoGet(cf, key, value, status);
+    },
+    [this](rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
+           const rocksdb::Slice* keys, rocksdb::PinnableSlice* values,
+           rocksdb::Status* statuses) {
+      static_cast<Derived*>(this)->DoMultiGetBatch(cf, keys_number, keys,
+                                                   values, statuses);
+    });
 
   std::vector<velox::VectorPtr> columns;
   columns.reserve(num_columns);
   for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
     const auto& type = _row_type->childAt(column_idx);
     columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      ReadColumnValues, type->kind(), column_idx, batch_size, statuses,
-      raw_values));
+      ReadPointColumnValues, type->kind(), column_idx, batch_size, num_columns,
+      _statuses, _raw_values, _memory_pool));
   }
 
   _produced += batch_size;
@@ -483,5 +482,9 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource::next(
   return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
                                             batch_size, std::move(columns));
 }
+
+template class RocksDBPointLookupDataSource<RocksDBRYOWPointLookupDataSource>;
+template class RocksDBPointLookupDataSource<
+  RocksDBSnapshotPointLookupDataSource>;
 
 }  // namespace sdb::connector

@@ -21,20 +21,67 @@
 #pragma once
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
+#include <velox/type/Type.h>
 #include <velox/vector/FlatVector.h>
 
-#include "basics/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "connector/key_utils.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
 
 class SereneDBConnectorSplit;
+
+class MultiGetContext {
+ public:
+  // TODO benchmark and choose best threshold
+  static constexpr size_t kThreshold = 1;
+  static constexpr size_t kBatchSize = 32;
+
+  template<
+    std::invocable<rocksdb::ColumnFamilyHandle&, const rocksdb::Slice&,
+                   rocksdb::PinnableSlice*, rocksdb::Status*>
+      SingleFn,
+    std::invocable<rocksdb::ColumnFamilyHandle&, size_t, const rocksdb::Slice*,
+                   rocksdb::PinnableSlice*, rocksdb::Status*>
+      BatchFn>
+  void MultiGet(rocksdb::ColumnFamilyHandle& cf,
+                const std::vector<rocksdb::Slice>& keys,
+                std::vector<std::string>& values,
+                std::vector<rocksdb::Status>& statuses, SingleFn&& single_fn,
+                BatchFn&& batch_fn) {
+    const size_t n = keys.size();
+    values.resize(n);
+    statuses.resize(n);
+
+    if (n <= kThreshold) {
+      for (size_t i = 0; i < n; ++i) {
+        _pinnable[0].Reset();
+        single_fn(cf, keys[i], _pinnable.data(), statuses.data() + i);
+        ExtractValues(1, i, values);
+      }
+      return;
+    }
+
+    for (size_t start = 0; start < n; start += kBatchSize) {
+      const size_t batch_size = std::min(kBatchSize, n - start);
+      for (size_t i = 0; i < batch_size; ++i) {
+        _pinnable[i].Reset();
+      }
+      batch_fn(cf, batch_size, keys.data() + start, _pinnable.data(),
+               statuses.data() + start);
+      ExtractValues(batch_size, start, values);
+    }
+  }
+
+ private:
+  void ExtractValues(size_t count, size_t dest_start,
+                     std::vector<std::string>& values);
+
+  std::array<rocksdb::PinnableSlice, kBatchSize> _pinnable;
+};
 
 class RocksDBFullScanDataSource : public velox::connector::DataSource {
  public:
@@ -136,6 +183,7 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
   rocksdb::DB& _db;
 };
 
+template<typename Derived>
 class RocksDBPointLookupDataSource : public velox::connector::DataSource {
  public:
   void addDynamicFilter(velox::column_index_t,
@@ -150,7 +198,15 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   }
   void cancel() final {}
 
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
+    SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
+    if (_current_split) {
+      SDB_THROW(ERROR_INTERNAL,
+                "RocksDBDataSource: a split is already being processed");
+    }
+    _current_split = std::move(split);
+    _offset = 0;
+  }
 
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
@@ -168,20 +224,7 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
       _object_key{object_key},
       _values{std::move(values)} {}
 
-  // Perform the batched read. Keys are laid out as [point_idx * num_columns +
-  // col_idx].
-  virtual std::vector<rocksdb::Status> DoMultiGet(
-    const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
-    const std::vector<rocksdb::Slice>& key_slices,
-    std::vector<std::string>& raw_values) = 0;
-
  private:
-  template<velox::TypeKind Kind>
-  velox::VectorPtr ReadColumnValues(
-    size_t col_idx, size_t num_points,
-    const std::vector<rocksdb::Status>& statuses,
-    const std::vector<std::string>& values);
-
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
@@ -193,10 +236,13 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   velox::RowVectorPtr _values;
   std::vector<std::string> _keys;
   std::vector<rocksdb::Slice> _key_slices;
+  std::vector<std::string> _raw_values;
+  std::vector<rocksdb::Status> _statuses;
+  MultiGetContext _ctx;
 };
 
 class RocksDBRYOWPointLookupDataSource final
-  : public RocksDBPointLookupDataSource {
+  : public RocksDBPointLookupDataSource<RocksDBRYOWPointLookupDataSource> {
  public:
   RocksDBRYOWPointLookupDataSource(velox::memory::MemoryPool& memory_pool,
                                    rocksdb::Transaction& transaction,
@@ -208,24 +254,29 @@ class RocksDBRYOWPointLookupDataSource final
     : RocksDBPointLookupDataSource{memory_pool,         cf,
                                    std::move(row_type), std::move(column_ids),
                                    object_key,          std::move(values)},
-      _transaction{transaction} {}
+      _transaction{transaction} {
+    _ro.async_io = IsIOUringEnabled();
+  }
 
- protected:
-  std::vector<rocksdb::Status> DoMultiGet(
-    const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
-    const std::vector<rocksdb::Slice>& key_slices,
-    std::vector<std::string>& raw_values) override {
-    rocksdb::ReadOptions ro;
-    ro.async_io = IsIOUringEnabled();
-    return _transaction.MultiGet(ro, cfs, key_slices, &raw_values);
+  void DoGet(rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
+             rocksdb::PinnableSlice* value, rocksdb::Status* status) {
+    *status = _transaction.Get(_ro, &cf, key, value);
+  }
+
+  void DoMultiGetBatch(rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
+                       const rocksdb::Slice* keys,
+                       rocksdb::PinnableSlice* values,
+                       rocksdb::Status* statuses) {
+    _transaction.MultiGet(_ro, &cf, keys_number, keys, values, statuses);
   }
 
  private:
   rocksdb::Transaction& _transaction;
+  rocksdb::ReadOptions _ro;
 };
 
 class RocksDBSnapshotPointLookupDataSource final
-  : public RocksDBPointLookupDataSource {
+  : public RocksDBPointLookupDataSource<RocksDBSnapshotPointLookupDataSource> {
  public:
   RocksDBSnapshotPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
@@ -235,23 +286,26 @@ class RocksDBSnapshotPointLookupDataSource final
     : RocksDBPointLookupDataSource{memory_pool,         cf,
                                    std::move(row_type), std::move(column_ids),
                                    object_key,          std::move(values)},
-      _db{db},
-      _snapshot{snapshot} {}
+      _db{db} {
+    _ro.async_io = IsIOUringEnabled();
+    _ro.snapshot = snapshot;
+  }
 
- protected:
-  std::vector<rocksdb::Status> DoMultiGet(
-    const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
-    const std::vector<rocksdb::Slice>& key_slices,
-    std::vector<std::string>& raw_values) override {
-    rocksdb::ReadOptions ro;
-    ro.async_io = IsIOUringEnabled();
-    ro.snapshot = _snapshot;
-    return _db.MultiGet(ro, cfs, key_slices, &raw_values);
+  void DoGet(rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
+             rocksdb::PinnableSlice* value, rocksdb::Status* status) {
+    *status = _db.Get(_ro, &cf, key, value);
+  }
+
+  void DoMultiGetBatch(rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
+                       const rocksdb::Slice* keys,
+                       rocksdb::PinnableSlice* values,
+                       rocksdb::Status* statuses) {
+    _db.MultiGet(_ro, &cf, keys_number, keys, values, statuses);
   }
 
  private:
   rocksdb::DB& _db;
-  const rocksdb::Snapshot* _snapshot;
+  rocksdb::ReadOptions _ro;
 };
 
 }  // namespace sdb::connector

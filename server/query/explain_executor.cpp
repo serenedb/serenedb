@@ -43,8 +43,7 @@ std::string ProcessPlan(std::string plan, bool clean_column_names) {
 
 }  // namespace
 
-ExplainExecutor::ExplainExecutor(VeloxExecutor* velox)
-  : _velox{velox} {}
+ExplainExecutor::ExplainExecutor(VeloxExecutor* velox) : _velox{velox} {}
 
 void ExplainExecutor::SetQuery(Query& query) { _query = &query; }
 

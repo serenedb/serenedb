@@ -132,7 +132,7 @@ class OrFilterNode final : public FilterNode {
   std::span<const std::string> pk_names);
 
 // Returns a RowVector with one row per specific point, or nullptr if the filter
-// is not a set of specific PK points (→ caller should use full scan).
+// is not a set of specific PK points (-> caller should use full scan).
 [[nodiscard]] velox::RowVectorPtr TryGetPoints(FilterNode& filter,
                                                velox::RowTypePtr pk_type,
                                                velox::memory::MemoryPool* pool);

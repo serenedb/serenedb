@@ -25,8 +25,8 @@
 namespace sdb::query {
 
 void Cursor::RequestCancel() {
-  if (_batch_executor) {
-    _batch_executor->RequestCancel();
+  if (_current < _executors.size()) {
+    _executors[_current]->RequestCancel();
   } else if (_query.HasExternal()) {
     _query.GetExternalExecutor().RequestCancel().Detach();
   }
@@ -37,28 +37,30 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
     return ExecuteStmt();
   }
 
-  if (_batch_executor) {
-    for (;;) {
-      auto f = _batch_executor->Execute();
-      if (!f.Valid()) {
-        return Process::Done;
-      }
-      if (f.Ready()) {
-        batch = std::move(f).Touch().Ok();
-        if (batch) {
-          return Process::More;
-        }
-        continue;
-      }
-      std::move(f).DetachInline(
-        [user_task = _user_task](yaclib::Result<velox::RowVectorPtr>&&) {
-          user_task();
-        });
-      return Process::Wait;
+  for (;;) {
+    if (_current >= _executors.size()) {
+      return Process::Done;
     }
+    auto& executor = _executors[_current];
+    auto f = executor->Execute();
+    if (!f.Valid()) {
+      ++_current;
+      continue;
+    }
+    if (f.Ready()) {
+      auto result = std::move(f).Touch().Ok();
+      if (result && !executor->IgnoreOutput()) {
+        batch = std::move(result);
+        return Process::More;
+      }
+      continue;
+    }
+    std::move(f).DetachInline(
+      [user_task = _user_task](yaclib::Result<velox::RowVectorPtr>&&) {
+        user_task();
+      });
+    return Process::Wait;
   }
-
-  return Process::Done;
 }
 
 Cursor::Process Cursor::ExecuteStmt() {
@@ -98,7 +100,7 @@ Cursor::Process Cursor::ExecuteStmt() {
 Cursor::Cursor(std::function<void()>&& user_task, Query& query)
   : _user_task{std::move(user_task)},
     _query{query},
-    _batch_executor{query.TakeBatchExecutor()} {}
+    _executors{query.TakeExecutors()} {}
 
 Cursor::~Cursor() {
   if (_query.HasExternal()) {

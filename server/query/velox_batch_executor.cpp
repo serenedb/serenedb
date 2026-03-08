@@ -47,8 +47,6 @@ yaclib::Future<velox::RowVectorPtr> VeloxBatchExecutor::Execute() {
   return {};
 }
 
-void VeloxBatchExecutor::RequestCancel() {
-  _runner.RequestCancel();
-}
+void VeloxBatchExecutor::RequestCancel() { _runner.RequestCancel(); }
 
 }  // namespace sdb::query

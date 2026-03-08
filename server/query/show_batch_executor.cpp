@@ -21,6 +21,7 @@
 #include "query/show_batch_executor.h"
 
 #include <absl/algorithm/container.h>
+
 #include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
@@ -33,14 +34,12 @@ namespace sdb::query {
 namespace {
 
 velox::RowVectorPtr BuildBatch(
-  const velox::RowTypePtr& output_type,
-  velox::memory::MemoryPool* pool,
+  const velox::RowTypePtr& output_type, velox::memory::MemoryPool* pool,
   std::span<const std::vector<std::string>> columns) {
   SDB_ASSERT(output_type->isRow());
-  SDB_ASSERT(absl::c_all_of(output_type->children(),
-                             [](const auto& ptr) {
-                               return ptr == velox::VARCHAR();
-                             }));
+  SDB_ASSERT(absl::c_all_of(output_type->children(), [](const auto& ptr) {
+    return ptr == velox::VARCHAR();
+  }));
   std::vector<velox::VectorPtr> vectors;
   vectors.reserve(columns.size());
   size_t batch_rows = 0;
@@ -119,11 +118,12 @@ void ShowAllBatchExecutor::SetQuery(Query& query) {
     descriptions.emplace_back(description);
   });
 
-  _result = BuildBatch(query.GetOutputType(), pool, {
-    std::move(names),
-    std::move(values),
-    std::move(descriptions),
-  });
+  _result = BuildBatch(query.GetOutputType(), pool,
+                       {
+                         std::move(names),
+                         std::move(values),
+                         std::move(descriptions),
+                       });
 }
 
 yaclib::Future<velox::RowVectorPtr> ShowAllBatchExecutor::Execute() {

@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <memory>
+#include <optional>
 
 #include "query/batch_executor.h"
 
@@ -30,21 +30,19 @@ class VeloxBatchExecutor;
 
 class ExplainBatchExecutor final : public BatchExecutor {
  public:
-  explicit ExplainBatchExecutor(
-    std::unique_ptr<VeloxBatchExecutor> inner);
+  explicit ExplainBatchExecutor(VeloxBatchExecutor* velox = nullptr);
 
   void SetQuery(Query& query) final;
 
   yaclib::Future<velox::RowVectorPtr> Execute() final;
-  void RequestCancel() final;
+  void RequestCancel() final {}
 
  private:
   velox::RowVectorPtr BuildExplainBatch();
 
-  std::unique_ptr<VeloxBatchExecutor> _inner;
+  VeloxBatchExecutor* _velox = nullptr;
   Query* _query = nullptr;
-  velox::RowVectorPtr _result;
-  bool _velox_done = false;
+  std::optional<velox::RowVectorPtr> _result;
 };
 
 }  // namespace sdb::query

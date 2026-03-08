@@ -81,17 +81,19 @@ std::unique_ptr<Query> Query::CreateQuery(
   if (query_ctx.command_type.Has(CommandType::Query)) {
     auto velox = std::make_unique<VeloxBatchExecutor>();
     if (query_ctx.command_type.Has(CommandType::Explain)) {
-      auto explain = std::make_unique<ExplainBatchExecutor>(std::move(velox));
-      query->_batch_executor = std::move(explain);
+      velox->IgnoreOutput() = true;
+      auto explain = std::make_unique<ExplainBatchExecutor>(velox.get());
+      query->_executors.push_back(std::move(velox));
+      query->_executors.push_back(std::move(explain));
     } else {
-      query->_batch_executor = std::move(velox);
+      query->_executors.push_back(std::move(velox));
     }
   } else if (query_ctx.command_type.Has(CommandType::Explain)) {
-    query->_batch_executor = std::make_unique<ExplainBatchExecutor>(nullptr);
+    query->_executors.push_back(std::make_unique<ExplainBatchExecutor>());
   }
 
-  if (query->_batch_executor) {
-    query->_batch_executor->SetQuery(*query);
+  for (auto& executor : query->_executors) {
+    executor->SetQuery(*query);
   }
   return query;
 }
@@ -107,8 +109,8 @@ std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
     velox::ROW({std::string{show_variable}}, {velox::VARCHAR()}),
     query_ctx,
   });
-  query->_batch_executor = std::make_unique<ShowBatchExecutor>();
-  query->_batch_executor->SetQuery(*query);
+  query->_executors.push_back(std::make_unique<ShowBatchExecutor>());
+  query->_executors.back()->SetQuery(*query);
   return query;
 }
 
@@ -118,8 +120,8 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
-  query->_batch_executor = std::make_unique<ShowAllBatchExecutor>();
-  query->_batch_executor->SetQuery(*query);
+  query->_executors.push_back(std::make_unique<ShowAllBatchExecutor>());
+  query->_executors.back()->SetQuery(*query);
   return query;
 }
 
@@ -127,8 +129,10 @@ std::unique_ptr<Query> Query::CreateWithBatchExecutor(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx,
   std::unique_ptr<BatchExecutor> batch_executor) {
+  std::vector<std::unique_ptr<BatchExecutor>> executors;
+  executors.push_back(std::move(batch_executor));
   return std::unique_ptr<Query>(
-    new Query{root, query_ctx, std::move(batch_executor)});
+    new Query{root, query_ctx, std::move(executors)});
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
@@ -139,12 +143,14 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx,
-             std::unique_ptr<BatchExecutor> batch_executor)
+             std::vector<std::unique_ptr<BatchExecutor>> executors)
   : _query_ctx{query_ctx},
     _logical_plan{root},
     _output_type{root->outputType()},
-    _batch_executor{std::move(batch_executor)} {
-  _batch_executor->SetQuery(*this);
+    _executors{std::move(executors)} {
+  for (auto& executor : _executors) {
+    executor->SetQuery(*this);
+  }
 }
 
 void Query::CompileQuery() {

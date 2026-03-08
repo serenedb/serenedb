@@ -25,6 +25,7 @@
 #include <velox/exec/Task.h>
 #include <velox/vector/ComplexVector.h>
 
+#include <vector>
 #include <yaclib/util/result.hpp>
 
 #include "query/batch_executor.h"
@@ -57,7 +58,8 @@ class Cursor {
 
   std::function<void()> _user_task;
   Query& _query;
-  std::unique_ptr<BatchExecutor> _batch_executor;
+  std::vector<std::unique_ptr<BatchExecutor>> _executors;
+  size_t _current = 0;
 
   yaclib::Result<Result> _stmt_result;
   absl::Mutex _stmt_result_mutex;

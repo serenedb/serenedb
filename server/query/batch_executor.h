@@ -36,6 +36,13 @@ class BatchExecutor {
   virtual yaclib::Future<velox::RowVectorPtr> Execute() = 0;
   virtual void RequestCancel() = 0;
   virtual ~BatchExecutor() = default;
+
+  decltype(auto) IgnoreOutput(this auto&& self) noexcept {
+    return (self._ignore_output);
+  }
+
+ protected:
+  [[maybe_unused]] bool _ignore_output = false;
 };
 
 }  // namespace sdb::query

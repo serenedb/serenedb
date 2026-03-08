@@ -30,6 +30,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "basics/fwd.h"
 #include "query/batch_executor.h"
@@ -80,8 +81,8 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
-  std::unique_ptr<BatchExecutor> TakeBatchExecutor() {
-    return std::move(_batch_executor);
+  std::vector<std::unique_ptr<BatchExecutor>> TakeExecutors() {
+    return std::move(_executors);
   }
 
   std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task);
@@ -105,7 +106,7 @@ class Query {
   // use for CreateWithBatchExecutor
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx,
-        std::unique_ptr<BatchExecutor> batch_executor);
+        std::vector<std::unique_ptr<BatchExecutor>> executors);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;
@@ -113,7 +114,7 @@ class Query {
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
   std::unique_ptr<ExternalExecutor> _executor;
-  std::unique_ptr<BatchExecutor> _batch_executor;
+  std::vector<std::unique_ptr<BatchExecutor>> _executors;
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;

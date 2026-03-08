@@ -43,56 +43,17 @@ std::string ProcessPlan(std::string plan, bool clean_column_names) {
 
 }  // namespace
 
-ExplainBatchExecutor::ExplainBatchExecutor(
-  std::unique_ptr<VeloxBatchExecutor> inner)
-  : _inner{std::move(inner)} {}
+ExplainBatchExecutor::ExplainBatchExecutor(VeloxBatchExecutor* velox)
+  : _velox{velox} {}
 
-void ExplainBatchExecutor::SetQuery(Query& query) {
-  _query = &query;
-  if (_inner) {
-    _inner->SetQuery(query);
-  }
-}
+void ExplainBatchExecutor::SetQuery(Query& query) { _query = &query; }
 
 yaclib::Future<velox::RowVectorPtr> ExplainBatchExecutor::Execute() {
-  SDB_ASSERT(_query);
-
-  if (_result) {
-    return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(_result));
+  if (!_result) {
+    _result = BuildExplainBatch();
+    return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(*_result));
   }
-
-  // If we have an inner executor (EXPLAIN ANALYZE), run Velox first
-  if (_inner && !_velox_done) {
-    auto f = _inner->Execute();
-    if (!f.Valid()) {
-      _velox_done = true;
-    } else if (f.Ready()) {
-      auto batch = std::move(f).Touch().Ok();
-      if (batch) {
-        // Velox still producing — discard batch, call again
-        return yaclib::MakeFuture<velox::RowVectorPtr>(nullptr);
-      }
-      // Velox done
-      _velox_done = true;
-    } else {
-      // Velox waiting — propagate the future
-      return std::move(f).ThenInline(
-        [](velox::RowVectorPtr&&) -> velox::RowVectorPtr {
-          // Discard batch, cursor will call Execute() again
-          return nullptr;
-        });
-    }
-  }
-
-  // No inner executor, or Velox done — produce explain output
-  _result = BuildExplainBatch();
-  return yaclib::MakeFuture<velox::RowVectorPtr>(std::move(_result));
-}
-
-void ExplainBatchExecutor::RequestCancel() {
-  if (_inner) {
-    _inner->RequestCancel();
-  }
+  return {};
 }
 
 velox::RowVectorPtr ExplainBatchExecutor::BuildExplainBatch() {
@@ -137,9 +98,9 @@ velox::RowVectorPtr ExplainBatchExecutor::BuildExplainBatch() {
 
   if (query_ctx.explain_params.Has(ExplainWith::Execution)) {
     if (query_ctx.explain_params.Has(ExplainWith::Stats)) {
-      SDB_ASSERT(_inner);
+      SDB_ASSERT(_velox);
       data.emplace_back("EXECUTION PLAN WITH STATS:");
-      post_process_plan(ProcessPlan(_inner->GetRunner().PrintPlanWithStats(),
+      post_process_plan(ProcessPlan(_velox->GetRunner().PrintPlanWithStats(),
                                     clean_column_names));
     } else {
       data.emplace_back("EXECUTION PLAN:");

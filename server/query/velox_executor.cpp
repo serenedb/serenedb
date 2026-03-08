@@ -40,9 +40,6 @@ yaclib::Future<> VeloxExecutor::Execute(velox::RowVectorPtr& batch) {
     SDB_ASSERT(!batch);
     return wait;
   }
-  if (batch) {
-    return yaclib::MakeFuture();
-  }
   return {};
 }
 

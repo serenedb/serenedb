@@ -328,7 +328,7 @@ velox::RowVectorPtr TryGetPoints(FilterNode& filter, velox::RowTypePtr pk_type,
       if (!point.IsSpecific()) {
         return nullptr;
       }
-      points.push_back(std::move(point));
+      points.emplace_back(std::move(point));
     }
   }
 
@@ -340,7 +340,6 @@ velox::RowVectorPtr TryGetPoints(FilterNode& filter, velox::RowTypePtr pk_type,
   }
 
   // Build one column vector per PK column, each with one row per point.
-  const size_t points_count = points.size();
   std::vector<velox::VectorPtr> columns;
   columns.reserve(pk_type->size());
   for (size_t col_idx = 0; col_idx < pk_type->size(); ++col_idx) {
@@ -350,7 +349,7 @@ velox::RowVectorPtr TryGetPoints(FilterNode& filter, velox::RowTypePtr pk_type,
       BuildPointColumn, col_type->kind(), col_name, points, pool));
   }
   return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
-                                            points_count, std::move(columns));
+                                            points.size(), std::move(columns));
 }
 
 }  // namespace sdb::connector

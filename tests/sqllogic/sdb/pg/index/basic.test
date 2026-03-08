@@ -18,7 +18,7 @@ statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c')
 
 
-query ok
+query
 SELECT * FROM t ORDER BY r;
 ----
 r
@@ -37,7 +37,7 @@ statement error
 VACUUM (UPDATE_INDEXES) wrong_t_name;
 
 
-query ok
+query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----
 indexname
@@ -48,7 +48,7 @@ statement ok
 DROP INDEX index_t;
 
 
-query ok
+query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----
 indexname
@@ -62,7 +62,7 @@ statement ok
 CREATE INDEX index_t ON t USING inverted(r);
 
 
-query ok
+query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----
 indexname
@@ -73,7 +73,7 @@ statement ok
 DROP TABLE t;
 
 
-query ok
+query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid;
 ----
 indexname
@@ -125,7 +125,7 @@ statement ok
 DROP INDEX test_index;
 
 
-query ok
+query
 SELECT indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid
@@ -143,13 +143,13 @@ statement ok
 DROP TABLE test;
 
 
-query ok
+query
 SELECT oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
 ----
 oid	relname	relkind
 
 
-query ok
+query
 SELECT indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid

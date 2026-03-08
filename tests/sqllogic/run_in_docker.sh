@@ -33,6 +33,7 @@ fi
 # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
 mkdir -p "$WORKSPACE/sanitizers"
 mkdir -p "$WORKSPACE/$BUILD_DIR/coverage"
+mkdir -p "$WORKSPACE/logs"
 
 if test -z "$BUILD_IMAGE"; then
 	export BUILD_IMAGE=registry.serenedb.com:5000/serenedb-build-ubuntu:latest
@@ -63,21 +64,20 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 	docker network create --driver overlay --attachable "$NETWORK_NAME"
 	docker volume create "$VOLUME_NAME"
 
-	docker service create \
-		--detach \
-		--name "$SERVICE_NAME" \
-		--restart-condition on-failure \
-		--replicas 1 \
-		--restart-delay 0s \
-		--restart-max-attempts 1 \
-		--restart-window 1s \
-		--network "$NETWORK_NAME" \
-		--mount type=bind,src="$WORKSPACE",dst=/serenedb \
-		--mount type=bind,src="$WORKSPACE/logs",dst=/var/log/serenedb \
-		--mount type=volume,src="$VOLUME_NAME",dst=/serenedb_datadir \
-		"${env_args[@]}" \
-		"$BUILD_IMAGE" \
-		sh -c '
+  docker service create \
+    --name "$SERVICE_NAME" \
+    --restart-condition on-failure \
+    --replicas 1 \
+    --restart-delay 1ns \
+    --restart-max-attempts 1 \
+    --restart-window 1ns \
+    --network "$NETWORK_NAME" \
+    --mount type=bind,src="$WORKSPACE",dst=/serenedb \
+    --mount type=bind,src="$WORKSPACE/logs",dst=/var/log/serenedb \
+    --mount type=volume,src="$VOLUME_NAME",dst=/serenedb_datadir \
+    "${env_args[@]}" \
+    "$BUILD_IMAGE" \
+    sh -c '
       if ! id serenedb >/dev/null 2>&1; then
         useradd serenedb &&
         chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR}/coverage
@@ -85,24 +85,8 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
       chown serenedb:serenedb /serenedb_datadir &&
       exec /serenedb/${BUILD_DIR}/bin/serened /serenedb_datadir \
         --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-        --server.endpoint tcp://0.0.0.0:8529 \
         --server.authentication 0
     '
-
-	echo "Waiting for service to start..."
-	for i in $(seq 1 30); do
-		if docker service ps --format '{{.CurrentState}}' "$SERVICE_NAME" 2>/dev/null | grep -qi "running"; then
-			echo "Service is running."
-			break
-		fi
-		if [[ $i -eq 30 ]]; then
-			echo "ERROR: Service failed to start"
-			docker service ps --no-trunc "$SERVICE_NAME"
-			docker service logs "$SERVICE_NAME" 2>&1 || true
-			exit 1
-		fi
-		sleep 1
-	done
 
 	# Run tests
 	docker run --rm \

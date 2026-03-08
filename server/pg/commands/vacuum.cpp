@@ -49,7 +49,8 @@ namespace sdb::pg {
 namespace {
 
 yaclib::Future<> UpdateIndexes(
-  ExecContext& context, const std::shared_ptr<catalog::Snapshot>& snapshot,
+  ExecContext& context,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const std::vector<std::shared_ptr<catalog::Table>>& tables) {
   std::vector<yaclib::Future<>> index_futures;
   for (const auto& table : tables) {
@@ -78,7 +79,7 @@ yaclib::Future<> UpdateIndexes(
 }
 
 Result SyncStats(ExecContext& context,
-                 const std::shared_ptr<catalog::Snapshot>& snapshot,
+                 const std::shared_ptr<const catalog::Snapshot>& snapshot,
                  const std::vector<std::shared_ptr<catalog::Table>>& tables) {
   for (const auto& table : tables) {
     auto shard = snapshot->GetTableShard(table->GetId());

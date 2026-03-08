@@ -175,7 +175,7 @@ class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
   catalog::Column::Id _id;
 };
 
-class SereneDBConnectorTableHandle
+class SereneDBConnectorTableHandle final
   : public velox::connector::ConnectorTableHandle {
  public:
   explicit SereneDBConnectorTableHandle(
@@ -269,7 +269,6 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
       basics::downCast<const SereneDBColumn>(findColumn(column_name))->Id());
   }
 
-  // TODO here
   velox::connector::ConnectorTableHandlePtr createTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     std::vector<velox::connector::ColumnHandlePtr> column_handles,
@@ -680,15 +679,6 @@ class SereneDBConnector final : public velox::connector::Connector {
       transaction.HasRocksDBWrite() &&
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
 
-#ifdef SDB_FAULT_INJECTION
-    // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
-    // bindable to allow parallel execution.
-    auto table_ptr =
-      transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
-    SDB_ASSERT(table_ptr);
-    auto table_name = table_ptr->GetName();
-#endif
-
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     if (needs_read_your_own_writes) {
       auto& rocksdb_transaction = transaction.GetRocksDBTransaction();
@@ -700,9 +690,14 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 
 #ifdef SDB_FAULT_INJECTION
-      SDB_IF_FAILURE(absl::StrCat(table_name, "_fail_on_ryow")) {
-        SDB_THROW(ERROR_DEBUG, absl::StrCat(table_name, "_fail_on_ryow"),
-                  " condition failed");
+      // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
+      // bindable to allow parallel execution.
+      auto table_ptr =
+        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+      SDB_ASSERT(table_ptr);
+      auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
+      SDB_IF_FAILURE(fail_on_ryow) {
+        SDB_THROW(ERROR_DEBUG, fail_on_ryow, " condition failed");
       }
 #endif
 

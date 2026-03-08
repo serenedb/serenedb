@@ -87,8 +87,8 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
  public:
   virtual void addSplit(
     std::shared_ptr<velox::connector::ConnectorSplit> split) override = 0;
-  std::optional<velox::RowVectorPtr> next(
-    uint64_t size, velox::ContinueFuture& future) override;
+  std::optional<velox::RowVectorPtr> next(uint64_t size,
+                                          velox::ContinueFuture& future) final;
   void addDynamicFilter(
     velox::column_index_t output_channel,
     const std::shared_ptr<velox::common::Filter>& filter) final;
@@ -161,8 +161,7 @@ class RocksDBRYOWFullScanDataSource : public RocksDBFullScanDataSource {
                                 catalog::Column::Id effective_column_id,
                                 ObjectId object_key);
 
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) override;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
  private:
   rocksdb::Transaction& _transaction;
@@ -176,8 +175,7 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
     std::vector<catalog::Column::Id> column_ids,
     catalog::Column::Id effective_column_id, ObjectId object_key,
     const rocksdb::Snapshot* snapshot = nullptr);
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) override;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
  private:
   rocksdb::DB& _db;

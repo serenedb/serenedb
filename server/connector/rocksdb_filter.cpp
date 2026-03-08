@@ -251,7 +251,6 @@ std::optional<Point> AndFilterNode::TryMerge() const {
   return result;
 }
 
-// TODO check how works
 std::vector<Point> AndFilterNode::NextPoints() {
   if (_children.empty() || _state == State::Done)
     return {};

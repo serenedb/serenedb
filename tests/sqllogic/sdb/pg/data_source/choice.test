@@ -256,7 +256,12 @@ QUERY PLAN
 # Full scan: reads all 14641 rows.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk;
+EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk WHERE 
+  (a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  d IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) OR
+  (1 = 2);
 ----
 QUERY PLAN
 <slt:ignore>[t_big4pk]<slt:ignore>Output: 14641 rows <slt:ignore>

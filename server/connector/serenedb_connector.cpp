@@ -150,7 +150,6 @@ SereneDBTableLayout::createTableHandle(
   rejected_filters = std::move(filters);
   SDB_ASSERT(!table().columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");
-  // todo column names
   return std::make_shared<SereneDBConnectorTableHandle>(session, *this,
                                                         std::move(filter));
 }

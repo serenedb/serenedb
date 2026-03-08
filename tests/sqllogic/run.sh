@@ -46,7 +46,8 @@ validate_boolean() {
 }
 
 launch_s3() {
-	MINIO_CONTAINER_NAME="serenedb-test-minio-$$"
+	PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	MINIO_CONTAINER_NAME="${PREFIX}-serenedb-test-minio-$$"
 	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio.log"
 	export MINIO_ACCESS_KEY="minioadmin"
 	export MINIO_SECRET_KEY="minioadmin"

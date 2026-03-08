@@ -39,8 +39,11 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
     auto& executor = _executors[_current];
     auto f = executor->Execute(batch);
     if (!f.Valid()) {
-      ++_current;
-      continue;
+      if (!batch) {
+        ++_current;
+        continue;
+      }
+      return Process::More;
     }
     if (f.Ready()) {
       std::ignore = std::move(f).Touch().Ok();

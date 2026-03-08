@@ -60,8 +60,6 @@ yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
   return {};
 }
 
-// CTASVeloxExecutor
-
 CTASVeloxExecutor::CTASVeloxExecutor(pg::CTASCommand& ctas_command)
   : _ctas_command{ctas_command} {}
 
@@ -77,8 +75,6 @@ yaclib::Future<> CTASVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
     throw;
   }
 }
-
-// RemoveTombstoneExecutor
 
 RemoveTombstoneExecutor::RemoveTombstoneExecutor(pg::CTASCommand& ctas_command)
   : _ctas_command{ctas_command} {}

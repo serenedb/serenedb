@@ -31,7 +31,7 @@ class Executor final : public query::Executor {
  public:
   explicit Executor(std::shared_ptr<ExecContext> context, const Node& node);
 
-  void SetQuery(query::Query&) final {}
+  void Init(query::Query&) final {}
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final;
 

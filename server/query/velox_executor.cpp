@@ -27,7 +27,7 @@
 
 namespace sdb::query {
 
-void VeloxExecutor::SetQuery(Query& query) {
+void VeloxExecutor::Init(Query& query) {
   _query = &query;
   _runner = query.MakeRunner();
 }

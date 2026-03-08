@@ -93,7 +93,7 @@ std::unique_ptr<Query> Query::CreateQuery(
   }
 
   for (auto& executor : query->_executors) {
-    executor->SetQuery(*query);
+    executor->Init(*query);
   }
   return query;
 }
@@ -103,7 +103,7 @@ std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<Executor> executor,
   auto query =
     std::unique_ptr<Query>(new Query{velox::RowTypePtr{}, query_ctx});
   query->_executors.emplace_back(std::move(executor));
-  query->_executors.back()->SetQuery(*query);
+  query->_executors.back()->Init(*query);
   return query;
 }
 
@@ -114,7 +114,7 @@ std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
     query_ctx,
   });
   query->_executors.emplace_back(std::make_unique<ShowExecutor>());
-  query->_executors.back()->SetQuery(*query);
+  query->_executors.back()->Init(*query);
   return query;
 }
 
@@ -125,7 +125,7 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
     query_ctx,
   });
   query->_executors.emplace_back(std::make_unique<ShowAllExecutor>());
-  query->_executors.back()->SetQuery(*query);
+  query->_executors.back()->Init(*query);
   return query;
 }
 
@@ -151,7 +151,7 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
     _output_type{root->outputType()},
     _executors{std::move(executors)} {
   for (auto& executor : _executors) {
-    executor->SetQuery(*this);
+    executor->Init(*this);
   }
 }
 

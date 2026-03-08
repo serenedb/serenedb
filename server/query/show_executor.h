@@ -26,7 +26,7 @@ namespace sdb::query {
 
 class ShowExecutor final : public Executor {
  public:
-  void SetQuery(Query& query) final;
+  void Init(Query& query) final;
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }
@@ -37,7 +37,7 @@ class ShowExecutor final : public Executor {
 
 class ShowAllExecutor final : public Executor {
  public:
-  void SetQuery(Query& query) final;
+  void Init(Query& query) final;
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }

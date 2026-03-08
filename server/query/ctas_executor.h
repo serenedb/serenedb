@@ -34,7 +34,7 @@ class CreateTableExecutor final : public Executor {
  public:
   explicit CreateTableExecutor(std::unique_ptr<pg::CTASCommand> ctas_command);
 
-  void SetQuery(Query& query) final { _query = &query; }
+  void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }
@@ -51,7 +51,7 @@ class CTASVeloxExecutor final : public VeloxExecutor {
  public:
   explicit CTASVeloxExecutor(pg::CTASCommand& ctas_command);
 
-  void SetQuery(Query& query) final { _query = &query; }
+  void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
@@ -63,7 +63,7 @@ class RemoveTombstoneExecutor final : public Executor {
  public:
   explicit RemoveTombstoneExecutor(pg::CTASCommand& ctas_command);
 
-  void SetQuery(Query&) final {}
+  void Init(Query&) final {}
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }

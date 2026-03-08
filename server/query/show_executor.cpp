@@ -59,7 +59,7 @@ velox::RowVectorPtr BuildBatch(
 
 }  // namespace
 
-void ShowExecutor::SetQuery(Query& query) {
+void ShowExecutor::Init(Query& query) {
   SDB_ASSERT(
     query.GetOutputType()->equivalent(*velox::ROW({velox::VARCHAR()})));
   const auto& config = query.GetContext().velox_query_ctx->queryConfig();
@@ -104,7 +104,7 @@ yaclib::Future<> ShowExecutor::Execute(velox::RowVectorPtr& batch) {
   return yaclib::MakeFuture();
 }
 
-void ShowAllExecutor::SetQuery(Query& query) {
+void ShowAllExecutor::Init(Query& query) {
   SDB_ASSERT(query.GetOutputType()->equivalent(
     *velox::ROW({velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()})));
   const auto& query_config = query.GetContext().velox_query_ctx->queryConfig();

@@ -27,7 +27,7 @@ namespace sdb::query {
 
 class VeloxExecutor : public Executor {
  public:
-  void SetQuery(Query& query) override;
+  void Init(Query& query) override;
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
   yaclib::Future<> RequestCancel() override;

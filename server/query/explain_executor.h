@@ -32,7 +32,7 @@ class ExplainExecutor final : public Executor {
  public:
   explicit ExplainExecutor(VeloxExecutor* velox = nullptr);
 
-  void SetQuery(Query& query) final;
+  void Init(Query& query) final;
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }

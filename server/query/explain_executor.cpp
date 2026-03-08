@@ -45,7 +45,7 @@ std::string ProcessPlan(std::string plan, bool clean_column_names) {
 
 ExplainExecutor::ExplainExecutor(VeloxExecutor* velox) : _velox{velox} {}
 
-void ExplainExecutor::SetQuery(Query& query) { _query = &query; }
+void ExplainExecutor::Init(Query& query) { _query = &query; }
 
 yaclib::Future<> ExplainExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_result) {

@@ -89,6 +89,21 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
         --server.authentication 0
     '
 
+	echo "Waiting for service to start..."
+	for i in $(seq 1 30); do
+		if docker service ps --format '{{.CurrentState}}' "$SERVICE_NAME" 2>/dev/null | grep -qi "running"; then
+			echo "Service is running."
+			break
+		fi
+		if [[ $i -eq 30 ]]; then
+			echo "ERROR: Service failed to start"
+			docker service ps --no-trunc "$SERVICE_NAME"
+			docker service logs "$SERVICE_NAME" 2>&1 || true
+			exit 1
+		fi
+		sleep 1
+	done
+
 	# Run tests
 	docker run --rm \
 		--network "$NETWORK_NAME" \

@@ -398,7 +398,9 @@ class FixedPhraseFrequency {
   }
 
   // returns frequency of the phrase
-  uint32_t EvaluateFreq() { return _phrase_freq.value = NextPosition(); }
+  IRS_FORCE_INLINE uint32_t EvaluateFreq() {
+    return _phrase_freq.value = NextPosition();
+  }
 
   uint32_t GetFreq() const noexcept { return _phrase_freq.value; }
 
@@ -413,7 +415,7 @@ class FixedPhraseFrequency {
     return {&start->start, &end->end};
   }
 
-  uint32_t NextPosition() {
+  IRS_FORCE_INLINE uint32_t NextPosition() {
     if constexpr (HasIntervals) {
       return NextPositionGeneric();
     } else {

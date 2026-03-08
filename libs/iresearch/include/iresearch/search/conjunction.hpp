@@ -266,7 +266,9 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t advance() final { return converge(this->_itrs[0].advance()); }
+  IRS_FORCE_INLINE doc_id_t advance() final {
+    return converge(this->_itrs[0].advance());
+  }
 
   doc_id_t seek(doc_id_t target) final {
     return converge(this->_itrs[0].seek(target));

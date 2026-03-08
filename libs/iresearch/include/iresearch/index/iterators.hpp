@@ -108,7 +108,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     _score_threshold = &score_threshold;
   }
 
-  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) final {
+  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
     ++_count;
     if (score <= *_score_threshold) {
       return;
@@ -123,46 +123,39 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     return _count;
   }
 
-  void AddWindow(const score_t* scores, const uint64_t* mask, doc_id_t min,
-                 size_t num_blocks) final {
-    uint64_t block_mask = 0;
+  IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
+                                  doc_id_t min,
+                                  size_t num_blocks) noexcept final {
+    auto threshold = _mm256_set1_ps(*_score_threshold);
     for (size_t i = 0; i < num_blocks; ++i) {
-      if (mask[i]) {
-        SetBit(block_mask, i);
-        _count += std::popcount(mask[i]);
+      auto word = mask[i];
+      if (word == 0) [[likely]] {
+        continue;
       }
-    }
 
-    if (!block_mask) {
-      return;
-    }
+      _count += std::popcount(word);
+      const score_t* IRS_RESTRICT const score_base = scores + i * kBlockSize;
+      word &= GetScoreMask(score_base, threshold);
+      const doc_id_t doc_base = min + i * kBlockSize;
 
-    const __m256 threshold = _mm256_set1_ps(*_score_threshold);
-
-    for (; block_mask; block_mask = PopBit(block_mask)) {
-      const doc_id_t i = std::countr_zero(block_mask);
-      const score_t* IRS_RESTRICT const block = scores + i * kBlockSize;
-      const uint64_t score_mask = GetScoreMask(block, threshold);
-      const doc_id_t base = min + static_cast<doc_id_t>(i * kBlockSize);
-
-      for (auto word = mask[i] & score_mask; word; word = PopBit(word)) {
+      while (word != 0) {
         const doc_id_t bit = std::countr_zero(word);
-        const auto score = block[bit];
-        if (score <= *_score_threshold) {
-          continue;
+        word = PopBit(word);
+        if (AddImpl(score_base[bit], doc_base + bit)) {
+          threshold = _mm256_set1_ps(*_score_threshold);
+          word &= GetScoreMask(score_base, threshold);
         }
-        AddImpl(score, base + bit);
       }
     }
   }
 
  private:
-  IRS_FORCE_INLINE void AddImpl(score_t score, doc_id_t doc) noexcept {
+  IRS_FORCE_INLINE bool AddImpl(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(*_score_threshold < score);
     *_hits_it = {score, doc};
     ++_hits_it;
     if (_hits_it != _hits_end) {
-      return;
+      return false;
     }
     _hits_it = _hits_pivot;
     std::nth_element(_hits_begin, _hits_pivot, _hits_end,
@@ -170,15 +163,16 @@ class NthPartitionScoreCollector final : public ScoreCollector {
                        return std::get<score_t>(l) > std::get<score_t>(r);
                      });
     *_score_threshold = std::get<score_t>(*_hits_pivot);
+    return true;
   }
 
-  IRS_FORCE_INLINE static uint64_t GetScoreMask(
-    const score_t* IRS_RESTRICT scores, const __m256 threshold) noexcept {
+  IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,
+                                         __m256 threshold) const noexcept {
     uint64_t mask = 0;
-    for (int j = 0; j < 8; ++j) {
-      const uint32_t bits = _mm256_movemask_ps(
-        _mm256_cmp_ps(_mm256_loadu_ps(scores + j * 8), threshold, _CMP_GT_OQ));
-      mask |= uint64_t{bits} << (j * 8);
+    for (int i = 0; i < 64; i += 8) {
+      const uint64_t bits = _mm256_movemask_ps(
+        _mm256_cmp_ps(_mm256_loadu_ps(scores + i), threshold, _CMP_GT_OQ));
+      mask |= bits << i;
     }
     return mask;
   }

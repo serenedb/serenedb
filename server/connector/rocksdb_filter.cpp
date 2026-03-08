@@ -148,6 +148,8 @@ std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
   return nullptr;
 }
 
+constexpr size_t kMaxPoints = 16 * 1024;  // TODO(mkornaukhov) tune
+
 }  // namespace
 
 bool Point::IsSpecific() const {
@@ -329,7 +331,11 @@ velox::RowVectorPtr TryGetPoints(FilterNode& filter, velox::RowTypePtr pk_type,
       points.push_back(std::move(point));
     }
   }
-  if (points.empty()) {
+
+  if (points.empty() || points.size() > kMaxPoints) {
+    // For now, if there are no specific points filtered, we assume that
+    // there are maybe any row. But really it may means that there is a
+    // contradiction and we know that there are *no* rows will be processed
     return nullptr;
   }
 

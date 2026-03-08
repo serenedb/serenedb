@@ -44,3 +44,8 @@ repos:
     hooks:
       - id: clang-format
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt

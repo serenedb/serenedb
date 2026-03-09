@@ -68,7 +68,7 @@ void ExplainExecutor::BuildExplainBatch() {
 
   if (query_ctx.explain_params.Has(ExplainWith::Logical)) {
     data.emplace_back("LOGICAL PLAN:");
-    process_plan(_query->GetLogicalPlan());
+    process_plan(_query->GetLogicalPlanText());
   }
 
   if (query_ctx.explain_params.Has(ExplainWith::InitialQueryGraph)) {

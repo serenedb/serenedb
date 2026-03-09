@@ -36,11 +36,13 @@ yaclib::Future<> CommandExecutor::RequestCancel() {
 }
 
 yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
-  if (std::exchange(_fired, true)) {
+  if (!_query) {  // was fired?
     return {};
   }
 
-  return ExecuteImpl();
+  auto f = ExecuteImpl();
+  _query = nullptr;  // set fired
+  return f;
 }
 
 yaclib::Future<> CommandExecutor::ExecuteImpl() {
@@ -95,6 +97,11 @@ yaclib::Future<> CommandExecutor::ExecuteImpl() {
         default:
           SDB_UNREACHABLE();
       }
+    }
+    case CommandRequestType::CTASCreateTable: {
+      const auto& req = static_cast<const CTASCreateTableRequest&>(*_request);
+      SDB_ASSERT(_query);
+      return CreateTableCTAS(*_context, *_query, req.into, req.if_not_exists);
     }
     case CommandRequestType::RemoveTombstone: {
       const auto& rel =

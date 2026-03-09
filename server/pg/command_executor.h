@@ -25,12 +25,13 @@
 #include "query/executor.h"
 #include "utils/exec_context.h"
 
+struct IntoClause;
 struct Node;
 struct RangeVar;
 
 namespace sdb::pg {
 
-enum class CommandRequestType { DDL, RemoveTombstone };
+enum class CommandRequestType { DDL, RemoveTombstone, CTASCreateTable };
 
 struct CommandExecutorRequest {
   CommandRequestType type;
@@ -41,16 +42,25 @@ struct CommandExecutorRequest {
 };
 
 struct DDLRequest final : CommandExecutorRequest {
-  const Node& node;
   explicit DDLRequest(const Node& node)
     : CommandExecutorRequest{CommandRequestType::DDL}, node{node} {}
+  const Node& node;
 };
 
 struct RemoveTombstoneRequest final : CommandExecutorRequest {
-  const RangeVar& relation;
   explicit RemoveTombstoneRequest(const RangeVar& relation)
     : CommandExecutorRequest{CommandRequestType::RemoveTombstone},
       relation{relation} {}
+  const RangeVar& relation;
+};
+
+struct CTASCreateTableRequest final : CommandExecutorRequest {
+  const IntoClause& into;
+  bool if_not_exists;
+  CTASCreateTableRequest(const IntoClause& into, bool if_not_exists)
+    : CommandExecutorRequest{CommandRequestType::CTASCreateTable},
+      into{into},
+      if_not_exists{if_not_exists} {}
 };
 
 class CommandExecutor final : public query::Executor {
@@ -58,16 +68,16 @@ class CommandExecutor final : public query::Executor {
   explicit CommandExecutor(std::shared_ptr<ExecContext> context,
                            std::unique_ptr<CommandExecutorRequest> request);
 
-  void Init(query::Query&) final {}
+  void Init(query::Query& query) final { _query = &query; }
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final;
 
  private:
   yaclib::Future<> ExecuteImpl();
 
-  bool _fired = false;
   std::shared_ptr<ExecContext> _context;
   std::unique_ptr<CommandExecutorRequest> _request;
+  query::Query* _query = nullptr;
 };
 
 }  // namespace sdb::pg

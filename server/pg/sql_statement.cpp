@@ -65,19 +65,13 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   }
   SDB_ASSERT(into);
 
-  auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
-    basics::downCast<const axiom::logical_plan::TableWriteNode>(
-      *query_desc.root));
-
-  auto ctas_state = std::make_shared<query::CTASState>(
-    static_cast<const ExecContext&>(*connection_ctx),
-    static_cast<query::Transaction&>(*connection_ctx), write_node, *into,
-    if_not_exists);
-
   query_ctx.command_type.Add(query::CommandType::CTAS);
 
-  auto create_table = std::make_unique<query::CreateTableExecutor>(ctas_state);
-  auto velox_exec = std::make_unique<query::CTASVeloxExecutor>(ctas_state);
+  auto create_table = std::make_unique<CommandExecutor>(
+    connection_ctx,
+    std::make_unique<CTASCreateTableRequest>(*into, if_not_exists));
+  auto velox_exec = std::make_unique<query::CTASVeloxExecutor>(
+    static_cast<const ExecContext&>(*connection_ctx), *into);
   auto remove_tombstone = std::make_unique<CommandExecutor>(
     connection_ctx, std::make_unique<RemoveTombstoneRequest>(*into->rel));
 

@@ -65,7 +65,8 @@ class Query {
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
-  std::string GetLogicalPlan() const;
+  std::string GetLogicalPlanText() const;
+  const auto& GetLogicalPlan() const { return _logical_plan; }
   const auto& GetInitialQueryGraphPlan() const {
     return _initial_query_graph_plan;
   }

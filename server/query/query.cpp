@@ -308,7 +308,7 @@ void Query::CompileQuery() {
   }
 }
 
-std::string Query::GetLogicalPlan() const {
+std::string Query::GetLogicalPlanText() const {
   SDB_ASSERT(_logical_plan);
   return axiom::logical_plan::PlanPrinter::toText(*_logical_plan);
 }

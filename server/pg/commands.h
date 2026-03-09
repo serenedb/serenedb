@@ -33,6 +33,10 @@ LIBPG_QUERY_INCLUDES_BEGIN
 #include "nodes/pg_list.h"
 LIBPG_QUERY_INCLUDES_END
 
+namespace sdb::query {
+class Query;
+}  // namespace sdb::query
+
 namespace sdb::pg {
 
 yaclib::Future<> CreateDatabase(ExecContext& ctx, const CreatedbStmt& stmt);
@@ -60,6 +64,9 @@ yaclib::Future<> CreateFunction(ExecContext& ctx,
 
 std::shared_ptr<catalog::Function> CreateSystemFunction(
   const CreateFunctionStmt& stmt);
+
+yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
+                                 const IntoClause& into, bool if_not_exists);
 
 yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
 

@@ -26,6 +26,7 @@
 #include "catalog/database.h"
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
+#include "connector/serenedb_connector.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/file_options.h"
@@ -35,6 +36,8 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "query/query.h"
+#include "query/transaction.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -112,6 +115,30 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
     SDB_THROW(std::move(r));
   }
   return column_expr;
+}
+
+void CommitCreateTable(catalog::LogicalCatalog& catalog,
+                       const catalog::Database& database, ObjectId db,
+                       std::string_view schema, std::string_view table_name,
+                       catalog::CreateTableRequest request, bool if_not_exists,
+                       catalog::CreateTableOperationOptions operation_options) {
+  catalog::CreateTableOptions options;
+  auto r = MakeTableOptions(std::move(request), database.GetId(), options,
+                            database.GetReplicationFactor(),
+                            database.GetWriteConcern(), {});
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  r = catalog.CreateTable(db, schema, std::move(options), operation_options);
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return;
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", table_name, "\" already exists"));
+  }
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
 }
 
 enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
@@ -423,24 +450,60 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
     request.type = std::to_underlying(TableType::File);
   }
 
-  catalog::CreateTableOptions options;
-  auto r = MakeTableOptions(std::move(request), database->GetId(), options,
-                            database->GetReplicationFactor(),
-                            database->GetWriteConcern(), {});
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  CommitCreateTable(catalog, *database, db, schema, table, std::move(request),
+                    stmt.if_not_exists, {});
+  return {};
+}
+
+yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
+                                 const IntoClause& into, bool if_not_exists) {
+  const auto db = context.GetDatabaseId();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
+
+  const auto& rel = *into.rel;
+  const std::string_view schema =
+    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+  if (schema.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
-  r = catalog.CreateTable(db, schema, std::move(options), {});
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    return {};
-  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", stmt.relation->relname, "\" already exists"));
+  const std::string_view table_name = rel.relname;
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
+
+  auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
+    basics::downCast<const axiom::logical_plan::TableWriteNode>(
+      *query.GetLogicalPlan()));
+
+  catalog::CreateTableRequest request;
+  request.name = table_name;
+
+  auto& columns = request.columns;
+  columns.resize(write_node.columnNames().size());
+  for (size_t i = 0; i < columns.size(); ++i) {
+    columns[i].id = i;
+    columns[i].name = write_node.columnNames()[i];
+    columns[i].type = write_node.columnExpressions()[i]->type();
   }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+
+  CommitCreateTable(catalog, *database, db, schema, table_name,
+                    std::move(request), if_not_exists,
+                    {.create_with_tombstone = true});
+
+  auto snapshot = catalog.GetSnapshot();
+  auto catalog_table = snapshot->GetTable(db, schema, table_name);
+  SDB_ASSERT(catalog_table);
+  auto& transaction = static_cast<query::Transaction&>(conn_ctx);
+  auto axiom_table =
+    std::make_shared<connector::RocksDBTable>(*catalog_table, transaction);
+  axiom_table->BulkInsert() = true;
+  write_node.setTable(std::move(axiom_table));
+  query.CompileQuery();
+
   return {};
 }
 

@@ -22,113 +22,31 @@
 
 #include <absl/cleanup/cleanup.h>
 
-#include <yaclib/async/make.hpp>
-
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "basics/errors.h"
 #include "catalog/catalog.h"
-#include "catalog/database.h"
-#include "catalog/sharding_strategy.h"
-#include "catalog/table_options.h"
-#include "connector/serenedb_connector.hpp"
-#include "pg/commands.h"
 #include "pg/connection_context.h"
-#include "pg/pg_list_utils.h"
-#include "pg/sql_analyzer_velox.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
-#include "pg/sql_resolver.h"
-#include "pg/sql_utils.h"
 #include "query/query.h"
-#include "query/transaction.h"
-#include "storage_engine/engine_feature.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/parsenodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::query {
 
-yaclib::Future<> CTASState::CreateTable() {
-  _db = _context.GetDatabaseId();
+void CTASVeloxExecutor::Rollback() {
+  auto db = _context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(_context);
-  std::string current_schema = conn_ctx.GetCurrentSchema();
-
   const auto& rel = *_into.rel;
-  _schema = rel.schemaname ? rel.schemaname : std::move(current_schema);
-  if (_schema.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
-                    ERR_MSG("no schema has been selected to create in"));
-  }
-  _table_name = rel.relname;
-
+  std::string current_schema = conn_ctx.GetCurrentSchema();
+  const std::string_view schema =
+    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+  SDB_ASSERT(!schema.empty());  // is supposed to be fallen in table creation
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(_db);
-  SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
-
-  catalog::CreateTableRequest request;
-  request.name = _table_name;
-
-  auto& columns = request.columns;
-  columns.resize(_write.columnNames().size());
-  for (size_t i = 0; i < columns.size(); ++i) {
-    columns[i].id = i;
-    columns[i].name = _write.columnNames()[i];
-    columns[i].type = _write.columnExpressions()[i]->type();
-  }
-
-  catalog::CreateTableOptions options;
-  auto r = MakeTableOptions(std::move(request), database->GetId(), options,
-                            database->GetReplicationFactor(),
-                            database->GetWriteConcern(), {});
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  catalog::CreateTableOperationOptions table_operation;
-  table_operation.create_with_tombstone = true;
-
-  r = catalog.CreateTable(_db, _schema, std::move(options), table_operation);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _if_not_exists) {
-    return {};
-  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                    ERR_MSG("relation \"", _table_name, "\" already exists"));
-  }
-
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  auto snapshot = catalog.GetSnapshot();
-  auto catalog_table = snapshot->GetTable(_db, _schema, _table_name);
-  SDB_ASSERT(catalog_table);
-  auto axiom_table =
-    std::make_shared<connector::RocksDBTable>(*catalog_table, _transaction);
-  axiom_table->BulkInsert() = true;
-  _write.setTable(std::move(axiom_table));
-
-  return {};
-}
-
-void CTASState::Rollback() {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  std::ignore = catalog.DropTable(_db, _schema, _table_name);
-}
-
-yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
-  if (!_ctas_state) {  // was fired?
-    return {};
-  }
-
-  auto f = _ctas_state->CreateTable();
-  _ctas_state.reset();  // set fired
-  if (f.Valid()) {
-    return std::move(f).ThenInline([this] { _query->CompileQuery(); });
-  }
-
-  _query->CompileQuery();
-  return {};
+  std::ignore = catalog.DropTable(db, schema, _into.rel->relname);
 }
 
 yaclib::Future<> CTASVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
@@ -136,7 +54,7 @@ yaclib::Future<> CTASVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_runner) {
     _runner = _query->MakeRunner();
   }
-  absl::Cleanup rollback = [&]() noexcept { _ctas_state->Rollback(); };
+  absl::Cleanup rollback = [&]() noexcept { Rollback(); };
   auto f = VeloxExecutor::Execute(batch);
   std::move(rollback).Cancel();
   return f;

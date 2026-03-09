@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
 
 #include "basics/assert.h"
@@ -99,7 +100,8 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, std::vector<catalog::Column::Id> column_oids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  const rocksdb::Snapshot* snapshot)
+  const rocksdb::Snapshot* snapshot, velox::core::TypedExprPtr remaining_filter,
+  velox::core::ExpressionEvaluator* evaluator)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _cf{cf},
@@ -149,20 +151,29 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
     _upper_bound_slices.emplace_back(
       _upper_bound_keys_data.data() + i * kKeySize, kKeySize);
   }
+
+  if (remaining_filter && evaluator) {
+    _evaluator = evaluator;
+    _remainingFilterExprSet = evaluator->compile(remaining_filter);
+  }
 }
 
 RocksDBRYOWFullScanDataSource::RocksDBRYOWFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
-  catalog::Column::Id effective_column_id, ObjectId object_key)
+  catalog::Column::Id effective_column_id, ObjectId object_key,
+  velox::core::TypedExprPtr remaining_filter,
+  velox::core::ExpressionEvaluator* evaluator)
   : RocksDBFullScanDataSource{memory_pool,
                               cf,
                               std::move(row_type),
                               std::move(column_ids),
                               effective_column_id,
                               object_key,
-                              transaction.GetSnapshot()},
+                              transaction.GetSnapshot(),
+                              std::move(remaining_filter),
+                              evaluator},
     _transaction{transaction} {}
 
 RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
@@ -170,14 +181,17 @@ RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  const rocksdb::Snapshot* snapshot)
+  const rocksdb::Snapshot* snapshot, velox::core::TypedExprPtr remaining_filter,
+  velox::core::ExpressionEvaluator* evaluator)
   : RocksDBFullScanDataSource{memory_pool,
                               cf,
                               std::move(row_type),
                               std::move(column_ids),
                               effective_column_id,
                               object_key,
-                              snapshot},
+                              snapshot,
+                              std::move(remaining_filter),
+                              evaluator},
     _db{db} {}
 
 void RocksDBRYOWFullScanDataSource::addSplit(
@@ -227,6 +241,48 @@ void RocksDBFullScanDataSource::InitIterators(CreateFn&& create_iter) {
   }
 }
 
+velox::RowVectorPtr RocksDBFullScanDataSource::ApplyRemainingFilter(
+  velox::RowVectorPtr batch) {
+  if (!_remainingFilterExprSet) {
+    return batch;
+  }
+
+  const velox::vector_size_t num_rows = batch->size();
+  velox::SelectivityVector rows(num_rows);
+  velox::VectorPtr result;
+  _evaluator->evaluate(_remainingFilterExprSet.get(), rows, *batch, result);
+
+  velox::DecodedVector decoded(*result, rows);
+
+  velox::vector_size_t passing = 0;
+  auto indices = velox::allocateIndices(num_rows, &_memory_pool);
+  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
+  for (velox::vector_size_t i = 0; i < num_rows; ++i) {
+    if (!decoded.isNullAt(i) && decoded.valueAt<bool>(i)) {
+      raw_indices[passing++] = i;
+    }
+  }
+
+  if (passing == num_rows) {
+    return batch;
+  }
+
+  if (passing == 0) {
+    return velox::BaseVector::create<velox::RowVector>(batch->type(), 0,
+                                                       &_memory_pool);
+  }
+
+  std::vector<velox::VectorPtr> filtered_columns;
+  filtered_columns.reserve(batch->childrenSize());
+  for (velox::column_index_t i = 0; i < batch->childrenSize(); ++i) {
+    filtered_columns.push_back(velox::BaseVector::wrapInDictionary(
+      nullptr, indices, passing, batch->childAt(i)));
+  }
+  return std::make_shared<velox::RowVector>(&_memory_pool, batch->type(),
+                                            nullptr, passing,
+                                            std::move(filtered_columns));
+}
+
 std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
@@ -256,10 +312,11 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
                                 return vec->size() == columns.front()->size();
                               }),
                "RocksDBDataSource: inconsistent number of rows among columns");
-    _produced += columns.front()->size();
-    return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
-                                              columns.front()->size(),
-                                              std::move(columns));
+    auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
+      &_memory_pool, _row_type, nullptr, columns.front()->size(),
+      std::move(columns)));
+    _produced += batch->size();
+    return batch;
   }
   SDB_ASSERT(_column_ids.size() == 1);
   const auto read = IterateColumn(

@@ -34,13 +34,15 @@ namespace sdb::connector {
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout,
-  std::unique_ptr<FilterNode> filter)
+  std::unique_ptr<FilterNode> filter,
+  velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     _transaction{
       basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
-    _filter{std::move(filter)} {
+    _filter{std::move(filter)},
+    _remaining_filter{std::move(remaining_filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
@@ -101,8 +103,8 @@ SereneDBTableLayout::createTableHandle(
     }
 
     SDB_ASSERT(!conjunct_root.empty());
-    auto handle =
-      std::make_shared<SereneDBConnectorTableHandle>(session, *this, nullptr);
+    auto handle = std::make_shared<SereneDBConnectorTableHandle>(
+      session, *this, nullptr, nullptr);
     const auto& snapshot =
       inverted_index_table->GetTransaction().EnsureSearchSnapshot(
         inverted_index_table->GetIndex().GetId());
@@ -143,11 +145,22 @@ SereneDBTableLayout::createTableHandle(
 
   const auto& pk_type = basics::downCast<RocksDBTable>(table()).PKType();
   auto filter = ParseFilters(filters, pk_type->names());
-  rejected_filters = std::move(filters);
+  // TODO(mkornaukhov) it must be just .clear()
+  // rejected_filters = std::move(filters);
+  // rejected_filters.clear();
+
+  velox::core::TypedExprPtr remaining_filter;
+  if (filters.size() == 1) {
+    remaining_filter = filters[0];
+  } else if (filters.size() > 1) {
+    remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+      velox::BOOLEAN(), filters, velox::expression::kAnd);
+  }
+
   SDB_ASSERT(!table().columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");
-  return std::make_shared<SereneDBConnectorTableHandle>(session, *this,
-                                                        std::move(filter));
+  return std::make_shared<SereneDBConnectorTableHandle>(
+    session, *this, std::move(filter), std::move(remaining_filter));
 }
 
 }  // namespace sdb::connector

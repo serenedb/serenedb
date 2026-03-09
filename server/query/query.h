@@ -82,6 +82,7 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
+  void SetExecutor(std::unique_ptr<Executor> executor);
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
   auto StealExecutors() { return std::move(_executors); }
@@ -120,9 +121,10 @@ class Query {
   axiom::runner::MultiFragmentPlanPtr _execution_plan;
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
+
+  Runner _runner;  // runner is supposed to be destroyed after executors.
   std::vector<std::unique_ptr<Executor>> _executors;
 
-  Runner _runner;
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;
   std::string _physical_plan;

@@ -31,53 +31,55 @@ struct RangeVar;
 
 namespace sdb::pg {
 
-enum class CommandRequestType { DDL, RemoveTombstone, CTASCreateTable };
-
-struct CommandExecutorRequest {
-  CommandRequestType type;
-  virtual ~CommandExecutorRequest() = default;
-
- protected:
-  explicit CommandExecutorRequest(CommandRequestType type) : type{type} {}
-};
-
-struct DDLRequest final : CommandExecutorRequest {
-  explicit DDLRequest(const Node& node)
-    : CommandExecutorRequest{CommandRequestType::DDL}, node{node} {}
-  const Node& node;
-};
-
-struct RemoveTombstoneRequest final : CommandExecutorRequest {
-  explicit RemoveTombstoneRequest(const RangeVar& relation)
-    : CommandExecutorRequest{CommandRequestType::RemoveTombstone},
-      relation{relation} {}
-  const RangeVar& relation;
-};
-
-struct CTASCreateTableRequest final : CommandExecutorRequest {
-  const IntoClause& into;
-  bool if_not_exists;
-  CTASCreateTableRequest(const IntoClause& into, bool if_not_exists)
-    : CommandExecutorRequest{CommandRequestType::CTASCreateTable},
-      into{into},
-      if_not_exists{if_not_exists} {}
-};
-
-class CommandExecutor final : public query::Executor {
+class CommandExecutor : public query::Executor {
  public:
-  explicit CommandExecutor(std::shared_ptr<ExecContext> context,
-                           std::unique_ptr<CommandExecutorRequest> request);
+  explicit CommandExecutor(std::shared_ptr<ExecContext> context);
 
   void Init(query::Query& query) final { _query = &query; }
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final;
 
- private:
-  yaclib::Future<> ExecuteImpl();
+ protected:
+  virtual yaclib::Future<> ExecuteImpl() = 0;
 
   std::shared_ptr<ExecContext> _context;
-  std::unique_ptr<CommandExecutorRequest> _request;
   query::Query* _query = nullptr;
+};
+
+class DDLExecutor final : public CommandExecutor {
+ public:
+  DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node);
+
+ protected:
+  yaclib::Future<> ExecuteImpl() override;
+
+ private:
+  const Node& _node;
+};
+
+class CTASCreateTableExecutor final : public CommandExecutor {
+ public:
+  CTASCreateTableExecutor(std::shared_ptr<ExecContext> context,
+                          const IntoClause& into, bool if_not_exists);
+
+ protected:
+  yaclib::Future<> ExecuteImpl() override;
+
+ private:
+  const IntoClause& _into;
+  bool _if_not_exists;
+};
+
+class RemoveTombstoneExecutor final : public CommandExecutor {
+ public:
+  RemoveTombstoneExecutor(std::shared_ptr<ExecContext> context,
+                          const RangeVar& relation);
+
+ protected:
+  yaclib::Future<> ExecuteImpl() override;
+
+ private:
+  const RangeVar& _relation;
 };
 
 }  // namespace sdb::pg

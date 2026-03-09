@@ -25,10 +25,8 @@
 
 namespace sdb::pg {
 
-CommandExecutor::CommandExecutor(
-  std::shared_ptr<ExecContext> context,
-  std::unique_ptr<CommandExecutorRequest> request)
-  : _context{std::move(context)}, _request{std::move(request)} {}
+CommandExecutor::CommandExecutor(std::shared_ptr<ExecContext> context)
+  : _context{std::move(context)} {}
 
 yaclib::Future<> CommandExecutor::RequestCancel() {
   _context->cancel();
@@ -36,7 +34,7 @@ yaclib::Future<> CommandExecutor::RequestCancel() {
 }
 
 yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
-  if (!_query) {  // was fired?
+  if (!_query) {  // was fired
     return {};
   }
 
@@ -45,72 +43,78 @@ yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
   return f;
 }
 
-yaclib::Future<> CommandExecutor::ExecuteImpl() {
-  switch (_request->type) {
-    case CommandRequestType::DDL: {
-      const auto& node = static_cast<const DDLRequest&>(*_request).node;
-      switch (node.type) {
-        case NodeTag::T_CreatedbStmt: {
-          const auto& stmt = *castNode(CreatedbStmt, &node);
-          return CreateDatabase(*_context, stmt);
-        }
-        case NodeTag::T_DropdbStmt: {
-          const auto& stmt = *castNode(DropdbStmt, &node);
-          return DropDatabase(*_context, stmt);
-        }
-        case NodeTag::T_CreateStmt: {
-          const auto& stmt = *castNode(CreateStmt, &node);
-          return CreateTable(*_context, stmt);
-        }
-        case NodeTag::T_IndexStmt: {
-          const auto& stmt = *castNode(IndexStmt, &node);
-          return CreateIndex(*_context, stmt);
-        }
-        case NodeTag::T_ViewStmt: {
-          const auto& stmt = *castNode(ViewStmt, &node);
-          return CreateView(*_context, stmt);
-        }
-        case NodeTag::T_DropStmt: {
-          const auto& stmt = *castNode(DropStmt, &node);
-          return DropObject(*_context, stmt);
-        }
-        case NodeTag::T_TransactionStmt: {
-          const auto& stmt = *castNode(TransactionStmt, &node);
-          return Transaction(*_context, stmt);
-        }
-        case NodeTag::T_VariableSetStmt: {
-          const auto& stmt = *castNode(VariableSetStmt, &node);
-          return VariableSet(*_context, stmt);
-        }
-        case NodeTag::T_CreateFunctionStmt: {
-          const auto& stmt = *castNode(CreateFunctionStmt, &node);
-          return CreateFunction(*_context, stmt);
-        }
-        case NodeTag::T_CreateSchemaStmt: {
-          const auto& stmt = *castNode(CreateSchemaStmt, &node);
-          return CreateSchema(*_context, stmt);
-        }
-        case NodeTag::T_VacuumStmt: {
-          const auto& stmt = *castNode(VacuumStmt, &node);
-          return Vacuum(*_context, stmt);
-        }
-        default:
-          SDB_UNREACHABLE();
-      }
+DDLExecutor::DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node)
+  : CommandExecutor{std::move(context)}, _node{node} {}
+
+yaclib::Future<> DDLExecutor::ExecuteImpl() {
+  switch (_node.type) {
+    case NodeTag::T_CreatedbStmt: {
+      const auto& stmt = *castNode(CreatedbStmt, &_node);
+      return CreateDatabase(*_context, stmt);
     }
-    case CommandRequestType::CTASCreateTable: {
-      const auto& req = static_cast<const CTASCreateTableRequest&>(*_request);
-      SDB_ASSERT(_query);
-      return CreateTableCTAS(*_context, *_query, req.into, req.if_not_exists);
+    case NodeTag::T_DropdbStmt: {
+      const auto& stmt = *castNode(DropdbStmt, &_node);
+      return DropDatabase(*_context, stmt);
     }
-    case CommandRequestType::RemoveTombstone: {
-      const auto& rel =
-        static_cast<const RemoveTombstoneRequest&>(*_request).relation;
-      return RemoveTombstone(*_context, rel);
+    case NodeTag::T_CreateStmt: {
+      const auto& stmt = *castNode(CreateStmt, &_node);
+      return CreateTable(*_context, stmt);
+    }
+    case NodeTag::T_IndexStmt: {
+      const auto& stmt = *castNode(IndexStmt, &_node);
+      return CreateIndex(*_context, stmt);
+    }
+    case NodeTag::T_ViewStmt: {
+      const auto& stmt = *castNode(ViewStmt, &_node);
+      return CreateView(*_context, stmt);
+    }
+    case NodeTag::T_DropStmt: {
+      const auto& stmt = *castNode(DropStmt, &_node);
+      return DropObject(*_context, stmt);
+    }
+    case NodeTag::T_TransactionStmt: {
+      const auto& stmt = *castNode(TransactionStmt, &_node);
+      return Transaction(*_context, stmt);
+    }
+    case NodeTag::T_VariableSetStmt: {
+      const auto& stmt = *castNode(VariableSetStmt, &_node);
+      return VariableSet(*_context, stmt);
+    }
+    case NodeTag::T_CreateFunctionStmt: {
+      const auto& stmt = *castNode(CreateFunctionStmt, &_node);
+      return CreateFunction(*_context, stmt);
+    }
+    case NodeTag::T_CreateSchemaStmt: {
+      const auto& stmt = *castNode(CreateSchemaStmt, &_node);
+      return CreateSchema(*_context, stmt);
+    }
+    case NodeTag::T_VacuumStmt: {
+      const auto& stmt = *castNode(VacuumStmt, &_node);
+      return Vacuum(*_context, stmt);
     }
     default:
       SDB_UNREACHABLE();
   }
+}
+
+CTASCreateTableExecutor::CTASCreateTableExecutor(
+  std::shared_ptr<ExecContext> context, const IntoClause& into,
+  bool if_not_exists)
+  : CommandExecutor{std::move(context)},
+    _into{into},
+    _if_not_exists{if_not_exists} {}
+
+yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl() {
+  SDB_ASSERT(_query);
+  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists);
+}
+
+RemoveTombstoneExecutor::RemoveTombstoneExecutor(
+  std::shared_ptr<ExecContext> context, const RangeVar& relation)
+  : CommandExecutor{std::move(context)}, _relation{relation} {}
+
+yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl() {
+  return RemoveTombstone(*_context, _relation);
 }
 
 }  // namespace sdb::pg

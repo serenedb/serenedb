@@ -117,11 +117,11 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
   return column_expr;
 }
 
-void CommitCreateTable(catalog::LogicalCatalog& catalog,
-                       const catalog::Database& database, ObjectId db,
-                       std::string_view schema, std::string_view table_name,
-                       catalog::CreateTableRequest request, bool if_not_exists,
-                       catalog::CreateTableOperationOptions operation_options) {
+void CreateTableImpl(catalog::LogicalCatalog& catalog,
+                     const catalog::Database& database, ObjectId db,
+                     std::string_view schema, std::string_view table_name,
+                     catalog::CreateTableRequest request, bool if_not_exists,
+                     catalog::CreateTableOperationOptions operation_options) {
   catalog::CreateTableOptions options;
   auto r = MakeTableOptions(std::move(request), database.GetId(), options,
                             database.GetReplicationFactor(),
@@ -450,8 +450,8 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
     request.type = std::to_underlying(TableType::File);
   }
 
-  CommitCreateTable(catalog, *database, db, schema, table, std::move(request),
-                    stmt.if_not_exists, {});
+  CreateTableImpl(catalog, *database, db, schema, table, std::move(request),
+                  stmt.if_not_exists, {});
   return {};
 }
 
@@ -490,9 +490,9 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
     columns[i].type = write_node.columnExpressions()[i]->type();
   }
 
-  CommitCreateTable(catalog, *database, db, schema, table_name,
-                    std::move(request), if_not_exists,
-                    {.create_with_tombstone = true});
+  CreateTableImpl(catalog, *database, db, schema, table_name,
+                  std::move(request), if_not_exists,
+                  {.create_with_tombstone = true});
 
   auto snapshot = catalog.GetSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, table_name);

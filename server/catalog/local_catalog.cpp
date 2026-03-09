@@ -1144,6 +1144,14 @@ Result LocalCatalog::CreateTable(
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+
+      if (operation_options.create_with_tombstone) {
+        r = _engine->WriteTombstone(*schema_id, table->GetId());
+        if (!r.ok()) {
+          return r;
+        }
+      }
+
       vpack::Builder b;
       b.openObject();
       table->WriteInternal(b);
@@ -1161,13 +1169,6 @@ Result LocalCatalog::CreateTable(
       r = _engine->CreateDefinition(
         shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
         [&](bool) -> vpack::Slice { return b.slice(); });
-      if (!r.ok()) {
-        return r;
-      }
-
-      if (operation_options.create_with_tombstone) {
-        r = _engine->WriteTombstone(*schema_id, table->GetId());
-      }
       return r;
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });

@@ -67,10 +67,9 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   }
   SDB_ASSERT(into);
 
-  auto create_table = std::make_unique<CommandExecutor>(
-    connection_ctx,
-    std::make_unique<CTASCreateTableRequest>(*into, if_not_exists));
-  auto rollback = [connection_ctx, into]() noexcept {
+  auto create_table = std::make_unique<CTASCreateTableExecutor>(
+    connection_ctx, *into, if_not_exists);
+  auto rollback = [connection_ctx, into] noexcept {
     auto db = connection_ctx->GetDatabaseId();
     const auto& rel = *into->rel;
     std::string current_schema = connection_ctx->GetCurrentSchema();
@@ -83,12 +82,11 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   };
   auto velox_exec =
     std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
-  auto remove_tombstone = std::make_unique<CommandExecutor>(
-    connection_ctx, std::make_unique<RemoveTombstoneRequest>(*into->rel));
+  auto remove_tombstone =
+    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, *into->rel);
 
-  static constexpr size_t kPipelineSize = 3;
   std::vector<std::unique_ptr<query::Executor>> executors;
-  executors.reserve(kPipelineSize);
+  executors.reserve(3);
   executors.emplace_back(std::move(create_table));
   executors.emplace_back(std::move(velox_exec));
   executors.emplace_back(std::move(remove_tombstone));
@@ -164,8 +162,8 @@ bool SqlStatement::ProcessNextRoot(
 
   if (query_desc.pgsql_node) {
     SDB_ASSERT(query_desc.pgsql_node);
-    auto executor = std::make_unique<CommandExecutor>(
-      connection_ctx, std::make_unique<DDLRequest>(*query_desc.pgsql_node));
+    auto executor =
+      std::make_unique<DDLExecutor>(connection_ctx, *query_desc.pgsql_node);
     query = query::Query::CreateDDL(std::move(executor), query_ctx);
     return true;
   }

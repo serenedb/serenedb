@@ -95,7 +95,6 @@ velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
   }
 
   return _query->BuildBatch({data});
-  ;
 }
 
 }  // namespace sdb::query

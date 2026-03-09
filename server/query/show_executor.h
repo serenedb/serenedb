@@ -26,24 +26,24 @@ namespace sdb::query {
 
 class ShowExecutor final : public Executor {
  public:
-  void Init(Query& query) final;
+  void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }
 
  private:
-  velox::RowVectorPtr _result;
+  Query* _query = nullptr;
 };
 
 class ShowAllExecutor final : public Executor {
  public:
-  void Init(Query& query) final;
+  void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }
 
  private:
-  velox::RowVectorPtr _result;
+  Query* _query = nullptr;
 };
 
 }  // namespace sdb::query

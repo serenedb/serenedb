@@ -194,12 +194,7 @@ void ResolveRelation(ObjectId database,
   ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
                             data, config);
 
-  if (!data.object) {
-    SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
-              name.FullName(), "\" does not exist");
-  }
-
-  if (data.object->Tombstoned()) {
+  if (!data.object || data.object->Tombstoned()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_TABLE),
       ERR_MSG("relation \"", name.FullName(), "\" does not exist"));

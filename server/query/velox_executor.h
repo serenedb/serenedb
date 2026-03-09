@@ -33,9 +33,7 @@ class VeloxExecutor : public Executor {
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
   yaclib::Future<> RequestCancel() final;
 
-  decltype(auto) IgnoreOutput(this auto&& self) noexcept {
-    return (self._ignore_output);
-  }
+  auto& IgnoreOutput(this auto& self) noexcept { return self._ignore_output; }
 
  protected:
   Query* _query = nullptr;

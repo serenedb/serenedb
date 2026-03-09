@@ -83,6 +83,7 @@ std::unique_ptr<Query> Query::CreateQuery(
   const bool has_explain = query_ctx.command_type.Has(CommandType::Explain);
 
   std::vector<std::unique_ptr<Executor>> executors;
+  executors.reserve(2);
   if (has_query) {
     auto velox = std::make_unique<VeloxExecutor>();
     velox->IgnoreOutput() = has_explain;
@@ -100,9 +101,7 @@ std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<Executor> executor,
                                         const QueryContext& query_ctx) {
   auto query =
     std::unique_ptr<Query>(new Query{velox::RowTypePtr{}, query_ctx});
-  std::vector<std::unique_ptr<Executor>> executors;
-  executors.emplace_back(std::move(executor));
-  query->SetExecutors(std::move(executors));
+  query->SetExecutor(std::move(executor));
   return query;
 }
 
@@ -112,9 +111,7 @@ std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
     velox::ROW({std::string{show_variable}}, {velox::VARCHAR()}),
     query_ctx,
   });
-  std::vector<std::unique_ptr<Executor>> executors;
-  executors.emplace_back(std::make_unique<ShowExecutor>());
-  query->SetExecutors(std::move(executors));
+  query->SetExecutor(std::make_unique<ShowExecutor>());
   return query;
 }
 
@@ -124,9 +121,7 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
-  std::vector<std::unique_ptr<Executor>> executors;
-  executors.emplace_back(std::make_unique<ShowAllExecutor>());
-  query->SetExecutors(std::move(executors));
+  query->SetExecutor(std::make_unique<ShowAllExecutor>());
   return query;
 }
 
@@ -153,7 +148,14 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
   SetExecutors(std::move(executors));
 }
 
+void Query::SetExecutor(std::unique_ptr<Executor> executor) {
+  SDB_ASSERT(_executors.empty());
+  _executors.emplace_back(std::move(executor));
+  _executors.back()->Init(*this);
+}
+
 void Query::SetExecutors(std::vector<std::unique_ptr<Executor>> executors) {
+  SDB_ASSERT(_executors.empty());
   _executors = std::move(executors);
   for (auto& executor : _executors) {
     executor->Init(*this);

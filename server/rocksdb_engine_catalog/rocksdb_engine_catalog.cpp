@@ -568,7 +568,10 @@ void RocksDBEngineCatalog::start() {
     std::error_code ec;
     auto bulk_insert_dir =
       std::filesystem::path(_path) / connector::kBulkInsertDirName;
-    std::filesystem::remove_all(bulk_insert_dir, ec);
+    auto removed = std::filesystem::remove_all(bulk_insert_dir, ec);
+    SDB_INFO_IF("xxxxx", Logger::ENGINES, removed != 0 && !ec,
+                "removed bulk insert directory '", bulk_insert_dir.c_str(),
+                "'");
   }
 
   uint64_t total_space;

@@ -398,7 +398,9 @@ class FixedPhraseFrequency {
   }
 
   // returns frequency of the phrase
-  uint32_t EvaluateFreq() { return _phrase_freq.value = NextPosition(); }
+  IRS_FORCE_INLINE uint32_t EvaluateFreq() {
+    return _phrase_freq.value = NextPosition();
+  }
 
   uint32_t GetFreq() const noexcept { return _phrase_freq.value; }
 
@@ -413,7 +415,7 @@ class FixedPhraseFrequency {
     return {&start->start, &end->end};
   }
 
-  uint32_t NextPosition() {
+  IRS_FORCE_INLINE uint32_t NextPosition() {
     if constexpr (HasIntervals) {
       return NextPositionGeneric();
     } else {
@@ -963,8 +965,9 @@ class PhraseIterator : public DocIterator {
   using TermPosition = typename Frequency::TermPosition;
 
   template<typename Adapters>
-  PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos)
-    : _approx{ScoreMergeType::Noop,
+  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
+                 std::vector<TermPosition>&& pos)
+    : _approx{ScoreMergeType::Noop, docs_count,
               [](auto itrs) {
                 absl::c_sort(itrs,
                              [](const auto& lhs, const auto& rhs) noexcept {
@@ -991,10 +994,10 @@ class PhraseIterator : public DocIterator {
   }
 
   template<typename Adapters>
-  PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos,
-                 const FieldProperties& field, const byte_type* stats,
-                 score_t boost)
-    : PhraseIterator{std::forward<Adapters>(itrs), std::move(pos)} {
+  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
+                 std::vector<TermPosition>&& pos, const FieldProperties& field,
+                 const byte_type* stats, score_t boost)
+    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos)} {
     _stats = stats;
     _boost = boost;
     _field = field;

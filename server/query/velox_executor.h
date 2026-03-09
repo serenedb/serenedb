@@ -28,10 +28,10 @@ namespace sdb::query {
 
 class VeloxExecutor : public Executor {
  public:
-  void Init(Query& query) override;
+  void Init(Query& query) final;
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
-  yaclib::Future<> RequestCancel() override;
+  yaclib::Future<> RequestCancel() final;
 
   decltype(auto) IgnoreOutput(this auto&& self) noexcept {
     return (self._ignore_output);

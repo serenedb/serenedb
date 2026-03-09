@@ -32,10 +32,6 @@
 
 namespace sdb::query {
 
-ExplainExecutor::ExplainExecutor(VeloxExecutor* velox) : _velox{velox} {}
-
-void ExplainExecutor::Init(Query& query) { _query = &query; }
-
 yaclib::Future<> ExplainExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_query) {  // was fired ?
     return {};

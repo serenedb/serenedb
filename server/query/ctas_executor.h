@@ -37,11 +37,11 @@ namespace sdb::query {
 class Query;
 class Transaction;
 
-class CTASCommand {
+class CTASState {
  public:
-  CTASCommand(const ExecContext& context, Transaction& transaction,
-              axiom::logical_plan::TableWriteNode& write,
-              const IntoClause& into, bool if_not_exists)
+  CTASState(const ExecContext& context, Transaction& transaction,
+            axiom::logical_plan::TableWriteNode& write, const IntoClause& into,
+            bool if_not_exists)
     : _context{context},
       _transaction{transaction},
       _write{write},
@@ -66,31 +66,30 @@ class CTASCommand {
 
 class CreateTableExecutor final : public Executor {
  public:
-  explicit CreateTableExecutor(std::unique_ptr<CTASCommand> ctas_command);
+  explicit CreateTableExecutor(std::shared_ptr<CTASState> ctas_state)
+    : _ctas_state{std::move(ctas_state)} {}
 
   void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final { return {}; }
 
-  CTASCommand& GetCommand() { return *_ctas_command; }
-
  private:
-  std::unique_ptr<CTASCommand> _ctas_command;
+  std::shared_ptr<CTASState> _ctas_state;
   Query* _query = nullptr;
-  bool _fired = false;
 };
 
 class CTASVeloxExecutor final : public VeloxExecutor {
  public:
-  explicit CTASVeloxExecutor(CTASCommand& ctas_command);
+  explicit CTASVeloxExecutor(std::shared_ptr<CTASState> ctas_state)
+    : _ctas_state{std::move(ctas_state)} {}
 
   void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
-  CTASCommand& _ctas_command;
+  std::shared_ptr<CTASState> _ctas_state;
 };
 
 }  // namespace sdb::query

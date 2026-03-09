@@ -1545,13 +1545,16 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   if (!table_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  auto r =
+    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
   auto object = _snapshot->GetObject(*table_id);
   if (object) {
     auto& schema_obj = basics::downCast<SchemaObject>(*object);
     schema_obj.SetTombstoned(false);
   }
-  return _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone,
-                                 *table_id);
+
+  return r;
 }
 
 Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,

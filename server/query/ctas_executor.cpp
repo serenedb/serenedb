@@ -20,6 +20,8 @@
 
 #include "query/ctas_executor.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
@@ -45,7 +47,7 @@
 
 namespace sdb::query {
 
-yaclib::Future<> CTASCommand::CreateTable() {
+yaclib::Future<> CTASState::CreateTable() {
   _db = _context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -108,25 +110,19 @@ yaclib::Future<> CTASCommand::CreateTable() {
   return {};
 }
 
-void CTASCommand::Rollback() {
+void CTASState::Rollback() {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   std::ignore = catalog.DropTable(_db, _schema, _table_name);
 }
 
-CreateTableExecutor::CreateTableExecutor(
-  std::unique_ptr<CTASCommand> ctas_command)
-  : _ctas_command{std::move(ctas_command)} {}
-
 yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
-  SDB_ASSERT(_query);
-  SDB_ASSERT(_ctas_command);
-
-  if (std::exchange(_fired, true)) {
+  if (!_ctas_state) {  // was fired?
     return {};
   }
 
-  auto f = _ctas_command->CreateTable();
+  auto f = _ctas_state->CreateTable();
+  _ctas_state.reset();  // set fired
   if (f.Valid()) {
     return std::move(f).ThenInline([this] { _query->CompileQuery(); });
   }
@@ -135,20 +131,15 @@ yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
   return {};
 }
 
-CTASVeloxExecutor::CTASVeloxExecutor(CTASCommand& ctas_command)
-  : _ctas_command{ctas_command} {}
-
 yaclib::Future<> CTASVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
   SDB_ASSERT(_query);
   if (!_runner) {
     _runner = _query->MakeRunner();
   }
-  try {
-    return VeloxExecutor::Execute(batch);
-  } catch (...) {
-    _ctas_command.Rollback();
-    throw;
-  }
+  absl::Cleanup rollback = [&]() noexcept { _ctas_state->Rollback(); };
+  auto f = VeloxExecutor::Execute(batch);
+  std::move(rollback).Cancel();
+  return f;
 }
 
 }  // namespace sdb::query

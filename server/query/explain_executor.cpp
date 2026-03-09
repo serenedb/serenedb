@@ -27,7 +27,6 @@
 #include "basics/assert.h"
 #include "basics/string_utils.h"
 #include "query/query.h"
-#include "query/velox_executor.h"
 #include "utils.h"
 
 namespace sdb::query {
@@ -88,9 +87,8 @@ void ExplainExecutor::BuildExplainBatch() {
 
   if (query_ctx.explain_params.Has(ExplainWith::Execution)) {
     if (query_ctx.explain_params.Has(ExplainWith::Stats)) {
-      SDB_ASSERT(_velox);
       data.emplace_back("EXECUTION PLAN WITH STATS:");
-      process_plan(_velox->GetRunner().PrintPlanWithStats());
+      process_plan(_query->GetRunner().PrintPlanWithStats());
     } else {
       data.emplace_back("EXECUTION PLAN:");
       process_plan(_query->GetExecutionPlan());

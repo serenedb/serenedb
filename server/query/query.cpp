@@ -83,15 +83,13 @@ std::unique_ptr<Query> Query::CreateQuery(
   const bool has_explain = query_ctx.command_type.Has(CommandType::Explain);
 
   std::vector<std::unique_ptr<Executor>> executors;
-  VeloxExecutor* velox_ptr = nullptr;
   if (has_query) {
     auto velox = std::make_unique<VeloxExecutor>();
     velox->IgnoreOutput() = has_explain;
-    velox_ptr = velox.get();
     executors.emplace_back(std::move(velox));
   }
   if (has_explain) {
-    executors.emplace_back(std::make_unique<ExplainExecutor>(velox_ptr));
+    executors.emplace_back(std::make_unique<ExplainExecutor>());
   }
 
   query->SetExecutors(std::move(executors));
@@ -328,12 +326,12 @@ std::unique_ptr<Cursor> Query::MakeCursor(std::function<void()>&& user_task) {
   return ptr;
 }
 
-Runner Query::MakeRunner() const {
-  return Runner{_execution_plan, std::move(_finish_write),
-                _query_ctx.velox_query_ctx,
-                std::make_shared<axiom::runner::ConnectorSplitSourceFactory>(
-                  axiom::connector::SplitOptions{}),
-                _query_ctx.query_memory_pool};
+void Query::MakeRunner() {
+  _runner = Runner{_execution_plan, std::move(_finish_write),
+                   _query_ctx.velox_query_ctx,
+                   std::make_shared<axiom::runner::ConnectorSplitSourceFactory>(
+                     axiom::connector::SplitOptions{}),
+                   _query_ctx.query_memory_pool};
 }
 
 template<typename StringType>

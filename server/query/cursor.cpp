@@ -56,7 +56,10 @@ Cursor::Cursor(std::function<void()>&& user_task, Query& query)
 
 Cursor::~Cursor() {
   if (_current < _executors.size()) {
-    std::ignore = _executors[_current]->RequestCancel().Get();
+    auto f = _executors[_current]->RequestCancel();
+    if (f.Valid()) {
+      std::ignore = std::move(f).Get();
+    }
   }
   // TODO: it doesn't look as correct place to do this
   if (!_query.GetContext().transaction->HasTransactionBegin()) {

@@ -20,6 +20,8 @@
 
 #include "query/velox_executor.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
@@ -29,23 +31,38 @@ namespace sdb::query {
 
 void VeloxExecutor::Init(Query& query) {
   _query = &query;
-  _runner = query.MakeRunner();
+  SDB_ASSERT(!query.GetRunner());
+  // if the query is not compiled we expect that preceding executor will do it
+  if (query.IsCompiled()) {
+    query.MakeRunner();
+  }
 }
 
 yaclib::Future<> VeloxExecutor::Execute(velox::RowVectorPtr& batch) {
-  SDB_ASSERT(_runner);
+  auto& runner = _query->GetRunner();
+  SDB_ASSERT(runner);
   yaclib::Future<> wait;
-  batch = _runner.Next(wait);
+  batch = runner.Next(wait);
   if (wait.Valid()) {
     SDB_ASSERT(!batch);
     return wait;
+  }
+  if (_ignore_output) {
+    batch = nullptr;
   }
   return {};
 }
 
 yaclib::Future<> VeloxExecutor::RequestCancel() {
-  _runner.RequestCancel();
+  _query->GetRunner().RequestCancel();
   return {};
+}
+
+yaclib::Future<> RollbackVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
+  absl::Cleanup rollback = [&]() noexcept { _on_error(); };
+  auto f = VeloxExecutor::Execute(batch);
+  std::move(rollback).Cancel();
+  return f;
 }
 
 }  // namespace sdb::query

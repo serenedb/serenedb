@@ -36,13 +36,6 @@ class Executor {
   virtual yaclib::Future<> Execute(velox::RowVectorPtr& batch) = 0;
   virtual yaclib::Future<> RequestCancel() = 0;
   virtual ~Executor() = default;
-
-  decltype(auto) IgnoreOutput(this auto&& self) noexcept {
-    return (self._ignore_output);
-  }
-
- protected:
-  [[maybe_unused]] bool _ignore_output = false;
 };
 
 }  // namespace sdb::query

@@ -503,6 +503,7 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
   axiom_table->BulkInsert() = true;
   write_node.setTable(std::move(axiom_table));
   query.CompileQuery();
+  query.MakeRunner();
 
   return {};
 }

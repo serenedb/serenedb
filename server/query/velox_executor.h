@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <functional>
+
 #include "query/executor.h"
-#include "query/runner.h"
 
 namespace sdb::query {
 
@@ -32,11 +33,26 @@ class VeloxExecutor : public Executor {
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
   yaclib::Future<> RequestCancel() override;
 
-  Runner& GetRunner() { return _runner; }
+  decltype(auto) IgnoreOutput(this auto&& self) noexcept {
+    return (self._ignore_output);
+  }
 
  protected:
   Query* _query = nullptr;
-  Runner _runner;
+
+ private:
+  bool _ignore_output = false;
+};
+
+class RollbackVeloxExecutor final : public VeloxExecutor {
+ public:
+  explicit RollbackVeloxExecutor(std::function<void()> on_error)
+    : _on_error{std::move(on_error)} {}
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+
+ private:
+  std::function<void()> _on_error;
 };
 
 }  // namespace sdb::query

@@ -3,7 +3,6 @@ target_sources(
     PRIVATE
         query.cpp
         cursor.cpp
-        ctas_executor.cpp
         explain_executor.cpp
         show_executor.cpp
         velox_executor.cpp

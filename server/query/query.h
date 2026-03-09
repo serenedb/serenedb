@@ -78,6 +78,8 @@ class Query {
            _logical_plan->is(axiom::logical_plan::NodeKind::kTableWrite);
   }
 
+  bool IsCompiled() const { return _execution_plan != nullptr; }
+
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
@@ -86,7 +88,8 @@ class Query {
 
   std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task);
 
-  Runner MakeRunner() const;
+  void MakeRunner();
+  Runner& GetRunner() { return _runner; }
 
   velox::RowVectorPtr BuildBatch(
     std::span<const std::vector<std::string>> columns) const;
@@ -119,6 +122,7 @@ class Query {
   velox::RowTypePtr _output_type;
   std::vector<std::unique_ptr<Executor>> _executors;
 
+  Runner _runner;
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;
   std::string _physical_plan;

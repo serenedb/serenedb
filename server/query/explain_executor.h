@@ -26,12 +26,8 @@
 
 namespace sdb::query {
 
-class VeloxExecutor;
-
 class ExplainExecutor final : public Executor {
  public:
-  explicit ExplainExecutor(VeloxExecutor* velox = nullptr) : _velox{velox} {}
-
   void Init(Query& query) final { _query = &query; }
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
@@ -40,7 +36,6 @@ class ExplainExecutor final : public Executor {
  private:
   void BuildExplainBatch();
 
-  VeloxExecutor* _velox = nullptr;
   Query* _query = nullptr;
   velox::RowVectorPtr _result;
 };

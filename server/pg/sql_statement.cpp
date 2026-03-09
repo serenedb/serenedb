@@ -23,7 +23,9 @@
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/logger/logger.h"
+#include "catalog/catalog.h"
 #include "general_server/state.h"
 #include "pg/command_executor.h"
 #include "pg/pg_feature.h"
@@ -33,7 +35,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_resolver.h"
 #include "pg/sql_statement.h"
-#include "query/ctas_executor.h"
+#include "query/velox_executor.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -68,8 +70,19 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   auto create_table = std::make_unique<CommandExecutor>(
     connection_ctx,
     std::make_unique<CTASCreateTableRequest>(*into, if_not_exists));
-  auto velox_exec = std::make_unique<query::CTASVeloxExecutor>(
-    static_cast<const ExecContext&>(*connection_ctx), *into);
+  auto rollback = [connection_ctx, into]() noexcept {
+    auto db = connection_ctx->GetDatabaseId();
+    const auto& rel = *into->rel;
+    std::string current_schema = connection_ctx->GetCurrentSchema();
+    const std::string_view schema =
+      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+    SDB_ASSERT(!schema.empty());
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    std::ignore = catalog.DropTable(db, schema, into->rel->relname);
+  };
+  auto velox_exec =
+    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
   auto remove_tombstone = std::make_unique<CommandExecutor>(
     connection_ctx, std::make_unique<RemoveTombstoneRequest>(*into->rel));
 
@@ -79,6 +92,8 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   executors.emplace_back(std::move(create_table));
   executors.emplace_back(std::move(velox_exec));
   executors.emplace_back(std::move(remove_tombstone));
+
+  query_ctx.command_type.Add(query::CommandType::Query);
 
   return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
                                           std::move(executors));

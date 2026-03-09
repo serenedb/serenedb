@@ -20,17 +20,43 @@
 
 #pragma once
 
+#include <memory>
+
 #include "query/executor.h"
 #include "utils/exec_context.h"
 
 struct Node;
+struct RangeVar;
 
 namespace sdb::pg {
+
+enum class CommandRequestType { DDL, RemoveTombstone };
+
+struct CommandExecutorRequest {
+  CommandRequestType type;
+  virtual ~CommandExecutorRequest() = default;
+
+ protected:
+  explicit CommandExecutorRequest(CommandRequestType type) : type{type} {}
+};
+
+struct DDLRequest final : CommandExecutorRequest {
+  const Node& node;
+  explicit DDLRequest(const Node& node)
+    : CommandExecutorRequest{CommandRequestType::DDL}, node{node} {}
+};
+
+struct RemoveTombstoneRequest final : CommandExecutorRequest {
+  const RangeVar& relation;
+  explicit RemoveTombstoneRequest(const RangeVar& relation)
+    : CommandExecutorRequest{CommandRequestType::RemoveTombstone},
+      relation{relation} {}
+};
 
 class CommandExecutor final : public query::Executor {
  public:
   explicit CommandExecutor(std::shared_ptr<ExecContext> context,
-                           const Node& node);
+                           std::unique_ptr<CommandExecutorRequest> request);
 
   void Init(query::Query&) final {}
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
@@ -41,7 +67,7 @@ class CommandExecutor final : public query::Executor {
 
   bool _fired = false;
   std::shared_ptr<ExecContext> _context;
-  const Node& _node;
+  std::unique_ptr<CommandExecutorRequest> _request;
 };
 
 }  // namespace sdb::pg

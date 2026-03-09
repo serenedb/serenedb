@@ -3,7 +3,7 @@ add_subdirectory(functions)
 target_sources(
     sereneserver
     PRIVATE
-        executor.cpp
+        command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
         sql_statement.cpp

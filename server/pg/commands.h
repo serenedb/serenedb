@@ -61,6 +61,8 @@ yaclib::Future<> CreateFunction(ExecContext& ctx,
 std::shared_ptr<catalog::Function> CreateSystemFunction(
   const CreateFunctionStmt& stmt);
 
+yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
+
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 }  // namespace sdb::pg

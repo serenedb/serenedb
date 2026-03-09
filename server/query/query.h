@@ -90,12 +90,12 @@ class Query {
   velox::RowVectorPtr BuildBatch(
     std::span<const std::vector<std::string_view>> columns) const;
 
+  void CompileQuery();
+
  private:
   template<typename StringType>
   velox::RowVectorPtr BuildBatchImpl(
     std::span<const std::vector<StringType>> columns) const;
-
-  void CompileQuery();
 
   // use for CreateQuery
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,

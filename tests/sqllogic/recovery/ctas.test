@@ -3,7 +3,7 @@ control substitution on
 # crash before tombstone removal, table should be gone
 
 statement ok
-SET sdb_fault_crash_ctas_before_remove_tombstone TO DEFAULT;
+SET sdb_fault_crash_before_remove_tombstone TO DEFAULT;
 
 statement error connection closed
 CREATE TABLE vedernikoff AS
@@ -75,7 +75,7 @@ DROP TABLE vedernikoff;
 
 connection ctas_final
 statement ok
-SET sdb_fault_crash_ctas_before_remove_tombstone TO DEFAULT;
+SET sdb_fault_crash_before_remove_tombstone TO DEFAULT;
 
 connection ctas_final
 statement error connection closed

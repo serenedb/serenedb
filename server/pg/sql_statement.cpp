@@ -26,7 +26,6 @@
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
 #include "pg/command_executor.h"
-#include "pg/commands/ctas.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
@@ -44,6 +43,58 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
+namespace {
+
+std::unique_ptr<query::Query> CreateCTASPipeline(
+  const VeloxQuery& query_desc, query::QueryContext& query_ctx,
+  const std::shared_ptr<ConnectionContext>& connection_ctx) {
+  SDB_ASSERT(query_desc.pgsql_node);
+  SDB_ASSERT(query_desc.root);
+  SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+
+  const IntoClause* into = nullptr;
+  bool if_not_exists = false;
+  if (nodeTag(query_desc.pgsql_node) == T_CreateTableAsStmt) {
+    const auto& ctas_stmt = *castNode(CreateTableAsStmt, query_desc.pgsql_node);
+    into = ctas_stmt.into;
+    if_not_exists = ctas_stmt.if_not_exists;
+  } else {
+    SDB_ASSERT(nodeTag(query_desc.pgsql_node) == T_SelectStmt);
+    const auto& select_stmt = *castNode(SelectStmt, query_desc.pgsql_node);
+    into = select_stmt.intoClause;
+  }
+  SDB_ASSERT(into);
+
+  auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
+    basics::downCast<const axiom::logical_plan::TableWriteNode>(
+      *query_desc.root));
+
+  auto ctas_cmd = std::make_unique<query::CTASCommand>(
+    static_cast<const ExecContext&>(*connection_ctx),
+    static_cast<query::Transaction&>(*connection_ctx), write_node, *into,
+    if_not_exists);
+
+  query_ctx.command_type.Add(query::CommandType::CTAS);
+
+  auto create_table =
+    std::make_unique<query::CreateTableExecutor>(std::move(ctas_cmd));
+  auto& cmd = create_table->GetCommand();
+  auto velox_exec = std::make_unique<query::CTASVeloxExecutor>(cmd);
+  auto remove_tombstone = std::make_unique<CommandExecutor>(
+    connection_ctx, std::make_unique<RemoveTombstoneRequest>(*into->rel));
+
+  static constexpr size_t kPipelineSize = 3;
+  std::vector<std::unique_ptr<query::Executor>> executors;
+  executors.reserve(kPipelineSize);
+  executors.emplace_back(std::move(create_table));
+  executors.emplace_back(std::move(velox_exec));
+  executors.emplace_back(std::move(remove_tombstone));
+
+  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
+                                          std::move(executors));
+}
+
+}  // namespace
 
 void* SqlTree::GetRoot() const { return list_nth(list, root_idx - 1); }
 
@@ -103,56 +154,14 @@ bool SqlStatement::ProcessNextRoot(
   }
 
   if (query_desc.type == pg::SqlCommandType::CTAS) {
-    SDB_ASSERT(query_desc.pgsql_node);
-    SDB_ASSERT(query_desc.root);
-    SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
-
-    const IntoClause* into = nullptr;
-    bool if_not_exists = false;
-    if (nodeTag(query_desc.pgsql_node) == T_CreateTableAsStmt) {
-      const auto& ctas_stmt =
-        *castNode(CreateTableAsStmt, query_desc.pgsql_node);
-      into = ctas_stmt.into;
-      if_not_exists = ctas_stmt.if_not_exists;
-    } else {
-      SDB_ASSERT(nodeTag(query_desc.pgsql_node) == T_SelectStmt);
-      const auto& select_stmt = *castNode(SelectStmt, query_desc.pgsql_node);
-      into = select_stmt.intoClause;
-    }
-    SDB_ASSERT(into);
-
-    auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
-      basics::downCast<const axiom::logical_plan::TableWriteNode>(
-        *query_desc.root));
-
-    auto ctas_cmd = std::make_unique<CTASCommand>(
-      static_cast<const ExecContext&>(*connection_ctx),
-      static_cast<query::Transaction&>(*connection_ctx), write_node, *into,
-      if_not_exists);
-
-    query_ctx.command_type.Add(query::CommandType::CTAS);
-
-    auto create_table =
-      std::make_unique<query::CreateTableExecutor>(std::move(ctas_cmd));
-    auto& cmd = create_table->GetCommand();
-    auto velox_exec = std::make_unique<query::CTASVeloxExecutor>(cmd);
-    auto remove_tombstone =
-      std::make_unique<query::RemoveTombstoneExecutor>(cmd);
-
-    std::vector<std::unique_ptr<query::Executor>> executors;
-    executors.push_back(std::move(create_table));
-    executors.push_back(std::move(velox_exec));
-    executors.push_back(std::move(remove_tombstone));
-
-    query = query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                             std::move(executors));
+    query = CreateCTASPipeline(query_desc, query_ctx, connection_ctx);
     return true;
   }
 
   if (query_desc.pgsql_node) {
     SDB_ASSERT(query_desc.pgsql_node);
-    auto executor =
-      std::make_unique<CommandExecutor>(connection_ctx, *query_desc.pgsql_node);
+    auto executor = std::make_unique<CommandExecutor>(
+      connection_ctx, std::make_unique<DDLRequest>(*query_desc.pgsql_node));
     query = query::Query::CreateDDL(std::move(executor), query_ctx);
     return true;
   }

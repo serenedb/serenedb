@@ -41,9 +41,7 @@ yaclib::Future<> RemoveTombstone(ExecContext& context, const RangeVar& rel) {
                     ERR_MSG("no schema has been selected to create in"));
   }
 
-  SDB_IF_FAILURE("crash_before_remove_tombstone") {
-    SDB_IMMEDIATE_ABORT();
-  }
+  SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

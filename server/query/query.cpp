@@ -79,23 +79,22 @@ std::unique_ptr<Query> Query::CreateQuery(
   const QueryContext& query_ctx) {
   std::unique_ptr<Query> query{new Query{root, query_ctx}};
 
-  if (query_ctx.command_type.Has(CommandType::Query)) {
+  const bool has_query = query_ctx.command_type.Has(CommandType::Query);
+  const bool has_explain = query_ctx.command_type.Has(CommandType::Explain);
+
+  std::vector<std::unique_ptr<Executor>> executors;
+  VeloxExecutor* velox_ptr = nullptr;
+  if (has_query) {
     auto velox = std::make_unique<VeloxExecutor>();
-    if (query_ctx.command_type.Has(CommandType::Explain)) {
-      velox->IgnoreOutput() = true;
-      auto explain = std::make_unique<ExplainExecutor>(velox.get());
-      query->_executors.emplace_back(std::move(velox));
-      query->_executors.emplace_back(std::move(explain));
-    } else {
-      query->_executors.emplace_back(std::move(velox));
-    }
-  } else if (query_ctx.command_type.Has(CommandType::Explain)) {
-    query->_executors.emplace_back(std::make_unique<ExplainExecutor>());
+    velox->IgnoreOutput() = has_explain;
+    velox_ptr = velox.get();
+    executors.emplace_back(std::move(velox));
+  }
+  if (has_explain) {
+    executors.emplace_back(std::make_unique<ExplainExecutor>(velox_ptr));
   }
 
-  for (auto& executor : query->_executors) {
-    executor->Init(*query);
-  }
+  query->SetExecutors(std::move(executors));
   return query;
 }
 
@@ -103,8 +102,9 @@ std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<Executor> executor,
                                         const QueryContext& query_ctx) {
   auto query =
     std::unique_ptr<Query>(new Query{velox::RowTypePtr{}, query_ctx});
-  query->_executors.emplace_back(std::move(executor));
-  query->_executors.back()->Init(*query);
+  std::vector<std::unique_ptr<Executor>> executors;
+  executors.emplace_back(std::move(executor));
+  query->SetExecutors(std::move(executors));
   return query;
 }
 
@@ -114,8 +114,9 @@ std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
     velox::ROW({std::string{show_variable}}, {velox::VARCHAR()}),
     query_ctx,
   });
-  query->_executors.emplace_back(std::make_unique<ShowExecutor>());
-  query->_executors.back()->Init(*query);
+  std::vector<std::unique_ptr<Executor>> executors;
+  executors.emplace_back(std::make_unique<ShowExecutor>());
+  query->SetExecutors(std::move(executors));
   return query;
 }
 
@@ -125,8 +126,9 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
-  query->_executors.emplace_back(std::make_unique<ShowAllExecutor>());
-  query->_executors.back()->Init(*query);
+  std::vector<std::unique_ptr<Executor>> executors;
+  executors.emplace_back(std::make_unique<ShowAllExecutor>());
+  query->SetExecutors(std::move(executors));
   return query;
 }
 
@@ -149,8 +151,12 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              std::vector<std::unique_ptr<Executor>> executors)
   : _query_ctx{query_ctx},
     _logical_plan{root},
-    _output_type{root->outputType()},
-    _executors{std::move(executors)} {
+    _output_type{root->outputType()} {
+  SetExecutors(std::move(executors));
+}
+
+void Query::SetExecutors(std::vector<std::unique_ptr<Executor>> executors) {
+  _executors = std::move(executors);
   for (auto& executor : _executors) {
     executor->Init(*this);
   }

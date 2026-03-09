@@ -127,10 +127,10 @@ yaclib::Future<> CreateTableExecutor::Execute(velox::RowVectorPtr& batch) {
   }
 
   auto f = _ctas_command->CreateTable();
-  if (!f.Ready()) {
+  if (f.Valid()) {
     return std::move(f).ThenInline([this] { _query->CompileQuery(); });
   }
-  std::ignore = std::move(f).Touch().Ok();
+
   _query->CompileQuery();
   return {};
 }

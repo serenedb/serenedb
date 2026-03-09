@@ -1548,6 +1548,8 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   auto r =
     _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
 
+  // Unlike most catalog operations that clone the snapshot, here we modify the
+  // object in-place because the tombstone flag is simple in-memory state.
   auto object = _snapshot->GetObject(*table_id);
   if (object) {
     auto& schema_obj = basics::downCast<SchemaObject>(*object);

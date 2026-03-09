@@ -100,7 +100,8 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, std::vector<catalog::Column::Id> column_oids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  const rocksdb::Snapshot* snapshot, velox::core::TypedExprPtr remaining_filter,
+  size_t output_column_count, const rocksdb::Snapshot* snapshot,
+  velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
@@ -109,7 +110,9 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
     _object_key{object_key},
     _column_ids(std::move(column_oids)),
     _row_type{std::move(row_type)},
-    _effective_column_id(std::move(effective_column_id)) {
+    _effective_column_id(std::move(effective_column_id)),
+    _output_column_count{output_column_count ? output_column_count
+                                             : _row_type->size()} {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
@@ -163,7 +166,7 @@ RocksDBRYOWFullScanDataSource::RocksDBRYOWFullScanDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  velox::core::TypedExprPtr remaining_filter,
+  size_t output_column_count, velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : RocksDBFullScanDataSource{memory_pool,
                               cf,
@@ -171,6 +174,7 @@ RocksDBRYOWFullScanDataSource::RocksDBRYOWFullScanDataSource(
                               std::move(column_ids),
                               effective_column_id,
                               object_key,
+                              output_column_count,
                               transaction.GetSnapshot(),
                               std::move(remaining_filter),
                               evaluator},
@@ -181,7 +185,8 @@ RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  const rocksdb::Snapshot* snapshot, velox::core::TypedExprPtr remaining_filter,
+  size_t output_column_count, const rocksdb::Snapshot* snapshot,
+  velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : RocksDBFullScanDataSource{memory_pool,
                               cf,
@@ -189,6 +194,7 @@ RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
                               std::move(column_ids),
                               effective_column_id,
                               object_key,
+                              output_column_count,
                               snapshot,
                               std::move(remaining_filter),
                               evaluator},
@@ -315,6 +321,24 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
     auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
       &_memory_pool, _row_type, nullptr, columns.front()->size(),
       std::move(columns)));
+
+    // Project out filter-only columns — keep only the first _output_column_count
+    if (batch->childrenSize() > _output_column_count) {
+      auto output_type = velox::ROW(
+        std::vector<std::string>(
+          _row_type->names().begin(),
+          _row_type->names().begin() + _output_column_count),
+        std::vector<velox::TypePtr>(
+          _row_type->children().begin(),
+          _row_type->children().begin() + _output_column_count));
+      std::vector<velox::VectorPtr> output_children(
+        batch->children().begin(),
+        batch->children().begin() + _output_column_count);
+      batch = std::make_shared<velox::RowVector>(
+        &_memory_pool, std::move(output_type), batch->nulls(), batch->size(),
+        std::move(output_children));
+    }
+
     _produced += batch->size();
     return batch;
   }

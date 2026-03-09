@@ -63,6 +63,12 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
 
   _points = TryExtractPoints(_filter.get(), _pk_type);
 
+  for (const auto& [orig_name, col_ptr] : column_map) {
+    const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
+    _table_column_map.emplace(orig_name,
+                              FilterColumn{orig_name, scol->Id(), scol->type()});
+  }
+
   _transaction.AddRocksDBRead();
 }
 
@@ -145,9 +151,6 @@ SereneDBTableLayout::createTableHandle(
 
   const auto& pk_type = basics::downCast<RocksDBTable>(table()).PKType();
   auto filter = ParseFilters(filters, pk_type->names());
-  // TODO(mkornaukhov) it must be just .clear()
-  // rejected_filters = std::move(filters);
-  // rejected_filters.clear();
 
   velox::core::TypedExprPtr remaining_filter;
   if (filters.size() == 1) {

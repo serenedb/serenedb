@@ -58,6 +58,7 @@
 #include "pg/pg_types.h"
 #include "query/config.h"
 #include "query/types.h"
+#include "velox/type/tz/TimeZoneMap.h"
 
 namespace sdb::pg {
 namespace {
@@ -670,14 +671,16 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
                                             size_t dims) {
   if (isUuidType(type)) {
     RETURN_ARRAY_SERIALIZATION(SerializeUuid<VarFormat::Text>,
-                               SerializeUuid<VarFormat::Binary>, 2950);
+                               SerializeUuid<VarFormat::Binary>,
+                               PgTypeOID::kUuidArray);
   }
 
   if (isJsonType(type)) {
     static constexpr auto kSerializeText = SerializeJson<VarFormat::Text, true>;
     static constexpr auto kSerializeBinary =
       SerializeJson<VarFormat::Binary, true>;
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 199);
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kJsonArray);
   }
 
   if (isIPAddressType(type)) {
@@ -709,7 +712,8 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
       SerializeDecimal<VarFormat::Text, int64_t>;
     static constexpr auto kSerializeBinary =
       SerializeDecimal<VarFormat::Binary, int64_t>;
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1231);
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kNumericArray);
   }
 
   if (type->isLongDecimal()) {
@@ -717,7 +721,8 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
       SerializeDecimal<VarFormat::Text, velox::int128_t>;
     static constexpr auto kSerializeBinary =
       SerializeDecimal<VarFormat::Binary, velox::int128_t>;
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1231);
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kNumericArray);
   }
 
   if (type->isIntervalYearMonth()) {
@@ -741,7 +746,8 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
 
   if (type->isDate()) {
     RETURN_ARRAY_SERIALIZATION(SerializeDate<VarFormat::Text>,
-                               SerializeDate<VarFormat::Binary>, 1082);
+                               SerializeDate<VarFormat::Binary>,
+                               PgTypeOID::kDateArray);
   }
 
   switch (type->kind()) {

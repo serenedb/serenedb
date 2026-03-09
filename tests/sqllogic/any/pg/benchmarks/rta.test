@@ -1,0 +1,832 @@
+# is taken from https://github.com/timescale/rtabench/tree/main/postgres/queries
+
+
+statement ok
+CREATE TABLE customers
+(
+    customer_id integer not null,
+    name text,
+    birthday date,
+    email text,
+    address text,
+    city text,
+    zip text,
+    state text,
+    country text,
+    PRIMARY KEY (customer_id)
+);
+
+
+statement ok
+CREATE TABLE products
+(
+    product_id integer not null,
+    name text,
+    description text,
+    category text,
+    price decimal(10,2),
+    stock int,
+    PRIMARY KEY (product_id)
+);
+
+
+statement ok
+CREATE TABLE orders
+(
+    order_id integer not null, -- TODO: serial
+    customer_id integer not null,
+    created_at timestamp not null, -- TODO: timestamptz
+    PRIMARY KEY (order_id)
+);
+
+
+statement ok
+CREATE TABLE order_items
+(
+    order_id integer not null,
+    product_id integer not null,
+    amount integer not null,
+    PRIMARY KEY (order_id, product_id)
+);
+
+
+statement ok
+CREATE TABLE order_events
+(
+    order_id integer not null,
+    counter integer,
+    event_created timestamp not null, -- TODO: timestamptz
+    event_type text not null,
+    satisfaction real not null,
+    processor text not null,
+    backup_processor text,
+    event_payload json -- TODO: jsonb
+);
+
+
+query
+-- 0000_terminal_hourly_stats
+WITH hourly_stats AS (
+  SELECT 
+    date_trunc('hour', event_created) as hour,
+    event_payload->>'terminal' as terminal,
+    count(*) as event_count
+  FROM order_events
+  WHERE 
+    event_created >= '2024-01-01' and event_created < '2024-02-01'
+    AND event_type IN ('Created', 'Departed', 'Delivered')
+  GROUP BY hour, terminal
+)
+SELECT 
+  hour,
+  terminal,
+  event_count,
+  AVG(event_count) OVER (
+    PARTITION BY terminal
+    ORDER BY hour
+    ROWS BETWEEN 3 PRECEDING AND CURRENT ROW
+  ) as moving_avg_events
+FROM hourly_stats
+WHERE terminal IN ('Berlin', 'Hamburg', 'Munich')
+ORDER BY terminal, hour;
+----
+hour	terminal	event_count	moving_avg_events
+
+
+query
+-- 0001_count_orders_from_terminal
+SELECT
+    date_trunc('day', event_created) as day,
+    count(*)
+FROM
+    order_events
+WHERE
+    event_created >= '2024-04-01' and event_created < '2024-05-01'
+    AND event_type = 'Departed'
+    AND event_payload->>'terminal' = 'Berlin'
+GROUP BY
+    day
+ORDER BY count desc, day;
+----
+day	count
+
+
+query
+-- 0002_global_agg
+SELECT
+    max(counter)
+FROM
+    order_events
+WHERE
+    event_created >= '2024-04-20' and event_created < '2024-05-20';
+----
+max
+NULL
+
+
+# TODO
+# query error
+# -- 0003_exists_order_delivered_from_terminal
+# SELECT
+# EXISTS (
+#     SELECT
+#     FROM
+#         order_events
+#     JOIN
+#         "orders" USING (order_id)
+#     WHERE
+#         customer_id = 124
+#         AND event_type='Delivered'
+#         AND event_payload->>'terminal' = 'London'
+#         AND event_created >= '2024-03-01' and event_created < '2024-04-01'
+# );
+----
+db error: ERROR: Exception: VeloxRuntimeError
+Error Source: RUNTIME
+Error Code: INVALID_STATE
+Reason: (0 vs. 0)
+Retriable: False
+Expression: idx < children_.size()
+Function: childAt
+File: /home/ivanovp/projects/serenedb/third_party/velox/velox/type/Type.h
+Line: 1137
+Stack trace:
+# 0  facebook::velox::VeloxException::VeloxException(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, facebook::velox::VeloxException::Type, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 1  facebook::velox::VeloxRuntimeError::VeloxRuntimeError(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 2  void facebook::velox::detail::veloxCheckFail<facebook::velox::VeloxRuntimeError, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&>(facebook::velox::detail::VeloxCheckFailArgs const&, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&)
+# 3  facebook::velox::RowType::childAt(unsigned int) const
+# 4  facebook::axiom::logical_plan::SubqueryExpr::SubqueryExpr(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>)
+# 5  facebook::axiom::logical_plan::SubqueryExpr* std::__2::construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 6  facebook::axiom::logical_plan::SubqueryExpr* std::__2::__construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 7  void std::__2::allocator_traits<std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::construct[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, void, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>&, facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 8  std::__2::__shared_ptr_emplace<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::__shared_ptr_emplace[abi:ne200100]<std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 9  std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::allocate_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr> const&, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 10 std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::make_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 11 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSubLink(sdb::pg::(anonymous namespace)::State&, SubLink const&)
+# 12 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 13 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 14 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)::$_1::operator()(ResTarget const&) const
+# 15 void sdb::VisitNodes<sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)::$_1>(List const*, sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)::$_1&&)
+# 16 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)
+# 17 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessPipeline(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 18 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSelectStmt(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 19 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessStmt(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 20 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessRoot(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 21 sdb::pg::AnalyzeVelox(RawStmt const&, sdb::QueryString const&, sdb::pg::Objects const&, sdb::pg::UniqueIdGenerator&, sdb::query::QueryContext&, sdb::pg::Params&)
+# 22 sdb::pg::SqlStatement::ProcessNextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 23 sdb::pg::SqlStatement::NextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 24 sdb::pg::PgSQLCommTaskBase::RunSimpleQuery(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 25 sdb::pg::PgSQLCommTaskBase::HandleClientPacket(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 26 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0::operator()() const
+# 27 void sdb::pg::PgSQLCommTaskBase::SafeCall<sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0>(sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0&&)
+# 28 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()
+# 29 sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'()::operator()() const
+# 30 void folly::detail::function::call_<sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'(), true, false, void>(folly::detail::function::Data&)
+# 31 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 32 sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0::operator()()
+# 33 void folly::detail::function::call_<sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0, false, false, void>(folly::detail::function::Data&)
+# 34 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 35 folly::ThreadPoolExecutor::runTask(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread> const&, folly::ThreadPoolExecutor::Task&&)
+# 36 folly::CPUThreadPoolExecutor::threadRun(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)
+# 37 decltype(*std::declval<folly::ThreadPoolExecutor*&>().*std::declval<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)>()(std::declval<std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>())) std::__2::__invoke[abi:ne200100]<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&, void>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&)
+# 38 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__apply_functor[abi:ne200100]<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, 0ul, 1ul, std::__2::tuple<>>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>&, std::__2::__tuple_indices<0ul, 1ul>, std::__2::tuple<>&&)
+# 39 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>::operator()[abi:ne200100]<>()
+# 40 void folly::detail::function::call_<std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>, true, false, void>(folly::detail::function::Data&)
+# 41 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 42 folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()::operator()()
+# 43 decltype(std::declval<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>()()) std::__2::__invoke[abi:ne200100]<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()&&)
+# 44 void std::__2::__thread_execute[abi:ne200100]<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>&, std::__2::__tuple_indices<...>)
+# 45 void* std::__2::__thread_proxy[abi:ne200100]<std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>>(void*)
+# 46 *no symbol name available for this frame
+# 47 *no symbol name available for this frame
+
+
+
+# TODO
+# query error db error: ERROR: unsupported JSON operator: @>
+# -- 0004_count_delayed_orders_per_day
+# SELECT date_trunc('day', event_created) as day,
+#        count(*)                            as count
+# FROM order_events
+# WHERE event_created >= '2024-05-01' and event_created < '2024-06-01'
+#   AND event_payload -> 'status' @> '["Delayed", "Priority"]'
+# GROUP BY day
+# ORDER BY count desc, day
+# limit 20;
+
+
+query
+-- 0005_search_events_for_processor
+SELECT * FROM order_events
+WHERE event_created >= '2024-03-01' and event_created < '2024-08-01'
+  AND processor LIKE '%ron%' ORDER BY event_created LIMIT 10;
+----
+order_id	counter	event_created	event_type	satisfaction	processor	backup_processor	event_payload
+
+
+query
+-- 0006_order_events_without_backups
+SELECT * FROM order_events 
+         WHERE backup_processor <> '' ORDER BY event_created LIMIT 10;
+----
+order_id	counter	event_created	event_type	satisfaction	processor	backup_processor	event_payload
+
+
+query
+-- 0007_last_order_event_for_order
+SELECT DISTINCT ON (oe.order_id) oe.order_id, event_created, event_type 
+FROM order_events oe
+JOIN orders ON orders.order_id = oe.order_id
+WHERE orders.order_id = 2344
+ORDER BY
+    order_id ASC,
+    event_created DESC;
+----
+order_id	event_created	event_type
+
+
+# TODO
+# query error db error: ERROR: unsupported JSON operator: @>
+# -- 0008_most_week_delayed_order
+# SELECT order_id, count(*) as count
+# FROM order_events
+# WHERE event_created >= '2024-01-29' and event_created < '2024-02-05'
+#   AND event_payload -> 'status' @> '["Delayed"]'
+# GROUP BY order_id
+# ORDER BY count, order_id desc
+# limit 1;
+
+
+query
+-- 0009_departed_orders_count
+SELECT count(*)
+FROM order_events
+WHERE event_created >= '2024-01-01' and event_created < '2024-02-01'
+  AND event_type = 'Departed' AND order_id = 27;
+----
+count
+0
+
+
+query
+-- 0010_last_event_for_an_order
+SELECT *
+FROM order_events
+WHERE event_created < '2024-09-01'
+  AND order_id = '333'
+ORDER BY event_created DESC
+LIMIT 1;
+----
+order_id	counter	event_created	event_type	satisfaction	processor	backup_processor	event_payload
+
+
+query
+-- 0011_events_for_an_order
+SELECT *
+FROM order_events
+WHERE event_created >= '2024-01-01 00:00:00' and event_created < '2024-01-01 23:55:00'
+  AND order_id = '512'
+ORDER BY event_created;
+----
+order_id	counter	event_created	event_type	satisfaction	processor	backup_processor	event_payload
+
+
+query
+-- 0012_max_satisfaction_for_order_per_day
+SELECT date_trunc('day', event_created) as day,
+       max(satisfaction)
+FROM order_events
+WHERE order_id = 700
+GROUP BY day
+ORDER BY day desc;
+----
+day	max
+
+
+query
+-- 0013_satisfaction_with_without_backup
+SELECT date_trunc('month', event_created) as month,
+       count(*) FILTER (WHERE backup_processor <> '') as count_with_backup,
+       count(*) FILTER (WHERE backup_processor is null) as count_without_backup,
+       avg(satisfaction) FILTER (WHERE backup_processor <> '') as avg_satisfaction_with_backup,
+       avg(satisfaction) FILTER (WHERE backup_processor is null) as avg_satisfaction_without_backup
+FROM order_events
+WHERE order_id = 112
+GROUP BY month
+ORDER BY month desc
+----
+month	count_with_backup	count_without_backup	avg_satisfaction_with_backup	avg_satisfaction_without_backup
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(integer, decimal\(10, 2\)\) does not exist
+# -- 0014_sum_prod_stock_price_per_category
+# SELECT
+#   sum(stock*price),
+#   category
+# FROM
+#     products
+# WHERE
+#     category = 'Electronics'
+# GROUP BY
+#     category;
+
+
+# TODO
+# query error
+# -- 0015_exists_order_delivered_for_customer
+# SELECT
+# EXISTS (
+#     SELECT
+#     FROM
+#         order_events
+#     JOIN
+#         orders USING (order_id)
+#     WHERE
+#         customer_id = 124
+#         AND event_type='Delivered'
+# );
+----
+db error: ERROR: Exception: VeloxRuntimeError
+Error Source: RUNTIME
+Error Code: INVALID_STATE
+Reason: (0 vs. 0)
+Retriable: False
+Expression: idx < children_.size()
+Function: childAt
+File: /home/ivanovp/projects/serenedb/third_party/velox/velox/type/Type.h
+Line: 1137
+Stack trace:
+# 0  facebook::velox::VeloxException::VeloxException(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, facebook::velox::VeloxException::Type, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 1  facebook::velox::VeloxRuntimeError::VeloxRuntimeError(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 2  void facebook::velox::detail::veloxCheckFail<facebook::velox::VeloxRuntimeError, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&>(facebook::velox::detail::VeloxCheckFailArgs const&, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&)
+# 3  facebook::velox::RowType::childAt(unsigned int) const
+# 4  facebook::axiom::logical_plan::SubqueryExpr::SubqueryExpr(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>)
+# 5  facebook::axiom::logical_plan::SubqueryExpr* std::__2::construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 6  facebook::axiom::logical_plan::SubqueryExpr* std::__2::__construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 7  void std::__2::allocator_traits<std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::construct[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, void, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>&, facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 8  std::__2::__shared_ptr_emplace<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::__shared_ptr_emplace[abi:ne200100]<std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 9  std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::allocate_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr> const&, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 10 std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::make_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 11 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSubLink(sdb::pg::(anonymous namespace)::State&, SubLink const&)
+# 12 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 13 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 14 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)::$_1::operator()(ResTarget const&) const
+# 15 void sdb::VisitNodes<sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)::$_1>(List const*, sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)::$_1&&)
+# 16 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessTargetList(sdb::pg::(anonymous namespace)::State&, List const*)
+# 17 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessPipeline(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 18 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSelectStmt(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 19 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessStmt(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 20 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessRoot(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 21 sdb::pg::AnalyzeVelox(RawStmt const&, sdb::QueryString const&, sdb::pg::Objects const&, sdb::pg::UniqueIdGenerator&, sdb::query::QueryContext&, sdb::pg::Params&)
+# 22 sdb::pg::SqlStatement::ProcessNextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 23 sdb::pg::SqlStatement::NextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 24 sdb::pg::PgSQLCommTaskBase::RunSimpleQuery(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 25 sdb::pg::PgSQLCommTaskBase::HandleClientPacket(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 26 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0::operator()() const
+# 27 void sdb::pg::PgSQLCommTaskBase::SafeCall<sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0>(sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0&&)
+# 28 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()
+# 29 sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'()::operator()() const
+# 30 void folly::detail::function::call_<sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'(), true, false, void>(folly::detail::function::Data&)
+# 31 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 32 sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0::operator()()
+# 33 void folly::detail::function::call_<sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0, false, false, void>(folly::detail::function::Data&)
+# 34 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 35 folly::ThreadPoolExecutor::runTask(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread> const&, folly::ThreadPoolExecutor::Task&&)
+# 36 folly::CPUThreadPoolExecutor::threadRun(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)
+# 37 decltype(*std::declval<folly::ThreadPoolExecutor*&>().*std::declval<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)>()(std::declval<std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>())) std::__2::__invoke[abi:ne200100]<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&, void>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&)
+# 38 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__apply_functor[abi:ne200100]<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, 0ul, 1ul, std::__2::tuple<>>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>&, std::__2::__tuple_indices<0ul, 1ul>, std::__2::tuple<>&&)
+# 39 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>::operator()[abi:ne200100]<>()
+# 40 void folly::detail::function::call_<std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>, true, false, void>(folly::detail::function::Data&)
+# 41 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 42 folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()::operator()()
+# 43 decltype(std::declval<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>()()) std::__2::__invoke[abi:ne200100]<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()&&)
+# 44 void std::__2::__thread_execute[abi:ne200100]<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>&, std::__2::__tuple_indices<...>)
+# 45 void* std::__2::__thread_proxy[abi:ne200100]<std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>>(void*)
+# 46 *no symbol name available for this frame
+# 47 *no symbol name available for this frame
+
+
+
+# TODO
+# query error db error: ERROR: column "name" must appear in the GROUP BY clause or be used in an aggregate function
+# -- 0016_customers_with_most_orders
+# SELECT
+#     c.customer_id,
+#     c.name,
+#     count(o.order_id)
+# FROM
+#     customers c
+#     INNER JOIN orders o USING (customer_id)
+# WHERE
+#     o.created_at >= '2024-01-01' and o.created_at < '2024-07-01'
+# GROUP BY
+#     c.customer_id
+# ORDER BY
+#     count(o.order_id) DESC, c.name
+# LIMIT 10;
+
+
+# TODO
+# query error db error: ERROR: column "name" must appear in the GROUP BY clause or be used in an aggregate function
+# -- 0017_top_selling_month_product
+# SELECT p.product_id, p.name, sum(amount) 
+# FROM products p 
+# INNER JOIN order_items oi USING(product_id)
+# INNER JOIN order_events oe USING(order_id)
+# WHERE oe.event_created >= '2024-01-01' AND oe.event_created < '2024-02-01'
+# AND oe.event_type = 'Delivered'
+# GROUP BY product_id
+# ORDER BY sum(amount), p.name DESC LIMIT 10;
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(integer, decimal\(10, 2\)\) does not exist
+# -- 0018_customer_month_value
+# SELECT
+#     c.customer_id,
+#     c.name,
+#     sum(oi.amount * p.price)
+# FROM
+#     customers c
+#     INNER JOIN orders o USING (customer_id)
+#     INNER JOIN order_items oi USING (order_id)
+#     INNER JOIN products p USING (product_id)
+# WHERE
+#     o.created_at >= '2024-01-01' and o.created_at < '2024-02-01'
+# GROUP BY
+#     c.customer_id
+# ORDER BY
+#     sum(oi.amount * p.price) DESC
+# LIMIT 10;
+
+
+# TODO
+# query error
+# -- 0019_out_of_stock_products
+# SELECT
+#     p.name,
+#     p.stock,
+#     sum(oi.amount)
+# FROM
+#     orders o
+#     INNER JOIN order_items oi USING (order_id)
+#     INNER JOIN products p USING (product_id)
+# WHERE
+#     o.created_at > '2024-12-01' AND o.created_at < '2024-12-07' AND
+#     NOT EXISTS (
+#         SELECT
+#         FROM
+#             order_events oe
+#         WHERE
+#             oe.event_type = 'Shipped'
+#             AND oe.order_id = oi.order_id)
+# GROUP BY
+#     p.product_id
+# HAVING (sum(oi.amount) < p.stock);
+----
+db error: ERROR: Exception: VeloxRuntimeError
+Error Source: RUNTIME
+Error Code: INVALID_STATE
+Reason: (0 vs. 0)
+Retriable: False
+Expression: idx < children_.size()
+Function: childAt
+File: /home/ivanovp/projects/serenedb/third_party/velox/velox/type/Type.h
+Line: 1137
+Stack trace:
+# 0  facebook::velox::VeloxException::VeloxException(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, facebook::velox::VeloxException::Type, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 1  facebook::velox::VeloxRuntimeError::VeloxRuntimeError(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 2  void facebook::velox::detail::veloxCheckFail<facebook::velox::VeloxRuntimeError, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&>(facebook::velox::detail::VeloxCheckFailArgs const&, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&)
+# 3  facebook::velox::RowType::childAt(unsigned int) const
+# 4  facebook::axiom::logical_plan::SubqueryExpr::SubqueryExpr(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>)
+# 5  facebook::axiom::logical_plan::SubqueryExpr* std::__2::construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 6  facebook::axiom::logical_plan::SubqueryExpr* std::__2::__construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 7  void std::__2::allocator_traits<std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::construct[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, void, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>&, facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 8  std::__2::__shared_ptr_emplace<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::__shared_ptr_emplace[abi:ne200100]<std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 9  std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::allocate_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr> const&, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 10 std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::make_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 11 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSubLink(sdb::pg::(anonymous namespace)::State&, SubLink const&)
+# 12 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 13 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0::operator()(Node const&) const
+# 14 void sdb::VisitNodes<sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0>(List const*, sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0&&)
+# 15 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)
+# 16 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessBoolExpr(sdb::pg::(anonymous namespace)::State&, BoolExpr const&)
+# 17 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 18 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0::operator()(Node const&) const
+# 19 void sdb::VisitNodes<sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0>(List const*, sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0&&)
+# 20 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)
+# 21 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessBoolExpr(sdb::pg::(anonymous namespace)::State&, BoolExpr const&)
+# 22 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 23 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 24 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessFilterNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 25 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessPipeline(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 26 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSelectStmt(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 27 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessStmt(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 28 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessRoot(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 29 sdb::pg::AnalyzeVelox(RawStmt const&, sdb::QueryString const&, sdb::pg::Objects const&, sdb::pg::UniqueIdGenerator&, sdb::query::QueryContext&, sdb::pg::Params&)
+# 30 sdb::pg::SqlStatement::ProcessNextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 31 sdb::pg::SqlStatement::NextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 32 sdb::pg::PgSQLCommTaskBase::RunSimpleQuery(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 33 sdb::pg::PgSQLCommTaskBase::HandleClientPacket(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 34 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0::operator()() const
+# 35 void sdb::pg::PgSQLCommTaskBase::SafeCall<sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0>(sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0&&)
+# 36 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()
+# 37 sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'()::operator()() const
+# 38 void folly::detail::function::call_<sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'(), true, false, void>(folly::detail::function::Data&)
+# 39 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 40 sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0::operator()()
+# 41 void folly::detail::function::call_<sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0, false, false, void>(folly::detail::function::Data&)
+# 42 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 43 folly::ThreadPoolExecutor::runTask(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread> const&, folly::ThreadPoolExecutor::Task&&)
+# 44 folly::CPUThreadPoolExecutor::threadRun(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)
+# 45 decltype(*std::declval<folly::ThreadPoolExecutor*&>().*std::declval<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)>()(std::declval<std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>())) std::__2::__invoke[abi:ne200100]<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&, void>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&)
+# 46 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__apply_functor[abi:ne200100]<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, 0ul, 1ul, std::__2::tuple<>>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>&, std::__2::__tuple_indices<0ul, 1ul>, std::__2::tuple<>&&)
+# 47 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>::operator()[abi:ne200100]<>()
+# 48 void folly::detail::function::call_<std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>, true, false, void>(folly::detail::function::Data&)
+# 49 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 50 folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()::operator()()
+# 51 decltype(std::declval<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>()()) std::__2::__invoke[abi:ne200100]<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()&&)
+# 52 void std::__2::__thread_execute[abi:ne200100]<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>&, std::__2::__tuple_indices<...>)
+# 53 void* std::__2::__thread_proxy[abi:ne200100]<std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>>(void*)
+# 54 *no symbol name available for this frame
+# 55 *no symbol name available for this frame
+
+
+
+# TODO
+# query error
+# -- 0020_customers_outstanding
+# SELECT
+#     c.customer_id,
+#     c.name
+# FROM
+#     customers c
+# WHERE
+#     EXISTS (
+#         SELECT
+#             *
+#         FROM
+#             orders o
+#         WHERE
+#             o.customer_id = c.customer_id AND
+#             o.created_at >= '2024-12-25' AND o.created_at < '2025-01-01'
+#             AND NOT EXISTS (
+#                 SELECT
+#                 FROM
+#                     order_events oe
+#                 WHERE
+#                     oe.event_type = 'Delivered'
+#                     AND oe.order_id = o.order_id))
+# ORDER BY c.customer_id;
+----
+db error: ERROR: Exception: VeloxRuntimeError
+Error Source: RUNTIME
+Error Code: INVALID_STATE
+Reason: (0 vs. 0)
+Retriable: False
+Expression: idx < children_.size()
+Function: childAt
+File: /home/ivanovp/projects/serenedb/third_party/velox/velox/type/Type.h
+Line: 1137
+Stack trace:
+# 0  facebook::velox::VeloxException::VeloxException(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, facebook::velox::VeloxException::Type, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 1  facebook::velox::VeloxRuntimeError::VeloxRuntimeError(char const*, unsigned long, char const*, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, std::__2::basic_string_view<char, std::__2::char_traits<char>>, bool, std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 2  void facebook::velox::detail::veloxCheckFail<facebook::velox::VeloxRuntimeError, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&>(facebook::velox::detail::VeloxCheckFailArgs const&, std::__2::basic_string<char, std::__2::char_traits<char>, std::__2::allocator<char>> const&)
+# 3  facebook::velox::RowType::childAt(unsigned int) const
+# 4  facebook::axiom::logical_plan::SubqueryExpr::SubqueryExpr(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>)
+# 5  facebook::axiom::logical_plan::SubqueryExpr* std::__2::construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 6  facebook::axiom::logical_plan::SubqueryExpr* std::__2::__construct_at[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, facebook::axiom::logical_plan::SubqueryExpr*>(facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 7  void std::__2::allocator_traits<std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::construct[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, void, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>&, facebook::axiom::logical_plan::SubqueryExpr*, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 8  std::__2::__shared_ptr_emplace<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>>::__shared_ptr_emplace[abi:ne200100]<std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 9  std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::allocate_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr>, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::allocator<facebook::axiom::logical_plan::SubqueryExpr> const&, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 10 std::__2::shared_ptr<facebook::axiom::logical_plan::SubqueryExpr> std::__2::make_shared[abi:ne200100]<facebook::axiom::logical_plan::SubqueryExpr, std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>, 0>(std::__2::shared_ptr<facebook::axiom::logical_plan::LogicalPlanNode const>&&)
+# 11 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSubLink(sdb::pg::(anonymous namespace)::State&, SubLink const&)
+# 12 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 13 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0::operator()(Node const&) const
+# 14 void sdb::VisitNodes<sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0>(List const*, sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0&&)
+# 15 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)
+# 16 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessBoolExpr(sdb::pg::(anonymous namespace)::State&, BoolExpr const&)
+# 17 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 18 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0::operator()(Node const&) const
+# 19 void sdb::VisitNodes<sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0>(List const*, sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)::$_0&&)
+# 20 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprListImpl(sdb::pg::(anonymous namespace)::State&, List const*)
+# 21 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessBoolExpr(sdb::pg::(anonymous namespace)::State&, BoolExpr const&)
+# 22 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 23 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 24 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessFilterNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 25 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessPipeline(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 26 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSelectStmt(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 27 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessStmt(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 28 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSubLink(sdb::pg::(anonymous namespace)::State&, SubLink const&)
+# 29 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNodeImpl(sdb::pg::(anonymous namespace)::State&, Node const*)
+# 30 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessExprNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 31 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessFilterNode(sdb::pg::(anonymous namespace)::State&, Node const*, sdb::pg::(anonymous namespace)::ExprKind)
+# 32 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessPipeline(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 33 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessSelectStmt(sdb::pg::(anonymous namespace)::State&, SelectStmt const&)
+# 34 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessStmt(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 35 sdb::pg::(anonymous namespace)::SqlAnalyzer::ProcessRoot(sdb::pg::(anonymous namespace)::State&, Node const&)
+# 36 sdb::pg::AnalyzeVelox(RawStmt const&, sdb::QueryString const&, sdb::pg::Objects const&, sdb::pg::UniqueIdGenerator&, sdb::query::QueryContext&, sdb::pg::Params&)
+# 37 sdb::pg::SqlStatement::ProcessNextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 38 sdb::pg::SqlStatement::NextRoot(std::__2::shared_ptr<sdb::ConnectionContext> const&)
+# 39 sdb::pg::PgSQLCommTaskBase::RunSimpleQuery(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 40 sdb::pg::PgSQLCommTaskBase::HandleClientPacket(std::__2::basic_string_view<char, std::__2::char_traits<char>>)
+# 41 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0::operator()() const
+# 42 void sdb::pg::PgSQLCommTaskBase::SafeCall<sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0>(sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()::$_0&&)
+# 43 sdb::pg::PgSQLCommTaskBase::ProcessFirstRoot()
+# 44 sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'()::operator()() const
+# 45 void folly::detail::function::call_<sdb::pg::PostgresFeature::ScheduleProcessFirst(std::__2::weak_ptr<sdb::rest::CommTask>)::'lambda'(), true, false, void>(folly::detail::function::Data&)
+# 46 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 47 sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0::operator()()
+# 48 void folly::detail::function::call_<sdb::Scheduler::queue(sdb::RequestPriority, folly::Function<void ()>)::$_0, false, false, void>(folly::detail::function::Data&)
+# 49 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 50 folly::ThreadPoolExecutor::runTask(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread> const&, folly::ThreadPoolExecutor::Task&&)
+# 51 folly::CPUThreadPoolExecutor::threadRun(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)
+# 52 decltype(*std::declval<folly::ThreadPoolExecutor*&>().*std::declval<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>)>()(std::declval<std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>())) std::__2::__invoke[abi:ne200100]<void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&, void>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*&, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&)
+# 53 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__apply_functor[abi:ne200100]<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, 0ul, 1ul, std::__2::tuple<>>(void (folly::ThreadPoolExecutor::*&)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>&, std::__2::__tuple_indices<0ul, 1ul>, std::__2::tuple<>&&)
+# 54 std::__2::__bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>, __is_valid_bind_return<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), std::__2::tuple<folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>>, std::__2::tuple<>>::value>::type std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>::operator()[abi:ne200100]<>()
+# 55 void folly::detail::function::call_<std::__2::__bind<void (folly::ThreadPoolExecutor::*)(std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>), folly::ThreadPoolExecutor*, std::__2::shared_ptr<folly::ThreadPoolExecutor::Thread>&>, true, false, void>(folly::detail::function::Data&)
+# 56 folly::detail::function::FunctionTraits<void ()>::operator()()
+# 57 folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()::operator()()
+# 58 decltype(std::declval<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>()()) std::__2::__invoke[abi:ne200100]<folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()&&)
+# 59 void std::__2::__thread_execute[abi:ne200100]<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>(std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>&, std::__2::__tuple_indices<...>)
+# 60 void* std::__2::__thread_proxy[abi:ne200100]<std::__2::tuple<std::__2::unique_ptr<std::__2::__thread_struct, std::__2::default_delete<std::__2::__thread_struct>>, folly::NamedThreadFactory::newThread(folly::Function<void ()>&&)::'lambda'()>>(void*)
+# 61 *no symbol name available for this frame
+# 62 *no symbol name available for this frame
+
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(integer, decimal\(10, 2\)\) does not exist
+# -- 0021_sales_volume_by_country
+# SELECT
+#     c.country,
+#     sum(amount * price)
+# FROM
+#     customers c
+#     INNER JOIN orders o USING (customer_id)
+#     INNER JOIN order_items oi USING (order_id)
+#     INNER JOIN products USING (product_id)
+# WHERE
+#     o.created_at >= '2024-01-01' and o.created_at < '2024-02-01'
+# GROUP BY
+#     c.country
+# ORDER BY
+#     2 DESC;
+
+
+# TODO
+# query error db error: ERROR: unsupported node type: 107
+# -- 0022_sales_volume_by_country_state
+# SELECT
+#     c.country,
+#     c.state,
+#     sum(amount * price)
+# FROM
+#     customers c
+#     INNER JOIN orders o ON o.customer_id = c.customer_id AND o.created_at >= '2024-12-24' AND o.created_at < '2025-01-01'
+#     INNER JOIN order_items oi USING (order_id)
+#     INNER JOIN products USING (product_id)
+# GROUP BY GROUPING SETS ((country), (country, state), ())
+# ORDER BY
+#     sum(amount * price), country, state;
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(integer, decimal\(10, 2\)\) does not exist
+# -- 0023_top_sales_volume_product_from_terminal
+# SELECT
+#     product_id,
+#     p.name,
+#     sum(oi.amount * p.price)
+# FROM
+#     products p
+#     INNER JOIN order_items oi USING (product_id)
+#     INNER JOIN order_events oe ON oe.order_id = oi.order_id
+#     WHERE oe.event_payload->>'terminal' = 'Berlin'
+#     AND oe.event_created >= '2024-07-01' and oe.event_created < '2025-01-01'
+#     AND oe.event_type = 'Delivered'
+# GROUP BY
+#     p.product_id
+# ORDER BY
+#     sum(oi.amount * p.price) DESC
+# LIMIT 10;
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(integer, decimal\(10, 2\)\) does not exist
+# -- 0024_top_customer_by_revenue
+# SELECT c.customer_id, c.name, sum(oi.amount*p.price) FROM customers c
+# INNER JOIN orders o ON o.customer_id=c.customer_id AND o.created_at > '2024-12-01' AND o.created_at < '2024-12-07'
+# INNER JOIN order_items oi USING(order_id)
+# INNER JOIN products p USING(product_id)
+# GROUP BY c.customer_id
+# ORDER BY sum(oi.amount*p.price) DESC LIMIT 10;
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(decimal\(10, 2\), integer\) does not exist
+# -- 0025_product_category_performance
+# SELECT
+#     p.category,
+#     sum(p.price * oi.amount)
+# FROM
+#     products p
+#     INNER JOIN order_items oi USING (product_id)
+#     INNER JOIN orders o ON o.order_id = oi.order_id
+#     INNER JOIN order_events oe ON oe.order_id = o.order_id
+# WHERE 
+#     oe.event_created >= '2024-01-01' and oe.event_created < '2024-01-07'
+#     AND oe.event_type = 'Delivered'
+# GROUP BY
+#     p.category
+# ORDER BY category;
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(integer, decimal\(10, 2\)\) does not exist
+# -- 0026_average_order_value
+# SELECT sum(oi.amount*p.price)/count(DISTINCT order_id)
+# FROM orders o
+# INNER JOIN order_items oi USING (order_id)
+# INNER JOIN products p USING (product_id)
+# WHERE o.created_at >= '2024-01-01' AND o.created_at < '2024-01-07';
+
+
+# TODO
+# query error db error: ERROR: function presto_multiply\(decimal\(10, 2\), integer\) does not exist
+# -- 0027_country_category_performance
+# SELECT
+#     c.country,
+#     p.category,
+#     sum(p.price * oi.amount)
+# FROM
+#     products p
+#     INNER JOIN order_items oi USING (product_id)
+#     INNER JOIN orders o ON o.order_id = oi.order_id
+#     INNER JOIN customers c ON c.customer_id = o.customer_id AND c.country = 'Switzerland'
+#     INNER JOIN order_events oe ON oe.order_id = o.order_id
+# WHERE oe.event_created >= '2024-01-01' and oe.event_created < '2024-02-01'
+# AND oe.event_type = 'Delivered'
+# GROUP BY
+#     c.country, p.category ORDER BY country, p.category;
+
+
+# TODO
+# query error db error: ERROR: relation "now" does not exist
+# -- 0028_sales_volume_by_age_group
+# SELECT
+#     sum(p.price * oi.amount) FILTER (WHERE age(now(), c.birthday) >= '18 year'::interval AND age(now(), c.birthday) < '26 year'::interval) AS "18-25",
+#     sum(p.price * oi.amount) FILTER (WHERE age(now(), c.birthday) >= '26 year'::interval AND age(now(), c.birthday) < '36 year'::interval) AS "26-35",
+#     sum(p.price * oi.amount) FILTER (WHERE age(now(), c.birthday) >= '36 year'::interval AND age(now(), c.birthday) < '51 year'::interval) AS "36-50",
+#     sum(p.price * oi.amount) FILTER (WHERE age(now(), c.birthday) >= '51 year'::interval AND age(now(), c.birthday) < '66 year'::interval) AS "51-65",
+#     sum(p.price * oi.amount) FILTER (WHERE age(now(), c.birthday) >= '66 year'::interval) AS "66+"
+# FROM
+#     products p
+#     INNER JOIN order_items oi USING (product_id)
+#     INNER JOIN orders o ON o.order_id = oi.order_id AND o.created_at > '2024-01-01' AND o.created_at < '2024-01-07'
+#     INNER JOIN customers c ON c.customer_id = o.customer_id
+# ;
+
+
+# TODO
+# query error db error: ERROR: relation "age" does not exist
+# -- 0029_top_product_in_age_group
+# SELECT
+#     product_id,
+#     p.name,
+#     sum(oi.amount * p.price)
+# FROM
+#     products p
+#     INNER JOIN order_items oi USING (product_id)
+#     INNER JOIN orders o ON o.order_id = oi.order_id
+#         AND o.created_at > '2024-12-24'
+#         AND o.created_at < '2025-01-01'
+#     INNER JOIN customers c ON c.customer_id = o.customer_id
+#         AND age(now(), c.birthday) >= '18 years' AND age(now(), c.birthday) < '26 years'
+# GROUP BY
+#     product_id
+# ORDER BY
+#     sum(oi.amount * p.price) DESC
+# LIMIT 10;
+
+
+# TODO
+# query error db error: ERROR: column "name" must appear in the GROUP BY clause or be used in an aggregate function
+# -- 0030_customers_with_most_orders_delivered
+# SELECT
+#     c.customer_id,
+#     c.name,
+#     count(o.order_id)
+# FROM
+#     customers c
+#     INNER JOIN orders o USING (customer_id)
+#     INNER JOIN order_events oe USING (order_id)
+# WHERE
+#     oe.event_created >= '2024-01-01' and oe.event_created < '2024-07-01'
+#     and oe.event_type = 'Delivered'
+# GROUP BY
+#     c.customer_id
+# ORDER BY
+#     count(o.order_id) DESC
+# LIMIT 10;

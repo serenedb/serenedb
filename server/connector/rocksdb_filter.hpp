@@ -131,10 +131,17 @@ class OrFilterNode final : public FilterNode {
   const std::vector<velox::core::TypedExprPtr>& filters,
   std::span<const std::string> pk_names);
 
-// Returns a RowVector with one row per specific point, or nullptr if the filter
-// is not a set of specific PK points (-> caller should use full scan).
-[[nodiscard]] velox::RowVectorPtr TryGetPoints(FilterNode* filter,
-                                               velox::RowTypePtr pk_type,
-                                               velox::memory::MemoryPool* pool);
+// Extracts specific PK points from the filter tree. Returns an empty vector if
+// the filter is not reducible to a finite set of points (-> caller should use
+// full scan). Does NOT require a memory pool — safe to call at table-handle
+// creation time and to cache across data-source instances.
+[[nodiscard]] std::vector<Point> TryExtractPoints(FilterNode* filter,
+                                                  velox::RowTypePtr pk_type);
+
+// Materialises a previously-extracted point set into a velox RowVector using
+// the supplied memory pool.
+[[nodiscard]] velox::RowVectorPtr PointsToRowVector(
+  const std::vector<Point>& points, velox::RowTypePtr pk_type,
+  velox::memory::MemoryPool* pool);
 
 }  // namespace sdb::connector

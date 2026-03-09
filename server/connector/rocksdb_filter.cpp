@@ -323,14 +323,13 @@ std::unique_ptr<FilterNode> ParseFilters(
   return std::make_unique<AndFilterNode>(std::move(nodes));
 }
 
-velox::RowVectorPtr TryGetPoints(FilterNode* filter, velox::RowTypePtr pk_type,
-                                 velox::memory::MemoryPool* pool) {
+std::vector<Point> TryExtractPoints(FilterNode* filter,
+                                    velox::RowTypePtr pk_type) {
   if (!filter) {
     return {};
   }
   SDB_ASSERT(pk_type->size() != 0);
 
-  // Drain all specific points first.
   std::vector<Point> points;
   while (true) {
     auto pts = filter->NextPoints();
@@ -338,19 +337,25 @@ velox::RowVectorPtr TryGetPoints(FilterNode* filter, velox::RowTypePtr pk_type,
       break;
     for (auto& point : pts) {
       if (!point.IsSpecific()) {
-        return nullptr;
+        return {};
       }
       points.emplace_back(std::move(point));
     }
   }
 
-  if (points.empty() || points.size() > kMaxPoints) {
+  if (points.size() > kMaxPoints) {
     // At the moment, if there are no filtered specific points, we assume that
     // there is at least one row. But in fact, this may mean that there is
     // a contradiction and we know that *no* rows will be processed.
-    return nullptr;
+    return {};
   }
 
+  return points;
+}
+
+velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
+                                      velox::RowTypePtr pk_type,
+                                      velox::memory::MemoryPool* pool) {
   // Build one column vector per PK column, each with one row per point.
   std::vector<velox::VectorPtr> columns;
   columns.reserve(pk_type->size());

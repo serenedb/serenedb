@@ -59,6 +59,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   }
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
 
+  _points = TryExtractPoints(_filter.get(), _pk_type);
+
   _transaction.AddRocksDBRead();
 }
 

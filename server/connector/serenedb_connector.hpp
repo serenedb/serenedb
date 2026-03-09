@@ -204,6 +204,9 @@ class SereneDBConnectorTableHandle final
   auto& GetPKType() const noexcept { return _pk_type; }
 
   auto& GetFilter() const noexcept { return _filter; }
+
+  const std::vector<Point>& GetPoints() const noexcept { return _points; }
+
   const irs::Filter::Query* GetSearchQuery() const noexcept {
     return _search_query.get();
   }
@@ -219,6 +222,7 @@ class SereneDBConnectorTableHandle final
   std::unique_ptr<FilterNode> _filter;
   irs::Filter::Query::ptr _search_query;
   ObjectId _index_id = ObjectId::none();
+  std::vector<Point> _points;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -700,12 +704,13 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 #endif
 
-      auto points = TryGetPoints(filter, serene_table_handle.GetPKType(),
-                                 connector_query_ctx->memoryPool());
-      if (points) {
+      const auto& points = serene_table_handle.GetPoints();
+      if (!points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
-          output_type, column_oids, object_key, std::move(points));
+          output_type, column_oids, object_key,
+          PointsToRowVector(points, serene_table_handle.GetPKType(),
+                            connector_query_ctx->memoryPool()));
       }
 
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
@@ -724,12 +729,13 @@ class SereneDBConnector final : public velox::connector::Connector {
         search_snapshot.reader, *serene_table_handle.GetSearchQuery());
     }
 
-    auto points = TryGetPoints(filter, serene_table_handle.GetPKType(),
-                               connector_query_ctx->memoryPool());
-    if (points) {
+    const auto& points = serene_table_handle.GetPoints();
+    if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
-        object_key, snapshot, std::move(points));
+        object_key, snapshot,
+        PointsToRowVector(points, serene_table_handle.GetPKType(),
+                          connector_query_ctx->memoryPool()));
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

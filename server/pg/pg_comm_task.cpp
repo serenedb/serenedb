@@ -1146,7 +1146,10 @@ void PgSQLCommTaskBase::CancelPacket() {
   std::unique_lock lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
   if (_current_portal && _current_portal->cursor) {
-    _current_portal->cursor->RequestCancel().Detach();
+    auto f = _current_portal->cursor->RequestCancel();
+    if (f.Valid()) {
+      std::move(f).Detach();
+    }
   }
   _copy_queue.Abort(lock);
 }

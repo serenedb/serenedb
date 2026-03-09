@@ -168,8 +168,12 @@ class SchemaObject : public DatabaseObject {
   // TODO(gnusi): remove it after schema management is done
   void SetSchemaId(ObjectId schema_id) noexcept { _schema_id = schema_id; }
 
-  bool Tombstoned() const noexcept { return _tombstoned; }
-  void SetTombstoned(bool v) noexcept { _tombstoned = v; }
+  bool Tombstoned() const noexcept {
+    return _tombstoned.load(std::memory_order_acquire);
+  }
+  void SetTombstoned(bool v) noexcept {
+    _tombstoned.store(v, std::memory_order_release);
+  }
 
  protected:
   SchemaObject(ObjectId owner_id, ObjectId database_id, ObjectId schema_id,

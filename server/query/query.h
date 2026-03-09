@@ -79,9 +79,7 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
-  std::vector<std::unique_ptr<Executor>> TakeExecutors() {
-    return std::move(_executors);
-  }
+  auto StealExecutors() { return std::move(_executors); }
 
   std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task);
 

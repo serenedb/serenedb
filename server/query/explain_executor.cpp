@@ -37,16 +37,16 @@ ExplainExecutor::ExplainExecutor(VeloxExecutor* velox) : _velox{velox} {}
 void ExplainExecutor::Init(Query& query) { _query = &query; }
 
 yaclib::Future<> ExplainExecutor::Execute(velox::RowVectorPtr& batch) {
+  if (!_query) {  // was fired ?
+    return {};
+  }
   BuildExplainBatch();
   batch = std::move(_result);
+  _query = nullptr;  // set fired
   return {};
 }
 
 void ExplainExecutor::BuildExplainBatch() {
-  if (!_query) {  // we have already built the explain
-    return;
-  }
-
   const auto& query_ctx = _query->GetContext();
   const bool clean_column_names =
     !query_ctx.explain_params.Has(ExplainWith::Registers);
@@ -102,7 +102,6 @@ void ExplainExecutor::BuildExplainBatch() {
   }
 
   _result = _query->BuildBatch({data});
-  _query = nullptr;
   return;
 }
 

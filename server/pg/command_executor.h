@@ -37,8 +37,9 @@ class CommandExecutor final : public query::Executor {
   yaclib::Future<> RequestCancel() final;
 
  private:
-  yaclib::Future<> ExecuteCommand();
+  yaclib::Future<> ExecuteImpl();
 
+  bool _fired = false;
   std::shared_ptr<ExecContext> _context;
   const Node& _node;
 };

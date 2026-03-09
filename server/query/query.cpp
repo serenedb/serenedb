@@ -77,7 +77,7 @@ class NoopHistory final : public axiom::optimizer::History {
 std::unique_ptr<Query> Query::CreateQuery(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx) {
-  auto query = std::unique_ptr<Query>(new Query{root, query_ctx});
+  std::unique_ptr<Query> query{new Query{root, query_ctx}};
 
   if (query_ctx.command_type.Has(CommandType::Query)) {
     auto velox = std::make_unique<VeloxExecutor>();
@@ -172,6 +172,9 @@ void Query::CompileQuery() {
   irs::Finally set_explain_output_type = [&] noexcept {
     if (_query_ctx.command_type.Has(CommandType::Explain)) {
       _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
+    } else {
+      // supposed to be set in the end of the func from exec plan
+      SDB_ASSERT(_output_type);
     }
   };
 

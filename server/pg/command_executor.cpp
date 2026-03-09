@@ -20,6 +20,7 @@
 
 #include "pg/command_executor.h"
 
+#include "basics/misc.hpp"
 #include "pg/commands.h"
 
 namespace sdb::pg {
@@ -34,6 +35,14 @@ yaclib::Future<> CommandExecutor::RequestCancel() {
 }
 
 yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
+  if (std::exchange(_fired, true)) {
+    return {};
+  }
+
+  return ExecuteImpl();
+}
+
+yaclib::Future<> CommandExecutor::ExecuteImpl() {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);
@@ -82,8 +91,6 @@ yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
     default:
       SDB_UNREACHABLE();
   }
-
-  return {};
 }
 
 }  // namespace sdb::pg

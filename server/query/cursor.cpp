@@ -32,10 +32,7 @@ yaclib::Future<> Cursor::RequestCancel() {
 }
 
 Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
-  for (;;) {
-    if (_current >= _executors.size()) {
-      return Process::Done;
-    }
+  for (; _current < _executors.size(); ++_current) {
     auto& executor = _executors[_current];
     auto f = executor->Execute(batch);
     if (f.Valid()) {
@@ -47,15 +44,15 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
     if (batch) {
       return Process::More;
     }
-
-    ++_current;
   }
+
+  return Process::Done;
 }
 
 Cursor::Cursor(std::function<void()>&& user_task, Query& query)
   : _user_task{std::move(user_task)},
     _query{query},
-    _executors{query.TakeExecutors()} {}
+    _executors{query.StealExecutors()} {}
 
 Cursor::~Cursor() {
   if (_current < _executors.size()) {

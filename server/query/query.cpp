@@ -319,7 +319,7 @@ std::string Query::GetExecutionPlan() const {
   return _execution_plan->toString(true);
 }
 
-std::unique_ptr<Cursor> Query::MakeCursor(std::function<void()>&& user_task) {
+std::unique_ptr<Cursor> Query::MakeCursor(UserTask&& user_task) {
   std::unique_ptr<Cursor> ptr;
   ptr.reset(new Cursor{std::move(user_task), *this});
   _finish_write = {};

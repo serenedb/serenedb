@@ -35,29 +35,28 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
   for (; _current < _executors.size(); ++_current) {
     auto& executor = _executors[_current];
     auto f = executor->Execute(batch);
+    if (batch) {
+      SDB_ASSERT(!f.Valid());
+      return Process::More;
+    }
+
     if (f.Valid()) {
       if (f.Ready()) {
-        std::ignore = std::move(f).Touch();
-        if (batch) {
-          return Process::More;
-        }
+        std::ignore = std::move(f).Touch().Ok();
         continue;
       }
 
-      std::move(f).DetachInline(
-        [user_task = _user_task](auto&&) { user_task(); });
+      std::move(f).DetachInline([user_task = _user_task](yaclib::Result<> r) {
+        user_task(std::move(r));
+      });
       return Process::Wait;
-    }
-
-    if (batch) {
-      return Process::More;
     }
   }
 
   return Process::Done;
 }
 
-Cursor::Cursor(std::function<void()>&& user_task, Query& query)
+Cursor::Cursor(UserTask&& user_task, Query& query)
   : _user_task{std::move(user_task)},
     _query{query},
     _executors{query.StealExecutors()} {}

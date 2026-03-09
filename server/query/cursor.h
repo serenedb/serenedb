@@ -50,9 +50,9 @@ class Cursor {
 
  private:
   friend class Query;
-  Cursor(std::function<void()>&& user_task, Query& query);
+  Cursor(UserTask&& user_task, Query& query);
 
-  std::function<void()> _user_task;
+  UserTask _user_task;
   Query& _query;
   std::vector<std::unique_ptr<Executor>> _executors;
   size_t _current = 0;

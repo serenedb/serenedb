@@ -34,10 +34,9 @@ class ExplainExecutor final : public Executor {
   yaclib::Future<> RequestCancel() final { return {}; }
 
  private:
-  void BuildExplainBatch();
+  velox::RowVectorPtr BuildExplainBatch();
 
   Query* _query = nullptr;
-  velox::RowVectorPtr _result;
 };
 
 }  // namespace sdb::query

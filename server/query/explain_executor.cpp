@@ -32,16 +32,15 @@
 namespace sdb::query {
 
 yaclib::Future<> ExplainExecutor::Execute(velox::RowVectorPtr& batch) {
-  if (!_query) {  // was fired ?
+  if (!_query) {  // was fired
     return {};
   }
-  BuildExplainBatch();
-  batch = std::move(_result);
+  batch = BuildExplainBatch();
   _query = nullptr;  // set fired
   return {};
 }
 
-void ExplainExecutor::BuildExplainBatch() {
+velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
   const auto& query_ctx = _query->GetContext();
   const bool clean_column_names =
     !query_ctx.explain_params.Has(ExplainWith::Registers);
@@ -95,8 +94,8 @@ void ExplainExecutor::BuildExplainBatch() {
     }
   }
 
-  _result = _query->BuildBatch({data});
-  return;
+  return _query->BuildBatch({data});
+  ;
 }
 
 }  // namespace sdb::query

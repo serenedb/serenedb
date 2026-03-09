@@ -86,7 +86,7 @@ class Query {
 
   auto StealExecutors() { return std::move(_executors); }
 
-  std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task);
+  std::unique_ptr<Cursor> MakeCursor(UserTask&& user_task);
 
   void MakeRunner();
   Runner& GetRunner() { return _runner; }

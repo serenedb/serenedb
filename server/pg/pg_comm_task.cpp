@@ -228,11 +228,15 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
   }
 }
 
-void PgSQLCommTaskBase::ProcessWakeup() noexcept {
+void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   std::lock_guard lock{_execution_mutex};
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
   SafeCall([&] {
+    if (!r) {
+      std::ignore = std::move(r).Ok();
+    }
+
     auto state = ProcessState::DonePacket;
     do {
       state = ProcessQueryResult();
@@ -943,9 +947,8 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal) {
   }
   SDB_ASSERT(portal.stmt->query);
   auto cursor = portal.stmt->query->MakeCursor(
-    [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())] {
-      user_task->ProcessWakeup();
-    });
+    [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())](
+      yaclib::Result<> r) { user_task->ProcessWakeup(std::move(r)); });
   if (RegisterCursor(std::move(cursor), portal)) {
     SDB_ASSERT(&portal == _current_portal);
     // Throws if soft shutdown is ongoing!

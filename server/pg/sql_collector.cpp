@@ -454,10 +454,7 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
   if (!stmt) {
     return;
   }
-  if (stmt->intoClause) {
-    // SELECT INTO is handled like CTAS — the target table will be created,
-    // so we don't collect it as an existing relation.
-  }
+
   CollectWithClause(state, stmt->withClause);
 
   CollectValuesLists(state, stmt->valuesLists);

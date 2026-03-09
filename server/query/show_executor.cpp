@@ -33,7 +33,12 @@ yaclib::Future<> ShowExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_query) {  // was fired
     return {};
   }
+  batch = BuildShowBatch();
+  _query = nullptr;  // set fired
+  return {};
+}
 
+velox::RowVectorPtr ShowExecutor::BuildShowBatch() {
   SDB_ASSERT(
     _query->GetOutputType()->equivalent(*velox::ROW({velox::VARCHAR()})));
   const auto& config = _query->GetContext().velox_query_ctx->queryConfig();
@@ -45,9 +50,7 @@ yaclib::Future<> ShowExecutor::Execute(velox::RowVectorPtr& batch) {
     point.remove_prefix(kFailPointPrefix.size());
     if (point == "s") {
       auto column = GetFailurePointsDebugging();
-      batch = _query->BuildBatch({std::move(column)});
-      _query = nullptr;  // set fired
-      return {};
+      return _query->BuildBatch({std::move(column)});
     }
     if (!point.starts_with('_')) {
       SDB_THROW(ERROR_FAILED,
@@ -56,9 +59,7 @@ yaclib::Future<> ShowExecutor::Execute(velox::RowVectorPtr& batch) {
     }
     point.remove_prefix(1);
     std::vector<std::string> column{ShouldFailDebugging(point) ? "on" : "off"};
-    batch = _query->BuildBatch({std::move(column)});
-    _query = nullptr;  // set fired
-    return {};
+    return _query->BuildBatch({std::move(column)});
   }
 #endif
 
@@ -68,16 +69,19 @@ yaclib::Future<> ShowExecutor::Execute(velox::RowVectorPtr& batch) {
               "\"");
   }
   std::vector<std::string> column{*value};
-  batch = _query->BuildBatch({std::move(column)});
-  _query = nullptr;  // set fired
-  return {};
+  return _query->BuildBatch({std::move(column)});
 }
 
 yaclib::Future<> ShowAllExecutor::Execute(velox::RowVectorPtr& batch) {
   if (!_query) {  // was fired
     return {};
   }
+  batch = BuildShowAllBatch();
+  _query = nullptr;  // set fired
+  return {};
+}
 
+velox::RowVectorPtr ShowAllExecutor::BuildShowAllBatch() {
   SDB_ASSERT(_query->GetOutputType()->equivalent(
     *velox::ROW({velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()})));
   const auto& query_config =
@@ -92,13 +96,11 @@ yaclib::Future<> ShowAllExecutor::Execute(velox::RowVectorPtr& batch) {
     descriptions.emplace_back(description);
   });
 
-  batch = _query->BuildBatch({
+  return _query->BuildBatch({
     std::move(names),
     std::move(values),
     std::move(descriptions),
   });
-  _query = nullptr;  // set fired
-  return {};
 }
 
 }  // namespace sdb::query

@@ -32,6 +32,8 @@ class ShowExecutor final : public Executor {
   yaclib::Future<> RequestCancel() final { return {}; }
 
  private:
+  velox::RowVectorPtr BuildShowBatch();
+
   Query* _query = nullptr;
 };
 
@@ -43,6 +45,8 @@ class ShowAllExecutor final : public Executor {
   yaclib::Future<> RequestCancel() final { return {}; }
 
  private:
+  velox::RowVectorPtr BuildShowAllBatch();
+
   Query* _query = nullptr;
 };
 

@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { BindVarSchema } from "../bind-var";
+
+export const QueryExecutionResultSchema = z.object({
+    rows: z.array(z.record(z.string(), z.any())),
+    action_type: z
+        .enum(["SELECT", "INSERT", "UPDATE", "DELETE", "OTHER"])
+        .optional(),
+    message: z.string().optional(),
+});
+export type QueryExecutionResultSchema = z.infer<
+    typeof QueryExecutionResultSchema
+>;
 
 const BaseQueryExecutionJobSchema = z.object({
     id: z.number(),
@@ -20,11 +30,7 @@ const RunningQueryExecutionJobSchema = BaseQueryExecutionJobSchema.extend({
 
 const SuccessQueryExecutionJobSchema = BaseQueryExecutionJobSchema.extend({
     status: z.literal("success"),
-    action_type: z
-        .enum(["SELECT", "INSERT", "UPDATE", "DELETE", "OTHER"])
-        .optional(),
-    message: z.string().optional(),
-    result: z.array(z.record(z.string(), z.any())),
+    results: z.array(QueryExecutionResultSchema),
 });
 
 const FailedQueryExecutionJobSchema = BaseQueryExecutionJobSchema.extend({

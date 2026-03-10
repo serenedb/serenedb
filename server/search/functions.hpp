@@ -25,6 +25,13 @@
 namespace sdb::search::functions {
 
 constexpr inline std::string_view kPhrase = "sdb_phrase";
+constexpr inline std::string_view kTermEq = "sdb_term_eq";
+constexpr inline std::string_view kTermLt = "sdb_term_lt";
+constexpr inline std::string_view kTermLe = "sdb_term_lte";
+constexpr inline std::string_view kTermGe = "sdb_term_gte";
+constexpr inline std::string_view kTermGt = "sdb_term_gt";
+constexpr inline std::string_view kTermIn = "sdb_term_in";
+constexpr inline std::string_view kTermLike = "sdb_term_like";
 
 void registerSearchFunctions();
 

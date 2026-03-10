@@ -56,6 +56,7 @@ class BufferedNormReader : public NormReader {
   }
 
   score_t GetAvg() const noexcept final {
+    // If non-zero count is equal to zero this won't be really used
     return static_cast<double>(_sum) / static_cast<double>(_non_zero_count);
   }
 

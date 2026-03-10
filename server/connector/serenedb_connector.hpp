@@ -199,8 +199,7 @@ class SereneDBConnectorTableHandle final
 
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout,
-    std::unique_ptr<FilterNode> filter,
+    const axiom::connector::TableLayout& layout, std::vector<Point> points,
     velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
@@ -223,8 +222,6 @@ class SereneDBConnectorTableHandle final
 
   auto& GetPKType() const noexcept { return _pk_type; }
 
-  auto& GetFilter() const noexcept { return _filter; }
-
   auto& GetRemainingFilter() const noexcept { return _remaining_filter; }
 
   const std::vector<Point>& GetPoints() const noexcept { return _points; }
@@ -246,7 +243,6 @@ class SereneDBConnectorTableHandle final
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
-  std::unique_ptr<FilterNode> _filter;
   irs::Filter::Query::ptr _search_query;
   ObjectId _index_id = ObjectId::none();
   std::vector<Point> _points;
@@ -730,7 +726,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     // can evaluate filters on non-projected columns.
     std::unordered_set<std::string> filter_names;
     if (serene_table_handle.GetRemainingFilter()) {
-      ExtractInputFields(serene_table_handle.GetRemainingFilter(), filter_names);
+      ExtractInputFields(serene_table_handle.GetRemainingFilter(),
+                         filter_names);
     }
 
     std::unordered_set<std::string> output_original_names;
@@ -768,16 +765,15 @@ class SereneDBConnector final : public velox::connector::Connector {
     const size_t output_column_count = output_type->size();
     auto& transaction = serene_table_handle.GetTransaction();
 
-    auto* filter = serene_table_handle.GetFilter().get();
-
-    // We cannot have precalculated rocksdb filter for search query
-    SDB_ASSERT(!filter || !serene_table_handle.GetSearchQuery());
+    // We cannot have precalculated points for search query
+    SDB_ASSERT(serene_table_handle.GetPoints().empty() ||
+               !serene_table_handle.GetSearchQuery());
 
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
 
-    const bool use_point_lookup = false;
+    const bool use_point_lookup = true;
 
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     if (needs_read_your_own_writes) {
@@ -811,9 +807,9 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
-        *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
-        read_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
-        object_key, output_column_count,
+        *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf, read_type,
+        column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
+        output_column_count,
         rewrite_filter(serene_table_handle.GetRemainingFilter()),
         connector_query_ctx->expressionEvaluator());
     }
@@ -839,8 +835,9 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
-      serene_table_handle.GetEffectiveColumnId(), object_key, output_column_count,
-      snapshot, rewrite_filter(serene_table_handle.GetRemainingFilter()),
+      serene_table_handle.GetEffectiveColumnId(), object_key,
+      output_column_count, snapshot,
+      rewrite_filter(serene_table_handle.GetRemainingFilter()),
       connector_query_ctx->expressionEvaluator());
   }
 

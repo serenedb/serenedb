@@ -322,15 +322,16 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
       &_memory_pool, _row_type, nullptr, columns.front()->size(),
       std::move(columns)));
 
-    // Project out filter-only columns — keep only the first _output_column_count
+    // Project out filter-only columns — keep only the first
+    // _output_column_count
     if (batch->childrenSize() > _output_column_count) {
-      auto output_type = velox::ROW(
-        std::vector<std::string>(
-          _row_type->names().begin(),
-          _row_type->names().begin() + _output_column_count),
-        std::vector<velox::TypePtr>(
-          _row_type->children().begin(),
-          _row_type->children().begin() + _output_column_count));
+      auto output_type =
+        velox::ROW(std::vector<std::string>(
+                     _row_type->names().begin(),
+                     _row_type->names().begin() + _output_column_count),
+                   std::vector<velox::TypePtr>(
+                     _row_type->children().begin(),
+                     _row_type->children().begin() + _output_column_count));
       std::vector<velox::VectorPtr> output_children(
         batch->children().begin(),
         batch->children().begin() + _output_column_count);

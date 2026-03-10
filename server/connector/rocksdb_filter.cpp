@@ -25,7 +25,6 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/logger/logger.h"
 
 namespace sdb::connector {
 
@@ -48,40 +47,41 @@ velox::VectorPtr BuildPointColumn(const std::string& col_name,
   return result;
 }
 
-std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
-                                        std::span<const std::string> pk_names);
+std::vector<Point> AnyPoint(const std::span<const std::string> names) {
+  return {Point(names)};
+}
 
-std::unique_ptr<FilterNode> ParseEq(const velox::core::CallTypedExpr* func_call,
-                                    std::span<const std::string> pk_names) {
+std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
+                                   std::span<const std::string> pk_names) {
   SDB_ASSERT(func_call->inputs().size() == 2);
-  if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
-      func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
-    return nullptr;
+  if (!func_call->inputs()[0]->isFieldAccessKind() ||
+      !func_call->inputs()[1]->isConcatKind()) {
+    return AnyPoint(pk_names);
   }
   auto field_access =
     basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
   auto const_val =
     basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
-  return std::make_unique<EqFilterNode>(field_access->name(), const_val,
-                                        pk_names);
+
+  Point p{pk_names};
+  p.AddEqFilter(field_access->name(), const_val);
+  return {p};
 }
 
-std::unique_ptr<FilterNode> ParseIn(const velox::core::CallTypedExpr* func_call,
-                                    std::span<const std::string> pk_names) {
-  if (func_call->inputs().size() != 2) {
-    return nullptr;
-  }
-  if (func_call->inputs()[0]->kind() != velox::core::ExprKind::kFieldAccess ||
-      func_call->inputs()[1]->kind() != velox::core::ExprKind::kConstant) {
-    return nullptr;
+std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
+                                   std::span<const std::string> pk_names) {
+  if (!func_call->inputs()[0]->isFieldAccessKind() ||
+      !func_call->inputs()[1]->isConcatKind()) {
+    return AnyPoint(pk_names);
   }
   auto field_access =
     basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
   auto array_const =
     basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
   if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
-    return nullptr;
+    return AnyPoint(pk_names);
   }
+
   SDB_ASSERT(array_const->valueVector()->typeKind() == velox::TypeKind::ARRAY);
   auto const_vec = basics::downCast<velox::ConstantVector<velox::ComplexType>>(
     array_const->valueVector());
@@ -91,64 +91,62 @@ std::unique_ptr<FilterNode> ParseIn(const velox::core::CallTypedExpr* func_call,
   const auto size = array_vec->sizeAt(const_vec->index());
   const auto& elements = array_vec->elements();
 
-  std::vector<std::unique_ptr<FilterNode>> children;
-  children.reserve(size);
+  std::vector<Point> points;
+  points.reserve(size);
   for (velox::vector_size_t i = 0; i < size; ++i) {
     auto elem_const = std::make_shared<velox::core::ConstantTypedExpr>(
       velox::BaseVector::wrapInConstant(1, offset + i, elements));
-    children.emplace_back(std::make_unique<EqFilterNode>(
-      field_access->name(), std::move(elem_const), pk_names));
+    Point p{pk_names};
+    p.AddEqFilter(field_access->name(), std::move(elem_const));
+    points.push_back(std::move(p));
   }
-  return std::make_unique<OrFilterNode>(std::move(children));
+  return points;
 }
 
-std::unique_ptr<FilterNode> ParseAndOr(
-  const velox::core::CallTypedExpr* func_call,
-  std::span<const std::string> pk_names) {
-  SDB_ASSERT(!func_call->inputs().empty(), "and/or must have at least 1 child");
-  const bool is_or = func_call->name() == "or";
+std::vector<Point> ExtractFilterAnd(const velox::core::CallTypedExpr* func_call,
+                                    std::span<const std::string> pk_names) {
+  SDB_ASSERT(!func_call->inputs().empty());
 
-  std::vector<std::unique_ptr<FilterNode>> children;
-  children.reserve(func_call->inputs().size());
+  // Cartesian product of all children's point sets, intersecting each tuple.
+  // An unconstrained child (AnyPoint — empty filters) acts as identity because
+  // Intersect(P, {}) == P, so no special-casing is needed.
+  std::vector<Point> result =
+    ExtractFilterExpr(func_call->inputs()[0], pk_names);
+  for (size_t i = 1; i < func_call->inputs().size(); ++i) {
+    const auto rhs_pts = ExtractFilterExpr(func_call->inputs()[i], pk_names);
+    std::vector<Point> next;
+    next.reserve(result.size() * rhs_pts.size());
+    for (const auto& lhs : result) {
+      for (const auto& rhs : rhs_pts) {
+        if (auto merged = Point::Intersect(lhs, rhs);
+            merged && !merged->IsUnconstrained()) {
+          next.push_back(std::move(*merged));
+        }
+      }
+    }
+    result = std::move(next);
+  }
+  return result;
+}
+
+std::vector<Point> ExtractFilterOr(const velox::core::CallTypedExpr* func_call,
+                                   std::span<const std::string> pk_names) {
+  SDB_ASSERT(!func_call->inputs().empty());
+
+  std::vector<Point> result;
   for (const auto& input : func_call->inputs()) {
-    auto child = ParseFilter(input, pk_names);
-    if (is_or && !child) {
-      // Unconstrained child makes the entire OR unconstrained.
-      return nullptr;
+    auto pts = ExtractFilterExpr(input, pk_names);
+    // If any point in the child result is unconstrained, the OR is
+    // unconstrained.
+    if (absl::c_any_of(pts,
+                       [](const Point& p) { return p.IsUnconstrained(); })) {
+      return AnyPoint(pk_names);
     }
-    if (child) {
-      children.emplace_back(std::move(child));
-    }
+    result.insert(result.end(), std::make_move_iterator(pts.begin()),
+                  std::make_move_iterator(pts.end()));
   }
-  if (children.empty()) {
-    return nullptr;
-  }
-  if (!is_or) {
-    return std::make_unique<AndFilterNode>(std::move(children));
-  }
-  return std::make_unique<OrFilterNode>(std::move(children));
+  return result;
 }
-
-std::unique_ptr<FilterNode> ParseFilter(const velox::core::TypedExprPtr& expr,
-                                        std::span<const std::string> pk_names) {
-  if (!expr->isCallKind()) {
-    return nullptr;
-  }
-  const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
-
-  if (func_call->name() == "presto_eq") {
-    return ParseEq(func_call, pk_names);
-  }
-  if (func_call->name() == "in") {
-    return ParseIn(func_call, pk_names);
-  }
-  if (func_call->name() == "and" || func_call->name() == "or") {
-    return ParseAndOr(func_call, pk_names);
-  }
-  return nullptr;
-}
-
-constexpr size_t kMaxPoints = 16 * 1024;  // TODO(mkornaukhov) tune
 
 }  // namespace
 
@@ -161,13 +159,13 @@ bool Point::IsSpecific() const {
 const velox::core::ConstantTypedExpr* Point::FindFilter(
   std::string_view column_name) const {
   auto it = _column_filters.find(column_name);
-  return it != _column_filters.end() ? it->second : nullptr;
+  return it != _column_filters.end() ? it->second.get() : nullptr;
 }
 
 void Point::AddEqFilter(std::string_view column_name,
-                        const velox::core::ConstantTypedExpr* value) {
+                        velox::core::ConstantTypedExprPtr value) {
   SDB_ASSERT(!_column_filters.contains(column_name));
-  _column_filters.emplace(column_name, value);
+  _column_filters.emplace(column_name, std::move(value));
 }
 
 std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
@@ -180,177 +178,20 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
       continue;
     }
     if (!lhs_f) {
-      result._column_filters.emplace(pk_name, rhs_f);
+      result._column_filters.emplace(pk_name, rhs._column_filters.at(pk_name));
       continue;
     }
     if (!rhs_f) {
-      result._column_filters.emplace(pk_name, lhs_f);
+      result._column_filters.emplace(pk_name, lhs._column_filters.at(pk_name));
       continue;
     }
     if (lhs_f->value() != rhs_f->value()) {
       // a = 1 AND a = 2 -> contradiction
       return {};
     }
-    result._column_filters.emplace(pk_name, lhs_f);
+    result._column_filters.emplace(pk_name, lhs._column_filters.at(pk_name));
   }
   return result;
-}
-
-EqFilterNode::EqFilterNode(std::string column_name,
-                           velox::core::ConstantTypedExprPtr value,
-                           std::span<const std::string> pk_names)
-  : _column_name{std::move(column_name)},
-    _value{std::move(value)},
-    _pk_names{pk_names} {}
-
-std::vector<Point> EqFilterNode::NextPoints() {
-  if (_sent)
-    return {};
-  _sent = true;
-  Point p{_pk_names};
-  p.AddEqFilter(_column_name, _value.get());
-  return {std::move(p)};
-}
-
-AndFilterNode::AndFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
-  : _children{std::move(filters)} {}
-
-bool AndFilterNode::EnsureChildPoint(size_t child_idx, size_t needed_idx) {
-  auto& child_points = _children_points[child_idx];
-  while (child_points.size() <= needed_idx) {
-    if (_exhausted[child_idx])
-      return false;
-    auto pts = _children[child_idx]->NextPoints();
-    if (pts.empty()) {
-      _exhausted[child_idx] = true;
-      return false;
-    }
-    std::ranges::move(pts, std::back_inserter(child_points));
-  }
-  return true;
-}
-
-bool AndFilterNode::Advance() {
-  for (int child_idx = static_cast<int>(_indices.size()) - 1; child_idx >= 0;
-       --child_idx) {
-    ++_indices[child_idx];
-    if (EnsureChildPoint(child_idx, _indices[child_idx])) {
-      return true;
-    }
-    // Child exhausted at this depth: carry left, reset right.
-    _indices[child_idx] = 0;
-  }
-  return false;
-}
-
-std::optional<Point> AndFilterNode::TryMerge() const {
-  std::optional<Point> result{_children_points[0][_indices[0]]};
-  for (size_t i = 1; i < _children_points.size(); ++i) {
-    result = Point::Intersect(*result, _children_points[i][_indices[i]]);
-    if (!result)
-      return {};
-  }
-  return result;
-}
-
-std::vector<Point> AndFilterNode::NextPoints() {
-  if (_children.empty() || _state == State::Done)
-    return {};
-
-  if (_state == State::NotStarted) {
-    _state = State::Running;
-    _children_points.resize(_children.size());
-    _exhausted.resize(_children.size(), false);
-    _indices.resize(_children.size(), 0);
-    for (size_t child_idx = 0; child_idx < _children.size(); ++child_idx) {
-      if (!EnsureChildPoint(child_idx, 0)) {
-        _state = State::Done;
-        return {};
-      }
-    }
-  } else {
-    if (!Advance()) {
-      _state = State::Done;
-      return {};
-    }
-  }
-
-  // Skip conflicting combinations.
-  while (true) {
-    if (auto result = TryMerge()) {
-      return {std::move(*result)};
-    }
-    if (!Advance()) {
-      _state = State::Done;
-      return {};
-    }
-  }
-}
-
-OrFilterNode::OrFilterNode(std::vector<std::unique_ptr<FilterNode>> filters)
-  : _children{std::move(filters)} {}
-
-std::vector<Point> OrFilterNode::NextPoints() {
-  while (_current < _children.size()) {
-    auto pts = _children[_current]->NextPoints();
-    if (!pts.empty()) {
-      return pts;
-    }
-    ++_current;
-  }
-  return {};
-}
-
-std::unique_ptr<FilterNode> ParseFilters(
-  const std::vector<velox::core::TypedExprPtr>& filters,
-  std::span<const std::string> pk_names) {
-  std::vector<std::unique_ptr<FilterNode>> nodes;
-  nodes.reserve(filters.size());
-  for (const auto& filter : filters) {
-    if (auto node = ParseFilter(filter, pk_names)) {
-      nodes.emplace_back(std::move(node));
-    }
-  }
-
-  if (nodes.empty()) {
-    return nullptr;
-  }
-
-  if (nodes.size() == 1) {
-    return std::move(nodes[0]);
-  }
-
-  return std::make_unique<AndFilterNode>(std::move(nodes));
-}
-
-std::vector<Point> TryExtractPoints(FilterNode* filter,
-                                    velox::RowTypePtr pk_type) {
-  if (!filter) {
-    return {};
-  }
-  SDB_ASSERT(pk_type->size() != 0);
-
-  std::vector<Point> points;
-  while (true) {
-    auto pts = filter->NextPoints();
-    if (pts.empty())
-      break;
-    for (auto& point : pts) {
-      if (!point.IsSpecific()) {
-        return {};
-      }
-      points.emplace_back(std::move(point));
-    }
-  }
-
-  if (points.size() > kMaxPoints) {
-    // At the moment, if there are no filtered specific points, we assume that
-    // there is at least one row. But in fact, this may mean that there is
-    // a contradiction and we know that *no* rows will be processed.
-    return {};
-  }
-
-  return points;
 }
 
 velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
@@ -367,6 +208,27 @@ velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
   }
   return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
                                             points.size(), std::move(columns));
+}
+
+std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
+                                     std::span<const std::string> pk_names) {
+  if (!expr->isCallKind()) {
+    return AnyPoint(pk_names);
+  }
+  const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
+  if (func_call->name() == "presto_eq") {
+    return ExtractFilterEq(func_call, pk_names);
+  }
+  if (func_call->name() == "in") {
+    return ExtractFilterIn(func_call, pk_names);
+  }
+  if (func_call->name() == "and") {
+    return ExtractFilterAnd(func_call, pk_names);
+  }
+  if (func_call->name() == "or") {
+    return ExtractFilterOr(func_call, pk_names);
+  }
+  return AnyPoint(pk_names);
 }
 
 }  // namespace sdb::connector

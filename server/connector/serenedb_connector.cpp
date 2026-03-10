@@ -33,15 +33,14 @@ namespace sdb::connector {
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout,
-  std::unique_ptr<FilterNode> filter,
+  const axiom::connector::TableLayout& layout, std::vector<Point> points,
   velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     _transaction{
       basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
-    _filter{std::move(filter)},
+    _points{std::move(points)},
     _remaining_filter{std::move(remaining_filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
@@ -61,12 +60,10 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   }
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
 
-  _points = TryExtractPoints(_filter.get(), _pk_type);
-
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
-    _table_column_map.emplace(orig_name,
-                              FilterColumn{orig_name, scol->Id(), scol->type()});
+    _table_column_map.emplace(
+      orig_name, FilterColumn{orig_name, scol->Id(), scol->type()});
   }
 
   _transaction.AddRocksDBRead();
@@ -110,7 +107,7 @@ SereneDBTableLayout::createTableHandle(
 
     SDB_ASSERT(!conjunct_root.empty());
     auto handle = std::make_shared<SereneDBConnectorTableHandle>(
-      session, *this, nullptr, nullptr);
+      session, *this, std::vector<Point>{}, nullptr);
     const auto& snapshot =
       inverted_index_table->GetTransaction().EnsureSearchSnapshot(
         inverted_index_table->GetIndex().GetId());
@@ -150,7 +147,6 @@ SereneDBTableLayout::createTableHandle(
   }
 
   const auto& pk_type = basics::downCast<RocksDBTable>(table()).PKType();
-  auto filter = ParseFilters(filters, pk_type->names());
 
   velox::core::TypedExprPtr remaining_filter;
   if (filters.size() == 1) {
@@ -160,10 +156,20 @@ SereneDBTableLayout::createTableHandle(
       velox::BOOLEAN(), filters, velox::expression::kAnd);
   }
 
+  std::vector<Point> points;
+  if (remaining_filter) {
+    constexpr size_t kMaxPoints = 16 * 1024;
+    auto pts = ExtractFilterExpr(remaining_filter, pk_type->names());
+    if (pts.size() <= kMaxPoints &&
+        absl::c_all_of(pts, [](const Point& p) { return p.IsSpecific(); })) {
+      points = std::move(pts);
+    }
+  }
+
   SDB_ASSERT(!table().columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");
   return std::make_shared<SereneDBConnectorTableHandle>(
-    session, *this, std::move(filter), std::move(remaining_filter));
+    session, *this, std::move(points), std::move(remaining_filter));
 }
 
 }  // namespace sdb::connector

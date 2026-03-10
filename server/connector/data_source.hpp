@@ -106,8 +106,7 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
                             velox::RowTypePtr row_type,
                             std::vector<catalog::Column::Id> column_ids,
                             catalog::Column::Id effective_column_id,
-                            ObjectId object_key,
-                            size_t output_column_count,
+                            ObjectId object_key, size_t output_column_count,
                             const rocksdb::Snapshot* snapshot,
                             velox::core::TypedExprPtr remaining_filter,
                             velox::core::ExpressionEvaluator* evaluator);
@@ -156,8 +155,9 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
   // this case is handled in SqlAnalyzer code, such scans are replaced with
   // empty Values node.
   catalog::Column::Id _effective_column_id;
-  // Number of columns in the projected output. May be less than _row_type->size()
-  // when filter-only columns are appended for ApplyRemainingFilter evaluation.
+  // Number of columns in the projected output. May be less than
+  // _row_type->size() when filter-only columns are appended for
+  // ApplyRemainingFilter evaluation.
   size_t _output_column_count;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   uint64_t _produced = 0;
@@ -174,8 +174,7 @@ class RocksDBRYOWFullScanDataSource : public RocksDBFullScanDataSource {
                                 velox::RowTypePtr row_type,
                                 std::vector<catalog::Column::Id> column_ids,
                                 catalog::Column::Id effective_column_id,
-                                ObjectId object_key,
-                                size_t output_column_count,
+                                ObjectId object_key, size_t output_column_count,
                                 velox::core::TypedExprPtr remaining_filter,
                                 velox::core::ExpressionEvaluator* evaluator);
 
@@ -192,8 +191,7 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
     std::vector<catalog::Column::Id> column_ids,
     catalog::Column::Id effective_column_id, ObjectId object_key,
-    size_t output_column_count,
-    const rocksdb::Snapshot* snapshot,
+    size_t output_column_count, const rocksdb::Snapshot* snapshot,
     velox::core::TypedExprPtr remaining_filter = nullptr,
     velox::core::ExpressionEvaluator* evaluator = nullptr);
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;

@@ -1,11 +1,15 @@
 import Database from "better-sqlite3";
 import { parentPort } from "worker_threads";
 import Cursor from "pg-cursor";
+import { parse } from "libpg-query";
 import {
     getMultiPlatformHost,
     PoolManagerInstance,
 } from "@serene-ui/shared-backend";
-import { QueryExecutionJobSchema } from "@serene-ui/shared-core";
+import {
+    QueryExecutionJobSchema,
+    QueryExecutionResultSchema,
+} from "@serene-ui/shared-core";
 
 if (!parentPort) {
     console.error("Worker must be run as a worker thread");
@@ -31,8 +35,6 @@ const updateJobStatus = (
     data?: {
         result?: string;
         error?: string;
-        actionType?: QueryActionType;
-        message?: string;
     },
 ) => {
     const updates: string[] = [`status='${status}'`];
@@ -49,14 +51,6 @@ const updateJobStatus = (
         if (data?.error) {
             updates.push("error=?");
             params.push(data.error);
-        }
-        if (data?.actionType) {
-            updates.push("action_type=?");
-            params.push(data.actionType);
-        }
-        if (data?.message) {
-            updates.push("message=?");
-            params.push(data.message);
         }
     }
 
@@ -127,9 +121,12 @@ const executeJob = async (taskData: any) => {
         updateJobStatus(db, jobId, "running");
 
         const bindVars = JSON.parse(job.bind_vars?.toString() || "[]");
-        const command = extractLeadingCommand(job.query);
+        const parsedStatements = await parseQueryStatements(job.query);
+        const primaryStatement = parsedStatements[0];
+        const command = primaryStatement?.command;
+        const hasMultipleStatements = parsedStatements.length > 1;
 
-        if (shouldUseCursor(command)) {
+        if (!hasMultipleStatements && shouldUseCursor(command)) {
             const cursor = client.query(new Cursor(job.query, bindVars));
 
             let rows: any[];
@@ -148,7 +145,7 @@ const executeJob = async (taskData: any) => {
                 }
             }
 
-            const actionType = mapCommandToActionType(command);
+            const actionType = primaryStatement?.actionType || "OTHER";
 
             const message = buildSuccessMessage({
                 actionType,
@@ -156,39 +153,28 @@ const executeJob = async (taskData: any) => {
                 rowCount: rows.length,
                 query: job.query,
             });
+            const results: QueryExecutionResultSchema[] = [
+                {
+                    rows,
+                    action_type: actionType,
+                    message,
+                },
+            ];
 
             updateJobStatus(db, jobId, "success", {
-                actionType,
-                message,
-                result: JSON.stringify(rows),
+                result: JSON.stringify(results),
             });
         } else {
             const queryResult = await client.query(job.query, bindVars);
-            const rows = Array.isArray(queryResult.rows)
-                ? limit === -1
-                    ? queryResult.rows
-                    : queryResult.rows.slice(0, limit || 1000)
-                : [];
-            const resultCommand =
-                typeof queryResult.command === "string"
-                    ? queryResult.command.toUpperCase()
-                    : command;
-            const actionType = mapCommandToActionType(resultCommand);
-
-            const message = buildSuccessMessage({
-                actionType,
-                command: resultCommand,
-                rowCount:
-                    typeof queryResult.rowCount === "number"
-                        ? queryResult.rowCount
-                        : undefined,
-                query: job.query,
-            });
+            const results = normalizeDriverResults(
+                queryResult,
+                job.query,
+                parsedStatements,
+                limit,
+            );
 
             updateJobStatus(db, jobId, "success", {
-                actionType,
-                message,
-                result: JSON.stringify(rows),
+                result: JSON.stringify(results),
             });
         }
 
@@ -297,6 +283,17 @@ parentPort.postMessage({ type: "ready" });
 
 type QueryActionType = "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "OTHER";
 
+type QueryDriverResult = {
+    rows?: unknown[];
+    command?: string;
+    rowCount?: number | null;
+};
+
+type ParsedStatementInfo = {
+    command?: string;
+    actionType: QueryActionType;
+};
+
 const mapCommandToActionType = (command?: string): QueryActionType => {
     switch ((command || "").toUpperCase()) {
         case "SELECT":
@@ -327,6 +324,22 @@ const shouldUseCursor = (command?: string): boolean => {
         "DESCRIBE",
         "DESC",
     ].includes(command);
+};
+
+const parseQueryStatements = async (
+    query: string,
+): Promise<ParsedStatementInfo[]> => {
+    try {
+        const parsed = (await parse(query)) as {
+            stmts?: Array<{ stmt?: Record<string, unknown> }>;
+        };
+
+        return (parsed.stmts || []).map((statement) =>
+            getStatementInfo(statement?.stmt),
+        );
+    } catch {
+        return [];
+    }
 };
 
 const extractLeadingCommand = (query: string): string | undefined => {
@@ -393,6 +406,82 @@ const buildSuccessMessage = ({
     }
 
     return "Query successfully executed.";
+};
+
+const normalizeDriverResults = (
+    queryResult: QueryDriverResult | QueryDriverResult[],
+    query: string,
+    parsedStatements: ParsedStatementInfo[],
+    limit?: number,
+): QueryExecutionResultSchema[] => {
+    const normalizedResults = Array.isArray(queryResult)
+        ? queryResult
+        : [queryResult];
+
+    return normalizedResults.map((result, index) => {
+        const statementInfo = parsedStatements[index];
+        const command =
+            statementInfo?.command ||
+            (typeof result.command === "string"
+                ? result.command.toUpperCase()
+                : undefined);
+        const actionType =
+            statementInfo?.actionType || mapCommandToActionType(command);
+
+        return {
+            rows: normalizeRows(result.rows, limit),
+            action_type: actionType,
+            message: buildSuccessMessage({
+                actionType,
+                command,
+                rowCount:
+                    typeof result.rowCount === "number"
+                        ? result.rowCount
+                        : undefined,
+                query,
+            }),
+        };
+    });
+};
+
+const getStatementInfo = (
+    stmt?: Record<string, unknown>,
+): ParsedStatementInfo => {
+    const statementType = stmt ? Object.keys(stmt)[0] : undefined;
+
+    switch (statementType) {
+        case "SelectStmt":
+            return { command: "SELECT", actionType: "SELECT" };
+        case "InsertStmt":
+            return { command: "INSERT", actionType: "INSERT" };
+        case "UpdateStmt":
+            return { command: "UPDATE", actionType: "UPDATE" };
+        case "DeleteStmt":
+            return { command: "DELETE", actionType: "DELETE" };
+        case "DropStmt":
+            return { command: "DROP", actionType: "OTHER" };
+        case "CreateStmt":
+            return { command: "CREATE", actionType: "OTHER" };
+        case "AlterTableStmt":
+            return { command: "ALTER", actionType: "OTHER" };
+        default:
+            return {
+                command: statementType
+                    ? statementType.replace(/Stmt$/, "").toUpperCase()
+                    : undefined,
+                actionType: "OTHER",
+            };
+    }
+};
+
+const normalizeRows = (rows: unknown[] | undefined, limit?: number) => {
+    const safeRows = Array.isArray(rows) ? rows : [];
+
+    if (limit === -1) {
+        return safeRows as Record<string, unknown>[];
+    }
+
+    return safeRows.slice(0, limit || 1000) as Record<string, unknown>[];
 };
 
 const extractDroppedEntityName = (query: string): string | undefined => {

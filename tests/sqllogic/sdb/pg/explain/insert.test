@@ -14,7 +14,7 @@ LOGICAL PLAN:
 - TableScan: t -> ROW<"c1":VARCHAR,"c2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
--- TableScan[0][t] -> "c1":VARCHAR, "c2":INTEGER
+-- TableScan[0][t, scan=<slt:ignore>] -> "c1":VARCHAR, "c2":INTEGER
 
 
 query

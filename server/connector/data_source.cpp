@@ -502,8 +502,6 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
              "Case of empty filters should be processed in connector");
 
   const auto num_columns = _row_type->size();
-  SDB_ASSERT(num_columns > 0);
-
   const auto total_points = static_cast<size_t>(_values->size());
   const auto batch_size =
     std::min(static_cast<size_t>(size), total_points - _offset);
@@ -511,6 +509,55 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   if (batch_size == 0) {
     _current_split.reset();
     return nullptr;
+  }
+
+  if (num_columns == 0) {
+    // count(*) path: no projected columns — issue one read per point using
+    // the effective column, count how many points exist, return a 0-column
+    // RowVector with that many rows (mirrors RocksDBFullScanDataSource).
+    SDB_ASSERT(_column_ids.size() == 1);
+
+    const size_t total_keys = batch_size;
+    _keys.resize(total_keys);
+    for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
+      auto& key = _keys[point_idx];
+      key.clear();
+      key_utils::AppendTableKey(key, _object_key);
+      key_utils::AppendColumnKey(key, _column_ids[0]);
+      primary_key::Create(*_values, _offset + point_idx, key);
+    }
+    _key_slices.resize(total_keys);
+    for (size_t i = 0; i < total_keys; ++i) {
+      _key_slices[i] = _keys[i];
+    }
+    _ctx.MultiGet(
+      _cf, _key_slices, _raw_values, _statuses,
+      [this](rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
+             rocksdb::PinnableSlice* value, rocksdb::Status* status) {
+        static_cast<Derived*>(this)->DoGet(cf, key, value, status);
+      },
+      [this](rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
+             const rocksdb::Slice* keys, rocksdb::PinnableSlice* values,
+             rocksdb::Status* statuses) {
+        static_cast<Derived*>(this)->DoMultiGetBatch(cf, keys_number, keys,
+                                                     values, statuses);
+      });
+
+    size_t found = 0;
+    for (size_t i = 0; i < batch_size; ++i) {
+      if (!_statuses[i].IsNotFound()) {
+        ++found;
+      }
+    }
+
+    _produced += found;
+    _offset += batch_size;
+    if (_offset >= total_points) {
+      _current_split.reset();
+      _offset = 0;
+    }
+    return velox::BaseVector::create<velox::RowVector>(_row_type, found,
+                                                       &_memory_pool);
   }
 
   const size_t total_keys = batch_size * num_columns;
@@ -553,14 +600,41 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
       _statuses, _raw_values, _memory_pool));
   }
 
-  _produced += batch_size;
+  // Compact the output: exclude rows whose point was not found in RocksDB.
+  // Column 0's status is authoritative — if a row exists, all its columns
+  // exist; if deleted/absent, all are kNotFound.
+  auto indices = velox::allocateIndices(batch_size, &_memory_pool);
+  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
+  size_t found_count = 0;
+  for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
+    if (!_statuses[point_idx * num_columns].IsNotFound()) {
+      raw_indices[found_count++] = static_cast<velox::vector_size_t>(point_idx);
+    }
+  }
+
+  _produced += found_count;
   _offset += batch_size;
   if (_offset >= total_points) {
     _current_split.reset();
     _offset = 0;
   }
+
+  if (found_count == batch_size) {
+    return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
+                                              batch_size, std::move(columns));
+  }
+  if (found_count == 0) {
+    return velox::BaseVector::create<velox::RowVector>(_row_type, 0,
+                                                       &_memory_pool);
+  }
+  std::vector<velox::VectorPtr> filtered;
+  filtered.reserve(num_columns);
+  for (auto& col : columns) {
+    filtered.push_back(
+      velox::BaseVector::wrapInDictionary(nullptr, indices, found_count, col));
+  }
   return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
-                                            batch_size, std::move(columns));
+                                            found_count, std::move(filtered));
 }
 
 template class RocksDBPointLookupDataSource<RocksDBRYOWPointLookupDataSource>;

@@ -206,6 +206,16 @@ class SereneDBConnectorTableHandle final
 
   const std::string& name() const final { return _name; }
 
+  std::string toString() const final {
+    if (_search_query) {
+      return absl::StrCat(_name, ", scan=search");
+    }
+    if (!_points.empty()) {
+      return absl::StrCat(_name, ", scan=point");
+    }
+    return absl::StrCat(_name, ", scan=full");
+  }
+
   ObjectId TableId() const noexcept { return _table_id; }
 
   const catalog::Column::Id& GetEffectiveColumnId() const noexcept {

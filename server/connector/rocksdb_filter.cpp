@@ -56,7 +56,7 @@ std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
                                    std::span<const std::string> pk_names) {
   SDB_ASSERT(func_call->inputs().size() == 2);
   if (!func_call->inputs()[0]->isFieldAccessKind() ||
-      !func_call->inputs()[1]->isConcatKind()) {
+      !func_call->inputs()[1]->isConstantKind()) {
     return AnyPoint(pk_names);
   }
   auto field_access =
@@ -72,7 +72,7 @@ std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
 std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
                                    std::span<const std::string> pk_names) {
   if (!func_call->inputs()[0]->isFieldAccessKind() ||
-      !func_call->inputs()[1]->isConcatKind()) {
+      !func_call->inputs()[1]->isConstantKind()) {
     return AnyPoint(pk_names);
   }
   auto field_access =

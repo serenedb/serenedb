@@ -162,7 +162,7 @@ SereneDBTableLayout::createTableHandle(
 
     if (!res.points.empty()) {
       points = std::move(res.points);
-      remaining_filter = res.remaining_filter;
+      remaining_filter = std::move(res.remaining_filter);
     }
   }
 

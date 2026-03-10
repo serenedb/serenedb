@@ -4,6 +4,7 @@ import {
     DialogDescription,
     DialogTitle,
 } from "@serene-ui/shared-frontend/shared";
+import { useEffect, useState } from "react";
 import {
     BindVariables,
     QueryResults,
@@ -32,6 +33,34 @@ export const SavedQueriesModal = () => {
 
     const hasBindVars =
         currentSavedQuery?.bind_vars && currentSavedQuery.bind_vars.length > 0;
+    const [selectedResultIndex, setSelectedResultIndex] = useState(0);
+    const queryResults =
+        result?.status === "success"
+            ? result.results.map((item) => ({
+                  rows: item.rows,
+                  status: "success" as const,
+                  message: item.message,
+              }))
+            : result
+              ? [
+                    {
+                        rows: [],
+                        status: isQueryRunning ? "running" : result.status,
+                        error: result.status === "failed" ? result.error : undefined,
+                    },
+                ]
+              : [];
+
+    useEffect(() => {
+        if (queryResults.length === 0) {
+            setSelectedResultIndex(0);
+            return;
+        }
+
+        setSelectedResultIndex((currentIndex) =>
+            Math.min(currentIndex, queryResults.length - 1),
+        );
+    }, [queryResults.length]);
 
     return (
         <Dialog open={open} onOpenChange={(value) => setOpen(value)}>
@@ -57,23 +86,11 @@ export const SavedQueriesModal = () => {
 
                     <div className="flex-1 flex min-h-60 bg-background rounded-md border border-border">
                         <QueryResults
-                            results={[
-                                {
-                                    rows:
-                                        result?.status == "success"
-                                            ? result?.result
-                                            : [],
-                                    status: isQueryRunning
-                                        ? "running"
-                                        : result?.status || "",
-                                },
-                            ]}
+                            results={queryResults}
                             selectedResultIndex={
-                                result?.status === "success" ||
-                                result?.status === "running"
-                                    ? 0
-                                    : -1
+                                queryResults.length > 0 ? selectedResultIndex : -1
                             }
+                            onSelectResult={setSelectedResultIndex}
                         />
                     </div>
                 </div>

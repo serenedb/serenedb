@@ -21,6 +21,7 @@ export interface ConsoleTab {
         statementRange: ConsoleStatementRange;
         error?: string;
         message?: string;
+        action_type?: "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "OTHER";
         created_at?: string;
         execution_started_at?: string;
         execution_finished_at?: string;

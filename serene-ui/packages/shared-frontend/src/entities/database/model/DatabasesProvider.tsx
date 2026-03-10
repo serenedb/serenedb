@@ -5,6 +5,7 @@ import {
     useExecuteQuery,
     useGetConnections,
 } from "@serene-ui/shared-frontend";
+import type { QueryExecutionResultSchema } from "@serene-ui/shared-core";
 
 type DatabaseRecord = { name: string };
 
@@ -21,7 +22,8 @@ export const DatabasesProvider = ({
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
 
-    const { mutateAsync: executeQuery } = useExecuteQuery<DatabaseRecord[]>();
+    const { mutateAsync: executeQuery } =
+        useExecuteQuery<QueryExecutionResultSchema[]>();
     const { data: connections } = useGetConnections();
     const { currentConnection, setCurrentConnection } = useConnection();
 
@@ -84,7 +86,11 @@ export const DatabasesProvider = ({
                     return;
                 }
 
-                setDatabases(data.result.map((database) => database.name));
+                setDatabases(
+                    (data.results?.[0]?.rows || []).map(
+                        (database) => (database as DatabaseRecord).name,
+                    ),
+                );
             } catch (err) {
                 if (currentAbortController.signal.aborted) return;
                 console.error("Failed to fetch databases:", err);
@@ -130,7 +136,11 @@ export const DatabasesProvider = ({
                     return;
                 }
 
-                setDatabases(data.result.map((database) => database.name));
+                setDatabases(
+                    (data.results?.[0]?.rows || []).map(
+                        (database) => (database as DatabaseRecord).name,
+                    ),
+                );
                 hasLoadedRef.current = true;
             } catch (err) {
                 if (currentAbortController.signal.aborted) return;

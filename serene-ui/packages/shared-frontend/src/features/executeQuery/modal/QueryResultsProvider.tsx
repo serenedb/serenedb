@@ -316,14 +316,12 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                                 status: result.status,
                                 query: currentQueryResult?.query || "",
                                 created_at: result?.created_at,
-                                message: result.message,
                                 execution_started_at:
                                     result?.execution_started_at,
                                 execution_finished_at:
                                     result?.execution_finished_at,
-                                action_type: result.action_type,
                                 bind_vars: currentQueryResult?.bind_vars,
-                                result: result.result || [],
+                                results: result.results || [],
                                 statementIndex:
                                     currentQueryResult?.statementIndex,
                                 statementRange:
@@ -342,7 +340,6 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                                     result?.execution_started_at,
                                 execution_finished_at:
                                     result?.execution_finished_at,
-                                action_type: result.action_type,
                                 bind_vars: currentQueryResult?.bind_vars,
                                 error: result.error || "Unknown error",
                                 statementIndex:

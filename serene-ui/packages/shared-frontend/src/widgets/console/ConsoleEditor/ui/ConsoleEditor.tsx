@@ -62,7 +62,7 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
     highlightVariant,
 }) => {
     const { isMaximized, toggleMaximizedResults } = useConsoleLayout();
-    const { executeQueryBatch } = useQueryResults();
+    const { executeQueryBatch, executeQuery } = useQueryResults();
     const autocomplete = useConnectionAutocomplete();
 
     const storybookPrefillAppliedRef = useRef(false);
@@ -103,28 +103,63 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
         };
     }, [selectedTabId, tabs, updateTab]);
 
-    const handleExecute = useCallback(async () => {
-        const result = await executeQueryBatch(
-            tabs[selectedTabId].value,
-            tabs[selectedTabId].bind_vars || [],
-            true,
-            limit,
-            (job: ExecuteQueryBatchJob) => {
-                addPendingResults([
-                    {
-                        jobId: job.jobId,
-                        statementIndex: job.statementIndex,
-                        statementQuery: job.statementQuery,
-                        sourceQuery: job.sourceQuery,
-                        statementRange: job.statementRange,
+    const handleExecute = useCallback(
+        async (mode: "sequential" | "transaction") => {
+            let result;
+            if (mode === "sequential") {
+                result = await executeQueryBatch(
+                    tabs[selectedTabId].value,
+                    tabs[selectedTabId].bind_vars || [],
+                    true,
+                    limit,
+                    (job: ExecuteQueryBatchJob) => {
+                        addPendingResults([
+                            {
+                                jobId: job.jobId,
+                                statementIndex: job.statementIndex,
+                                statementQuery: job.statementQuery,
+                                sourceQuery: job.sourceQuery,
+                                statementRange: job.statementRange,
+                            },
+                        ]);
                     },
-                ]);
-            },
-        );
-        if (!result.success) {
-            return;
-        }
-    }, [tabs, selectedTabId, executeQueryBatch, addPendingResults, limit]);
+                );
+            }
+            if (mode === "transaction") {
+                result = await executeQuery(
+                    tabs[selectedTabId].value,
+                    tabs[selectedTabId].bind_vars || [],
+                    true,
+                    limit,
+                );
+                if (result.success) {
+                    addPendingResults([
+                        {
+                            jobId: result.jobId,
+                            statementIndex: 0,
+                            statementQuery: tabs[selectedTabId].value,
+                            sourceQuery: tabs[selectedTabId].value,
+                            statementRange: {
+                                startOffset: 0,
+                                endOffset: tabs[selectedTabId].value.length,
+                            },
+                        },
+                    ]);
+                }
+            }
+            if (!result?.success) {
+                return;
+            }
+        },
+        [
+            tabs,
+            selectedTabId,
+            executeQueryBatch,
+            executeQuery,
+            addPendingResults,
+            limit,
+        ],
+    );
 
     const handleExecuteInNewTab = useCallback(async () => {
         const currentQuery = tabs[selectedTabId].value;

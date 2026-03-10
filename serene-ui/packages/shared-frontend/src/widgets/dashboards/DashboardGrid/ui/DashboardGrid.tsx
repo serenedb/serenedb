@@ -1,11 +1,12 @@
 import React from "react";
 import ReactGridLayout, { useContainerWidth } from "react-grid-layout";
 import {
-    boundedX,
+    gridBounds,
     minMaxSize,
     noCompactor,
     transformStrategy,
 } from "react-grid-layout/core";
+import { wrapCompactor } from "react-grid-layout/extras";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
@@ -24,6 +25,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
     const { width, containerRef, mounted } = useContainerWidth();
     const [scale, setScale] =
         React.useState<(typeof GRID_SCALE_OPTIONS)[number]>(1);
+    const [isDragging, setIsDragging] = React.useState(false);
     const freePlacementCompactor = React.useMemo(
         () => ({
             ...noCompactor,
@@ -44,6 +46,18 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
         { i: "b", x: 3, y: 2, w: 3, h: 2 },
         { i: "c", x: 3, y: 0, w: 1, h: 2 },
     ];
+
+    React.useEffect(() => {
+        if (!isDragging) return;
+
+        const previousUserSelect = document.body.style.userSelect;
+
+        document.body.style.userSelect = "none";
+
+        return () => {
+            document.body.style.userSelect = previousUserSelect;
+        };
+    }, [isDragging]);
 
     return (
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
@@ -74,7 +88,9 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                             layout={layout}
                             width={width}
                             compactor={freePlacementCompactor}
-                            constraints={[boundedX, minMaxSize]}
+                            constraints={[gridBounds, minMaxSize]}
+                            onDragStart={() => setIsDragging(true)}
+                            onDragStop={() => setIsDragging(false)}
                             positionStrategy={positionStrategy}
                             gridConfig={{ cols: 14, rowHeight: 36 }}>
                             <div className="flex" key="a">

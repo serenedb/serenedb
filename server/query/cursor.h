@@ -21,13 +21,13 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
-#include <basics/exceptions.h>
 #include <velox/exec/Task.h>
 #include <velox/vector/ComplexVector.h>
 
-#include <yaclib/util/result.hpp>
+#include <vector>
 
 #include "query/context.h"
+#include "query/executor.h"
 #include "query/runner.h"
 
 namespace sdb::query {
@@ -41,31 +41,21 @@ class Cursor {
     More,
     Done,
   };
+
   Process Next(velox::RowVectorPtr& batch);
 
-  void RequestCancel();
+  yaclib::Future<> RequestCancel();
 
   ~Cursor();
 
  private:
-  Process ExecuteVelox(velox::RowVectorPtr& batch);
-  Process ExecuteStmt();
-  Process ExecuteShow(velox::RowVectorPtr& batch);
-  Process ExecuteShowAll(velox::RowVectorPtr& batch);
-
   friend class Query;
-  Cursor(std::function<void()>&& user_task, const Query& query);
+  Cursor(UserTask&& user_task, Query& query);
 
-  void BuildBatch(velox::RowVectorPtr& batch,
-                  std::span<const std::vector<std::string>> data);
-
-  std::shared_ptr<velox::memory::MemoryPool> _data_memory_pool;
-  std::function<void()> _user_task;
-  Runner _runner;
-  const Query& _query;
-
-  yaclib::Result<Result> _stmt_result;
-  absl::Mutex _stmt_result_mutex;
+  UserTask _user_task;
+  Query& _query;
+  std::vector<std::unique_ptr<Executor>> _executors;
+  size_t _current = 0;
 };
 
 }  // namespace sdb::query

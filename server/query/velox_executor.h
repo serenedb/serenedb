@@ -20,23 +20,37 @@
 
 #pragma once
 
-#include "query/external_executor.h"
-#include "utils/exec_context.h"
+#include <functional>
 
-struct Node;
+#include "query/executor.h"
 
-namespace sdb::pg {
+namespace sdb::query {
 
-class Executor final : public query::ExternalExecutor {
+class VeloxExecutor : public Executor {
  public:
-  explicit Executor(std::shared_ptr<ExecContext> context, const Node& node);
+  void Init(Query& query) final;
 
-  yaclib::Future<Result> Execute() final;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
   yaclib::Future<> RequestCancel() final;
 
+  auto& IgnoreOutput(this auto& self) noexcept { return self._ignore_output; }
+
+ protected:
+  Query* _query = nullptr;
+
  private:
-  std::shared_ptr<ExecContext> _context;
-  const Node& _node;
+  bool _ignore_output = false;
 };
 
-}  // namespace sdb::pg
+class RollbackVeloxExecutor final : public VeloxExecutor {
+ public:
+  explicit RollbackVeloxExecutor(std::function<void()> on_error)
+    : _on_error{std::move(on_error)} {}
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+
+ private:
+  std::function<void()> _on_error;
+};
+
+}  // namespace sdb::query

@@ -714,7 +714,8 @@ class SqlAnalyzer {
   VeloxQuery ProcessRoot(State& state, const Node& node);
 
  private:
-  SqlCommandType ProcessStmt(State& state, const Node& node);
+  SqlCommandType ProcessStmt(State& state, const Node& node,
+                             bool allowed_select_into = false);
 
   void MakeTableWrite(State& state, const Node& stmt,
                       const Objects::ObjectData& object,
@@ -725,7 +726,8 @@ class SqlAnalyzer {
 
   lp::ExprPtr GetDefaultValue(State& state, const catalog::Column& column);
 
-  void ProcessSelectStmt(State& state, const SelectStmt& stmt);
+  void ProcessSelectStmt(State& state, const SelectStmt& stmt,
+                         bool allowed_select_into = false);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
   void ProcessUpdateStmt(State& state, const UpdateStmt& stmt);
   void ProcessDeleteStmt(State& state, const DeleteStmt& stmt);
@@ -733,6 +735,9 @@ class SqlAnalyzer {
   void ProcessCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
+  void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+
+  void ProcessIntoClause(State& state, const IntoClause& into);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -1259,7 +1264,14 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
 }
 
-void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
+void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
+                                    bool allowed_select_into) {
+  if (!allowed_select_into && stmt.intoClause) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
+                    ERR_MSG("SELECT ... INTO is not allowed here"));
+  }
+
   if (stmt.lockingClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "LOCK clause is not implemented yet");
   }
@@ -1269,9 +1281,6 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
     ProcessValuesList(state, stmt.valuesLists);
     ProcessSortClause(state, stmt.sortClause, {});
   } else if (stmt.op == SETOP_NONE) {
-    if (stmt.intoClause) {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "INTO clause is not implemented yet");
-    }
     ProcessPipeline(state, stmt);
   } else {
     ProcessPipelineSet(state, stmt);
@@ -2508,12 +2517,120 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   });
 }
 
-SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
+void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
+                                           const CreateTableAsStmt& stmt) {
+  if (nodeTag(stmt.query) != T_SelectStmt) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("CREATE TABLE AS only supports SELECT statements"));
+  }
+
+  if (stmt.objtype != OBJECT_TABLE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("CREATE TABLE AS only supports creating tables"));
+  }
+
+  const SelectStmt& select = *castNode(SelectStmt, stmt.query);
+  ProcessSelectStmt(state, select);
+  ProcessIntoClause(state, *stmt.into);
+}
+
+void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
+  SDB_ASSERT(state.root);
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+  const auto& output = *state.root->outputType();
+  column_names.reserve(output.size());
+  column_exprs.reserve(output.size());
+
+  if (output.size() < list_length(into.colNames)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("too many column names were specified"));
+  }
+
+  auto add_column = [&](std::string_view alias, size_t idx) {
+    if (absl::c_contains(column_names, alias)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+        CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+        ERR_MSG("column \"", alias, "\" specified more than once"));
+    }
+    column_names.emplace_back(alias);
+
+    auto expr = std::make_shared<lp::InputReferenceExpr>(output.childAt(idx),
+                                                         output.nameOf(idx));
+    column_exprs.emplace_back(std::move(expr));
+  };
+
+  size_t i = 0;
+  for (; i < list_length(into.colNames); ++i) {
+    auto alias = strVal(list_nth_node(Node, into.colNames, i));
+    add_column(alias, i);
+  }
+  for (; i < output.size(); ++i) {
+    auto alias = ToAlias(output.nameOf(i));
+    add_column(alias, i);
+  }
+
+  if (into.accessMethod) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("access method is not supported"));
+  }
+
+  if (into.options) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("WITH options are not supported"));
+  }
+
+  if (into.onCommit != ONCOMMIT_NOOP) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("ON COMMIT is not supported"));
+  }
+
+  if (into.tableSpaceName) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("TABLESPACE is not supported"));
+  }
+
+  if (into.skipData) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("WITH NO DATA is not supported"));
+  }
+
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(state.root), nullptr,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
+}
+
+SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
+                                        bool allowed_select_into) {
   switch (node.type) {
     case T_SelectStmt: {
       const auto& stmt = *castNode(SelectStmt, &node);
-      ProcessSelectStmt(state, stmt);
-      return SqlCommandType::Select;
+      ProcessSelectStmt(state, stmt, allowed_select_into);
+
+      if (!stmt.intoClause) {
+        return SqlCommandType::Select;
+      }
+
+      if (!allowed_select_into) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
+          ERR_MSG("SELECT ... INTO is not allowed here"));
+      }
+
+      ProcessIntoClause(state, *stmt.intoClause);
+      state.pgsql_node = &node;
+      return SqlCommandType::CTAS;
     }
     case T_InsertStmt: {
       const auto& stmt = *castNode(InsertStmt, &node);
@@ -2563,6 +2680,12 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       ProcessCreateStmt(state, stmt);
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
+    }
+    case T_CreateTableAsStmt: {
+      state.pgsql_node = &node;
+      const auto& stmt = *castNode(CreateTableAsStmt, &node);
+      ProcessCreateTableAsStmt(state, stmt);
+      return SqlCommandType::CTAS;
     }
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;
@@ -5719,7 +5842,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAIndirection(State& state,
 }
 
 VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
-  auto command_type = ProcessStmt(state, node);
+  auto command_type = ProcessStmt(state, node, true);
   return {
     .root = std::move(state.root),
     .options = std::move(_options),

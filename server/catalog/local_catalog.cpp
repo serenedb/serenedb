@@ -1121,6 +1121,9 @@ Result LocalCatalog::CreateTable(
     }
   }
   auto table = std::make_shared<Table>(std::move(options), database_id);
+  if (operation_options.create_with_tombstone) {
+    table->SetTombstoned(true);
+  }
   auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   absl::MutexLock lock{&_mutex};
@@ -1141,6 +1144,14 @@ Result LocalCatalog::CreateTable(
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+
+      if (operation_options.create_with_tombstone) {
+        r = _engine->WriteTombstone(*schema_id, table->GetId());
+        if (!r.ok()) {
+          return r;
+        }
+      }
+
       vpack::Builder b;
       b.openObject();
       table->WriteInternal(b);
@@ -1155,9 +1166,10 @@ Result LocalCatalog::CreateTable(
       b.clear();
       shard->WriteInternal(b);
 
-      return _engine->CreateDefinition(
+      r = _engine->CreateDefinition(
         shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
         [&](bool) -> vpack::Slice { return b.slice(); });
+      return r;
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
@@ -1518,6 +1530,34 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     DropTask::Schedule(std::move(task)).Detach();
     return Result{};
   });
+}
+
+Result LocalCatalog::RemoveTombstone(ObjectId db_id,
+                                     std::string_view schema_name,
+                                     std::string_view name) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!table_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto r =
+    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
+  // Unlike most catalog operations that clone the snapshot, here we modify the
+  // object in-place because the tombstone flag is simple in-memory state.
+  auto object = _snapshot->GetObject(*table_id);
+  if (object) {
+    auto& schema_obj = basics::downCast<SchemaObject>(*object);
+    schema_obj.SetTombstoned(false);
+  }
+
+  return r;
 }
 
 Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,

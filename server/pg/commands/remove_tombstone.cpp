@@ -18,24 +18,34 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <yaclib/async/make.hpp>
-
+#include "app/app_server.h"
+#include "basics/debugging.h"
 #include "basics/errors.h"
-#include "catalog/databases.h"
+#include "basics/system-compiler.h"
+#include "catalog/catalog.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 
-yaclib::Future<> CreateDatabase(ExecContext& context,
-                                const CreatedbStmt& stmt) {
-  auto r = catalog::CreateDatabase(
-    context, catalog::DatabaseOptions{.name = stmt.dbname});
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
-                    ERR_MSG("database \"", stmt.dbname, "\" already exists"));
+yaclib::Future<> RemoveTombstone(ExecContext& context, const RangeVar& rel) {
+  const auto db = context.GetDatabaseId();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
+  const std::string_view schema =
+    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+  if (schema.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
+
+  SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto r = catalog.RemoveTombstone(db, schema, rel.relname);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }

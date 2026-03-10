@@ -18,28 +18,36 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <yaclib/async/make.hpp>
+#pragma once
 
-#include "basics/errors.h"
-#include "catalog/databases.h"
-#include "pg/commands.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
+#include "query/executor.h"
 
-namespace sdb::pg {
+namespace sdb::query {
 
-yaclib::Future<> CreateDatabase(ExecContext& context,
-                                const CreatedbStmt& stmt) {
-  auto r = catalog::CreateDatabase(
-    context, catalog::DatabaseOptions{.name = stmt.dbname});
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
-                    ERR_MSG("database \"", stmt.dbname, "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-  return {};
-}
+class ShowExecutor final : public Executor {
+ public:
+  void Init(Query& query) final { _query = &query; }
 
-}  // namespace sdb::pg
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+  yaclib::Future<> RequestCancel() final { return {}; }
+
+ private:
+  velox::RowVectorPtr BuildShowBatch();
+
+  Query* _query = nullptr;
+};
+
+class ShowAllExecutor final : public Executor {
+ public:
+  void Init(Query& query) final { _query = &query; }
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+  yaclib::Future<> RequestCancel() final { return {}; }
+
+ private:
+  velox::RowVectorPtr BuildShowAllBatch();
+
+  Query* _query = nullptr;
+};
+
+}  // namespace sdb::query

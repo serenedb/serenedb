@@ -18,28 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <yaclib/async/make.hpp>
+#pragma once
 
-#include "basics/errors.h"
-#include "catalog/databases.h"
-#include "pg/commands.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
+#include <velox/vector/ComplexVector.h>
 
-namespace sdb::pg {
+#include <yaclib/async/future.hpp>
 
-yaclib::Future<> CreateDatabase(ExecContext& context,
-                                const CreatedbStmt& stmt) {
-  auto r = catalog::CreateDatabase(
-    context, catalog::DatabaseOptions{.name = stmt.dbname});
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
-                    ERR_MSG("database \"", stmt.dbname, "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-  return {};
-}
+#include "basics/fwd.h"
 
-}  // namespace sdb::pg
+namespace sdb::query {
+
+class Query;
+
+class Executor {
+ public:
+  virtual void Init(Query& query) = 0;
+  virtual yaclib::Future<> Execute(velox::RowVectorPtr& batch) = 0;
+  virtual yaclib::Future<> RequestCancel() = 0;
+  virtual ~Executor() = default;
+};
+
+}  // namespace sdb::query

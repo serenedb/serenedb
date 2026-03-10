@@ -111,13 +111,14 @@ void AssertNormHeader(irs::bytes_view header, uint32_t num_bytes, uint32_t min,
   constexpr irs::NormVersion kVersion{irs::NormVersion::Min};
 
   ASSERT_FALSE(irs::IsNull(header));
-  ASSERT_EQ(14, header.size());
+  ASSERT_EQ(22, header.size());
 
   auto* p = header.data();
   const auto actual_verson = *p++;
   const auto actual_num_bytes = *p++;
   const auto actual_max = irs::read<uint32_t>(p);
   [[maybe_unused]] const auto actual_sum = irs::read<uint64_t>(p);
+  [[maybe_unused]] const auto actual_non_zero_count = irs::read<uint64_t>(p);
   ASSERT_EQ(p, header.data() + header.size());
 
   ASSERT_EQ(static_cast<uint32_t>(kVersion), actual_verson);

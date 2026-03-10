@@ -20,17 +20,23 @@
 
 #pragma once
 
-#include <yaclib/async/future.hpp>
+#include <optional>
 
-#include "basics/result.h"
+#include "query/executor.h"
 
 namespace sdb::query {
 
-class ExternalExecutor {
+class ExplainExecutor final : public Executor {
  public:
-  virtual yaclib::Future<Result> Execute() = 0;
-  virtual yaclib::Future<> RequestCancel() = 0;
-  virtual ~ExternalExecutor() = default;
+  void Init(Query& query) final { _query = &query; }
+
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
+  yaclib::Future<> RequestCancel() final { return {}; }
+
+ private:
+  velox::RowVectorPtr BuildExplainBatch();
+
+  Query* _query = nullptr;
 };
 
 }  // namespace sdb::query

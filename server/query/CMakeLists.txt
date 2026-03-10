@@ -3,6 +3,9 @@ target_sources(
     PRIVATE
         query.cpp
         cursor.cpp
+        explain_executor.cpp
+        show_executor.cpp
+        velox_executor.cpp
         config.cpp
         utils.cpp
         config_variables.cpp

@@ -123,8 +123,7 @@ class CreateIndexOptionsParser : public OptionsParser {
 }  // namespace
 
 // TODO: use ErrorPosition in ThrowSqlError
-yaclib::Future<Result> CreateIndex(ExecContext& context,
-                                   const IndexStmt& stmt) {
+yaclib::Future<> CreateIndex(ExecContext& context, const IndexStmt& stmt) {
   const auto db = context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
 
@@ -134,21 +133,22 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
   if (schema.empty()) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
   if (stmt.concurrent) {
-    return yaclib::MakeFuture(Result{ERROR_NOT_IMPLEMENTED});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("CONCURRENTLY is not implemented"));
   }
   std::vector<std::string> column_names;
   catalog::IndexBaseOptions options;
 
   if (auto r = ParseIndexOptions(stmt, column_names, options); !r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
 
   if (options.type == IndexType::Inverted) {
@@ -159,14 +159,16 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
                           std::move(options), shard_options);
 
     if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-      r = {};
-
+      return {};
     } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
         ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
     }
-    return yaclib::MakeFuture(std::move(r));
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+    return {};
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index type is not supported"));

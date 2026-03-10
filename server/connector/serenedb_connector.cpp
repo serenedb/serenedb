@@ -22,6 +22,7 @@
 
 #include "basics/static_strings.h"
 #include "pg/sql_exception_macro.h"
+#include "rocksdb_filter.hpp"
 #include "search_filter_builder.hpp"
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -162,6 +163,7 @@ SereneDBTableLayout::createTableHandle(
 
     if (!res.points.empty()) {
       points = std::move(res.points);
+      SortPoints(points, *pk_type);
       remaining_filter = std::move(res.remaining_filter);
     }
   }

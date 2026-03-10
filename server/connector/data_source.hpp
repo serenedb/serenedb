@@ -27,6 +27,9 @@
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <algorithm>
+#include <numeric>
+
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "rocksdb/db.h"
@@ -239,7 +242,18 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
       _row_type{std::move(row_type)},
       _column_ids{std::move(column_ids)},
       _object_key{object_key},
-      _values{std::move(values)} {}
+      _values{std::move(values)} {
+    const size_t num_cols = _column_ids.size();
+    _sorted_col_indices.resize(num_cols);
+    std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
+    std::sort(
+      _sorted_col_indices.begin(), _sorted_col_indices.end(),
+      [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
+    _col_rank.resize(num_cols);
+    for (size_t rank = 0; rank < num_cols; ++rank) {
+      _col_rank[_sorted_col_indices[rank]] = rank;
+    }
+  }
 
  private:
   velox::memory::MemoryPool& _memory_pool;
@@ -251,6 +265,8 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   uint64_t _produced = 0;
   size_t _offset = 0;
   velox::RowVectorPtr _values;
+  std::vector<size_t> _sorted_col_indices;
+  std::vector<size_t> _col_rank;
   std::vector<std::string> _keys;
   std::vector<rocksdb::Slice> _key_slices;
   std::vector<std::string> _raw_values;
@@ -284,7 +300,7 @@ class RocksDBRYOWPointLookupDataSource final
                        const rocksdb::Slice* keys,
                        rocksdb::PinnableSlice* values,
                        rocksdb::Status* statuses) {
-    _transaction.MultiGet(_ro, &cf, keys_number, keys, values, statuses);
+    _transaction.MultiGet(_ro, &cf, keys_number, keys, values, statuses, true);
   }
 
  private:
@@ -317,7 +333,7 @@ class RocksDBSnapshotPointLookupDataSource final
                        const rocksdb::Slice* keys,
                        rocksdb::PinnableSlice* values,
                        rocksdb::Status* statuses) {
-    _db.MultiGet(_ro, &cf, keys_number, keys, values, statuses);
+    _db.MultiGet(_ro, &cf, keys_number, keys, values, statuses, true);
   }
 
  private:

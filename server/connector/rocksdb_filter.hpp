@@ -108,4 +108,9 @@ struct ExtractAndRewriteResult {
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
+// Sorts points in-place by serialized PK key order using pk_type for
+// authoritative column ordering. Comparison uses velox::variant::operator<,
+// which matches RocksDB byte ordering for all supported PK types.
+void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type);
+
 }  // namespace sdb::connector

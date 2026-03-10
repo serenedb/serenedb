@@ -179,6 +179,22 @@ velox::core::TypedExprPtr RewriteExpr(
     expr->type(), std::move(new_inputs), call->name());
 }
 
+template<velox::TypeKind Kind>
+velox::variant ExtractScalarVariant(const velox::BaseVector& vec) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  const auto& cv = static_cast<const velox::ConstantVector<T>&>(vec);
+  return velox::variant(cv.valueAt(0));
+}
+
+velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
+  if (!expr.hasValueVector())
+    return expr.value();
+  if (expr.isNull())
+    return velox::variant(expr.type()->kind());
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
+}
+
 }  // namespace
 
 bool Point::IsSpecific() const {
@@ -294,6 +310,24 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {std::move(pts), nullptr};
   }
   return {std::move(pts), std::move(rewritten)};
+}
+
+void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type) {
+  absl::c_sort(points, [&](const Point& a, const Point& b) {
+    for (size_t i = 0; i < pk_type.size(); ++i) {
+      const auto& col_name = pk_type.nameOf(i);
+      const auto* af = a.FindFilter(col_name);
+      const auto* bf = b.FindFilter(col_name);
+      SDB_ASSERT(af && bf);
+      const auto av = ToVariant(*af);
+      const auto bv = ToVariant(*bf);
+      if (av < bv)
+        return true;
+      if (bv < av)
+        return false;
+    }
+    return false;
+  });
 }
 
 }  // namespace sdb::connector

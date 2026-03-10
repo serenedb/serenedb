@@ -40,7 +40,7 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
 template<velox::TypeKind Kind>
 velox::VectorPtr ReadPointColumnValues(
-  size_t col_idx, size_t num_points, size_t num_columns,
+  size_t sort_rank, size_t num_points,
   const std::vector<rocksdb::Status>& statuses,
   const std::vector<std::string>& values,
   velox::memory::MemoryPool& memory_pool) {
@@ -50,7 +50,7 @@ velox::VectorPtr ReadPointColumnValues(
     velox::Type::create<Kind>(), num_points, &memory_pool);
 
   for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
-    const size_t idx = point_idx * num_columns + col_idx;
+    const size_t idx = sort_rank * num_points + point_idx;
     const auto& status = statuses[idx];
     const auto& value = values[idx];
 
@@ -511,12 +511,15 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
     return nullptr;
   }
 
+  // SDB_PRINT("row type=", _row_type->toString());
   if (num_columns == 0) {
+    // SDB_PRINT("num_columns == 0");
     // count(*) path: no projected columns — issue one read per point using
     // the effective column, count how many points exist, return a 0-column
     // RowVector with that many rows (mirrors RocksDBFullScanDataSource).
     SDB_ASSERT(_column_ids.size() == 1);
 
+    // todo restrict with number of values?
     const size_t total_keys = batch_size;
     _keys.resize(total_keys);
     for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
@@ -526,6 +529,11 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
       key_utils::AppendColumnKey(key, _column_ids[0]);
       primary_key::Create(*_values, _offset + point_idx, key);
     }
+
+    for (size_t i = 1; i < _keys.size(); ++i) {
+      SDB_ASSERT(_keys[i] > _keys[i - 1], "Failed on ", i);
+    }
+
     _key_slices.resize(total_keys);
     for (size_t i = 0; i < total_keys; ++i) {
       _key_slices[i] = _keys[i];
@@ -563,9 +571,10 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   const size_t total_keys = batch_size * num_columns;
 
   _keys.resize(total_keys);
-  for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-    for (size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      auto& key = _keys[point_idx * num_columns + col_idx];
+  for (size_t sort_rank = 0; sort_rank < num_columns; ++sort_rank) {
+    const size_t col_idx = _sorted_col_indices[sort_rank];
+    for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
+      auto& key = _keys[sort_rank * batch_size + point_idx];
       key.clear();
       key_utils::AppendTableKey(key, _object_key);
       key_utils::AppendColumnKey(key, _column_ids[col_idx]);
@@ -596,18 +605,18 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
     const auto& type = _row_type->childAt(column_idx);
     columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      ReadPointColumnValues, type->kind(), column_idx, batch_size, num_columns,
+      ReadPointColumnValues, type->kind(), _col_rank[column_idx], batch_size,
       _statuses, _raw_values, _memory_pool));
   }
 
   // Compact the output: exclude rows whose point was not found in RocksDB.
-  // Column 0's status is authoritative — if a row exists, all its columns
-  // exist; if deleted/absent, all are kNotFound.
+  // sort_rank=0 column's status is authoritative — if a row exists, all its
+  // columns exist; if deleted/absent, all are kNotFound.
   auto indices = velox::allocateIndices(batch_size, &_memory_pool);
   auto* raw_indices = indices->asMutable<velox::vector_size_t>();
   size_t found_count = 0;
   for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-    if (!_statuses[point_idx * num_columns].IsNotFound()) {
+    if (!_statuses[0 * batch_size + point_idx].IsNotFound()) {
       raw_indices[found_count++] = static_cast<velox::vector_size_t>(point_idx);
     }
   }

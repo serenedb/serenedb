@@ -37,7 +37,8 @@
     },
     "dependencies": {
         "@orpc/tanstack-query": "^1.13.1",
-        "@serene-ui/shared-core": "*"
+        "@serene-ui/shared-core": "*",
+        "react-grid-layout": "^2.2.2"
     },
     "peerDependencies": {
         "@radix-ui/react-checkbox": "^1.3.3",

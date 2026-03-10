@@ -54,6 +54,19 @@ class Point {
     return _pk_names;
   }
 
+  // The expression node that made this point specific (set only when
+  // IsSpecific() is true). May be null if the point was never specific.
+  [[nodiscard]] const velox::core::TypedExprPtr& GetSourceExpr()
+    const noexcept {
+    return _source_expr;
+  }
+
+  void UpdateIfNeededSourceExpr(velox::core::TypedExprPtr expr) {
+    if (!_source_expr) {
+      _source_expr = std::move(expr);
+    }
+  }
+
   void AddEqFilter(std::string_view column_name,
                    velox::core::ConstantTypedExprPtr value);
 
@@ -65,6 +78,7 @@ class Point {
   std::span<const std::string> _pk_names;
   absl::flat_hash_map<std::string_view, velox::core::ConstantTypedExprPtr>
     _column_filters;
+  velox::core::TypedExprPtr _source_expr;
 };
 
 // Materialises a point set into a velox RowVector using the supplied memory
@@ -77,6 +91,21 @@ class Point {
 // unconstrained Point (IsUnconstrained() == true) when the expression cannot be
 // reduced to a finite point set — callers should fall back to a full scan.
 [[nodiscard]] std::vector<Point> ExtractFilterExpr(
+  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
+
+// Calls ExtractFilterExpr. When all returned points are specific, rewrites
+// `expr` by replacing each point's source sub-expression with a constant `true`
+// (the PK lookup covers those predicates) and returns the rewritten tree.
+// When not all points are specific, returns `expr` unchanged.
+// The returned TypedExprPtr is null when the rewritten filter is trivially
+// true.
+struct ExtractAndRewriteResult {
+  std::vector<Point> points;
+  // Rewritten filter with PK predicates replaced by true; null if the entire
+  // expression reduced to true.
+  velox::core::TypedExprPtr remaining_filter;
+};
+[[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
 }  // namespace sdb::connector

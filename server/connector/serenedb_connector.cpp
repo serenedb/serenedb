@@ -158,12 +158,19 @@ SereneDBTableLayout::createTableHandle(
 
   std::vector<Point> points;
   if (remaining_filter) {
-    constexpr size_t kMaxPoints = 16 * 1024;
-    auto pts = ExtractFilterExpr(remaining_filter, pk_type->names());
-    if (pts.size() <= kMaxPoints &&
-        absl::c_all_of(pts, [](const Point& p) { return p.IsSpecific(); })) {
-      points = std::move(pts);
+    auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
+
+    if (!res.points.empty()) {
+      points = std::move(res.points);
+      remaining_filter = res.remaining_filter;
     }
+  }
+
+  const bool use_all_filters_pushdown = false;
+
+  if (!use_all_filters_pushdown && remaining_filter) {
+    rejected_filters = {std::move(remaining_filter)};
+    remaining_filter.reset();
   }
 
   SDB_ASSERT(!table().columnMap().empty(),

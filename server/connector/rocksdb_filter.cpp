@@ -20,6 +20,7 @@
 
 #include "rocksdb_filter.hpp"
 
+#include <absl/container/flat_hash_set.h>
 #include <velox/vector/ConstantVector.h>
 #include <velox/vector/FlatVector.h>
 
@@ -148,6 +149,36 @@ std::vector<Point> ExtractFilterOr(const velox::core::CallTypedExpr* func_call,
   return result;
 }
 
+// Recursively rewrites `expr`, replacing any node whose address appears in
+// `sources` with a constant `true`. Returns the original pointer when nothing
+// changed (avoids allocations on the happy path).
+velox::core::TypedExprPtr RewriteExpr(
+  const velox::core::TypedExprPtr& expr,
+  const absl::flat_hash_set<const velox::core::ITypedExpr*>& sources) {
+  if (sources.contains(expr.get())) {
+    return std::make_shared<velox::core::ConstantTypedExpr>(
+      velox::BOOLEAN(), velox::variant(true));
+  }
+  if (!expr->isCallKind()) {
+    return expr;
+  }
+  const auto* call = expr->asUnchecked<velox::core::CallTypedExpr>();
+  std::vector<velox::core::TypedExprPtr> new_inputs;
+  bool changed = false;
+  for (const auto& input : call->inputs()) {
+    auto new_input = RewriteExpr(input, sources);
+    if (new_input.get() != input.get()) {
+      changed = true;
+    }
+    new_inputs.push_back(std::move(new_input));
+  }
+  if (!changed) {
+    return expr;
+  }
+  return std::make_shared<velox::core::CallTypedExpr>(
+    expr->type(), std::move(new_inputs), call->name());
+}
+
 }  // namespace
 
 bool Point::IsSpecific() const {
@@ -212,23 +243,57 @@ velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
 
 std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
                                      std::span<const std::string> pk_names) {
+  std::vector<Point> pts;
   if (!expr->isCallKind()) {
-    return AnyPoint(pk_names);
+    pts = AnyPoint(pk_names);
+  } else {
+    const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
+    if (func_call->name() == "presto_eq") {
+      pts = ExtractFilterEq(func_call, pk_names);
+    } else if (func_call->name() == "in") {
+      pts = ExtractFilterIn(func_call, pk_names);
+    } else if (func_call->name() == "and") {
+      pts = ExtractFilterAnd(func_call, pk_names);
+    } else if (func_call->name() == "or") {
+      pts = ExtractFilterOr(func_call, pk_names);
+    } else {
+      pts = AnyPoint(pk_names);
+    }
   }
-  const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
-  if (func_call->name() == "presto_eq") {
-    return ExtractFilterEq(func_call, pk_names);
+  for (auto& p : pts) {
+    if (p.IsSpecific()) {
+      p.UpdateIfNeededSourceExpr(expr);
+    }
   }
-  if (func_call->name() == "in") {
-    return ExtractFilterIn(func_call, pk_names);
+  return pts;
+}
+
+ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
+  const velox::core::TypedExprPtr& expr,
+  std::span<const std::string> pk_names) {
+  auto pts = ExtractFilterExpr(expr, pk_names);
+  if (!absl::c_all_of(pts, [](const Point& p) { return p.IsSpecific(); })) {
+    return {{}, expr};
   }
-  if (func_call->name() == "and") {
-    return ExtractFilterAnd(func_call, pk_names);
+
+  // Collect the unique source sub-expressions to replace with `true`.
+  absl::flat_hash_set<const velox::core::ITypedExpr*> sources;
+  for (const auto& p : pts) {
+    if (p.GetSourceExpr()) {
+      sources.insert(p.GetSourceExpr().get());
+    }
   }
-  if (func_call->name() == "or") {
-    return ExtractFilterOr(func_call, pk_names);
+
+  auto rewritten = RewriteExpr(expr, sources);
+
+  // TODO evaluator should do this later?
+  // If the whole expression rewrote to `true`, return null (no filter needed).
+  if (const auto* c =
+        dynamic_cast<const velox::core::ConstantTypedExpr*>(rewritten.get());
+      c && c->value().value<bool>()) {
+    return {std::move(pts), nullptr};
   }
-  return AnyPoint(pk_names);
+  return {std::move(pts), std::move(rewritten)};
 }
 
 }  // namespace sdb::connector

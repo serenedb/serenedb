@@ -1,0 +1,15 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_tokenizer(
+    template = text, locale = en
+)
+
+
+query
+SELECT ts_lexize('text_tokenizer', 'a QUICK Brown FoX');
+----
+ts_lexize
+{a,quick,brown,fox}
+
+
+query error text search dictionary "other_tokenizer" does not exist
+SELECT ts_lexize('other_tokenizer', 'a QUICK Brown Fox');

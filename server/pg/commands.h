@@ -25,6 +25,7 @@
 #include "catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
+#include "yaclib/async/future.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -71,5 +72,7 @@ yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
 yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
 
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
+
+yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt);
 
 }  // namespace sdb::pg

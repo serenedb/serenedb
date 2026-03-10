@@ -42,8 +42,6 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
  public:
   using stopwords_t = absl::flat_hash_set<std::string>;
 
-  enum CaseConvertT { kLower, kNone, kUpper };
-
   struct OptionsT {
     // lowercase tokens, match original implementation
     CaseConvertT case_convert{CaseConvertT::kLower};

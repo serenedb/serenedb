@@ -32,6 +32,7 @@ target_sources(
         inverted_index.cpp
         analyzer.cpp
         mangling.cpp
+        text_search_dictionary.cpp
 )
 
 add_subdirectory(identifiers)

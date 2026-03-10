@@ -90,6 +90,9 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
         r = catalog.DropSchema(db, name, cascade);
       }
     } break;
+    case OBJECT_TSDICTIONARY: {
+      r = catalog.DropTSDictionary(db, schema, name);
+    } break;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("DROP for this object type is not implemented: ",

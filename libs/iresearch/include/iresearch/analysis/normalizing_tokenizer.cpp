@@ -55,14 +55,6 @@ constexpr std::string_view kLocaleParamName = "locale";
 constexpr std::string_view kCaseConvertParamName = "case";
 constexpr std::string_view kAccentParamName = "accent";
 
-constexpr frozen::unordered_map<std::string_view,
-                                NormalizingTokenizer::CaseConvertT, 3>
-  kCaseConvertMap = {
-    {"lower", NormalizingTokenizer::kLower},
-    {"none", NormalizingTokenizer::kNone},
-    {"upper", NormalizingTokenizer::kUpper},
-};
-
 bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
   if (!slice.isString()) {
     SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",

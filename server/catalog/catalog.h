@@ -43,6 +43,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/text_search_dictionary.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -100,6 +101,9 @@ struct Snapshot {
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
   virtual std::shared_ptr<Function> GetFunction(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+  virtual std::shared_ptr<TSDictionary> GetTSDictionary(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
   virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
@@ -175,6 +179,9 @@ struct LogicalCatalog {
   virtual Result CreateFunction(ObjectId database_id, std::string_view schema,
                                 std::shared_ptr<catalog::Function> function,
                                 bool replace) = 0;
+  virtual Result CreateTSDictionary(ObjectId database_id,
+                                    std::string_view schema,
+                                    std::shared_ptr<TSDictionary> dict) = 0;
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
@@ -206,6 +213,8 @@ struct LogicalCatalog {
                             bool cascade) = 0;
   virtual Result DropFunction(ObjectId database, std::string_view schema,
                               std::string_view name) = 0;
+  virtual Result DropTSDictionary(ObjectId database, std::string_view schema,
+                                  std::string_view name) = 0;
   virtual Result DropView(ObjectId database, std::string_view schema,
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,

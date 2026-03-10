@@ -88,6 +88,7 @@
 #include "query/transaction.h"
 #include "query/types.h"
 #include "query/utils.h"
+#include "utils/elog.h"
 #include "utils/query_string.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -736,6 +737,7 @@ class SqlAnalyzer {
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+  void ProcessDefineStmt(State& state, const DefineStmt& stmt);
 
   void ProcessIntoClause(State& state, const IntoClause& into);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
@@ -2610,6 +2612,19 @@ void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
     std::move(column_exprs));
 }
 
+void SqlAnalyzer::ProcessDefineStmt(State& state, const DefineStmt& stmt) {
+  switch (stmt.kind) {
+    case OBJECT_TSDICTIONARY: {
+      state.pgsql_node = castNode(Node, &stmt);
+      return;
+    }
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                      ERR_MSG("Such define statement is not supported"));
+  }
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
                                         bool allowed_select_into) {
   switch (node.type) {
@@ -2719,6 +2734,11 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_VacuumStmt: {
       state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_DefineStmt: {
+      const auto& stmt = *castNode(DefineStmt, &node);
+      ProcessDefineStmt(state, stmt);
       return SqlCommandType::DDL;
     }
     default:

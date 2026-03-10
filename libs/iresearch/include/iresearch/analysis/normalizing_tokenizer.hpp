@@ -41,8 +41,6 @@ namespace analysis {
 class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
                                    private util::Noncopyable {
  public:
-  enum CaseConvertT { kLower, kNone, kUpper };
-
   struct OptionsT {
     icu::Locale locale;
     CaseConvertT case_convert{CaseConvertT::kNone};  // no extra normalization

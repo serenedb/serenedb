@@ -337,13 +337,13 @@ bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
 
   // case-convert unicode
   switch (state.options.case_convert) {
-    case TextTokenizer::kLower:
+    case kLower:
       state.token.toLower(state.options.locale);  // inplace case-conversion
       break;
-    case TextTokenizer::kUpper:
+    case kUpper:
       state.token.toUpper(state.options.locale);  // inplace case-conversion
       break;
-    case TextTokenizer::kNone:
+    case kNone:
       break;
   }
 
@@ -398,14 +398,6 @@ constexpr std::string_view kEdgeNGramParamName = "edgeNGram";
 constexpr std::string_view kMinParamName = "min";
 constexpr std::string_view kMaxParamName = "max";
 constexpr std::string_view kPreserveOriginalParamName = "preserveOriginal";
-
-constexpr frozen::unordered_map<std::string_view, TextTokenizer::CaseConvertT,
-                                3>
-  kCaseConvertMap = {
-    {"lower", TextTokenizer::CaseConvertT::kLower},
-    {"none", TextTokenizer::CaseConvertT::kNone},
-    {"upper", TextTokenizer::CaseConvertT::kUpper},
-};
 
 bool InitFromOptions(const TextTokenizer::OptionsT& options,
                      IcuObjects* objects, bool print_errors) {

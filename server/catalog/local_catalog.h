@@ -35,6 +35,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/text_search_dictionary.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/slice.h"
 
@@ -84,6 +85,8 @@ class LocalCatalog final : public LogicalCatalog,
                      const std::vector<std::string>& column_names,
                      IndexBaseOptions options,
                      IndexShardOptions& shard_options) final;
+  Result CreateTSDictionary(ObjectId database_id, std::string_view schema,
+                            std::shared_ptr<TSDictionary> dict) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -104,6 +107,9 @@ class LocalCatalog final : public LogicalCatalog,
                   std::string_view name) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
                       std::string_view name) final;
+  Result DropTSDictionary(ObjectId database_id, std::string_view schema,
+                          std::string_view name) final;
+
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,

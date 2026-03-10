@@ -24,6 +24,8 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
+#include <iresearch/analysis/tokenizer.hpp>
+
 #include "gtest/gtest.h"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
 
@@ -95,7 +97,7 @@ TEST_F(NormalizingTokenizerTests, test_normalizing) {
     OptionsT options;
 
     options.locale = icu::Locale::createFromName("en.utf8");
-    options.case_convert = irs::analysis::NormalizingTokenizer::kLower;
+    options.case_convert = irs::CaseConvertT::kLower;
 
     std::string_view data("rUnNiNg\xd0\x81");
     std::string_view expected("running\xd1\x91");
@@ -120,7 +122,7 @@ TEST_F(NormalizingTokenizerTests, test_normalizing) {
     OptionsT options;
 
     options.locale = icu::Locale::createFromName("en.utf8");
-    options.case_convert = irs::analysis::NormalizingTokenizer::kUpper;
+    options.case_convert = irs::CaseConvertT::kUpper;
 
     std::string_view data("rUnNiNg\xd1\x91");
     std::string_view expected("RUNNING\xd0\x81");

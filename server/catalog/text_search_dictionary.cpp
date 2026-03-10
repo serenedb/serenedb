@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2016 by EMC Corporation, All Rights Reserved
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,36 +15,21 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is EMC Corporation
-///
-/// @author Andrey Abramov
-/// @author Vasiliy Nabatchikov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "catalog/text_search_dictionary.h"
 
-#include <frozen/unordered_map.h>
+#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 
-#include <memory>
+#include "basics/assert.h"
+#include "vpack/builder.h"
 
-#include "iresearch/utils/attribute_provider.hpp"
+namespace sdb::catalog {
 
-namespace irs {
+void TSDictionary::WriteInternal(vpack::Builder& b) const {
+  SDB_ASSERT(b.isOpenArray());
+}
 
-class Tokenizer : public AttributeProvider {
- public:
-  using ptr = std::unique_ptr<Tokenizer>;
-
-  virtual bool next() = 0;
-};
-
-enum CaseConvertT { kLower, kNone, kUpper };
-
-constexpr frozen::unordered_map<std::string_view, CaseConvertT, 3>
-  kCaseConvertMap = {
-    {"lower", CaseConvertT::kLower},
-    {"none", CaseConvertT::kNone},
-    {"upper", CaseConvertT::kUpper},
-};
-
-}  // namespace irs
+}  // namespace sdb::catalog

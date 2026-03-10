@@ -50,7 +50,7 @@ type MonacoEditorProps = {
         monaco: typeof import("monaco-editor"),
     ) => void;
     onChange?: (value: string) => void;
-    onExecute?: () => void;
+    onExecute?: (mode: "sequential" | "transaction") => void;
     onExecuteInNewTab?: () => void;
 };
 
@@ -142,7 +142,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                     label: "Execute Query",
                     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
                     run: () => {
-                        onExecuteRef.current?.();
+                        onExecuteRef.current?.("transaction");
                     },
                 });
             }

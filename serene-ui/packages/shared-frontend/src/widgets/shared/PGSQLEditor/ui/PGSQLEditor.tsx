@@ -11,7 +11,7 @@ interface PGSQLEditorProps {
     value: string;
     onChange: (value: string) => void;
     readOnly?: boolean;
-    onExecute?: () => void;
+    onExecute?: (mode: "sequential" | "transaction") => void;
     onExecuteInNewTab?: () => void;
     autocomplete?: {
         tables: string[];

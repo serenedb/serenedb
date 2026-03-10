@@ -15,7 +15,7 @@ interface ExecuteQueryButtonProps {
     saveToHistory?: boolean;
     limit?: number;
     handleJobId: (jobId: number) => void;
-    onExecute?: () => Promise<void> | void;
+    onExecute?: (mode: "sequential" | "transaction") => Promise<void> | void;
     onBeforeExecute?: () => void;
     onExecuteInNewTab?: () => void;
 }
@@ -43,7 +43,7 @@ export const ExecuteQueryButton = ({
                 onClick={async () => {
                     onBeforeExecute?.();
                     if (onExecute) {
-                        await onExecute();
+                        await onExecute("transaction");
                         return;
                     }
                     const result = await executeQuery(
@@ -71,6 +71,16 @@ export const ExecuteQueryButton = ({
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-50 p-1">
+                    <DropdownMenuItem
+                        className="justify-between pr-1 pl-3"
+                        onSelect={(event) => {
+                            event.preventDefault();
+                            if (!disabled && onExecute) {
+                                onExecute("sequential");
+                            }
+                        }}>
+                        Execute sequentially
+                    </DropdownMenuItem>
                     <DropdownMenuItem
                         className="justify-between pr-1 pl-3"
                         onSelect={(event) => {

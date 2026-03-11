@@ -359,7 +359,7 @@ jobs:
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ inputs.BRANCH }}
           JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
-          ACTOR: ${{ github.actor }}
+          ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
           WORKFLOW: ${{ github.workflow }}
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

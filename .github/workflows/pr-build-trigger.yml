@@ -112,7 +112,7 @@ jobs:
                   PUSH_IMAGES_2_REGISTRY: 'false',
                   EXTRA_ARTIFACTS: '',
                   DOCKER_BUILD_IMAGES: 'false',
-                  BUILD_CONFIG: '{}',
+                  BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor }),
                 },
               });
 

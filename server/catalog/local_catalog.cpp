@@ -1548,21 +1548,32 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto table_id =
+  auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!table_id) {
+  if (!object_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto r =
-    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
+  auto object = _snapshot->GetObject(*object_id);
+  if (!object) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  ObjectId tombstone_parent;
+  if (object->GetType() == ObjectType::Index) {
+    auto& index = basics::downCast<Index>(*object);
+    tombstone_parent = index.GetRelationId();
+  } else {
+    tombstone_parent = *schema_id;
+  }
+
+  auto r = _engine->DropDefinition(tombstone_parent,
+                                   RocksDBEntryType::Tombstone, *object_id);
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
-  auto object = _snapshot->GetObject(*table_id);
-  if (object) {
-    auto& schema_obj = basics::downCast<SchemaObject>(*object);
-    schema_obj.SetTombstoned(false);
-  }
+  auto& schema_obj = basics::downCast<SchemaObject>(*object);
+  schema_obj.SetTombstoned(false);
 
   return r;
 }

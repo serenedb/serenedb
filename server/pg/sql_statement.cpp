@@ -83,8 +83,9 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   };
   auto velox_exec =
     std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
-  auto remove_tombstone =
-    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, *into->rel);
+  auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
+    connection_ctx, absl::NullSafeStringView(into->rel->schemaname),
+    into->rel->relname);
 
   std::vector<std::unique_ptr<query::Executor>> executors;
   executors.reserve(3);
@@ -128,16 +129,16 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
     connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
     index_stmt.relation->relname);
 
-  // auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
-  //   connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
-  //   index_stmt.idxname);
+  auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
+    connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
+    index_stmt.idxname);
 
   std::vector<std::unique_ptr<query::Executor>> executors;
   executors.reserve(4);
   executors.emplace_back(std::move(create_index));
   executors.emplace_back(std::move(velox_exec));
   executors.emplace_back(std::move(update_indexes));
-  // executors.emplace_back(std::move(remove_tombstone));
+  executors.emplace_back(std::move(remove_tombstone));
 
   query_ctx.command_type.Add(query::CommandType::Query);
 

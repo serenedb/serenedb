@@ -30,7 +30,6 @@
 struct IndexStmt;
 struct IntoClause;
 struct Node;
-struct RangeVar;
 
 namespace sdb::pg {
 
@@ -95,20 +94,21 @@ class UpdateIndexesExecutor final : public CommandExecutor {
   yaclib::Future<> ExecuteImpl() override;
 
  private:
-  std::string _schemaname;
-  std::string _relation_name;
+  std::string_view _schemaname;
+  std::string_view _relation_name;
 };
 
 class RemoveTombstoneExecutor final : public CommandExecutor {
  public:
   RemoveTombstoneExecutor(std::shared_ptr<ExecContext> context,
-                          const RangeVar& relation);
+                          std::string_view schemaname, std::string_view name);
 
  protected:
   yaclib::Future<> ExecuteImpl() override;
 
  private:
-  const RangeVar& _relation;
+  std::string_view _schemaname;
+  std::string_view _name;
 };
 
 }  // namespace sdb::pg

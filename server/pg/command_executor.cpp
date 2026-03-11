@@ -142,11 +142,12 @@ yaclib::Future<> UpdateIndexesExecutor::ExecuteImpl() {
 }
 
 RemoveTombstoneExecutor::RemoveTombstoneExecutor(
-  std::shared_ptr<ExecContext> context, const RangeVar& relation)
-  : CommandExecutor{std::move(context)}, _relation{relation} {}
+  std::shared_ptr<ExecContext> context, std::string_view schemaname,
+  std::string_view name)
+  : CommandExecutor{std::move(context)}, _schemaname{schemaname}, _name{name} {}
 
 yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl() {
-  return RemoveTombstone(*_context, _relation);
+  return RemoveTombstone(*_context, _schemaname, _name);
 }
 
 }  // namespace sdb::pg

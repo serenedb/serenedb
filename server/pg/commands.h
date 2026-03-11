@@ -75,7 +75,8 @@ yaclib::Future<> UpdateIndexes(
   ExecContext& ctx, const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const std::vector<std::shared_ptr<catalog::Table>>& tables);
 
-yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
+yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
+                                 std::string_view name);
 
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 

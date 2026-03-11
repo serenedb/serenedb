@@ -23,6 +23,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
@@ -32,6 +33,7 @@
 
 #include "catalog/object.h"
 #include "vpack/builder.h"
+#include "vpack/slice.h"
 
 namespace sdb::catalog {
 
@@ -43,23 +45,10 @@ enum class TokenizerType {
   Norm,
 };
 
-template<typename Analyzer, typename... Args>
-class AnalyzerFactory {
+class AnalyzersPool {
  public:
-  explicit AnalyzerFactory(Args... args) : _args{std::move(args)...} {}
+  AnalyzersPool(std::string data) : _data{std::move(data)} {}
 
-  irs::analysis::Analyzer::ptr Create() const {
-    return std::apply(
-      [](const Args&... args) { return std::make_unique<Analyzer>(args...); },
-      _args);
-  }
-
- private:
-  std::tuple<Args...> _args;
-};
-
-class AnalyzersPoolBase {
- public:
   irs::analysis::Analyzer::ptr GetAnalyzer() {
     absl::MutexLock lock{&_m};
     if (_pool.empty()) {
@@ -69,47 +58,28 @@ class AnalyzersPoolBase {
     _pool.pop_back();
     return analyzer;
   }
+
   void PushAnalyzer(irs::analysis::Analyzer::ptr analyzer) noexcept {
     absl::MutexLock lock{&_m};
     _pool.push_back(std::move(analyzer));
   }
 
-  virtual ~AnalyzersPoolBase() = default;
-
  protected:
-  virtual irs::analysis::Analyzer::ptr CreateAnalyzer() const = 0;
+  irs::analysis::Analyzer::ptr CreateAnalyzer() const {
+    vpack::Slice slice{reinterpret_cast<const uint8_t*>(_data.data())};
+    irs::analysis::Analyzer::ptr output;
+    irs::analysis::analyzers::MakeAnalyzer(slice, output);
+    return output;
+  }
 
  private:
   absl::Mutex _m;
   std::vector<irs::analysis::Analyzer::ptr> _pool;
-};
-
-template<typename Analyzer, typename... Args>
-class AnalyzersPool final : public AnalyzersPoolBase {
- public:
-  explicit AnalyzersPool(AnalyzerFactory<Analyzer, Args...>&& factory)
-    : _factory{std::move(factory)} {}
-
-  irs::analysis::Analyzer::ptr CreateAnalyzer() const final {
-    return _factory.Create();
-  }
-
- private:
-  AnalyzerFactory<Analyzer, Args...> _factory;
+  std::string _data;
 };
 
 class TSDictionary : public SchemaObject {
  public:
-  template<typename Tokenizer, typename... Args>
-  static std::shared_ptr<TSDictionary> CreateTokenizer(ObjectId id,
-                                                       std::string_view name,
-                                                       Args... args) {
-    AnalyzerFactory<Tokenizer, Args...> factory{std::move(args)...};
-    auto pool =
-      std::make_unique<AnalyzersPool<Tokenizer, Args...>>(std::move(factory));
-    return std::make_shared<TSDictionary>(id, name, std::move(pool));
-  }
-
   irs::analysis::Analyzer::ptr GetTokenizer() const {
     return _pool->GetAnalyzer();
   }
@@ -119,13 +89,12 @@ class TSDictionary : public SchemaObject {
 
   void WriteInternal(vpack::Builder& b) const final;
 
-  TSDictionary(ObjectId id, std::string_view name,
-               std::unique_ptr<AnalyzersPoolBase> pool)
+  TSDictionary(ObjectId id, std::string_view name, std::string data)
     : SchemaObject{{}, {}, {}, id, name, ObjectType::TSDictionary},
-      _pool{std::move(pool)} {}
+      _pool{std::make_unique<AnalyzersPool>(std::move(data))} {}
 
  private:
-  std::unique_ptr<AnalyzersPoolBase> _pool;
+  std::unique_ptr<AnalyzersPool> _pool;
 };
 
 }  // namespace sdb::catalog

@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <frozen/unordered_map.h>
+#include <unicode/locid.h>
+#include <vpack/builder.h>
 
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -33,6 +35,8 @@
 #include "pg/sql_utils.h"
 #include "utils/elog.h"
 #include "utils/exec_context.h"
+#include "vpack/value.h"
+#include "vpack/value_type.h"
 
 namespace sdb::pg {
 
@@ -65,10 +69,7 @@ void InvalidParameterThrow(std::string_view param, std::string_view details) {
                           param, "\": ", details));
 }
 
-irs::analysis::TextTokenizer::OptionsT ParseTextTokenizerOptions(
-  const DefineStmt& stmt) {
-  irs::analysis::TextTokenizer::OptionsT options;
-
+void BuildTextAnalyzerVPack(vpack::Builder& b, const DefineStmt& stmt) {
   for (const auto* def : PgListWrapper<DefElem>{stmt.definition}) {
     const std::string_view name{def->defname};
 
@@ -79,69 +80,60 @@ irs::analysis::TextTokenizer::OptionsT ParseTextTokenizerOptions(
       if (!val) {
         InvalidParameterThrow("locale", "expected string");
       }
-      options.locale = icu::Locale::createFromName(val->data());
-      if (options.locale.isBogus()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("unrecognized locale \"", *val, "\""));
-      }
+      b.add("locale", *val);
     } else if (name == "case") {
       auto val = TryGet<std::string_view>(def->arg);
       if (!val) {
         InvalidParameterThrow("case", "expected string");
       }
-      const auto* it = irs::kCaseConvertMap.find(*val);
-      if (it == irs::kCaseConvertMap.end()) {
-        InvalidParameterThrow("cast", "expected one of: lower, none, upper");
+      if (irs::kCaseConvertMap.find(*val) == irs::kCaseConvertMap.end()) {
+        InvalidParameterThrow("case", "expected one of: lower, none, upper");
       }
-      options.case_convert = it->second;
+      b.add("case", *val);
     } else if (name == "accent") {
       auto val = TryGet<bool>(def->arg);
       if (!val) {
         InvalidParameterThrow("accent", "expected boolean");
       }
-      options.accent = *val;
+      b.add("accent", *val);
     } else if (name == "stemming") {
       auto val = TryGet<bool>(def->arg);
       if (!val) {
         InvalidParameterThrow("stemming", "expected boolean");
       }
-      options.stemming = *val;
+      b.add("stemming", *val);
     } else if (name == "stopwords") {
       auto val = TryGet<std::string_view>(def->arg);
       if (!val) {
         InvalidParameterThrow("stopwords", "expected comma-separated string");
       }
-      ParseCommaSeparated(*val, [&](std::string_view word) {
-        options.explicit_stopwords.emplace(word);
-      });
-      options.explicit_stopwords_set = true;
+      b.add("stopwords", vpack::Value{vpack::ValueType::Array});
+      ParseCommaSeparated(*val, [&](std::string_view word) { b.add(word); });
+      b.close();  // close "stopwords" array
     } else if (name == "stopwordspath") {
       auto val = TryGet<std::string_view>(def->arg);
       if (!val) {
         InvalidParameterThrow("stopwordspath", "expected string");
       }
-      options.stopwords_path = std::move(*val);
+      b.add("stopwordsPath", *val);
     } else if (name == "mingram") {
       auto val = TryGet<int>(def->arg);
       if (!val || *val < 1) {
         InvalidParameterThrow("mingram", "must be a positive integer");
       }
-      options.min_gram = static_cast<size_t>(*val);
-      options.min_gram_set = true;
+      b.add("mingram", *val);
     } else if (name == "maxgram") {
       auto val = TryGet<int>(def->arg);
       if (!val || *val < 1) {
         InvalidParameterThrow("maxgram", "must be a positive integer");
       }
-      options.max_gram = static_cast<size_t>(*val);
-      options.max_gram_set = true;
+      b.add("maxgram", *val);
     } else if (name == "preserveoriginal") {
       auto val = TryGet<bool>(def->arg);
       if (!val) {
-        InvalidParameterThrow("preserveoriginal", "expected bool");
+        InvalidParameterThrow("preserveoriginal", "expected boolean");
       }
-      options.preserve_original = *val;
-      options.preserve_original_set = true;
+      b.add("preserveoriginal", *val);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -149,30 +141,9 @@ irs::analysis::TextTokenizer::OptionsT ParseTextTokenizerOptions(
                 "\""));
     }
   }
-
-  if (options.locale.isBogus()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("parameter \"locale\" is required for text search dictionary "
-              "with template \"text\""));
-  }
-
-  if (options.min_gram_set && options.max_gram_set &&
-      options.min_gram > options.max_gram) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("\"mingram\" must be less than or equal to \"maxgram\""));
-  }
-
-  return options;
 }
 
-irs::analysis::NGramTokenizerBase::Options ParseNGramTokenizerOptions(
-  const DefineStmt& stmt) {
-  irs::analysis::NGramTokenizerBase::Options options;
-  bool min_gram_set = false;
-  bool max_gram_set = false;
-
+void BuildNGramAnalyzerVPack(vpack::Builder& b, const DefineStmt& stmt) {
   for (const auto* def : PgListWrapper<DefElem>{stmt.definition}) {
     const std::string_view name{def->defname};
 
@@ -183,49 +154,40 @@ irs::analysis::NGramTokenizerBase::Options ParseNGramTokenizerOptions(
       if (!val || *val < 1) {
         InvalidParameterThrow("mingram", "must be a positive integer");
       }
-      options.min_gram = static_cast<size_t>(*val);
-      min_gram_set = true;
+      b.add("min", static_cast<uint64_t>(*val));
     } else if (name == "maxgram") {
       auto val = TryGet<int>(def->arg);
       if (!val || *val < 1) {
         InvalidParameterThrow("maxgram", "must be a positive integer");
       }
-      options.max_gram = static_cast<size_t>(*val);
-      max_gram_set = true;
+      b.add("max", static_cast<uint64_t>(*val));
     } else if (name == "preserveoriginal") {
       auto val = TryGet<bool>(def->arg);
       if (!val) {
         InvalidParameterThrow("preserveoriginal", "expected boolean");
       }
-      options.preserve_original = *val;
+      b.add("preserveOriginal", *val);
     } else if (name == "inputtype") {
       auto val = TryGet<std::string_view>(def->arg);
       if (!val) {
         InvalidParameterThrow("inputtype", "expected string");
       }
-      if (*val == "binary") {
-        options.stream_bytes_type =
-          irs::analysis::NGramTokenizerBase::InputType::Binary;
-      } else if (*val == "utf8") {
-        options.stream_bytes_type =
-          irs::analysis::NGramTokenizerBase::InputType::UTF8;
-      } else {
+      if (*val != "binary" && *val != "utf8") {
         InvalidParameterThrow("inputtype", "expected one of: binary, utf8");
       }
+      b.add("streamType", *val);
     } else if (name == "startmarker") {
       auto val = TryGet<std::string_view>(def->arg);
       if (!val) {
         InvalidParameterThrow("startmarker", "expected string");
       }
-      options.start_marker = irs::bstring{
-        reinterpret_cast<const irs::byte_type*>(val->data()), val->size()};
+      b.add("startMarker", *val);
     } else if (name == "endmarker") {
       auto val = TryGet<std::string_view>(def->arg);
       if (!val) {
         InvalidParameterThrow("endmarker", "expected string");
       }
-      options.end_marker = irs::bstring{
-        reinterpret_cast<const irs::byte_type*>(val->data()), val->size()};
+      b.add("endMarker", *val);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -233,28 +195,6 @@ irs::analysis::NGramTokenizerBase::Options ParseNGramTokenizerOptions(
                 "\""));
     }
   }
-
-  if (!min_gram_set) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("parameter \"mingram\" is required for text search dictionary "
-              "with template \"ngram\""));
-  }
-
-  if (!max_gram_set) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("parameter \"maxgram\" is required for text search dictionary "
-              "with template \"ngram\""));
-  }
-
-  if (options.min_gram > options.max_gram) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("\"mingram\" must be less than or equal to \"maxgram\""));
-  }
-
-  return options;
 }
 
 }  // namespace
@@ -283,31 +223,35 @@ yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
     }
   }
 
-  std::shared_ptr<catalog::TSDictionary> ts_dict;
-  if (template_name == "text") {
-    auto options = ParseTextTokenizerOptions(stmt);
-    ts_dict =
-      catalog::TSDictionary::CreateTokenizer<irs::analysis::TextTokenizer>(
-        ObjectId{0}, dict_name.relation, options, options.explicit_stopwords);
-  } else if (template_name == "ngram") {
-    auto options = ParseNGramTokenizerOptions(stmt);
-    if (options.stream_bytes_type ==
-        irs::analysis::NGramTokenizerBase::InputType::UTF8) {
-      ts_dict =
-        catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
-          irs::analysis::NGramTokenizerBase::InputType::UTF8>>(
-          ObjectId{0}, dict_name.relation, options);
-    } else {
-      ts_dict =
-        catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
-          irs::analysis::NGramTokenizerBase::InputType::Binary>>(
-          ObjectId{0}, dict_name.relation, options);
-    }
+  vpack::Builder b;
+  b.openObject();
+  b.add("analyzer", vpack::Value{vpack::ValueType::Object});
+  b.add("type", template_name);
+  b.add("properties", vpack::Value{vpack::ValueType::Object});
+  if (template_name == irs::analysis::TextTokenizer::type_name()) {
+    BuildTextAnalyzerVPack(b, stmt);
+  } else if (template_name ==
+               irs::analysis::NGramTokenizer<
+                 irs::analysis::NGramTokenizerBase::InputType::Binary>::
+                 type_name() ||
+             template_name ==
+               irs::analysis::NGramTokenizer<irs::analysis::NGramTokenizerBase::
+                                               InputType::UTF8>::type_name()) {
+    BuildNGramAnalyzerVPack(b, stmt);
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
       ERR_MSG("text search template \"", template_name, "\" does not exist"));
   }
+  b.close();  // close "properties" object
+  b.close();  // close "analyzer" object
+  b.close();  // close outer object
+
+  auto ts_dict = std::make_shared<catalog::TSDictionary>(
+    ObjectId{0}, dict_name.relation,
+    std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
+                b.slice().byteSize()});
+
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();

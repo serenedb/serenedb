@@ -40,17 +40,21 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
       return Process::More;
     }
 
-    if (f.Valid()) {
-      if (f.Ready()) {
-        std::ignore = std::move(f).Touch().Ok();
-        continue;
-      }
-
-      std::move(f).DetachInline([user_task = _user_task](yaclib::Result<> r) {
-        user_task(std::move(r));
-      });
-      return Process::Wait;
+    if (!f.Valid()) {
+      continue;
     }
+
+    if (f.Ready()) {
+      // for future completed in this thread DetachInline would call user_task
+      // on this thread and would cause a deadlock - ProcessWakeup locks mtx
+      std::ignore = std::move(f).Touch().Ok();
+      continue;
+    }
+
+    std::move(f).DetachInline([user_task = _user_task](yaclib::Result<> r) {
+      user_task(std::move(r));
+    });
+    return Process::Wait;
   }
 
   return Process::Done;

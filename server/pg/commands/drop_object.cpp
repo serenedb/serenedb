@@ -91,7 +91,7 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       }
     } break;
     case OBJECT_TSDICTIONARY: {
-      r = catalog.DropTSDictionary(db, schema, name);
+      r = catalog.DropTokenizer(db, schema, name);
     } break;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

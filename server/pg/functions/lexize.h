@@ -60,8 +60,8 @@ struct PgTsLexize {
                                 const arg_type<velox::Varchar>& text) {
     auto snapshot = catalog::GetCatalog().GetSnapshot();
     auto object_name = ParseObjectName(ts_dict, current_schema);
-    auto dict = snapshot->GetTSDictionary(db_id, object_name.schema,
-                                          object_name.relation);
+    auto dict =
+      snapshot->GetTokenizer(db_id, object_name.schema, object_name.relation);
     if (!dict) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_NAME),
                       ERR_MSG("text search dictionary \"",

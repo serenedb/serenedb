@@ -37,7 +37,7 @@
 #include <iresearch/utils/attribute_provider.hpp>
 #include <yaclib/async/make.hpp>
 
-#include "catalog/text_search_dictionary.h"
+#include "catalog/tokenizer.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
@@ -194,7 +194,7 @@ vpack::Builder BuildTokenizerVPack(const DefineStmt& stmt) {
 
 }  // namespace
 
-yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
+yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(ctx);
   const auto db = ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
@@ -220,7 +220,7 @@ yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
 
   vpack::Builder b = BuildTokenizerVPack(stmt);
 
-  auto ts_dict = std::make_shared<catalog::TSDictionary>(
+  auto ts_dict = std::make_shared<catalog::Tokenizer>(
     ObjectId{0}, dict_name.relation,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
@@ -228,7 +228,7 @@ yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
-  auto r = catalog.CreateTSDictionary(db, dict_name.schema, std::move(ts_dict));
+  auto r = catalog.CreateTokenizer(db, dict_name.schema, std::move(ts_dict));
 
   if (!r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),

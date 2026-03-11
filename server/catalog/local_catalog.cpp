@@ -68,7 +68,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/text_search_dictionary.h"
+#include "catalog/tokenizer.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "general_server/scheduler.h"
@@ -235,8 +235,8 @@ class SnapshotImpl : public Snapshot {
         return r;
       }
       return AddObjectDefinition(parent_id, object);
-    } else if constexpr (std::is_same_v<T, TSDictionary>) {
-      auto r = AddToResolution<ResolveType::TSDictionary>(
+    } else if constexpr (std::is_same_v<T, Tokenizer>) {
+      auto r = AddToResolution<ResolveType::Tokenizer>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
@@ -283,9 +283,9 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Function>) {
       RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName(),
                                                   maybe_not_found);
-    } else if constexpr (std::is_same_v<T, TSDictionary>) {
-      RemoveFromResolution<ResolveType::TSDictionary>(
-        parent_id, object->GetName(), maybe_not_found);
+    } else if constexpr (std::is_same_v<T, Tokenizer>) {
+      RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
+                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Table>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
@@ -342,9 +342,9 @@ class SnapshotImpl : public Snapshot {
         auto schema_deps = GetDependency<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
       } break;
-      case ObjectType::TSDictionary: {
+      case ObjectType::Tokenizer: {
         auto schema_deps = GetDependency<SchemaDependency>(parent_id);
-        schema_deps->ts_dicts.insert(object->GetId());
+        schema_deps->tokenizers.insert(object->GetId());
       } break;
       case ObjectType::View: {
         auto schema_deps = GetDependency<SchemaDependency>(parent_id);
@@ -487,20 +487,20 @@ class SnapshotImpl : public Snapshot {
       .value_or(nullptr);
   }
 
-  std::shared_ptr<TSDictionary> GetTSDictionary(
-    ObjectId db_id, std::string_view schema,
-    std::string_view name) const final {
+  std::shared_ptr<Tokenizer> GetTokenizer(ObjectId db_id,
+                                          std::string_view schema,
+                                          std::string_view name) const final {
     auto schema_id =
       _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
     if (!schema_id) {
       return nullptr;
     }
-    auto id = _resolution_table.ResolveObject<ResolveType::TSDictionary>(
-      *schema_id, name);
+    auto id =
+      _resolution_table.ResolveObject<ResolveType::Tokenizer>(*schema_id, name);
     if (!id) {
       return nullptr;
     }
-    return GetObject<TSDictionary>(*id);
+    return GetObject<Tokenizer>(*id);
   }
 
   std::shared_ptr<Table> GetTable(ObjectId db_id, std::string_view schema,
@@ -651,10 +651,10 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
         } break;
-        case ObjectType::TSDictionary: {
+        case ObjectType::Tokenizer: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
-          schema_deps->ts_dicts.erase(id);
+          schema_deps->tokenizers.erase(id);
         } break;
         case ObjectType::Table: {
           auto schema_deps = GetDependency<SchemaDependency>(parent_id);
@@ -710,7 +710,7 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::Function:
       case ObjectType::View:
-      case ObjectType::TSDictionary:
+      case ObjectType::Tokenizer:
         break;
       case ObjectType::TableShard:
       case ObjectType::IndexShard:
@@ -823,6 +823,14 @@ Result LocalCatalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(function), schema_id, false);
+  });
+}
+
+Result LocalCatalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
+                                       std::shared_ptr<Tokenizer> tokenizer) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(tokenizer), schema_id, false);
   });
 }
 
@@ -1208,9 +1216,9 @@ Result LocalCatalog::CreateTable(
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
 
-Result LocalCatalog::CreateTSDictionary(ObjectId database_id,
-                                        std::string_view schema,
-                                        std::shared_ptr<TSDictionary> dict) {
+Result LocalCatalog::CreateTokenizer(ObjectId database_id,
+                                     std::string_view schema,
+                                     std::shared_ptr<Tokenizer> dict) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1226,12 +1234,12 @@ Result LocalCatalog::CreateTSDictionary(ObjectId database_id,
         return r;
       }
       vpack::Builder b;
-      b.openArray();
+      b.openObject();
       dict->WriteInternal(b);
       b.close();
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::TSDictionary, dict->GetId(),
-        [&](bool) { return b.slice(); });
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Tokenizer,
+                                       dict->GetId(),
+                                       [&](bool) { return b.slice(); });
     },
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
@@ -1706,9 +1714,9 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::DropTSDictionary(ObjectId database_id,
-                                      std::string_view schema,
-                                      std::string_view name) {
+Result LocalCatalog::DropTokenizer(ObjectId database_id,
+                                   std::string_view schema,
+                                   std::string_view name) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1716,14 +1724,14 @@ Result LocalCatalog::DropTSDictionary(ObjectId database_id,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   auto dict_id =
-    _snapshot->GetObjectId<ResolveType::TSDictionary>(*schema_id, name);
+    _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
   if (!dict_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-    auto dict = clone->GetObject<TSDictionary>(*dict_id);
+    auto dict = clone->GetObject<Tokenizer>(*dict_id);
     SDB_ASSERT(dict);
-    auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::TSDictionary,
+    auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::Tokenizer,
                                      *dict_id);
     if (!r.ok()) {
       return r;

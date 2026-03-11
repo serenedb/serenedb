@@ -49,6 +49,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/tokenizer.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "folly/Function.h"
@@ -226,6 +227,7 @@ class OpenDatabase {
   Result RegisterDatabases();
   Result RegisterSchemas(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
+  Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
@@ -335,6 +337,24 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
       }
       SDB_ASSERT(function);
       return _catalog.RegisterFunction(db_id, schema_id, std::move(function));
+    });
+}
+
+Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitDefinitions(
+    schema_id, RocksDBEntryType::Tokenizer,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto name = slice.get("name");
+      if (!name.isString()) {
+        return ErrorMeta(ERROR_INTERNAL, "tokenizer",
+                         "Cannot parse tokenizer name", slice);
+      }
+      auto tokenizer = std::make_shared<Tokenizer>(
+        key.GetObjectId(), name.stringView(),
+        std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
+                    slice.byteSize()});
+      SDB_ASSERT(tokenizer);
+      return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
     });
 }
 
@@ -523,6 +543,9 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
     ClearDeletedDefinitions(DeletedScope::Schema);
   };
 
+  if (auto r = RegisterTokenizers(db_id, schema_id); !r.ok()) {
+    return r;
+  }
   if (auto r = RegisterFunctions(db_id, schema_id); !r.ok()) {
     return r;
   }

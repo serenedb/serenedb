@@ -94,7 +94,7 @@ yaclib::Future<> DDLExecutor::ExecuteImpl() {
     }
     case NodeTag::T_DefineStmt: {
       const auto& stmt = *castNode(DefineStmt, &_node);
-      return CreateTSDictionary(*_context, stmt);
+      return CreateTokenizer(*_context, stmt);
     }
     default:
       SDB_UNREACHABLE();

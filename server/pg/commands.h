@@ -73,6 +73,6 @@ yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
 
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
-yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt);
+yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);
 
 }  // namespace sdb::pg

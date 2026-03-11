@@ -18,18 +18,47 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/text_search_dictionary.h"
+#include "catalog/tokenizer.h"
 
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 
 #include "basics/assert.h"
 #include "vpack/builder.h"
+#include "vpack/slice.h"
 
 namespace sdb::catalog {
 
-void TSDictionary::WriteInternal(vpack::Builder& b) const {
-  SDB_ASSERT(b.isOpenArray());
+irs::analysis::Analyzer::ptr AnalyzersPool::GetAnalyzer() {
+  absl::MutexLock lock{&_m};
+  if (_pool.empty()) {
+    return CreateAnalyzer();
+  }
+  auto analyzer = std::move(_pool.back());
+  _pool.pop_back();
+  return analyzer;
+}
+
+void AnalyzersPool::PushAnalyzer(
+  irs::analysis::Analyzer::ptr analyzer) noexcept {
+  absl::MutexLock lock{&_m};
+  _pool.push_back(std::move(analyzer));
+}
+
+irs::analysis::Analyzer::ptr AnalyzersPool::CreateAnalyzer() const {
+  vpack::Slice slice{reinterpret_cast<const uint8_t*>(_data.data())};
+  irs::analysis::Analyzer::ptr output;
+  irs::analysis::analyzers::MakeAnalyzer(slice, output);
+  return output;
+}
+
+Tokenizer::Tokenizer(ObjectId id, std::string_view name, std::string data)
+  : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
+    _pool{std::make_unique<AnalyzersPool>(std::move(data))} {}
+
+void Tokenizer::WriteInternal(vpack::Builder& b) const {
+  b.add("name", GetName());
+  b.add("analyzer", _pool->GetAnalyzerOptions().get("analyzer"));
 }
 
 }  // namespace sdb::catalog

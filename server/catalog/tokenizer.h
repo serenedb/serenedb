@@ -37,40 +37,20 @@
 
 namespace sdb::catalog {
 
-enum class TokenizerType {
-  Unknown = 0,
-  Text,
-  NGram,
-  Stem,
-  Norm,
-};
-
 class AnalyzersPool {
  public:
   AnalyzersPool(std::string data) : _data{std::move(data)} {}
 
-  irs::analysis::Analyzer::ptr GetAnalyzer() {
-    absl::MutexLock lock{&_m};
-    if (_pool.empty()) {
-      return CreateAnalyzer();
-    }
-    auto analyzer = std::move(_pool.back());
-    _pool.pop_back();
-    return analyzer;
-  }
+  irs::analysis::Analyzer::ptr GetAnalyzer();
 
-  void PushAnalyzer(irs::analysis::Analyzer::ptr analyzer) noexcept {
-    absl::MutexLock lock{&_m};
-    _pool.push_back(std::move(analyzer));
+  void PushAnalyzer(irs::analysis::Analyzer::ptr analyzer) noexcept;
+
+  vpack::Slice GetAnalyzerOptions() const {
+    return vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
   }
 
  protected:
-  irs::analysis::Analyzer::ptr CreateAnalyzer() const {
-    vpack::Slice slice{reinterpret_cast<const uint8_t*>(_data.data())};
-    irs::analysis::Analyzer::ptr output;
-    irs::analysis::analyzers::MakeAnalyzer(slice, output);
-    return output;
-  }
+  irs::analysis::Analyzer::ptr CreateAnalyzer() const;
 
  private:
   absl::Mutex _m;
@@ -78,7 +58,7 @@ class AnalyzersPool {
   std::string _data;
 };
 
-class TSDictionary : public SchemaObject {
+class Tokenizer : public SchemaObject {
  public:
   irs::analysis::Analyzer::ptr GetTokenizer() const {
     return _pool->GetAnalyzer();
@@ -89,9 +69,7 @@ class TSDictionary : public SchemaObject {
 
   void WriteInternal(vpack::Builder& b) const final;
 
-  TSDictionary(ObjectId id, std::string_view name, std::string data)
-    : SchemaObject{{}, {}, {}, id, name, ObjectType::TSDictionary},
-      _pool{std::make_unique<AnalyzersPool>(std::move(data))} {}
+  Tokenizer(ObjectId id, std::string_view name, std::string data);
 
  private:
   std::unique_ptr<AnalyzersPool> _pool;

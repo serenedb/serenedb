@@ -117,8 +117,7 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
              "RocksDBDataSource: at least one column must be requested");
-  SDB_ASSERT(_row_type->size() == 0 ||
-               _row_type->size() == _column_ids.size() || remaining_filter,
+  SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
 
   std::string key = key_utils::PrepareTableKey(_object_key);

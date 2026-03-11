@@ -91,7 +91,6 @@ class Table : public SchemaObject {
     return *_sharding_strategy;
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
-
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {

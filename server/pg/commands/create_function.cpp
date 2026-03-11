@@ -198,8 +198,8 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
                                              std::move(sql_impl), database_id);
 }
 
-yaclib::Future<Result> CreateFunction(ExecContext& context,
-                                      const CreateFunctionStmt& stmt) {
+yaclib::Future<> CreateFunction(ExecContext& context,
+                                const CreateFunctionStmt& stmt) {
   SDB_ASSERT(stmt.funcname);
 
   auto database_name = context.GetDatabase();
@@ -224,8 +224,10 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
       ERR_CODE(ERRCODE_DUPLICATE_TABLE),
       ERR_MSG("relation \"", function->GetName(), "\" already exists"));
   }
-
-  return yaclib::MakeFuture(std::move(r));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 std::shared_ptr<catalog::Function> CreateSystemFunction(

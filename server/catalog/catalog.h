@@ -57,6 +57,7 @@ using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
 struct CreateTableOperationOptions {
   bool wait_for_sync_replication = false;
   bool enforce_replication_factor = false;
+  bool create_with_tombstone = false;
 };
 
 template<typename T>
@@ -209,10 +210,12 @@ struct LogicalCatalog {
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name) = 0;
+  virtual Result RemoveTombstone(ObjectId database, std::string_view schema,
+                                 std::string_view name) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 
-  virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
+  virtual std::shared_ptr<const Snapshot> GetSnapshot() const = 0;
 };
 
 class CatalogFeature final : public SerenedFeature {

@@ -20,6 +20,7 @@
 
 #include "query/query.h"
 
+#include <absl/algorithm/container.h>
 #include <axiom/logical_plan/PlanPrinter.h>
 #include <axiom/optimizer/DerivedTablePrinter.h>
 #include <axiom/optimizer/Optimization.h>
@@ -36,6 +37,9 @@
 #include "connector/serenedb_connector.hpp"
 #include "pg/sql_resolver.h"
 #include "query/cursor.h"
+#include "query/explain_executor.h"
+#include "query/show_executor.h"
+#include "query/velox_executor.h"
 
 namespace sdb::query {
 namespace {
@@ -73,44 +77,88 @@ class NoopHistory final : public axiom::optimizer::History {
 std::unique_ptr<Query> Query::CreateQuery(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{root, query_ctx});
+  std::unique_ptr<Query> query{new Query{root, query_ctx}};
+
+  const bool has_query = query_ctx.command_type.Has(CommandType::Query);
+  const bool has_explain = query_ctx.command_type.Has(CommandType::Explain);
+
+  std::vector<std::unique_ptr<Executor>> executors;
+  executors.reserve(2);
+  if (has_query) {
+    auto velox = std::make_unique<VeloxExecutor>();
+    velox->IgnoreOutput() = has_explain;
+    executors.emplace_back(std::move(velox));
+  }
+  if (has_explain) {
+    executors.emplace_back(std::make_unique<ExplainExecutor>());
+  }
+
+  query->SetExecutors(std::move(executors));
+  return query;
 }
 
-std::unique_ptr<Query> Query::CreateExternal(
-  std::unique_ptr<ExternalExecutor> executor, const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{std::move(executor), query_ctx});
+std::unique_ptr<Query> Query::CreateDDL(std::unique_ptr<Executor> executor,
+                                        const QueryContext& query_ctx) {
+  auto query =
+    std::unique_ptr<Query>(new Query{velox::RowTypePtr{}, query_ctx});
+  query->SetExecutor(std::move(executor));
+  return query;
 }
 
 std::unique_ptr<Query> Query::CreateShow(std::string_view show_variable,
                                          const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{
+  auto query = std::unique_ptr<Query>(new Query{
     velox::ROW({std::string{show_variable}}, {velox::VARCHAR()}),
     query_ctx,
   });
+  query->SetExecutor(std::make_unique<ShowExecutor>());
+  return query;
 }
 
 std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
-  return std::unique_ptr<Query>(new Query{
+  auto query = std::unique_ptr<Query>(new Query{
     velox::ROW({"name", "value", "description"},
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
+  query->SetExecutor(std::make_unique<ShowAllExecutor>());
+  return query;
+}
+
+std::unique_ptr<Query> Query::CreateWithExecutor(
+  const axiom::logical_plan::LogicalPlanNodePtr& root,
+  const QueryContext& query_ctx,
+  std::vector<std::unique_ptr<Executor>> executors) {
+  return std::unique_ptr<Query>(
+    new Query{root, query_ctx, std::move(executors)});
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _logical_plan{root} {
   CompileQuery();
+}
 
-  if (_query_ctx.command_type.Has(CommandType::Explain)) {
-    _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
-  } else {
-    SDB_ASSERT(_execution_plan);
-    const auto& fragments = _execution_plan->fragments();
-    SDB_ASSERT(!fragments.empty());
-    const auto& gather_fragment = fragments.back().fragment.planNode;
-    SDB_ASSERT(gather_fragment);
-    _output_type = gather_fragment->outputType();
+Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
+             const QueryContext& query_ctx,
+             std::vector<std::unique_ptr<Executor>> executors)
+  : _query_ctx{query_ctx},
+    _logical_plan{root},
+    _output_type{root->outputType()} {
+  SetExecutors(std::move(executors));
+}
+
+void Query::SetExecutor(std::unique_ptr<Executor> executor) {
+  SDB_ASSERT(_executors.empty());
+  _executors.emplace_back(std::move(executor));
+  _executors.back()->Init(*this);
+}
+
+void Query::SetExecutors(std::vector<std::unique_ptr<Executor>> executors) {
+  SDB_ASSERT(_executors.empty());
+  _executors = std::move(executors);
+  for (auto& executor : _executors) {
+    executor->Init(*this);
   }
 }
 
@@ -126,6 +174,15 @@ void Query::CompileQuery() {
     _query_ctx.explain_params.Has(ExplainWith::Physical);
   const bool needs_execution =
     _query_ctx.explain_params.Has(ExplainWith::Execution);
+
+  irs::Finally set_explain_output_type = [&] noexcept {
+    if (_query_ctx.command_type.Has(CommandType::Explain)) {
+      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
+    } else {
+      // supposed to be set in the end of the func from exec plan
+      SDB_ASSERT(_output_type);
+    }
+  };
 
   if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&
       !needs_physical && !needs_execution) {
@@ -240,13 +297,18 @@ void Query::CompileQuery() {
   auto result = optimization.toVeloxPlan(best->op);
   _execution_plan = std::move(result.plan);
   _finish_write = std::move(result.finishWrite);
+
+  if (!_query_ctx.command_type.Has(CommandType::Explain)) {
+    SDB_ASSERT(_execution_plan);
+    const auto& fragments = _execution_plan->fragments();
+    SDB_ASSERT(!fragments.empty());
+    const auto& gather_fragment = fragments.back().fragment.planNode;
+    SDB_ASSERT(gather_fragment);
+    _output_type = gather_fragment->outputType();
+  }
 }
 
-Query::Query(std::unique_ptr<ExternalExecutor> executor,
-             const QueryContext& query_ctx)
-  : _query_ctx{query_ctx}, _executor{std::move(executor)} {}
-
-std::string Query::GetLogicalPlan() const {
+std::string Query::GetLogicalPlanText() const {
   SDB_ASSERT(_logical_plan);
   return axiom::logical_plan::PlanPrinter::toText(*_logical_plan);
 }
@@ -259,24 +321,54 @@ std::string Query::GetExecutionPlan() const {
   return _execution_plan->toString(true);
 }
 
-ExternalExecutor& Query::GetExternalExecutor() const {
-  SDB_ASSERT(_executor);
-  return *_executor;
-}
-
-std::unique_ptr<Cursor> Query::MakeCursor(
-  std::function<void()>&& user_task) const {
+std::unique_ptr<Cursor> Query::MakeCursor(UserTask&& user_task) {
   std::unique_ptr<Cursor> ptr;
   ptr.reset(new Cursor{std::move(user_task), *this});
   _finish_write = {};
   return ptr;
 }
 
-Runner Query::MakeRunner() const {
-  return Runner{_execution_plan, std::move(_finish_write),
-                _query_ctx.velox_query_ctx,
-                std::make_shared<axiom::runner::ConnectorSplitSourceFactory>(
-                  axiom::connector::SplitOptions{}),
-                _query_ctx.query_memory_pool};
+void Query::MakeRunner() {
+  _runner = Runner{_execution_plan, std::move(_finish_write),
+                   _query_ctx.velox_query_ctx,
+                   std::make_shared<axiom::runner::ConnectorSplitSourceFactory>(
+                     axiom::connector::SplitOptions{}),
+                   _query_ctx.query_memory_pool};
 }
+
+template<typename StringType>
+velox::RowVectorPtr Query::BuildBatchImpl(
+  std::span<const std::vector<StringType>> columns) const {
+  SDB_ASSERT(_output_type->isRow());
+  SDB_ASSERT(absl::c_all_of(_output_type->children(), [](const auto& ptr) {
+    return ptr == velox::VARCHAR();
+  }));
+  auto* pool = _query_ctx.query_memory_pool.get();
+  std::vector<velox::VectorPtr> vectors;
+  vectors.reserve(columns.size());
+  size_t batch_rows = 0;
+  for (size_t i = 0; i < columns.size(); ++i) {
+    auto vector =
+      velox::BaseVector::create<velox::FlatVector<velox::StringView>>(
+        _output_type->children()[i], columns[i].size(), pool);
+    for (size_t j = 0; j < columns[i].size(); ++j) {
+      vector->set(j, velox::StringView(columns[i][j]));
+    }
+    batch_rows = std::max(batch_rows, columns[i].size());
+    vectors.push_back(std::move(vector));
+  }
+  return std::make_shared<velox::RowVector>(pool, _output_type, nullptr,
+                                            batch_rows, std::move(vectors));
+}
+
+velox::RowVectorPtr Query::BuildBatch(
+  std::span<const std::vector<std::string>> columns) const {
+  return BuildBatchImpl(columns);
+}
+
+velox::RowVectorPtr Query::BuildBatch(
+  std::span<const std::vector<std::string_view>> columns) const {
+  return BuildBatchImpl(columns);
+}
+
 }  // namespace sdb::query

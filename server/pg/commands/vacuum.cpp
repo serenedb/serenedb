@@ -49,7 +49,8 @@ namespace sdb::pg {
 namespace {
 
 yaclib::Future<> UpdateIndexes(
-  ExecContext& context, const std::shared_ptr<catalog::Snapshot>& snapshot,
+  ExecContext& context,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const std::vector<std::shared_ptr<catalog::Table>>& tables) {
   std::vector<yaclib::Future<>> index_futures;
   for (const auto& table : tables) {
@@ -77,22 +78,21 @@ yaclib::Future<> UpdateIndexes(
   return yaclib::WhenAll(index_futures.begin(), index_futures.size());
 }
 
-Result SyncStats(ExecContext& context,
-                 const std::shared_ptr<catalog::Snapshot>& snapshot,
-                 const std::vector<std::shared_ptr<catalog::Table>>& tables) {
+void SyncStats(ExecContext& context,
+               const std::shared_ptr<const catalog::Snapshot>& snapshot,
+               const std::vector<std::shared_ptr<catalog::Table>>& tables) {
   for (const auto& table : tables) {
     auto shard = snapshot->GetTableShard(table->GetId());
     if (auto r = GetServerEngine().SyncTableShard(*shard); !r.ok()) {
-      return r;
+      SDB_THROW(std::move(r));
     }
   }
-  return {};
 }
 
 }  // namespace
 
 // TODO: use ErrorPosition in ThrowSqlError
-yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
+yaclib::Future<> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
   if (!stmt.is_vacuumcmd) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("ANALYZE is not implemented yet"));
@@ -106,7 +106,7 @@ yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
   for (auto elem : options) {
     names.insert(elem->defname);
   }
-  std::vector<yaclib::Future<Result>> res;
+  std::vector<yaclib::Future<>> res;
   std::vector<std::shared_ptr<catalog::Table>> tables;
   PgListWrapper<VacuumRelation> rels{stmt.rels};
   auto snapshot = catalog::GetCatalog().GetSnapshot();
@@ -127,21 +127,17 @@ yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
     rel_name = rel->relation->relname;
     auto table = snapshot->GetTable(db_id, schema_name, rel_name);
     if (!table) {
-      return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "relation '",
-                                        rel_name, "' not found.");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("relation '", rel_name, "' not found."));
     }
     SDB_ASSERT(table);
     tables.push_back(std::move(table));
   }
   if (names.contains("update_indexes")) {
-    auto f = UpdateIndexes(context, snapshot, tables).ThenInline([] {
-      return Result{};
-    });
-    res.push_back(std::move(f));
+    res.push_back(UpdateIndexes(context, snapshot, tables));
   }
   if (names.contains("sync_stats")) {
-    auto f = yaclib::MakeFuture(SyncStats(context, snapshot, tables));
-    res.push_back(std::move(f));
+    SyncStats(context, snapshot, tables);
   }
 
   if (names.contains("compact")) {
@@ -155,18 +151,20 @@ yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
         ERR_MSG("VACUUM for specific tables is not implemented yet"));
     }
 
-    auto f = GetServerEngine().compactAll(true, true);
-    res.push_back(std::move(f));
+    res.push_back(
+      GetServerEngine().compactAll(true, true).ThenInline([](Result&& r) {
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+      }));
   }
-  if (res.size() == 0) {
-    return yaclib::MakeFuture<Result>();
+  if (res.empty()) {
+    return {};
   }
   if (res.size() == 1) {
     return std::move(res[0]);
   }
-  return yaclib::Join(res.begin(), res.size()).ThenInline([] {
-    return Result{};
-  });
+  return yaclib::WhenAll(res.begin(), res.size());
 }
 
 }  // namespace sdb::pg

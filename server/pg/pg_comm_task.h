@@ -83,7 +83,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void ProcessFirstRoot() noexcept;
   void ProcessNextRoot() noexcept;
-  void ProcessWakeup() noexcept;
+  void ProcessWakeup(yaclib::Result<> r) noexcept;
 
   virtual void SendAsync(message::SequenceView data) noexcept = 0;
 

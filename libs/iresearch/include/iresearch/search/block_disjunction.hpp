@@ -126,19 +126,25 @@ class BlockDisjunction : public DocIterator {
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  explicit BlockDisjunction(Adapters&& itrs)
-    : BlockDisjunction{std::move(itrs), 1} {}
+  BlockDisjunction(Adapters&& itrs, doc_id_t docs_count)
+    : BlockDisjunction{std::move(itrs), size_t{1}, docs_count} {}
   BlockDisjunction(Adapters&& itrs, size_t min_match_count, CostAttr::Type est)
     : BlockDisjunction{std::move(itrs), min_match_count, est,
                        ResolveOverloadTag{}} {}
-  BlockDisjunction(Adapters&& itrs, size_t min_match_count)
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, doc_id_t docs_count,
+                   CostAttr::Type est)
     : BlockDisjunction{std::move(itrs), min_match_count,
-                       [&] noexcept {
-                         return absl::c_accumulate(
+                       std::min<CostAttr::Type>(est, docs_count),
+                       ResolveOverloadTag{}} {}
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, doc_id_t docs_count)
+    : BlockDisjunction{std::move(itrs), min_match_count,
+                       [this, docs_count] noexcept {
+                         const auto est = absl::c_accumulate(
                            _itrs, CostAttr::Type{0},
                            [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                              return lhs + CostAttr::extract(rhs, 0);
                            });
+                         return std::min<CostAttr::Type>(est, docs_count);
                        },
                        ResolveOverloadTag{}} {}
 
@@ -298,10 +304,9 @@ class BlockDisjunction : public DocIterator {
     if constexpr (kHasScore) {
       SDB_ASSERT(doc_limits::valid(value()));
       SDB_ASSERT(!doc_limits::eof(value()));
+      // TODO(gnusi): make better
       _score_buf.FetchScoreArgs(
-        static_cast<uint16_t>(_buf_offset + value() -
-                              _doc_base),  // TODO(gnusi): make better
-        index);
+        static_cast<uint16_t>(_buf_offset + (value() - _doc_base)), index);
     }
   }
 
@@ -352,57 +357,18 @@ class BlockDisjunction : public DocIterator {
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
-    ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
-      const score_t* IRS_RESTRICT score_window = nullptr;
-      if constexpr (kHasScore) {
-        score_window = _score_buf.score_window.data();
-      }
-
-      auto cur = _cur;
-      auto doc_base = _doc_base;
-      [[maybe_unused]] auto buf_offset = _buf_offset;
-      auto* IRS_RESTRICT begin = _begin;
-      const auto* IRS_RESTRICT const end = std::end(_mask);
-
-      while (true) {
-        while (cur == 0) {
-          if (begin >= end) {
-            if (Refill()) {
-              SDB_ASSERT(_cur);
-              cur = _cur;
-              doc_base = _doc_base;
-              begin = _begin;
-              if constexpr (Traits::kMinMatch || kHasScore) {
-                buf_offset = _buf_offset;
-              }
-              break;
-            }
-
-            _match_count = 0;
-            _cur = 0;
-            _doc = doc_limits::eof();
-            _begin = begin;
-            return;
-          }
-
-          cur = *begin++;
-          doc_base += BitsRequired<uint64_t>();
-          if constexpr (Traits::kMinMatch || kHasScore) {
-            buf_offset += BitsRequired<uint64_t>();
-          }
+    if constexpr (kHasScore) {
+      ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
+        while (RefillImpl()) {
+          const doc_id_t window_base = _max - kWindow;
+          collector.AddWindow(_score_buf.score_window.data(), _mask,
+                              window_base, kNumBlocks);
         }
-        const auto bit_offset = std::countr_zero(cur);
-        cur = PopBit(cur);
-
-        if constexpr (Traits::kMinMatch) {
-          _match_count = _match_buf.match_count(buf_offset + bit_offset);
-          SDB_ASSERT(_match_count >= _match_buf.min_match_count());
-        }
-
-        const auto doc = doc_base + static_cast<doc_id_t>(bit_offset);
-        collector.Add(score_window[buf_offset + bit_offset], doc);
-      }
-    });
+      });
+      _doc = doc_limits::eof();
+    } else {
+      SDB_ASSERT(false);
+    }
   }
 
   template<typename Estimation>
@@ -531,6 +497,20 @@ class BlockDisjunction : public DocIterator {
 
         if constexpr (kHasScore) {
           score_ctx.score = &score;
+        }
+
+        auto value = it.value();
+
+        // disjunction is 1 step next behind, that may happen:
+        // - before the very first next()
+        // - after seek() in case of 'kSeekReadahead == false'
+        if (value < _doc_base) {
+          value = it.advance();
+        }
+
+        if (doc_limits::eof(value)) {
+          // exhausted
+          return false;
         }
 
         const auto [doc, has_hits] =

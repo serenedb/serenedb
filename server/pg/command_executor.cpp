@@ -18,23 +18,35 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/executor.h"
+#include "pg/command_executor.h"
 
+#include "basics/misc.hpp"
 #include "pg/commands.h"
-#include "yaclib/async/make.hpp"
 
 namespace sdb::pg {
 
-Executor::Executor(std::shared_ptr<ExecContext> context, const Node& node)
-  : _context{std::move(context)}, _node{node} {}
+CommandExecutor::CommandExecutor(std::shared_ptr<ExecContext> context)
+  : _context{std::move(context)} {}
 
-yaclib::Future<> Executor::RequestCancel() {
-  // TODO(mbkkt) connect ExecContext::cancel should return Future
+yaclib::Future<> CommandExecutor::RequestCancel() {
   _context->cancel();
-  return yaclib::MakeFuture();
+  return {};
 }
 
-yaclib::Future<Result> Executor::Execute() {
+yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
+  if (!_query) {  // was fired
+    return {};
+  }
+
+  auto f = ExecuteImpl();
+  _query = nullptr;  // set fired
+  return f;
+}
+
+DDLExecutor::DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node)
+  : CommandExecutor{std::move(context)}, _node{node} {}
+
+yaclib::Future<> DDLExecutor::ExecuteImpl() {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);
@@ -83,6 +95,26 @@ yaclib::Future<Result> Executor::Execute() {
     default:
       SDB_UNREACHABLE();
   }
+}
+
+CTASCreateTableExecutor::CTASCreateTableExecutor(
+  std::shared_ptr<ExecContext> context, const IntoClause& into,
+  bool if_not_exists)
+  : CommandExecutor{std::move(context)},
+    _into{into},
+    _if_not_exists{if_not_exists} {}
+
+yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl() {
+  SDB_ASSERT(_query);
+  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists);
+}
+
+RemoveTombstoneExecutor::RemoveTombstoneExecutor(
+  std::shared_ptr<ExecContext> context, const RangeVar& relation)
+  : CommandExecutor{std::move(context)}, _relation{relation} {}
+
+yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl() {
+  return RemoveTombstone(*_context, _relation);
 }
 
 }  // namespace sdb::pg

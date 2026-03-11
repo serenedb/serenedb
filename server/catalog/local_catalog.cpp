@@ -106,15 +106,17 @@ namespace {
 Result Apply(
   auto& snapshot, auto&& f,
   std::function<void(const std::shared_ptr<SnapshotImpl>&)> rollback = {}) {
-  auto clone =
-    std::atomic_load_explicit(&snapshot, std::memory_order_relaxed)->Clone();
+  auto self = std::atomic_load_explicit(&snapshot, std::memory_order_acquire);
+  std::shared_ptr<SnapshotImpl> clone = self->Clone();
+  self.reset();
   if (auto r = f(clone); !r.ok()) {
     if (rollback) {
       rollback(clone);
     }
     return r;
   }
-  std::atomic_store_explicit(&snapshot, std::move(clone),
+  std::shared_ptr<const SnapshotImpl> clone_const = std::move(clone);
+  std::atomic_store_explicit(&snapshot, std::move(clone_const),
                              std::memory_order_release);
   return {};
 }
@@ -128,7 +130,10 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
-    result->_object_dependencies = _object_dependencies;
+    result->_object_dependencies.reserve(_object_dependencies.size());
+    for (auto& [id, dep] : _object_dependencies) {
+      result->_object_dependencies.emplace(id, dep->Clone());
+    }
     return result;
   }
 
@@ -259,8 +264,8 @@ class SnapshotImpl : public Snapshot {
       RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Role>) {
-      RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
-                                                  maybe_not_found);
+      RemoveFromResolution<ResolveType::Role>(parent_id, object->GetName(),
+                                              maybe_not_found);
     } else if constexpr (std::is_same_v<T, Schema>) {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
@@ -514,7 +519,7 @@ class SnapshotImpl : public Snapshot {
 
   template<ResolveType Type>
   std::optional<ObjectId> GetObjectId(ObjectId parent_id,
-                                      std::string_view name) {
+                                      std::string_view name) const {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
@@ -557,6 +562,12 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
+    } else {
+      // Name unchanged, but must refresh the string_view to point to new
+      // object's _name
+      auto r = _resolution_table.AddObject<Type>(
+        parent_id, new_object->GetName(), new_object->GetId(), true);
+      SDB_ASSERT(r.ok());
     }
 
     auto it = _objects.find(new_object->GetId());
@@ -886,7 +897,9 @@ ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
 
   absl::MutexLock lock{&_mutex};
 
-  auto r = _snapshot->RegisterObject(*index, relation_id, false);
+  auto r = Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(*index, relation_id, false);
+  });
   if (!r.ok()) {
     return std::unexpected<Result>(std::in_place, r.errorNumber(),
                                    r.errorMessage());
@@ -1108,6 +1121,9 @@ Result LocalCatalog::CreateTable(
     }
   }
   auto table = std::make_shared<Table>(std::move(options), database_id);
+  if (operation_options.create_with_tombstone) {
+    table->SetTombstoned(true);
+  }
   auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   absl::MutexLock lock{&_mutex};
@@ -1128,6 +1144,14 @@ Result LocalCatalog::CreateTable(
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+
+      if (operation_options.create_with_tombstone) {
+        r = _engine->WriteTombstone(*schema_id, table->GetId());
+        if (!r.ok()) {
+          return r;
+        }
+      }
+
       vpack::Builder b;
       b.openObject();
       table->WriteInternal(b);
@@ -1142,9 +1166,10 @@ Result LocalCatalog::CreateTable(
       b.clear();
       shard->WriteInternal(b);
 
-      return _engine->CreateDefinition(
+      r = _engine->CreateDefinition(
         shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
         [&](bool) -> vpack::Slice { return b.slice(); });
+      return r;
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
@@ -1507,6 +1532,34 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
   });
 }
 
+Result LocalCatalog::RemoveTombstone(ObjectId db_id,
+                                     std::string_view schema_name,
+                                     std::string_view name) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!table_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto r =
+    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
+  // Unlike most catalog operations that clone the snapshot, here we modify the
+  // object in-place because the tombstone flag is simple in-memory state.
+  auto object = _snapshot->GetObject(*table_id);
+  if (object) {
+    auto& schema_obj = basics::downCast<SchemaObject>(*object);
+    schema_obj.SetTombstoned(false);
+  }
+
+  return r;
+}
+
 Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
                                std::string_view name) {
   absl::MutexLock lock{&_mutex};
@@ -1588,7 +1641,7 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-std::shared_ptr<Snapshot> LocalCatalog::GetSnapshot() const noexcept {
+std::shared_ptr<const Snapshot> LocalCatalog::GetSnapshot() const noexcept {
   return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
 }
 

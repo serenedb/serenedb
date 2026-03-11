@@ -43,6 +43,7 @@
 #include <vpack/iterator.h>
 
 #include <atomic>
+#include <filesystem>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -80,6 +81,7 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
+#include "connector/sst_sink_writer.hpp"
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
@@ -562,20 +564,15 @@ void RocksDBEngineCatalog::start() {
     }
   }
 
-#ifdef USE_SST_INGESTION
-  _idx_path = basics::file_utils::BuildFilename(_path, "tmp-idx-creation");
-  if (basics::file_utils::isDirectory(_idx_path)) {
-    for (const auto& fileName : SdbFullTreeDirectory(_idx_path.c_str())) {
-      SdbUnlinkFile(basics::file_utils::BuildFilename(path, fileName).data());
-    }
-  } else {
-    auto errorMsg = ERROR_OK;
-    if (!basics::file_utils::createDirectory(_idx_path, &errorMsg)) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "Cannot create tmp-idx-creation directory: ", LastError());
-    }
+  {
+    std::error_code ec;
+    auto bulk_insert_dir =
+      std::filesystem::path(_path) / connector::kBulkInsertDirName;
+    auto removed = std::filesystem::remove_all(bulk_insert_dir, ec);
+    SDB_INFO_IF("xxxxx", Logger::ENGINES, removed != 0 && !ec,
+                "removed bulk insert directory '", bulk_insert_dir.c_str(),
+                "'");
   }
-#endif
 
   uint64_t total_space;
   uint64_t free_space;

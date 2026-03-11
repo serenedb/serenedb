@@ -27,13 +27,16 @@
 
 namespace sdb::pg {
 
-yaclib::Future<Result> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt) {
+yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt) {
   auto r = catalog::DropDatabase(ctx, stmt.dbname);
   if (stmt.missing_ok && r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
     r = {};
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
-  return yaclib::MakeFuture(std::move(r));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 }  // namespace sdb::pg

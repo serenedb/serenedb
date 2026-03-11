@@ -41,6 +41,26 @@ constexpr size_t kTablePrefixSize = sizeof(ObjectId);
 constexpr size_t kKeyPrefixSize =
   kTablePrefixSize + sizeof(catalog::Column::Id);
 
+template<typename T>
+void SetResultValue(std::string_view value, size_t idx,
+                    velox::FlatVector<T>& result) {
+  if constexpr (std::is_same_v<T, velox::StringView>) {
+    const size_t offset = value[0] == 0 ? 1 : 0;
+    result.set(idx,
+               velox::StringView(value.data() + offset, value.size() - offset));
+  } else if constexpr (std::is_same_v<T, bool>) {
+    SDB_ASSERT(value.size() == kTrueValue.size(),
+               "RocksDBDataSource: unexpected value size for bool column");
+    result.set(idx, value == kTrueValue);
+  } else {
+    SDB_ASSERT(value.size() == sizeof(T),
+               "RocksDBDataSource: unexpected value size for scalar column");
+    T tmp;
+    memcpy(&tmp, value.data(), sizeof(T));
+    result.set(idx, tmp);
+  }
+}
+
 template<velox::TypeKind Kind>
 velox::VectorPtr ReadPointColumnValues(
   size_t sort_rank, size_t num_points,
@@ -62,26 +82,13 @@ velox::VectorPtr ReadPointColumnValues(
       continue;
     }
 
+    SDB_ASSERT(!value.empty());
+
     if (!status.ok()) {
       auto res = rocksutils::ConvertStatus(status);
       SDB_THROW(std::move(res));
     }
-
-    if constexpr (std::is_same_v<T, velox::StringView>) {
-      const size_t offset = value[0] == 0 ? 1 : 0;
-      result->set(point_idx, velox::StringView(value.data() + offset,
-                                               value.size() - offset));
-    } else if constexpr (std::is_same_v<T, bool>) {
-      SDB_ASSERT(value.size() == kTrueValue.size(),
-                 "RocksDBDataSource: unexpected value size for bool column");
-      result->set(point_idx, value == kTrueValue);
-    } else {
-      SDB_ASSERT(value.size() == sizeof(T),
-                 "RocksDBDataSource: unexpected value size for scalar column");
-      T tmp;
-      memcpy(&tmp, value.data(), sizeof(T));
-      result->set(point_idx, tmp);
-    }
+    SetResultValue(value, point_idx, *result);
   }
   return result;
 }
@@ -147,8 +154,8 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
 
   if (remaining_filter && evaluator) {
     _evaluator = evaluator;
-    _remaining_filter_expr_set = evaluator->compile(remaining_filter);
-    SDB_ASSERT(_remaining_filter_expr_set->size() == 1);
+    _remaining_expr_set = evaluator->compile(remaining_filter);
+    SDB_ASSERT(_remaining_expr_set->size() == 1);
   }
 }
 
@@ -240,14 +247,15 @@ void RocksDBFullScanDataSource::InitIterators(CreateFn&& create_iter) {
 
 velox::RowVectorPtr RocksDBFullScanDataSource::ApplyRemainingFilter(
   velox::RowVectorPtr batch) {
-  if (!_remaining_filter_expr_set) {
+  if (!_remaining_expr_set) {
+    SDB_ASSERT(batch->childrenSize() == _output_column_count);
     return batch;
   }
 
   const velox::vector_size_t num_rows = batch->size();
   velox::SelectivityVector rows(num_rows);
   velox::VectorPtr result;
-  _evaluator->evaluate(_remaining_filter_expr_set.get(), rows, *batch, result);
+  _evaluator->evaluate(_remaining_expr_set.get(), rows, *batch, result);
 
   velox::DecodedVector decoded(*result, rows);
 
@@ -335,7 +343,7 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
     return batch;
   }
   SDB_ASSERT(_column_ids.size() == 1);
-  SDB_ASSERT(!_remaining_filter_expr_set,
+  SDB_ASSERT(!_remaining_expr_set,
              "RocksDBFullScanDataSource: count(*) with filter should set up "
              "filter columns in _row_type");
   const auto read = IterateColumn(
@@ -404,23 +412,7 @@ velox::VectorPtr RocksDBFullScanDataSource::ReadScalarColumn(
     it, max_size,
     [&](uint64_t value_idx, std::string_view, std::string_view value) {
       if (!value.empty()) {
-        if constexpr (std::is_same_v<T, velox::StringView>) {
-          const size_t offset = value[0] == 0 ? 1 : 0;
-          velox::StringView val(value.data() + offset, value.size() - offset);
-          result->set(value_idx, val);
-        } else if constexpr (std::is_same_v<T, bool>) {
-          SDB_ASSERT(
-            value.size() == kTrueValue.size(),
-            "RocksDBDataSource: unexpected value size for bool column");
-          result->set(value_idx, value == kTrueValue);
-        } else {
-          SDB_ASSERT(
-            value.size() == sizeof(T),
-            "RocksDBDataSource: unexpected value size for scalar column");
-          T tmp;
-          memcpy(&tmp, value.data(), sizeof(T));
-          result->set(value_idx, tmp);
-        }
+        SetResultValue(value, value_idx, *result);
       } else {
         result->setNull(value_idx, true);
       }
@@ -524,7 +516,6 @@ template<typename Source>
 velox::RowVectorPtr RocksDBPointLookupDataSource<Source>::ApplyRemainingFilter(
   velox::RowVectorPtr batch) {
   if (!_remaining_expr_set) {
-    // No filter — trim extra columns if any.
     SDB_ASSERT(batch->childrenSize() == _output_column_count);
     return batch;
   }

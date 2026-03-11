@@ -2733,10 +2733,6 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;
       const auto& stmt = *castNode(IndexStmt, &node);
-      if (stmt.concurrent) {
-        // CONCURRENTLY not supported, let DDL handler produce the error
-        return SqlCommandType::DDL;
-      }
       ProcessIndexStmt(state, stmt);
       return SqlCommandType::CreateIndex;
     }

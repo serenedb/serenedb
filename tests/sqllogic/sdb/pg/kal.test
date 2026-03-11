@@ -1,0 +1,18 @@
+control substitution on
+
+statement count 1
+COPY (select 1::int2) TO '/tmp/${__DATABASE__}_arelav.parquet';
+
+statement ok
+CREATE TABLE arelav(iq INT2) USING EXTERNAL WITH (PATH = '/tmp/${__DATABASE__}_arelav.parquet');
+
+
+query
+EXPLAIN (EXECUTION)
+SELECT * FROM arelav WHERE iq = 3;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Filter[1][expression: presto_eq(cast("iq" as INTEGER),3)] -> "iq":SMALLINT
+  -- TableScan[0][File(parquet)] -> "iq":SMALLINT

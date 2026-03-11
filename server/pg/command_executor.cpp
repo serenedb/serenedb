@@ -26,6 +26,7 @@
 #include "catalog/catalog.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "search/inverted_index_shard.h"
 
 namespace sdb::pg {
 
@@ -118,14 +119,14 @@ yaclib::Future<> CreateIndexExecutor::ExecuteImpl() {
   return CreateIndex(*_context, *_query, _stmt);
 }
 
-UpdateIndexesExecutor::UpdateIndexesExecutor(
+FinishCreationExecutor::FinishCreationExecutor(
   std::shared_ptr<ExecContext> context, std::string_view schemaname,
-  std::string_view relation_name)
+  std::string_view index_name)
   : CommandExecutor{std::move(context)},
     _schemaname{schemaname},
-    _relation_name{relation_name} {}
+    _index_name{index_name} {}
 
-yaclib::Future<> UpdateIndexesExecutor::ExecuteImpl() {
+yaclib::Future<> FinishCreationExecutor::ExecuteImpl() {
   const auto db = _context->GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -135,10 +136,19 @@ yaclib::Future<> UpdateIndexesExecutor::ExecuteImpl() {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto snapshot = catalog.GetSnapshot();
-  auto table = snapshot->GetTable(db, schema, _relation_name);
-  SDB_ASSERT(table);
+  auto index = snapshot->GetRelation(db, schema, _index_name);
+  SDB_ASSERT(index);
+  auto shard = snapshot->GetIndexShard(index->GetId());
+  SDB_ASSERT(shard);
+  SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+  auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
 
-  return UpdateIndexes(*_context, snapshot, {table});
+  return inverted_index.CommitWait().ThenInline([shard = std::move(shard)](
+                                                  yaclib::Result<>&&) {
+    auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+    inverted_index.FinishCreation();
+    inverted_index.StartTasks();
+  });
 }
 
 RemoveTombstoneExecutor::RemoveTombstoneExecutor(

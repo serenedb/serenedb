@@ -84,18 +84,18 @@ class CreateIndexExecutor final : public CommandExecutor {
   const IndexStmt& _stmt;
 };
 
-class UpdateIndexesExecutor final : public CommandExecutor {
+class FinishCreationExecutor final : public CommandExecutor {
  public:
-  UpdateIndexesExecutor(std::shared_ptr<ExecContext> context,
-                        std::string_view schemaname,
-                        std::string_view relation_name);
+  FinishCreationExecutor(std::shared_ptr<ExecContext> context,
+                         std::string_view schemaname,
+                         std::string_view index_name);
 
  protected:
   yaclib::Future<> ExecuteImpl() override;
 
  private:
   std::string_view _schemaname;
-  std::string_view _relation_name;
+  std::string_view _index_name;
 };
 
 class RemoveTombstoneExecutor final : public CommandExecutor {

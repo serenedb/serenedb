@@ -22,7 +22,6 @@
 
 #include <memory>
 #include <string_view>
-#include <vector>
 
 #include "catalog/fwd.h"
 #include "pg/sql_utils.h"
@@ -70,10 +69,6 @@ std::shared_ptr<catalog::Function> CreateSystemFunction(
 
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
                                  const IntoClause& into, bool if_not_exists);
-
-yaclib::Future<> UpdateIndexes(
-  ExecContext& ctx, const std::shared_ptr<const catalog::Snapshot>& snapshot,
-  const std::vector<std::shared_ptr<catalog::Table>>& tables);
 
 yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
                                  std::string_view name);

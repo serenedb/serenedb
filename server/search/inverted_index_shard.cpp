@@ -110,9 +110,7 @@ std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
   ObjectId id, const catalog::InvertedIndex& index,
   InvertedIndexShardOptions options, bool is_new) {
   auto shard = std::make_shared<InvertedIndexShard>(id, index, options, is_new);
-  // TODO(Dronpane) use actual is_new value when indexing of existing table
-  // would be implemented
-  shard->InitPostRecovery(false);
+  shard->InitPostRecovery(is_new);
   return shard;
 }
 
@@ -261,13 +259,11 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
         }
 
         // Register flush subscription if we are loading existing index
-        // If not finishCreation would be called later when indexing finishes
+        // If not, FinishCreation would be called later when indexing finishes
         if (!is_new) {
           self->FinishCreation();
+          self->StartTasks();
         }
-
-        // Start background maintenance tasks
-        self->StartTasks();
 
         return {};
       });
@@ -531,12 +527,11 @@ Result InvertedIndexShard::CommitUnsafeImpl(
 
 void InvertedIndexShard::FinishCreation() {
   std::lock_guard lock{_commit_mutex};
-  if (std::exchange(_is_creation, false)) {
-    auto& server = SerenedServer::Instance();
-    if (server.hasFeature<FlushFeature>()) {
-      server.getFeature<FlushFeature>().registerFlushSubscription(
-        _flush_subscription);
-    }
+  SDB_ASSERT(std::exchange(_is_creation, false));
+  auto& server = SerenedServer::Instance();
+  if (server.hasFeature<FlushFeature>()) {
+    server.getFeature<FlushFeature>().registerFlushSubscription(
+      _flush_subscription);
   }
 }
 

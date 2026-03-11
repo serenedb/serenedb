@@ -88,17 +88,6 @@ velox::VectorPtr ReadPointColumnValues(
 
 }  // namespace
 
-void MultiGetContext::ExtractValues(size_t count, size_t dest_start,
-                                    std::vector<std::string>& values) {
-  for (size_t i = 0; i < count; ++i) {
-    if (_pinnable[i].IsPinned()) {
-      values[dest_start + i] = _pinnable[i].ToStringView();
-    } else {
-      values[dest_start + i] = std::move(*_pinnable[i].GetSelf());
-    }
-  }
-}
-
 RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, std::vector<catalog::Column::Id> column_oids,
@@ -492,9 +481,9 @@ uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
   return vector_size;
 }
 
-template<typename Derived>
-void RocksDBPointLookupDataSource<Derived>::BuildKeys(size_t batch_size,
-                                                      size_t key_cols) {
+template<typename Source>
+void RocksDBPointLookupDataSource<Source>::BuildKeys(size_t batch_size,
+                                                     size_t key_cols) {
   const size_t total_keys = batch_size * key_cols;
   const size_t old_size = _keys.size();
   _keys.resize(total_keys);
@@ -521,28 +510,17 @@ void RocksDBPointLookupDataSource<Derived>::BuildKeys(size_t batch_size,
   }
 }
 
-template<typename Derived>
-void RocksDBPointLookupDataSource<Derived>::PerformMultiGet(size_t total_keys) {
+template<typename Source>
+void RocksDBPointLookupDataSource<Source>::PerformMultiGet(size_t total_keys) {
   _key_slices.resize(total_keys);
   for (size_t i = 0; i < total_keys; ++i) {
     _key_slices[i] = _keys[i];
   }
-  _ctx.MultiGet(
-    _cf, _key_slices, _raw_values, _statuses,
-    [this](rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
-           rocksdb::PinnableSlice* value, rocksdb::Status* status) {
-      static_cast<Derived*>(this)->DoGet(cf, key, value, status);
-    },
-    [this](rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
-           const rocksdb::Slice* keys, rocksdb::PinnableSlice* values,
-           rocksdb::Status* statuses) {
-      static_cast<Derived*>(this)->DoMultiGetBatch(cf, keys_number, keys,
-                                                   values, statuses);
-    });
+  _ctx.MultiGet(_cf, _key_slices, _raw_values, _statuses);
 }
 
-template<typename Derived>
-size_t RocksDBPointLookupDataSource<Derived>::CountFound(
+template<typename Source>
+size_t RocksDBPointLookupDataSource<Source>::CountFound(
   size_t batch_size) const {
   size_t found = 0;
   for (size_t i = 0; i < batch_size; ++i) {
@@ -553,9 +531,9 @@ size_t RocksDBPointLookupDataSource<Derived>::CountFound(
   return found;
 }
 
-template<typename Derived>
-void RocksDBPointLookupDataSource<Derived>::FinalizeOffset(
-  size_t batch_size, size_t total_points) {
+template<typename Source>
+void RocksDBPointLookupDataSource<Source>::FinalizeOffset(size_t batch_size,
+                                                          size_t total_points) {
   _offset += batch_size;
   if (_offset >= total_points) {
     _current_split.reset();
@@ -563,8 +541,8 @@ void RocksDBPointLookupDataSource<Derived>::FinalizeOffset(
   }
 }
 
-template<typename Derived>
-std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
+template<typename Source>
+std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
   uint64_t size, velox::ContinueFuture&) {
   SDB_ASSERT(size);
   if (!_current_split) {
@@ -579,11 +557,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   const auto total_points = static_cast<size_t>(_values->size());
   const auto batch_size =
     std::min(static_cast<size_t>(size), total_points - _offset);
-
-  if (batch_size == 0) {
-    _current_split.reset();
-    return nullptr;
-  }
+  SDB_ASSERT(batch_size > 0);
 
   if (num_columns == 0) {
     // count(*) path: no projected columns — issue one read per point using
@@ -649,8 +623,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
                                             found_count, std::move(filtered));
 }
 
-template class RocksDBPointLookupDataSource<RocksDBRYOWPointLookupDataSource>;
-template class RocksDBPointLookupDataSource<
-  RocksDBSnapshotPointLookupDataSource>;
+template class RocksDBPointLookupDataSource<rocksdb::Transaction>;
+template class RocksDBPointLookupDataSource<rocksdb::DB>;
 
 }  // namespace sdb::connector

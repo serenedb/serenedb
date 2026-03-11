@@ -40,24 +40,20 @@ namespace sdb::connector {
 
 class SereneDBConnectorSplit;
 
+template<typename Source>
 class MultiGetContext {
  public:
   // TODO benchmark and choose best threshold
   static constexpr size_t kThreshold = 1;
   static constexpr size_t kBatchSize = 32;
 
-  template<
-    std::invocable<rocksdb::ColumnFamilyHandle&, const rocksdb::Slice&,
-                   rocksdb::PinnableSlice*, rocksdb::Status*>
-      SingleFn,
-    std::invocable<rocksdb::ColumnFamilyHandle&, size_t, const rocksdb::Slice*,
-                   rocksdb::PinnableSlice*, rocksdb::Status*>
-      BatchFn>
+  MultiGetContext(Source& source, rocksdb::ReadOptions ro)
+    : _source{source}, _ro{std::move(ro)} {}
+
   void MultiGet(rocksdb::ColumnFamilyHandle& cf,
                 const std::vector<rocksdb::Slice>& keys,
                 std::vector<std::string>& values,
-                std::vector<rocksdb::Status>& statuses, SingleFn&& single_fn,
-                BatchFn&& batch_fn) {
+                std::vector<rocksdb::Status>& statuses) {
     const size_t n = keys.size();
     values.resize(n);
     statuses.resize(n);
@@ -65,7 +61,7 @@ class MultiGetContext {
     if (n <= kThreshold) {
       for (size_t i = 0; i < n; ++i) {
         _pinnable[0].Reset();
-        single_fn(cf, keys[i], _pinnable.data(), statuses.data() + i);
+        statuses[i] = _source.Get(_ro, &cf, keys[i], _pinnable.data());
         ExtractValues(1, i, values);
       }
       return;
@@ -76,16 +72,27 @@ class MultiGetContext {
       for (size_t i = 0; i < batch_size; ++i) {
         _pinnable[i].Reset();
       }
-      batch_fn(cf, batch_size, keys.data() + start, _pinnable.data(),
-               statuses.data() + start);
+      _source.MultiGet(_ro, &cf, batch_size, keys.data() + start,
+                       _pinnable.data(), statuses.data() + start,
+                       /*sorted_input=*/true);
       ExtractValues(batch_size, start, values);
     }
   }
 
  private:
   void ExtractValues(size_t count, size_t dest_start,
-                     std::vector<std::string>& values);
+                     std::vector<std::string>& values) {
+    for (size_t i = 0; i < count; ++i) {
+      if (_pinnable[i].IsPinned()) {
+        values[dest_start + i] = _pinnable[i].ToStringView();
+      } else {
+        values[dest_start + i] = std::move(*_pinnable[i].GetSelf());
+      }
+    }
+  }
 
+  Source& _source;
+  rocksdb::ReadOptions _ro;
   std::array<rocksdb::PinnableSlice, kBatchSize> _pinnable;
 };
 
@@ -201,7 +208,7 @@ class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
   rocksdb::DB& _db;
 };
 
-template<typename Derived>
+template<typename Source>
 class RocksDBPointLookupDataSource : public velox::connector::DataSource {
  public:
   void addDynamicFilter(velox::column_index_t,
@@ -234,13 +241,15 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
                                rocksdb::ColumnFamilyHandle& cf,
                                velox::RowTypePtr row_type,
                                std::vector<catalog::Column::Id> column_ids,
-                               ObjectId object_key, velox::RowVectorPtr values)
+                               ObjectId object_key, velox::RowVectorPtr values,
+                               Source& source, rocksdb::ReadOptions ro)
     : _memory_pool{memory_pool},
       _cf{cf},
       _row_type{std::move(row_type)},
       _column_ids{std::move(column_ids)},
       _object_key{object_key},
-      _values{std::move(values)} {
+      _values{std::move(values)},
+      _ctx{source, std::move(ro)} {
     const size_t num_cols = _column_ids.size();
     _sorted_col_indices.resize(num_cols);
     std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
@@ -257,8 +266,7 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   // Build _keys[rank * batch_size + point_idx] for key_cols column slots.
   void BuildKeys(size_t batch_size, size_t key_cols);
 
-  // Copy _keys[0..total_keys) into _key_slices, then call
-  // DoGet/DoMultiGetBatch.
+  // Copy _keys[0..total_keys) into _key_slices, then call MultiGetContext.
   void PerformMultiGet(size_t total_keys);
 
   // Count entries in _statuses[0..batch_size) that are not NotFound.
@@ -282,11 +290,11 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   std::vector<rocksdb::Slice> _key_slices;
   std::vector<std::string> _raw_values;
   std::vector<rocksdb::Status> _statuses;
-  MultiGetContext _ctx;
+  MultiGetContext<Source> _ctx;
 };
 
 class RocksDBRYOWPointLookupDataSource final
-  : public RocksDBPointLookupDataSource<RocksDBRYOWPointLookupDataSource> {
+  : public RocksDBPointLookupDataSource<rocksdb::Transaction> {
  public:
   RocksDBRYOWPointLookupDataSource(velox::memory::MemoryPool& memory_pool,
                                    rocksdb::Transaction& transaction,
@@ -295,61 +303,41 @@ class RocksDBRYOWPointLookupDataSource final
                                    std::vector<catalog::Column::Id> column_ids,
                                    ObjectId object_key,
                                    velox::RowVectorPtr values)
-    : RocksDBPointLookupDataSource{memory_pool,         cf,
-                                   std::move(row_type), std::move(column_ids),
-                                   object_key,          std::move(values)},
-      _transaction{transaction} {
-    _ro.async_io = IsIOUringEnabled();
-  }
-
-  void DoGet(rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
-             rocksdb::PinnableSlice* value, rocksdb::Status* status) {
-    *status = _transaction.Get(_ro, &cf, key, value);
-  }
-
-  void DoMultiGetBatch(rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
-                       const rocksdb::Slice* keys,
-                       rocksdb::PinnableSlice* values,
-                       rocksdb::Status* statuses) {
-    _transaction.MultiGet(_ro, &cf, keys_number, keys, values, statuses, true);
-  }
-
- private:
-  rocksdb::Transaction& _transaction;
-  rocksdb::ReadOptions _ro;
+    : RocksDBPointLookupDataSource{memory_pool,
+                                   cf,
+                                   std::move(row_type),
+                                   std::move(column_ids),
+                                   object_key,
+                                   std::move(values),
+                                   transaction,
+                                   [] {
+                                     rocksdb::ReadOptions ro;
+                                     ro.async_io = IsIOUringEnabled();
+                                     return ro;
+                                   }()} {}
 };
 
 class RocksDBSnapshotPointLookupDataSource final
-  : public RocksDBPointLookupDataSource<RocksDBSnapshotPointLookupDataSource> {
+  : public RocksDBPointLookupDataSource<rocksdb::DB> {
  public:
   RocksDBSnapshotPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
     std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
     const rocksdb::Snapshot* snapshot, velox::RowVectorPtr values)
-    : RocksDBPointLookupDataSource{memory_pool,         cf,
-                                   std::move(row_type), std::move(column_ids),
-                                   object_key,          std::move(values)},
-      _db{db} {
-    _ro.async_io = IsIOUringEnabled();
-    _ro.snapshot = snapshot;
-  }
-
-  void DoGet(rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
-             rocksdb::PinnableSlice* value, rocksdb::Status* status) {
-    *status = _db.Get(_ro, &cf, key, value);
-  }
-
-  void DoMultiGetBatch(rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
-                       const rocksdb::Slice* keys,
-                       rocksdb::PinnableSlice* values,
-                       rocksdb::Status* statuses) {
-    _db.MultiGet(_ro, &cf, keys_number, keys, values, statuses, true);
-  }
-
- private:
-  rocksdb::DB& _db;
-  rocksdb::ReadOptions _ro;
+    : RocksDBPointLookupDataSource{memory_pool,
+                                   cf,
+                                   std::move(row_type),
+                                   std::move(column_ids),
+                                   object_key,
+                                   std::move(values),
+                                   db,
+                                   [snapshot] {
+                                     rocksdb::ReadOptions ro;
+                                     ro.async_io = IsIOUringEnabled();
+                                     ro.snapshot = snapshot;
+                                     return ro;
+                                   }()} {}
 };
 
 }  // namespace sdb::connector

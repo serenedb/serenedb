@@ -22,9 +22,19 @@
 #include <unicode/locid.h>
 #include <vpack/builder.h>
 
+#include <iresearch/analysis/classification_tokenizer.hpp>
+#include <iresearch/analysis/collation_tokenizer.hpp>
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/minhash_tokenizer.hpp>
+#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/stemming_tokenizer.hpp>
+#include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/attribute_provider.hpp>
 #include <yaclib/async/make.hpp>
 
 #include "catalog/text_search_dictionary.h"
@@ -41,6 +51,19 @@
 namespace sdb::pg {
 
 namespace {
+constexpr auto kNameMappings =
+  frozen::make_unordered_map<std::string_view, std::string_view>({
+    {"stopwordspath", "stopwordsPath"},
+    {"mingram", "min"},
+    {"maxgram", "max"},
+    {"preserveoriginal", "preserveOriginal"},
+    {"inputtype", "streamType"},
+    {"startmarker", "startMarker"},
+    {"endmarker", "endMarker"},
+    {"modellocation", "model_location"},
+    {"topk", "top_k"},
+    {"numhashes", "numHashes"},
+  });
 
 void ParseCommaSeparated(std::string_view input,
                          std::invocable<std::string_view> auto&& callback) {
@@ -69,132 +92,104 @@ void InvalidParameterThrow(std::string_view param, std::string_view details) {
                           param, "\": ", details));
 }
 
-void BuildTextAnalyzerVPack(vpack::Builder& b, const DefineStmt& stmt) {
+template<NodeTag Tag>
+void ProcessParamWithType(vpack::Builder& b, std::string_view name,
+                          const Node* value) {
+  if constexpr (Tag == T_Integer) {
+    auto val = TryGet<int>(value);
+    if (!val) {
+      InvalidParameterThrow(name, "expected integer");
+    }
+    b.add(name, *val);
+  } else if constexpr (Tag == T_String) {
+    auto val = TryGet<std::string_view>(value);
+    if (!val) {
+      InvalidParameterThrow(name, "expected string");
+    }
+    b.add(name, *val);
+  } else if constexpr (Tag == T_Boolean) {
+    auto val = TryGet<bool>(value);
+    if (!val) {
+      InvalidParameterThrow(name, "expected boolean");
+    }
+    b.add(name, *val);
+  } else if constexpr (Tag == T_Float) {
+    auto val = TryGet<double>(value);
+    if (!val) {
+      InvalidParameterThrow(name, "expected float");
+    }
+    b.add(name, *val);
+  } else {
+    static_assert(false);
+  }
+}
+
+void ProcessParam(vpack::Builder& b, std::string_view name, const Node* value) {
+  if (nodeTag(value) == T_Integer) {
+    ProcessParamWithType<T_Integer>(b, name, value);
+  } else if (nodeTag(value) == T_String) {
+    ProcessParamWithType<T_String>(b, name, value);
+  } else if (nodeTag(value) == T_Boolean) {
+    ProcessParamWithType<T_Boolean>(b, name, value);
+  } else if (nodeTag(value) == T_Float) {
+    ProcessParamWithType<T_Float>(b, name, value);
+  } else {
+    InvalidParameterThrow(name, "cannot process value type");
+  }
+}
+
+void VisitDefineDefinitions(const DefineStmt& stmt, auto&& callback) {
   for (const auto* def : PgListWrapper<DefElem>{stmt.definition}) {
     const std::string_view name{def->defname};
+    std::string_view vpack_name;
+    auto it = kNameMappings.find(name);
+    if (it == kNameMappings.end()) {
+      vpack_name = name;
+    } else {
+      vpack_name = it->second;
+    }
+    callback(vpack_name, def->arg);
+  }
+}
 
-    if (name == "template") {
-      continue;
-    } else if (name == "locale") {
-      auto val = TryGet<std::string_view>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("locale", "expected string");
-      }
-      b.add("locale", *val);
-    } else if (name == "case") {
-      auto val = TryGet<std::string_view>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("case", "expected string");
-      }
-      if (irs::kCaseConvertMap.find(*val) == irs::kCaseConvertMap.end()) {
-        InvalidParameterThrow("case", "expected one of: lower, none, upper");
-      }
-      b.add("case", *val);
-    } else if (name == "accent") {
-      auto val = TryGet<bool>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("accent", "expected boolean");
-      }
-      b.add("accent", *val);
-    } else if (name == "stemming") {
-      auto val = TryGet<bool>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("stemming", "expected boolean");
-      }
-      b.add("stemming", *val);
+vpack::Builder BuildTokenizerVPack(const DefineStmt& stmt) {
+  vpack::Builder b;
+  std::string_view template_name;
+  b.openObject();
+  b.add("analyzer", vpack::Value{vpack::ValueType::Object});
+  b.add("properties", vpack::Value{vpack::ValueType::Object});
+  VisitDefineDefinitions(stmt, [&](std::string_view name, const Node* value) {
+    if (name == "accent" || name == "stemming" || name == "preserveOriginal") {
+      ProcessParamWithType<T_Boolean>(b, name, value);
     } else if (name == "stopwords") {
-      auto val = TryGet<std::string_view>(def->arg);
+      auto val = TryGet<std::string_view>(value);
       if (!val) {
-        InvalidParameterThrow("stopwords", "expected comma-separated string");
+        InvalidParameterThrow(name, "expected comma-separated string");
       }
       b.add("stopwords", vpack::Value{vpack::ValueType::Array});
       ParseCommaSeparated(*val, [&](std::string_view word) { b.add(word); });
       b.close();  // close "stopwords" array
-    } else if (name == "stopwordspath") {
-      auto val = TryGet<std::string_view>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("stopwordspath", "expected string");
+    } else if (name == "hex") {
+      ProcessParamWithType<T_Boolean>(b, name, value);
+    } else if (name == "template") {
+      auto type = TryGet<std::string_view>(value);
+      if (!type) {
+        InvalidParameterThrow(name, "expected string");
       }
-      b.add("stopwordsPath", *val);
-    } else if (name == "mingram") {
-      auto val = TryGet<int>(def->arg);
-      if (!val || *val < 1) {
-        InvalidParameterThrow("mingram", "must be a positive integer");
-      }
-      b.add("mingram", *val);
-    } else if (name == "maxgram") {
-      auto val = TryGet<int>(def->arg);
-      if (!val || *val < 1) {
-        InvalidParameterThrow("maxgram", "must be a positive integer");
-      }
-      b.add("maxgram", *val);
-    } else if (name == "preserveoriginal") {
-      auto val = TryGet<bool>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("preserveoriginal", "expected boolean");
-      }
-      b.add("preserveoriginal", *val);
+      template_name = *type;
     } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("unrecognized text search dictionary parameter: \"", name,
-                "\""));
+      ProcessParam(b, name, value);
     }
+  });
+  b.close();  // close properties
+  if (!template_name.data()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("template value is not provided"));
   }
-}
-
-void BuildNGramAnalyzerVPack(vpack::Builder& b, const DefineStmt& stmt) {
-  for (const auto* def : PgListWrapper<DefElem>{stmt.definition}) {
-    const std::string_view name{def->defname};
-
-    if (name == "template") {
-      continue;
-    } else if (name == "mingram") {
-      auto val = TryGet<int>(def->arg);
-      if (!val || *val < 1) {
-        InvalidParameterThrow("mingram", "must be a positive integer");
-      }
-      b.add("min", static_cast<uint64_t>(*val));
-    } else if (name == "maxgram") {
-      auto val = TryGet<int>(def->arg);
-      if (!val || *val < 1) {
-        InvalidParameterThrow("maxgram", "must be a positive integer");
-      }
-      b.add("max", static_cast<uint64_t>(*val));
-    } else if (name == "preserveoriginal") {
-      auto val = TryGet<bool>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("preserveoriginal", "expected boolean");
-      }
-      b.add("preserveOriginal", *val);
-    } else if (name == "inputtype") {
-      auto val = TryGet<std::string_view>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("inputtype", "expected string");
-      }
-      if (*val != "binary" && *val != "utf8") {
-        InvalidParameterThrow("inputtype", "expected one of: binary, utf8");
-      }
-      b.add("streamType", *val);
-    } else if (name == "startmarker") {
-      auto val = TryGet<std::string_view>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("startmarker", "expected string");
-      }
-      b.add("startMarker", *val);
-    } else if (name == "endmarker") {
-      auto val = TryGet<std::string_view>(def->arg);
-      if (!val) {
-        InvalidParameterThrow("endmarker", "expected string");
-      }
-      b.add("endMarker", *val);
-    } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("unrecognized text search dictionary parameter: \"", name,
-                "\""));
-    }
-  }
+  b.add("type", template_name);
+  b.close();  // close analyzer
+  b.close();  // close object
+  return b;
 }
 
 }  // namespace
@@ -223,29 +218,7 @@ yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
     }
   }
 
-  vpack::Builder b;
-  b.openObject();
-  b.add("analyzer", vpack::Value{vpack::ValueType::Object});
-  b.add("type", template_name);
-  b.add("properties", vpack::Value{vpack::ValueType::Object});
-  if (template_name == irs::analysis::TextTokenizer::type_name()) {
-    BuildTextAnalyzerVPack(b, stmt);
-  } else if (template_name ==
-               irs::analysis::NGramTokenizer<
-                 irs::analysis::NGramTokenizerBase::InputType::Binary>::
-                 type_name() ||
-             template_name ==
-               irs::analysis::NGramTokenizer<irs::analysis::NGramTokenizerBase::
-                                               InputType::UTF8>::type_name()) {
-    BuildNGramAnalyzerVPack(b, stmt);
-  } else {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-      ERR_MSG("text search template \"", template_name, "\" does not exist"));
-  }
-  b.close();  // close "properties" object
-  b.close();  // close "analyzer" object
-  b.close();  // close outer object
+  vpack::Builder b = BuildTokenizerVPack(stmt);
 
   auto ts_dict = std::make_shared<catalog::TSDictionary>(
     ObjectId{0}, dict_name.relation,

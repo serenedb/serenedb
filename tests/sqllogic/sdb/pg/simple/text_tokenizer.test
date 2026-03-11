@@ -1,6 +1,9 @@
+control substitution on
+
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY t1(
-    template = 'text', locale = 'en_US.UTF-8'
+    template = 'text', Locale = 'en_US.UTF-8'
 )
 
 
@@ -75,3 +78,121 @@ SELECT ts_lexize('t5', 'QuIcK');
 ----
 ts_lexize
 {Qu,QuI,QuIcK,uI,uIc,Ic,IcK,cK}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t6(
+    template = 'stem',
+    locale = 'en'
+)
+
+
+query
+SELECT ts_lexize('t6', 'running');
+----
+ts_lexize
+{run}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t7(
+    template = 'nearest_neighbors',
+    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
+    topk = 1
+)
+
+
+query
+SELECT ts_lexize('t7', 'salt');
+----
+ts_lexize
+{homogenized}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t8(
+    template = 'nearest_neighbors',
+    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
+    topk = 2
+)
+
+
+query
+SELECT ts_lexize('t8', 'salt');
+----
+ts_lexize
+{homogenized,teach}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t9(
+    template = 'classification',
+    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
+    topk = 1
+)
+
+
+query
+SELECT ts_lexize('t9', 'baking');
+----
+ts_lexize
+{__label__baking}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t10(
+    template = 'collation',
+    locale = 'en_US.UTF-8'
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t11(
+    template = 'delimiter',
+    delimiter = '|'
+)
+
+
+query
+SELECT ts_lexize('t11', 'a|b|c');
+----
+ts_lexize
+{a,b,c}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t12(
+    template = 'minhash',
+    numhashes = 2
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t13(
+    template = 'norm',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    accent = false
+)
+
+
+query
+SELECT ts_lexize('t13', 'Jaime ce café');
+----
+ts_lexize
+{"jaime ce cafe"}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t14(
+    template = 'segmentation',
+    case = 'upper',
+    break = 'alpha'
+)
+
+
+query
+SELECT ts_lexize('t14', 'Hello, World!');
+----
+ts_lexize
+{HELLO,WORLD}

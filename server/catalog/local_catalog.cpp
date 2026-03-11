@@ -922,12 +922,11 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   });
 }
 
-Result LocalCatalog::CreateIndex(ObjectId database_id,
-                                 std::string_view relation_schema,
-                                 std::string_view relation_name,
-                                 const std::vector<std::string>& column_names,
-                                 IndexBaseOptions options,
-                                 IndexShardOptions& shard_options) {
+Result LocalCatalog::CreateIndex(
+  ObjectId database_id, std::string_view relation_schema,
+  std::string_view relation_name, const std::vector<std::string>& column_names,
+  IndexBaseOptions options, IndexShardOptions& shard_options,
+  CreateIndexOperationOptions operation_options) {
   if (column_names.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
@@ -996,6 +995,14 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       SDB_ASSERT(r.ok());
 
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      if (operation_options.create_with_tombstone) {
+        r =
+          _engine->WriteTombstone((*index)->GetRelationId(), (*index)->GetId());
+        if (!r.ok()) {
+          return r;
+        }
+        (*index)->SetTombstoned(true);
+      }
       {  // Write index definition
         vpack::Builder b;
         (*index)->WriteInternal(b);
@@ -1532,30 +1539,30 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::RemoveTombstone(ObjectId db_id,
-                                     std::string_view schema_name,
-                                     std::string_view name) {
+Result LocalCatalog::RemoveTombstone(ObjectId object_id) {
   absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
-  if (!schema_id) {
+
+  auto object = _snapshot->GetObject(object_id);
+  if (!object) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto table_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!table_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+
+  ObjectId tombstone_parent;
+  if (object->GetType() == ObjectType::Index) {
+    auto& index = basics::downCast<Index>(*object);
+    tombstone_parent = index.GetRelationId();
+  } else {
+    auto& schema_obj = basics::downCast<SchemaObject>(*object);
+    tombstone_parent = schema_obj.GetSchemaId();
   }
-  auto r =
-    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
+  auto r = _engine->DropDefinition(tombstone_parent,
+                                   RocksDBEntryType::Tombstone, object_id);
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
-  auto object = _snapshot->GetObject(*table_id);
-  if (object) {
-    auto& schema_obj = basics::downCast<SchemaObject>(*object);
-    schema_obj.SetTombstoned(false);
-  }
+  auto& schema_obj = basics::downCast<SchemaObject>(*object);
+  schema_obj.SetTombstoned(false);
 
   return r;
 }

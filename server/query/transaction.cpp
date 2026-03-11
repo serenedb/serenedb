@@ -43,7 +43,7 @@ Result Transaction::Commit() {
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
 
-  if (num_ops > 0) [[likely]] {
+  if (num_ops > 0 || !_search_transactions.empty()) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
       // writer and let IndexWriter know that he need to wait for this
@@ -75,7 +75,9 @@ Result Transaction::Commit() {
     // id is first write operation seqno in the WAL
     auto post_commit_seq = _rocksdb_transaction->GetId();
     // add number of operations to get last operation seqno
-    post_commit_seq += num_ops - 1;
+    if (num_ops > 0) {
+      post_commit_seq += num_ops - 1;
+    }
 
     std::move(rollback).Cancel();
 

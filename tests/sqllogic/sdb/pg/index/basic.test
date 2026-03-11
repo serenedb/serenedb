@@ -242,3 +242,136 @@ Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
+
+
+control substitution on
+
+statement ok
+CREATE TABLE vedernikoff (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+INSERT INTO vedernikoff values (1, 'pudge goes mid every game', 'babsky');
+
+statement ok
+INSERT INTO vedernikoff values (2, 'anchin-chan reads manga all day', 'babsky');
+
+statement ok
+INSERT INTO vedernikoff values (3, 'anchin-chan watches anime at night', 'tuetue');
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(a, b, c);
+
+statement ok
+INSERT INTO vedernikoff values (4, 'pudge goes bot every game', 'gayazov');
+
+
+query
+SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'anchin-chan') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+2	anchin-chan reads manga all day
+3	anchin-chan watches anime at night
+4	pudge goes bot every game
+
+query
+SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR a = 2 ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+2	anchin-chan reads manga all day
+4	pudge goes bot every game
+
+query
+SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'gayazov') AND PHRASE(b, 'every game');
+----
+a	b	c
+4	pudge goes bot every game	gayazov
+
+
+statement ok
+UPDATE vedernikoff SET c = 'deadinside' WHERE a = 3;
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff;
+
+query
+SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'deadinside') AND PHRASE(b, 'watches anime');
+----
+a	b	c
+3	anchin-chan watches anime at night	deadinside
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+# index backfill from external (file) table
+
+statement ok
+CREATE TABLE babsky_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO babsky_src VALUES
+  (1, 'pudge goes mid every game', 'clickclack university'),
+  (2, 'anchin-chan reads manga all day', 'clickclack university'),
+  (3, 'vedernikoff carries team again', 'deadinside academy'),
+  (4, 'gayazov plays mass effect', 'deadinside academy'),
+  (5, 'krivda writes sql at night', 'clickclack university');
+
+statement count 5
+COPY babsky_src TO '/tmp/${__DATABASE__}_babsky_memes.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TABLE babsky_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_babsky_memes.parquet'
+);
+
+statement ok
+CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b, c);
+
+statement ok
+VACUUM (UPDATE_INDEXES) babsky_ext;
+
+query
+SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'anchin-chan') ORDER BY a;
+----
+a	b
+2	anchin-chan reads manga all day
+
+query
+SELECT a, b, c FROM babsky_ext_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+5	krivda writes sql at night	clickclack university
+
+query
+SELECT a, b, c FROM babsky_ext_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+----
+a	b	c
+3	vedernikoff carries team again	deadinside academy
+
+query
+SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+4	gayazov plays mass effect
+
+statement ok
+DROP TABLE babsky_ext;
+
+statement ok
+DROP TABLE babsky_src;

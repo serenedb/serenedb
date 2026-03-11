@@ -20,6 +20,7 @@
 
 #include "pg/sql_statement.h"
 
+#include <absl/strings/string_view.h>
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
@@ -82,13 +83,61 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   };
   auto velox_exec =
     std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
-  auto remove_tombstone =
-    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, *into->rel);
+  auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
+    connection_ctx, absl::NullSafeStringView(into->rel->schemaname),
+    into->rel->relname);
 
   std::vector<std::unique_ptr<query::Executor>> executors;
   executors.reserve(3);
   executors.emplace_back(std::move(create_table));
   executors.emplace_back(std::move(velox_exec));
+  executors.emplace_back(std::move(remove_tombstone));
+
+  query_ctx.command_type.Add(query::CommandType::Query);
+
+  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
+                                          std::move(executors));
+}
+
+std::unique_ptr<query::Query> CreateIndexPipeline(
+  const VeloxQuery& query_desc, query::QueryContext& query_ctx,
+  const std::shared_ptr<ConnectionContext>& connection_ctx) {
+  SDB_ASSERT(query_desc.pgsql_node);
+  SDB_ASSERT(query_desc.root);
+  SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+
+  const auto& index_stmt = *castNode(IndexStmt, query_desc.pgsql_node);
+
+  auto create_index =
+    std::make_unique<CreateIndexExecutor>(connection_ctx, index_stmt);
+
+  auto rollback = [connection_ctx, &index_stmt] noexcept {
+    auto db = connection_ctx->GetDatabaseId();
+    const auto& rel = *index_stmt.relation;
+    std::string current_schema = connection_ctx->GetCurrentSchema();
+    const std::string_view schema =
+      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+    SDB_ASSERT(!schema.empty());
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    std::ignore = catalog.DropIndex(db, schema, index_stmt.idxname);
+  };
+  auto velox_exec =
+    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
+
+  auto update_indexes = std::make_unique<UpdateIndexesExecutor>(
+    connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
+    index_stmt.relation->relname);
+
+  auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
+    connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
+    index_stmt.idxname);
+
+  std::vector<std::unique_ptr<query::Executor>> executors;
+  executors.reserve(4);
+  executors.emplace_back(std::move(create_index));
+  executors.emplace_back(std::move(velox_exec));
+  executors.emplace_back(std::move(update_indexes));
   executors.emplace_back(std::move(remove_tombstone));
 
   query_ctx.command_type.Add(query::CommandType::Query);
@@ -157,6 +206,11 @@ bool SqlStatement::ProcessNextRoot(
 
   if (query_desc.type == pg::SqlCommandType::CTAS) {
     query = CreateCTASPipeline(query_desc, query_ctx, connection_ctx);
+    return true;
+  }
+
+  if (query_desc.type == pg::SqlCommandType::CreateIndex) {
+    query = CreateIndexPipeline(query_desc, query_ctx, connection_ctx);
     return true;
   }
 

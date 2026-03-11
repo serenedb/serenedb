@@ -60,6 +60,10 @@ struct CreateTableOperationOptions {
   bool create_with_tombstone = false;
 };
 
+struct CreateIndexOperationOptions {
+  bool create_with_tombstone = false;
+};
+
 template<typename T>
 constexpr ObjectType GetObjectType() noexcept {
   if constexpr (std::is_same_v<T, View>) {
@@ -178,11 +182,11 @@ struct LogicalCatalog {
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
-  virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
-                             std::string_view relation,
-                             const std::vector<std::string>& column_names,
-                             IndexBaseOptions options,
-                             IndexShardOptions& shard_options) = 0;
+  virtual Result CreateIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    const std::vector<std::string>& column_names, IndexBaseOptions options,
+    IndexShardOptions& shard_options,
+    CreateIndexOperationOptions operation_options = {}) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
@@ -210,8 +214,7 @@ struct LogicalCatalog {
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name) = 0;
-  virtual Result RemoveTombstone(ObjectId database, std::string_view schema,
-                                 std::string_view name) = 0;
+  virtual Result RemoveTombstone(ObjectId object_id) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 

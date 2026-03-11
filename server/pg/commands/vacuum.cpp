@@ -46,7 +46,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-namespace {
 
 yaclib::Future<> UpdateIndexes(
   ExecContext& context,
@@ -77,6 +76,8 @@ yaclib::Future<> UpdateIndexes(
   }
   return yaclib::WhenAll(index_futures.begin(), index_futures.size());
 }
+
+namespace {
 
 void SyncStats(ExecContext& context,
                const std::shared_ptr<const catalog::Snapshot>& snapshot,

@@ -30,12 +30,14 @@
 
 namespace sdb::pg {
 
-yaclib::Future<> RemoveTombstone(ExecContext& context, const RangeVar& rel) {
+yaclib::Future<> RemoveTombstone(ExecContext& context,
+                                 std::string_view schemaname,
+                                 std::string_view name) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema =
-    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+    schemaname.empty() ? std::string_view{current_schema} : schemaname;
   if (schema.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
                     ERR_MSG("no schema has been selected to create in"));
@@ -45,7 +47,12 @@ yaclib::Future<> RemoveTombstone(ExecContext& context, const RangeVar& rel) {
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto r = catalog.RemoveTombstone(db, schema, rel.relname);
+  auto object = catalog.GetSnapshot()->GetRelation(db, schema, name);
+  if (!object) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", name, "\" does not exist"));
+  }
+  auto r = catalog.RemoveTombstone(object->GetId());
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }

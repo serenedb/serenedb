@@ -60,4 +60,11 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   void DeleteCell(std::string_view full_key);
 };
 
+class NoopSinkWriter {
+ public:
+  void SetColumnIndex(size_t /*column_idx*/) {}
+  void Write(std::span<const rocksdb::Slice> /*cell_slices*/,
+             std::string_view /*full_key*/) {}
+};
+
 }  //  namespace sdb::connector

@@ -21,6 +21,8 @@
 #pragma once
 
 #include <memory>
+#include <string_view>
+#include <vector>
 
 #include "catalog/fwd.h"
 #include "pg/sql_utils.h"
@@ -47,7 +49,8 @@ yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 
 yaclib::Future<> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
 
-yaclib::Future<> CreateIndex(ExecContext& ctx, const IndexStmt& stmt);
+yaclib::Future<> CreateIndex(ExecContext& ctx, query::Query& query,
+                             const IndexStmt& stmt);
 
 yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
@@ -68,7 +71,12 @@ std::shared_ptr<catalog::Function> CreateSystemFunction(
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
                                  const IntoClause& into, bool if_not_exists);
 
-yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
+yaclib::Future<> UpdateIndexes(
+  ExecContext& ctx, const std::shared_ptr<const catalog::Snapshot>& snapshot,
+  const std::vector<std::shared_ptr<catalog::Table>>& tables);
+
+yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
+                                 std::string_view name);
 
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 

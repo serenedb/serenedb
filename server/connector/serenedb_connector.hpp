@@ -33,9 +33,11 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
+#include <chrono>
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
 #include <ranges>
+#include <thread>
 #include <type_traits>
 
 #include "basics/assert.h"
@@ -94,11 +96,15 @@ std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
 template<axiom::connector::WriteKind Kind>
 std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   ObjectId table_id, query::Transaction& transaction,
-  std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
+  std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false,
+  ObjectId backfill_index_id = {}) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
   auto resolve_index_writer = [&](auto& transaction,
                                   const catalog::Index& index) {
+    if (backfill_index_id.isSet() && index.GetId() != backfill_index_id) {
+      return;
+    }
     if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
                                  irs::IndexWriter::Transaction>) {
       const auto& inverted_index =
@@ -377,6 +383,10 @@ class RocksDBTable : public axiom::connector::Table {
     return (self._bulk_insert);
   }
 
+  decltype(auto) BackfillIndexId(this auto&& self) noexcept {
+    return (self._backfill_index_id);
+  }
+
  private:
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
@@ -388,6 +398,7 @@ class RocksDBTable : public axiom::connector::Table {
     WriteConflictPolicy::EmitError;
   bool _update_pk = false;
   bool _bulk_insert = false;
+  ObjectId _backfill_index_id;
 };
 
 class RocksDBInvertedIndexTable : public RocksDBTable {
@@ -810,6 +821,14 @@ class SereneDBConnector final : public velox::connector::Connector {
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
               std::move(update_sinks));
+          } else if (table.BackfillIndexId().isSet()) {
+            auto backfill_sinks =
+              CreateIndexWriters<axiom::connector::WriteKind::kInsert>(
+                object_key, transaction, {}, false, table.BackfillIndexId());
+            SDB_ASSERT(backfill_sinks.size() == 1);
+            return std::make_unique<RocksDBIndexBackfillDataSink>(
+              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
+              object_key, pk_indices, columns, std::move(backfill_sinks));
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

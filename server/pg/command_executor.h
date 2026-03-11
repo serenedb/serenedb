@@ -21,13 +21,15 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "query/executor.h"
 #include "utils/exec_context.h"
 
+struct IndexStmt;
 struct IntoClause;
 struct Node;
-struct RangeVar;
 
 namespace sdb::pg {
 
@@ -70,16 +72,43 @@ class CTASCreateTableExecutor final : public CommandExecutor {
   bool _if_not_exists;
 };
 
-class RemoveTombstoneExecutor final : public CommandExecutor {
+class CreateIndexExecutor final : public CommandExecutor {
  public:
-  RemoveTombstoneExecutor(std::shared_ptr<ExecContext> context,
-                          const RangeVar& relation);
+  CreateIndexExecutor(std::shared_ptr<ExecContext> context,
+                      const IndexStmt& stmt);
 
  protected:
   yaclib::Future<> ExecuteImpl() override;
 
  private:
-  const RangeVar& _relation;
+  const IndexStmt& _stmt;
+};
+
+class UpdateIndexesExecutor final : public CommandExecutor {
+ public:
+  UpdateIndexesExecutor(std::shared_ptr<ExecContext> context,
+                        std::string_view schemaname,
+                        std::string_view relation_name);
+
+ protected:
+  yaclib::Future<> ExecuteImpl() override;
+
+ private:
+  std::string _schemaname;
+  std::string _relation_name;
+};
+
+class RemoveTombstoneExecutor final : public CommandExecutor {
+ public:
+  RemoveTombstoneExecutor(std::shared_ptr<ExecContext> context,
+                          std::string_view schemaname, std::string_view name);
+
+ protected:
+  yaclib::Future<> ExecuteImpl() override;
+
+ private:
+  std::string _schemaname;
+  std::string _name;
 };
 
 }  // namespace sdb::pg

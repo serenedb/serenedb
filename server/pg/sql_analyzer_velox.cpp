@@ -738,6 +738,7 @@ class SqlAnalyzer {
   void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
 
   void ProcessIntoClause(State& state, const IntoClause& into);
+  void ProcessIndexStmt(State& state, const IndexStmt& stmt);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -2610,6 +2611,48 @@ void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
     std::move(column_exprs));
 }
 
+void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
+  SDB_ASSERT(stmt.relation);
+  const auto& relation = *stmt.relation;
+  const std::string_view relname = relation.relname;
+  const std::string_view schemaname =
+    absl::NullSafeStringView(relation.schemaname);
+
+  const auto* object = _objects.getRelation(schemaname, relname);
+  SDB_ASSERT(object);
+  SDB_ASSERT(object->object);
+
+  auto table_state =
+    ProcessTable(&state, schemaname, relname, *object, stmt.relation, false);
+  const auto& input_type = *table_state.root->outputType();
+
+  const auto& table = basics::downCast<catalog::Table>(*object->object);
+  const auto& table_type = *table.RowType();
+
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+
+  VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
+    const std::string_view colname = index_elem.name;
+    auto maybe_col_idx = table_type.getChildIdxIfExists(colname);
+    if (!maybe_col_idx) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", colname, "\" of relation \"",
+                              relname, "\" does not exist"));
+    }
+    size_t col_idx = *maybe_col_idx;
+    column_names.emplace_back(colname);
+    auto expr = std::make_shared<lp::InputReferenceExpr>(
+      input_type.childAt(col_idx), input_type.nameOf(col_idx));
+    column_exprs.emplace_back(std::move(expr));
+  });
+
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(table_state.root), nullptr,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
                                         bool allowed_select_into) {
   switch (node.type) {
@@ -2689,7 +2732,13 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;
-      return SqlCommandType::DDL;
+      const auto& stmt = *castNode(IndexStmt, &node);
+      if (stmt.concurrent) {
+        // CONCURRENTLY not supported, let DDL handler produce the error
+        return SqlCommandType::DDL;
+      }
+      ProcessIndexStmt(state, stmt);
+      return SqlCommandType::CreateIndex;
     }
     case T_CreateRoleStmt:
     case T_DropRoleStmt:

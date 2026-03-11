@@ -20,8 +20,12 @@
 
 #include "pg/command_executor.h"
 
+#include "app/app_server.h"
+#include "basics/down_cast.h"
 #include "basics/misc.hpp"
+#include "catalog/catalog.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 
 namespace sdb::pg {
 
@@ -59,10 +63,6 @@ yaclib::Future<> DDLExecutor::ExecuteImpl() {
     case NodeTag::T_CreateStmt: {
       const auto& stmt = *castNode(CreateStmt, &_node);
       return CreateTable(*_context, stmt);
-    }
-    case NodeTag::T_IndexStmt: {
-      const auto& stmt = *castNode(IndexStmt, &_node);
-      return CreateIndex(*_context, stmt);
     }
     case NodeTag::T_ViewStmt: {
       const auto& stmt = *castNode(ViewStmt, &_node);
@@ -109,12 +109,45 @@ yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl() {
   return CreateTableCTAS(*_context, *_query, _into, _if_not_exists);
 }
 
+CreateIndexExecutor::CreateIndexExecutor(std::shared_ptr<ExecContext> context,
+                                         const IndexStmt& stmt)
+  : CommandExecutor{std::move(context)}, _stmt{stmt} {}
+
+yaclib::Future<> CreateIndexExecutor::ExecuteImpl() {
+  SDB_ASSERT(_query);
+  return CreateIndex(*_context, *_query, _stmt);
+}
+
+UpdateIndexesExecutor::UpdateIndexesExecutor(
+  std::shared_ptr<ExecContext> context, std::string_view schemaname,
+  std::string_view relation_name)
+  : CommandExecutor{std::move(context)},
+    _schemaname{schemaname},
+    _relation_name{relation_name} {}
+
+yaclib::Future<> UpdateIndexesExecutor::ExecuteImpl() {
+  const auto db = _context->GetDatabaseId();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
+  const std::string_view schema =
+    _schemaname.empty() ? std::string_view{current_schema} : _schemaname;
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto snapshot = catalog.GetSnapshot();
+  auto table = snapshot->GetTable(db, schema, _relation_name);
+  SDB_ASSERT(table);
+
+  return UpdateIndexes(*_context, snapshot, {table});
+}
+
 RemoveTombstoneExecutor::RemoveTombstoneExecutor(
-  std::shared_ptr<ExecContext> context, const RangeVar& relation)
-  : CommandExecutor{std::move(context)}, _relation{relation} {}
+  std::shared_ptr<ExecContext> context, std::string_view schemaname,
+  std::string_view name)
+  : CommandExecutor{std::move(context)}, _schemaname{schemaname}, _name{name} {}
 
 yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl() {
-  return RemoveTombstone(*_context, _relation);
+  return RemoveTombstone(*_context, _schemaname, _name);
 }
 
 }  // namespace sdb::pg

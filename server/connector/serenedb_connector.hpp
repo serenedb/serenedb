@@ -727,8 +727,6 @@ class SereneDBConnector final : public velox::connector::Connector {
         column_oids.push_back(
           basics::downCast<const SereneDBColumnHandle>(handle->second)->Id());
       }
-    } else {
-      column_oids.push_back(serene_table_handle.GetEffectiveColumnId());
     }
 
     // Detect filter-only columns: referenced in remaining_filter but not in
@@ -762,6 +760,12 @@ class SereneDBConnector final : public velox::connector::Connector {
       column_oids.push_back(it->second.id);
       extra_col_names.push_back(fname);
       extra_col_types.push_back(it->second.type);
+    }
+
+    // For COUNT(*) with no output columns: if there are filter columns, they
+    // drive the row iteration; otherwise fall back to effective_col_id.
+    if (output_type->size() == 0 && column_oids.empty()) {
+      column_oids.push_back(serene_table_handle.GetEffectiveColumnId());
     }
 
     velox::RowTypePtr read_type = output_type;

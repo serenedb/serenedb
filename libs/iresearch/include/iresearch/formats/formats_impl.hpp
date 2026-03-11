@@ -386,8 +386,9 @@ class PostingsWriterBase : public PostingsWriter {
 
   void WriteSkip(size_t level, MemoryIndexOutput& out) const;
   void BeginTerm(TermMetaImpl& meta);
-  void EndTerm(TermMetaImpl& meta);
   void EndDocument();
+  virtual void FlushTailDoc() = 0;
+  void EndTerm(TermMetaImpl& meta);
   void PrepareWriters(const FieldProperties& meta);
 
   template<typename Func>
@@ -583,19 +584,8 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
     if (!has_skip_list) {
       write_max_score(0);
     }
-    // write remaining documents and frequencies
-    auto* doc = _doc.docs.data();
-    const auto tail_size = std::distance(doc, _doc.doc.base());
-    if (tail_size != 0) {
-      auto* buf = reinterpret_cast<byte_type*>(_buf);
-      auto size =
-        streamvbyte_delta_encode(doc, tail_size, buf, _doc.block_last);
-      if (_features.HasFrequency()) {
-        auto* freq = _doc.freqs.data();
-        size += streamvbyte_encode(freq, tail_size, buf + size);
-      }
-      _doc_out->WriteU16(size);
-      _doc_out->WriteBytes(buf, size);
+    if ((meta.docs_count & (_skip.Skip0() - 1)) != 0) {
+      FlushTailDoc();
     }
   }
 
@@ -644,6 +634,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   void End() final;
 
  private:
+  void FlushTailDoc() final;
   void FlushTailPos();
   void FlushTailPay();
   void AddPosition(uint32_t pos);
@@ -679,6 +670,17 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   } _encbuf;
   bool _volatile_attributes;
 };
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::FlushTailDoc() {
+  auto* doc = _doc.docs.data();
+  const auto tail = std::distance(doc, _doc.doc.base());
+  SDB_ASSERT(tail != 0);
+  FormatTraits::write_tail_delta(tail, *_doc_out, doc, _doc.block_last, _buf);
+  if (_features.HasFrequency()) {
+    FormatTraits::write_tail(tail, *_doc_out, _doc.freqs.data(), _buf);
+  }
+}
 
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::FlushTailPos() {
@@ -1889,27 +1891,14 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
                          InputType>::ReadTailBlock(doc_id_t prev_doc) {
   const auto tail = this->_left_in_list;
-  SDB_ASSERT(tail <= IteratorTraits::kBlockSize);
-  const uint16_t size = GetDocIn().ReadI16();
-  const auto* buf = GetDocIn().ReadView(size);
-  if constexpr (std::is_same_v<BytesViewInput, InputType>) {
-    SDB_ASSERT(buf);
-  } else if (!buf) [[likely]] {
-    auto* encoded = reinterpret_cast<byte_type*>(this->_enc_buf);
-    [[maybe_unused]] const auto read = GetDocIn().ReadBytes(encoded, size);
-    SDB_ASSERT(read == size);
-    buf = encoded;
-  }
-  auto* doc = std::end(this->_docs) - tail;
-  const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
+  SDB_ASSERT(tail < IteratorTraits::kBlockSize);
+  IteratorTraits::read_tail_delta(tail, GetDocIn(), this->_enc_buf, this->_docs,
+                                  prev_doc);
   this->_max_in_leaf = *(std::end(this->_docs) - 1);
   this->_left_in_leaf = tail;
   this->_left_in_list = 0;
   if constexpr (IteratorTraits::Frequency()) {
-    auto* freq = std::end(this->_freqs) - tail;
-    [[maybe_unused]] const auto freq_size =
-      streamvbyte_decode(buf + doc_size, freq, tail);
-    SDB_ASSERT(doc_size + freq_size == size);
+    IteratorTraits::read_tail(tail, GetDocIn(), this->_enc_buf, this->_freqs);
   }
 }
 
@@ -3124,26 +3113,13 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
       IteratorTraits::skip_block(GetDocIn());
     }
   } else {
-    const uint16_t size = GetDocIn().ReadI16();
-    const auto* buf = GetDocIn().ReadView(size);
-    if constexpr (std::is_same_v<BytesViewInput, InputType>) {
-      SDB_ASSERT(buf);
-    } else if (!buf) [[likely]] {
-      auto* encoded = reinterpret_cast<byte_type*>(_enc_buf);
-      [[maybe_unused]] const auto read = GetDocIn().ReadBytes(encoded, size);
-      SDB_ASSERT(read == size);
-      buf = encoded;
-    }
-    auto* doc = std::end(_docs) - tail;
-    const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
+    IteratorTraits::read_tail_delta(tail, GetDocIn(), _enc_buf, _docs,
+                                    prev_doc);
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = tail;
     _left_in_list = 0;
     if constexpr (IteratorTraits::Frequency()) {
-      auto* freq = std::end(_freqs) - tail;
-      [[maybe_unused]] const auto freq_size =
-        streamvbyte_decode(buf + doc_size, freq, tail);
-      SDB_ASSERT(doc_size + freq_size == size);
+      IteratorTraits::read_tail(tail, GetDocIn(), _enc_buf, _freqs);
     }
   }
 }
@@ -3232,25 +3208,13 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   }
 
   const auto tail = docs_count % FieldTraits::kBlockSize;
-
-  if (!tail) {
+  if (tail == 0) {
     return;
   }
-
-  const uint16_t size = doc_in.ReadI16();
-  const auto* buf = doc_in.ReadView(size);
-  if (!buf) {
-    auto* encoded = reinterpret_cast<byte_type*>(enc_buf);
-    const auto read = doc_in.ReadBytes(encoded, size);
-    SDB_ASSERT(read == size);
-    buf = encoded;
-  }
-  auto* doc = std::end(docs) - tail;
-  const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
-  SDB_ASSERT(FieldTraits::Frequency() == (size != doc_size));
+  FieldTraits::read_tail_delta(tail, doc_in, enc_buf, docs, prev_doc);
 
   // FIXME optimize
-  for (const auto doc : std::span{doc, tail}) {
+  for (const auto doc : std::span{std::end(docs) - tail, tail}) {
     SetBit(set[doc / kBits], doc % kBits);
   }
 }
@@ -3577,8 +3541,9 @@ struct FormatTraits128 {
   static constexpr auto kEncBufSize =
     (kEncBufByteSize + sizeof(uint32_t)) / sizeof(uint32_t);
 
-  IRS_FORCE_INLINE static void write_block_delta(DataOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
+  IRS_FORCE_INLINE static void write_block_delta(BufferedOutput& out,
+                                                 uint32_t* in, uint32_t prev,
+                                                 uint32_t* buf) {
     DeltaEncode<kBlockSize>(in, prev);
     bitpack::write_block32(
       [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
@@ -3589,8 +3554,20 @@ struct FormatTraits128 {
       out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void write_block(DataOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
+  IRS_FORCE_INLINE static void write_tail_delta(uint32_t tail,
+                                                BufferedOutput& out,
+                                                uint32_t* in, uint32_t prev,
+                                                uint32_t* buf) {
+    SDB_ASSERT(tail != 0);
+    SDB_ASSERT(tail < kBlockSize);
+    auto* encoded = reinterpret_cast<byte_type*>(buf);
+    const uint16_t size = streamvbyte_delta_encode(in, tail, encoded, prev);
+    out.WriteU16(size);
+    out.WriteBytes(encoded, size);
+  }
+
+  IRS_FORCE_INLINE static void write_block(BufferedOutput& out,
+                                           const uint32_t* in, uint32_t* buf) {
     bitpack::write_block32(
       [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
          uint32_t bits) IRS_FORCE_INLINE {
@@ -3598,6 +3575,16 @@ struct FormatTraits128 {
                               bits);
       },
       out, in, buf, kBlockSize);
+  }
+
+  IRS_FORCE_INLINE static void write_tail(uint32_t tail, BufferedOutput& out,
+                                          const uint32_t* in, uint32_t* buf) {
+    SDB_ASSERT(tail != 0);
+    SDB_ASSERT(tail < kBlockSize);
+    auto* encoded = reinterpret_cast<byte_type*>(buf);
+    const uint16_t size = streamvbyte_encode(in, tail, encoded);
+    out.WriteU16(size);
+    out.WriteBytes(encoded, size);
   }
 
   template<typename InputType>
@@ -3613,6 +3600,23 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
+  IRS_FORCE_INLINE static void read_tail_delta(uint32_t tail, InputType& in,
+                                               uint32_t* buf, uint32_t* out,
+                                               uint32_t prev) {
+    SDB_ASSERT(tail != 0);
+    SDB_ASSERT(tail < kBlockSize);
+    const uint16_t size = in.ReadI16();
+    auto* encoded = reinterpret_cast<byte_type*>(buf);
+    const auto* view = in.ReadView(size);
+    if (!view) {
+      [[maybe_unused]] const auto read = in.ReadBytes(encoded, size);
+      SDB_ASSERT(read == size);
+      view = encoded;
+    }
+    streamvbyte_delta_decode(view, out + kBlockSize - tail, tail, prev);
+  }
+
+  template<typename InputType>
   IRS_FORCE_INLINE static void read_block(InputType& in, uint32_t* buf,
                                           uint32_t* out) {
     bitpack::read_block32(
@@ -3622,6 +3626,22 @@ struct FormatTraits128 {
                      bits);
       },
       in, buf, out, kBlockSize);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void read_tail(uint32_t tail, InputType& in,
+                                         uint32_t* buf, uint32_t* out) {
+    SDB_ASSERT(tail != 0);
+    SDB_ASSERT(tail < kBlockSize);
+    const uint16_t size = in.ReadI16();
+    auto* encoded = reinterpret_cast<byte_type*>(buf);
+    const auto* view = in.ReadView(size);
+    if (!view) {
+      [[maybe_unused]] const auto read = in.ReadBytes(encoded, size);
+      SDB_ASSERT(read == size);
+      view = encoded;
+    }
+    streamvbyte_decode(view, out + kBlockSize - tail, tail);
   }
 
   IRS_FORCE_INLINE static void skip_block(DataInput& in) {

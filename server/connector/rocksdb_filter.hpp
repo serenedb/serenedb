@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <velox/core/Expressions.h>
 #include <velox/core/ITypedExpr.h>
 #include <velox/vector/ComplexVector.h>
@@ -54,21 +55,22 @@ class Point {
     return _pk_names;
   }
 
-  // The expression node that made this point specific (set only when
-  // IsSpecific() is true). May be null if the point was never specific.
-  [[nodiscard]] const velox::core::TypedExprPtr& GetSourceExpr()
-    const noexcept {
-    return _source_expr;
+  // The expression nodes that specify this point
+  [[nodiscard]] const auto& GetSourceExprs() const noexcept {
+    return _source_exprs;
   }
 
-  void UpdateIfNeededSourceExpr(velox::core::TypedExprPtr expr) {
-    if (!_source_expr) {
-      _source_expr = std::move(expr);
-    }
+  std::string ToString() const {
+    std::string resp;
+
+    // for (std::string_view column_fi)
+
+    return resp;
   }
 
   void AddEqFilter(std::string_view column_name,
-                   velox::core::ConstantTypedExprPtr value);
+                   velox::core::ConstantTypedExprPtr value,
+                   const velox::core::ITypedExpr* source_expr);
 
   // Returns nullopt when the two points are contradictory (e.g. a=1 AND a=2).
   [[nodiscard]] static std::optional<Point> Intersect(const Point& lhs,
@@ -76,9 +78,10 @@ class Point {
 
  private:
   std::span<const std::string> _pk_names;
-  absl::flat_hash_map<std::string_view, velox::core::ConstantTypedExprPtr>
+  // absl::flat_hash_map<std::string_view, velox::core::ConstantTypedExprPtr>
+  absl::flat_hash_map<std::string, velox::core::ConstantTypedExprPtr>
     _column_filters;
-  velox::core::TypedExprPtr _source_expr;
+  absl::flat_hash_set<const velox::core::ITypedExpr*> _source_exprs;
 };
 
 // Materialises a point set into a velox RowVector using the supplied memory

@@ -170,7 +170,7 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   uint64_t _produced = 0;
   velox::core::ExpressionEvaluator* _evaluator = nullptr;
-  std::unique_ptr<velox::exec::ExprSet> _remainingFilterExprSet;
+  std::unique_ptr<velox::exec::ExprSet> _remaining_filter_expr_set;
 };
 
 // Read Your Own Writes
@@ -239,16 +239,21 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
  protected:
   RocksDBPointLookupDataSource(velox::memory::MemoryPool& memory_pool,
                                rocksdb::ColumnFamilyHandle& cf,
-                               velox::RowTypePtr row_type,
+                               velox::RowTypePtr read_type,
                                std::vector<catalog::Column::Id> column_ids,
                                ObjectId object_key, velox::RowVectorPtr values,
+                               size_t output_column_count,
+                               velox::core::TypedExprPtr remaining_filter,
+                               velox::core::ExpressionEvaluator* evaluator,
                                Source& source, rocksdb::ReadOptions ro)
     : _memory_pool{memory_pool},
       _cf{cf},
-      _row_type{std::move(row_type)},
+      _row_type{std::move(read_type)},
       _column_ids{std::move(column_ids)},
       _object_key{object_key},
       _values{std::move(values)},
+      _output_column_count{output_column_count},
+      _evaluator{evaluator},
       _ctx{source, std::move(ro)} {
     const size_t num_cols = _column_ids.size();
     _sorted_col_indices.resize(num_cols);
@@ -259,6 +264,10 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
     _col_rank.resize(num_cols);
     for (size_t rank = 0; rank < num_cols; ++rank) {
       _col_rank[_sorted_col_indices[rank]] = rank;
+    }
+    if (remaining_filter && evaluator) {
+      _remaining_expr_set = evaluator->compile(remaining_filter);
+      SDB_PRINT("expr_set=", _remaining_expr_set->toString());
     }
   }
 
@@ -275,6 +284,10 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   // Advance _offset by batch_size; reset _current_split when all points done.
   void FinalizeOffset(size_t batch_size, size_t total_points);
 
+  // Apply _filter_expr_set to batch and trim to _output_column_count columns.
+  // Returns batch unchanged if no filter is set.
+  velox::RowVectorPtr ApplyRemainingFilter(velox::RowVectorPtr batch);
+
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
@@ -284,6 +297,9 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   uint64_t _produced = 0;
   size_t _offset = 0;
   velox::RowVectorPtr _values;
+  size_t _output_column_count;
+  velox::core::ExpressionEvaluator* _evaluator = nullptr;
+  std::unique_ptr<velox::exec::ExprSet> _remaining_expr_set;
   std::vector<size_t> _sorted_col_indices;
   std::vector<size_t> _col_rank;
   std::vector<std::string> _keys;
@@ -296,19 +312,22 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
 class RocksDBRYOWPointLookupDataSource final
   : public RocksDBPointLookupDataSource<rocksdb::Transaction> {
  public:
-  RocksDBRYOWPointLookupDataSource(velox::memory::MemoryPool& memory_pool,
-                                   rocksdb::Transaction& transaction,
-                                   rocksdb::ColumnFamilyHandle& cf,
-                                   velox::RowTypePtr row_type,
-                                   std::vector<catalog::Column::Id> column_ids,
-                                   ObjectId object_key,
-                                   velox::RowVectorPtr values)
+  RocksDBRYOWPointLookupDataSource(
+    velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
+    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
+    std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
+    velox::RowVectorPtr values, size_t output_column_count,
+    velox::core::TypedExprPtr remaining_filter,
+    velox::core::ExpressionEvaluator* evaluator)
     : RocksDBPointLookupDataSource{memory_pool,
                                    cf,
-                                   std::move(row_type),
+                                   std::move(read_type),
                                    std::move(column_ids),
                                    object_key,
                                    std::move(values),
+                                   output_column_count,
+                                   std::move(remaining_filter),
+                                   evaluator,
                                    transaction,
                                    [] {
                                      rocksdb::ReadOptions ro;
@@ -322,15 +341,20 @@ class RocksDBSnapshotPointLookupDataSource final
  public:
   RocksDBSnapshotPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
-    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
     std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
-    const rocksdb::Snapshot* snapshot, velox::RowVectorPtr values)
+    const rocksdb::Snapshot* snapshot, velox::RowVectorPtr values,
+    size_t output_column_count, velox::core::TypedExprPtr remaining_filter,
+    velox::core::ExpressionEvaluator* evaluator)
     : RocksDBPointLookupDataSource{memory_pool,
                                    cf,
-                                   std::move(row_type),
+                                   std::move(read_type),
                                    std::move(column_ids),
                                    object_key,
                                    std::move(values),
+                                   output_column_count,
+                                   std::move(remaining_filter),
+                                   evaluator,
                                    db,
                                    [snapshot] {
                                      rocksdb::ReadOptions ro;

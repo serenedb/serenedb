@@ -276,3 +276,42 @@ QUERY PLAN
 
 statement ok
 DROP TABLE t_big4pk;
+
+# Test splitting filter on point and remaining for point lookup
+statement ok
+CREATE TABLE t_not_all_pk (a INTEGER, b INTEGER, c INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_not_all_pk
+SELECT a.x, b.x, a.x + b.x FROM
+  generate_series(1, 11) as a(x),
+  generate_series(1, 11) as b(x);
+
+query
+SELECT count(*) FROM t_not_all_pk WHERE
+  a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+----
+count
+45
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT count(*) FROM t_not_all_pk WHERE
+  a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
+  c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=0:
+-- Aggregation[2][SINGLE count := presto_count()] -> "count":BIGINT
+   Output: 1 rows (32B, 1 batches)<slt:ignore>
+  -- Filter[1][expression: and(true,true,in("c",{1, 2, 3, 4, 5, ...5 more}))] -> "c":INTEGER
+     Output: 45 rows (187B, 1 batches)<slt:ignore>
+    -- TableScan[0][t_not_all_pk, scan=point] -> "c":INTEGER
+       Input: 100 rows (416B, 1 batches), Output: 100 rows<slt:ignore>
+
+statement ok
+DROP TABLE t_not_all_pk;

@@ -64,8 +64,11 @@ std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
   auto const_val =
     basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
 
+  if (!absl::c_linear_search(pk_names, field_access->name())) {
+    return AnyPoint(pk_names);
+  }
   Point p{pk_names};
-  p.AddEqFilter(field_access->name(), const_val);
+  p.AddEqFilter(field_access->name(), const_val, func_call);
   return {p};
 }
 
@@ -80,6 +83,9 @@ std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
   auto array_const =
     basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
   if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
+    return AnyPoint(pk_names);
+  }
+  if (!absl::c_linear_search(pk_names, field_access->name())) {
     return AnyPoint(pk_names);
   }
 
@@ -98,7 +104,10 @@ std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
     auto elem_const = std::make_shared<velox::core::ConstantTypedExpr>(
       velox::BaseVector::wrapInConstant(1, offset + i, elements));
     Point p{pk_names};
-    p.AddEqFilter(field_access->name(), std::move(elem_const));
+    // If all points that uses func_call source expr become specific, it means
+    // that this node maybe replaced with constant true, as specific points will
+    // be processed in point lookup datas ource
+    p.AddEqFilter(field_access->name(), std::move(elem_const), func_call);
     points.push_back(std::move(p));
   }
   return points;
@@ -210,9 +219,11 @@ const velox::core::ConstantTypedExpr* Point::FindFilter(
 }
 
 void Point::AddEqFilter(std::string_view column_name,
-                        velox::core::ConstantTypedExprPtr value) {
+                        velox::core::ConstantTypedExprPtr value,
+                        const velox::core::ITypedExpr* source_expr) {
   SDB_ASSERT(!_column_filters.contains(column_name));
   _column_filters.emplace(column_name, std::move(value));
+  _source_exprs.insert(source_expr);
 }
 
 std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
@@ -238,6 +249,14 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
     }
     result._column_filters.emplace(pk_name, lhs._column_filters.at(pk_name));
   }
+  result._source_exprs.insert(
+    lhs._source_exprs.begin(),
+    lhs._source_exprs.end());  // TODO moving iterator?
+
+  result._source_exprs.insert(
+    rhs._source_exprs.begin(),
+    rhs._source_exprs.end());  // TODO moving iterator?
+
   return result;
 }
 
@@ -257,6 +276,9 @@ velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
                                             points.size(), std::move(columns));
 }
 
+// problem
+// a, b -- PK
+// a = 1 and b = 2 and c = 3 --> true and c = 3
 std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
                                      std::span<const std::string> pk_names) {
   std::vector<Point> pts;
@@ -276,11 +298,6 @@ std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
       pts = AnyPoint(pk_names);
     }
   }
-  for (auto& p : pts) {
-    if (p.IsSpecific()) {
-      p.UpdateIfNeededSourceExpr(expr);
-    }
-  }
   return pts;
 }
 
@@ -295,20 +312,12 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // Collect the unique source sub-expressions to replace with `true`.
   absl::flat_hash_set<const velox::core::ITypedExpr*> sources;
   for (const auto& p : pts) {
-    if (p.GetSourceExpr()) {
-      sources.insert(p.GetSourceExpr().get());
-    }
+    sources.insert(p.GetSourceExprs().begin(),
+                   p.GetSourceExprs().end());  // todo moving iterator?
   }
 
   auto rewritten = RewriteExpr(expr, sources);
 
-  // TODO evaluator should do this later?
-  // If the whole expression rewrote to `true`, return null (no filter needed).
-  if (const auto* c =
-        dynamic_cast<const velox::core::ConstantTypedExpr*>(rewritten.get());
-      c && c->value().value<bool>()) {
-    return {std::move(pts), nullptr};
-  }
   return {std::move(pts), std::move(rewritten)};
 }
 

@@ -726,11 +726,10 @@ template<bool Resize>
 class ValueReader {
  protected:
   ValueReader(IndexInput::ptr data_in, size_t size, uint64_t offset)
-    : _buf(size, 0), _data_in{std::move(data_in)} {
-    _data_in->Skip(offset);
-  }
+    : _buf(size, 0), _data_in{std::move(data_in)}, _offset{offset} {}
 
   bytes_view value(uint64_t offset, size_t length) {
+    offset += _offset;
     if constexpr (Resize) {
       _buf.resize(length);
     }
@@ -746,6 +745,7 @@ class ValueReader {
 
   bstring _buf;
   IndexInput::ptr _data_in;
+  uint64_t _offset;
 };
 
 template<bool Resize>

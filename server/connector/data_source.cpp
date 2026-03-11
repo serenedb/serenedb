@@ -493,6 +493,77 @@ uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
 }
 
 template<typename Derived>
+void RocksDBPointLookupDataSource<Derived>::BuildKeys(size_t batch_size,
+                                                      size_t key_cols) {
+  const size_t total_keys = batch_size * key_cols;
+  const size_t old_size = _keys.size();
+  _keys.resize(total_keys);
+  if (old_size >= total_keys) {
+    for (size_t rank = 0; rank < key_cols; ++rank) {
+      for (size_t pt = 0; pt < batch_size; ++pt) {
+        auto& key = _keys[rank * batch_size + pt];
+        SDB_ASSERT(key.size() >= kKeyPrefixSize);
+        key.resize(kKeyPrefixSize);
+        primary_key::Create(*_values, _offset + pt, key);
+      }
+    }
+  } else {
+    for (size_t rank = 0; rank < key_cols; ++rank) {
+      const size_t col_idx = _sorted_col_indices[rank];
+      for (size_t pt = 0; pt < batch_size; ++pt) {
+        auto& key = _keys[rank * batch_size + pt];
+        key.clear();
+        key_utils::AppendTableKey(key, _object_key);
+        key_utils::AppendColumnKey(key, _column_ids[col_idx]);
+        primary_key::Create(*_values, _offset + pt, key);
+      }
+    }
+  }
+}
+
+template<typename Derived>
+void RocksDBPointLookupDataSource<Derived>::PerformMultiGet(size_t total_keys) {
+  _key_slices.resize(total_keys);
+  for (size_t i = 0; i < total_keys; ++i) {
+    _key_slices[i] = _keys[i];
+  }
+  _ctx.MultiGet(
+    _cf, _key_slices, _raw_values, _statuses,
+    [this](rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
+           rocksdb::PinnableSlice* value, rocksdb::Status* status) {
+      static_cast<Derived*>(this)->DoGet(cf, key, value, status);
+    },
+    [this](rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
+           const rocksdb::Slice* keys, rocksdb::PinnableSlice* values,
+           rocksdb::Status* statuses) {
+      static_cast<Derived*>(this)->DoMultiGetBatch(cf, keys_number, keys,
+                                                   values, statuses);
+    });
+}
+
+template<typename Derived>
+size_t RocksDBPointLookupDataSource<Derived>::CountFound(
+  size_t batch_size) const {
+  size_t found = 0;
+  for (size_t i = 0; i < batch_size; ++i) {
+    if (!_statuses[i].IsNotFound()) {
+      ++found;
+    }
+  }
+  return found;
+}
+
+template<typename Derived>
+void RocksDBPointLookupDataSource<Derived>::FinalizeOffset(
+  size_t batch_size, size_t total_points) {
+  _offset += batch_size;
+  if (_offset >= total_points) {
+    _current_split.reset();
+    _offset = 0;
+  }
+}
+
+template<typename Derived>
 std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   uint64_t size, velox::ContinueFuture&) {
   SDB_ASSERT(size);
@@ -517,100 +588,24 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   if (num_columns == 0) {
     // count(*) path: no projected columns — issue one read per point using
     // the effective column, count how many points exist, return a 0-column
-    // RowVector with that many rows
+    // RowVector with that many rows.
     SDB_ASSERT(_column_ids.size() == 1);
+    BuildKeys(batch_size, 1);
 
-    const size_t total_keys = batch_size;
-    _keys.resize(total_keys);
-    for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-      auto& key = _keys[point_idx];
-      key.clear();
-      key_utils::AppendTableKey(key, _object_key);
-      key_utils::AppendColumnKey(key, _column_ids[0]);
-      primary_key::Create(*_values, _offset + point_idx, key);
-    }
-
-    for (size_t i = 1; i < _keys.size(); ++i) {
+    for (size_t i = 1; i < batch_size; ++i) {
       SDB_ASSERT(_keys[i] > _keys[i - 1], "Failed on ", i);
     }
 
-    _key_slices.resize(total_keys);
-    for (size_t i = 0; i < total_keys; ++i) {
-      _key_slices[i] = _keys[i];
-    }
-    _ctx.MultiGet(
-      _cf, _key_slices, _raw_values, _statuses,
-      [this](rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
-             rocksdb::PinnableSlice* value, rocksdb::Status* status) {
-        static_cast<Derived*>(this)->DoGet(cf, key, value, status);
-      },
-      [this](rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
-             const rocksdb::Slice* keys, rocksdb::PinnableSlice* values,
-             rocksdb::Status* statuses) {
-        static_cast<Derived*>(this)->DoMultiGetBatch(cf, keys_number, keys,
-                                                     values, statuses);
-      });
-
-    size_t found = 0;
-    for (size_t i = 0; i < batch_size; ++i) {
-      if (!_statuses[i].IsNotFound()) {
-        ++found;
-      }
-    }
-
-    _produced += found;
-    _offset += batch_size;
-    if (_offset >= total_points) {
-      _current_split.reset();
-      _offset = 0;
-    }
-    return velox::BaseVector::create<velox::RowVector>(_row_type, found,
+    PerformMultiGet(batch_size);
+    const size_t found_count = CountFound(batch_size);
+    _produced += found_count;
+    FinalizeOffset(batch_size, total_points);
+    return velox::BaseVector::create<velox::RowVector>(_row_type, found_count,
                                                        &_memory_pool);
   }
 
-  const size_t total_keys = batch_size * num_columns;
-  const size_t old_keys_size = _keys.size();
-  _keys.resize(total_keys);
-
-  if (old_keys_size >= total_keys) {
-    for (size_t sort_rank = 0; sort_rank < num_columns; ++sort_rank) {
-      for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-        auto& key = _keys[sort_rank * batch_size + point_idx];
-        SDB_ASSERT(key.size() >= kKeyPrefixSize);
-        key.resize(kKeyPrefixSize);
-        primary_key::Create(*_values, _offset + point_idx, key);
-      }
-    }
-  } else {
-    for (size_t sort_rank = 0; sort_rank < num_columns; ++sort_rank) {
-      const size_t col_idx = _sorted_col_indices[sort_rank];
-      for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-        auto& key = _keys[sort_rank * batch_size + point_idx];
-        key.clear();
-        key_utils::AppendTableKey(key, _object_key);
-        key_utils::AppendColumnKey(key, _column_ids[col_idx]);
-        primary_key::Create(*_values, _offset + point_idx, key);
-      }
-    }
-  }
-
-  _key_slices.resize(total_keys);
-  for (size_t i = 0; i < total_keys; ++i) {
-    _key_slices[i] = _keys[i];
-  }
-
-  _ctx.MultiGet(
-    _cf, _key_slices, _raw_values, _statuses,
-    [this](rocksdb::ColumnFamilyHandle& cf, const rocksdb::Slice& key,
-           rocksdb::PinnableSlice* value, rocksdb::Status* status) {
-      static_cast<Derived*>(this)->DoGet(cf, key, value, status);
-    },
-    [this](rocksdb::ColumnFamilyHandle& cf, size_t keys_number,
-           const rocksdb::Slice* keys, rocksdb::PinnableSlice* values,
-           rocksdb::Status* statuses) {
-      static_cast<Derived*>(this)->DoMultiGetBatch(cf, keys_number, keys,
-                                                   values, statuses);
-    });
+  BuildKeys(batch_size, num_columns);
+  PerformMultiGet(batch_size * num_columns);
 
   std::vector<velox::VectorPtr> columns;
   columns.reserve(num_columns);
@@ -624,21 +619,9 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   // Compact the output: exclude rows whose point was not found in RocksDB.
   // sort_rank=0 column's status is authoritative — if a row exists, all its
   // columns exist; if deleted/absent, all are kNotFound.
-  auto indices = velox::allocateIndices(batch_size, &_memory_pool);
-  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
-  size_t found_count = 0;
-  for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-    if (!_statuses[0 * batch_size + point_idx].IsNotFound()) {
-      raw_indices[found_count++] = static_cast<velox::vector_size_t>(point_idx);
-    }
-  }
-
+  const size_t found_count = CountFound(batch_size);
   _produced += found_count;
-  _offset += batch_size;
-  if (_offset >= total_points) {
-    _current_split.reset();
-    _offset = 0;
-  }
+  FinalizeOffset(batch_size, total_points);
 
   if (found_count == batch_size) {
     return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
@@ -648,11 +631,19 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
     return velox::BaseVector::create<velox::RowVector>(_row_type, 0,
                                                        &_memory_pool);
   }
+  auto indices = velox::allocateIndices(batch_size, &_memory_pool);
+  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
+  size_t idx = 0;
+  for (size_t pt = 0; pt < batch_size; ++pt) {
+    if (!_statuses[pt].IsNotFound()) {
+      raw_indices[idx++] = static_cast<velox::vector_size_t>(pt);
+    }
+  }
   std::vector<velox::VectorPtr> filtered;
   filtered.reserve(num_columns);
   for (auto& col : columns) {
-    filtered.push_back(
-      velox::BaseVector::wrapInDictionary(nullptr, indices, found_count, col));
+    filtered.push_back(velox::BaseVector::wrapInDictionary(
+      nullptr, std::move(indices), found_count, col));
   }
   return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
                                             found_count, std::move(filtered));

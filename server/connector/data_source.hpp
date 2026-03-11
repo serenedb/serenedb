@@ -254,6 +254,19 @@ class RocksDBPointLookupDataSource : public velox::connector::DataSource {
   }
 
  private:
+  // Build _keys[rank * batch_size + point_idx] for key_cols column slots.
+  void BuildKeys(size_t batch_size, size_t key_cols);
+
+  // Copy _keys[0..total_keys) into _key_slices, then call
+  // DoGet/DoMultiGetBatch.
+  void PerformMultiGet(size_t total_keys);
+
+  // Count entries in _statuses[0..batch_size) that are not NotFound.
+  size_t CountFound(size_t batch_size) const;
+
+  // Advance _offset by batch_size; reset _current_split when all points done.
+  void FinalizeOffset(size_t batch_size, size_t total_points);
+
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;

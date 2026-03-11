@@ -37,6 +37,9 @@ namespace sdb::connector {
 namespace {
 
 constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
+constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+constexpr size_t kKeyPrefixSize =
+  kTablePrefixSize + sizeof(catalog::Column::Id);
 
 template<velox::TypeKind Kind>
 velox::VectorPtr ReadPointColumnValues(
@@ -123,11 +126,9 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   std::string key = key_utils::PrepareTableKey(_object_key);
 
   const auto num_columns = _column_ids.size();
-  static constexpr size_t kKeySize =
-    kTablePrefixSize + sizeof(catalog::Column::Id);
 
   _column_keys.reserve(num_columns);
-  _upper_bound_keys_data.reserve(kKeySize * num_columns);
+  _upper_bound_keys_data.reserve(kKeyPrefixSize * num_columns);
   _upper_bound_slices.reserve(num_columns);
 
   for (const auto column_id : _column_ids) {
@@ -152,7 +153,7 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
 
   for (size_t i = 0; i < num_columns; ++i) {
     _upper_bound_slices.emplace_back(
-      _upper_bound_keys_data.data() + i * kKeySize, kKeySize);
+      _upper_bound_keys_data.data() + i * kKeyPrefixSize, kKeyPrefixSize);
   }
 
   if (remaining_filter && evaluator) {
@@ -344,6 +345,9 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
     return batch;
   }
   SDB_ASSERT(_column_ids.size() == 1);
+  SDB_ASSERT(!_remainingFilterExprSet,
+             "RocksDBFullScanDataSource: count(*) with filter should set up "
+             "filter columns in _row_type");
   const auto read = IterateColumn(
     *_iterators[0], size, [](uint64_t, std::string_view, std::string_view) {});
 
@@ -458,9 +462,8 @@ velox::VectorPtr RocksDBFullScanDataSource::ReadColumnFromKey(
   const auto vector_size = IterateColumn(
     it, max_size,
     [&](uint64_t value_idx, std::string_view key, std::string_view value) {
-      auto val = primary_key::ReadSigned<int64_t>(std::string_view{
-        key.begin() + kTablePrefixSize + sizeof(catalog::Column::Id),
-        key.end()});
+      auto val = primary_key::ReadSigned<int64_t>(
+        std::string_view{key.begin() + kKeyPrefixSize, key.end()});
       result->set(value_idx, val);
     });
   if (vector_size != result->size()) {
@@ -511,15 +514,12 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
     return nullptr;
   }
 
-  // SDB_PRINT("row type=", _row_type->toString());
   if (num_columns == 0) {
-    // SDB_PRINT("num_columns == 0");
     // count(*) path: no projected columns — issue one read per point using
     // the effective column, count how many points exist, return a 0-column
-    // RowVector with that many rows (mirrors RocksDBFullScanDataSource).
+    // RowVector with that many rows
     SDB_ASSERT(_column_ids.size() == 1);
 
-    // todo restrict with number of values?
     const size_t total_keys = batch_size;
     _keys.resize(total_keys);
     for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
@@ -569,16 +569,28 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Derived>::next(
   }
 
   const size_t total_keys = batch_size * num_columns;
-
+  const size_t old_keys_size = _keys.size();
   _keys.resize(total_keys);
-  for (size_t sort_rank = 0; sort_rank < num_columns; ++sort_rank) {
-    const size_t col_idx = _sorted_col_indices[sort_rank];
-    for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-      auto& key = _keys[sort_rank * batch_size + point_idx];
-      key.clear();
-      key_utils::AppendTableKey(key, _object_key);
-      key_utils::AppendColumnKey(key, _column_ids[col_idx]);
-      primary_key::Create(*_values, _offset + point_idx, key);
+
+  if (old_keys_size >= total_keys) {
+    for (size_t sort_rank = 0; sort_rank < num_columns; ++sort_rank) {
+      for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
+        auto& key = _keys[sort_rank * batch_size + point_idx];
+        SDB_ASSERT(key.size() >= kKeyPrefixSize);
+        key.resize(kKeyPrefixSize);
+        primary_key::Create(*_values, _offset + point_idx, key);
+      }
+    }
+  } else {
+    for (size_t sort_rank = 0; sort_rank < num_columns; ++sort_rank) {
+      const size_t col_idx = _sorted_col_indices[sort_rank];
+      for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
+        auto& key = _keys[sort_rank * batch_size + point_idx];
+        key.clear();
+        key_utils::AppendTableKey(key, _object_key);
+        key_utils::AppendColumnKey(key, _column_ids[col_idx]);
+        primary_key::Create(*_values, _offset + point_idx, key);
+      }
     }
   }
 

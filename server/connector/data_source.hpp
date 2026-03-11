@@ -124,8 +124,6 @@ class RocksDBFullScanDataSource : public velox::connector::DataSource {
   std::vector<catalog::Column::Id> _column_ids;
 
  private:
-  static constexpr size_t kTablePrefixSize = sizeof(ObjectId);
-
   // Applies _remainingFilterExprSet to batch, returning a (possibly smaller)
   // RowVector with only the rows where the filter evaluates to true.
   // Returns batch unchanged if no filter is set.

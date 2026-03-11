@@ -31,6 +31,14 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+namespace {
+
+// Whether execute push downed into table scan filters or use separate filter
+// operator. When value is changed, some explain tests will be broken (as
+// execution graph may change).
+constexpr bool kExecuteFiltersInTableScan = false;
+
+}  // namespace
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
@@ -63,8 +71,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
 
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
-    _table_column_map.emplace(
-      orig_name, FilterColumn{orig_name, scol->Id(), scol->type()});
+    _table_column_map.emplace(orig_name,
+                              FilterColumn{scol->Id(), scol->type()});
   }
 
   _transaction.AddRocksDBRead();
@@ -168,9 +176,7 @@ SereneDBTableLayout::createTableHandle(
     }
   }
 
-  const bool use_all_filters_pushdown = false;
-
-  if (!use_all_filters_pushdown && remaining_filter) {
+  if (!kExecuteFiltersInTableScan && remaining_filter) {
     rejected_filters = {std::move(remaining_filter)};
     remaining_filter.reset();
   }

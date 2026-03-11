@@ -293,13 +293,15 @@ yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
     auto options = ParseNGramTokenizerOptions(stmt);
     if (options.stream_bytes_type ==
         irs::analysis::NGramTokenizerBase::InputType::UTF8) {
-      ts_dict = catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
-        irs::analysis::NGramTokenizerBase::InputType::UTF8>>(
-        ObjectId{0}, dict_name.relation, options);
+      ts_dict =
+        catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
+          irs::analysis::NGramTokenizerBase::InputType::UTF8>>(
+          ObjectId{0}, dict_name.relation, options);
     } else {
-      ts_dict = catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
-        irs::analysis::NGramTokenizerBase::InputType::Binary>>(
-        ObjectId{0}, dict_name.relation, options);
+      ts_dict =
+        catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
+          irs::analysis::NGramTokenizerBase::InputType::Binary>>(
+          ObjectId{0}, dict_name.relation, options);
     }
   } else {
     THROW_SQL_ERROR(

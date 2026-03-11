@@ -164,13 +164,13 @@ std::vector<Point> ExtractFilterOr(const velox::core::CallTypedExpr* func_call,
 velox::core::TypedExprPtr RewriteExpr(
   const velox::core::TypedExprPtr& expr,
   const absl::flat_hash_set<const velox::core::ITypedExpr*>& sources) {
-  if (sources.contains(expr.get())) {
-    return std::make_shared<velox::core::ConstantTypedExpr>(
-      velox::BOOLEAN(), velox::variant(true));
-  }
   if (!expr->isCallKind()) {
     return expr;
   }
+  if (sources.contains(expr.get())) {
+    return {};
+  }
+
   const auto* call = expr->asUnchecked<velox::core::CallTypedExpr>();
   std::vector<velox::core::TypedExprPtr> new_inputs;
   bool changed = false;
@@ -184,6 +184,23 @@ velox::core::TypedExprPtr RewriteExpr(
   if (!changed) {
     return expr;
   }
+
+  if (call->name() == "and") {
+    std::erase_if(new_inputs, [](auto expr) { return expr == nullptr; });
+    if (new_inputs.size() == 0) {
+      return {};
+    }
+    if (new_inputs.size() == 1) {
+      return new_inputs[0];
+    }
+  }
+
+  if (call->name() == "or") {
+    SDB_ASSERT(
+      absl::c_all_of(new_inputs, [](auto expr) { return expr == nullptr; }));
+    return {};
+  }
+
   return std::make_shared<velox::core::CallTypedExpr>(
     expr->type(), std::move(new_inputs), call->name());
 }

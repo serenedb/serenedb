@@ -308,7 +308,7 @@ EXECUTION PLAN WITH STATS:
 Fragment 0:  numWorkers=0:
 -- Aggregation[2][SINGLE count := presto_count()] -> "count":BIGINT
    Output: 1 rows (32B, 1 batches)<slt:ignore>
-  -- Filter[1][expression: and(true,true,in("c",{1, 2, 3, 4, 5, ...5 more}))] -> "c":INTEGER
+  -- Filter[1][expression: in("c",{1, 2, 3, 4, 5, ...5 more})] -> "c":INTEGER
      Output: 45 rows (187B, 1 batches)<slt:ignore>
     -- TableScan[0][t_not_all_pk, scan=point] -> "c":INTEGER
        Input: 100 rows (416B, 1 batches), Output: 100 rows<slt:ignore>

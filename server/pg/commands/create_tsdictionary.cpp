@@ -20,6 +20,7 @@
 
 #include <frozen/unordered_map.h>
 
+#include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <yaclib/async/make.hpp>
@@ -166,6 +167,96 @@ irs::analysis::TextTokenizer::OptionsT ParseTextTokenizerOptions(
   return options;
 }
 
+irs::analysis::NGramTokenizerBase::Options ParseNGramTokenizerOptions(
+  const DefineStmt& stmt) {
+  irs::analysis::NGramTokenizerBase::Options options;
+  bool min_gram_set = false;
+  bool max_gram_set = false;
+
+  for (const auto* def : PgListWrapper<DefElem>{stmt.definition}) {
+    const std::string_view name{def->defname};
+
+    if (name == "template") {
+      continue;
+    } else if (name == "mingram") {
+      auto val = TryGet<int>(def->arg);
+      if (!val || *val < 1) {
+        InvalidParameterThrow("mingram", "must be a positive integer");
+      }
+      options.min_gram = static_cast<size_t>(*val);
+      min_gram_set = true;
+    } else if (name == "maxgram") {
+      auto val = TryGet<int>(def->arg);
+      if (!val || *val < 1) {
+        InvalidParameterThrow("maxgram", "must be a positive integer");
+      }
+      options.max_gram = static_cast<size_t>(*val);
+      max_gram_set = true;
+    } else if (name == "preserveoriginal") {
+      auto val = TryGet<bool>(def->arg);
+      if (!val) {
+        InvalidParameterThrow("preserveoriginal", "expected boolean");
+      }
+      options.preserve_original = *val;
+    } else if (name == "inputtype") {
+      auto val = TryGet<std::string_view>(def->arg);
+      if (!val) {
+        InvalidParameterThrow("inputtype", "expected string");
+      }
+      if (*val == "binary") {
+        options.stream_bytes_type =
+          irs::analysis::NGramTokenizerBase::InputType::Binary;
+      } else if (*val == "utf8") {
+        options.stream_bytes_type =
+          irs::analysis::NGramTokenizerBase::InputType::UTF8;
+      } else {
+        InvalidParameterThrow("inputtype", "expected one of: binary, utf8");
+      }
+    } else if (name == "startmarker") {
+      auto val = TryGet<std::string_view>(def->arg);
+      if (!val) {
+        InvalidParameterThrow("startmarker", "expected string");
+      }
+      options.start_marker = irs::bstring{
+        reinterpret_cast<const irs::byte_type*>(val->data()), val->size()};
+    } else if (name == "endmarker") {
+      auto val = TryGet<std::string_view>(def->arg);
+      if (!val) {
+        InvalidParameterThrow("endmarker", "expected string");
+      }
+      options.end_marker = irs::bstring{
+        reinterpret_cast<const irs::byte_type*>(val->data()), val->size()};
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("unrecognized text search dictionary parameter: \"", name,
+                "\""));
+    }
+  }
+
+  if (!min_gram_set) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("parameter \"mingram\" is required for text search dictionary "
+              "with template \"ngram\""));
+  }
+
+  if (!max_gram_set) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("parameter \"maxgram\" is required for text search dictionary "
+              "with template \"ngram\""));
+  }
+
+  if (options.min_gram > options.max_gram) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("\"mingram\" must be less than or equal to \"maxgram\""));
+  }
+
+  return options;
+}
+
 }  // namespace
 
 yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
@@ -198,6 +289,18 @@ yaclib::Future<> CreateTSDictionary(ExecContext& ctx, const DefineStmt& stmt) {
     ts_dict =
       catalog::TSDictionary::CreateTokenizer<irs::analysis::TextTokenizer>(
         ObjectId{0}, dict_name.relation, options, options.explicit_stopwords);
+  } else if (template_name == "ngram") {
+    auto options = ParseNGramTokenizerOptions(stmt);
+    if (options.stream_bytes_type ==
+        irs::analysis::NGramTokenizerBase::InputType::UTF8) {
+      ts_dict = catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
+        irs::analysis::NGramTokenizerBase::InputType::UTF8>>(
+        ObjectId{0}, dict_name.relation, options);
+    } else {
+      ts_dict = catalog::TSDictionary::CreateTokenizer<irs::analysis::NGramTokenizer<
+        irs::analysis::NGramTokenizerBase::InputType::Binary>>(
+        ObjectId{0}, dict_name.relation, options);
+    }
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),

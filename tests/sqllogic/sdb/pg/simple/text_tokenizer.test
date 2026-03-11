@@ -59,3 +59,19 @@ SELECT ts_lexize('t4', 'A thing of some KIND and ANoTher');
 ----
 ts_lexize
 {thing,some,kind,anoth}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t5(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3,
+    preserveoriginal = true
+)
+
+
+query
+SELECT ts_lexize('t5', 'quick');
+----
+ts_lexize
+{qu,qui,quick,ui,uic,ic,ick,ck}

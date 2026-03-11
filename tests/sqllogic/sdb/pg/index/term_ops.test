@@ -33,6 +33,12 @@ a
 2
 
 query
+SELECT a FROM test_term_ops_idx WHERE TERM_LIKE(b, 'percent_not_contain') AND a < 2;
+----
+a
+1
+
+query
 SELECT a FROM test_term_ops_idx WHERE TERM_LIKE(b, 'percent\_not\_contain') ORDER BY a;
 ----
 a
@@ -46,12 +52,14 @@ a
 
 query
 SELECT a FROM test_term_ops_idx WHERE TERM_GT(c, 'd') ORDER BY a DESC;
+----
 a
 6
 5
 
 query
 SELECT a FROM test_term_ops_idx WHERE TERM_LTE(c, 'd') ORDER BY a DESC;
+----
 a
 4
 3
@@ -60,6 +68,7 @@ a
 
 query
 SELECT a FROM test_term_ops_idx WHERE NOT TERM_LT(c, 'd') ORDER BY a DESC;
+----
 a
 6
 5
@@ -67,6 +76,7 @@ a
 
 query
 SELECT a FROM test_term_ops_idx WHERE TERM_IN(c, 'd', 'a') ORDER BY a DESC;
+----
 a
 4
 1

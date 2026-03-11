@@ -1,0 +1,182 @@
+name: PR-Build-Trigger
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  inject-checkboxes:
+    # Append build trigger checkboxes when PR is opened (and they're not already there)
+    if: >-
+      github.event.action == 'opened' &&
+      !contains(github.event.pull_request.body, '## Build Triggers')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Append build triggers to PR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const triggers = [
+              '',
+              '## Build Triggers',
+              '_Check a box and save to trigger a build. It will be auto-unchecked after triggering._',
+              '',
+              '**self-hosted**',
+              '- [ ] build · self-hosted',
+              '- [ ] asan · self-hosted',
+              '- [ ] tsan · self-hosted',
+              '- [ ] release · self-hosted',
+              '',
+              '**X64**',
+              '- [ ] build · X64',
+              '- [ ] asan · X64',
+              '- [ ] tsan · X64',
+              '- [ ] release · X64',
+              '',
+              '**arm**',
+              '- [ ] build · arm',
+              '- [ ] asan · arm',
+              '- [ ] tsan · arm',
+              '- [ ] release · arm',
+            ].join('\n');
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              body: body + triggers,
+            });
+
+  trigger-build:
+    # Only run on edits when PR body contains a checked build trigger
+    if: >-
+      github.event.action == 'edited' &&
+      contains(github.event.pull_request.body, '- [x]')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Parse checkboxes and trigger builds
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const branch = context.payload.pull_request.head.ref;
+            const sha = context.payload.pull_request.head.sha;
+            const prNumber = context.payload.pull_request.number;
+
+            // Match checked boxes like "- [x] asan · self-hosted"
+            const checkedPattern = /- \[x\] (\w+) · ([\w-]+)/g;
+            const triggers = [];
+            let match;
+            while ((match = checkedPattern.exec(body)) !== null) {
+              triggers.push({ preset: match[1], location: match[2] });
+            }
+
+            if (triggers.length === 0) {
+              core.info('No build triggers found');
+              return;
+            }
+
+            const validPresets = ['asan', 'tsan', 'build', 'release'];
+            const validLocations = ['X64', 'arm', 'self-hosted'];
+
+            // Trigger builds and collect results
+            const triggered = [];
+            for (const t of triggers) {
+              if (!validPresets.includes(t.preset) || !validLocations.includes(t.location)) {
+                core.warning(`Skipping invalid trigger: ${t.preset} · ${t.location}`);
+                continue;
+              }
+
+              // Set pending commit status so it shows on the PR
+              const statusContext = `SereneDB-Build / ${t.preset} (${t.location})`;
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: sha,
+                state: 'pending',
+                description: `Build ${t.preset} on ${t.location} triggered...`,
+                context: statusContext,
+              });
+
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'build-manual.yml',
+                ref: branch,
+                inputs: {
+                  PRESET: t.preset,
+                  LOCATION: t.location,
+                  BRANCH: branch,
+                  JOB_CONFIG: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}',
+                  DOCKER_SERENEDB_IMAGE: 'false',
+                  DOCKER_EXTRA_TAGS: '',
+                  PUSH_IMAGES_2_REGISTRY: 'false',
+                  EXTRA_ARTIFACTS: '',
+                  DOCKER_BUILD_IMAGES: 'false',
+                  BUILD_CONFIG: '{}',
+                },
+              });
+
+              // Wait briefly then find the dispatched run to link it
+              await new Promise(r => setTimeout(r, 3000));
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'build-manual.yml',
+                branch: branch,
+                per_page: 1,
+              });
+
+              const runUrl = runs.data.workflow_runs[0]?.html_url || '';
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: sha,
+                state: 'pending',
+                description: `Build ${t.preset} on ${t.location} in progress`,
+                context: statusContext,
+                target_url: runUrl,
+              });
+
+              triggered.push({ ...t, runUrl, statusContext });
+              core.info(`Triggered: ${t.preset} on ${t.location} -> ${runUrl}`);
+            }
+
+            // Uncheck the boxes so they can be clicked again
+            let newBody = body;
+            for (const t of triggered) {
+              const checked = `- [x] ${t.preset} · ${t.location}`;
+              const unchecked = `- [ ] ${t.preset} · ${t.location}`;
+              newBody = newBody.replace(checked, unchecked);
+            }
+
+            if (newBody !== body) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                body: newBody,
+              });
+            }
+
+            // Post confirmation comment
+            if (triggered.length > 0) {
+              const rows = triggered.map(t => {
+                const link = t.runUrl ? `[View run](${t.runUrl})` : 'dispatched';
+                return `| \`${t.preset}\` | \`${t.location}\` | \`${branch}\` | ${link} |`;
+              }).join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `**Build triggered!**\n\n| Preset | Location | Branch | Link |\n|--------|----------|--------|------|\n${rows}`,
+              });
+            }

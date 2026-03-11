@@ -40,9 +40,11 @@
 #include "catalog/tokenizer.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "pg/tokenizer_options.h"
 #include "utils/elog.h"
 #include "utils/exec_context.h"
 #include "vpack/value.h"
@@ -51,6 +53,9 @@
 namespace sdb::pg {
 
 namespace {
+
+using namespace std::string_view_literals;
+
 constexpr auto kNameMappings =
   frozen::make_unordered_map<std::string_view, std::string_view>({
     {"stopwordspath", "stopwordsPath"},
@@ -92,105 +97,143 @@ void InvalidParameterThrow(std::string_view param, std::string_view details) {
                           param, "\": ", details));
 }
 
-template<NodeTag Tag>
-void ProcessParamWithType(vpack::Builder& b, std::string_view name,
-                          const Node* value) {
-  if constexpr (Tag == T_Integer) {
-    auto val = TryGet<int>(value);
-    if (!val) {
-      InvalidParameterThrow(name, "expected integer");
-    }
-    b.add(name, *val);
-  } else if constexpr (Tag == T_String) {
-    auto val = TryGet<std::string_view>(value);
-    if (!val) {
-      InvalidParameterThrow(name, "expected string");
-    }
-    b.add(name, *val);
-  } else if constexpr (Tag == T_Boolean) {
-    auto val = TryGet<bool>(value);
-    if (!val) {
-      InvalidParameterThrow(name, "expected boolean");
-    }
-    b.add(name, *val);
-  } else if constexpr (Tag == T_Float) {
-    auto val = TryGet<double>(value);
-    if (!val) {
-      InvalidParameterThrow(name, "expected float");
-    }
-    b.add(name, *val);
-  } else {
-    static_assert(false);
-  }
+std::string_view GetVPackName(std::string_view pg_name) {
+  auto it = kNameMappings.find(pg_name);
+  return it != kNameMappings.end() ? it->second : pg_name;
 }
 
-void ProcessParam(vpack::Builder& b, std::string_view name, const Node* value) {
-  if (nodeTag(value) == T_Integer) {
-    ProcessParamWithType<T_Integer>(b, name, value);
-  } else if (nodeTag(value) == T_String) {
-    ProcessParamWithType<T_String>(b, name, value);
-  } else if (nodeTag(value) == T_Boolean) {
-    ProcessParamWithType<T_Boolean>(b, name, value);
-  } else if (nodeTag(value) == T_Float) {
-    ProcessParamWithType<T_Float>(b, name, value);
-  } else {
-    InvalidParameterThrow(name, "cannot process value type");
-  }
-}
+constexpr OptionInfo kTemplate{"template", ""sv, "Tokenizer template type"};
+constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
+constexpr OptionGroup kTSDictionaryOptionGroups[] = {
+  {"Text Search Dictionary", kTSDictionaryRootOptions,
+   tokenizer_options::kTokenizerSubgroups}};
 
-void VisitDefineDefinitions(const DefineStmt& stmt, auto&& callback) {
-  for (const auto* def : PgListWrapper<DefElem>{stmt.definition}) {
-    const std::string_view name{def->defname};
-    std::string_view vpack_name;
-    auto it = kNameMappings.find(name);
-    if (it == kNameMappings.end()) {
-      vpack_name = name;
-    } else {
-      vpack_name = it->second;
+class CreateTSDictionaryOptions : public OptionsParser {
+ public:
+  CreateTSDictionaryOptions(const List* ts_dictionary_options)
+    : OptionsParser("CREATE TEXT SEARCH DICTIONARY", {}, {},
+                    MakeOptions(ts_dictionary_options, {}),
+                    kTSDictionaryOptionGroups) {
+    Parse();
+  }
+
+  vpack::Builder BuildVPack() && { return std::move(_builder); }
+
+ private:
+  static const OptionGroup* FindSubgroup(std::string_view name) {
+    for (const auto& group : tokenizer_options::kTokenizerSubgroups) {
+      if (group.name == name) {
+        return &group;
+      }
     }
-    callback(vpack_name, def->arg);
+    return nullptr;
   }
-}
 
-vpack::Builder BuildTokenizerVPack(const DefineStmt& stmt) {
-  vpack::Builder b;
-  std::string_view template_name;
-  b.openObject();
-  b.add("analyzer", vpack::Value{vpack::ValueType::Object});
-  b.add("properties", vpack::Value{vpack::ValueType::Object});
-  VisitDefineDefinitions(stmt, [&](std::string_view name, const Node* value) {
-    if (name == "accent" || name == "stemming" || name == "preserveOriginal") {
-      ProcessParamWithType<T_Boolean>(b, name, value);
-    } else if (name == "stopwords") {
-      auto val = TryGet<std::string_view>(value);
+  void Parse() {
+    const auto* tmpl_opt = EraseOption(kTemplate);
+    if (!tmpl_opt) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("template value is not provided"));
+    }
+    auto tmpl_name = TryGet<std::string_view>(tmpl_opt->arg);
+    if (!tmpl_name) {
+      InvalidParameterThrow("template", "expected string");
+    }
+    const std::string_view type = *tmpl_name;
+
+    const auto* subgroup = FindSubgroup(type);
+    if (!subgroup) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unknown tokenizer template \"", type, "\""));
+    }
+
+    // Validate all remaining options belong to this template's group
+    auto valid_names = subgroup->FlatNames();
+    for (const auto& [name, opt] : _options) {
+      if (std::ranges::find(valid_names, name) == valid_names.end()) {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(opt))),
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("option \"", name, "\" is not supported by tokenizer \"",
+                  type, "\""));
+      }
+    }
+
+    _builder.openObject();
+    _builder.add("analyzer", vpack::Value{vpack::ValueType::Object});
+    _builder.add("properties", vpack::Value{vpack::ValueType::Object});
+
+    WriteTokenizerOptions(*subgroup);
+
+    _builder.close();  // close properties
+    _builder.add("type", type);
+    _builder.close();  // close analyzer
+    _builder.close();  // close object
+  }
+
+  void WriteTokenizerOptions(const OptionGroup& subgroup) {
+    using namespace tokenizer_options;
+
+    if (const auto* opt = EraseOption(kStopwords)) {
+      auto val = TryGet<std::string_view>(opt->arg);
       if (!val) {
-        InvalidParameterThrow(name, "expected comma-separated string");
+        InvalidParameterThrow("stopwords", "expected comma-separated string");
       }
-      b.add("stopwords", vpack::Value{vpack::ValueType::Array});
-      ParseCommaSeparated(*val, [&](std::string_view word) { b.add(word); });
-      b.close();  // close "stopwords" array
-    } else if (name == "hex") {
-      ProcessParamWithType<T_Boolean>(b, name, value);
-    } else if (name == "template") {
-      auto type = TryGet<std::string_view>(value);
-      if (!type) {
-        InvalidParameterThrow(name, "expected string");
-      }
-      template_name = *type;
-    } else {
-      ProcessParam(b, name, value);
+      _builder.add("stopwords", vpack::Value{vpack::ValueType::Array});
+      ParseCommaSeparated(*val,
+                          [&](std::string_view word) { _builder.add(word); });
+      _builder.close();  // close stopwords array
     }
-  });
-  b.close();  // close properties
-  if (!template_name.data()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("template value is not provided"));
+
+    for (const auto& opt : subgroup.FlatOptions()) {
+      auto it = _options.find(opt.name);
+      if (it == _options.end()) {
+        continue;
+      }
+      const auto* def = it->second;
+      _options.erase(it);
+      WriteParam(GetVPackName(opt.name), opt.type, def->arg);
+    }
   }
-  b.add("type", template_name);
-  b.close();  // close analyzer
-  b.close();  // close object
-  return b;
-}
+
+  void WriteParam(std::string_view name, OptionInfo::Type type,
+                  const Node* value) {
+    switch (type) {
+      case OptionInfo::Type::Boolean: {
+        auto val = TryGet<bool>(value);
+        if (!val) {
+          InvalidParameterThrow(name, "expected boolean");
+        }
+        _builder.add(name, *val);
+      } break;
+      case OptionInfo::Type::Integer: {
+        auto val = TryGet<int>(value);
+        if (!val) {
+          InvalidParameterThrow(name, "expected integer");
+        }
+        _builder.add(name, *val);
+      } break;
+      case OptionInfo::Type::Double: {
+        auto val = TryGet<double>(value);
+        if (!val) {
+          InvalidParameterThrow(name, "expected float");
+        }
+        _builder.add(name, *val);
+      } break;
+      case OptionInfo::Type::String: {
+        auto val = TryGet<std::string_view>(value);
+        if (!val) {
+          InvalidParameterThrow(name, "expected string");
+        }
+        _builder.add(name, *val);
+      } break;
+      default:
+        InvalidParameterThrow(name, "unsupported option type");
+    }
+  }
+
+  vpack::Builder _builder;
+};
 
 }  // namespace
 
@@ -201,24 +244,8 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto dict_name =
     ParseObjectName(stmt.defnames, ctx.GetDatabase(), current_schema);
 
-  std::string_view template_name;
-  PgListWrapper<DefElem> defs{stmt.definition};
-  for (const auto* def : defs) {
-    std::string_view name{def->defname};
-    if (name == "template") {
-      if (template_name.data()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-                        ERR_MSG("multiple \"template\" definitions"));
-      }
-      auto type = TryGet<std::string_view>(def->arg);
-      if (!type) {
-        InvalidParameterThrow("template", "expected string");
-      }
-      template_name = *type;
-    }
-  }
-
-  vpack::Builder b = BuildTokenizerVPack(stmt);
+  vpack::Builder b =
+    std::move(CreateTSDictionaryOptions{stmt.definition}).BuildVPack();
 
   auto ts_dict = std::make_shared<catalog::Tokenizer>(
     ObjectId{0}, dict_name.relation,

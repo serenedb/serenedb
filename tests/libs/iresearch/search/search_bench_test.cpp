@@ -34,6 +34,8 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
+#include "basics/math_utils.hpp"
+#include "executor.hpp"
 #include "index_builder.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -318,10 +320,16 @@ void TestSeekSkipFillBlock(const irs::DirectoryReader& reader,
     });
 }
 
+enum class ResultType {
+  Raw,
+  Hash,
+};
+
 struct QueryResult {
   std::string query;
   uint64_t count{0};
   uint64_t top_100{0};
+  ResultType result_type{ResultType::Raw};
   std::vector<std::string> top_100_result;
   std::vector<std::string> top_100_count_result;
 };
@@ -342,15 +350,21 @@ std::string HashIds(const std::vector<std::string>& ids) {
 
 void HashResults(std::vector<QueryResult>& results) {
   for (auto& r : results) {
+    if (r.result_type == ResultType::Hash) {
+      continue;
+    }
     r.top_100_result = {HashIds(r.top_100_result)};
     r.top_100_count_result = {HashIds(r.top_100_count_result)};
+    r.result_type = ResultType::Hash;
   }
 }
 
 std::string SerializeResults(const std::vector<QueryResult>& results) {
   vpack::Builder builder;
   vpack::WriteObject(builder, results);
-  return builder.slice().toJson();
+  auto options = vpack::Options::gDefaults;
+  options.pretty_print = true;
+  return builder.slice().toJson(&options);
 }
 
 std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
@@ -400,8 +414,8 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
 };
 
 void BuildIndex(const std::string& corpus_path,
-                const std::filesystem::path& index_dir) {
-  bench::BenchConfig config;
+                const std::filesystem::path& index_dir,
+                const bench::BenchConfig& config) {
   bench::IndexBuilderOptions builder_options{
     .batch_size = 100000,
     .indexer_threads = 1,
@@ -446,22 +460,26 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
 
 std::vector<QueryResult> ExecuteAllQueries(
   bench::Executor& executor, const std::vector<ParsedQuery>& queries,
-  const std::vector<std::string>& id_map) {
+  const std::vector<std::string>& id_map, bool include_scores) {
   constexpr size_t kTopK = 100;
 
-  auto collect_ids = [&](std::string_view label,
-                         std::span<const irs::ScoreDoc> hits,
+  auto collect_ids = [&](std::string_view label, std::span<irs::ScoreDoc> hits,
                          std::vector<std::string>& out) {
-    for (size_t i = 0; i < hits.size(); ++i) {
-      auto doc_id = std::get<irs::doc_id_t>(hits[i]);
-      auto score = std::get<irs::score_t>(hits[i]);
+    absl::c_sort(hits, [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
+      return std::tie(b.first, a.second) < std::tie(a.first, b.second);
+    });
+    for (const auto& [score, doc_id] : hits) {
       auto idx = doc_id - irs::doc_limits::min();
       if (idx >= id_map.size()) {
-        ADD_FAILURE() << label << " hit[" << i << "] doc_id=" << doc_id
-                      << " score=" << score << " out of range";
+        ADD_FAILURE() << label << " doc_id=" << doc_id << " score=" << score
+                      << " out of range";
         continue;
       }
-      out.emplace_back(id_map[idx]);
+      if (include_scores) {
+        out.emplace_back(absl::StrCat(id_map[idx], " ", score));
+      } else {
+        out.emplace_back(id_map[idx]);
+      }
     }
   };
 
@@ -474,6 +492,7 @@ std::vector<QueryResult> ExecuteAllQueries(
                  << "query[" << i << "] \"" << q.query << "\"");
     QueryResult r;
     r.query = q.query;
+    r.result_type = ResultType::Raw;
     r.count = executor.ExecuteCount(q.query);
     EXPECT_GT(r.count, 0) << "COUNT returned 0";
     r.top_100 = executor.ExecuteTopK(kTopK, q.query);
@@ -558,8 +577,9 @@ class SearchBenchTest : public TestBase {
       index_dir = _corpus_path;
       _drop_index = false;
     } else {
-      BuildIndex(_corpus_path, test_dir());
+      BuildIndex(_corpus_path, test_dir(), _config);
       index_dir = test_dir().string();
+      std::cout << absl::StrCat("Index directory: ", index_dir, "\n");
     }
 
     std::string drop_index;
@@ -567,7 +587,7 @@ class SearchBenchTest : public TestBase {
       _drop_index = drop_index != "0";
     }
 
-    _executor = std::make_unique<bench::Executor>(index_dir);
+    _executor = std::make_unique<bench::Executor>(index_dir, _config);
     const auto& reader = _executor->GetReader();
     ASSERT_GT(reader.size(), 0);
     _id_map = BuildDocIdMap(reader);
@@ -589,7 +609,8 @@ class SearchBenchTest : public TestBase {
     auto queries = LoadQueries(queries_path);
     ASSERT_FALSE(queries.empty()) << "No queries loaded from " << queries_path;
 
-    auto results = ExecuteAllQueries(*_executor, queries, _id_map);
+    auto results = ExecuteAllQueries(*_executor, queries, _id_map,
+                                     _mode == Mode::GenerateJson);
     ASSERT_FALSE(results.empty()) << "No query results produced";
 
     if (_mode == Mode::GenerateHash) {
@@ -630,13 +651,12 @@ class SearchBenchTest : public TestBase {
         << "Reference file not found: " << raw_path;
     }
     auto expected = DeserializeResults(ref_str);
-    HashResults(results);
 
     ASSERT_EQ(results.size(), expected.size()) << "Query count mismatch";
 
     for (size_t i = 0; i < results.size(); ++i) {
-      const auto& a = results[i];
-      const auto& e = expected[i];
+      auto& a = results[i];
+      auto& e = expected[i];
 
       ASSERT_EQ(a.query, e.query) << "Query text mismatch at index " << i;
 
@@ -646,12 +666,30 @@ class SearchBenchTest : public TestBase {
       EXPECT_EQ(a.top_100, e.top_100)
         << "TOP_100 mismatch for query[" << i << "] \"" << a.query << "\"";
 
+      // Hash test results if reference is hashed; compare raw otherwise
+      if (e.result_type == ResultType::Hash) {
+        if (a.result_type == ResultType::Raw) {
+          a.top_100_result = {HashIds(a.top_100_result)};
+          a.top_100_count_result = {HashIds(a.top_100_count_result)};
+        }
+      }
+
       ASSERT_EQ(a.top_100_result.size(), e.top_100_result.size())
         << "TOP_100 id count mismatch for query[" << i << "] \"" << a.query
         << "\"";
 
+      // Raw reference may include scores
+      auto strip_score = [&](std::string_view s) -> std::string_view {
+        if (e.result_type != ResultType::Raw) {
+          return s;
+        }
+        auto pos = s.rfind(' ');
+        return pos != std::string_view::npos ? s.substr(0, pos) : s;
+      };
+
       for (size_t j = 0; j < a.top_100_result.size(); ++j) {
-        EXPECT_EQ(a.top_100_result[j], e.top_100_result[j])
+        auto expected_id = strip_score(e.top_100_result[j]);
+        EXPECT_EQ(a.top_100_result[j], expected_id)
           << "TOP_100 id[" << j << "] mismatch for query[" << i << "] \""
           << a.query << "\"";
       }
@@ -661,13 +699,26 @@ class SearchBenchTest : public TestBase {
         << a.query << "\"";
 
       for (size_t j = 0; j < a.top_100_count_result.size(); ++j) {
-        EXPECT_EQ(a.top_100_count_result[j], e.top_100_count_result[j])
+        auto expected_id = strip_score(e.top_100_count_result[j]);
+        EXPECT_EQ(a.top_100_count_result[j], expected_id)
           << "TOP_100_COUNT id[" << j << "] mismatch for query[" << i << "] \""
           << a.query << "\"";
+      }
+
+      ASSERT_EQ(a.top_100_result.size(), a.top_100_count_result.size())
+        << "TOP_100 vs TOP_100_COUNT id count mismatch for query[" << i
+        << "] \"" << a.query << "\"";
+
+      for (size_t j = 0; j < a.top_100_result.size(); ++j) {
+        auto expected_id = strip_score(a.top_100_count_result[j]);
+        EXPECT_EQ(a.top_100_result[j], expected_id)
+          << "TOP_100 vs TOP_100_COUNT id[" << j << "] mismatch for query[" << i
+          << "] \"" << a.query << "\"";
       }
     }
   }
 
+  bench::BenchConfig _config;
   std::string _corpus_path;
   std::unique_ptr<bench::Executor> _executor;
   std::vector<std::string> _id_map;
@@ -677,6 +728,160 @@ class SearchBenchTest : public TestBase {
 };
 
 TEST_F(SearchBenchTest, WikiSmall) { RunAndValidate("wiki_small"); }
+
+TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
+  const auto& reader = _executor->GetReader();
+  auto scorer_ptr =
+    irs::scorers::Get(_config.scorer, irs::Type<irs::text_format::Json>::get(),
+                      _config.scorer_options, false);
+  ASSERT_TRUE(scorer_ptr);
+  const auto& scorer = *scorer_ptr;
+
+  struct QueryCase {
+    std::string_view query;
+    std::vector<std::string_view> terms;
+  };
+
+  const QueryCase cases[] = {
+    {"griffith observatory", {"griffith", "observatory"}},
+    {"who dares wins", {"who", "dares", "wins"}},
+    {"ellen degeneres show", {"ellen", "degeneres", "show"}},
+  };
+
+  for (const auto& [query, terms] : cases) {
+    SCOPED_TRACE(query);
+
+    std::map<irs::doc_id_t, irs::score_t> reference_scores;
+
+    for (auto& segment : reader) {
+      for (auto term_str : terms) {
+        auto filter = irs::ByTerm::prepare(
+          {.index = reader, .scorer = &scorer}, "text",
+          irs::ViewCast<irs::byte_type>(irs::bytes_view{
+            reinterpret_cast<const irs::byte_type*>(term_str.data()),
+            term_str.size()}));
+        ASSERT_TRUE(filter);
+
+        auto it = filter->execute({.segment = segment, .scorer = &scorer});
+        ASSERT_TRUE(it);
+
+        irs::ColumnArgsFetcher fetcher;
+        auto score_func = it->PrepareScore({
+          .scorer = &scorer,
+          .segment = &segment,
+          .fetcher = &fetcher,
+        });
+        EXPECT_FALSE(score_func.IsDefault())
+          << "Score function is default for term: " << term_str;
+
+        for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
+             doc = it->advance()) {
+          fetcher.Fetch(doc);
+          it->FetchScoreArgs(0);
+          irs::score_t s = score_func.Score();
+          reference_scores[doc] += s;
+        }
+      }
+    }
+    ASSERT_GT(reference_scores.size(), 0u) << "No reference docs found";
+
+    auto filter = _executor->ParseFilter(std::string{query});
+    ASSERT_TRUE(filter);
+
+    auto prepared = filter->prepare({.index = reader, .scorer = &scorer});
+    ASSERT_TRUE(prepared);
+
+    // 1) Compare via advance + Score
+    {
+      std::map<irs::doc_id_t, irs::score_t> bd_scores;
+      for (auto& segment : reader) {
+        irs::ColumnArgsFetcher fetcher;
+        auto it = prepared->execute({.segment = segment, .scorer = &scorer});
+        auto score_func = it->PrepareScore({
+          .scorer = &scorer,
+          .segment = &segment,
+          .fetcher = &fetcher,
+        });
+
+        for (auto doc = it->advance(); !irs::doc_limits::eof(doc);
+             doc = it->advance()) {
+          fetcher.Fetch(doc);
+          it->FetchScoreArgs(0);
+          irs::score_t s = score_func.Score();
+          bd_scores[doc] = s;
+        }
+      }
+
+      EXPECT_EQ(bd_scores.size(), reference_scores.size())
+        << "advance: doc count mismatch";
+
+      for (auto& [doc, ref_score] : reference_scores) {
+        auto it = bd_scores.find(doc);
+        ASSERT_NE(it, bd_scores.end())
+          << "advance: ref doc " << doc << " missing from BD";
+        EXPECT_TRUE(irs::math::ApproxEquals(it->second, ref_score))
+          << "advance: score mismatch doc " << doc << ": BD=" << it->second
+          << " ref=" << ref_score;
+      }
+    }
+
+    auto cmp = [](const auto& a, const auto& b) {
+      return std::tie(b.first, a.second) <=> std::tie(a.first, b.second) < 0;
+    };
+
+    std::vector<irs::ScoreDoc> ref_top;
+    ref_top.reserve(reference_scores.size());
+    for (auto& [doc, score] : reference_scores) {
+      ref_top.emplace_back(score, doc);
+    }
+    absl::c_sort(ref_top, cmp);
+
+    // 2) Compare via Collect (ExecuteTopKWithCount)
+    {
+      static constexpr size_t kCount = 100;
+      std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
+      const auto count = irs::ExecuteTopKWithCount(reader, *filter, scorer,
+                                                   kCount, std::span{hits});
+
+      EXPECT_EQ(count, reference_scores.size()) << "Collect: count mismatch";
+
+      absl::c_sort(hits, cmp);
+
+      const size_t result_count = std::min<size_t>(kCount, count);
+
+      for (size_t i = 0; i < result_count; ++i) {
+        EXPECT_EQ(hits[i].second, ref_top[i].second)
+          << "Collect: rank " << i << " doc mismatch";
+        EXPECT_TRUE(irs::math::ApproxEquals(hits[i].first, ref_top[i].first))
+          << "Collect: rank " << i << " score mismatch doc " << hits[i].second
+          << ": collect=" << hits[i].first << " ref=" << ref_top[i].first;
+      }
+    }
+
+    // 3) Compare via ExecuteTopK (WAND path)
+    // Scores may differ at ULP level due to different FP accumulation order.
+    {
+      static constexpr size_t kCount = 100;
+      std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
+      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.index = 0},
+                       std::span{hits});
+
+      absl::c_sort(hits, cmp);
+
+      const size_t result_count = std::min<size_t>(kCount, ref_top.size());
+
+      // FP accumulation order differs between WAND and non-WAND paths,
+      // so allow a wider epsilon than the default single-ULP tolerance.
+      static constexpr float kEps = 1e-5f;
+      for (size_t i = 0; i < result_count; ++i) {
+        EXPECT_TRUE(
+          irs::math::ApproxEquals(hits[i].first, ref_top[i].first, kEps))
+          << "WAND: rank " << i << " score mismatch doc " << hits[i].second
+          << ": wand=" << hits[i].first << " ref=" << ref_top[i].first;
+      }
+    }
+  }
+}
 
 TEST_F(SearchBenchTest, AdvanceVsFillBlock) {
   auto factories = MakeFactories(*_executor);

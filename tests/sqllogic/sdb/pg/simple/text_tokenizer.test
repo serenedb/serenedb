@@ -71,7 +71,7 @@ CREATE TEXT SEARCH DICTIONARY t5(
 
 
 query
-SELECT ts_lexize('t5', 'quick');
+SELECT ts_lexize('t5', 'QuIcK');
 ----
 ts_lexize
-{qu,qui,quick,ui,uic,ic,ick,ck}
+{Qu,QuI,QuIcK,uI,uIc,Ic,IcK,cK}

@@ -47,12 +47,7 @@ yaclib::Future<> RemoveTombstone(ExecContext& context,
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto object = catalog.GetSnapshot()->GetRelation(db, schema, name);
-  if (!object) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-  auto r = catalog.RemoveTombstone(object->GetId());
+  auto r = catalog.RemoveTombstone(db, schema, name);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }

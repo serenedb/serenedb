@@ -1539,25 +1539,38 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::RemoveTombstone(ObjectId object_id) {
+Result LocalCatalog::RemoveTombstone(ObjectId db_id,
+                                     std::string_view schema_name,
+                                     std::string_view name) {
   absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
 
-  auto object = _snapshot->GetObject(object_id);
+  auto object = _snapshot->GetObject(*object_id);
   if (!object) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  // For indexes, the tombstone parent is the relation (table) id.
+  // For tables, the tombstone parent is the schema id.
   ObjectId tombstone_parent;
   if (object->GetType() == ObjectType::Index) {
     auto& index = basics::downCast<Index>(*object);
     tombstone_parent = index.GetRelationId();
   } else {
-    auto& schema_obj = basics::downCast<SchemaObject>(*object);
-    tombstone_parent = schema_obj.GetSchemaId();
+    tombstone_parent = *schema_id;
   }
 
   auto r = _engine->DropDefinition(tombstone_parent,
-                                   RocksDBEntryType::Tombstone, object_id);
+                                   RocksDBEntryType::Tombstone, *object_id);
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.

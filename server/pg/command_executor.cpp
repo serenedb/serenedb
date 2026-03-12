@@ -119,14 +119,14 @@ yaclib::Future<> CreateIndexExecutor::ExecuteImpl() {
   return CreateIndex(*_context, *_query, _stmt);
 }
 
-FinishCreationExecutor::FinishCreationExecutor(
+FinishCreateIndexExecutor::FinishCreateIndexExecutor(
   std::shared_ptr<ExecContext> context, std::string_view schemaname,
   std::string_view index_name)
   : CommandExecutor{std::move(context)},
     _schemaname{schemaname},
     _index_name{index_name} {}
 
-yaclib::Future<> FinishCreationExecutor::ExecuteImpl() {
+yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl() {
   const auto db = _context->GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();

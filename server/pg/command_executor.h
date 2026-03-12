@@ -84,9 +84,9 @@ class CreateIndexExecutor final : public CommandExecutor {
   const IndexStmt& _stmt;
 };
 
-class FinishCreationExecutor final : public CommandExecutor {
+class FinishCreateIndexExecutor final : public CommandExecutor {
  public:
-  FinishCreationExecutor(std::shared_ptr<ExecContext> context,
+  FinishCreateIndexExecutor(std::shared_ptr<ExecContext> context,
                          std::string_view schemaname,
                          std::string_view index_name);
 

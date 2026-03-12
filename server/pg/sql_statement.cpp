@@ -125,7 +125,7 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
   auto velox_exec =
     std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
 
-  auto finish_creation = std::make_unique<FinishCreationExecutor>(
+  auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
     connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
     index_stmt.idxname);
 

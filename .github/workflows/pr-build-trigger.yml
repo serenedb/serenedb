@@ -8,24 +8,65 @@ on:
 
 jobs:
   post-checkboxes:
-    # Post build trigger checkboxes as a bot comment when PR is opened
+    # Post build trigger form as a bot comment when PR is opened
     if: github.event_name == 'pull_request' && github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      contents: read
     steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/workflows/build-manual.yml
+          sparse-checkout-cone-mode: false
+
+      # TODO: use yq or install js-yaml to parse YAML properly instead of awk/sed
+      - name: Parse build-manual.yml
+        id: parse
+        run: |
+          FILE=".github/workflows/build-manual.yml"
+          extract_options() {
+            awk "/^      $1:/{ found=1; next } found && /options:/{ opts=1; next } opts && /^ *- /{ gsub(/^ *- /,\"\"); print; next } opts && !/^ *- /{ exit }" "$FILE"
+          }
+          extract_default() {
+            awk "/^      $1:/{ found=1; next } found && /default:/{ gsub(/.*default: *'?/,\"\"); gsub(/'$/,\"\"); print; exit }" "$FILE"
+          }
+          for FIELD in PRESET LOCATION; do
+            {
+              echo "${FIELD}_OPTIONS<<EOF"
+              extract_options "$FIELD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=$(extract_default "$FIELD")" >> "$GITHUB_OUTPUT"
+          done
+
       - name: Post build triggers comment
         uses: actions/github-script@v7
+        env:
+          PRESET_OPTIONS: ${{ steps.parse.outputs.PRESET_OPTIONS }}
+          PRESET_DEFAULT: ${{ steps.parse.outputs.PRESET_DEFAULT }}
+          LOCATION_OPTIONS: ${{ steps.parse.outputs.LOCATION_OPTIONS }}
+          LOCATION_DEFAULT: ${{ steps.parse.outputs.LOCATION_DEFAULT }}
         with:
           script: |
+            const fields = ['PRESET', 'LOCATION'];
+            const sections = fields.map(key => {
+              const options = process.env[`${key}_OPTIONS`].split('\n').filter(Boolean);
+              const def = process.env[`${key}_DEFAULT`];
+              const checkboxes = options.map(opt =>
+                `- [${opt === def ? 'x' : ' '}] ${opt}`
+              ).join('\n');
+              return `**${key}**\n${checkboxes}`;
+            });
+
             const body = [
               '### Build Triggers',
-              '_Check to trigger a build on `self-hosted`. Auto-unchecks after triggering._',
+              '_Pick options and click Run Build_',
               '',
-              '- [ ] build',
-              '- [ ] asan',
-              '- [ ] tsan',
-              '- [ ] release',
+              sections.join('\n\n'),
+              '',
+              '---',
+              '- [ ] **Run Build** <--',
             ].join('\n');
 
             await github.rest.issues.createComment({
@@ -36,13 +77,13 @@ jobs:
             });
 
   trigger-build:
-    # React to checkbox edits in a bot comment on a PR
+    # React to "Run Build" checkbox in a bot comment on a PR
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'edited' &&
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '### Build Triggers') &&
-      contains(github.event.comment.body, '- [x]')
+      contains(github.event.comment.body, '- [x] **Run Build** <--')
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -50,15 +91,52 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - name: Parse checkboxes and trigger builds
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/workflows/build-manual.yml
+          sparse-checkout-cone-mode: false
+
+      # TODO: use yq or install js-yaml to parse YAML properly instead of awk/sed
+      - name: Parse build-manual.yml
+        id: parse
+        run: |
+          FILE=".github/workflows/build-manual.yml"
+          extract_options() {
+            awk "/^      $1:/{ found=1; next } found && /options:/{ opts=1; next } opts && /^ *- /{ gsub(/^ *- /,\"\"); print; next } opts && !/^ *- /{ exit }" "$FILE"
+          }
+          extract_default() {
+            awk "/^      $1:/{ found=1; next } found && /default:/{ gsub(/.*default: *'?/,\"\"); gsub(/'$/,\"\"); print; exit }" "$FILE"
+          }
+          for FIELD in PRESET LOCATION; do
+            {
+              echo "${FIELD}_OPTIONS<<EOF"
+              extract_options "$FIELD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=$(extract_default "$FIELD")" >> "$GITHUB_OUTPUT"
+          done
+          # Collect all input keys and their defaults for dispatch
+          {
+            echo "DEFAULTS<<EOF"
+            awk '/^      [A-Z_0-9]+:$/{ key=$1; sub(/:$/,"",key) } /^        default:/{
+              val=$0; sub(/.*default: */,"",val); gsub(/^'"'"'|'"'"'$/,"",val); print key"="val
+            }' "$FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Parse form and trigger build
         uses: actions/github-script@v7
+        env:
+          PRESET_OPTIONS: ${{ steps.parse.outputs.PRESET_OPTIONS }}
+          LOCATION_OPTIONS: ${{ steps.parse.outputs.LOCATION_OPTIONS }}
+          INPUT_DEFAULTS: ${{ steps.parse.outputs.DEFAULTS }}
         with:
           script: |
             const comment = context.payload.comment;
             const body = comment.body || '';
             const prNumber = context.payload.issue.number;
 
-            // Get PR details for branch and SHA
+            // Get PR details
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -67,86 +145,97 @@ jobs:
             const branch = pr.head.ref;
             const sha = pr.head.sha;
 
-            // Match checked boxes like "- [x] build"
-            const checkedPattern = /- \[x\] (\w+)/g;
-            const validPresets = ['asan', 'tsan', 'build', 'release'];
-            const presets = [];
-            let match;
-            while ((match = checkedPattern.exec(body)) !== null) {
-              if (validPresets.includes(match[1])) {
-                presets.push(match[1]);
-              }
+            // Parse selected value for a section
+            function parseSelection(sectionName) {
+              const re = new RegExp(`\\*\\*${sectionName}\\*\\*([\\s\\S]*?)(?=\\*\\*|---|$)`);
+              const section = body.match(re)?.[1] || '';
+              const checked = section.match(/- \[x\] ([\w-]+)/);
+              return checked?.[1] || null;
             }
 
-            if (presets.length === 0) {
-              core.info('No build triggers found');
+            const preset = parseSelection('PRESET');
+            const location = parseSelection('LOCATION');
+
+            const validPresets = process.env.PRESET_OPTIONS.split('\n').filter(Boolean);
+            const validLocations = process.env.LOCATION_OPTIONS.split('\n').filter(Boolean);
+
+            if (!preset || !validPresets.includes(preset)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `**Error:** No valid preset selected. Pick one of: ${validPresets.join(', ')}`,
+              });
               return;
             }
 
-            const location = 'self-hosted';
-            const triggered = [];
-
-            for (const preset of presets) {
-              const statusContext = `SereneDB-Build / ${preset}`;
-              await github.rest.repos.createCommitStatus({
+            if (!location || !validLocations.includes(location)) {
+              await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                sha: sha,
-                state: 'pending',
-                description: `Build ${preset} triggered...`,
-                context: statusContext,
+                issue_number: prNumber,
+                body: `**Error:** No valid location selected. Pick one of: ${validLocations.join(', ')}`,
               });
-
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'build-manual.yml',
-                ref: branch,
-                inputs: {
-                  PRESET: preset,
-                  LOCATION: location,
-                  BRANCH: branch,
-                  JOB_CONFIG: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}',
-                  DOCKER_SERENEDB_IMAGE: 'false',
-                  DOCKER_EXTRA_TAGS: '',
-                  PUSH_IMAGES_2_REGISTRY: 'false',
-                  EXTRA_ARTIFACTS: '',
-                  DOCKER_BUILD_IMAGES: 'false',
-                  BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor }),
-                },
-              });
-
-              // Wait briefly then find the dispatched run to link it
-              await new Promise(r => setTimeout(r, 3000));
-              const runs = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'build-manual.yml',
-                branch: branch,
-                per_page: 1,
-              });
-
-              const runUrl = runs.data.workflow_runs[0]?.html_url || '';
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha: sha,
-                state: 'pending',
-                description: `Build ${preset} in progress`,
-                context: statusContext,
-                target_url: runUrl,
-              });
-
-              triggered.push({ preset, runUrl });
-              core.info(`Triggered: ${preset} -> ${runUrl}`);
+              return;
             }
 
-            // Uncheck the boxes so they can be clicked again
-            let newBody = body;
-            for (const t of triggered) {
-              newBody = newBody.replace(`- [x] ${t.preset}`, `- [ ] ${t.preset}`);
+            // Build dispatch inputs from defaults
+            const defaults = {};
+            for (const line of process.env.INPUT_DEFAULTS.split('\n')) {
+              const idx = line.indexOf('=');
+              if (idx > 0) defaults[line.slice(0, idx)] = line.slice(idx + 1);
             }
 
+            const statusContext = `SereneDB-Build / ${preset} (${location})`;
+            const dispatchInputs = { ...defaults,
+              PRESET: preset,
+              LOCATION: location,
+              BRANCH: branch,
+              BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
+            };
+
+            // Set pending commit status
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: sha,
+              state: 'pending',
+              description: `Build ${preset} on ${location} triggered...`,
+              context: statusContext,
+            });
+
+            // Dispatch the build
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build-manual.yml',
+              ref: branch,
+              inputs: dispatchInputs,
+            });
+
+            // Wait briefly then find the dispatched run to link it
+            await new Promise(r => setTimeout(r, 3000));
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build-manual.yml',
+              branch: branch,
+              per_page: 1,
+            });
+
+            const runUrl = runs.data.workflow_runs[0]?.html_url || '';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: sha,
+              state: 'pending',
+              description: `Build ${preset} on ${location} in progress`,
+              context: statusContext,
+              target_url: runUrl,
+            });
+
+            // Uncheck "Run Build" so it can be clicked again
+            const newBody = body.replace('- [x] **Run Build** <--', '- [ ] **Run Build** <--');
             if (newBody !== body) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -157,15 +246,10 @@ jobs:
             }
 
             // Post confirmation reply
-            if (triggered.length > 0) {
-              const rows = triggered.map(t => {
-                const link = t.runUrl ? `[View run](${t.runUrl})` : 'dispatched';
-                return `| \`${t.preset}\` | \`${branch}\` | ${link} |`;
-              }).join('\n');
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `**Build triggered!**\n\n| Preset | Branch | Link |\n|--------|--------|------|\n${rows}`,
-              });
-            }
+            const link = runUrl ? `[View run](${runUrl})` : 'dispatched';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `**Build triggered!**\n\n| Preset | Location | Branch | Link |\n|--------|----------|--------|------|\n| \`${preset}\` | \`${location}\` | \`${branch}\` | ${link} |`,
+            });

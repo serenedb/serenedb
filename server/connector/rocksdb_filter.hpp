@@ -82,12 +82,6 @@ class Point {
 [[nodiscard]] std::vector<Point> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
-// Calls ExtractFilterExpr. When all returned points are specific, rewrites
-// `expr` by replacing each point's source sub-expression with a constant `true`
-// (the PK lookup covers those predicates) and returns the rewritten tree.
-// When not all points are specific, returns `expr` unchanged.
-// The returned TypedExprPtr is null when the rewritten filter is trivially
-// true.
 struct ExtractAndRewriteResult {
   std::vector<Point> points;
   // Rewritten filter with PK predicates replaced by true; null if the entire

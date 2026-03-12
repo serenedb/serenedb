@@ -930,8 +930,6 @@ class DenseFixedLengthColumn : public ColumnBase {
     PayloadReader(uint64_t data, uint64_t len, Args&&... args)
       : ValueReader{std::forward<Args>(args)..., data}, _len{len} {}
 
-    uint64_t GetOffset() const noexcept { return _data; }
-
     bytes_view payload(doc_id_t i) {
       const auto offset = _len * i;
 

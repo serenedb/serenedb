@@ -311,7 +311,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   size_t CheckAndCountFound(size_t batch_size) const;
 
   // Advance _offset by batch_size; reset _current_split when all points done.
-  void FinalizeOffset(size_t batch_size, size_t total_points);
+  void FinalizeOffset(size_t batch_size);
 
   size_t _offset = 0;
   velox::RowVectorPtr _values;

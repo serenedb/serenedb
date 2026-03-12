@@ -527,10 +527,9 @@ size_t RocksDBPointLookupDataSource<Source>::CheckAndCountFound(
 }
 
 template<typename Source>
-void RocksDBPointLookupDataSource<Source>::FinalizeOffset(size_t batch_size,
-                                                          size_t total_points) {
+void RocksDBPointLookupDataSource<Source>::FinalizeOffset(size_t batch_size) {
   _offset += batch_size;
-  if (_offset >= total_points) {
+  if (_offset >= _values->size()) {
     _current_split.reset();
     _offset = 0;
   }
@@ -569,7 +568,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     PerformMultiGet(batch_size);
     const size_t found_count = CheckAndCountFound(batch_size);
     _produced += found_count;
-    FinalizeOffset(batch_size, total_points);
+    FinalizeOffset(batch_size);
 
     return velox::BaseVector::create<velox::RowVector>(_read_type, found_count,
                                                        &_memory_pool);
@@ -596,7 +595,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
                    [&](const auto& col) { return col->size() == found_count; }),
     "RocksDBPointLookupDataSource: inconsistent columns");
 
-  FinalizeOffset(batch_size, total_points);
+  FinalizeOffset(batch_size);
 
   auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
     &_memory_pool, _read_type, nullptr, found_count, std::move(columns)));

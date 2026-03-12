@@ -10,7 +10,7 @@
 
 ```bash
 # specify github username
-GITHUB_USERNAME="your_github_username_here"
+GITHUB_USERNAME="your_github_username_her"
 git clone git@github.com:${GITHUB_USERNAME}/serenedb.git
 cd serenedb
 git remote add upstream git@github.com:serenedb/serenedb.git

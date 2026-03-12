@@ -317,6 +317,8 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   velox::RowVectorPtr _values;
   std::vector<size_t> _sorted_col_indices;
   std::vector<size_t> _col_rank;
+  // TODO(mkornaukhov) use std::array, need pass callback into multiget context
+  // for custom processing of window-by-window logics.
   std::vector<std::string> _keys;
   std::vector<rocksdb::Slice> _key_slices;
   std::vector<std::string> _raw_values;

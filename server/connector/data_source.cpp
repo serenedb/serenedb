@@ -575,6 +575,8 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
                                                        &_memory_pool);
   }
 
+  // TODO(mkornaukhov) try to load only the first column and get mask of which
+  // rows are present. This may allow us to reduce number of multiget calls
   BuildKeys(batch_size, num_columns);
   PerformMultiGet(batch_size * num_columns);
   CheckAndCountFound(batch_size * num_columns);

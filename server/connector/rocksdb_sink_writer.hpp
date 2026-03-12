@@ -38,6 +38,9 @@ class RocksDBSinkWriterBase {
     return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
 
+  void Finish() {}
+  void Abort() {}
+
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;

@@ -340,7 +340,7 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   irs::IndexWriter::Transaction& trx)
-  : _trx(trx) {}
+  : _trx{trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);

@@ -139,7 +139,7 @@ jobs:
           git config --global --add safe.directory '*'
 
       - name: Checkout SereneDB
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: serenedb/serenedb
           ref: ${{ inputs.BRANCH }}
@@ -149,7 +149,7 @@ jobs:
           clean: true
 
       - name: Checkout Cluster
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ secrets.SDB_CLUSTER_REPO }}
           ref: ${{ env.CLUSTER_BRANCH }}

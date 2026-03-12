@@ -540,7 +540,7 @@ Fragment 0:  numWorkers=0:
 -- Project[3][expressions: (?column?:4:INTEGER, "dt1.__p7")] -> "?column?:4":INTEGER
   -- OrderBy[2][dt1.__p7 ASC NULLS LAST] -> "dt1.__p7":INTEGER
     -- Project[1][expressions: (dt1.__p7:INTEGER, presto_plus("a:1",1))] -> "dt1.__p7":INTEGER
-      -- TableScan[0][t1] -> "a:1":INTEGER
+      -- TableScan[0][t1, scan=<slt:ignore>] -> "a:1":INTEGER
 
 
 onlyif serenedb
@@ -561,9 +561,9 @@ Fragment 0:  numWorkers=0:
   -- OrderBy[5][dt1.__p21 ASC NULLS LAST, a:1 ASC NULLS LAST] -> "dt1.__p21":INTEGER, "a:1":INTEGER
     -- Project[4][expressions: (dt1.__p21:INTEGER, switch(presto_lt("avg:7",cast("c:3" as DOUBLE)),presto_multiply("a:1",2),presto_multiply("b:2",10))), (a:1:INTEGER, "a:1")] -> "dt1.__p21":INTEGER, "a:1":INTEGER
       -- NestedLoopJoin[3][INNER] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER, "avg:7":DOUBLE
-        -- TableScan[0][t1] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER
+        -- TableScan[0][t1, scan=<slt:ignore>] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER
         -- Aggregation[2][SINGLE avg:7 := presto_avg("c:6")] -> "avg:7":DOUBLE
-          -- TableScan[1][t1] -> "c:6":INTEGER
+          -- TableScan[1][t1, scan=<slt:ignore>] -> "c:6":INTEGER
 
 
 query

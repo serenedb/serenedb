@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 #include <axiom/connectors/ConnectorMetadata.h>
 #include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
@@ -47,6 +48,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/rocksdb_filter.hpp"
 #include "connector/search_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
@@ -54,6 +56,7 @@
 #include "data_source.hpp"
 #include "file_table.hpp"
 #include "query/transaction.h"
+#include "query/utils.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/table_shard.h"
@@ -61,6 +64,18 @@
 namespace sdb::connector {
 
 namespace {
+
+inline void ExtractInputFields(const velox::core::TypedExprPtr& expr,
+                               absl::flat_hash_set<std::string_view>& names) {
+  if (expr->kind() == velox::core::ExprKind::kFieldAccess) {
+    names.insert(
+      basics::downCast<velox::core::FieldAccessTypedExpr>(expr.get())->name());
+    return;
+  }
+  for (const auto& child : expr->inputs()) {
+    ExtractInputFields(child, names);
+  }
+}
 
 inline bool HasColumnOverlap(
   std::span<const catalog::Column::Id> index_columns,
@@ -177,13 +192,30 @@ class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
 class SereneDBConnectorTableHandle final
   : public velox::connector::ConnectorTableHandle {
  public:
+  struct FilterColumn {
+    catalog::Column::Id id;
+    velox::TypePtr type;
+  };
+
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout);
+    const axiom::connector::TableLayout& layout, std::vector<Point> points,
+    velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
 
   const std::string& name() const final { return _name; }
+
+  std::string toString() const final {
+    // TODO(mkornaukhov) implement filter printing
+    if (_search_query) {
+      return absl::StrCat(_name, ", scan=search");
+    }
+    if (!_points.empty()) {
+      return absl::StrCat(_name, ", scan=point");
+    }
+    return absl::StrCat(_name, ", scan=full");
+  }
 
   ObjectId TableId() const noexcept { return _table_id; }
 
@@ -199,6 +231,17 @@ class SereneDBConnectorTableHandle final
 
   auto& GetTransaction() const noexcept { return _transaction; }
 
+  auto& GetPKType() const noexcept { return _pk_type; }
+
+  auto& GetRemainingFilter() const noexcept { return _remaining_filter; }
+
+  const std::vector<Point>& GetPoints() const noexcept { return _points; }
+
+  const absl::flat_hash_map<std::string, FilterColumn>& GetTableColumnMap()
+    const noexcept {
+    return _table_column_map;
+  }
+
   const irs::Filter::Query* GetSearchQuery() const noexcept {
     return _search_query.get();
   }
@@ -212,6 +255,10 @@ class SereneDBConnectorTableHandle final
   query::Transaction& _transaction;
   irs::Filter::Query::ptr _search_query;
   ObjectId _index_id = ObjectId::none();
+  velox::RowTypePtr _pk_type;
+  std::vector<Point> _points;
+  velox::core::TypedExprPtr _remaining_filter;
+  absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -657,10 +704,76 @@ class SereneDBConnector final : public velox::connector::Connector {
         column_oids.push_back(
           basics::downCast<const SereneDBColumnHandle>(handle->second)->Id());
       }
-    } else {
+    }
+
+    velox::RowTypePtr read_type = output_type;
+    const size_t output_column_count = output_type->size();
+    velox::core::TypedExprPtr compiled_filter;
+
+    if (const auto& remaining_filter =
+          serene_table_handle.GetRemainingFilter()) {
+      std::unordered_map<std::string, velox::core::TypedExprPtr> name_mapping;
+      absl::flat_hash_set<std::string_view> output_original_names;
+      for (size_t i = 0; i < output_type->size(); ++i) {
+        const auto& mangled = output_type->nameOf(i);
+        const auto sep = mangled.rfind(query::kColumnSeparator);
+        SDB_ASSERT(sep != std::string::npos);
+        std::string_view original{mangled.data(), sep};
+        output_original_names.insert(original);
+        name_mapping.emplace(
+          std::string{original},
+          std::make_shared<velox::core::FieldAccessTypedExpr>(
+            output_type->childAt(i), mangled));
+      }
+
+      // Detect filter-only columns: referenced in filter but absent from
+      // output. Extend column_oids and read_type so ApplyRemainingFilter can
+      // read them.
+      absl::flat_hash_set<std::string_view> filter_field_names;
+      ExtractInputFields(remaining_filter, filter_field_names);
+
+      const auto& table_col_map = serene_table_handle.GetTableColumnMap();
+      std::vector<std::string> extra_names;
+      std::vector<velox::TypePtr> extra_types;
+      bool need_rewrite = false;
+      for (const auto& fname : filter_field_names) {
+        if (output_original_names.contains(fname)) {
+          need_rewrite = true;
+          continue;
+        }
+        auto it = table_col_map.find(fname);
+        SDB_ASSERT(it != table_col_map.end());
+        column_oids.push_back(it->second.id);
+        extra_names.emplace_back(fname);
+        extra_types.push_back(it->second.type);
+      }
+
+      if (!extra_names.empty()) {
+        auto names = output_type->names();
+        auto types = output_type->children();
+        names.insert(names.end(), std::move_iterator(extra_names.begin()),
+                     std::move_iterator(extra_names.end()));
+        types.insert(types.end(), std::move_iterator(extra_types.begin()),
+                     std::move_iterator(extra_types.end()));
+        read_type = velox::ROW(std::move(names), std::move(types));
+      }
+
+      compiled_filter = need_rewrite
+                          ? remaining_filter->rewriteInputNames(name_mapping)
+                          : remaining_filter;
+    }
+
+    // For COUNT(*) with no output and no filter columns, use effective_col_id
+    // as the row iterator driver.
+    if (column_oids.empty()) {
+      SDB_ASSERT(output_type->size() == 0);
       column_oids.push_back(serene_table_handle.GetEffectiveColumnId());
     }
     auto& transaction = serene_table_handle.GetTransaction();
+
+    // We cannot have precalculated points for search query
+    SDB_ASSERT(serene_table_handle.GetPoints().empty() ||
+               !serene_table_handle.GetSearchQuery());
 
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
@@ -677,8 +790,6 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 
 #ifdef SDB_FAULT_INJECTION
-      // failpoints are per process so we make unique name to allow multiple
-      // sqlogic tests run in parallel without interference of failpoints
       // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
       // bindable to allow parallel execution.
       auto table_ptr =
@@ -690,10 +801,22 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 #endif
 
-      return std::make_unique<RocksDBRYOWDataSource>(
-        *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
-        output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
-        object_key);
+      const auto& points = serene_table_handle.GetPoints();
+      if (!points.empty()) {
+        return std::make_unique<RocksDBRYOWPointLookupDataSource>(
+          *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
+          read_type, column_oids, object_key,
+          PointsToRowVector(points, serene_table_handle.GetPKType(),
+                            connector_query_ctx->memoryPool()),
+          output_column_count, compiled_filter,
+          connector_query_ctx->expressionEvaluator());
+      }
+
+      return std::make_unique<RocksDBRYOWFullScanDataSource>(
+        *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf, read_type,
+        column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
+        output_column_count, compiled_filter,
+        connector_query_ctx->expressionEvaluator());
     }
 
     if (serene_table_handle.GetSearchQuery()) {
@@ -706,9 +829,22 @@ class SereneDBConnector final : public velox::connector::Connector {
         search_snapshot.reader, *serene_table_handle.GetSearchQuery());
     }
 
-    return std::make_unique<RocksDBSnapshotDataSource>(
-      *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
-      serene_table_handle.GetEffectiveColumnId(), object_key, snapshot);
+    const auto& points = serene_table_handle.GetPoints();
+    if (!points.empty()) {
+      return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
+        *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
+        object_key, snapshot,
+        PointsToRowVector(points, serene_table_handle.GetPKType(),
+                          connector_query_ctx->memoryPool()),
+        output_column_count, compiled_filter,
+        connector_query_ctx->expressionEvaluator());
+    }
+
+    return std::make_unique<RocksDBSnapshotFullScanDataSource>(
+      *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
+      serene_table_handle.GetEffectiveColumnId(), object_key,
+      output_column_count, snapshot, compiled_filter,
+      connector_query_ctx->expressionEvaluator());
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(

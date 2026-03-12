@@ -14,6 +14,7 @@ add_library(
     search_data_source.cpp
     search_filter_builder.cpp
     sst_sink_writer.cpp
+    rocksdb_filter.cpp
 )
 
 target_link_libraries(

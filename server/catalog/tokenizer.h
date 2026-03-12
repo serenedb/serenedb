@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "catalog/object.h"
+#include "catalog/search_analyzer_impl.h"
 #include "vpack/builder.h"
 #include "vpack/slice.h"
 
@@ -39,7 +40,10 @@ namespace sdb::catalog {
 
 class AnalyzersPool {
  public:
-  AnalyzersPool(std::string data) : _data{std::move(data)} {}
+  AnalyzersPool(std::string data) : _data{std::move(data)} {
+    auto analyzer = CreateAnalyzer();
+    _pool.push_back(std::move(analyzer));
+  }
 
   irs::analysis::Analyzer::ptr GetAnalyzer();
 
@@ -69,10 +73,12 @@ class Tokenizer : public SchemaObject {
 
   void WriteInternal(vpack::Builder& b) const final;
 
-  Tokenizer(ObjectId id, std::string_view name, std::string data);
+  Tokenizer(ObjectId id, std::string_view name, search::Features features,
+            std::string data);
 
  private:
   std::unique_ptr<AnalyzersPool> _pool;
+  search::Features _features;
 };
 
 }  // namespace sdb::catalog

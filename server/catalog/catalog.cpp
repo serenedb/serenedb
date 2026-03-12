@@ -47,6 +47,7 @@
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
 #include "catalog/schema.h"
+#include "catalog/search_analyzer_impl.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -349,8 +350,14 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
         return ErrorMeta(ERROR_INTERNAL, "tokenizer",
                          "Cannot parse tokenizer name", slice);
       }
+      auto features_slice = slice.get("features");
+      search::Features features;
+      auto r = features.FromVPack(features_slice);
+      if (!r.ok()) {
+        return r;
+      }
       auto tokenizer = std::make_shared<Tokenizer>(
-        key.GetObjectId(), name.stringView(),
+        key.GetObjectId(), name.stringView(), std::move(features),
         std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
                     slice.byteSize()});
       SDB_ASSERT(tokenizer);

@@ -34,14 +34,17 @@
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <yaclib/async/make.hpp>
 
+#include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_error.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
@@ -117,7 +120,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     Parse();
   }
 
-  vpack::Builder BuildVPack() && { return std::move(_builder); }
+  auto Result() && { return std::make_pair(std::move(_builder), _features); }
 
  private:
   static const OptionGroup* FindSubgroup(std::string_view name) {
@@ -130,6 +133,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void Parse() {
+    ParseFeatures();
+
     const auto* tmpl_opt = EraseOption(kTemplate);
     if (!tmpl_opt) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -172,9 +177,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void WriteTokenizerOptions(const OptionGroup& subgroup) {
-    using namespace tokenizer_options;
-
-    if (const auto* opt = EraseOption(kStopwords)) {
+    if (const auto* opt = EraseOption(tokenizer_options::kStopwords)) {
       auto val = TryGet<std::string_view>(opt->arg);
       if (!val) {
         InvalidParameterThrow("stopwords", "expected comma-separated string");
@@ -193,6 +196,25 @@ class CreateTSDictionaryOptions : public OptionsParser {
       const auto* def = it->second;
       _options.erase(it);
       WriteParam(GetVPackName(opt.name), opt.type, def->arg);
+    }
+  }
+
+  void ParseFeatures() {
+    const auto* features_subgroup =
+      FindSubgroup(tokenizer_options::kFeaturesGroup.name);
+    if (!features_subgroup) {
+      return;
+    }
+    auto features = features_subgroup->FlatOptions();
+    for (const auto& feature : features) {
+      auto it = _options.find(feature.name);
+      if (it == _options.end()) {
+        continue;
+      }
+      _options.erase(it);
+      if (!_features.Add(feature.name)) {
+        InvalidParameterThrow(feature.name, "feature name was not found");
+      }
     }
   }
 
@@ -233,6 +255,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   vpack::Builder _builder;
+  search::Features _features;
 };
 
 }  // namespace
@@ -244,11 +267,11 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto dict_name =
     ParseObjectName(stmt.defnames, ctx.GetDatabase(), current_schema);
 
-  vpack::Builder b =
-    std::move(CreateTSDictionaryOptions{stmt.definition}).BuildVPack();
+  auto [b, features] =
+    std::move(CreateTSDictionaryOptions{stmt.definition}).Result();
 
   auto ts_dict = std::make_shared<catalog::Tokenizer>(
-    ObjectId{0}, dict_name.relation,
+    ObjectId{0}, dict_name.relation, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 

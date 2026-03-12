@@ -24,6 +24,7 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 
 #include "basics/assert.h"
+#include "catalog/search_analyzer_impl.h"
 #include "vpack/builder.h"
 #include "vpack/slice.h"
 
@@ -52,13 +53,18 @@ irs::analysis::Analyzer::ptr AnalyzersPool::CreateAnalyzer() const {
   return output;
 }
 
-Tokenizer::Tokenizer(ObjectId id, std::string_view name, std::string data)
+Tokenizer::Tokenizer(ObjectId id, std::string_view name,
+                     search::Features features, std::string data)
   : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
-    _pool{std::make_unique<AnalyzersPool>(std::move(data))} {}
+    _pool{std::make_unique<AnalyzersPool>(std::move(data))},
+    _features{features} {}
 
 void Tokenizer::WriteInternal(vpack::Builder& b) const {
   b.add("name", GetName());
   b.add("analyzer", _pool->GetAnalyzerOptions().get("analyzer"));
+  b.add("features", vpack::Value{vpack::ValueType::Array});
+  _features.ToVPack(b);
+  b.close();
 }
 
 }  // namespace sdb::catalog

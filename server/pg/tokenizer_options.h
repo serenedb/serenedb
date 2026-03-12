@@ -26,6 +26,20 @@ namespace sdb::pg::tokenizer_options {
 
 using namespace std::string_view_literals;
 
+// Features
+
+inline constexpr OptionInfo kNormFeature{"norm", false,
+                                         "Enables norm feature in index"};
+
+inline constexpr OptionInfo kFreqFeature{"freq", false,
+                                         "Enables frequency feature in index"};
+
+inline constexpr OptionInfo kPosFeature{"position", false,
+                                        "Enables position feature in index"};
+
+inline constexpr OptionInfo kOffsetFeature{"offset", false,
+                                           "Enables offset feature in index"};
+
 // Common
 
 inline constexpr OptionInfo kLocale{"locale", ""sv,
@@ -97,6 +111,9 @@ inline constexpr OptionInfo kDelimiter{"delimiter", ""sv,
 
 // Per-tokenizer option arrays
 
+inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
+                                                  kPosFeature, kFreqFeature};
+
 inline constexpr OptionInfo kTextOptions[] = {
   kLocale, kAccent, kStemming, kStopwords, kStopwordsPath, kCase};
 
@@ -125,6 +142,7 @@ inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
 // Groups
 
+inline constexpr OptionGroup kFeaturesGroup{"features", kFeaturesOptions, {}};
 inline constexpr OptionGroup kTextGroup{"text", kTextOptions, {}};
 inline constexpr OptionGroup kNGramGroup{"ngram", kNGramOptions, {}};
 inline constexpr OptionGroup kNearestNeighborsGroup{
@@ -144,9 +162,9 @@ inline constexpr OptionGroup kSegmentationGroup{
   "segmentation", kSegmentationOptions, {}};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kTextGroup,      kNGramGroup,       kNearestNeighborsGroup,
-  kStemmingGroup,  kStopwordsGroup,   kClassificationGroup,
-  kCollationGroup, kDelimiterGroup,   kMinHashGroup,
-  kNormGroup,      kSegmentationGroup};
+  kFeaturesGroup,         kTextGroup,      kNGramGroup,
+  kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
+  kClassificationGroup,   kCollationGroup, kDelimiterGroup,
+  kMinHashGroup,          kNormGroup,      kSegmentationGroup};
 
 }  // namespace sdb::pg::tokenizer_options

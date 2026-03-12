@@ -27,7 +27,6 @@
 #include <streamvbytedelta.h>
 
 #include <algorithm>
-#include <bit>
 #include <limits>
 #include <memory>
 #include <span>
@@ -1508,23 +1507,27 @@ const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
   std::span<const doc_id_t, N> docs, const ScoreFunction& score,
   ColumnArgsFetcher* fetcher) {
   if constexpr (N == kPostingBlock) {
+    SDB_ASSERT(std::data(_docs) == docs.data());
     if (fetcher) {
       fetcher->FetchPostingBlock(docs);
     }
     if constexpr (IteratorTraits::Frequency()) {
       std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
     }
-    auto p = reinterpret_cast<score_t*>(EncBufEnd() - N);
+    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - N);
     score.ScorePostingBlock(p);
     return p;
   } else {
+    SDB_ASSERT(std::data(_docs) <= docs.data());
+    SDB_ASSERT(docs.data() <= std::data(_docs) + std::size(_docs));
     if (fetcher) {
       fetcher->Fetch(docs);
     }
     if constexpr (IteratorTraits::Frequency()) {
-      std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - docs.size();
+      const auto offset = docs.data() - std::data(_docs);
+      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
     }
-    auto p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
+    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
     score.Score(p, docs.size());
     return p;
   }
@@ -2735,10 +2738,7 @@ class SingleWandIterator : public DocIterator {
   }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    // TODO(gnusi): optimize
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
+               ScoreCollector& collector) final;
 
   void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
@@ -2875,6 +2875,11 @@ class SingleWandIterator : public DocIterator {
     return sdb::basics::downCast<InputType>(*_doc_in);
   }
 
+  template<size_t N>
+  IRS_FORCE_INLINE const score_t* ScoreBlock(std::span<const doc_id_t, N> docs,
+                                             const ScoreFunction& score,
+                                             ColumnArgsFetcher* fetcher);
+
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
   void PrepareSkipReader(uint64_t skip_offs, uint32_t docs_count);
   IRS_FORCE_INLINE auto* EncBufEnd() {
@@ -2911,6 +2916,89 @@ class SingleWandIterator : public DocIterator {
   Attributes _attrs;
   SkipReader<WandReadSkip, InputType> _skip;
 };
+
+// TODO(gnusi): Deduplicate ScoreBlock and Collect at least
+template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+template<size_t N>
+const score_t*
+SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
+                   InputType>::ScoreBlock(std::span<const doc_id_t, N> docs,
+                                          const ScoreFunction& score,
+                                          ColumnArgsFetcher* fetcher) {
+  if constexpr (N == kPostingBlock) {
+    SDB_ASSERT(std::data(_docs) == docs.data());
+    if (fetcher) {
+      fetcher->FetchPostingBlock(docs);
+    }
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
+    }
+    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - N);
+    score.ScorePostingBlock(p);
+    return p;
+  } else {
+    SDB_ASSERT(std::data(_docs) <= docs.data());
+    SDB_ASSERT(docs.data() <= std::data(_docs) + std::size(_docs));
+    if (fetcher) {
+      fetcher->Fetch(docs);
+    }
+    if constexpr (IteratorTraits::Frequency()) {
+      const auto offset = docs.data() - std::data(_docs);
+      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
+    }
+    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
+    score.Score(p, docs.size());
+    return p;
+  }
+}
+
+template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
+                        InputType>::Collect(const ScoreFunction& scorer,
+                                            ColumnArgsFetcher& fetcher,
+                                            ScoreCollector& collector) {
+  ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
+    auto process_block = [&]<size_t N>(size_t left_in_leaf) IRS_FORCE_INLINE {
+      std::span<const doc_id_t, N> docs{std::end(_docs) - left_in_leaf,
+                                        left_in_leaf};
+      const auto* scores = ScoreBlock(docs, scorer, &fetcher);
+      // TODO(mbkkt): bulk threshold check will make it faster
+      for (size_t i = 0; i < docs.size(); ++i) {
+        collector.Add(scores[i], docs[i]);
+      }
+    };
+
+    if (_left_in_leaf != 0) [[unlikely]] {
+      process_block.template operator()<std::dynamic_extent>(_left_in_leaf);
+      _left_in_leaf = 0;
+    } else {
+      *(std::end(_docs) - 1) = _doc;
+    }
+
+    SDB_ASSERT(_left_in_leaf == 0);
+    while (_left_in_list != 0) {
+      auto last_doc = *(std::end(_docs) - 1);
+      if (last_doc + 1 > _skip.Reader().UpperBound()) {
+        _left_in_list = _skip.Seek(last_doc + 1);
+        auto& state = _skip.Reader().State();
+        if (state.doc_ptr) [[likely]] {
+          GetDocIn().Seek(state.doc_ptr);
+        }
+        last_doc = state.doc;
+      }
+      ReadBlock(last_doc);
+      if (_left_in_leaf == kPostingBlock) {
+        process_block.template operator()<kPostingBlock>(kPostingBlock);
+      } else {
+        process_block.template operator()<std::dynamic_extent>(_left_in_leaf);
+        _left_in_leaf = 0;
+      }
+    }
+  });
+  _doc = doc_limits::eof();
+}
 
 template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
          typename InputType>
@@ -2989,8 +3077,8 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
     _collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
     freq_block.value = _collected_freqs;
 
-    _doc_in->Seek(term_state.doc_start);
-    SDB_ASSERT(!_doc_in->IsEOF());
+    GetDocIn().Seek(term_state.doc_start);
+    SDB_ASSERT(!GetDocIn().IsEOF());
   } else {
     SDB_ASSERT(term_state.docs_count == 1);
     auto* doc = std::end(_docs) - 1;
@@ -3068,7 +3156,7 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
   SDB_ASSERT(docs_count > 0);
 
   std::unique_ptr<InputType> skip_in_ptr{
-    sdb::basics::downCast<InputType>(_doc_in->Dup().release())};
+    sdb::basics::downCast<InputType>(GetDocIn().Dup().release())};
   if (!skip_in_ptr) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to duplicate document input");

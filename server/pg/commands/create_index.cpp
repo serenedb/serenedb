@@ -101,9 +101,10 @@ constexpr OptionGroup kIndexOptionGroups[] = {kIndexGroup};
 class CreateIndexOptionsParser : public OptionsParser {
  public:
   CreateIndexOptionsParser(const List* options)
-    : OptionsParser{
-        "CREATE INDEX", {}, {}, MakeOptions(options, {}), kIndexOptionGroups} {
-    Parse();
+    : OptionsParser{MakeOptions(options, {}),
+                    kIndexOptionGroups,
+                    {.operation = "CREATE INDEX"}} {
+    ParseOptions([&] { Parse(); });
   }
 
   search::InvertedIndexShardOptions GetOptions() && {

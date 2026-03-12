@@ -67,18 +67,23 @@ struct PgTsLexize {
                       ERR_MSG("text search dictionary \"",
                               std::string_view{ts_dict}, "\" does not exist"));
     }
+
     auto tokenizer = dict->GetTokenizer();
+    if (!tokenizer) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG(tokenizer.error().errorMessage()));
+    }
     irs::Finally return_tokenizer = [&] mutable noexcept {
-      dict->PushTokenizer(std::move(tokenizer));
+      dict->PushTokenizer(std::move(*tokenizer));
     };
 
-    bool r = tokenizer->reset(text);
+    bool r = (*tokenizer)->reset(text);
     if (!r) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("error while preparing tokenizer"));
     }
-    auto* value = irs::get<irs::TermAttr>(*tokenizer);
-    while (tokenizer->next()) {
+    auto* value = irs::get<irs::TermAttr>(**tokenizer);
+    while ((*tokenizer)->next()) {
       result.add_item().copy_from(irs::ViewCast<char>(value->value));
     }
   }

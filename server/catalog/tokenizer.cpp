@@ -20,28 +20,37 @@
 
 #include "catalog/tokenizer.h"
 
+#include <expected>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 
 #include "basics/assert.h"
+#include "basics/errors.h"
 #include "catalog/search_analyzer_impl.h"
 #include "vpack/builder.h"
 #include "vpack/slice.h"
 
 namespace sdb::catalog {
 
-irs::analysis::Analyzer::ptr AnalyzersPool::GetAnalyzer() {
+ResultOr<irs::analysis::Analyzer::ptr> AnalyzersPool::GetAnalyzer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
-    return CreateAnalyzer();
+    auto analyzer = CreateAnalyzer();
+    if (!analyzer) {
+      return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
+                                     "Failed to create analyzer"};
+    }
+    return {std::move(analyzer)};
   }
   auto analyzer = std::move(_pool.back());
+  SDB_ASSERT(analyzer);
   _pool.pop_back();
   return analyzer;
 }
 
 void AnalyzersPool::PushAnalyzer(
   irs::analysis::Analyzer::ptr analyzer) noexcept {
+  SDB_ASSERT(analyzer);
   absl::MutexLock lock{&_m};
   _pool.push_back(std::move(analyzer));
 }

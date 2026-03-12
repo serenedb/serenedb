@@ -40,12 +40,9 @@ namespace sdb::catalog {
 
 class AnalyzersPool {
  public:
-  AnalyzersPool(std::string data) : _data{std::move(data)} {
-    auto analyzer = CreateAnalyzer();
-    _pool.push_back(std::move(analyzer));
-  }
+  AnalyzersPool(std::string data) : _data{std::move(data)} {}
 
-  irs::analysis::Analyzer::ptr GetAnalyzer();
+  ResultOr<irs::analysis::Analyzer::ptr> GetAnalyzer();
 
   void PushAnalyzer(irs::analysis::Analyzer::ptr analyzer) noexcept;
 
@@ -64,7 +61,7 @@ class AnalyzersPool {
 
 class Tokenizer : public SchemaObject {
  public:
-  irs::analysis::Analyzer::ptr GetTokenizer() const {
+  ResultOr<irs::analysis::Analyzer::ptr> GetTokenizer() const {
     return _pool->GetAnalyzer();
   }
   void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {

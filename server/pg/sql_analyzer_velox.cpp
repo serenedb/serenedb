@@ -2638,8 +2638,7 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     auto maybe_col_idx = table_type.getChildIdxIfExists(colname);
     if (!maybe_col_idx) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column \"", colname, "\" of relation \"",
-                              relname, "\" does not exist"));
+                      ERR_MSG("column \"", colname, "\" does not exist"));
     }
     size_t col_idx = *maybe_col_idx;
     column_names.emplace_back(colname);

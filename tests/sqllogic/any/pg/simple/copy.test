@@ -429,6 +429,14 @@ HINT: Allowed values: SILENT, DEFAULT, VERBOSE
 
 onlyif serenedb
 statement error
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.parquet' WITH (FORMAT PARQUET, DELIMITER ',');
+----
+db error: ERROR: option "delimiter" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+onlyif serenedb
+statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
 ----
 db error: ERROR: 

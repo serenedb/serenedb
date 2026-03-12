@@ -306,8 +306,9 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   // Copy _keys[0..total_keys) into _key_slices, then call MultiGetContext.
   void PerformMultiGet(size_t total_keys);
 
-  // Count entries in _statuses[0..batch_size) that are not NotFound.
-  size_t CountFound(size_t batch_size) const;
+  // Count entries in _statuses[0..batch_size) that are not NotFound and throw
+  // if any error happens.
+  size_t CheckAndCountFound(size_t batch_size) const;
 
   // Advance _offset by batch_size; reset _current_split when all points done.
   void FinalizeOffset(size_t batch_size, size_t total_points);

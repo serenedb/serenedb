@@ -72,8 +72,9 @@ velox::VectorPtr ReadPointColumnValues(
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), num_points, &memory_pool);
 
-  for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
-    const size_t idx = sort_rank * num_points + point_idx;
+  size_t written = 0;
+  for (size_t read_idx = 0; read_idx < num_points; ++read_idx) {
+    const size_t idx = sort_rank * num_points + read_idx;
     const auto& status = statuses[idx];
     const auto& value = values[idx];
 
@@ -83,13 +84,10 @@ velox::VectorPtr ReadPointColumnValues(
     }
 
     SDB_ASSERT(!value.empty());
-
-    if (!status.ok()) {
-      auto res = rocksutils::ConvertStatus(status);
-      SDB_THROW(std::move(res));
-    }
-    SetResultValue(value, point_idx, *result);
+    SDB_ENSURE(status.ok(), rocksutils::ConvertStatus(status));
+    SetResultValue(value, written++, *result);
   }
+  result->resize(written);
   return result;
 }
 
@@ -410,12 +408,12 @@ uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
 
 template<typename Source>
 void RocksDBPointLookupDataSource<Source>::BuildKeys(size_t batch_size,
-                                                     size_t key_cols) {
-  const size_t total_keys = batch_size * key_cols;
+                                                     size_t key_columns) {
+  const size_t total_keys = batch_size * key_columns;
   const size_t old_size = _keys.size();
   _keys.resize(total_keys);
   if (old_size >= total_keys) {
-    for (size_t rank = 0; rank < key_cols; ++rank) {
+    for (size_t rank = 0; rank < key_columns; ++rank) {
       for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
         auto& key = _keys[rank * batch_size + point_idx];
         SDB_ASSERT(key.size() >= kKeyPrefixSize);
@@ -424,7 +422,7 @@ void RocksDBPointLookupDataSource<Source>::BuildKeys(size_t batch_size,
       }
     }
   } else {
-    for (size_t rank = 0; rank < key_cols; ++rank) {
+    for (size_t rank = 0; rank < key_columns; ++rank) {
       const size_t col_idx = _sorted_col_indices[rank];
       for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
         auto& key = _keys[rank * batch_size + point_idx];
@@ -514,12 +512,15 @@ velox::RowVectorPtr RocksDBBaseDataSource::ApplyRemainingFilter(
 }
 
 template<typename Source>
-size_t RocksDBPointLookupDataSource<Source>::CountFound(
-  size_t batch_size) const {
+size_t RocksDBPointLookupDataSource<Source>::CheckAndCountFound(
+  size_t keys_count) const {
   size_t found = 0;
-  for (size_t i = 0; i < batch_size; ++i) {
+  for (size_t i = 0; i < keys_count; ++i) {
     if (_statuses[i].ok()) {
       ++found;
+    } else {
+      SDB_ENSURE(_statuses[i].IsNotFound(),
+                 rocksutils::ConvertStatus(_statuses[i]));
     }
   }
   return found;
@@ -566,18 +567,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     }
 
     PerformMultiGet(batch_size);
-    const size_t found_count = CountFound(batch_size);
-
-    // Ensure statuses
-    if (auto it = absl::c_find_if(_statuses,
-                                  [](rocksdb::Status status) {
-                                    return !status.ok() && !status.IsNotFound();
-                                  });
-        it != _statuses.end()) {
-      auto res = rocksutils::ConvertStatus(*it);
-      SDB_THROW(std::move(res));
-    }
-
+    const size_t found_count = CheckAndCountFound(batch_size);
     _produced += found_count;
     FinalizeOffset(batch_size, total_points);
 
@@ -587,6 +577,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
 
   BuildKeys(batch_size, num_columns);
   PerformMultiGet(batch_size * num_columns);
+  CheckAndCountFound(batch_size * num_columns);
 
   std::vector<velox::VectorPtr> columns;
   columns.reserve(num_columns);
@@ -597,30 +588,13 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
       _statuses, _raw_values, _memory_pool));
   }
 
-  // Compact the output: exclude rows whose point was not found in RocksDB.
-  const size_t found_count = CountFound(batch_size);
+  const size_t found_count = columns[0]->size();
+  SDB_ASSERT(
+    absl::c_all_of(columns,
+                   [&](const auto& col) { return col->size() == found_count; }),
+    "RocksDBPointLookupDataSource: inconsistent columns");
+
   FinalizeOffset(batch_size, total_points);
-
-  if (found_count == 0) {
-    return velox::BaseVector::create<velox::RowVector>(_read_type, 0,
-                                                       &_memory_pool);
-  }
-
-  auto indices = velox::allocateIndices(batch_size, &_memory_pool);
-  auto* raw_indices = indices->template asMutable<velox::vector_size_t>();
-  size_t idx = 0;
-  for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-    if (!_statuses[point_idx].IsNotFound()) {
-      raw_indices[idx++] = static_cast<velox::vector_size_t>(point_idx);
-    }
-  }
-
-  if (found_count < batch_size) {
-    for (auto& column : columns) {
-      column = velox::BaseVector::wrapInDictionary(nullptr, indices,
-                                                   found_count, column);
-    }
-  }
 
   auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
     &_memory_pool, _read_type, nullptr, found_count, std::move(columns)));

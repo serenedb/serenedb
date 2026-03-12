@@ -13,7 +13,7 @@ const DashboardSchemaBlockBase = z.object({
 
 const DashboardQueryBlockBaseSchema = DashboardSchemaBlockBase.extend({
     query: z.string(),
-    name: z.string().max(255),
+    name: z.string().max(255).optional().default("No name"),
     description: z.string().max(1024).optional(),
     custom_refresh_interval_enabled: z.boolean().default(false),
     custom_refresh_interval: z.number().default(60),

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ComponentProps, useEffect, useMemo, useState } from "react";
 import {
     ChartConfig,
     ChartContainer,
@@ -10,34 +10,38 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@serene-ui/shared-frontend";
-import type { LayoutConstraint } from "react-grid-layout/core";
-import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
+import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
 
-export interface DashboardInteractiveBarchartSeries {
+export interface DashboardInteractiveLinechartSeries {
     key: string;
     label: string;
     color: string;
 }
 
-export interface DashboardInteractiveBarchartDatum {
+export interface DashboardInteractiveLinechartDatum {
     [key: string]: string | number | null | undefined;
 }
 
-interface DashboardInteractiveChartCardProps {
+export type DashboardInteractiveLinechartType = ComponentProps<
+    typeof Line
+>["type"];
+
+interface DashboardInteractiveLinechartCardProps {
     name?: string;
     description?: string;
-    data: DashboardInteractiveBarchartDatum[];
-    series: DashboardInteractiveBarchartSeries[];
+    data: DashboardInteractiveLinechartDatum[];
+    series: DashboardInteractiveLinechartSeries[];
     xAxisKey: string;
     defaultActiveKey?: string;
     isMoving?: boolean;
     valueLabel?: string;
+    lineType?: DashboardInteractiveLinechartType;
     formatXAxisTick?: (value: string | number) => string;
     formatTooltipLabel?: (value: string | number) => string;
 }
 
-export const DashboardInteractiveChartCard: React.FC<
-    DashboardInteractiveChartCardProps
+export const DashboardInteractiveLinechartCard: React.FC<
+    DashboardInteractiveLinechartCardProps
 > = ({
     name,
     description,
@@ -47,6 +51,7 @@ export const DashboardInteractiveChartCard: React.FC<
     defaultActiveKey,
     isMoving = false,
     valueLabel = "Value",
+    lineType = "monotone",
     formatXAxisTick,
     formatTooltipLabel,
 }) => {
@@ -75,6 +80,17 @@ export const DashboardInteractiveChartCard: React.FC<
         }
     }, [activeChart, defaultActiveKey, series]);
 
+    useEffect(() => {
+        if (!isMoving) return;
+
+        const preveousUserSelect = document.body.style.userSelect;
+        document.body.style.userSelect = "none";
+
+        return () => {
+            document.body.style.userSelect = preveousUserSelect;
+        };
+    }, [isMoving]);
+
     const totals = useMemo(
         () =>
             Object.fromEntries(
@@ -97,7 +113,7 @@ export const DashboardInteractiveChartCard: React.FC<
                 <Select value={activeChart} onValueChange={setActiveChart}>
                     <SelectTrigger className="w-full h-auto min-h-9">
                         <SelectValue>
-                            <div className="flex  items-center gap-1 text-left">
+                            <div className="flex items-center gap-1 text-left">
                                 <span className="text-xs text-muted-foreground">
                                     {activeSeries?.label ?? valueLabel}
                                 </span>
@@ -132,32 +148,34 @@ export const DashboardInteractiveChartCard: React.FC<
                 </Select>
             </div>
             {isMoving ? (
-                <div className="flex min-h-0 flex-1 items-center justify-center px-2 pb-2">
-                    <div className="bg-muted/30 border-border/50 flex h-full w-full max-h-full max-w-full flex-col gap-2 self-center overflow-hidden rounded-xs border p-4">
-                        <p className="text-xs text-muted-foreground">
+                <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-4">
+                    <div className="bg-muted/30 border-border/50 flex aspect-[4/3] w-full max-h-full max-w-full flex-col gap-1 self-center overflow-hidden rounded-xs border px-4 py-3">
+                        <p className="text-xs leading-none text-muted-foreground">
                             {activeSeries?.label ?? valueLabel}
                         </p>
-                        <p className="text-lg font-semibold">
+                        <p className="text-lg leading-none font-semibold">
                             {(totals[activeChart] ?? 0).toLocaleString()}
                         </p>
-                        <div className="flex min-h-0 flex-1 items-end gap-1">
-                            {Array.from({ length: 12 }, (_, index) => (
-                                <div
-                                    key={index}
-                                    className="bg-muted-foreground/20 flex-1 rounded-t-[2px]"
-                                    style={{
-                                        height: `${40 + ((index % 5) + 1) * 10}%`,
-                                    }}
+                        <div className="flex min-h-0 flex-[2] items-end">
+                            <svg
+                                viewBox="0 0 240 96"
+                                className="h-full w-full overflow-visible">
+                                <polyline
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                    className="text-muted-foreground/30"
+                                    points="0,76 22,64 44,68 66,30 88,38 110,28 132,52 154,22 176,26 198,14 220,34 240,18"
                                 />
-                            ))}
+                            </svg>
                         </div>
                     </div>
                 </div>
             ) : (
                 <ChartContainer
                     config={chartConfig}
-                    className="aspect-auto flex-1 min-h-0 w-full">
-                    <BarChart
+                    className="aspect-auto h-[250px] min-h-0 w-full">
+                    <LineChart
                         accessibilityLayer
                         data={data}
                         margin={{
@@ -171,6 +189,7 @@ export const DashboardInteractiveChartCard: React.FC<
                             axisLine={false}
                             tickMargin={8}
                             minTickGap={32}
+                            padding={{ left: 12, right: 12 }}
                             tickFormatter={(value) =>
                                 formatXAxisTick?.(value) ?? String(value)
                             }
@@ -188,11 +207,14 @@ export const DashboardInteractiveChartCard: React.FC<
                                 />
                             )}
                         />
-                        <Bar
+                        <Line
                             dataKey={activeChart}
-                            fill={`var(--color-${activeChart})`}
+                            type={lineType}
+                            stroke={`var(--color-${activeChart})`}
+                            strokeWidth={2}
+                            dot={false}
                         />
-                    </BarChart>
+                    </LineChart>
                 </ChartContainer>
             )}
             <div className="flex flex-col border-t-1 p-3 w-full mt-auto gap-0.5">

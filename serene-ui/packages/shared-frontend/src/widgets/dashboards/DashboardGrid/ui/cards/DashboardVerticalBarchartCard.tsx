@@ -31,7 +31,7 @@ interface DashboardVerticalBarchartCardProps {
     barColor?: string;
     series?: DashboardVerticalBarchartCardSeries[];
     isStacked?: boolean;
-    isResizing?: boolean;
+    isMoving?: boolean;
     formatXAxisTick?: (value: string | number) => string;
     formatTooltipLabel?: (value: string | number) => string;
 }
@@ -48,7 +48,7 @@ export const DashboardVerticalBarchartCard: React.FC<
     barColor = "var(--chart-1)",
     series,
     isStacked = false,
-    isResizing = false,
+    isMoving = false,
     formatXAxisTick,
     formatTooltipLabel,
 }) => {
@@ -78,24 +78,26 @@ export const DashboardVerticalBarchartCard: React.FC<
 
     return (
         <DashboardChartCardBase name={name} description={description}>
-            {isResizing ? (
-                <div className="flex h-[250px] w-full items-center justify-center px-4">
-                    <div className="bg-muted/30 border-border/50 flex w-full items-end gap-2 rounded-xs border p-4">
-                        {Array.from({ length: 6 }, (_, index) => (
-                            <div
-                                key={index}
-                                className="bg-muted-foreground/20 flex-1 rounded-t-[8px]"
-                                style={{
-                                    height: `${35 + ((index % 4) + 1) * 12}%`,
-                                }}
-                            />
-                        ))}
+            {isMoving ? (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-2">
+                    <div className="bg-muted/30 border-border/50 flex h-full w-full max-h-full max-w-full items-end self-center overflow-hidden rounded-xs border p-4">
+                        <div className="flex h-full min-h-0 w-full items-end gap-2">
+                            {Array.from({ length: 6 }, (_, index) => (
+                                <div
+                                    key={index}
+                                    className="bg-muted-foreground/20 flex-1 rounded-t-[8px]"
+                                    style={{
+                                        height: `${35 + ((index % 4) + 1) * 12}%`,
+                                    }}
+                                />
+                            ))}
+                        </div>
                     </div>
                 </div>
             ) : (
                 <ChartContainer
                     config={chartConfig}
-                    className="aspect-auto h-[250px] w-full">
+                    className="flex-1 py-2 min-h-0 w-full flex flex-col items-center justify-center">
                     <BarChart
                         accessibilityLayer
                         data={data}

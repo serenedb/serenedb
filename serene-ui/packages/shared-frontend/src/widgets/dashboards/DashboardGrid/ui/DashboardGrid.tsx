@@ -22,6 +22,24 @@ import {
     type DashboardInteractiveBarchartSeries,
 } from "./cards/DashboardInteractiveBarchartCard";
 import {
+    DashboardInteractiveLinechartCard,
+    type DashboardInteractiveLinechartDatum,
+    type DashboardInteractiveLinechartSeries,
+} from "./cards/DashboardInteractiveLinechartCard";
+import {
+    DashboardInteractivePiechartCard,
+    type DashboardInteractivePiechartDatum,
+} from "./cards/DashboardInteractivePiechartCard";
+import {
+    DashboardPiechartCard,
+    type DashboardPiechartCardDatum,
+} from "./cards/DashboardPiechartCard";
+import {
+    DashboardLinechartCard,
+    type DashboardLinechartCardDatum,
+    type DashboardLinechartCardSeries,
+} from "./cards/DashboardLinechartCard";
+import {
     DashboardVerticalBarchartCard,
     type DashboardVerticalBarchartCardDatum,
     type DashboardVerticalBarchartCardSeries,
@@ -94,6 +112,26 @@ const horizontalBarChartData: DashboardHorizontalBarchartCardDatum[] =
     barChartData;
 const horizontalBarChartSeries: DashboardHorizontalBarchartCardSeries[] =
     barChartSeries;
+const interactiveLineChartData: DashboardInteractiveLinechartDatum[] =
+    chartData;
+const interactiveLineChartSeries: DashboardInteractiveLinechartSeries[] =
+    chartSeries;
+const lineChartData: DashboardLinechartCardDatum[] = barChartData;
+const lineChartSeries: DashboardLinechartCardSeries[] = barChartSeries;
+const pieChartData: DashboardInteractivePiechartDatum[] = [
+    { month: "january", visitors: 186, fill: "var(--chart-1)" },
+    { month: "february", visitors: 305, fill: "var(--chart-2)" },
+    { month: "march", visitors: 237, fill: "var(--chart-3)" },
+    { month: "april", visitors: 173, fill: "var(--chart-4)" },
+    { month: "may", visitors: 209, fill: "var(--chart-5)" },
+];
+const simplePieChartData: DashboardPiechartCardDatum[] = [
+    { browser: "chrome", visitors: 275, fill: "var(--chart-1)" },
+    { browser: "safari", visitors: 200, fill: "var(--chart-2)" },
+    { browser: "firefox", visitors: 187, fill: "var(--chart-3)" },
+    { browser: "edge", visitors: 173, fill: "var(--chart-4)" },
+    { browser: "other", visitors: 90, fill: "var(--chart-5)" },
+];
 
 export const DashboardGrid: React.FC<DashboardGridProps> = () => {
     const { width, containerRef, mounted } = useContainerWidth();
@@ -101,6 +139,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
         React.useState<(typeof GRID_SCALE_OPTIONS)[number]>(1);
     const [isDragging, setIsDragging] = React.useState(false);
     const [isResizing, setIsResizing] = React.useState(false);
+    const isMoving = isResizing || isDragging;
     const freePlacementCompactor = React.useMemo(
         () => ({
             ...noCompactor,
@@ -181,22 +220,91 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
             minW: 10,
             minH: 6,
         },
+        {
+            i: "i",
+            x: 12,
+            y: 12,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "j",
+            x: 24,
+            y: 12,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "k",
+            x: 0,
+            y: 18,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "l",
+            x: 12,
+            y: 18,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "m",
+            x: 24,
+            y: 18,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "n",
+            x: 0,
+            y: 24,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "o",
+            x: 12,
+            y: 24,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "p",
+            x: 24,
+            y: 24,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
+        {
+            i: "q",
+            x: 0,
+            y: 30,
+            w: 12,
+            h: 6,
+            minW: 10,
+            minH: 6,
+        },
     ];
 
-    React.useEffect(() => {
-        if (!isDragging) return;
-
-        const previousUserSelect = document.body.style.userSelect;
-
-        document.body.style.userSelect = "none";
-
-        return () => {
-            document.body.style.userSelect = previousUserSelect;
-        };
-    }, [isDragging]);
-
     return (
-        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden [&_.recharts-sector:focus]:outline-none [&_.recharts-sector:focus-visible]:outline-none [&_.recharts-surface:focus]:outline-none [&_.recharts-surface:focus-visible]:outline-none [&_.recharts-rectangle:focus]:outline-none [&_.recharts-rectangle:focus-visible]:outline-none [&_.recharts-dot:focus]:outline-none [&_.recharts-dot:focus-visible]:outline-none [&_.recharts-symbols:focus]:outline-none [&_.recharts-symbols:focus-visible]:outline-none [&_.recharts-trapezoid:focus]:outline-none [&_.recharts-trapezoid:focus-visible]:outline-none">
             <div className="absolute bottom-4 left-4 z-20">
                 <DashboardScaleButton scale={scale} onScaleChange={setScale} />
             </div>
@@ -221,7 +329,6 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                         <ReactGridLayout
                             layout={layout}
                             width={width}
-                            compactor={freePlacementCompactor}
                             constraints={[gridBounds, minMaxSize]}
                             onDragStart={() => setIsDragging(true)}
                             onDragStop={() => setIsDragging(false)}
@@ -241,7 +348,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                     data={chartData}
                                     series={chartSeries}
                                     xAxisKey="date"
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     valueLabel="Page Views"
                                     name="My barchart"
                                     description="buth"
@@ -271,7 +378,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                     barKey="desktop"
                                     barLabel="Desktop"
                                     barColor="var(--chart-1)"
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     name="Vertical single"
                                     description="One series"
                                     formatXAxisTick={(value) =>
@@ -285,7 +392,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                     xAxisKey="month"
                                     barKey="desktop"
                                     series={barChartSeries.slice(0, 2)}
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     name="Vertical multiple"
                                     description="Two grouped series"
                                     formatXAxisTick={(value) =>
@@ -300,7 +407,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                     barKey="desktop"
                                     series={barChartSeries.slice(0, 2)}
                                     isStacked
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     name="Vertical stacked"
                                     description="Two stacked series"
                                     formatXAxisTick={(value) =>
@@ -315,7 +422,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                     barKey="desktop"
                                     barLabel="Desktop"
                                     barColor="var(--chart-1)"
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     name="Horizontal single"
                                     description="One series"
                                     formatYAxisTick={(value) =>
@@ -332,7 +439,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                         0,
                                         2,
                                     )}
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     name="Horizontal multiple"
                                     description="Two grouped series"
                                     formatYAxisTick={(value) =>
@@ -350,11 +457,169 @@ export const DashboardGrid: React.FC<DashboardGridProps> = () => {
                                         2,
                                     )}
                                     isStacked
-                                    isResizing={isResizing}
+                                    isMoving={isMoving}
                                     name="Horizontal stacked"
                                     description="Two stacked series"
                                     formatYAxisTick={(value) =>
                                         String(value).slice(0, 3)
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="i">
+                                <DashboardInteractiveLinechartCard
+                                    data={interactiveLineChartData}
+                                    series={interactiveLineChartSeries}
+                                    xAxisKey="date"
+                                    isMoving={isMoving}
+                                    valueLabel="Page Views"
+                                    name="Interactive line"
+                                    description="Selectable time series"
+                                    formatXAxisTick={(value) =>
+                                        new Date(
+                                            String(value),
+                                        ).toLocaleDateString("en-US", {
+                                            month: "short",
+                                            day: "numeric",
+                                        })
+                                    }
+                                    formatTooltipLabel={(value) =>
+                                        new Date(
+                                            String(value),
+                                        ).toLocaleDateString("en-US", {
+                                            month: "short",
+                                            day: "numeric",
+                                            year: "numeric",
+                                        })
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="j">
+                                <DashboardLinechartCard
+                                    data={lineChartData}
+                                    xAxisKey="month"
+                                    lineKey="desktop"
+                                    series={lineChartSeries.slice(0, 2)}
+                                    isMoving={isMoving}
+                                    name="Line chart"
+                                    description="Single or multiple lines"
+                                    formatXAxisTick={(value) =>
+                                        String(value).slice(0, 3)
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="k">
+                                <DashboardLinechartCard
+                                    data={lineChartData}
+                                    xAxisKey="month"
+                                    lineKey="desktop"
+                                    lineLabel="Desktop"
+                                    lineColor="var(--chart-1)"
+                                    lineType="linear"
+                                    isMoving={isMoving}
+                                    name="Line linear"
+                                    description="Straight segments"
+                                    formatXAxisTick={(value) =>
+                                        String(value).slice(0, 3)
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="l">
+                                <DashboardLinechartCard
+                                    data={lineChartData}
+                                    xAxisKey="month"
+                                    lineKey="desktop"
+                                    lineLabel="Desktop"
+                                    lineColor="var(--chart-1)"
+                                    lineType="step"
+                                    isMoving={isMoving}
+                                    name="Line step"
+                                    description="Stepped segments"
+                                    formatXAxisTick={(value) =>
+                                        String(value).slice(0, 3)
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="m">
+                                <DashboardInteractivePiechartCard
+                                    data={pieChartData}
+                                    nameKey="month"
+                                    valueKey="visitors"
+                                    valueLabel="Visitors"
+                                    isMoving={isMoving}
+                                    name="Interactive pie"
+                                    description="Active donut segment"
+                                    formatSliceLabel={(value) =>
+                                        String(value).replace(/^./, (char) =>
+                                            char.toUpperCase(),
+                                        )
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="n">
+                                <DashboardPiechartCard
+                                    data={simplePieChartData}
+                                    nameKey="browser"
+                                    valueKey="visitors"
+                                    valueLabel="Visitors"
+                                    isMoving={isMoving}
+                                    name="Pie chart"
+                                    description="Simple pie distribution"
+                                    formatSliceLabel={(value) =>
+                                        String(value).replace(/^./, (char) =>
+                                            char.toUpperCase(),
+                                        )
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="o">
+                                <DashboardPiechartCard
+                                    data={simplePieChartData}
+                                    nameKey="browser"
+                                    valueKey="visitors"
+                                    valueLabel="Visitors"
+                                    showLabels
+                                    isMoving={isMoving}
+                                    name="Pie chart labels"
+                                    description="Simple pie with labels"
+                                    formatSliceLabel={(value) =>
+                                        String(value).replace(/^./, (char) =>
+                                            char.toUpperCase(),
+                                        )
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="p">
+                                <DashboardPiechartCard
+                                    data={simplePieChartData}
+                                    nameKey="browser"
+                                    valueKey="visitors"
+                                    valueLabel="Visitors"
+                                    variant="donut"
+                                    isMoving={isMoving}
+                                    name="Donut chart"
+                                    description="Simple donut distribution"
+                                    formatSliceLabel={(value) =>
+                                        String(value).replace(/^./, (char) =>
+                                            char.toUpperCase(),
+                                        )
+                                    }
+                                />
+                            </div>
+                            <div className="flex" key="q">
+                                <DashboardPiechartCard
+                                    data={simplePieChartData}
+                                    nameKey="browser"
+                                    valueKey="visitors"
+                                    valueLabel="Visitors"
+                                    variant="donut"
+                                    showCenterLabel
+                                    isMoving={isMoving}
+                                    name="Donut chart text"
+                                    description="Donut with centered total"
+                                    formatSliceLabel={(value) =>
+                                        String(value).replace(/^./, (char) =>
+                                            char.toUpperCase(),
+                                        )
                                     }
                                 />
                             </div>

@@ -31,7 +31,7 @@ interface DashboardHorizontalBarchartCardProps {
     barColor?: string;
     series?: DashboardHorizontalBarchartCardSeries[];
     isStacked?: boolean;
-    isResizing?: boolean;
+    isMoving?: boolean;
     formatYAxisTick?: (value: string | number) => string;
     formatTooltipLabel?: (value: string | number) => string;
 }
@@ -48,7 +48,7 @@ export const DashboardHorizontalBarchartCard: React.FC<
     barColor = "var(--chart-1)",
     series,
     isStacked = false,
-    isResizing = false,
+    isMoving = false,
     formatYAxisTick,
     formatTooltipLabel,
 }) => {
@@ -78,9 +78,9 @@ export const DashboardHorizontalBarchartCard: React.FC<
 
     return (
         <DashboardChartCardBase name={name} description={description}>
-            {isResizing ? (
-                <div className="flex h-[250px] w-full items-center justify-center px-4">
-                    <div className="bg-muted/30 border-border/50 flex w-full flex-col gap-2 rounded-xs border p-4">
+            {isMoving ? (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-2">
+                    <div className="bg-muted/30 h-full border-border/50 flex  w-full max-h-full max-w-full flex-col justify-center gap-2 self-center overflow-hidden rounded-xs border p-4">
                         {Array.from({ length: 6 }, (_, index) => (
                             <div
                                 key={index}
@@ -99,8 +99,9 @@ export const DashboardHorizontalBarchartCard: React.FC<
             ) : (
                 <ChartContainer
                     config={chartConfig}
-                    className="aspect-auto h-[250px] w-full">
+                    className="aspect-auto flex-1 py-2 min-h-0 w-full flex flex-col items-center justify-center">
                     <BarChart
+                        className="flex-1"
                         accessibilityLayer
                         data={data}
                         layout="vertical"

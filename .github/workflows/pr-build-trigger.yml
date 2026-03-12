@@ -61,6 +61,7 @@ jobs:
 
             const body = [
               '### Build Triggers',
+              '_Pick options and click Run Build_',
               '',
               sections.join('\n\n'),
               '',

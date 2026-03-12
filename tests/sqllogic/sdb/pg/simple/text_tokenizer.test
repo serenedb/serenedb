@@ -7,7 +7,7 @@ CREATE TEXT SEARCH DICTIONARY t0(
 )
 
 
-statement error unknown tokenizer template "whaaat"
+statement error invalid value of the parameter "template"
 CREATE TEXT SEARCH DICTIONARY t0(
     template = 'whaaat',
     locale = 'en_US.UTF-8'

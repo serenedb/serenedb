@@ -158,19 +158,13 @@ class CreateTSDictionaryOptions : public OptionsParser {
     ParseFeatures();
 
     const auto* tmpl_opt = EraseOption(kTemplate);
-    if (!tmpl_opt) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("template value is not provided"));
-    }
+    SDB_ASSERT(tmpl_opt);
     auto tmpl_name = TryGet<std::string_view>(tmpl_opt->arg);
     SDB_ASSERT(tmpl_name);
     const std::string_view type = *tmpl_name;
 
     const auto* subgroup = FindSubgroup(type);
-    if (!subgroup) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("unknown tokenizer template \"", type, "\""));
-    }
+    SDB_ASSERT(subgroup);
 
     // Validate all remaining options belong to this template's group
     auto valid_names = subgroup->FlatNames();
@@ -215,7 +209,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
       }
       const auto* def = it->second;
       _options.erase(it);
-      WriteParam(GetVPackName(opt.name), opt, def->arg);
+
+      opt.Apply(def->arg, [&](const auto& val) {
+        _builder.add(GetVPackName(opt.name), val);
+      });
     }
   }
 
@@ -235,15 +232,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
       if (!_features.Add(feature.name)) {
         InvalidParameterThrow(feature);
       }
-    }
-  }
-
-  void WriteParam(std::string_view name, const OptionInfo& opt,
-                  const Node* value) {
-    auto r = opt.CheckAndApply(
-      value, [&](const auto& val) { _builder.add(name, val); });
-    if (!r.ok()) {
-      InvalidParameterThrow(opt);
     }
   }
 

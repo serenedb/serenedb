@@ -185,19 +185,29 @@ class OptionsParser {
 
   template<typename F>
   void ParseOptions(F&& parse) {
-    CheckRequiredOptions();
+    CheckOptions();
     parse();
     CheckUnrecognizedOptions();
   }
 
  private:
-  void CheckRequiredOptions() const {
+  void CheckOptions() const {
     for (const auto& group : _option_groups) {
       group.VisitOptions([&](const auto& opt) {
-        if (opt.required && !_options.contains(opt.name)) {
+        auto it = _options.find(opt.name);
+        if (opt.required && it == _options.end()) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
             ERR_MSG("required parameter \"", opt.name, "\" was not found"));
+        }
+        if (it == _options.end()) {
+          return;
+        }
+        if (it->second->arg && opt.constraint &&
+            !opt.CheckValue(it->second->arg)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("invalid value of the parameter \"", opt.name, "\""));
         }
       });
     }

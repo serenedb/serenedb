@@ -37,6 +37,7 @@
 #include "basics/errors.h"
 #include "basics/result.h"
 #include "basics/system-compiler.h"
+#include "folly/Function.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/sql_utils.h"
 
@@ -135,9 +136,39 @@ struct OptionInfo {
     });
   }
 
+  // Enum is not supported
+  bool CheckValue(const Node* node) const {
+    SDB_ASSERT(constraint);
+    auto check_value = [&]<typename T>() {
+      std::optional<T> val;
+      if constexpr (std::is_same_v<T, char>) {
+        val = TryGet<std::string_view>(node).and_then(
+          [](const auto& str) -> std::optional<char> {
+            return str.size() == 1 ? std::optional{str[0]} : std::nullopt;
+          });
+      } else {
+        val = TryGet<T>(node);
+      }
+      return val && constraint(*val);
+    };
+    switch (type) {
+      case OptionInfo::Type::Boolean:
+        return check_value.template operator()<bool>();
+      case OptionInfo::Type::Integer:
+        return check_value.template operator()<int>();
+      case OptionInfo::Type::Double:
+        return check_value.template operator()<double>();
+      case OptionInfo::Type::String:
+        return check_value.template operator()<std::string_view>();
+      case OptionInfo::Type::Character:
+        return check_value.template operator()<char>();
+      case OptionInfo::Type::Enum:
+        return true;
+    }
+  }
+
   // Enum type is not supported
-  Result CheckAndApply(const Node* node, auto&& callback) const {
-    bool correct_value = true;
+  void Apply(const Node* node, auto&& callback) const {
     auto process_value = [&]<typename T>() {
       std::optional<T> val;
       if constexpr (std::is_same_v<T, char>) {
@@ -148,35 +179,22 @@ struct OptionInfo {
       } else {
         val = TryGet<T>(node);
       }
-      if (val && (!constraint || constraint(*val))) {
-        callback(*val);
-        return true;
-      }
-      return false;
+      callback(*val);
     };
     switch (type) {
-      case OptionInfo::Type::Boolean: {
-        correct_value = process_value.template operator()<bool>();
-      } break;
-      case OptionInfo::Type::Integer: {
-        correct_value = process_value.template operator()<int>();
-      } break;
-      case OptionInfo::Type::Double: {
-        correct_value = process_value.template operator()<double>();
-      } break;
-      case OptionInfo::Type::String: {
-        correct_value = process_value.template operator()<std::string_view>();
-      } break;
-      case OptionInfo::Type::Character: {
-        correct_value = process_value.template operator()<char>();
-      } break;
+      case OptionInfo::Type::Boolean:
+        return process_value.template operator()<bool>();
+      case OptionInfo::Type::Integer:
+        return process_value.template operator()<int>();
+      case OptionInfo::Type::Double:
+        return process_value.template operator()<double>();
+      case OptionInfo::Type::String:
+        return process_value.template operator()<std::string_view>();
+      case OptionInfo::Type::Character:
+        return process_value.template operator()<char>();
       default:
         SDB_UNREACHABLE();
     }
-    if (!correct_value) {
-      return Result{ERROR_BAD_PARAMETER, "incorrect parameter"};
-    }
-    return {};
   }
 
   template<Type V>

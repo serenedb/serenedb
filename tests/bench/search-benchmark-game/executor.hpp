@@ -55,8 +55,8 @@ class Executor {
   size_t ExecuteCount(std::string_view query);
 
   const irs::DirectoryReader& GetReader() const { return _reader; }
-  std::span<const irs::ScoreDoc> GetResults() const {
-    return {_results.data(), _result_count};
+  auto GetResults(this auto& self) {
+    return std::span{self._results.data(), self._result_count};
   }
 
   irs::Filter::ptr ParseFilter(std::string_view str);

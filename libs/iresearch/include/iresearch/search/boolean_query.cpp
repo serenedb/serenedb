@@ -309,7 +309,10 @@ void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
   _opt = opt.prepare(ctx);
 }
 
-DocIterator::ptr BoostQuery::execute(const ExecutionContext& ctx) const {
+DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {
+  ExecutionContext ctx{old};
+  // TODO(mbkkt) enable back?
+  ctx.wand.index = WandContext::kDisable;
   auto req = _req->execute(ctx);
   if (!ctx.scorer || doc_limits::eof(req->value())) {
     return req;

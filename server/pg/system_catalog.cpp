@@ -428,6 +428,13 @@ constexpr auto kMapping =
       FunctionKind::Scalar}},
     // Search functions
     {"phrase", {search::functions::kPhrase, false}},
+    {"term_eq", {search::functions::kTermEq, false}},
+    {"term_lt", {search::functions::kTermLt, false}},
+    {"term_lte", {search::functions::kTermLe, false}},
+    {"term_gte", {search::functions::kTermGe, false}},
+    {"term_gt", {search::functions::kTermGt, false}},
+    {"term_in", {search::functions::kTermIn, false}},
+    {"term_like", {search::functions::kTermLike, false}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {

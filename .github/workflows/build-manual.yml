@@ -63,6 +63,9 @@ on:
         required: false
         default: '{}'
 
+permissions:
+  statuses: write
+
 jobs:
   call-reusable:
     uses: ./.github/workflows/build-reusable.yml

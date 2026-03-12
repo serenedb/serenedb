@@ -710,7 +710,8 @@ class ValueDirectReader {
   const byte_type* GetData() const noexcept { return _data; }
 
  protected:
-  explicit ValueDirectReader(const byte_type* data) noexcept : _data{data} {
+  explicit ValueDirectReader(const byte_type* data, uint64_t offset) noexcept
+    : _data{data + offset} {
     SDB_ASSERT(data);
   }
 
@@ -724,43 +725,49 @@ class ValueDirectReader {
 template<bool Resize>
 class ValueReader {
  protected:
-  ValueReader(IndexInput::ptr data_in, size_t size)
-    : buf_(size, 0), data_in_{std::move(data_in)} {}
+  ValueReader(IndexInput::ptr data_in, size_t size, uint64_t offset)
+    : _buf(size, 0), _data_in{std::move(data_in)}, _offset{offset} {}
 
   bytes_view value(uint64_t offset, size_t length) {
+    offset += _offset;
     if constexpr (Resize) {
-      buf_.resize(length);
+      _buf.resize(length);
     }
 
-    auto* buf = buf_.data();
+    auto* buf = _buf.data();
 
     [[maybe_unused]] const size_t read =
-      data_in_->ReadBytes(offset, buf, length);
+      _data_in->ReadBytes(offset, buf, length);
     SDB_ASSERT(read == length);
 
     return {buf, length};
   }
 
-  bstring buf_;
-  IndexInput::ptr data_in_;
+  bstring _buf;
+  IndexInput::ptr _data_in;
+  uint64_t _offset;
 };
 
 template<bool Resize>
 class EncryptedValueReader {
  protected:
-  EncryptedValueReader(IndexInput::ptr&& data_in, Encryption::Stream* cipher,
-                       size_t size)
-    : buf_(size, 0), data_in_{std::move(data_in)}, _cipher{cipher} {}
+  EncryptedValueReader(IndexInput::ptr data_in, Encryption::Stream* cipher,
+                       size_t size, uint64_t offset)
+    : _buf(size, 0),
+      _data_in{std::move(data_in)},
+      _cipher{cipher},
+      _offset{offset} {}
 
   bytes_view value(uint64_t offset, size_t length) {
+    offset += _offset;
     if constexpr (Resize) {
-      buf_.resize(length);
+      _buf.resize(length);
     }
 
-    auto* buf = buf_.data();
+    auto* buf = _buf.data();
 
     [[maybe_unused]] const size_t read =
-      data_in_->ReadBytes(offset, buf, length);
+      _data_in->ReadBytes(offset, buf, length);
     SDB_ASSERT(read == length);
 
     [[maybe_unused]] const bool ok = _cipher->Decrypt(offset, buf, length);
@@ -769,9 +776,10 @@ class EncryptedValueReader {
     return {buf, length};
   }
 
-  bstring buf_;
-  IndexInput::ptr data_in_;
+  bstring _buf;
+  IndexInput::ptr _data_in;
   Encryption::Stream* _cipher;
+  uint64_t _offset;
 };
 
 ResettableDocIterator::ptr MakeMaskIterator(const ColumnBase& column,
@@ -920,17 +928,16 @@ class DenseFixedLengthColumn : public ColumnBase {
    public:
     template<typename... Args>
     PayloadReader(uint64_t data, uint64_t len, Args&&... args)
-      : ValueReader{std::forward<Args>(args)...}, _data{data}, _len{len} {}
+      : ValueReader{std::forward<Args>(args)..., data}, _len{len} {}
 
     bytes_view payload(doc_id_t i) {
-      const auto offset = _data + _len * i;
+      const auto offset = _len * i;
 
       return ValueReader::value(offset, _len);
     }
 
    private:
-    uint64_t _data;  // where data starts
-    uint64_t _len;   // data entry length
+    uint64_t _len;  // data entry length
   };
 
   struct Factory {
@@ -1076,7 +1083,9 @@ class FixedLengthColumn : public ColumnBase {
    public:
     template<typename... Args>
     PayloadReader(const ColumnBlock* blocks, uint64_t len, Args&&... args)
-      : ValueReader{std::forward<Args>(args)...}, _blocks{blocks}, _len{len} {}
+      : ValueReader{std::forward<Args>(args)..., 0},
+        _blocks{blocks},
+        _len{len} {}
 
     bytes_view payload(doc_id_t i) {
       const auto block_idx = i / Column::kBlockSize;
@@ -1283,7 +1292,7 @@ class SparseColumn : public ColumnBase {
    public:
     template<typename... Args>
     PayloadReader(const ColumnBlock* blocks, Args&&... args)
-      : ValueReader{std::forward<Args>(args)...}, _blocks{blocks} {}
+      : ValueReader{std::forward<Args>(args)..., 0}, _blocks{blocks} {}
 
     bytes_view payload(doc_id_t i);
 
@@ -1432,9 +1441,9 @@ bytes_view SparseColumn::PayloadReader<ValueReader>::payload(doc_id_t i) {
   if constexpr (std::is_same_v<ValueReader, ValueDirectReader>) {
     addr_buf = this->_data + addr_offset;
   } else {
-    this->buf_.resize(block_size);
-    this->data_in_->ReadBytes(addr_offset, this->buf_.data(), block_size);
-    addr_buf = this->buf_.c_str();
+    this->_buf.resize(block_size);
+    this->_data_in->ReadBytes(addr_offset, this->_buf.data(), block_size);
+    addr_buf = this->_buf.c_str();
   }
   const uint64_t start_delta = sdb::ZigZagDecode64(packed::FastpackAt(
     reinterpret_cast<const uint64_t*>(addr_buf), value_index, block.bits));
@@ -1448,9 +1457,9 @@ bytes_view SparseColumn::PayloadReader<ValueReader>::payload(doc_id_t i) {
       if constexpr (std::is_same_v<ValueReader, ValueDirectReader>) {
         addr_buf += block_size;
       } else {
-        this->buf_.resize(block_size);
-        this->data_in_->ReadBytes(this->buf_.data(), block_size);
-        addr_buf = this->buf_.c_str();
+        this->_buf.resize(block_size);
+        this->_data_in->ReadBytes(this->_buf.data(), block_size);
+        addr_buf = this->_buf.c_str();
       }
     }
 

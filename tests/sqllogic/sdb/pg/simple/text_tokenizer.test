@@ -7,6 +7,13 @@ CREATE TEXT SEARCH DICTIONARY t0(
 )
 
 
+statement error unknown tokenizer template "whaaat"
+CREATE TEXT SEARCH DICTIONARY t0(
+    template = 'whaaat',
+    locale = 'en_US.UTF-8'
+)
+
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY t1(
     template = 'text', Locale = 'en_US.UTF-8'

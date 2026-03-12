@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <frozen/unordered_map.h>
+#include <frozen/unordered_set.h>
 #include <unicode/locid.h>
 #include <vpack/builder.h>
 
@@ -26,9 +27,11 @@
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/minhash_tokenizer.hpp>
+#include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
@@ -74,6 +77,11 @@ constexpr auto kNameMappings =
     {"numhashes", "numHashes"},
   });
 
+void InvalidParameterThrow(const OptionInfo& opt) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Incorrect value for parameter \"", opt.name, "\""));
+}
+
 void ParseCommaSeparated(std::string_view input,
                          std::invocable<std::string_view> auto&& callback) {
   while (!input.empty()) {
@@ -94,21 +102,31 @@ void ParseCommaSeparated(std::string_view input,
   }
 }
 
-void InvalidParameterThrow(std::string_view param, std::string_view details) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("invalid value for parameter "
-                          "\"",
-                          param, "\": ", details));
-}
-
 std::string_view GetVPackName(std::string_view pg_name) {
   auto it = kNameMappings.find(pg_name);
   return it != kNameMappings.end() ? it->second : pg_name;
 }
 
-constexpr OptionInfo kTemplate{"template",
-                               OptionInfo::RequiredTag<std::string_view>{},
-                               "Tokenizer template type"};
+constexpr OptionInfo kTemplate{
+  "template", OptionInfo::RequiredTag<std::string_view>{},
+  "Tokenizer template type", [](const OptionInfo::DefaultValueT& value) {
+    static constexpr auto kTokenizerTypes = frozen::make_unordered_set({
+      irs::analysis::TextTokenizer::type_name(),
+      irs::analysis::NormalizingTokenizer::type_name(),
+      irs::analysis::NGramTokenizerBase::type_name(),
+      irs::analysis::CollationTokenizer::type_name(),
+      irs::analysis::DelimitedTokenizer::type_name(),
+      irs::analysis::MultiDelimitedTokenizer::type_name(),
+      irs::analysis::SegmentationTokenizer::type_name(),
+      irs::analysis::ClassificationTokenizer::type_name(),
+      irs::analysis::MinHashTokenizer::type_name(),
+      irs::analysis::NearestNeighborsTokenizer::type_name(),
+      irs::analysis::StemmingTokenizer::type_name(),
+      irs::analysis::StopwordsTokenizer::type_name(),
+    });
+    auto str = std::get<std::string_view>(value);
+    return kTokenizerTypes.count(str) == 1;
+  }};
 constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
 constexpr OptionGroup kTSDictionaryOptionGroups[] = {
   {"Text Search Dictionary", kTSDictionaryRootOptions,
@@ -145,9 +163,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
                       ERR_MSG("template value is not provided"));
     }
     auto tmpl_name = TryGet<std::string_view>(tmpl_opt->arg);
-    if (!tmpl_name) {
-      InvalidParameterThrow("template", "expected string");
-    }
+    SDB_ASSERT(tmpl_name);
     const std::string_view type = *tmpl_name;
 
     const auto* subgroup = FindSubgroup(type);
@@ -184,7 +200,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (const auto* opt = EraseOption(tokenizer_options::kStopwords)) {
       auto val = TryGet<std::string_view>(opt->arg);
       if (!val) {
-        InvalidParameterThrow("stopwords", "expected comma-separated string");
+        InvalidParameterThrow(tokenizer_options::kStopwords);
       }
       _builder.add("stopwords", vpack::Value{vpack::ValueType::Array});
       ParseCommaSeparated(*val,
@@ -199,7 +215,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       }
       const auto* def = it->second;
       _options.erase(it);
-      WriteParam(GetVPackName(opt.name), opt.type, def->arg);
+      WriteParam(GetVPackName(opt.name), opt, def->arg);
     }
   }
 
@@ -217,44 +233,17 @@ class CreateTSDictionaryOptions : public OptionsParser {
       }
       _options.erase(it);
       if (!_features.Add(feature.name)) {
-        InvalidParameterThrow(feature.name, "feature name was not found");
+        InvalidParameterThrow(feature);
       }
     }
   }
 
-  void WriteParam(std::string_view name, OptionInfo::Type type,
+  void WriteParam(std::string_view name, const OptionInfo& opt,
                   const Node* value) {
-    switch (type) {
-      case OptionInfo::Type::Boolean: {
-        auto val = TryGet<bool>(value);
-        if (!val) {
-          InvalidParameterThrow(name, "expected boolean");
-        }
-        _builder.add(name, *val);
-      } break;
-      case OptionInfo::Type::Integer: {
-        auto val = TryGet<int>(value);
-        if (!val) {
-          InvalidParameterThrow(name, "expected integer");
-        }
-        _builder.add(name, *val);
-      } break;
-      case OptionInfo::Type::Double: {
-        auto val = TryGet<double>(value);
-        if (!val) {
-          InvalidParameterThrow(name, "expected float");
-        }
-        _builder.add(name, *val);
-      } break;
-      case OptionInfo::Type::String: {
-        auto val = TryGet<std::string_view>(value);
-        if (!val) {
-          InvalidParameterThrow(name, "expected string");
-        }
-        _builder.add(name, *val);
-      } break;
-      default:
-        InvalidParameterThrow(name, "unsupported option type");
+    auto r = opt.CheckAndApply(
+      value, [&](const auto& val) { _builder.add(name, val); });
+    if (!r.ok()) {
+      InvalidParameterThrow(opt);
     }
   }
 

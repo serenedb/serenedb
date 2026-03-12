@@ -47,8 +47,12 @@ inline constexpr OptionInfo kLocale{"locale", ""sv,
 
 inline constexpr OptionInfo kAccent{"accent", true, "Preserve accent marks"};
 
-inline constexpr OptionInfo kCase{"case", "none"sv,
-                                  "Text case conversion: none, lower, upper"};
+inline constexpr OptionInfo kCase{
+  "case", "none"sv, "Text case conversion: none, lower, upper",
+  [](const OptionInfo::DefaultValueT& value) {
+    auto str = std::get<std::string_view>(value);
+    return str == "none" || str == "lower" || str == "upper";
+  }};
 
 inline constexpr OptionInfo kModelLocation{"modellocation", ""sv,
                                            "Path to the ML model file"};
@@ -61,10 +65,12 @@ inline constexpr OptionInfo kStemming{"stemming", true,
                                       "Apply stemming to tokens"};
 
 inline constexpr OptionInfo kStopwords{
-  "stopwords", ""sv, "Comma-separated list of inline stop words"};
+  "stopwords", OptionInfo::Type::String,
+  "Comma-separated list of inline stop words"};
 
 inline constexpr OptionInfo kStopwordsPath{
-  "stopwordspath", ""sv, "Path to file containing stop words"};
+  "stopwordspath", OptionInfo::Type::String,
+  "Path to file containing stop words"};
 
 // NGram
 
@@ -79,15 +85,21 @@ inline constexpr OptionInfo kInputType{"inputtype", "utf8"sv,
                                        "Input stream encoding: binary, utf8"};
 
 inline constexpr OptionInfo kStartMarker{
-  "startmarker", ""sv, "Prefix marker appended at n-gram boundary"};
+  "startmarker", OptionInfo::Type::String,
+  "Prefix marker appended at n-gram boundary"};
 
 inline constexpr OptionInfo kEndMarker{
-  "endmarker", ""sv, "Suffix marker appended at n-gram boundary"};
+  "endmarker", OptionInfo::Type::String,
+  "Suffix marker appended at n-gram boundary"};
 
 // Classification
 
-inline constexpr OptionInfo kThreshold{"threshold", 0.0,
-                                       "Minimum confidence score (0.0 to 1.0)"};
+inline constexpr OptionInfo kThreshold{
+  "threshold", 0.0, "Minimum confidence score (0.0 to 1.0)",
+  [](const OptionInfo::DefaultValueT& value) {
+    auto val = std::get<double>(value);
+    return 0. <= val && val <= 1.;
+  }};
 
 // Stopwords tokenizer
 
@@ -106,7 +118,7 @@ inline constexpr OptionInfo kBreak{
 
 // Delimiter
 
-inline constexpr OptionInfo kDelimiter{"delimiter", ""sv,
+inline constexpr OptionInfo kDelimiter{"delimiter", OptionInfo::Type::String,
                                        "Token delimiter character or string"};
 
 // Per-tokenizer option arrays

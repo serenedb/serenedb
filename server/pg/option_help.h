@@ -34,6 +34,12 @@
 #include <type_traits>
 #include <vector>
 
+#include "basics/errors.h"
+#include "basics/result.h"
+#include "basics/system-compiler.h"
+#include "pg/pg_catalog/pg_type.h"
+#include "pg/sql_utils.h"
+
 namespace sdb::pg {
 
 namespace detail {
@@ -74,28 +80,46 @@ struct OptionInfo {
     }
   }
 
+  using DefaultValueT = std::variant<std::string_view, bool, int, double, char>;
+
   std::string_view name;
   Type type;
   std::string_view description;
 
   bool required = false;
-  std::optional<std::variant<std::string_view, bool, int, double, char>>
-    default_value;
+  std::optional<DefaultValueT> default_value;
+
+  bool (*constraint)(const DefaultValueT&) = nullptr;
 
   std::span<const std::string_view> enum_values;
 
-  template<typename T>
-  consteval OptionInfo(std::string_view name, RequiredTag<T>,
-                       std::string_view desc)
-    : name{name}, type{GetType<T>()}, description{desc}, required{true} {}
+  consteval OptionInfo(std::string_view name, Type type,
+                       std::string_view description,
+                       bool (*constraint)(const DefaultValueT&) = nullptr)
+    : name{name},
+      type{type},
+      description{description},
+      constraint{constraint} {}
 
   template<typename T>
-  consteval OptionInfo(std::string_view name, T default_value,
-                       std::string_view desc)
+  consteval OptionInfo(std::string_view name, RequiredTag<T>,
+                       std::string_view desc,
+                       bool (*constraint)(const DefaultValueT&) = nullptr)
     : name{name},
       type{GetType<T>()},
       description{desc},
-      default_value{default_value} {}
+      required{true},
+      constraint{constraint} {}
+
+  template<typename T>
+  consteval OptionInfo(std::string_view name, T default_value,
+                       std::string_view desc,
+                       bool (*constraint)(const DefaultValueT&) = nullptr)
+    : name{name},
+      type{GetType<T>()},
+      description{desc},
+      default_value{default_value},
+      constraint{constraint} {}
 
   template<typename T>
   constexpr std::optional<T> DefaultValue() const {
@@ -109,6 +133,50 @@ struct OptionInfo {
         return {std::get<T>(def)};
       }
     });
+  }
+
+  // Enum type is not supported
+  Result CheckAndApply(const Node* node, auto&& callback) const {
+    bool correct_value = true;
+    auto process_value = [&]<typename T>() {
+      std::optional<T> val;
+      if constexpr (std::is_same_v<T, char>) {
+        val = TryGet<std::string_view>(node).and_then(
+          [](const auto& str) -> std::optional<char> {
+            return str.size() == 1 ? std::optional{str[0]} : std::nullopt;
+          });
+      } else {
+        val = TryGet<T>(node);
+      }
+      if (val && (!constraint || constraint(*val))) {
+        callback(*val);
+        return true;
+      }
+      return false;
+    };
+    switch (type) {
+      case OptionInfo::Type::Boolean: {
+        correct_value = process_value.template operator()<bool>();
+      } break;
+      case OptionInfo::Type::Integer: {
+        correct_value = process_value.template operator()<int>();
+      } break;
+      case OptionInfo::Type::Double: {
+        correct_value = process_value.template operator()<double>();
+      } break;
+      case OptionInfo::Type::String: {
+        correct_value = process_value.template operator()<std::string_view>();
+      } break;
+      case OptionInfo::Type::Character: {
+        correct_value = process_value.template operator()<char>();
+      } break;
+      default:
+        SDB_UNREACHABLE();
+    }
+    if (!correct_value) {
+      return Result{ERROR_BAD_PARAMETER, "incorrect parameter"};
+    }
+    return {};
   }
 
   template<Type V>

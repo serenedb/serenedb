@@ -259,7 +259,7 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
         }
 
         // Register flush subscription if we are loading existing index
-        // If not, FinishCreation would be called later when indexing finishes
+        // If not finishCreation would be called later when indexing finishes
         if (!is_new) {
           self->FinishCreation();
           self->StartTasks();

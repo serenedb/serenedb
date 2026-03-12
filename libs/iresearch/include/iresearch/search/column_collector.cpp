@@ -29,15 +29,17 @@ const uint32_t* ColumnArgsFetcher::AddNorms(const ColumnReader* field) {
   if (!field) {
     return nullptr;
   }
-  auto& it = _columns.try_emplace(field->id()).first->second;
-  if (!it.reader) {
-    it.reader = field->norms();
-    if (!it.reader) [[unlikely]] {
+  auto it = _columns.try_emplace(field->id()).first;
+  auto& entry = it->second;
+  if (!entry.reader) {
+    entry.reader = field->norms();
+    if (!entry.reader) [[unlikely]] {
+      _columns.erase(it);
       return nullptr;
     }
-    it.norms.resize(kPostingBlock);  // TODO(gnusi): fix
+    entry.norms.resize(kPostingBlock);  // TODO(gnusi): fix
   }
-  return it.norms.data();
+  return entry.norms.data();
 }
 
 }  // namespace irs

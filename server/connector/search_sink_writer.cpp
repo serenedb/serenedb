@@ -349,6 +349,7 @@ void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
 
 void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
+  FinishImpl();
   SDB_ASSERT(!_remove_filter);
   _remove_filter = std::make_shared<SearchRemoveFilter>(batch_size);
 }

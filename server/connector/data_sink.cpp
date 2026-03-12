@@ -520,9 +520,6 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
       WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
     }
-    for (const auto& writer : _index_writers) {
-      writer->Finish();
-    }
     _number_of_rows_affected += num_rows;
     return;
   }

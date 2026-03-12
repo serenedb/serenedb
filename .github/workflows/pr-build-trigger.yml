@@ -147,7 +147,7 @@ jobs:
 
             // Parse all checked values for a section
             function parseSelections(sectionName, validOptions) {
-              const re = new RegExp(`\\*\\*${sectionName}\\*\\*([\\s\\S]*?)(?=####|---|$)`);
+              const re = new RegExp(`#### ${sectionName}\\n([\\s\\S]*?)(?=####|---|$)`);
               const section = body.match(re)?.[1] || '';
               const checked = [...section.matchAll(/- \[x\] `([\w-]+)`/g)].map(m => m[1]);
               return checked.filter(v => validOptions.includes(v));

@@ -60,14 +60,6 @@ class Point {
     return _source_exprs;
   }
 
-  std::string ToString() const {
-    std::string resp;
-
-    // for (std::string_view column_fi)
-
-    return resp;
-  }
-
   void AddEqFilter(std::string_view column_name,
                    velox::core::ConstantTypedExprPtr value,
                    const velox::core::ITypedExpr* source_expr);

@@ -102,16 +102,16 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   size_t output_column_count, const rocksdb::Snapshot* snapshot,
   velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
-  : velox::connector::DataSource{},
-    _memory_pool{memory_pool},
-    _cf{cf},
+  : RocksDBBaseDataSource{memory_pool,
+                          cf,
+                          std::move(row_type),
+                          object_key,
+                          std::move(column_oids),
+                          output_column_count,
+                          std::move(remaining_filter),
+                          evaluator},
     _snapshot{snapshot},
-    _object_key{object_key},
-    _column_ids(std::move(column_oids)),
-    _row_type{std::move(row_type)},
-    _effective_column_id(std::move(effective_column_id)),
-    _output_column_count{output_column_count ? output_column_count
-                                             : _row_type->size()} {
+    _effective_column_id(std::move(effective_column_id)) {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
@@ -150,12 +150,6 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
   for (size_t i = 0; i < num_columns; ++i) {
     _upper_bound_slices.emplace_back(
       _upper_bound_keys_data.data() + i * kKeyPrefixSize, kKeyPrefixSize);
-  }
-
-  if (remaining_filter && evaluator) {
-    _evaluator = evaluator;
-    _remaining_expr_set = evaluator->compile(remaining_filter);
-    SDB_ASSERT(_remaining_expr_set->size() == 1);
   }
 }
 
@@ -245,48 +239,48 @@ void RocksDBFullScanDataSource::InitIterators(CreateFn&& create_iter) {
   }
 }
 
-velox::RowVectorPtr RocksDBFullScanDataSource::ApplyRemainingFilter(
-  velox::RowVectorPtr batch) {
-  if (!_remaining_expr_set) {
-    SDB_ASSERT(batch->childrenSize() == _output_column_count);
-    return batch;
-  }
+// velox::RowVectorPtr RocksDBFullScanDataSource::ApplyRemainingFilter(
+//   velox::RowVectorPtr batch) {
+//   if (!_remaining_expr_set) {
+//     SDB_ASSERT(batch->childrenSize() == _output_column_count);
+//     return batch;
+//   }
 
-  const velox::vector_size_t num_rows = batch->size();
-  velox::SelectivityVector rows(num_rows);
-  velox::VectorPtr result;
-  _evaluator->evaluate(_remaining_expr_set.get(), rows, *batch, result);
+//   const velox::vector_size_t num_rows = batch->size();
+//   velox::SelectivityVector rows(num_rows);
+//   velox::VectorPtr result;
+//   _evaluator->evaluate(_remaining_expr_set.get(), rows, *batch, result);
 
-  velox::DecodedVector decoded(*result, rows);
+//   velox::DecodedVector decoded(*result, rows);
 
-  velox::vector_size_t passing = 0;
-  auto indices = velox::allocateIndices(num_rows, &_memory_pool);
-  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
-  for (velox::vector_size_t i = 0; i < num_rows; ++i) {
-    if (!decoded.isNullAt(i) && decoded.valueAt<bool>(i)) {
-      raw_indices[passing++] = i;
-    }
-  }
+//   velox::vector_size_t passing = 0;
+//   auto indices = velox::allocateIndices(num_rows, &_memory_pool);
+//   auto* raw_indices = indices->asMutable<velox::vector_size_t>();
+//   for (velox::vector_size_t i = 0; i < num_rows; ++i) {
+//     if (!decoded.isNullAt(i) && decoded.valueAt<bool>(i)) {
+//       raw_indices[passing++] = i;
+//     }
+//   }
 
-  if (passing == num_rows) {
-    return batch;
-  }
+//   if (passing == num_rows) {
+//     return batch;
+//   }
 
-  if (passing == 0) {
-    return velox::BaseVector::create<velox::RowVector>(batch->type(), 0,
-                                                       &_memory_pool);
-  }
+//   if (passing == 0) {
+//     return velox::BaseVector::create<velox::RowVector>(batch->type(), 0,
+//                                                        &_memory_pool);
+//   }
 
-  std::vector<velox::VectorPtr> filtered_columns;
-  filtered_columns.reserve(batch->childrenSize());
-  for (velox::column_index_t i = 0; i < batch->childrenSize(); ++i) {
-    filtered_columns.push_back(velox::BaseVector::wrapInDictionary(
-      nullptr, indices, passing, batch->childAt(i)));
-  }
-  return std::make_shared<velox::RowVector>(&_memory_pool, batch->type(),
-                                            nullptr, passing,
-                                            std::move(filtered_columns));
-}
+//   std::vector<velox::VectorPtr> filtered_columns;
+//   filtered_columns.reserve(batch->childrenSize());
+//   for (velox::column_index_t i = 0; i < batch->childrenSize(); ++i) {
+//     filtered_columns.push_back(velox::BaseVector::wrapInDictionary(
+//       nullptr, indices, passing, batch->childAt(i)));
+//   }
+//   return std::make_shared<velox::RowVector>(&_memory_pool, batch->type(),
+//                                             nullptr, passing,
+//                                             std::move(filtered_columns));
+// }
 
 std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
@@ -320,24 +314,6 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
     auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
       &_memory_pool, _row_type, nullptr, columns.front()->size(),
       std::move(columns)));
-
-    // Project out filter-only columns — keep only the first
-    // _output_column_count
-    if (batch->childrenSize() > _output_column_count) {
-      auto output_type =
-        velox::ROW(std::vector<std::string>(
-                     _row_type->names().begin(),
-                     _row_type->names().begin() + _output_column_count),
-                   std::vector<velox::TypePtr>(
-                     _row_type->children().begin(),
-                     _row_type->children().begin() + _output_column_count));
-      std::vector<velox::VectorPtr> output_children(
-        batch->children().begin(),
-        batch->children().begin() + _output_column_count);
-      batch = std::make_shared<velox::RowVector>(
-        &_memory_pool, std::move(output_type), batch->nulls(), batch->size(),
-        std::move(output_children));
-    }
 
     _produced += batch->size();
     return batch;
@@ -512,8 +488,7 @@ void RocksDBPointLookupDataSource<Source>::PerformMultiGet(size_t total_keys) {
   _ctx.MultiGet(_cf, _key_slices, _raw_values, _statuses);
 }
 
-template<typename Source>
-velox::RowVectorPtr RocksDBPointLookupDataSource<Source>::ApplyRemainingFilter(
+velox::RowVectorPtr RocksDBBaseDataSource::ApplyRemainingFilter(
   velox::RowVectorPtr batch) {
   if (!_remaining_expr_set) {
     SDB_ASSERT(batch->childrenSize() == _output_column_count);
@@ -528,7 +503,7 @@ velox::RowVectorPtr RocksDBPointLookupDataSource<Source>::ApplyRemainingFilter(
   velox::DecodedVector decoded(*result, rows);
   velox::vector_size_t passing = 0;
   auto indices = velox::allocateIndices(num_rows, &_memory_pool);
-  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
+  auto* raw_indices = indices->template asMutable<velox::vector_size_t>();
   for (velox::vector_size_t i = 0; i < num_rows; ++i) {
     if (!decoded.isNullAt(i) && decoded.valueAt<bool>(i)) {
       raw_indices[passing++] = i;
@@ -550,14 +525,35 @@ velox::RowVectorPtr RocksDBPointLookupDataSource<Source>::ApplyRemainingFilter(
                                                        &_memory_pool);
   }
 
-  std::vector<velox::VectorPtr> filtered;
-  filtered.reserve(_output_column_count);
-  for (size_t i = 0; i < _output_column_count; ++i) {
-    filtered.push_back(velox::BaseVector::wrapInDictionary(
-      nullptr, indices, passing, batch->childAt(static_cast<int32_t>(i))));
+  if (passing != batch->size()) {
+    std::vector<velox::VectorPtr> filtered;
+    filtered.reserve(_output_column_count);
+    for (size_t i = 0; i < _output_column_count; ++i) {
+      filtered.push_back(velox::BaseVector::wrapInDictionary(
+        nullptr, indices, passing, batch->childAt(static_cast<int32_t>(i))));
+    }
+
+    batch =
+      std::make_shared<velox::RowVector>(&_memory_pool, std::move(out_type),
+                                         nullptr, passing, std::move(filtered));
   }
-  return std::make_shared<velox::RowVector>(
-    &_memory_pool, std::move(out_type), nullptr, passing, std::move(filtered));
+
+  if (batch->childrenSize() > _output_column_count) {
+    auto output_type =
+      velox::ROW(std::vector<std::string>(
+                   _row_type->names().begin(),
+                   _row_type->names().begin() + _output_column_count),
+                 std::vector<velox::TypePtr>(
+                   _row_type->children().begin(),
+                   _row_type->children().begin() + _output_column_count));
+    std::vector<velox::VectorPtr> output_children(
+      batch->children().begin(),
+      batch->children().begin() + _output_column_count);
+    batch = std::make_shared<velox::RowVector>(
+      &_memory_pool, std::move(output_type), batch->nulls(), batch->size(),
+      std::move(output_children));
+  }
+  return batch;
 }
 
 template<typename Source>
@@ -605,6 +601,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     // the effective column, count how many points exist, return a 0-column
     // RowVector with that many rows.
     SDB_ASSERT(_column_ids.size() == 1);
+    SDB_ASSERT(!_remaining_expr_set);
     BuildKeys(batch_size, 1);
 
     for (size_t i = 1; i < batch_size; ++i) {
@@ -616,11 +613,8 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     _produced += found_count;
     FinalizeOffset(batch_size, total_points);
 
-    return ApplyRemainingFilter(velox::BaseVector::create<velox::RowVector>(
-      _row_type, found_count, &_memory_pool));
-    // return velox::BaseVector::create<velox::RowVector>(_row_type,
-    // found_count,
-    //                                                    &_memory_pool);
+    return velox::BaseVector::create<velox::RowVector>(_row_type, found_count,
+                                                       &_memory_pool);
   }
 
   BuildKeys(batch_size, num_columns);
@@ -641,51 +635,29 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
   const size_t found_count = CountFound(batch_size);
   FinalizeOffset(batch_size, total_points);
 
-  // if (found_count == batch_size) {
-  //   return std::make_shared<velox::RowVector>(&_memory_pool, _row_type,
-  //   nullptr,
-  //                                             batch_size,
-  //                                             std::move(columns));
-  // }
   if (found_count == 0) {
     return velox::BaseVector::create<velox::RowVector>(_row_type, 0,
                                                        &_memory_pool);
   }
   auto indices = velox::allocateIndices(batch_size, &_memory_pool);
-  auto* raw_indices = indices->asMutable<velox::vector_size_t>();
+  auto* raw_indices = indices->template asMutable<velox::vector_size_t>();
   size_t idx = 0;
-  for (size_t pt = 0; pt < batch_size; ++pt) {
-    if (!_statuses[pt].IsNotFound()) {
-      raw_indices[idx++] = static_cast<velox::vector_size_t>(pt);
+  for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
+    if (!_statuses[point_idx].IsNotFound()) {
+      raw_indices[idx++] = static_cast<velox::vector_size_t>(point_idx);
     }
   }
-  std::vector<velox::VectorPtr> filtered;
-  filtered.reserve(num_columns);
-  for (auto& col : columns) {
-    filtered.push_back(
-      velox::BaseVector::wrapInDictionary(nullptr, indices, found_count, col));
+
+  if (found_count < batch_size) {
+    for (auto& column : columns) {
+      column = velox::BaseVector::wrapInDictionary(nullptr, indices,
+                                                   found_count, column);
+    }
   }
 
   auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
-    &_memory_pool, _row_type, nullptr, found_count, std::move(filtered)));
+    &_memory_pool, _row_type, nullptr, found_count, std::move(columns)));
 
-  // Project out filter-only columns — keep only the first
-  // _output_column_count
-  if (batch->childrenSize() > _output_column_count) {
-    auto output_type =
-      velox::ROW(std::vector<std::string>(
-                   _row_type->names().begin(),
-                   _row_type->names().begin() + _output_column_count),
-                 std::vector<velox::TypePtr>(
-                   _row_type->children().begin(),
-                   _row_type->children().begin() + _output_column_count));
-    std::vector<velox::VectorPtr> output_children(
-      batch->children().begin(),
-      batch->children().begin() + _output_column_count);
-    batch = std::make_shared<velox::RowVector>(
-      &_memory_pool, std::move(output_type), batch->nulls(), batch->size(),
-      std::move(output_children));
-  }
   _produced += batch->size();
   return batch;
 }

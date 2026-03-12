@@ -261,7 +261,6 @@ QUERY PLAN
 <slt:ignore>[t_big4pk, scan=point]<slt:ignore>
 
 
-# Full scan: reads all 14641 rows.
 onlyif serenedb
 query
 EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk WHERE 

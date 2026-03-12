@@ -326,11 +326,10 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {{}, expr};
   }
 
-  // Collect the unique source sub-expressions to replace with `true`.
+  // Collect the unique source sub-expressions to get rid of them.
   absl::flat_hash_set<const velox::core::ITypedExpr*> sources;
   for (const auto& p : pts) {
-    sources.insert(p.GetSourceExprs().begin(),
-                   p.GetSourceExprs().end());  // todo moving iterator?
+    sources.insert(p.GetSourceExprs().begin(), p.GetSourceExprs().end());
   }
 
   auto rewritten = RewriteExpr(expr, sources);

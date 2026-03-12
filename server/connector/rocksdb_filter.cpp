@@ -266,13 +266,11 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
     }
     result._column_filters.emplace(pk_name, lhs._column_filters.at(pk_name));
   }
-  result._source_exprs.insert(
-    lhs._source_exprs.begin(),
-    lhs._source_exprs.end());  // TODO moving iterator?
+  result._source_exprs.insert(lhs._source_exprs.begin(),
+                              lhs._source_exprs.end());
 
-  result._source_exprs.insert(
-    rhs._source_exprs.begin(),
-    rhs._source_exprs.end());  // TODO moving iterator?
+  result._source_exprs.insert(rhs._source_exprs.begin(),
+                              rhs._source_exprs.end());
 
   return result;
 }
@@ -293,9 +291,6 @@ velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
                                             points.size(), std::move(columns));
 }
 
-// problem
-// a, b -- PK
-// a = 1 and b = 2 and c = 3 --> true and c = 3
 std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
                                      std::span<const std::string> pk_names) {
   std::vector<Point> pts;
@@ -332,24 +327,19 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     sources.insert(p.GetSourceExprs().begin(), p.GetSourceExprs().end());
   }
 
-  auto rewritten = RewriteExpr(expr, sources);
-
-  return {std::move(pts), std::move(rewritten)};
+  return {std::move(pts), RewriteExpr(expr, sources)};
 }
 
 void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type) {
-  absl::c_sort(points, [&](const Point& a, const Point& b) {
-    for (size_t i = 0; i < pk_type.size(); ++i) {
-      const auto& col_name = pk_type.nameOf(i);
-      const auto* af = a.FindFilter(col_name);
-      const auto* bf = b.FindFilter(col_name);
-      SDB_ASSERT(af && bf);
-      const auto av = ToVariant(*af);
-      const auto bv = ToVariant(*bf);
-      if (av < bv)
-        return true;
-      if (bv < av)
-        return false;
+  absl::c_sort(points, [&](const Point& lhs, const Point& rhs) {
+    for (std::string_view col_name : pk_type.names()) {
+      const auto* lhs_filter = lhs.FindFilter(col_name);
+      const auto* rhs_filter = rhs.FindFilter(col_name);
+      SDB_ASSERT(lhs_filter && rhs_filter);
+      const auto lhs_val = ToVariant(*lhs_filter);
+      const auto rhs_val = ToVariant(*rhs_filter);
+      if (lhs_val != rhs_val)
+        return lhs_val < rhs_val;
     }
     return false;
   });

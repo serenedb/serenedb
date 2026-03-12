@@ -693,7 +693,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
     const auto& object_key = serene_table_handle.TableId();
 
-    // Build column OIDs from output column handles.
+    // need to remap names to oids
     std::vector<catalog::Column::Id> column_oids;
     if (output_type->size() > 0) {
       column_oids.reserve(output_type->size());

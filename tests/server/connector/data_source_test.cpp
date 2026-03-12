@@ -109,7 +109,7 @@ class DataSourceTest : public ::testing::Test,
       *pool_.get(), *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
-      column_ids, effective_column_id, object_key);
+      column_ids, effective_column_id, object_key, data->rowType()->size());
 
     // read as single batch
     {
@@ -288,9 +288,9 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
     {makeFlatVector<int32_t>(key_data), makeFlatVector<std::string>(data)});
   auto row_type_empty = velox::ROW({});
   MakeRocksDBWrite(row_data, kObjectKey);
-  RocksDBSnapshotFullScanDataSource source(*pool_.get(), *_db,
-                                           *_cf_handles.front(), row_type_empty,
-                                           {0}, 0, kObjectKey);
+  RocksDBSnapshotFullScanDataSource source(
+    *pool_.get(), *_db, *_cf_handles.front(), row_type_empty, {0}, 0,
+    kObjectKey, row_type_empty->size());
 
   // read as single batch
   {

@@ -41,8 +41,6 @@ class Point {
 
   [[nodiscard]] bool IsSpecific() const;
 
-  // Returns true when the point carries no column constraints (matches any
-  // row).
   [[nodiscard]] bool IsUnconstrained() const noexcept {
     return _column_filters.empty();
   }
@@ -70,7 +68,6 @@ class Point {
 
  private:
   std::span<const std::string> _pk_names;
-  // absl::flat_hash_map<std::string_view, velox::core::ConstantTypedExprPtr>
   absl::flat_hash_map<std::string, velox::core::ConstantTypedExprPtr>
     _column_filters;
   absl::flat_hash_set<const velox::core::ITypedExpr*> _source_exprs;
@@ -82,9 +79,6 @@ class Point {
   const std::vector<Point>& points, velox::RowTypePtr pk_type,
   velox::memory::MemoryPool* pool);
 
-// Extracts PK points from a filter expression. Returns a vector with a single
-// unconstrained Point (IsUnconstrained() == true) when the expression cannot be
-// reduced to a finite point set — callers should fall back to a full scan.
 [[nodiscard]] std::vector<Point> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
@@ -100,6 +94,7 @@ struct ExtractAndRewriteResult {
   // expression reduced to true.
   velox::core::TypedExprPtr remaining_filter;
 };
+
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 

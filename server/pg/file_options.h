@@ -80,17 +80,20 @@ inline constexpr OptionInfo kS3ConnectionOptions[] = {
 
 inline constexpr OptionInfo kStorageOptions[] = {kStorage};
 
-inline constexpr OptionGroup kCommonStorageGroup{"Common", kStorageOptions, {}};
-inline constexpr OptionGroup kS3AuthGroup{"Authentication", kS3AuthOptions, {}};
+inline constexpr OptionGroup kCommonStorageGroup{
+  "Common", {}, kStorageOptions, {}};
+inline constexpr OptionGroup kS3AuthGroup{
+  "Authentication", {}, kS3AuthOptions, {}};
 inline constexpr OptionGroup kS3ConnectionGroup{
   "Connection", kS3ConnectionOptions, {}};
 inline constexpr OptionGroup kS3Subgroups[] = {kS3AuthGroup,
                                                kS3ConnectionGroup};
-inline constexpr OptionGroup kS3Group{"S3", {}, kS3Subgroups};
-inline constexpr OptionGroup kLocalGroup{"Local", {}, {}};
+inline constexpr OptionGroup kS3Group{"S3", {}, {}, kS3Subgroups};
+inline constexpr OptionGroup kLocalGroup{"Local", {}, {}, {}};
 inline constexpr OptionGroup kStorageSubgroups[] = {kCommonStorageGroup,
                                                     kS3Group, kLocalGroup};
-inline constexpr OptionGroup kStorageGroup{"Storage", {}, kStorageSubgroups};
+inline constexpr OptionGroup kStorageGroup{
+  "Storage", {}, {}, kStorageSubgroups};
 
 inline constexpr EnumOptionInfo<FormatType> kFormat{"format", FormatType::Text,
                                                     "File format"};
@@ -135,27 +138,27 @@ inline constexpr OptionInfo kCopyCsvOptions[] = {
   kOnError,      kRejectLimit, kLogVerbosity};
 
 inline constexpr OptionGroup kCommonCopyFormatGroup{
-  "Common", kCommonCopyFormatOptions, {}};
+  "Common", kCommonCopyFormatOptions, {}, {}};
 inline constexpr OptionGroup kCommonFormatGroup{
-  "Common", kCommonFormatOptions, {}};
-inline constexpr OptionGroup kTextGroup{"Text", kTextOptions, {}};
-inline constexpr OptionGroup kCsvGroup{"CSV", kCsvOptions, {}};
-inline constexpr OptionGroup kCopyTextGroup{"Text", kCopyTextOptions, {}};
-inline constexpr OptionGroup kCopyCsvGroup{"CSV", kCopyCsvOptions, {}};
-inline constexpr OptionGroup kParquetGroup{"Parquet", {}, {}};
-inline constexpr OptionGroup kDwrfGroup{"DWRF", {}, {}};
-inline constexpr OptionGroup kOrcGroup{"ORC", {}, {}};
+  "Common", kCommonFormatOptions, {}, {}};
+inline constexpr OptionGroup kTextGroup{"Text", {}, kTextOptions, {}};
+inline constexpr OptionGroup kCsvGroup{"CSV", {}, kCsvOptions, {}};
+inline constexpr OptionGroup kCopyTextGroup{"Text", {}, kCopyTextOptions, {}};
+inline constexpr OptionGroup kCopyCsvGroup{"CSV", {}, kCopyCsvOptions, {}};
+inline constexpr OptionGroup kParquetGroup{"Parquet", {}, {}, {}};
+inline constexpr OptionGroup kDwrfGroup{"DWRF", {}, {}, {}};
+inline constexpr OptionGroup kOrcGroup{"ORC", {}, {}, {}};
 
 inline constexpr OptionGroup kFormatSubgroups[] = {
   kCommonFormatGroup, kTextGroup, kCsvGroup,
   kParquetGroup,      kDwrfGroup, kOrcGroup};
-inline constexpr OptionGroup kFormatGroup{"Format", {}, kFormatSubgroups};
+inline constexpr OptionGroup kFormatGroup{"Format", {}, {}, kFormatSubgroups};
 
 inline constexpr OptionGroup kCopyFormatSubgroups[] = {
   kCommonCopyFormatGroup, kCopyTextGroup, kCopyCsvGroup,
   kParquetGroup,          kDwrfGroup,     kOrcGroup};
 inline constexpr OptionGroup kCopyFormatGroup{
-  "Format", {}, kCopyFormatSubgroups};
+  "Format", {}, {}, kCopyFormatSubgroups};
 
 inline constexpr OptionInfo kDefault{
   "default", ""sv, "Default value for columns (not yet supported)"};
@@ -183,7 +186,7 @@ inline constexpr OptionInfo kPath{"path", ""sv,
 inline constexpr OptionInfo kCreateExternalOptions[] = {kPath};
 
 inline constexpr OptionGroup kCreateExternalGroup{
-  "External", kCreateExternalOptions, {}};
+  "External", {}, kCreateExternalOptions, {}};
 
 inline constexpr OptionGroup kCopyParserGroups[] = {kStorageGroup,
                                                     kCopyFormatGroup};

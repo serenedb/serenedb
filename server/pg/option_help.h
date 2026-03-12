@@ -180,7 +180,9 @@ struct EnumOptionInfo {
 
 struct OptionGroup {
   std::string_view name;
-  std::span<const OptionInfo> options;     // leaf options in this group
+  std::span<const OptionInfo>
+    required_options;                   // required leaf options in this group
+  std::span<const OptionInfo> options;  // leaf options in this group
   std::span<const OptionGroup> subgroups;  // nested groups
 
   std::vector<OptionInfo> FlatOptions() const {
@@ -194,8 +196,19 @@ struct OptionGroup {
            std::ranges::to<std::vector>();
   }
 
+  void VisitRequiredOptions(auto&& visit) const {
+    for (const auto& opt : required_options) {
+      visit(opt);
+    }
+    for (const auto& group : subgroups) {
+      group.VisitRequiredOptions(visit);
+    }
+  }
+
  private:
   void CollectOptions(std::vector<OptionInfo>& result) const {
+    result.insert(result.end(), required_options.begin(),
+                  required_options.end());
     result.insert(result.end(), options.begin(), options.end());
     for (const auto& subgroup : subgroups) {
       subgroup.CollectOptions(result);

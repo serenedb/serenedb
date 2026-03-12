@@ -34,6 +34,7 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "utils/elog.h"
 
 namespace sdb::pg {
 
@@ -181,11 +182,23 @@ class OptionsParser {
 
   template<typename F>
   void ParseOptions(F&& parse) {
+    CheckRequiredOptions();
     parse();
     CheckUnrecognizedOptions();
   }
 
  private:
+  void CheckRequiredOptions() const {
+    for (const auto& group : _option_groups) {
+      group.VisitRequiredOptions([&](const auto& opt) {
+        if (!_options.contains(opt.name)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+            ERR_MSG("required parameter \"", opt.name, "\" was not found"));
+        }
+      });
+    }
+  }
   void CheckUnrecognizedOptions() const {
     auto known_names = AllOptionNames(_option_groups);
     known_names.emplace_back("help");

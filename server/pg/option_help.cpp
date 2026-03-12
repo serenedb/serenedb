@@ -32,8 +32,9 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
 
   absl::StrAppend(&out, prefix, group.name, ":\n");
 
-  for (const auto& opt : group.options) {
-    absl::StrAppend(&out, prefix, "  ", opt.name, " (", opt.TypeName(), ")");
+  auto print_option = [&](const OptionInfo& opt, bool required) {
+    absl::StrAppend(&out, prefix, "  ", opt.name, required ? "[required]" : "",
+                    " (", opt.TypeName(), ")");
     switch (opt.type) {
       case OptionInfo::Type::String:
         if (!opt.string_val.empty()) {
@@ -77,6 +78,14 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
         break;
     }
     absl::StrAppend(&out, " - ", opt.description, "\n");
+  };
+
+  for (const auto& opt : group.required_options) {
+    print_option(opt, true);
+  }
+
+  for (const auto& opt : group.options) {
+    print_option(opt, false);
   }
 
   for (const auto& sub : group.subgroups) {

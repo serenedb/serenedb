@@ -108,16 +108,19 @@ std::string_view GetVPackName(std::string_view pg_name) {
 constexpr OptionInfo kTemplate{"template", ""sv, "Tokenizer template type"};
 constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
 constexpr OptionGroup kTSDictionaryOptionGroups[] = {
-  {"Text Search Dictionary", kTSDictionaryRootOptions,
-   tokenizer_options::kTokenizerSubgroups}};
+  {"Text Search Dictionary",
+   kTSDictionaryRootOptions,
+   {},
+   tokenizer_options::kTokenizerSubgroups},
+};
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(const List* ts_dictionary_options)
-    : OptionsParser("CREATE TEXT SEARCH DICTIONARY", {}, {},
-                    MakeOptions(ts_dictionary_options, {}),
-                    kTSDictionaryOptionGroups) {
-    Parse();
+    : OptionsParser(MakeOptions(ts_dictionary_options, {}),
+                    kTSDictionaryOptionGroups,
+                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}) {
+    ParseOptions([&] { Parse(); });
   }
 
   auto Result() && { return std::make_pair(std::move(_builder), _features); }

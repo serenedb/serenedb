@@ -142,24 +142,25 @@ inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
 // Groups
 
-inline constexpr OptionGroup kFeaturesGroup{"features", kFeaturesOptions, {}};
-inline constexpr OptionGroup kTextGroup{"text", kTextOptions, {}};
-inline constexpr OptionGroup kNGramGroup{"ngram", kNGramOptions, {}};
+inline constexpr OptionGroup kFeaturesGroup{
+  "features", {}, kFeaturesOptions, {}};
+inline constexpr OptionGroup kTextGroup{"text", {}, kTextOptions, {}};
+inline constexpr OptionGroup kNGramGroup{"ngram", {}, kNGramOptions, {}};
 inline constexpr OptionGroup kNearestNeighborsGroup{
-  "nearest_neighbors", kNearestNeighborsOptions, {}};
-inline constexpr OptionGroup kStemmingGroup{"stem", kStemmingOptions, {}};
+  "nearest_neighbors", {}, kNearestNeighborsOptions, {}};
+inline constexpr OptionGroup kStemmingGroup{"stem", {}, kStemmingOptions, {}};
 inline constexpr OptionGroup kStopwordsGroup{
-  "stopwords", kStopwordsTokenizerOptions, {}};
+  "stopwords", {}, kStopwordsTokenizerOptions, {}};
 inline constexpr OptionGroup kClassificationGroup{
-  "classification", kClassificationOptions, {}};
+  "classification", {}, kClassificationOptions, {}};
 inline constexpr OptionGroup kCollationGroup{
-  "collation", kCollationOptions, {}};
+  "collation", {}, kCollationOptions, {}};
 inline constexpr OptionGroup kDelimiterGroup{
-  "delimiter", kDelimiterOptions, {}};
-inline constexpr OptionGroup kMinHashGroup{"minhash", kMinHashOptions, {}};
-inline constexpr OptionGroup kNormGroup{"norm", kNormOptions, {}};
+  "delimiter", {}, kDelimiterOptions, {}};
+inline constexpr OptionGroup kMinHashGroup{"minhash", {}, kMinHashOptions, {}};
+inline constexpr OptionGroup kNormGroup{"norm", {}, kNormOptions, {}};
 inline constexpr OptionGroup kSegmentationGroup{
-  "segmentation", kSegmentationOptions, {}};
+  "segmentation", {}, kSegmentationOptions, {}};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,

@@ -99,50 +99,22 @@ SELECT ts_lexize('t6', 'running');
 ts_lexize
 {run}
 
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY t7(
-    template = 'nearest_neighbors',
-    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
-    topk = 1
-)
-
-
-query
-SELECT ts_lexize('t7', 'salt');
-----
-ts_lexize
-{homogenized}
+# Cannot be tested, because sqllogic and serenedb has different filesystems while docker run
+# statement ok
+# CREATE TEXT SEARCH DICTIONARY t7(
+#    template = 'nearest_neighbors',
+#    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
+#    topk = 1
+# )
 
 
-statement ok
-CREATE TEXT SEARCH DICTIONARY t8(
-    template = 'nearest_neighbors',
-    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
-    topk = 2
-)
-
-
-query
-SELECT ts_lexize('t8', 'salt');
-----
-ts_lexize
-{homogenized,teach}
-
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY t9(
-    template = 'classification',
-    modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
-    topk = 1
-)
-
-
-query
-SELECT ts_lexize('t9', 'baking');
-----
-ts_lexize
-{__label__baking}
+# Cannot be tested, because sqllogic and serenedb has different filesystems while docker run
+# statement ok
+# CREATE TEXT SEARCH DICTIONARY t9(
+#     template = 'classification',
+#     modellocation = '${PWD}/resources/tests/iresearch/model_cooking.bin',
+#     topk = 1
+# )
 
 
 statement ok

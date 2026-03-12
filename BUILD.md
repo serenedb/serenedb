@@ -9,7 +9,7 @@
 ## Clone the repository
 
 ```bash
-# specify github username
+# specify github usernme
 GITHUB_USERNAME="your_github_username_here"
 git clone git@github.com:${GITHUB_USERNAME}/serenedb.git
 cd serenedb

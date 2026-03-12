@@ -20,17 +20,24 @@ jobs:
           sparse-checkout: .github/workflows/build-manual.yml
           sparse-checkout-cone-mode: false
 
+      # TODO: use yq or install js-yaml to parse YAML properly instead of awk/sed
       - name: Parse build-manual.yml
         id: parse
         run: |
           FILE=".github/workflows/build-manual.yml"
+          extract_options() {
+            awk "/^      $1:/{ found=1; next } found && /options:/{ opts=1; next } opts && /^ *- /{ gsub(/^ *- /,\"\"); print; next } opts && !/^ *- /{ exit }" "$FILE"
+          }
+          extract_default() {
+            awk "/^      $1:/{ found=1; next } found && /default:/{ gsub(/.*default: *'?/,\"\"); gsub(/'$/,\"\"); print; exit }" "$FILE"
+          }
           for FIELD in PRESET LOCATION; do
-            # Extract options list
-            OPTIONS=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep '^ *- ' | sed 's/^ *- //')
-            # Extract default
-            DEFAULT=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep 'default:' | sed "s/.*default: *'//" | sed "s/'//")
-            echo "${FIELD}_OPTIONS=${OPTIONS}" >> "$GITHUB_OUTPUT"
-            echo "${FIELD}_DEFAULT=${DEFAULT}" >> "$GITHUB_OUTPUT"
+            {
+              echo "${FIELD}_OPTIONS<<EOF"
+              extract_options "$FIELD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=$(extract_default "$FIELD")" >> "$GITHUB_OUTPUT"
           done
 
       - name: Post build triggers comment
@@ -88,21 +95,33 @@ jobs:
           sparse-checkout: .github/workflows/build-manual.yml
           sparse-checkout-cone-mode: false
 
+      # TODO: use yq or install js-yaml to parse YAML properly instead of awk/sed
       - name: Parse build-manual.yml
         id: parse
         run: |
           FILE=".github/workflows/build-manual.yml"
+          extract_options() {
+            awk "/^      $1:/{ found=1; next } found && /options:/{ opts=1; next } opts && /^ *- /{ gsub(/^ *- /,\"\"); print; next } opts && !/^ *- /{ exit }" "$FILE"
+          }
+          extract_default() {
+            awk "/^      $1:/{ found=1; next } found && /default:/{ gsub(/.*default: *'?/,\"\"); gsub(/'$/,\"\"); print; exit }" "$FILE"
+          }
           for FIELD in PRESET LOCATION; do
-            OPTIONS=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep '^ *- ' | sed 's/^ *- //')
-            DEFAULT=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep 'default:' | sed "s/.*default: *'//" | sed "s/'//")
-            echo "${FIELD}_OPTIONS=${OPTIONS}" >> "$GITHUB_OUTPUT"
-            echo "${FIELD}_DEFAULT=${DEFAULT}" >> "$GITHUB_OUTPUT"
+            {
+              echo "${FIELD}_OPTIONS<<EOF"
+              extract_options "$FIELD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=$(extract_default "$FIELD")" >> "$GITHUB_OUTPUT"
           done
           # Collect all input keys and their defaults for dispatch
-          DEFAULTS=$(awk '/^      [A-Z_]+:/{key=$1; sub(/:$/,"",key)} /default:/{val=$0; sub(/.*default: */,"",val); gsub(/^'\''|'\''$/,"",val); print key"="val}' "$FILE")
-          echo "DEFAULTS<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$DEFAULTS" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "DEFAULTS<<EOF"
+            awk '/^      [A-Z_0-9]+:$/{ key=$1; sub(/:$/,"",key) } /^        default:/{
+              val=$0; sub(/.*default: */,"",val); gsub(/^'"'"'|'"'"'$/,"",val); print key"="val
+            }' "$FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Parse form and trigger build
         uses: actions/github-script@v7

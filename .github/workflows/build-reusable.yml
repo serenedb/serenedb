@@ -193,17 +193,16 @@ jobs:
 
       # ==================== BUILD ====================
       # if selected, DOCKER_BUILD_IMAGES owns the build
-      # TEMPORARILY COMMENTED FOR TESTING STATUS REPORTING
-      # - name: SereneDB build
-      #   id: serenedb_build
-      #   if: env.DOCKER_BUILD_IMAGES != 'true'
-      #   run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
+      - name: SereneDB build
+        id: serenedb_build
+        if: env.DOCKER_BUILD_IMAGES != 'true'
+        run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
-      # # ==================== TESTS ====================
-      # - name: Run tests
-      #   id: run_tests
-      #   if: steps.serenedb_build.outcome == 'success'
-      #   run: ./private/ci/steps/04-ci-run-tests.bash
+      # ==================== TESTS ====================
+      - name: Run tests
+        id: run_tests
+        if: steps.serenedb_build.outcome == 'success'
+        run: ./private/ci/steps/04-ci-run-tests.bash
 
       # ==================== PACKAGES ====================
       - name: SereneDB Packages

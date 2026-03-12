@@ -63,18 +63,18 @@ void SetResultValue(std::string_view value, size_t idx,
 
 template<velox::TypeKind Kind>
 velox::VectorPtr ReadPointColumnValues(
-  size_t sort_rank, size_t num_points,
+  size_t sort_rank, size_t read_points_count, size_t write_points_count,
   const std::vector<rocksdb::Status>& statuses,
   const std::vector<std::string>& values,
   velox::memory::MemoryPool& memory_pool) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
 
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), num_points, &memory_pool);
+    velox::Type::create<Kind>(), write_points_count, &memory_pool);
 
   size_t written = 0;
-  for (size_t read_idx = 0; read_idx < num_points; ++read_idx) {
-    const size_t idx = sort_rank * num_points + read_idx;
+  for (size_t read_idx = 0; read_idx < read_points_count; ++read_idx) {
+    const size_t idx = sort_rank * read_points_count + read_idx;
     const auto& status = statuses[idx];
     const auto& value = values[idx];
 
@@ -87,7 +87,7 @@ velox::VectorPtr ReadPointColumnValues(
     SDB_ENSURE(status.ok(), rocksutils::ConvertStatus(status));
     SetResultValue(value, written++, *result);
   }
-  result->resize(written);
+  SDB_ASSERT(written == write_points_count);
   return result;
 }
 
@@ -578,7 +578,9 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
   // rows are present. This may allow us to reduce number of multiget calls
   BuildKeys(batch_size, num_columns);
   PerformMultiGet(batch_size * num_columns);
-  CheckAndCountFound(batch_size * num_columns);
+  size_t found_count = CheckAndCountFound(batch_size * num_columns);
+  SDB_ASSERT(found_count % num_columns == 0);
+  found_count /= num_columns;
 
   std::vector<velox::VectorPtr> columns;
   columns.reserve(num_columns);
@@ -586,10 +588,9 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     const auto& type = _read_type->childAt(column_idx);
     columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
       ReadPointColumnValues, type->kind(), _col_rank[column_idx], batch_size,
-      _statuses, _raw_values, _memory_pool));
+      found_count, _statuses, _raw_values, _memory_pool));
   }
 
-  const size_t found_count = columns[0]->size();
   SDB_ASSERT(
     absl::c_all_of(columns,
                    [&](const auto& col) { return col->size() == found_count; }),

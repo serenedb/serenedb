@@ -146,6 +146,20 @@ EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4
 QUERY PLAN
 <slt:ignore>[t_choice_cpk, scan=point]<slt:ignore>
 
+query
+SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
+----
+a	b	val
+1	2	10
+1	4	11
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_choice_cpk, scan=point]<slt:ignore>
+
 
 # Cartesian product of {a:1},{b:2} x {a:2},{b:4}:
 #   {a:1} and {a:2} = contradiction

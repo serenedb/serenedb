@@ -92,7 +92,7 @@ constexpr OptionInfo kCleanupIntervalStep{"cleanup_interval_step", 1,
                                           "Cleanup interval step"};
 constexpr OptionInfo kIndexOptions[] = {kCommitInterval, kConsolidationInterval,
                                         kCleanupIntervalStep};
-constexpr OptionGroup kIndexGroup{"Index", {}, kIndexOptions, {}};
+constexpr OptionGroup kIndexGroup{"Index", kIndexOptions, {}};
 constexpr OptionGroup kIndexOptionGroups[] = {kIndexGroup};
 
 class CreateIndexOptionsParser : public OptionsParser {

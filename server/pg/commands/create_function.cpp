@@ -67,7 +67,7 @@ constexpr OptionInfo kAs{"as", ""sv, "Function body"};
 constexpr OptionInfo kFunctionOptions[] = {
   kLanguage, kVolatility, kParallel, kStrict,    kSecurity,
   kCost,     kRows,       kWindow,   kLeakproof, kAs};
-constexpr OptionGroup kFunctionGroup{"Function", {}, kFunctionOptions, {}};
+constexpr OptionGroup kFunctionGroup{"Function", kFunctionOptions, {}};
 constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
 
 // Parses options and return function body and catalog options.

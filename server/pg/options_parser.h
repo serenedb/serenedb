@@ -106,8 +106,9 @@ class OptionsParser {
       }
       return *value;
     }
-
-    return Info.DefaultValue<T>();
+    auto value = Info.DefaultValue<T>();
+    SDB_ASSERT(value.has_value());
+    return *value;
   }
 
   template<const auto& Info>
@@ -145,7 +146,9 @@ class OptionsParser {
       return *result;
     }
 
-    return Info.base.template DefaultValue<E>();
+    auto value = Info.base.template DefaultValue<E>();
+    SDB_ASSERT(value.has_value());
+    return *value;
   }
 
   // requires_parameter == presence flag like ... WITH (FLAG)
@@ -190,8 +193,8 @@ class OptionsParser {
  private:
   void CheckRequiredOptions() const {
     for (const auto& group : _option_groups) {
-      group.VisitRequiredOptions([&](const auto& opt) {
-        if (!_options.contains(opt.name)) {
+      group.VisitOptions([&](const auto& opt) {
+        if (opt.required && !_options.contains(opt.name)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
             ERR_MSG("required parameter \"", opt.name, "\" was not found"));

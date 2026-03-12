@@ -32,60 +32,62 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
 
   absl::StrAppend(&out, prefix, group.name, ":\n");
 
-  auto print_option = [&](const OptionInfo& opt, bool required) {
-    absl::StrAppend(&out, prefix, "  ", opt.name, required ? "[required]" : "",
-                    " (", opt.TypeName(), ")");
-    switch (opt.type) {
-      case OptionInfo::Type::String:
-        if (!opt.string_val.empty()) {
-          absl::StrAppend(&out, " [default: ", opt.string_val, "]");
-        }
-        break;
-      case OptionInfo::Type::Boolean:
-        absl::StrAppend(&out, " [default: ", opt.bool_val ? "true" : "false",
-                        "]");
-        break;
-      case OptionInfo::Type::Integer:
-        absl::StrAppend(&out, " [default: ", opt.int_val, "]");
-        break;
-      case OptionInfo::Type::Character:
-        switch (opt.char_val) {
-          case '\t':
-            absl::StrAppend(&out, " [default: \\t]");
-            break;
-          case '\n':
-            absl::StrAppend(&out, " [default: \\n]");
-            break;
-          case '\r':
-            absl::StrAppend(&out, " [default: \\r]");
-            break;
-          case '\\':
-            absl::StrAppend(&out, " [default: \\\\]");
-            break;
-          default:
-            absl::StrAppend(
-              &out, " [default: ", std::string_view{&opt.char_val, 1}, "]");
-            break;
-        }
-        break;
-      case OptionInfo::Type::Double:
-        absl::StrAppend(&out, " [default: ", opt.double_val, "]");
-        break;
-      case OptionInfo::Type::Enum:
-        absl::StrAppend(&out, " [default: ", opt.string_val,
-                        ", values: ", absl::StrJoin(opt.enum_values, ", "),
-                        "]");
-        break;
+  for (const auto& opt : group.options) {
+    absl::StrAppend(&out, prefix, "  ", opt.name,
+                    opt.required ? "[required]" : "", " (", opt.TypeName(),
+                    ")");
+    if (!opt.default_value.has_value()) {
+      if (!opt.required) {
+        absl::StrAppend(&out, " [default: none]");
+      }
+    } else {
+      auto value = *opt.default_value;
+      switch (opt.type) {
+        case OptionInfo::Type::String: {
+          auto str = std::get<std::string_view>(value);
+          if (!str.empty()) {
+            absl::StrAppend(&out, " [default: ", str, "]");
+          }
+        } break;
+        case OptionInfo::Type::Boolean:
+          absl::StrAppend(
+            &out, " [default: ", std::get<bool>(value) ? "true" : "false", "]");
+          break;
+        case OptionInfo::Type::Integer:
+          absl::StrAppend(&out, " [default: ", std::get<int>(value), "]");
+          break;
+        case OptionInfo::Type::Character: {
+          char c = std::get<char>(value);
+          switch (c) {
+            case '\t':
+              absl::StrAppend(&out, " [default: \\t]");
+              break;
+            case '\n':
+              absl::StrAppend(&out, " [default: \\n]");
+              break;
+            case '\r':
+              absl::StrAppend(&out, " [default: \\r]");
+              break;
+            case '\\':
+              absl::StrAppend(&out, " [default: \\\\]");
+              break;
+            default:
+              absl::StrAppend(&out, " [default: ", std::string_view{&c, 1},
+                              "]");
+              break;
+          }
+        } break;
+        case OptionInfo::Type::Double:
+          absl::StrAppend(&out, " [default: ", std::get<double>(value), "]");
+          break;
+        case OptionInfo::Type::Enum:
+          absl::StrAppend(
+            &out, " [default: ", std::get<std::string_view>(value),
+            ", values: ", absl::StrJoin(opt.enum_values, ", "), "]");
+          break;
+      }
     }
     absl::StrAppend(&out, " - ", opt.description, "\n");
-  };
-
-  for (const auto& opt : group.required_options) {
-    print_option(opt, true);
-  }
-
-  for (const auto& opt : group.options) {
-    print_option(opt, false);
   }
 
   for (const auto& sub : group.subgroups) {

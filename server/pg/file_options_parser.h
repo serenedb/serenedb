@@ -25,6 +25,8 @@
 #include "catalog/types.h"
 #include "pg/file_options.h"
 #include "pg/options_parser.h"
+#include "pg/sql_exception_macro.h"
+#include "utils/elog.h"
 
 namespace sdb::pg {
 
@@ -71,12 +73,12 @@ class FileOptionsParser : public OptionsParser {
                 kS3IamRole.name, " cannot be specified together"));
     }
 
-    auto access_key = EraseOptionOrDefault<kS3AccessKey>();
-    auto secret_key = EraseOptionOrDefault<kS3SecretKey>();
-    auto iam_role = EraseOptionOrDefault<kS3IamRole>();
+    std::string access_key{EraseOptionOrDefault<kS3AccessKey>()};
+    std::string secret_key{EraseOptionOrDefault<kS3SecretKey>()};
+    std::string iam_role{EraseOptionOrDefault<kS3IamRole>()};
 
-    auto endpoint = EraseOptionOrDefault<kS3Endpoint>();
-    auto region = EraseOptionOrDefault<kS3Region>();
+    std::string endpoint{EraseOptionOrDefault<kS3Endpoint>()};
+    std::string region{EraseOptionOrDefault<kS3Region>()};
     auto path_style = EraseOptionOrDefault<kS3PathStyleAccess>();
     auto ssl_enabled = EraseOptionOrDefault<kS3SslEnabled>();
     auto use_creds = EraseOptionOrDefault<kS3UseInstanceCredentials>();
@@ -147,7 +149,7 @@ class FileOptionsParser : public OptionsParser {
     uint8_t escape = EraseOptionOrDefault<kEscape>();
 
     constexpr auto& kNull = IsCsv ? kCsvNull : kTextNull;
-    auto null_string = EraseOptionOrDefault<kNull>();
+    std::string null_string{EraseOptionOrDefault<kNull>()};
 
     // TODO: make variant option info
     auto header = kHeader.DefaultValue<bool>();
@@ -175,8 +177,13 @@ class FileOptionsParser : public OptionsParser {
       }
     }
 
-    return std::make_shared<TextFormatOptions>(
-      delim, escape, std::string{null_string}, header);
+    if (!header) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                      ERR_MSG("header option was not provided"));
+    }
+
+    return std::make_shared<TextFormatOptions>(delim, escape,
+                                               std::move(null_string), *header);
   }
 
   std::shared_ptr<ParquetFormatOptions> ParseParquetFormatOptions() {

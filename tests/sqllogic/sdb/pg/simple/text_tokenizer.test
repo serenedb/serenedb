@@ -1,6 +1,12 @@
 control substitution on
 
 
+statement error required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY t0(
+    locale = 'en_US.UTF-8'
+)
+
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY t1(
     template = 'text', Locale = 'en_US.UTF-8'

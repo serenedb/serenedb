@@ -42,6 +42,7 @@
 #include "catalog/tokenizer.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/option_help.h"
 #include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_error.h"
@@ -105,12 +106,12 @@ std::string_view GetVPackName(std::string_view pg_name) {
   return it != kNameMappings.end() ? it->second : pg_name;
 }
 
-constexpr OptionInfo kTemplate{"template", ""sv, "Tokenizer template type"};
+constexpr OptionInfo kTemplate{"template",
+                               OptionInfo::RequiredTag<std::string_view>{},
+                               "Tokenizer template type"};
 constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
 constexpr OptionGroup kTSDictionaryOptionGroups[] = {
-  {"Text Search Dictionary",
-   kTSDictionaryRootOptions,
-   {},
+  {"Text Search Dictionary", kTSDictionaryRootOptions,
    tokenizer_options::kTokenizerSubgroups},
 };
 

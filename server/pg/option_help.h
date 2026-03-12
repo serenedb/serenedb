@@ -26,6 +26,7 @@
 
 #include <cassert>
 #include <magic_enum/magic_enum.hpp>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -51,71 +52,68 @@ struct OptionInfo {
     Enum
   };
 
+  template<typename T>
+  struct RequiredTag {};
+
+  template<typename T>
+  static consteval Type GetType() {
+    if constexpr (std::is_same_v<T, std::string_view>) {
+      return Type::String;
+    } else if constexpr (std::is_same_v<T, int>) {
+      return Type::Integer;
+    } else if constexpr (std::is_same_v<T, bool>) {
+      return Type::Boolean;
+    } else if constexpr (std::is_same_v<T, double>) {
+      return Type::Double;
+    } else if constexpr (std::is_same_v<T, char>) {
+      return Type::Character;
+    } else if constexpr (std::is_enum_v<T>) {
+      return Type::Enum;
+    } else {
+      static_assert(false);
+    }
+  }
+
   std::string_view name;
   Type type;
   std::string_view description;
 
-  union {
-    std::string_view string_val;
-    bool bool_val;
-    int int_val;
-    double double_val;
-    char char_val;
-  };
+  bool required = false;
+  std::optional<std::variant<std::string_view, bool, int, double, char>>
+    default_value;
 
   std::span<const std::string_view> enum_values;
 
-  consteval OptionInfo(std::string_view name, std::string_view def,
+  template<typename T>
+  consteval OptionInfo(std::string_view name, RequiredTag<T>,
                        std::string_view desc)
-    : name{name}, type{Type::String}, description{desc}, string_val{def} {}
-
-  consteval OptionInfo(std::string_view name, bool def, std::string_view desc)
-    : name{name}, type{Type::Boolean}, description{desc}, bool_val{def} {}
-
-  consteval OptionInfo(std::string_view name, char def, std::string_view desc)
-    : name{name}, type{Type::Character}, description{desc}, char_val{def} {}
-
-  consteval OptionInfo(std::string_view name, int def, std::string_view desc)
-    : name{name}, type{Type::Integer}, description{desc}, int_val{def} {}
-
-  consteval OptionInfo(std::string_view name, double def, std::string_view desc)
-    : name{name}, type{Type::Double}, description{desc}, double_val{def} {}
+    : name{name}, type{GetType<T>()}, description{desc}, required{true} {}
 
   template<typename T>
-  constexpr T DefaultValue() const {
-    if constexpr (std::is_same_v<T, std::string_view>) {
-      assert(type == Type::String || type == Type::Enum);
-      return string_val;
-    } else if constexpr (std::is_same_v<T, std::string>) {
-      assert(type == Type::String || type == Type::Enum);
-      return std::string{string_val};
-    } else if constexpr (std::is_same_v<T, bool>) {
-      assert(type == Type::Boolean);
-      return bool_val;
-    } else if constexpr (std::is_same_v<T, uint8_t> ||
-                         std::is_same_v<T, char>) {
-      assert(type == Type::Character);
-      return static_cast<T>(char_val);
-    } else if constexpr (std::is_same_v<T, int>) {
-      assert(type == Type::Integer);
-      return int_val;
-    } else if constexpr (std::is_same_v<T, double>) {
-      assert(type == Type::Double);
-      return double_val;
-    } else if constexpr (std::is_enum_v<T>) {
-      assert(type == Type::Enum);
-      auto result =
-        magic_enum::enum_cast<T>(string_val, magic_enum::case_insensitive);
-      assert(result.has_value());
-      return *result;
-    } else {
-      static_assert(false, "Unsupported type for DefaultValue");
-    }
+  consteval OptionInfo(std::string_view name, T default_value,
+                       std::string_view desc)
+    : name{name},
+      type{GetType<T>()},
+      description{desc},
+      default_value{default_value} {}
+
+  template<typename T>
+  constexpr std::optional<T> DefaultValue() const {
+    return default_value.and_then([&](const auto& def) -> std::optional<T> {
+      if constexpr (std::is_enum_v<T>) {
+        const auto& value_str = std::get<std::string_view>(def);
+        auto value =
+          magic_enum::enum_cast<T>(value_str, magic_enum::case_insensitive);
+        return {value};
+      } else {
+        return {std::get<T>(def)};
+      }
+    });
   }
 
   template<Type V>
   using CppType = std::conditional_t<
-    V == Type::String || V == Type::Enum, std::string,
+    V == Type::String || V == Type::Enum, std::string_view,
     std::conditional_t<
       V == Type::Boolean, bool,
       std::conditional_t<V == Type::Integer, int,
@@ -180,9 +178,7 @@ struct EnumOptionInfo {
 
 struct OptionGroup {
   std::string_view name;
-  std::span<const OptionInfo>
-    required_options;                   // required leaf options in this group
-  std::span<const OptionInfo> options;  // leaf options in this group
+  std::span<const OptionInfo> options;     // leaf options in this group
   std::span<const OptionGroup> subgroups;  // nested groups
 
   std::vector<OptionInfo> FlatOptions() const {
@@ -196,19 +192,17 @@ struct OptionGroup {
            std::ranges::to<std::vector>();
   }
 
-  void VisitRequiredOptions(auto&& visit) const {
-    for (const auto& opt : required_options) {
+  void VisitOptions(auto&& visit) const {
+    for (const auto& opt : options) {
       visit(opt);
     }
     for (const auto& group : subgroups) {
-      group.VisitRequiredOptions(visit);
+      group.VisitOptions(visit);
     }
   }
 
  private:
   void CollectOptions(std::vector<OptionInfo>& result) const {
-    result.insert(result.end(), required_options.begin(),
-                  required_options.end());
     result.insert(result.end(), options.begin(), options.end());
     for (const auto& subgroup : subgroups) {
       subgroup.CollectOptions(result);

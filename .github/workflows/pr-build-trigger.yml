@@ -54,19 +54,19 @@ jobs:
               const options = process.env[`${key}_OPTIONS`].split('\n').filter(Boolean);
               const def = process.env[`${key}_DEFAULT`];
               const checkboxes = options.map(opt =>
-                `- [${opt === def ? 'x' : ' '}] ${opt}`
+                `- [${opt === def ? 'x' : ' '}] \`${opt}\``
               ).join('\n');
-              return `**${key}**\n${checkboxes}`;
+              return `#### ${key}\n${checkboxes}`;
             });
 
             const body = [
               '### Build Triggers',
-              '_Pick options and click Run Build_',
+              '_Tick **Run Build** and wait for the bot to launch jobs and reset the checkbox._',
               '',
               sections.join('\n\n'),
               '',
               '---',
-              '- [ ] **Run Build** <--',
+              '- [ ] **Run Build**',
             ].join('\n');
 
             await github.rest.issues.createComment({
@@ -83,7 +83,7 @@ jobs:
       github.event.action == 'edited' &&
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '### Build Triggers') &&
-      contains(github.event.comment.body, '- [x] **Run Build** <--')
+      contains(github.event.comment.body, '- [x] **Run Build**')
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -145,36 +145,25 @@ jobs:
             const branch = pr.head.ref;
             const sha = pr.head.sha;
 
-            // Parse selected value for a section
-            function parseSelection(sectionName) {
-              const re = new RegExp(`\\*\\*${sectionName}\\*\\*([\\s\\S]*?)(?=\\*\\*|---|$)`);
+            // Parse all checked values for a section
+            function parseSelections(sectionName, validOptions) {
+              const re = new RegExp(`#### ${sectionName}\\n([\\s\\S]*?)(?=####|---|$)`);
               const section = body.match(re)?.[1] || '';
-              const checked = section.match(/- \[x\] ([\w-]+)/);
-              return checked?.[1] || null;
+              const checked = [...section.matchAll(/- \[x\] `([\w-]+)`/g)].map(m => m[1]);
+              return checked.filter(v => validOptions.includes(v));
             }
-
-            const preset = parseSelection('PRESET');
-            const location = parseSelection('LOCATION');
 
             const validPresets = process.env.PRESET_OPTIONS.split('\n').filter(Boolean);
             const validLocations = process.env.LOCATION_OPTIONS.split('\n').filter(Boolean);
+            const presets = parseSelections('PRESET', validPresets);
+            const locations = parseSelections('LOCATION', validLocations);
 
-            if (!preset || !validPresets.includes(preset)) {
+            if (presets.length === 0 || locations.length === 0) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: `**Error:** No valid preset selected. Pick one of: ${validPresets.join(', ')}`,
-              });
-              return;
-            }
-
-            if (!location || !validLocations.includes(location)) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `**Error:** No valid location selected. Pick one of: ${validLocations.join(', ')}`,
+                body: `**Error:** Select at least one preset and one location.`,
               });
               return;
             }
@@ -186,56 +175,81 @@ jobs:
               if (idx > 0) defaults[line.slice(0, idx)] = line.slice(idx + 1);
             }
 
-            const statusContext = `SereneDB-Build / ${preset} (${location})`;
-            const dispatchInputs = { ...defaults,
-              PRESET: preset,
-              LOCATION: location,
-              BRANCH: branch,
-              BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
-            };
-
-            // Set pending commit status
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: sha,
-              state: 'pending',
-              description: `Build ${preset} on ${location} triggered...`,
-              context: statusContext,
-            });
-
-            // Dispatch the build
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'build-manual.yml',
-              ref: branch,
-              inputs: dispatchInputs,
-            });
-
-            // Wait briefly then find the dispatched run to link it
-            await new Promise(r => setTimeout(r, 3000));
-            const runs = await github.rest.actions.listWorkflowRuns({
+            // Snapshot run IDs before dispatching so we can find new ones later
+            const before = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'build-manual.yml',
               branch: branch,
               per_page: 1,
             });
+            const latestIdBefore = before.data.workflow_runs[0]?.id || 0;
 
-            const runUrl = runs.data.workflow_runs[0]?.html_url || '';
-            await github.rest.repos.createCommitStatus({
+            // Dispatch one job per preset × location combination
+            const jobs = [];
+            for (const preset of presets) {
+              for (const location of locations) {
+                const statusContext = `SereneDB-Build / ${preset} (${location})`;
+                const dispatchInputs = { ...defaults,
+                  PRESET: preset,
+                  LOCATION: location,
+                  BRANCH: branch,
+                  BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
+                };
+
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: sha,
+                  state: 'pending',
+                  description: `Build ${preset} on ${location} triggered...`,
+                  context: statusContext,
+                });
+
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'build-manual.yml',
+                  ref: branch,
+                  inputs: dispatchInputs,
+                });
+
+                jobs.push({ preset, location, statusContext });
+              }
+            }
+
+            // Wait for runs to appear, then collect their URLs
+            await new Promise(r => setTimeout(r, 5000));
+            const after = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: sha,
-              state: 'pending',
-              description: `Build ${preset} on ${location} in progress`,
-              context: statusContext,
-              target_url: runUrl,
+              workflow_id: 'build-manual.yml',
+              branch: branch,
+              per_page: jobs.length + 5,
+            });
+            const newRuns = after.data.workflow_runs.filter(r => r.id > latestIdBefore);
+
+            // Build table rows — match runs to jobs by order (newest first = last dispatched)
+            const reversedRuns = [...newRuns].reverse();
+            const rows = jobs.map((job, i) => {
+              const run = reversedRuns[i];
+              const link = run ? `[View run](${run.html_url})` : 'pending';
+              if (run) {
+                github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: sha,
+                  state: 'pending',
+                  description: `Build ${job.preset} on ${job.location} in progress`,
+                  context: job.statusContext,
+                  target_url: run.html_url,
+                });
+              }
+              return `| \`${job.preset}\` | \`${job.location}\` | ${link} |`;
             });
 
             // Uncheck "Run Build" so it can be clicked again
-            const newBody = body.replace('- [x] **Run Build** <--', '- [ ] **Run Build** <--');
+            const newBody = body.replace('- [x] **Run Build**', '- [ ] **Run Build**');
             if (newBody !== body) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -246,10 +260,10 @@ jobs:
             }
 
             // Post confirmation reply
-            const link = runUrl ? `[View run](${runUrl})` : 'dispatched';
+            const table = `| Preset | Location | Link |\n|--------|----------|------|\n${rows.join('\n')}`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `**Build triggered!**\n\n| Preset | Location | Branch | Link |\n|--------|----------|--------|------|\n| \`${preset}\` | \`${location}\` | \`${branch}\` | ${link} |`,
+              body: `**Triggered ${jobs.length} build(s) on \`${branch}\`**\n\n${table}`,
             });

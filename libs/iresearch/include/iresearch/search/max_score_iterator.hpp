@@ -187,11 +187,17 @@ class MaxScoreIterator : public DocIterator {
           break;
         }
 
+        if (_mask[2 * i] == 0 && _mask[2 * i + 1] == 0) {
+          continue;
+        }
+
         const score_t* IRS_RESTRICT sub_scores = _scores + i * kSubBlock;
         const bool skip =
-          std::all_of(sub_scores, sub_scores + kSubBlock,
-                      [&](auto v) { return v <= score_threshold; });
+          std::count_if(sub_scores, sub_scores + kSubBlock,
+                        [&](auto v) { return v > score_threshold; }) == 0;
         if (skip) {
+          _mask[2 * i] = 0;
+          _mask[2 * i + 1] = 0;
           continue;
         }
 

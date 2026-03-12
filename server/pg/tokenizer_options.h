@@ -127,7 +127,8 @@ inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
                                                   kPosFeature, kFreqFeature};
 
 inline constexpr OptionInfo kTextOptions[] = {
-  kLocale, kAccent, kStemming, kStopwords, kStopwordsPath, kCase};
+  kLocale,        kAccent, kStemming, kStopwords,
+  kStopwordsPath, kCase,   kMinGram,  kMaxGram};
 
 inline constexpr OptionInfo kNGramOptions[] = {
   kMinGram, kMaxGram, kPreserveOriginal, kInputType, kStartMarker, kEndMarker};

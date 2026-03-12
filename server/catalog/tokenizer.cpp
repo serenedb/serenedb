@@ -71,9 +71,8 @@ Tokenizer::Tokenizer(ObjectId id, std::string_view name,
 void Tokenizer::WriteInternal(vpack::Builder& b) const {
   b.add("name", GetName());
   b.add("analyzer", _pool->GetAnalyzerOptions().get("analyzer"));
-  b.add("features", vpack::Value{vpack::ValueType::Array});
+  b.add("features");
   _features.ToVPack(b);
-  b.close();
 }
 
 }  // namespace sdb::catalog

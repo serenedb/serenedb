@@ -30,6 +30,8 @@ CREATE TEXT SEARCH DICTIONARY s1.d(
 query
 SELECT ts_lexize('s1.d', 'A quicK Brown FOX');
 ----
+ts_lexize
+{a,quick,brown,fox}
 
 
 statement ok
@@ -64,9 +66,12 @@ f
 1
 
 
+connection after_index_drop
 query
 SELECT ts_lexize('s1.d', 'A quicK Brown FOX');
 ----
+ts_lexize
+{a,quick,brown,fox}
 
 
 connection after_index_drop

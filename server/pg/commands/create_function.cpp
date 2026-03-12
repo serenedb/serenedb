@@ -79,12 +79,10 @@ constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
 class CreateFunctionOptionsParser : public OptionsParser {
  public:
   CreateFunctionOptionsParser(const List* pg_options)
-    : OptionsParser{"CREATE FUNCTION",
-                    {},
-                    {},
-                    MakeOptions(pg_options, {}),
-                    kFunctionOptionGroups} {
-    Parse();
+    : OptionsParser{MakeOptions(pg_options, {}),
+                    kFunctionOptionGroups,
+                    {.operation = "CREATE FUNCTION"}} {
+    ParseOptions([&] { Parse(); });
   }
 
   auto Result() && {

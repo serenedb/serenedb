@@ -20,20 +20,32 @@ jobs:
           sparse-checkout: .github/workflows/build-manual.yml
           sparse-checkout-cone-mode: false
 
+      - name: Parse build-manual.yml
+        id: parse
+        run: |
+          FILE=".github/workflows/build-manual.yml"
+          for FIELD in PRESET LOCATION; do
+            # Extract options list
+            OPTIONS=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep '^ *- ' | sed 's/^ *- //')
+            # Extract default
+            DEFAULT=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep 'default:' | sed "s/.*default: *'//" | sed "s/'//")
+            echo "${FIELD}_OPTIONS=${OPTIONS}" >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=${DEFAULT}" >> "$GITHUB_OUTPUT"
+          done
+
       - name: Post build triggers comment
         uses: actions/github-script@v7
+        env:
+          PRESET_OPTIONS: ${{ steps.parse.outputs.PRESET_OPTIONS }}
+          PRESET_DEFAULT: ${{ steps.parse.outputs.PRESET_DEFAULT }}
+          LOCATION_OPTIONS: ${{ steps.parse.outputs.LOCATION_OPTIONS }}
+          LOCATION_DEFAULT: ${{ steps.parse.outputs.LOCATION_DEFAULT }}
         with:
           script: |
-            const fs = require('fs');
-            const yaml = require('js-yaml');
-            const workflow = yaml.load(fs.readFileSync('.github/workflows/build-manual.yml', 'utf8'));
-            const inputs = workflow.on.workflow_dispatch.inputs;
-
-            // Build checkbox sections for PRESET and LOCATION
-            const sections = ['PRESET', 'LOCATION'].map(key => {
-              const input = inputs[key];
-              const options = input.options || [];
-              const def = input.default || '';
+            const fields = ['PRESET', 'LOCATION'];
+            const sections = fields.map(key => {
+              const options = process.env[`${key}_OPTIONS`].split('\n').filter(Boolean);
+              const def = process.env[`${key}_DEFAULT`];
               const checkboxes = options.map(opt =>
                 `- [${opt === def ? 'x' : ' '}] ${opt}`
               ).join('\n');
@@ -76,15 +88,30 @@ jobs:
           sparse-checkout: .github/workflows/build-manual.yml
           sparse-checkout-cone-mode: false
 
+      - name: Parse build-manual.yml
+        id: parse
+        run: |
+          FILE=".github/workflows/build-manual.yml"
+          for FIELD in PRESET LOCATION; do
+            OPTIONS=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep '^ *- ' | sed 's/^ *- //')
+            DEFAULT=$(awk "/^      ${FIELD}:/,/^      [A-Z]/" "$FILE" | grep 'default:' | sed "s/.*default: *'//" | sed "s/'//")
+            echo "${FIELD}_OPTIONS=${OPTIONS}" >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=${DEFAULT}" >> "$GITHUB_OUTPUT"
+          done
+          # Collect all input keys and their defaults for dispatch
+          DEFAULTS=$(awk '/^      [A-Z_]+:/{key=$1; sub(/:$/,"",key)} /default:/{val=$0; sub(/.*default: */,"",val); gsub(/^'\''|'\''$/,"",val); print key"="val}' "$FILE")
+          echo "DEFAULTS<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$DEFAULTS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Parse form and trigger build
         uses: actions/github-script@v7
+        env:
+          PRESET_OPTIONS: ${{ steps.parse.outputs.PRESET_OPTIONS }}
+          LOCATION_OPTIONS: ${{ steps.parse.outputs.LOCATION_OPTIONS }}
+          INPUT_DEFAULTS: ${{ steps.parse.outputs.DEFAULTS }}
         with:
           script: |
-            const fs = require('fs');
-            const yaml = require('js-yaml');
-            const workflow = yaml.load(fs.readFileSync('.github/workflows/build-manual.yml', 'utf8'));
-            const inputs = workflow.on.workflow_dispatch.inputs;
-
             const comment = context.payload.comment;
             const body = comment.body || '';
             const prNumber = context.payload.issue.number;
@@ -98,7 +125,7 @@ jobs:
             const branch = pr.head.ref;
             const sha = pr.head.sha;
 
-            // Parse selected value for a section (first checked box between section header and next header/---)
+            // Parse selected value for a section
             function parseSelection(sectionName) {
               const re = new RegExp(`\\*\\*${sectionName}\\*\\*([\\s\\S]*?)(?=\\*\\*|---|$)`);
               const section = body.match(re)?.[1] || '';
@@ -109,8 +136,8 @@ jobs:
             const preset = parseSelection('PRESET');
             const location = parseSelection('LOCATION');
 
-            const validPresets = inputs.PRESET.options;
-            const validLocations = inputs.LOCATION.options;
+            const validPresets = process.env.PRESET_OPTIONS.split('\n').filter(Boolean);
+            const validLocations = process.env.LOCATION_OPTIONS.split('\n').filter(Boolean);
 
             if (!preset || !validPresets.includes(preset)) {
               await github.rest.issues.createComment({
@@ -132,18 +159,22 @@ jobs:
               return;
             }
 
-            // Build dispatch inputs — use defaults for all non-selected fields
-            const dispatchInputs = {};
-            for (const [key, cfg] of Object.entries(inputs)) {
-              if (key === 'PRESET') dispatchInputs[key] = preset;
-              else if (key === 'LOCATION') dispatchInputs[key] = location;
-              else if (key === 'BRANCH') dispatchInputs[key] = branch;
-              else if (key === 'BUILD_CONFIG') dispatchInputs[key] = JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: `SereneDB-Build / ${preset} (${location})` });
-              else dispatchInputs[key] = String(cfg.default ?? '');
+            // Build dispatch inputs from defaults
+            const defaults = {};
+            for (const line of process.env.INPUT_DEFAULTS.split('\n')) {
+              const idx = line.indexOf('=');
+              if (idx > 0) defaults[line.slice(0, idx)] = line.slice(idx + 1);
             }
 
-            // Set pending commit status
             const statusContext = `SereneDB-Build / ${preset} (${location})`;
+            const dispatchInputs = { ...defaults,
+              PRESET: preset,
+              LOCATION: location,
+              BRANCH: branch,
+              BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
+            };
+
+            // Set pending commit status
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,

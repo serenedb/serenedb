@@ -2592,7 +2592,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   rocksdb::Endpoint end_ep{table_prefix, true};
   auto lock_status = transaction.GetRangeLock(&cf, start_ep, end_ep);
   if (!lock_status.ok()) {
-    SDB_THROW(ERROR_LOCK_TIMEOUT, "Failed to lock table for index backfill:",
+    SDB_THROW(ERROR_LOCK_TIMEOUT, "Failed to lock table for index backfill: ",
               lock_status.ToString());
   }
 }

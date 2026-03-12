@@ -165,7 +165,8 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
 
     if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
       return {};
-    } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    }
+    if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
         ERR_MSG("relation \"", stmt.idxname, "\" already exists"));

@@ -527,11 +527,12 @@ Result InvertedIndexShard::CommitUnsafeImpl(
 
 void InvertedIndexShard::FinishCreation() {
   std::lock_guard lock{_commit_mutex};
-  SDB_ASSERT(std::exchange(_is_creation, false));
-  auto& server = SerenedServer::Instance();
-  if (server.hasFeature<FlushFeature>()) {
-    server.getFeature<FlushFeature>().registerFlushSubscription(
-      _flush_subscription);
+  if (std::exchange(_is_creation, false)) {
+    auto& server = SerenedServer::Instance();
+    if (server.hasFeature<FlushFeature>()) {
+      server.getFeature<FlushFeature>().registerFlushSubscription(
+        _flush_subscription);
+    }
   }
 }
 

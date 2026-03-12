@@ -115,7 +115,7 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
   return column_expr;
 }
 
-void CreateTableImpl(catalog::LogicalCatalog& catalog,
+bool CreateTableImpl(catalog::LogicalCatalog& catalog,
                      const catalog::Database& database, ObjectId db,
                      std::string_view schema, std::string_view table_name,
                      catalog::CreateTableRequest request, bool if_not_exists,
@@ -129,14 +129,16 @@ void CreateTableImpl(catalog::LogicalCatalog& catalog,
   }
   r = catalog.CreateTable(db, schema, std::move(options), operation_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return;
-  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    return false;
+  }
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("relation \"", table_name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
+  return true;
 }
 
 enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
@@ -488,9 +490,11 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
     columns[i].type = write_node.columnExpressions()[i]->type();
   }
 
-  CreateTableImpl(catalog, *database, db, schema, table_name,
-                  std::move(request), if_not_exists,
-                  {.create_with_tombstone = true});
+  if (!CreateTableImpl(catalog, *database, db, schema, table_name,
+                       std::move(request), if_not_exists,
+                       {.create_with_tombstone = true})) {
+    return {};
+  }
 
   auto snapshot = catalog.GetSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, table_name);

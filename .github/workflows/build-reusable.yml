@@ -210,6 +210,12 @@ jobs:
         if: steps.serenedb_build.outcome == 'success'
         run: ./private/ci/steps/05-ci-in-docker-package.bash
 
+      # ==================== RELEASE TEST AUTOMATION ====================
+      - name: Release Test Automation (RTA)
+        id: rta
+        if: steps.serenedb_packages.outcome == 'success'
+        run: ./private/ci/steps/08-ci-rta.bash
+
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
@@ -271,6 +277,11 @@ jobs:
             HAS_FAILURES=true
           fi
 
+          if [[ "${{ steps.rta.outcome }}" == "failure" ]]; then
+            echo "RTA failed"
+            HAS_FAILURES=true
+          fi
+
           echo "HAS_FAILURES=$HAS_FAILURES" >> $GITHUB_ENV
 
       # ==================== ARTIFACTS ====================
@@ -292,6 +303,7 @@ jobs:
             iresearch-tests.log
             sqllogic-tests.log
             recovery-tests.log
+            rta-tests.log
             serenedb-tests*.log
             fuerte-tests.log
             tests.log
@@ -338,6 +350,7 @@ jobs:
             **/fuerte-testsXml/*.xml
             **/testrunXml/**/*.xml
             **/tests/sqllogic/*.xml
+            logs/rta-tests*.xml
           if-no-files-found: ignore
           retention-days: 30
 

@@ -24,7 +24,6 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/regexp_utils_re2.hpp"
 
 namespace irs {

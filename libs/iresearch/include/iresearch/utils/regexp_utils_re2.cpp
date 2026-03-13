@@ -30,6 +30,87 @@
 namespace irs {
 namespace {
 
+// RAII wrapper for re2::Regexp* (ref-counted via Decref)
+struct RegexpDeleter {
+  void operator()(re2::Regexp* re) const {
+    if (re) {
+      re->Decref();
+    }
+  }
+};
+
+using RegexpPtr = std::unique_ptr<re2::Regexp, RegexpDeleter>;
+
+// Pattern analysis helpers
+
+// Checks if pattern contains any unescaped metacharacters or RE2 escape
+// sequences that change matching semantics (e.g. \d, \w, \b, \p).
+bool HasMetacharacters(bytes_view pattern) noexcept {
+  bool escaped = false;
+  for (byte_type c : pattern) {
+    if (escaped) {
+      escaped = false;
+      // After \, only actual regexp metacharacters are "simple escapes"
+      // (e.g. \. \* \( \{ — just remove special meaning).
+      // Everything else (\d, \w, \s, \b, \p, \Q, etc.) is an RE2
+      // feature that changes matching semantics.
+      if (!IsSimpleEscape(c)) {
+        return true;
+      }
+      continue;
+    }
+    if (c == RegexpMeta::kEscape) {
+      escaped = true;
+      continue;
+    }
+    if (IsRegexpMeta(c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool HasEscapes(bytes_view pattern) noexcept {
+  for (byte_type c : pattern) {
+    if (c == RegexpMeta::kEscape) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Checks if pattern is a literal prefix followed by .* at the very end,
+// with no RE2 special escape sequences in the prefix part.
+bool IsLiteralPrefixDotStar(bytes_view pattern) noexcept {
+  if (pattern.size() < 2) {
+    return false;
+  }
+
+  bool escaped = false;
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    if (escaped) {
+      escaped = false;
+      if (!IsSimpleEscape(pattern[i])) {
+        return false;
+      }
+      continue;
+    }
+    if (pattern[i] == RegexpMeta::kEscape) {
+      escaped = true;
+      continue;
+    }
+    // First unescaped metacharacter must be '.' followed by '*' at the very end
+    if (IsRegexpMeta(pattern[i])) {
+      return pattern[i] == RegexpMeta::kDot && i + 1 == pattern.size() - 1 &&
+             pattern[i + 1] == RegexpMeta::kStar;
+    }
+  }
+
+  return false;
+}
+
+// Automaton building primitives
+
 automaton MakeEpsilon() {
   automaton a;
   a.AddStates(1);
@@ -38,32 +119,13 @@ automaton MakeEpsilon() {
   return a;
 }
 
-// Build automaton for a single Unicode codepoint (Rune → UTF-8 → MakeChar)
 automaton MakeCharFromRune(int rune) {
   byte_type buf[utf8_utils::kMaxCharSize];
-  uint32_t len = utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf);
+  auto len = utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf);
   return MakeChar(bytes_view{buf, len});
 }
 
-// ---------------------------------------------------------------------------
-// UTF-8 byte-range automaton builder
-//
-// Given a range [lo, hi] of Unicode codepoints, builds an automaton that
-// accepts exactly the UTF-8 byte sequences encoding those codepoints.
-//
-// Algorithm:
-// 1. Split [lo, hi] at UTF-8 byte-length boundaries (0x80, 0x800, 0x10000)
-//    so each sub-range has uniform byte length.
-// 2. For each sub-range, recursively build a byte-level automaton:
-//    - If first bytes of lo and hi are equal, emit that byte and recurse.
-//    - Otherwise, split into 3 parts: lo's first byte (partial tail),
-//      middle first bytes (full continuation range), hi's first byte
-//      (partial tail).
-// ---------------------------------------------------------------------------
 
-// Add arcs from `from` to `to` in automaton `a` that accept all UTF-8
-// byte sequences between lo_bytes and hi_bytes (inclusive).
-// Both lo_bytes and hi_bytes must have the same length `len`.
 void AddUtf8ByteRange(automaton& a, automaton::StateId from,
                       automaton::StateId to, const byte_type* lo,
                       const byte_type* hi, int len) {
@@ -73,7 +135,6 @@ void AddUtf8ByteRange(automaton& a, automaton::StateId from,
   }
 
   if (lo[0] == hi[0]) {
-    // Same first byte — emit it and recurse on the tail
     auto mid = a.AddState();
     a.EmplaceArc(from, RangeLabel::From(lo[0], lo[0]), mid);
     AddUtf8ByteRange(a, mid, to, lo + 1, hi + 1, len - 1);
@@ -111,29 +172,28 @@ void AddUtf8ByteRange(automaton& a, automaton::StateId from,
   }
 }
 
-// Build an automaton accepting UTF-8 encodings of codepoints in [lo, hi].
-// Splits at byte-length boundaries and delegates to AddUtf8ByteRange.
 automaton BuildUtf8RangeAutomaton(uint32_t lo, uint32_t hi) {
-  if (lo > hi)
+  if (lo > hi) {
     return {};
+  }
 
-  // UTF-8 byte-length boundaries
   constexpr uint32_t kBoundaries[] = {0x80, 0x800, 0x10000, 0x110000};
 
   std::vector<automaton> parts;
-  uint32_t cur = lo;
+  auto cur = lo;
 
-  for (uint32_t bound : kBoundaries) {
-    if (cur >= bound)
+  for (auto bound : kBoundaries) {
+    if (cur >= bound) {
       continue;
-    if (cur > hi)
+    }
+    if (cur > hi) {
       break;
-    uint32_t end = std::min(hi, bound - 1);
+    }
+    auto end = std::min(hi, bound - 1);
 
-    // [cur, end] — all codepoints have the same UTF-8 byte length
     byte_type lo_buf[utf8_utils::kMaxCharSize];
     byte_type hi_buf[utf8_utils::kMaxCharSize];
-    uint32_t byte_len = utf8_utils::FromChar32(cur, lo_buf);
+    auto byte_len = utf8_utils::FromChar32(cur, lo_buf);
     utf8_utils::FromChar32(end, hi_buf);
 
     automaton a;
@@ -148,27 +208,25 @@ automaton BuildUtf8RangeAutomaton(uint32_t lo, uint32_t hi) {
     cur = bound;
   }
 
-  if (parts.empty())
+  if (parts.empty()) {
     return {};
-  automaton result = std::move(parts[0]);
+  }
+  auto result = std::move(parts[0]);
   for (size_t i = 1; i < parts.size(); ++i) {
     fst::Union(&result, parts[i]);
   }
   return result;
 }
 
-// Build automaton for a character class from RE2's CharClass ranges
 automaton BuildCharClassFromRe2(re2::CharClass* cc) {
   if (cc == nullptr || cc->empty()) {
-    return {};  // no-match
+    return {};
   }
 
-  // If it's a full class (matches everything), return MakeAny
   if (cc->full()) {
     return MakeAny();
   }
 
-  // Check if all ranges are single-byte (ASCII) for efficient RangeLabel path
   bool all_ascii = true;
   for (auto it = cc->begin(); it != cc->end(); ++it) {
     if (it->hi > 0x7F) {
@@ -178,7 +236,6 @@ automaton BuildCharClassFromRe2(re2::CharClass* cc) {
   }
 
   if (all_ascii) {
-    // Fast path: use RangeLabel arcs directly
     automaton a;
     a.AddStates(2);
     a.SetStart(0);
@@ -189,24 +246,16 @@ automaton BuildCharClassFromRe2(re2::CharClass* cc) {
     return a;
   }
 
-  // General case: build proper UTF-8 byte-level automata for each range
   std::vector<automaton> parts;
   for (auto it = cc->begin(); it != cc->end(); ++it) {
     if (it->lo <= 0x7F && it->hi <= 0x7F) {
-      // ASCII range — single arc with RangeLabel
       automaton a;
       a.AddStates(2);
       a.SetStart(0);
       a.SetFinal(1);
       a.EmplaceArc(0, RangeLabel::From(it->lo, it->hi), 1);
       parts.push_back(std::move(a));
-    } else if (it->hi - it->lo < 256) {
-      // Small multi-byte range — expand individual codepoints (simple path)
-      for (int cp = it->lo; cp <= it->hi; ++cp) {
-        parts.push_back(MakeCharFromRune(cp));
-      }
     } else {
-      // Large multi-byte range — build proper UTF-8 byte-range automaton
       parts.push_back(BuildUtf8RangeAutomaton(static_cast<uint32_t>(it->lo),
                                               static_cast<uint32_t>(it->hi)));
     }
@@ -216,24 +265,29 @@ automaton BuildCharClassFromRe2(re2::CharClass* cc) {
     return {};
   }
 
-  automaton result = std::move(parts[0]);
+  auto result = std::move(parts[0]);
   for (size_t i = 1; i < parts.size(); ++i) {
     fst::Union(&result, parts[i]);
   }
   return result;
 }
 
-// Walker that converts RE2's Regexp AST into an FST automaton.
-// After RE2 Parse() + Simplify(), the tree contains only simple ops:
-//   Literal, LiteralString, Concat, Alternate, Star, Plus, Quest,
-//   AnyChar, AnyByte, CharClass, Capture, EmptyMatch, NoMatch,
-//   BeginLine, EndLine, BeginText, EndText, etc.
+// RE2 AST → FST automaton walker
 //
+// After RE2 Parse() + Simplify(), the tree contains only simple ops.
 // kRegexpRepeat ({n,m}) is eliminated by Simplify() and expanded
 // into Concat/Quest combinations, so we don't need to handle it.
+//
+// Error handling strategy:
+//   RE2 AST invariants (e.g. Star has 1 child): SDB_ASSERT — these
+//   indicate a bug in RE2 or in our code, not a user error.
+//   kRegexpRepeat after Simplify, unknown RegexpOp: SDB_ASSERT — should
+//   never happen; indicates version mismatch or corruption.
+//   kRegexpNoMatch: returns empty automaton (no final states) — legitimate
+//   AST node, not an error.
 class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
  public:
-  Re2ToAutomatonWalker() : _error(false) {}
+  Re2ToAutomatonWalker() : _error{false} {}
 
   bool has_error() const { return _error; }
 
@@ -244,26 +298,24 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
         return MakeCharFromRune(re->rune());
 
       case re2::kRegexpLiteralString: {
-        // Build concatenation of all runes in the string
-        if (re->nrunes() == 0)
+        if (re->nrunes() == 0) {
           return MakeEpsilon();
-
-        // Build in reverse for efficient prepend-concat
+        }
         automaton result = MakeCharFromRune(re->runes()[re->nrunes() - 1]);
         for (int i = re->nrunes() - 2; i >= 0; --i) {
-          automaton ch = MakeCharFromRune(re->runes()[i]);
+          auto ch = MakeCharFromRune(re->runes()[i]);
           fst::Concat(ch, &result);
         }
         return result;
       }
 
       case re2::kRegexpConcat: {
-        if (nchild_args == 0)
+        if (nchild_args == 0) {
           return MakeEpsilon();
-        if (nchild_args == 1)
+        }
+        if (nchild_args == 1) {
           return std::move(child_args[0]);
-
-        // Reverse-order prepend for efficiency (same as original parser)
+        }
         automaton result;
         result.SetStart(result.AddState());
         result.SetFinal(0, true);
@@ -281,12 +333,13 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
       }
 
       case re2::kRegexpAlternate: {
-        if (nchild_args == 0)
+        if (nchild_args == 0) {
           return MakeEpsilon();
-        if (nchild_args == 1)
+        }
+        if (nchild_args == 1) {
           return std::move(child_args[0]);
-
-        automaton result = std::move(child_args[0]);
+        }
+        auto result = std::move(child_args[0]);
         for (int i = 1; i < nchild_args; ++i) {
           fst::Union(&result, child_args[i]);
         }
@@ -294,75 +347,81 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
       }
 
       case re2::kRegexpStar:
-        if (nchild_args != 1) {
-          _error = true;
-          return {};
-        }
+        SDB_ASSERT(nchild_args == 1);
         fst::Closure(&child_args[0], fst::ClosureType::CLOSURE_STAR);
         return std::move(child_args[0]);
 
       case re2::kRegexpPlus:
-        if (nchild_args != 1) {
-          _error = true;
-          return {};
-        }
+        SDB_ASSERT(nchild_args == 1);
         fst::Closure(&child_args[0], fst::ClosureType::CLOSURE_PLUS);
         return std::move(child_args[0]);
 
       case re2::kRegexpQuest:
-        if (nchild_args != 1) {
-          _error = true;
-          return {};
-        }
+        SDB_ASSERT(nchild_args == 1);
         fst::Union(&child_args[0], MakeEpsilon());
         return std::move(child_args[0]);
 
       case re2::kRegexpAnyChar:
         return MakeAny();
 
-      case re2::kRegexpAnyByte:
-        // Single byte: range 0x00..0xFF
-        return MakeAny();
+      case re2::kRegexpAnyByte: {
+        // \C in RE2 — matches a single raw byte (0x00–0xFF).
+        // This can split multi-byte UTF-8 sequences, but we handle it
+        // faithfully at the byte level.
+        automaton a;
+        a.AddStates(2);
+        a.SetStart(0);
+        a.SetFinal(1);
+        a.EmplaceArc(0, RangeLabel::From(0x00, 0xFF), 1);
+        return a;
+      }
 
       case re2::kRegexpCharClass:
         return BuildCharClassFromRe2(re->cc());
 
       case re2::kRegexpCapture:
-        // Capture groups are transparent — just return the child
-        if (nchild_args != 1) {
-          _error = true;
-          return {};
-        }
+        SDB_ASSERT(nchild_args == 1);
         return std::move(child_args[0]);
 
       case re2::kRegexpEmptyMatch:
         return MakeEpsilon();
 
       case re2::kRegexpNoMatch:
-        // Automaton that accepts nothing (no final states)
         return {};
 
-      // Anchors — in SereneDB we match full terms (not substrings),
-      // so anchors are effectively no-ops (epsilon)
+      // Anchors: the automaton matches terms whole (from start to end),
+      // so anchors add no additional constraint — epsilon is correct.
+      // (?m) multiline mode produces BeginLine/EndLine instead of
+      // BeginText/EndText, but for whole-term matching the semantics
+      // are identical: the term has no internal newlines to anchor on.
       case re2::kRegexpBeginLine:
       case re2::kRegexpEndLine:
       case re2::kRegexpBeginText:
       case re2::kRegexpEndText:
-      case re2::kRegexpWordBoundary:
-      case re2::kRegexpNoWordBoundary:
         return MakeEpsilon();
 
+      // \b — word boundary. In whole-term matching the start and end
+      // of the term are always word boundaries, so this is a no-op.
+      case re2::kRegexpWordBoundary:
+        return MakeEpsilon();
+
+      // \B — not-a-word-boundary. In whole-term matching the start and
+      // end of the term are always word boundaries, so \B at those
+      // positions can never be satisfied → matches nothing.
+      case re2::kRegexpNoWordBoundary:
+        return {};
+
       case re2::kRegexpHaveMatch:
-        // Used by RE2::Set internally, should not appear after Parse().
-        // Treat as epsilon for safety.
         return MakeEpsilon();
 
       case re2::kRegexpRepeat:
-        // Should not appear after Simplify(), but handle defensively
+        // Simplify() must eliminate all Repeat nodes
+        SDB_ASSERT(false);
         _error = true;
         return {};
 
       default:
+        SDB_ASSERT(false);
         _error = true;
         return {};
     }
@@ -373,10 +432,9 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
   }
 
   automaton Copy(automaton arg) override {
-    // Deep copy of the automaton — needed when the AST has shared subtrees
-    automaton copy;
-    fst::Union(&copy, arg);  // crude but correct copy
-    return copy;
+    // arg is already copy-constructed (passed by value).
+    // VectorFst has a proper copy constructor.
+    return arg;
   }
 
  private:
@@ -385,44 +443,102 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
 
 }  // namespace
 
+// Pattern analysis utilities
+
+bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
+  out.clear();
+  out.reserve(in.size());
+
+  bool escaped = false;
+  for (byte_type c : in) {
+    if (escaped) {
+      // Should only be called for patterns classified as
+      // LiteralEscaped/PrefixEscaped — only simple escapes allowed.
+      SDB_ASSERT(IsSimpleEscape(c));
+      out.push_back(c);
+      escaped = false;
+    } else if (c == RegexpMeta::kEscape) {
+      escaped = true;
+    } else {
+      out.push_back(c);
+    }
+  }
+  if (escaped) {
+    out.push_back(RegexpMeta::kEscape);
+  }
+
+  return bytes_view{out.data(), out.size()};
+}
+
+RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
+  if (pattern.empty()) {
+    return RegexpType::Literal;
+  }
+
+  if (!HasMetacharacters(pattern)) {
+    return HasEscapes(pattern) ? RegexpType::LiteralEscaped
+                               : RegexpType::Literal;
+  }
+
+  if (IsLiteralPrefixDotStar(pattern)) {
+    bytes_view prefix{pattern.data(), pattern.size() - 2};
+    return HasEscapes(prefix) ? RegexpType::PrefixEscaped : RegexpType::Prefix;
+  }
+
+  return RegexpType::Complex;
+}
+
+bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
+  SDB_ASSERT(pattern.size() >= 2);
+  return bytes_view{pattern.data(), pattern.size() - 2};
+}
+
+// RE2-based regexp → automaton
+
 automaton FromRegexpRe2(bytes_view pattern) {
+  // ComputeRegexpType routes empty patterns to ByTerm (Literal path),
+  // so FromRegexpRe2 should never be called with an empty pattern.
+  SDB_ASSERT(!pattern.empty());
   if (pattern.empty()) {
     return MakeEpsilon();
   }
 
-  // Convert bytes_view to string_view for RE2
   absl::string_view sv(reinterpret_cast<const char*>(pattern.data()),
                        pattern.size());
 
-  // Step 1: RE2 parses the pattern string into an AST (Regexp* tree)
+  // Step 1: Parse pattern → AST.
+  // TODO: make dialect configurable (LikePerl / POSIX / custom flags)
   re2::RegexpStatus status;
-  re2::Regexp* re = re2::Regexp::Parse(sv, re2::Regexp::PerlX, &status);
-  if (re == nullptr) {
-    return {};  // parse error
-  }
-
-  // Step 2: RE2 simplifies/optimizes the AST
-  re2::Regexp* sre = re->Simplify();
-  re->Decref();
-  if (sre == nullptr) {
-    return {};  // simplification error
-  }
-
-  // Step 3: Walk the simplified AST, building FST automaton at each node
-  Re2ToAutomatonWalker walker;
-  automaton nfa = walker.Walk(sre, MakeEpsilon());
-  sre->Decref();
-
-  if (walker.has_error()) {
+  RegexpPtr re{re2::Regexp::Parse(sv, re2::Regexp::LikePerl, &status)};
+  if (!re) {
     return {};
   }
 
-  // Step 4: Determinize NFA → DFA (same as original FromRegexp)
+  // Step 2: Simplify/optimize AST.
+  // Rewrites {n,m} into Star/Plus/Quest, coalesces runs, normalizes classes.
+  RegexpPtr sre{re->Simplify()};
+  SDB_ASSERT(sre != nullptr);
+  if (!sre) {
+    return {};
+  }
+
+  // Step 3: Walk the simplified AST → build FST automaton.
+  Re2ToAutomatonWalker walker;
+  auto nfa = walker.Walk(sre.get(), MakeEpsilon());
+
+  SDB_ASSERT(!walker.stopped_early());
+  SDB_ASSERT(!walker.has_error());
+
+  if (walker.has_error() || walker.stopped_early()) {
+    return {};
+  }
+
+  // Step 4: Determinize NFA → DFA.
   nfa.SetProperties(fst::kILabelSorted, fst::kILabelSorted);
 
   automaton dfa;
   if (fst::DeterminizeStar(nfa, &dfa)) {
-    return {};  // determinization failed
+    return {};
   }
 
   return dfa;

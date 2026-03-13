@@ -110,8 +110,8 @@ struct GetVisitor {
       };
   }
 
-  field_visitor operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::visitor(part.pattern);
+  field_visitor operator()(const ByRegexpRe2Options& part) const {
+    return ByRegexpRe2::visitor(part.pattern);
   }
 };
 
@@ -140,8 +140,8 @@ struct PrepareVisitor : util::Noncopyable {
     return ByRange::prepare(ctx, field, part.range, part.scored_terms_limit);
   }
 
-  auto operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::prepare(ctx, field, part.pattern, part.scored_terms_limit);
+  auto operator()(const ByRegexpRe2Options& part) const {
+    return ByRegexpRe2::prepare(ctx, field, part.pattern, part.scored_terms_limit);
   }
 
   PrepareVisitor(const PrepareContext& ctx, std::string_view field) noexcept

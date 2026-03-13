@@ -1159,7 +1159,6 @@ TEST_P(RegexpRe2FilterTestCase, visit_invalid_pattern) {
 }
 
 // RE2-specific: counted quantifiers {n}, {n,}, {n,m}
-// TODO: need to fix
 
 TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_counted_quantifiers) {
   {
@@ -1200,7 +1199,6 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_non_capturing_group) {
 }
 
 // RE2-specific: Perl classes \d \w \s \D \W \S
-// TODO: need to fix
 
 TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_perl_classes) {
   {
@@ -1244,7 +1242,6 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_perl_classes) {
 }
 
 // RE2-specific: word boundary \b \B
-// TODO: need to fix
 
 TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_word_boundary) {
   {

@@ -41,6 +41,7 @@
 #include "connector/sink_writer_base.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 #if __has_feature(memory_sanitizer)
@@ -149,7 +150,7 @@ WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
     _table_name{table_name},
     _write_conflict_policy{policy} {
   _read_options.snapshot = transaction.GetSnapshot();
-  _read_options.async_io = true;
+  _read_options.async_io = IsIOUringEnabled();
 }
 
 template<bool CheckOldKeys>
@@ -519,9 +520,6 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     // Write updated values
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
       WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
-    }
-    for (const auto& writer : _index_writers) {
-      writer->Finish();
     }
     _number_of_rows_affected += num_rows;
     return;
@@ -2547,6 +2545,7 @@ RocksDBDataSinkBase<DataWriterType>::GatherIndicies(
 
 template<typename DataWriterType>
 bool RocksDBDataSinkBase<DataWriterType>::finish() {
+  _data_writer.Finish();
   for (const auto& writer : _index_writers) {
     writer->Finish();
   }
@@ -2562,7 +2561,7 @@ template<typename DataWriterType>
 void RocksDBDataSinkBase<DataWriterType>::abort() {
   // Transaction itself should be contolled outside and needed SavePoint should
   // be set.
-  ResetForNewRow();
+  _data_writer.Abort();
   // TODO(Dronplane) should we also shrink slice vector to save some memory?
   for (const auto& writer : _index_writers) {
     writer->Abort();
@@ -2703,6 +2702,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
 }
 
 bool RocksDBDeleteDataSink::finish() {
+  _data_writer.Finish();
   for (const auto& writer : _index_writers) {
     writer->Finish();
   }
@@ -2712,6 +2712,7 @@ bool RocksDBDeleteDataSink::finish() {
 std::vector<std::string> RocksDBDeleteDataSink::close() { return {}; }
 
 void RocksDBDeleteDataSink::abort() {
+  _data_writer.Abort();
   for (const auto& writer : _index_writers) {
     writer->Abort();
   }

@@ -22,6 +22,7 @@
 
 #include "basics/static_strings.h"
 #include "pg/sql_exception_macro.h"
+#include "rocksdb_filter.hpp"
 #include "search_filter_builder.hpp"
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -30,15 +31,26 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+namespace {
+
+// Whether execute push downed into table scan filters or use separate filter
+// operator. When value is changed, some explain tests will be broken (as
+// execution graph may change).
+constexpr bool kExecuteFiltersInTableScan = false;
+
+}  // namespace
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout)
+  const axiom::connector::TableLayout& layout, std::vector<Point> points,
+  velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     _transaction{
-      basics::downCast<RocksDBTable>(layout.table()).GetTransaction()} {
+      basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
+    _points{std::move(points)},
+    _remaining_filter{std::move(remaining_filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
@@ -55,6 +67,14 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                              std::next(column_map.begin())->second)
                              ->Id();
   }
+  _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
+
+  for (const auto& [orig_name, col_ptr] : column_map) {
+    const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
+    _table_column_map.emplace(orig_name,
+                              FilterColumn{scol->Id(), scol->type()});
+  }
+
   _transaction.AddRocksDBRead();
 }
 
@@ -95,8 +115,8 @@ SereneDBTableLayout::createTableHandle(
     }
 
     SDB_ASSERT(!conjunct_root.empty());
-    auto handle =
-      std::make_shared<SereneDBConnectorTableHandle>(session, *this);
+    auto handle = std::make_shared<SereneDBConnectorTableHandle>(
+      session, *this, std::vector<Point>{}, nullptr);
     const auto& snapshot =
       inverted_index_table->GetTransaction().EnsureSearchSnapshot(
         inverted_index_table->GetIndex().GetId());
@@ -135,11 +155,36 @@ SereneDBTableLayout::createTableHandle(
                                              std::move(remaining_filter));
   }
 
-  rejected_filters = std::move(filters);
-  SDB_ASSERT(!table().columnMap().empty(),
-             "SereneDBConnectorTableHandle: need a column for count field");
+  const auto& pk_type = basics::downCast<RocksDBTable>(table()).PKType();
 
-  return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
+  velox::core::TypedExprPtr remaining_filter;
+  if (filters.size() == 1) {
+    remaining_filter = filters[0];
+  } else if (filters.size() > 1) {
+    remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+      velox::BOOLEAN(), filters, velox::expression::kAnd);
+  }
+
+  std::vector<Point> points;
+  if (remaining_filter) {
+    auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
+
+    if (!res.points.empty()) {
+      points = std::move(res.points);
+      SortPoints(points, *pk_type);
+      remaining_filter = std::move(res.remaining_filter);
+    }
+  }
+
+  if (!kExecuteFiltersInTableScan && remaining_filter) {
+    rejected_filters = {std::move(remaining_filter)};
+    remaining_filter.reset();
+  }
+
+  SDB_ASSERT(!table().columnMap().empty(),
+             "SereneDBFullScanTableHandle: need a column for count field");
+  return std::make_shared<SereneDBConnectorTableHandle>(
+    session, *this, std::move(points), std::move(remaining_filter));
 }
 
 }  // namespace sdb::connector

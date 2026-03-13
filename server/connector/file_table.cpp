@@ -85,30 +85,14 @@ void FileDataSink::appendData(velox::RowVectorPtr input) {
   _stats.numWrittenBytes += input->estimateFlatSize();
 }
 
-bool FileDataSink::finish() {
-  _writer->flush();
-  return true;
-}
+bool FileDataSink::finish() { return _writer->finish(); }
 
 std::vector<std::string> FileDataSink::close() {
-  if (_closed) {
-    return {};
-  }
-  if (_writer) {
-    _writer->close();
-    _writer.reset();
-  }
-  _closed = true;
+  _writer->close();
   return {};
 }
 
-void FileDataSink::abort() {
-  if (_writer) {
-    _writer->abort();
-    _writer.reset();
-  }
-  _closed = true;
-}
+void FileDataSink::abort() { _writer->abort(); }
 
 FileDataSource::FileDataSource(
   std::shared_ptr<ReaderOptions> options,

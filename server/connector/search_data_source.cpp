@@ -71,7 +71,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
     SDB_ASSERT(!_doc);
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
-      _doc = _query.execute({.segment = segment});
+      _doc = segment.mask(_query.execute({.segment = segment}));
       const auto* pk_column =
         segment.column(sdb::connector::search::kPkFieldName);
       _pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);

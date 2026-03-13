@@ -47,6 +47,8 @@ void Create(const velox::RowVector& data,
 void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key);
 
+void AppendKeyValue(std::string& key, const velox::BaseVector& column,
+                    velox::vector_size_t idx);
 template<typename T>
 void AppendSigned(std::string& key, T value) {
   SDB_ASSERT(std::is_signed_v<T>,

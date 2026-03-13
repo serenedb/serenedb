@@ -28,6 +28,7 @@
 #include <velox/core/QueryCtx.h>
 #include <velox/exec/Task.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -61,7 +62,8 @@ class Query {
   static std::unique_ptr<Query> CreateWithExecutor(
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx,
-    std::vector<std::unique_ptr<Executor>> executors);
+    std::vector<std::unique_ptr<Executor>> executors,
+    std::function<void()> on_error = {});
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
@@ -85,7 +87,8 @@ class Query {
   void SetExecutor(std::unique_ptr<Executor> executor);
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
-  auto StealExecutors() { return std::move(_executors); }
+  auto GetExecutors() const { return std::span{_executors}; }
+  absl::FunctionRef<void()> GetOnError() const { return _on_error; }
 
   std::unique_ptr<Cursor> MakeCursor(UserTask&& user_task);
 
@@ -114,7 +117,8 @@ class Query {
   // use for CreateWithExecutor
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx,
-        std::vector<std::unique_ptr<Executor>> executors);
+        std::vector<std::unique_ptr<Executor>> executors,
+        std::function<void()> on_error);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;
@@ -124,6 +128,7 @@ class Query {
 
   Runner _runner;  // runner is supposed to be destroyed after executors.
   std::vector<std::unique_ptr<Executor>> _executors;
+  std::function<void()> _on_error = [] {};
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;

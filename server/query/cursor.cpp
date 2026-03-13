@@ -20,6 +20,8 @@
 
 #include "query/cursor.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "query/query.h"
 
 namespace sdb::query {
@@ -32,6 +34,13 @@ yaclib::Future<> Cursor::RequestCancel() {
 }
 
 Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
+  absl::Cleanup rollback = [&] { _on_error(); };
+  auto result = NextImpl(batch);
+  std::move(rollback).Cancel();
+  return result;
+}
+
+Cursor::Process Cursor::NextImpl(velox::RowVectorPtr& batch) {
   for (; _current < _executors.size(); ++_current) {
     auto& executor = _executors[_current];
     auto f = executor->Execute(batch);
@@ -63,7 +72,8 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
 Cursor::Cursor(UserTask&& user_task, Query& query)
   : _user_task{std::move(user_task)},
     _query{query},
-    _executors{query.StealExecutors()} {}
+    _executors{query.GetExecutors()},
+    _on_error{query.GetOnError()} {}
 
 Cursor::~Cursor() {
   if (_current < _executors.size()) {

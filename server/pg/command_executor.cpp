@@ -21,6 +21,7 @@
 #include "pg/command_executor.h"
 
 #include "app/app_server.h"
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "catalog/catalog.h"
@@ -142,6 +143,8 @@ yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl() {
   SDB_ASSERT(shard);
   SDB_ASSERT(shard->GetType() == IndexType::Inverted);
   auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+
+  SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
   return inverted_index.CommitWait().ThenInline([shard = std::move(shard)](
                                                   yaclib::Result<>&&) {

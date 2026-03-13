@@ -58,7 +58,7 @@ statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM idx_bf_crash3;
 
 
-# completed CREATE INDEX should survive crash
+# crash before finish creation, index should be gone
 
 connection bf_after_3
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
@@ -66,35 +66,54 @@ RESET sdb_faults;
 
 connection bf_after_3
 statement ok
-CREATE INDEX idx_bf_ok ON idx_bf_t USING inverted(a, b);
+SET sdb_fault_crash_before_finish_creation TO DEFAULT;
 
 connection bf_after_3
-statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+statement error connection closed
+CREATE INDEX idx_bf_crash4 ON idx_bf_t USING inverted(a, b);
 
-connection bf_after_3
-query error connection closed
-SELECT 1;
+connection bf_after_4
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM idx_bf_crash4;
+
+
+# completed CREATE INDEX should survive crash
 
 connection bf_after_4
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) idx_bf_t;
+RESET sdb_faults;
 
 connection bf_after_4
+statement ok
+CREATE INDEX idx_bf_ok ON idx_bf_t USING inverted(a, b);
+
+connection bf_after_4
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+connection bf_after_4
+query error connection closed
+SELECT 1;
+
+connection bf_after_5
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) idx_bf_t;
+
+connection bf_after_5
 query
 SELECT a, b FROM idx_bf_ok WHERE PHRASE(b, 'pudge');
 ----
 a	b
 1	pudge goes mid
 
-connection bf_after_4
+connection bf_after_5
 query
 SELECT a, b FROM idx_bf_ok WHERE PHRASE(b, 'vedernikoff carries');
 ----
 a	b
 2	vedernikoff carries team
 
-connection bf_after_4
+connection bf_after_5
 query
 SELECT a, b FROM idx_bf_ok WHERE PHRASE(b, 'babsky');
 ----

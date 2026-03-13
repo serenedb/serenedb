@@ -81,8 +81,7 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
     std::ignore = catalog.DropTable(db, schema, into->rel->relname);
   };
-  auto velox_exec =
-    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
+  auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
     connection_ctx, absl::NullSafeStringView(into->rel->schemaname),
     into->rel->relname);
@@ -96,7 +95,8 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
   query_ctx.command_type.Add(query::CommandType::Query);
 
   return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                          std::move(executors));
+                                          std::move(executors),
+                                          std::move(rollback));
 }
 
 std::unique_ptr<query::Query> CreateIndexPipeline(
@@ -122,13 +122,10 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
     std::ignore = catalog.DropIndex(db, schema, index_stmt.idxname);
   };
-  auto velox_exec =
-    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
-
+  auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
     connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
     index_stmt.idxname);
-
   auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
     connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
     index_stmt.idxname);
@@ -143,7 +140,8 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
   query_ctx.command_type.Add(query::CommandType::Query);
 
   return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                          std::move(executors));
+                                          std::move(executors),
+                                          std::move(rollback));
 }
 
 }  // namespace

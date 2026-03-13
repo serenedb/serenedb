@@ -2581,10 +2581,18 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
-  std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers)
+  std::unique_ptr<SinkIndexWriter> index_writer)
   : RocksDBDataSinkBase<NoopSinkWriter>{
-      NoopSinkWriter{}, memory_pool,        object_key,
-      key_childs,       std::move(columns), std::move(index_writers)} {
+      NoopSinkWriter{},
+      memory_pool,
+      object_key,
+      key_childs,
+      std::move(columns),
+      [&] {
+        std::vector<std::unique_ptr<SinkIndexWriter>> w;
+        w.push_back(std::move(index_writer));
+        return w;
+      }()} {
   // lock all the table before index backfill.
   // TODO: don't lock all the table.
   std::string table_prefix = key_utils::PrepareTableKey(object_key);
@@ -2603,26 +2611,20 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->type()->size() == _columns_info.size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
-  const std::string table_key = key_utils::PrepareTableKey(_object_key);
-
   _store_keys_buffers.clear();
   const auto num_rows = input->size();
   _store_keys_buffers.reserve(num_rows);
 
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _store_keys_buffers.emplace_back();
     key_utils::MakeColumnKey(
-      input, _key_childs, row_idx, table_key,
-      [&](auto) {
-        // don't need to lock anything since we've locked all the table.
-      },
-      key_buffer);
+      input, _key_childs, row_idx, table_key, [&](auto) {}, key_buffer);
     key_utils::SetupColumnForKey(key_buffer, _columns_info.front().id);
   }
 
-  SDB_ASSERT(_index_writers.size() == 1);
-  const auto& writer = _index_writers.front();
-  writer->Init(num_rows);
+  auto& writer = *_index_writers.front();
+  writer.Init(num_rows);
 
   const velox::IndexRange all_rows{0, num_rows};
   const folly::Range all_rows_range{&all_rows, 1};
@@ -2634,7 +2636,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
 
-  writer->Finish();
+  writer.Finish();
 }
 
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(

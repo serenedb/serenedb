@@ -331,7 +331,7 @@ class RocksDBIndexBackfillDataSink final
     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
+    std::unique_ptr<SinkIndexWriter> index_writer);
 
   void appendData(velox::RowVectorPtr input) final;
 };

@@ -55,14 +55,17 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId database_id, std::string_view schema,
-                      std::shared_ptr<View> view) final;
-  Result RegisterFunction(ObjectId database_id, std::string_view schema,
+  Result RegisterView(ObjectId schema_id, std::shared_ptr<View> view) final;
+  Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
-  Result RegisterTable(ObjectId database_id, std::string_view schema,
+  Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
-  Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                       IndexBaseOptions options, vpack::Slice args) final;
+  Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
+
+  ResultOr<std::shared_ptr<Index>> RegisterIndex(
+    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    IndexBaseOptions options) final;
+  Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
@@ -79,7 +82,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
                      const std::vector<std::string>& column_names,
-                     IndexBaseOptions options, vpack::Slice args) final;
+                     IndexBaseOptions options,
+                     IndexShardOptions& shard_options) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -92,24 +96,21 @@ class LocalCatalog final : public LogicalCatalog,
                      ChangeCallback<Table> callback) final;
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback) final;
 
-  Result DropDatabase(std::string_view name, AsyncResult* async_result) final;
+  Result DropDatabase(std::string_view name) final;
   Result DropRole(std::string_view role) final;
-  Result DropSchema(ObjectId database_id, std::string_view name, bool cascade,
-                    AsyncResult* async_result) final;
+  Result DropSchema(ObjectId database_id, std::string_view name,
+                    bool cascade) final;
   Result DropView(ObjectId database_id, std::string_view schema,
                   std::string_view name) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
                       std::string_view name) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
-                   std::string_view name, AsyncResult* async_result) final;
+                   std::string_view name) final;
+  Result RemoveTombstone(ObjectId database_id, std::string_view schema,
+                         std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
-                   std::string_view name, AsyncResult* async_result) final;
-  std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
-
-  void RegisterTableDrop(TableTombstone tombstone) final;
-  void RegisterIndexDrop(IndexTombstone tombstone) final;
-  void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
-  void DropTableShard(ObjectId id);
+                   std::string_view name) final;
+  std::shared_ptr<const Snapshot> GetSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;
@@ -117,7 +118,7 @@ class LocalCatalog final : public LogicalCatalog,
 
  private:
   mutable absl::Mutex _mutex;
-  std::shared_ptr<SnapshotImpl> _snapshot;
+  std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
   bool _skip_background_errors;
 };

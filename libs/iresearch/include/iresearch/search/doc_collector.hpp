@@ -1,13 +1,12 @@
 #pragma once
 
 #include <algorithm>
-#include <iresearch/index/index_reader_options.hpp>
-#include <iresearch/utils/type_limits.hpp>
 #include <utility>
 
 #include "basics/shared.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
@@ -15,6 +14,7 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 

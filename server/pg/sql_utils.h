@@ -141,6 +141,7 @@ enum class SqlCommandType : uint32_t {
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
   Copy,         // copy stmt
+  CTAS          // create table as select
 };
 
 template<typename T>
@@ -151,8 +152,6 @@ std::optional<T> TryGet(const Node& node);
 
 template<typename T>
 std::optional<T> TryGet(const List* list, size_t i);
-
-std::optional<bool> TryGetBoolOption(const Node* expr);
 
 }  // namespace pg
 }  // namespace sdb

@@ -3,11 +3,9 @@ add_subdirectory(functions)
 target_sources(
     sereneserver
     PRIVATE
-        executor.cpp
-        format_options.cpp
+        command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
-        storage_options.cpp
         sql_statement.cpp
         connection_context.cpp
         copy_file.cpp
@@ -27,4 +25,5 @@ target_sources(
         sql_resolver.cpp
         sql_utils.cpp
         isolation_level.cpp
+        option_help.cpp
 )

@@ -42,13 +42,12 @@ namespace {
 struct Position {
   template<typename Iterator>
   explicit Position(Iterator& itr) noexcept
-    : pos{&PosAttr::get(itr)}, doc{irs::get<DocAttr>(itr)} {
+    : doc{itr.value()}, pos{&PosAttr::get(itr)} {
     SDB_ASSERT(pos);
-    SDB_ASSERT(doc);
   }
 
+  const doc_id_t& doc;
   PosAttr* pos;
-  const DocAttr* doc;
 };
 
 struct PositionWithOffset : Position {
@@ -104,6 +103,8 @@ class NGramApprox : public MinMatchDisjunction {
 
  public:
   using Base::Base;
+  NGramApprox(doc_id_t docs_count, CostAdapters&& itrs, size_t min_match)
+    : Base{std::move(itrs), min_match, docs_count} {}
 };
 
 template<>
@@ -111,8 +112,8 @@ class NGramApprox<true> : public Conjunction<CostAdapter> {
   using Base = Conjunction<CostAdapter>;
 
  public:
-  NGramApprox(CostAdapters&& itrs, size_t min_match_count)
-    : Base{ScoreMergeType::Noop,
+  NGramApprox(doc_id_t docs_count, CostAdapters&& itrs, size_t min_match_count)
+    : Base{ScoreMergeType::Noop, docs_count,
            [](auto&& itrs) {
              absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
                return lhs.est < rhs.est;
@@ -247,7 +248,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 
   _seq_freq.value = 0;
   for (const auto& pos_iterator : _pos) {
-    if (pos_iterator.doc->value == doc) {
+    if (pos_iterator.doc == doc) {
       auto& pos = *pos_iterator.pos;
       if (potential <= longest_sequence_len || potential < _min_match_count) {
         // this term could not start largest (or long enough) sequence.
@@ -461,25 +462,23 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 template<typename Approx, typename Checker>
 class NGramSimilarityDocIterator : public DocIterator {
  public:
-  NGramSimilarityDocIterator(CostAdapters&& itrs, size_t total_terms_count,
-                             size_t min_match_count, bool collect_all_states)
+  NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
+                             size_t total_terms_count, size_t min_match_count,
+                             bool collect_all_states)
     : _checker{std::begin(itrs), std::end(itrs), total_terms_count,
                min_match_count, collect_all_states},
       // we are not interested in disjunction`s // scoring
-      _approx{std::move(itrs), min_match_count} {
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
+      _approx{docs_count, std::move(itrs), min_match_count} {
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
   }
 
-  NGramSimilarityDocIterator(CostAdapters&& itrs, size_t total_terms_count,
-                             size_t min_match_count,
+  NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
+                             size_t total_terms_count, size_t min_match_count,
                              const FieldProperties& field,
                              const byte_type* stats, score_t boost)
-    : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
+    : NGramSimilarityDocIterator{docs_count, std::move(itrs), total_terms_count,
                                  min_match_count, stats != nullptr} {
     _stats = stats;
     _field = field;
@@ -519,15 +518,11 @@ class NGramSimilarityDocIterator : public DocIterator {
     return attr != nullptr ? attr : _checker.GetMutableAttr(type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
@@ -538,7 +533,7 @@ class NGramSimilarityDocIterator : public DocIterator {
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
   }
@@ -552,7 +547,7 @@ class NGramSimilarityDocIterator : public DocIterator {
       return doc;
     }
     if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-      return doc;
+      return _doc = doc;
     }
     return doc + 1;
   }
@@ -579,8 +574,8 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
  private:
-  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>,
-                                BoostBlockAttr, FreqBlockAttr>;
+  using Attributes =
+    std::tuple<AttributePtr<CostAttr>, BoostBlockAttr, FreqBlockAttr>;
 
   const byte_type* _stats{};
   score_t _boost{1.0f};
@@ -644,10 +639,11 @@ DocIterator::ptr NGramSimilarityQuery::execute(
 
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (itrs.size() == _min_match_count) {
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<Dummy>>>(
-      std::move(itrs), query_state->terms.size(), _min_match_count,
+      docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
       query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr,
       _boost);
   }
@@ -655,7 +651,7 @@ DocIterator::ptr NGramSimilarityQuery::execute(
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
-    std::move(itrs), query_state->terms.size(), _min_match_count,
+    docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
     query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr, _boost);
 }
 
@@ -675,16 +671,19 @@ DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(
   }
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
+  const auto docs_count = static_cast<doc_id_t>(rdr.docs_count());
   if (itrs.size() == _min_match_count) {
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<NGramPosition>>>(
-      std::move(itrs), query_state->terms.size(), _min_match_count, true);
+      docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+      true);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<NGramPosition>>>(
-    std::move(itrs), query_state->terms.size(), _min_match_count, true);
+    docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+    true);
 }
 
 }  // namespace irs

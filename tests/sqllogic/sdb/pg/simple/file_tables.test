@@ -25,7 +25,7 @@ WITH (
 
 
 # all filters are supposed to be pushdowned — no FilterNode in the plan
-query ?
+query
 EXPLAIN (EXECUTION)
 SELECT *
 FROM
@@ -89,7 +89,7 @@ salary	fact
 salary 99 dallar	i do nothing and gain money
 
 
-query ??????
+query
 SELECT *
 FROM
   vedernikoff_company as v1,
@@ -99,21 +99,21 @@ WHERE v1.iq > 90 AND v2.iq > 90 AND v1.iq != 98;
 5400006 values hashing to 497bc5d96ddaa8438d0571265649bb89
 
 
-query ?
+query
 SELECT iq FROM vedernikoff_company WHERE iq = 7 AND salary = 'salary 7 dallar';
 ----
 iq
 7
 
 
-query ??
+query
 SELECT salary, iq FROM vedernikoff_company WHERE iq = 7 AND salary = 'salary 7 dallar';
 ----
 salary	iq
 salary 7 dallar	7
 
 
-query ?
+query
 SELECT salary FROM vedernikoff_company WHERE iq = 42 AND salary = 'salary 42 dallar';
 ----
 salary
@@ -197,7 +197,7 @@ count
 9900
 
 
-query ?
+query
 SELECT DISTINCT iq FROM vedernikoff_company WHERE iq > 95 ORDER BY iq;
 ----
 iq
@@ -208,7 +208,7 @@ iq
 100
 
 
-query ?
+query
 SELECT DISTINCT iq FROM vedernikoff_company WHERE iq < 5 ORDER BY iq;
 ----
 iq
@@ -440,7 +440,7 @@ count
 1
 
 
-query ??
+query
 SELECT id, name FROM nullable_data WHERE id IS NULL ORDER BY name;
 ----
 id	name
@@ -451,7 +451,7 @@ NULL	val_9
 NULL	NULL
 
 
-query ??
+query
 SELECT id, name FROM nullable_data WHERE name IS NULL ORDER BY id;
 ----
 id	name
@@ -460,7 +460,7 @@ id	name
 NULL	NULL
 
 
-query ??
+query
 SELECT id, name FROM nullable_data WHERE id IS NOT NULL AND name IS NOT NULL ORDER BY id;
 ----
 id	name
@@ -474,7 +474,7 @@ id	name
 14	val_14
 
 
-query ??
+query
 SELECT id, name FROM nullable_data WHERE id > 10 AND name IS NOT NULL ORDER BY id;
 ----
 id	name
@@ -507,7 +507,7 @@ WITH (
 
 
 # all filters are supposed to be pushdowned — no FilterNode in the plan
-query ?
+query
 EXPLAIN (EXECUTION)
 SELECT *
 FROM
@@ -647,7 +647,7 @@ count
 9900
 
 
-query ?
+query
 SELECT DISTINCT iq FROM malandin_company WHERE iq > 95 ORDER BY iq;
 ----
 iq
@@ -658,7 +658,7 @@ iq
 100
 
 
-query ?
+query
 SELECT DISTINCT iq FROM malandin_company WHERE iq < 5 ORDER BY iq;
 ----
 iq
@@ -890,7 +890,7 @@ count
 1
 
 
-query ??
+query
 SELECT id, name FROM clickclack WHERE id IS NULL ORDER BY name;
 ----
 id	name
@@ -901,7 +901,7 @@ NULL	val_9
 NULL	NULL
 
 
-query ??
+query
 SELECT id, name FROM clickclack WHERE name IS NULL ORDER BY id;
 ----
 id	name
@@ -910,7 +910,7 @@ id	name
 NULL	NULL
 
 
-query ??
+query
 SELECT id, name FROM clickclack WHERE id IS NOT NULL AND name IS NOT NULL ORDER BY id;
 ----
 id	name
@@ -935,7 +935,7 @@ Fragment 0:  numWorkers=0:
   -- TableScan[0][File(text), [(name, Filter(IsNotNull, deterministic, no nulls)), (id, BigintRange: [11, 9223372036854775807] no nulls)]] -> "id":BIGINT, "name":VARCHAR
 
 
-query ??
+query
 SELECT id, name FROM clickclack WHERE id > 10 AND name IS NOT NULL ORDER BY id;
 ----
 id	name
@@ -956,7 +956,7 @@ Fragment 0:  numWorkers=0:
     -- TableScan[0][File(text), [(name, Filter(IsNotNull, deterministic, no nulls)), (id, BigintRange: [11, 9223372036854775807] no nulls)]] -> "name":VARCHAR
 
 
-query ?
+query
 SELECT name FROM clickclack WHERE id > 10 AND name IS NOT NULL ORDER BY name;
 ----
 name
@@ -1037,3 +1037,54 @@ WITH (
 );
 ----
 db error: ERROR: generated columns are not supported for external tables
+
+
+statement error
+CREATE TABLE babsky(
+  iq INT8,
+  salary TEXT
+) USING EXTERNAL
+WITH (
+  HELP
+);
+----
+db error: ERROR: 
+External:
+  path (string) - Path to external file (required)
+
+Storage:
+  Common:
+    storage (enum) [default: Local, values: Local, S3] - Storage backend
+  S3:
+    Authentication:
+      s3_access_key (string) - AWS access key ID (used with s3_secret_key)
+      s3_secret_key (string) - AWS secret access key (used with s3_access_key)
+      s3_iam_role (string) - IAM role ARN (instead of access/secret keys)
+      s3_use_instance_credentials (boolean) [default: false] - Use EC2 instance credentials
+    Connection:
+      s3_endpoint (string) - S3-compatible endpoint URL
+      s3_region (string) - AWS region
+      s3_path_style_access (boolean) [default: true] - Use path-style S3 URLs
+      s3_ssl_enabled (boolean) [default: false] - Enable SSL for S3 connections
+  Local:
+    (no additional options)
+
+Format:
+  Common:
+    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+  Text:
+    delimiter (character) [default: \t] - Column delimiter character
+    escape (character) [default: \\] - Escape character
+    null (string) [default: \N] - String representing NULL
+    header (boolean) [default: false] - First line is a header row
+  CSV:
+    delimiter (character) [default: ,] - Column delimiter character
+    escape (character) [default: "] - Escape character
+    null (string) - String representing NULL
+    header (boolean) [default: false] - First line is a header row
+  Parquet:
+    (no additional options)
+  DWRF:
+    (no additional options)
+  ORC:
+    (no additional options)

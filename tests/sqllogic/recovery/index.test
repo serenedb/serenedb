@@ -9,7 +9,7 @@ statement ok
 CREATE INDEX index_t ON t USING inverted(r);
 
 
-query ok
+query
 select c.relname as table_name, (select relname from pg_class where pg_class.oid = i.indexrelid) as index_name from pg_class as c join pg_index as i on c.oid = i.indrelid and c.relkind = 'r';
 ----
 table_name	index_name
@@ -34,7 +34,7 @@ t	index_t
 
 connection new1
 statement ok
-SET sdb_fault_crash_on_index_drop TO DEFAULT;
+SET sdb_fault_crash_on_drop TO DEFAULT;
 
 
 connection new1

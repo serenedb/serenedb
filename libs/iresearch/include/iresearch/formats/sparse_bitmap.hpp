@@ -157,13 +157,6 @@ class SparseBitmapWriter {
   SparseBitmapWriterOptions _opts;
 };
 
-// Denotes a position of a value associated with a document.
-struct ValueIndex : DocAttr {
-  static constexpr std::string_view type_name() noexcept {
-    return "value_index";
-  }
-};
-
 class SparseBitmapIterator : public ResettableDocIterator {
   static void Noop(IndexInput* /*in*/) noexcept {}
   static void Delete(IndexInput* in) noexcept { delete in; }
@@ -206,10 +199,6 @@ class SparseBitmapIterator : public ResettableDocIterator {
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
-  }
-
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t advance() final { return seek(value() + 1); }
@@ -259,7 +248,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     };
   };
 
-  using Attributes = std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr>;
+  using Attributes = std::tuple<ValueIndex, PrevDocAttr, CostAttr>;
 
   explicit SparseBitmapIterator(Ptr&& in, const Options& opts);
 

@@ -21,6 +21,7 @@
 
 #include "server_feature.h"
 
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -130,7 +131,9 @@ void ServerFeature::start() {
   });
 }
 
-void ServerFeature::beginShutdown() { _is_stopping = true; }
+void ServerFeature::beginShutdown() {
+  _is_stopping.store(true, std::memory_order_release);
+}
 
 void ServerFeature::waitForHeartbeat() {
   if (!ServerState::instance()->IsCoordinator()) {

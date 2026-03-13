@@ -32,13 +32,13 @@ namespace {
 template<NormEncoding Encoding>
 class BufferedNormReader : public NormReader {
  public:
-  explicit BufferedNormReader(uint64_t sum,
+  explicit BufferedNormReader(uint64_t sum, uint64_t non_zero_count,
                               std::span<const BufferedValue> values,
                               bytes_view data) noexcept
-    : _sum{sum}, _it{values, data} {}
+    : _sum{sum}, _non_zero_count{non_zero_count}, _it{values, data} {}
 
   void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
-    GetImpl(docs, values);
+    GetBlockImpl(docs, values);
   }
 
   uint32_t Get(doc_id_t doc) final {
@@ -50,12 +50,29 @@ class BufferedNormReader : public NormReader {
     return Norm::Read<Encoding>(payload);
   }
 
+  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                       std::span<uint32_t, kPostingBlock> values) final {
+    GetBlockImpl(docs, values);
+  }
+
   score_t GetAvg() const noexcept final {
-    return static_cast<double>(_sum) / _it.Size();
+    // If non-zero count is equal to zero this won't be really used
+    return static_cast<double>(_sum) / static_cast<double>(_non_zero_count);
   }
 
  private:
+  template<size_t N>
+  void GetBlockImpl(std::span<const doc_id_t, N> docs,
+                    std::span<uint32_t, N> values) {
+    SDB_ASSERT(docs.size() <= values.size());
+    const auto size = docs.size();
+    for (size_t i = 0; i < size; ++i) {
+      values[i] = Get(docs[i]);
+    }
+  }
+
   uint64_t _sum;
+  uint64_t _non_zero_count;
   BufferedColumnIterator _it;
 };
 
@@ -67,6 +84,7 @@ void NormHeader::Write(const NormHeader& hdr, DataOutput& out) {
   out.WriteByte(static_cast<byte_type>(hdr._encoding));
   out.WriteU32(hdr._max);
   out.WriteU64(hdr._sum);
+  out.WriteU64(hdr._non_zero_count);
 }
 
 std::optional<NormHeader> NormHeader::Read(bytes_view payload) noexcept {
@@ -98,6 +116,7 @@ std::optional<NormHeader> NormHeader::Read(bytes_view payload) noexcept {
   NormHeader hdr{NormEncoding{num_bytes}};
   hdr._max = irs::read<decltype(_max)>(p);
   hdr._sum = irs::read<decltype(_sum)>(p);
+  hdr._non_zero_count = irs::read<decltype(_non_zero_count)>(p);
 
   return hdr;
 }
@@ -134,8 +153,8 @@ NormReader::ptr MakeNormReader(bytes_view payload,
   }
   return ResolveNormEncoding(
     header->Encoding(), [&]<NormEncoding Encoding> -> NormReader::ptr {
-      return memory::make_managed<BufferedNormReader<Encoding>>(header->Sum(),
-                                                                values, data);
+      return memory::make_managed<BufferedNormReader<Encoding>>(
+        header->Sum(), header->NonZeroCount(), values, data);
     });
 }
 

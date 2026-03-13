@@ -192,10 +192,20 @@ db error: ERROR: column "iamdegenereted" is a generated column
 DETAIL: Generated columns cannot be used in COPY.
 
 
+onlyif serenedb
 statement error
 COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (LABUDABUDABDAB rick);
 ----
 db error: ERROR: option "labudabudabdab" not recognized
+HINT: Use WITH (HELP) to see available options
+
+
+onlyif serenedb
+statement error
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (HELL true);
+----
+db error: ERROR: option "hell" not recognized, did you mean "help"?
+HINT: Use WITH (HELP) to see available options
 
 
 statement count 100000
@@ -260,10 +270,12 @@ COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJEC
 db error: ERROR: REJECT_LIMIT (-1) must be greater than zero
 
 
+onlyif serenedb
 statement error
 COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR labudadadab);
 ----
 db error: ERROR: COPY ON_ERROR "labudadadab" not recognized
+HINT: Allowed values: STOP, IGNORE
 
 
 statement count 10
@@ -399,13 +411,75 @@ imarelav,9
 imarelav,10
 
 
+onlyif serenedb
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
 ----
-db error: ERROR: COPY format "1" not recognized
+db error: ERROR: COPY FORMAT "1" not recognized
+HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC
 
 
+onlyif serenedb
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
 ----
 db error: ERROR: COPY LOG_VERBOSITY "228.228" not recognized
+HINT: Allowed values: SILENT, DEFAULT, VERBOSE
+
+
+onlyif serenedb
+statement error
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.parquet' WITH (FORMAT PARQUET, DELIMITER ',');
+----
+db error: ERROR: option "delimiter" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+onlyif serenedb
+statement error
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
+----
+db error: ERROR: 
+Storage:
+  Common:
+    storage (enum) [default: Local, values: Local, S3] - Storage backend
+  S3:
+    Authentication:
+      s3_access_key (string) - AWS access key ID (used with s3_secret_key)
+      s3_secret_key (string) - AWS secret access key (used with s3_access_key)
+      s3_iam_role (string) - IAM role ARN (instead of access/secret keys)
+      s3_use_instance_credentials (boolean) [default: false] - Use EC2 instance credentials
+    Connection:
+      s3_endpoint (string) - S3-compatible endpoint URL
+      s3_region (string) - AWS region
+      s3_path_style_access (boolean) [default: true] - Use path-style S3 URLs
+      s3_ssl_enabled (boolean) [default: false] - Enable SSL for S3 connections
+  Local:
+    (no additional options)
+
+Format:
+  Common:
+    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+    progress (boolean) [default: false] - Show progress notices during COPY
+  Text:
+    delimiter (character) [default: \t] - Column delimiter character
+    escape (character) [default: \\] - Escape character
+    null (string) [default: \N] - String representing NULL
+    header (boolean) [default: false] - First line is a header row
+    on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
+    reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
+    log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
+  CSV:
+    delimiter (character) [default: ,] - Column delimiter character
+    escape (character) [default: "] - Escape character
+    null (string) - String representing NULL
+    header (boolean) [default: false] - First line is a header row
+    on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
+    reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
+    log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
+  Parquet:
+    (no additional options)
+  DWRF:
+    (no additional options)
+  ORC:
+    (no additional options)

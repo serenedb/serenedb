@@ -41,6 +41,8 @@ enum class ObjectType : uint8_t {
   Schema,
   Database,
   Virtual,
+  TableShard,
+  IndexShard,
 };
 
 // https://www.postgresql.org/docs/current/sql-grant.html
@@ -166,6 +168,13 @@ class SchemaObject : public DatabaseObject {
   // TODO(gnusi): remove it after schema management is done
   void SetSchemaId(ObjectId schema_id) noexcept { _schema_id = schema_id; }
 
+  bool Tombstoned() const noexcept {
+    return _tombstoned.load(std::memory_order_acquire);
+  }
+  void SetTombstoned(bool v) noexcept {
+    _tombstoned.store(v, std::memory_order_release);
+  }
+
  protected:
   SchemaObject(ObjectId owner_id, ObjectId database_id, ObjectId schema_id,
                ObjectId id, std::string_view name, ObjectType type)
@@ -174,6 +183,7 @@ class SchemaObject : public DatabaseObject {
 
  private:
   ObjectId _schema_id;
+  std::atomic_bool _tombstoned = false;
 };
 
 struct ObjectMeta {

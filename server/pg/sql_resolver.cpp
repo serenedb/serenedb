@@ -27,8 +27,16 @@
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/virtual_table.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
@@ -186,13 +194,14 @@ void ResolveRelation(ObjectId database,
   ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
                             data, config);
 
-  if (!data.object) {
-    SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
-              name.FullName(), "\" does not exist");
+  if (!data.object || data.object->Tombstoned()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", name.FullName(), "\" does not exist"));
   }
 
   if (data.object->GetType() == catalog::ObjectType::Table) {
-    auto table = basics::downCast<catalog::Table>(*data.object);
+    auto& table = basics::downCast<catalog::Table>(*data.object);
     for (const auto& column : table.Columns()) {
       if (const auto& default_value = column.expr) {
         const auto& default_value_objects = default_value->GetObjects();

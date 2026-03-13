@@ -37,7 +37,7 @@
 #include "pg/functions/extract.h"
 #include "pg/functions/interval.h"
 #include "pg/functions/json.h"
-#include "pg/functions/search.hpp"
+#include "pg/functions/size.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -528,6 +528,13 @@ struct PgErrorFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/,
+    const arg_type<velox::Varchar>& errmsg) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_RAISE_EXCEPTION),
+                    ERR_MSG(std::string_view{errmsg}));
+  }
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
     const arg_type<int32_t>& cursorpos,
     const arg_type<velox::Varchar>& errmsg) {
@@ -623,6 +630,9 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgJsonOutFunction, velox::Varchar, velox::Json>(
     {prefix + "jsonout"});
 
+  // pg_error(message)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, velox::Varchar>(
+    {prefix + "error"});
   // pg_error(errcode, cursorpos, message)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
                           int32_t, velox::Varchar>({prefix + "error"});
@@ -634,6 +644,13 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
                           int32_t, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "error"});
+
+  velox::registerFunction<PgDatabaseSize, int64_t, velox::Varchar>(
+    {prefix + "database_size"});
+  velox::registerFunction<PgSchemaSize, int64_t, velox::Varchar>(
+    {prefix + "schema_size"});
+  velox::registerFunction<PgTableSize, int64_t, velox::Varchar>(
+    {prefix + "table_size"});
   registerExtractFunctions(prefix);
   registerSearchFunctions(prefix);
 }

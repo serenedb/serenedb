@@ -108,6 +108,7 @@
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
+#include "search/functions.hpp"
 #include "vpack/serializer.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -289,6 +290,7 @@ constexpr auto kMapping =
     {"tan", {"presto_tan", false}},
     {"trunc", {"presto_truncate", false}},
     {"width_bucket", {"presto_width_bucket", false}},
+    {"fail", {"pg_error", false}},
     // Date/Time functions
     {"date_trunc", {"presto_date_trunc", false}},
     {"extract", {"pg_extract", false}},
@@ -412,8 +414,24 @@ constexpr auto kMapping =
     {"json_extract_path_text",
      {"pg_json_extract_path_text", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"pg_schema_size",
+     {"pg_schema_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"pg_database_size",
+     {"pg_database_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"pg_table_size",
+     {"pg_table_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
     // Search functions
-    {"phrase", {"pg_phrase", false}},
+    {"phrase", {search::functions::kPhrase, false}},
+    {"term_eq", {search::functions::kTermEq, false}},
+    {"term_lt", {search::functions::kTermLt, false}},
+    {"term_lte", {search::functions::kTermLe, false}},
+    {"term_gte", {search::functions::kTermGe, false}},
+    {"term_gt", {search::functions::kTermGt, false}},
+    {"term_in", {search::functions::kTermIn, false}},
+    {"term_like", {search::functions::kTermLike, false}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {

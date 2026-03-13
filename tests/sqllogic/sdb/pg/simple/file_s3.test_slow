@@ -1,0 +1,353 @@
+control substitution on
+
+# Requires MinIO running
+
+statement ok
+CREATE TABLE clickclack
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+INSERT INTO clickclack VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky'), (4, 'pudge'), (5, 'mom');
+
+
+statement count 5
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.csv'
+WITH (
+  FORMAT csv,
+  HEADER true,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+statement ok
+CREATE TABLE s3_csv_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY s3_csv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.csv'
+WITH (
+  FORMAT csv,
+  HEADER true,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+query
+SELECT *
+FROM s3_csv_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+statement count 5
+DELETE FROM s3_csv_vedernikoff;
+
+
+statement count 3
+COPY s3_csv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.csv'
+WITH (
+  FORMAT csv,
+  HEADER true,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+)
+WHERE id != 2 AND id != 4;
+
+
+query
+SELECT *
+FROM s3_csv_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+3	babsky
+5	mom
+
+
+statement count 5
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.tsv'
+WITH (
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+statement ok
+CREATE TABLE s3_tsv_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY s3_tsv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.tsv'
+WITH (
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+query
+SELECT *
+FROM s3_tsv_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+statement count 5
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.parquet'
+WITH (
+  FORMAT parquet,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+statement ok
+CREATE TABLE s3_parquet_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY s3_parquet_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.parquet'
+WITH (
+  FORMAT parquet,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+query
+SELECT *
+FROM s3_parquet_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+statement count 5
+COPY clickclack TO '/tmp/${__DATABASE__}_local_clickclack.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+
+statement ok
+CREATE TABLE local_csv_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY local_csv_vedernikoff FROM '/tmp/${__DATABASE__}_local_clickclack.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+
+statement count 5
+COPY clickclack TO '/tmp/${__DATABASE__}_local_clickclack.parquet' WITH (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE local_parquet_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY local_parquet_vedernikoff FROM '/tmp/${__DATABASE__}_local_clickclack.parquet' WITH (FORMAT PARQUET);
+
+
+query
+SELECT
+  lc.name as csv_local,
+  lp.name as parquet_local,
+  sc.name as csv_s3,
+  sp.name as parquet_s3
+FROM
+  local_csv_vedernikoff lc
+  JOIN local_parquet_vedernikoff lp ON lc.id = lp.id
+  JOIN s3_csv_vedernikoff sc ON lc.id = sc.id
+  JOIN s3_parquet_vedernikoff sp ON lc.id = sp.id
+ORDER BY lc.id;
+----
+csv_local	parquet_local	csv_s3	parquet_s3
+vedernikoff	vedernikoff	vedernikoff	vedernikoff
+babsky	babsky	babsky	babsky
+mom	mom	mom	mom
+
+
+query
+SELECT
+  lc.id,
+  lc.name
+FROM
+  local_csv_vedernikoff lc
+  JOIN s3_parquet_vedernikoff sp ON lc.id = sp.id
+WHERE lc.name = sp.name
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+query
+SELECT count(*)
+FROM
+  local_csv_vedernikoff lc
+  JOIN local_parquet_vedernikoff lp ON lc.id = lp.id
+  JOIN s3_csv_vedernikoff sc ON lc.id = sc.id
+  JOIN s3_parquet_vedernikoff sp ON lc.id = sp.id
+WHERE lc.name = lp.name
+  AND lp.name = sc.name
+  AND sc.name = sp.name;
+----
+count
+3
+
+
+query
+SELECT
+  sp.name,
+  lc.name
+FROM
+  s3_parquet_vedernikoff sp
+  FULL OUTER JOIN local_csv_vedernikoff lc ON sp.id = lc.id
+ORDER BY sp.id;
+----
+name	name
+vedernikoff	vedernikoff
+pavelvi	pavelvi
+babsky	babsky
+pudge	pudge
+mom	mom
+
+
+statement count 100000
+COPY
+(
+  SELECT *
+  FROM
+    generate_series(1, 100) as iq,
+    generate_series(1, 1000) as pencil_size
+) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_babsky_company.csv'
+WITH (
+  FORMAT csv,
+  HEADER true,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+statement ok
+CREATE TABLE babsky_company
+(
+  iq BIGINT,
+  pencil_size BIGINT
+);
+
+
+statement count 100000
+COPY babsky_company FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_babsky_company.csv'
+WITH (
+  FORMAT csv,
+  HEADER true,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+
+
+query
+SELECT count(*)
+FROM babsky_company;
+----
+count
+100000
+
+
+query
+SELECT count(*)
+FROM babsky_company
+WHERE iq > 90;
+----
+count
+10000
+
+
+statement error
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
+WITH (
+  FORMAT csv,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_IAM_ROLE 'arn:aws:iam::123456789012:role/test',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+----
+db error: ERROR: s3_access_key/s3_secret_key and s3_iam_role cannot be specified together
+
+
+statement error
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
+WITH (
+  FORMAT csv,
+  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+----
+db error: ERROR: s3_access_key and s3_secret_key must be specified together
+
+
+statement error
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
+WITH (
+  FORMAT csv,
+  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
+  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
+);
+----
+db error: ERROR: s3_access_key and s3_secret_key must be specified together

@@ -509,7 +509,7 @@ SHOW default_transaction_isolation;
 default_transaction_isolation
 repeatable read
 
-# 20. SET invalid isolation level 
+# 20. SET invalid isolation level
 statement error
 SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ABOBA;
 ----

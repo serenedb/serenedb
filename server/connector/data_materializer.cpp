@@ -26,6 +26,7 @@
 #include "key_utils.hpp"
 #include "primary_key.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
@@ -125,7 +126,7 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
     _multiget_buffer_allocator{&_memory_pool} {
   SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
              "Only one data source should be specified");
-  _read_options.async_io = true;
+  _read_options.async_io = IsIOUringEnabled();
   _read_options.snapshot = snapshot;
   _read_options.verify_checksums = false;
   _upper_bound_keys_data.reserve((sizeof(catalog::Column::Id) + sizeof(ObjectId)) * _column_ids.size());

@@ -23,13 +23,13 @@
 
 #include "merge_writer.hpp"
 
-#include <iresearch/index/norm.hpp>
 #include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/small_vector.h"
 #include "basics/down_cast.h"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/utils/string.hpp"
 
 #if defined(SDB_DEV) && !defined(__clang__)
@@ -142,36 +142,33 @@ class RemappingDocIterator : public DocIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<DocAttr>::id() == type ? &_doc : _it->GetMutable(type);
+    return _it->GetMutable(type);
   }
-
-  doc_id_t value() const noexcept final { return _doc.value; }
 
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
     SDB_ASSERT(false);
-    return _doc.value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
  private:
   DocIterator::ptr _it;
   const DocMapF* _mapper;
-  irs::DocAttr _doc;
 };
 
 doc_id_t RemappingDocIterator::advance() {
   while (true) {
     const auto it_value = _it->advance();
     if (doc_limits::eof(it_value)) {
-      return _doc.value = doc_limits::eof();
+      return _doc = doc_limits::eof();
     }
 
-    _doc.value = (*_mapper)(it_value);
-    if (doc_limits::eof(_doc.value)) {
+    _doc = (*_mapper)(it_value);
+    if (doc_limits::eof(_doc)) {
       continue;  // masked doc_id
     }
-    return _doc.value;
+    return _doc;
   }
 }
 
@@ -194,7 +191,7 @@ class CompoundDocIterator : public DocIterator {
       return false;
     }
 
-    _doc.value = doc_limits::invalid();
+    _doc = doc_limits::invalid();
     _current_itr = 0;
 
     return true;
@@ -205,21 +202,15 @@ class CompoundDocIterator : public DocIterator {
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (irs::Type<DocAttr>::id() == type) {
-      return &_doc;
-    }
-
     return irs::Type<AttrProviderChangeAttr>::id() == type ? &_attribute_change
                                                            : nullptr;
   }
-
-  doc_id_t value() const noexcept final { return _doc.value; }
 
   doc_id_t advance() final;
 
   doc_id_t seek(doc_id_t target) final {
     SDB_ASSERT(false);
-    return _doc.value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
  private:
@@ -229,7 +220,6 @@ class CompoundDocIterator : public DocIterator {
   std::vector<DocIteratorT> _iterators;
   size_t _current_itr{0};
   ProgressTracker _progress;
-  DocAttr _doc;
 };
 
 doc_id_t CompoundDocIterator::advance() {
@@ -237,11 +227,11 @@ doc_id_t CompoundDocIterator::advance() {
 
   if (Aborted()) {
     _iterators.clear();
-    return _doc.value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
-  for (bool notify = !doc_limits::valid(_doc.value);
-       _current_itr < _iterators.size(); notify = true, ++_current_itr) {
+  for (bool notify = !doc_limits::valid(_doc); _current_itr < _iterators.size();
+       notify = true, ++_current_itr) {
     auto& it_entry = _iterators[_current_itr];
     auto& it = it_entry.first;
     auto& id_map = it_entry.second.get();
@@ -260,17 +250,17 @@ doc_id_t CompoundDocIterator::advance() {
         break;
       }
 
-      _doc.value = id_map(it_value);
-      if (doc_limits::eof(_doc.value)) {
+      _doc = id_map(it_value);
+      if (doc_limits::eof(_doc)) {
         continue;  // masked doc_id
       }
-      return _doc.value;
+      return _doc;
     }
 
     it.reset();
   }
 
-  return _doc.value = doc_limits::eof();
+  return _doc = doc_limits::eof();
 }
 
 // Iterator over sorted doc_ids for a term over all readers
@@ -294,8 +284,6 @@ class SortingCompoundDocIterator : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _doc_it->GetMutable(type);
   }
-
-  doc_id_t value() const noexcept final { return _doc_it->value(); }
 
   doc_id_t advance() final;
 
@@ -335,10 +323,9 @@ class SortingCompoundDocIterator : public DocIterator {
 doc_id_t SortingCompoundDocIterator::advance() {
   _doc_it->_progress();
 
-  auto& current_id = _doc_it->_doc.value;
   if (_doc_it->Aborted()) {
     _doc_it->_iterators.clear();
-    return current_id = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
   while (_merge_it.Next()) {
@@ -352,13 +339,13 @@ doc_id_t SortingCompoundDocIterator::advance() {
       _lead = &new_lead;
     }
 
-    current_id = doc_map(it->value());
-    if (!doc_limits::eof(current_id)) {
-      return current_id;
+    _doc = doc_map(it->value());
+    if (!doc_limits::eof(_doc)) {
+      return _doc;
     }
   }
 
-  return current_id = doc_limits::eof();
+  return _doc = doc_limits::eof();
 }
 
 class DocIteratorContainer {
@@ -983,23 +970,16 @@ struct PrimarySortIteratorAdapter {
   explicit PrimarySortIteratorAdapter(DocIterator::ptr it,
                                       DocIterator::ptr live_docs) noexcept
     : it{std::move(it)},
-      doc{irs::get<DocAttr>(*this->it)},
       payload{irs::get<PayAttr>(*this->it)},
-      live_docs{std::move(live_docs)},
-      live_doc{this->live_docs ? irs::get<DocAttr>(*this->live_docs)
-                               : nullptr} {
+      live_docs{std::move(live_docs)} {
     SDB_ASSERT(Valid());
   }
 
-  [[nodiscard]] bool Valid() const noexcept {
-    return it && doc && payload && (!live_docs || live_doc);
-  }
+  [[nodiscard]] bool Valid() const noexcept { return it && payload; }
 
   DocIterator::ptr it;
-  const DocAttr* doc;
   const PayAttr* payload;
   DocIterator::ptr live_docs;
-  const DocAttr* live_doc;
   doc_id_t min{};
 };
 
@@ -1011,7 +991,7 @@ class MergeContext {
 
   // advance
   bool operator()(Value& value) const {
-    value.min = value.doc->value + 1;
+    value.min = value.it->value() + 1;
     return value.it->next();
   }
 
@@ -1201,7 +1181,7 @@ bool WriteColumns(Columnstore& cs, Iterator& columns,
                                          const irs::ColumnReader& column) {
       auto it = column.iterator(ColumnHint::Consolidation);
 
-      if (it && irs::get<DocAttr>(*it)) [[likely]] {
+      if (it) [[likely]] {
         count += column.size();
         itrs.emplace_back(std::move(it), doc_map);
       } else {
@@ -1311,17 +1291,8 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
 
         if (it) [[likely]] {
           hdrs.emplace_back(reader->payload());
-
-          if (irs::get<DocAttr>(*it)) [[likely]] {
-            count += reader->size();
-            itrs.emplace_back(std::move(it), doc_map);
-          } else {
-            SDB_ASSERT(false);
-            SDB_ERROR(
-              "xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to get document attribute from the iterator, skipping "
-              "it");
-          }
+          count += reader->size();
+          itrs.emplace_back(std::move(it), doc_map);
         }
       }
 
@@ -1747,9 +1718,9 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
     if (auto min = it.min; min < max) {
       if (it.live_docs) {
         auto& live_docs = *it.live_docs;
-        const auto* live_doc = it.live_doc;
-        for (live_docs.seek(min); live_doc->value < max; live_docs.next()) {
-          doc_id_map[live_doc->value] = next_id++;
+        for (live_docs.seek(min); it.live_docs->value() < max;
+             live_docs.next()) {
+          doc_id_map[it.live_docs->value()] = next_id++;
           if (!progress()) {
             return false;
           }
@@ -1773,7 +1744,7 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
     auto& it = columns_it.Lead();
     SDB_ASSERT(it.Valid());
 
-    const auto max = it.doc->value;
+    const auto max = it.it->value();
     const auto index = &it - itrs.data();
     auto& doc_id_map = _readers[index].doc_id_map;
 

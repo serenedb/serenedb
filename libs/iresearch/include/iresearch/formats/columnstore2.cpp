@@ -25,6 +25,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/overload.h>
 
+#include <limits>
 #include <utility>
 
 #include "basics/down_cast.h"
@@ -39,6 +40,8 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/compression.hpp"
 
@@ -190,7 +193,7 @@ class RangeColumnIterator : public ResettableDocIterator,
   // FIXME(gnusi):
   //  * don't expose payload for noop_value_reader?
   //  * don't expose prev_doc if not requested?
-  using Attributes = std::tuple<DocAttr, CostAttr, PrevDocAttr, PayAttr>;
+  using Attributes = std::tuple<CostAttr, PrevDocAttr, PayAttr>;
 
  public:
   template<typename... Args>
@@ -207,7 +210,7 @@ class RangeColumnIterator : public ResettableDocIterator,
       std::get<PrevDocAttr>(_attrs).reset(
         [](const void* ctx) noexcept {
           auto* self = static_cast<const RangeColumnIterator*>(ctx);
-          const auto value = self->value();
+          const auto value = self->DocIterator::value();
           const auto max_doc = self->_max_doc;
 
           if (self->_min_base < value && value <= max_doc) [[likely]] {
@@ -228,29 +231,25 @@ class RangeColumnIterator : public ResettableDocIterator,
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
     if (_min_doc <= _max_doc) {
       std::get<PayAttr>(_attrs).value = this->payload(_min_doc - _min_base);
-      return std::get<DocAttr>(_attrs).value = _min_doc++;
+      return _doc = _min_doc++;
     }
     std::get<PayAttr>(_attrs).value = {};
-    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t doc) final {
     if (_min_doc <= doc && doc <= _max_doc) [[likely]] {
-      std::get<DocAttr>(_attrs).value = doc;
+      _doc = doc;
       _min_doc = doc + 1;
       std::get<PayAttr>(_attrs).value = this->payload(doc - _min_base);
       return doc;
     }
 
     if (!doc_limits::valid(value())) {
-      std::get<DocAttr>(_attrs).value = _min_doc++;
+      _doc = _min_doc++;
       std::get<PayAttr>(_attrs).value = this->payload(value() - _min_base);
       return value();
     }
@@ -258,7 +257,7 @@ class RangeColumnIterator : public ResettableDocIterator,
     if (value() < doc) {
       _max_doc = doc_limits::invalid();
       _min_doc = doc_limits::eof();
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      _doc = doc_limits::eof();
       std::get<PayAttr>(_attrs).value = {};
       return doc_limits::eof();
     }
@@ -275,7 +274,7 @@ class RangeColumnIterator : public ResettableDocIterator,
     _min_doc = _min_base;
     _max_doc = _min_doc +
                static_cast<doc_id_t>(std::get<CostAttr>(_attrs).estimate() - 1);
-    std::get<DocAttr>(_attrs).value = doc_limits::invalid();
+    _doc = doc_limits::invalid();
   }
 
   bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
@@ -294,8 +293,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
  private:
   using PayloadReader = PayloadReaderImpl;
 
-  using Attributes = std::tuple<AttributePtr<DocAttr>, CostAttr,
-                                AttributePtr<PrevDocAttr>, PayAttr>;
+  using Attributes = std::tuple<CostAttr, AttributePtr<PrevDocAttr>, PayAttr>;
 
  public:
   template<typename... Args>
@@ -305,8 +303,6 @@ class BitmapColumnIterator : public ResettableDocIterator,
     : PayloadReader{std::forward<Args>(args)...},
       _bitmap{std::move(bitmap_in), opts, cost} {
     std::get<CostAttr>(_attrs).reset(cost);
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_bitmap);
     std::get<AttributePtr<PrevDocAttr>>(_attrs) =
       irs::GetMutable<PrevDocAttr>(&_bitmap);
   }
@@ -315,17 +311,13 @@ class BitmapColumnIterator : public ResettableDocIterator,
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
 
   doc_id_t advance() final {
     const auto doc = _bitmap.advance();
     std::get<PayAttr>(_attrs).value =
       doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
-    return doc;
+    return _doc = doc;
   }
 
   doc_id_t seek(doc_id_t doc) final {
@@ -334,7 +326,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
     doc = _bitmap.seek(doc);
     std::get<PayAttr>(_attrs).value =
       doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
-    return doc;
+    return _doc = doc;
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
@@ -391,10 +383,12 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
 
   SparseBitmapIterator::Options BitmapIteratorOptions(
     ColumnHint hint) const noexcept {
-    return {.version = ToSparseBitmapVersion(Header().props),
-            .track_prev_doc = TrackPrevDoc(hint),
-            .use_block_index = true,
-            .blocks = _index};
+    return {
+      .version = ToSparseBitmapVersion(Header().props),
+      .track_prev_doc = TrackPrevDoc(hint),
+      .use_block_index = true,
+      .blocks = _index,
+    };
   }
 
   const IndexInput& Stream() const noexcept {
@@ -520,6 +514,23 @@ class NormReaderImpl : public NormReader {
   explicit NormReaderImpl(Iterator&& it) noexcept : _it{std::move(it)} {}
 
   void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
+    GetBlockImpl(docs, values);
+  }
+
+  uint32_t Get(doc_id_t doc) final {
+    _it->reset();  // TODO(gnusi): remove this
+    return GetImpl(doc);
+  }
+
+  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                       std::span<uint32_t, kPostingBlock> values) final {
+    GetBlockImpl(docs, values);
+  }
+
+ private:
+  template<size_t N>
+  IRS_FORCE_INLINE void GetBlockImpl(std::span<const doc_id_t, N> docs,
+                                     std::span<uint32_t, N> values) {
     SDB_ASSERT(docs.size() <= values.size());
     SDB_ASSERT(absl::c_is_sorted(docs));
     _it->reset();  // TODO(gnusi): remove this
@@ -529,12 +540,6 @@ class NormReaderImpl : public NormReader {
     }
   }
 
-  uint32_t Get(doc_id_t doc) final {
-    _it->reset();  // TODO(gnusi): remove this
-    return GetImpl(doc);
-  }
-
- private:
   IRS_FORCE_INLINE uint32_t GetImpl(doc_id_t doc) {
     const auto r = _it->seek(doc);
     if (r != doc) [[unlikely]] {
@@ -574,15 +579,12 @@ class DirectFixedNormReader : public NormReader {
 
   void Get(std::span<const doc_id_t> docs,
            std::span<uint32_t> values) noexcept final {
-    SDB_ASSERT(docs.size() <= values.size());
-
-    const auto size = docs.size();
     const auto base = _doc_base;
     const auto* IRS_RESTRICT const origin = _origin;
     auto* IRS_RESTRICT const values_data = values.data();
     const auto* IRS_RESTRICT const docs_data = docs.data();
 
-    for (size_t i = 0; i < size; ++i) {
+    for (size_t i = 0; i < docs.size(); ++i) {
       values_data[i] = ReadValue(origin, docs_data[i] - base);
     }
   }
@@ -590,6 +592,36 @@ class DirectFixedNormReader : public NormReader {
   IRS_FORCE_INLINE uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= _doc_base);
     return ReadValue(_origin, doc - _doc_base);
+  }
+
+  void GetPostingBlock(
+    std::span<const doc_id_t, kPostingBlock> docs,
+    std::span<uint32_t, kPostingBlock> values) noexcept final {
+    static constexpr uint32_t kMask = [] -> uint32_t {
+      if constexpr (Encoding == NormEncoding::Byte) {
+        return std::numeric_limits<uint8_t>::max();
+      } else if constexpr (Encoding == NormEncoding::Short) {
+        return std::numeric_limits<uint16_t>::max();
+      } else {
+        return std::numeric_limits<uint32_t>::max();
+      }
+    }();
+    const auto base = _mm256_set1_epi32(_doc_base);
+    const auto mask = _mm256_set1_epi32(kMask);
+    const auto* IRS_RESTRICT docs_data = docs.data();
+    auto* IRS_RESTRICT values_data = values.data();
+    const auto* origin = _origin;
+
+    for (size_t i = 0; i < kPostingBlock; i += 8) {
+      auto indices =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs_data + i));
+      indices = _mm256_sub_epi32(indices, base);
+      auto gathered =
+        _mm256_i32gather_epi32(origin, indices, std::to_underlying(Encoding));
+      gathered = _mm256_and_si256(gathered, mask);
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(values_data + i),
+                          gathered);
+    }
   }
 
  private:
@@ -678,7 +710,8 @@ class ValueDirectReader {
   const byte_type* GetData() const noexcept { return _data; }
 
  protected:
-  explicit ValueDirectReader(const byte_type* data) noexcept : _data{data} {
+  explicit ValueDirectReader(const byte_type* data, uint64_t offset) noexcept
+    : _data{data + offset} {
     SDB_ASSERT(data);
   }
 
@@ -692,43 +725,49 @@ class ValueDirectReader {
 template<bool Resize>
 class ValueReader {
  protected:
-  ValueReader(IndexInput::ptr data_in, size_t size)
-    : buf_(size, 0), data_in_{std::move(data_in)} {}
+  ValueReader(IndexInput::ptr data_in, size_t size, uint64_t offset)
+    : _buf(size, 0), _data_in{std::move(data_in)}, _offset{offset} {}
 
   bytes_view value(uint64_t offset, size_t length) {
+    offset += _offset;
     if constexpr (Resize) {
-      buf_.resize(length);
+      _buf.resize(length);
     }
 
-    auto* buf = buf_.data();
+    auto* buf = _buf.data();
 
     [[maybe_unused]] const size_t read =
-      data_in_->ReadBytes(offset, buf, length);
+      _data_in->ReadBytes(offset, buf, length);
     SDB_ASSERT(read == length);
 
     return {buf, length};
   }
 
-  bstring buf_;
-  IndexInput::ptr data_in_;
+  bstring _buf;
+  IndexInput::ptr _data_in;
+  uint64_t _offset;
 };
 
 template<bool Resize>
 class EncryptedValueReader {
  protected:
-  EncryptedValueReader(IndexInput::ptr&& data_in, Encryption::Stream* cipher,
-                       size_t size)
-    : buf_(size, 0), data_in_{std::move(data_in)}, _cipher{cipher} {}
+  EncryptedValueReader(IndexInput::ptr data_in, Encryption::Stream* cipher,
+                       size_t size, uint64_t offset)
+    : _buf(size, 0),
+      _data_in{std::move(data_in)},
+      _cipher{cipher},
+      _offset{offset} {}
 
   bytes_view value(uint64_t offset, size_t length) {
+    offset += _offset;
     if constexpr (Resize) {
-      buf_.resize(length);
+      _buf.resize(length);
     }
 
-    auto* buf = buf_.data();
+    auto* buf = _buf.data();
 
     [[maybe_unused]] const size_t read =
-      data_in_->ReadBytes(offset, buf, length);
+      _data_in->ReadBytes(offset, buf, length);
     SDB_ASSERT(read == length);
 
     [[maybe_unused]] const bool ok = _cipher->Decrypt(offset, buf, length);
@@ -737,9 +776,10 @@ class EncryptedValueReader {
     return {buf, length};
   }
 
-  bstring buf_;
-  IndexInput::ptr data_in_;
+  bstring _buf;
+  IndexInput::ptr _data_in;
   Encryption::Stream* _cipher;
+  uint64_t _offset;
 };
 
 ResettableDocIterator::ptr MakeMaskIterator(const ColumnBase& column,
@@ -888,17 +928,16 @@ class DenseFixedLengthColumn : public ColumnBase {
    public:
     template<typename... Args>
     PayloadReader(uint64_t data, uint64_t len, Args&&... args)
-      : ValueReader{std::forward<Args>(args)...}, _data{data}, _len{len} {}
+      : ValueReader{std::forward<Args>(args)..., data}, _len{len} {}
 
     bytes_view payload(doc_id_t i) {
-      const auto offset = _data + _len * i;
+      const auto offset = _len * i;
 
       return ValueReader::value(offset, _len);
     }
 
    private:
-    uint64_t _data;  // where data starts
-    uint64_t _len;   // data entry length
+    uint64_t _len;  // data entry length
   };
 
   struct Factory {
@@ -1044,7 +1083,9 @@ class FixedLengthColumn : public ColumnBase {
    public:
     template<typename... Args>
     PayloadReader(const ColumnBlock* blocks, uint64_t len, Args&&... args)
-      : ValueReader{std::forward<Args>(args)...}, _blocks{blocks}, _len{len} {}
+      : ValueReader{std::forward<Args>(args)..., 0},
+        _blocks{blocks},
+        _len{len} {}
 
     bytes_view payload(doc_id_t i) {
       const auto block_idx = i / Column::kBlockSize;
@@ -1251,7 +1292,7 @@ class SparseColumn : public ColumnBase {
    public:
     template<typename... Args>
     PayloadReader(const ColumnBlock* blocks, Args&&... args)
-      : ValueReader{std::forward<Args>(args)...}, _blocks{blocks} {}
+      : ValueReader{std::forward<Args>(args)..., 0}, _blocks{blocks} {}
 
     bytes_view payload(doc_id_t i);
 
@@ -1400,9 +1441,9 @@ bytes_view SparseColumn::PayloadReader<ValueReader>::payload(doc_id_t i) {
   if constexpr (std::is_same_v<ValueReader, ValueDirectReader>) {
     addr_buf = this->_data + addr_offset;
   } else {
-    this->buf_.resize(block_size);
-    this->data_in_->ReadBytes(addr_offset, this->buf_.data(), block_size);
-    addr_buf = this->buf_.c_str();
+    this->_buf.resize(block_size);
+    this->_data_in->ReadBytes(addr_offset, this->_buf.data(), block_size);
+    addr_buf = this->_buf.c_str();
   }
   const uint64_t start_delta = sdb::ZigZagDecode64(packed::FastpackAt(
     reinterpret_cast<const uint64_t*>(addr_buf), value_index, block.bits));
@@ -1416,9 +1457,9 @@ bytes_view SparseColumn::PayloadReader<ValueReader>::payload(doc_id_t i) {
       if constexpr (std::is_same_v<ValueReader, ValueDirectReader>) {
         addr_buf += block_size;
       } else {
-        this->buf_.resize(block_size);
-        this->data_in_->ReadBytes(this->buf_.data(), block_size);
-        addr_buf = this->buf_.c_str();
+        this->_buf.resize(block_size);
+        this->_data_in->ReadBytes(this->_buf.data(), block_size);
+        addr_buf = this->_buf.c_str();
       }
     }
 

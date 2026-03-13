@@ -675,9 +675,9 @@ void PostingsWriterImpl<FormatTraits>::FlushTailDoc() {
   auto* doc = _doc.docs.data();
   const auto tail = std::distance(doc, _doc.doc.base());
   SDB_ASSERT(tail != 0);
-  FormatTraits::write_tail_delta(tail, *_doc_out, doc, _doc.block_last, _buf);
+  FormatTraits::WriteTailDelta(tail, *_doc_out, doc, _doc.block_last, _buf);
   if (_features.HasFrequency()) {
-    FormatTraits::write_tail(tail, *_doc_out, _doc.freqs.data(), _buf);
+    FormatTraits::WriteTail(tail, *_doc_out, _doc.freqs.data(), _buf);
   }
 }
 
@@ -690,7 +690,7 @@ void PostingsWriterImpl<FormatTraits>::FlushTailPos() {
 
   auto* pos_tail = _pos.buf.data() + _pos.size;
   std::fill_n(pos_tail, tail_size, pos_tail[-1]);
-  FormatTraits::write_block(*_pos_out, _pos.buf.data(), _buf);
+  FormatTraits::WriteBlock(*_pos_out, _pos.buf.data(), _buf);
 
   _pos.size = 0;
 }
@@ -704,11 +704,11 @@ void PostingsWriterImpl<FormatTraits>::FlushTailPay() {
 
   auto* offs_start_tail = _pay.offs_start_buf + _pay.size;
   std::fill_n(offs_start_tail, tail_size, offs_start_tail[-1]);
-  FormatTraits::write_block(*_pay_out, _pay.offs_start_buf, _buf);
+  FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _buf);
 
   auto* offs_len_tail = _pay.offs_len_buf + _pay.size;
   std::fill_n(offs_len_tail, tail_size, offs_len_tail[-1]);
-  FormatTraits::write_block(*_pay_out, _pay.offs_len_buf, _buf);
+  FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _buf);
 
   _pay.size = 0;
 }
@@ -742,10 +742,10 @@ void PostingsWriterImpl<FormatTraits>::BeginDocument() {
     _doc.Push(id, _attrs.freq_value.value);
 
     if (_doc.Full()) {
-      FormatTraits::write_block_delta(*_doc_out, _doc.docs.data(),
-                                      _doc.block_last, _buf);
+      FormatTraits::WriteBlockDelta(*_doc_out, _doc.docs.data(),
+                                    _doc.block_last, _buf);
       if (_features.HasFrequency()) {
-        FormatTraits::write_block(*_doc_out, _doc.freqs.data(), _buf);
+        FormatTraits::WriteBlock(*_doc_out, _doc.freqs.data(), _buf);
       }
     }
 
@@ -777,14 +777,14 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
 
   if (_pos.Full()) [[unlikely]] {
     SDB_ASSERT(_pos_out);
-    FormatTraits::write_block(*_pos_out, _pos.buf.data(), _buf);
+    FormatTraits::WriteBlock(*_pos_out, _pos.buf.data(), _buf);
     _pos.size = 0;
 
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
       SDB_ASSERT(_pay.size != 0);
-      FormatTraits::write_block(*_pay_out, _pay.offs_start_buf, _buf);
-      FormatTraits::write_block(*_pay_out, _pay.offs_len_buf, _buf);
+      FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _buf);
+      FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _buf);
       _pay.size = 0;
     }
   }
@@ -1121,18 +1121,18 @@ class PositionImpl final : public PosAttr {
   }
 
   void ReadBlock() {
-    IteratorTraits::read_block(*_pos_in, _enc_buf, _pos_deltas);
+    IteratorTraits::ReadBlock(*_pos_in, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::read_block(*_pay_in, _enc_buf, _offs_start_deltas);
-      IteratorTraits::read_block(*_pay_in, _enc_buf, _offs_lengths);
+      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_start_deltas);
+      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_lengths);
     }
   }
 
   void SkipBlock() {
-    IteratorTraits::skip_block(*_pos_in);
+    IteratorTraits::SkipBlock(*_pos_in);
     if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::skip_block(*_pay_in);
-      IteratorTraits::skip_block(*_pay_in);
+      IteratorTraits::SkipBlock(*_pay_in);
+      IteratorTraits::SkipBlock(*_pay_in);
     }
   }
 
@@ -1899,13 +1899,13 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
                          InputType>::ReadTail(doc_id_t prev_doc) {
   const auto tail = this->_left_in_list;
   SDB_ASSERT(tail < IteratorTraits::kBlockSize);
-  IteratorTraits::read_tail_delta(tail, GetDocIn(), this->_enc_buf, this->_docs,
-                                  prev_doc);
+  IteratorTraits::ReadTailDelta(tail, GetDocIn(), this->_enc_buf, this->_docs,
+                                prev_doc);
   this->_max_in_leaf = *(std::end(this->_docs) - 1);
   this->_left_in_leaf = tail;
   this->_left_in_list = 0;
   if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::read_tail(tail, GetDocIn(), this->_enc_buf, this->_freqs);
+    IteratorTraits::ReadTail(tail, GetDocIn(), this->_enc_buf, this->_freqs);
   }
 }
 
@@ -1913,15 +1913,15 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
          typename InputType>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
                          InputType>::ReadBlock(doc_id_t prev_doc) {
-  IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
-                                   prev_doc);
+  IteratorTraits::ReadBlockDelta(GetDocIn(), this->_enc_buf, this->_docs,
+                                 prev_doc);
   this->_max_in_leaf = *(std::end(this->_docs) - 1);
   this->_left_in_leaf = IteratorTraits::kBlockSize;
   this->_left_in_list -= IteratorTraits::kBlockSize;
   if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
+    IteratorTraits::ReadBlock(GetDocIn(), this->_enc_buf, this->_freqs);
   } else if constexpr (FieldTraits::Frequency()) {
-    IteratorTraits::skip_block(GetDocIn());
+    IteratorTraits::SkipBlock(GetDocIn());
   }
 }
 
@@ -3115,23 +3115,22 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
                         InputType>::ReadBlock(doc_id_t prev_doc) {
   if (const auto tail = _left_in_list; tail >= IteratorTraits::kBlockSize)
     [[likely]] {
-    IteratorTraits::read_block_delta(GetDocIn(), _enc_buf, _docs, prev_doc);
+    IteratorTraits::ReadBlockDelta(GetDocIn(), _enc_buf, _docs, prev_doc);
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = IteratorTraits::kBlockSize;
     _left_in_list -= IteratorTraits::kBlockSize;
     if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::read_block(GetDocIn(), _enc_buf, _freqs);
+      IteratorTraits::ReadBlock(GetDocIn(), _enc_buf, _freqs);
     } else if (FieldTraits::Frequency()) {
-      IteratorTraits::skip_block(GetDocIn());
+      IteratorTraits::SkipBlock(GetDocIn());
     }
   } else {
-    IteratorTraits::read_tail_delta(tail, GetDocIn(), _enc_buf, _docs,
-                                    prev_doc);
+    IteratorTraits::ReadTailDelta(tail, GetDocIn(), _enc_buf, _docs, prev_doc);
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = tail;
     _left_in_list = 0;
     if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::read_tail(tail, GetDocIn(), _enc_buf, _freqs);
+      IteratorTraits::ReadTail(tail, GetDocIn(), _enc_buf, _freqs);
     }
   }
 }
@@ -3207,9 +3206,9 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
 
   auto prev_doc = doc_limits::invalid();
   while (num_blocks--) {
-    FieldTraits::read_block_delta(doc_in, enc_buf, docs, prev_doc);
+    FieldTraits::ReadBlockDelta(doc_in, enc_buf, docs, prev_doc);
     if constexpr (FieldTraits::Frequency()) {
-      FieldTraits::skip_block(doc_in);
+      FieldTraits::SkipBlock(doc_in);
     }
 
     // FIXME optimize
@@ -3223,7 +3222,7 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   if (tail == 0) {
     return;
   }
-  FieldTraits::read_tail_delta(tail, doc_in, enc_buf, docs, prev_doc);
+  FieldTraits::ReadTailDelta(tail, doc_in, enc_buf, docs, prev_doc);
 
   // FIXME optimize
   for (const auto doc : std::span{std::end(docs) - tail, tail}) {
@@ -3554,16 +3553,15 @@ struct FormatTraits128 {
   // For bitset encoding.
   static_assert(kBlockSize % BitsRequired<uint64_t>() == 0);
 
-  IRS_FORCE_INLINE static void write_block_delta(BufferedOutput& out,
-                                                 uint32_t* in, uint32_t prev,
-                                                 uint32_t* buf) {
-    write_tail_delta(kBlockSize, out, in, prev, buf);
+  IRS_FORCE_INLINE static void WriteBlockDelta(BufferedOutput& out,
+                                               uint32_t* in, uint32_t prev,
+                                               uint32_t* buf) {
+    WriteTailDelta(kBlockSize, out, in, prev, buf);
   }
 
-  IRS_FORCE_INLINE static void write_tail_delta(uint32_t len,
-                                                BufferedOutput& out,
-                                                uint32_t* in, uint32_t prev,
-                                                uint32_t* buf) {
+  IRS_FORCE_INLINE static void WriteTailDelta(uint32_t len, BufferedOutput& out,
+                                              uint32_t* in, uint32_t prev,
+                                              uint32_t* buf) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= kBlockSize);
     SDB_ASSERT(std::is_sorted(in, in + len));
@@ -3748,13 +3746,13 @@ struct FormatTraits128 {
     }
   }
 
-  IRS_FORCE_INLINE static void write_block(BufferedOutput& out, uint32_t* in,
-                                           uint32_t* buf) {
-    write_tail(kBlockSize, out, in, buf);
+  IRS_FORCE_INLINE static void WriteBlock(BufferedOutput& out, uint32_t* in,
+                                          uint32_t* buf) {
+    WriteTail(kBlockSize, out, in, buf);
   }
 
-  IRS_FORCE_INLINE static void write_tail(uint32_t len, BufferedOutput& out,
-                                          uint32_t* in, uint32_t* buf) {
+  IRS_FORCE_INLINE static void WriteTail(uint32_t len, BufferedOutput& out,
+                                         uint32_t* in, uint32_t* buf) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= kBlockSize);
     byte_type best_encoding = e_values;
@@ -3886,15 +3884,15 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void read_block_delta(InputType& in, uint32_t* buf,
-                                                uint32_t* out, uint32_t prev) {
-    read_tail_delta(kBlockSize, in, buf, out, prev);
+  IRS_FORCE_INLINE static void ReadBlockDelta(InputType& in, uint32_t* buf,
+                                              uint32_t* out, uint32_t prev) {
+    ReadTailDelta(kBlockSize, in, buf, out, prev);
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void read_tail_delta(uint32_t len, InputType& in,
-                                               uint32_t* buf, uint32_t* out,
-                                               uint32_t prev) {
+  IRS_FORCE_INLINE static void ReadTailDelta(uint32_t len, InputType& in,
+                                             uint32_t* buf, uint32_t* out,
+                                             uint32_t prev) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= kBlockSize);
     const auto type = static_cast<DeltaEncoding>(in.ReadByte());
@@ -3991,14 +3989,14 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void read_block(InputType& in, uint32_t* buf,
-                                          uint32_t* out) {
-    read_tail(kBlockSize, in, buf, out);
+  IRS_FORCE_INLINE static void ReadBlock(InputType& in, uint32_t* buf,
+                                         uint32_t* out) {
+    ReadTail(kBlockSize, in, buf, out);
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void read_tail(uint32_t len, InputType& in,
-                                         uint32_t* buf, uint32_t* out) {
+  IRS_FORCE_INLINE static void ReadTail(uint32_t len, InputType& in,
+                                        uint32_t* buf, uint32_t* out) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= kBlockSize);
     const auto type = static_cast<Encoding>(in.ReadByte());
@@ -4068,12 +4066,12 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void skip_block(InputType& in) {
-    skip_tail(kBlockSize, in);
+  IRS_FORCE_INLINE static void SkipBlock(InputType& in) {
+    SkipTail(kBlockSize, in);
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void skip_tail(uint32_t tail, InputType& in) {
+  IRS_FORCE_INLINE static void SkipTail(uint32_t tail, InputType& in) {
     const auto type = static_cast<Encoding>(in.ReadByte());
     const auto size = Size(tail, type, in);
     in.Skip(size);

@@ -666,7 +666,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   } _pay_buf;
   struct {
     // Buffer for encoding (worst case)
-    uint32_t buf[FormatTraits::kEncBufSize];
+    uint32_t buf[FormatTraits::kBlockSize];
   } _encbuf;
   bool _volatile_attributes;
 };
@@ -1254,11 +1254,7 @@ class PostingIteratorBase : public DocIterator {
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
 
-  IRS_FORCE_INLINE auto* EncBufEnd() {
-    return std::begin(_enc_buf) + IteratorTraits::kBlockSize;
-  }
-
-  uint32_t _enc_buf[IteratorTraits::kEncBufSize];
+  uint32_t _enc_buf[IteratorTraits::kBlockSize];
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
     _collected_freqs;
   [[no_unique_address]] utils::Need<
@@ -1516,7 +1512,7 @@ const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
     if constexpr (IteratorTraits::Frequency()) {
       std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
     }
-    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - N);
+    auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - N);
     score.ScorePostingBlock(p);
     return p;
   } else {
@@ -1529,7 +1525,7 @@ const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
       const auto offset = docs.data() - std::data(_docs);
       std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
     }
-    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
+    auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - docs.size());
     score.Score(p, docs.size());
     return p;
   }
@@ -1914,7 +1910,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
     this->_left_in_list -= IteratorTraits::kBlockSize;
     if constexpr (IteratorTraits::Frequency()) {
       IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
-    } else if (FieldTraits::Frequency()) {
+    } else if constexpr (FieldTraits::Frequency()) {
       IteratorTraits::skip_block(GetDocIn());
     }
   } else {
@@ -2871,9 +2867,6 @@ class SingleWandIterator : public DocIterator {
 
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
   void PrepareSkipReader(uint64_t skip_offs, uint32_t docs_count);
-  IRS_FORCE_INLINE auto* EncBufEnd() {
-    return std::begin(_enc_buf) + IteratorTraits::kBlockSize;
-  }
 
   void SeekToBlock(doc_id_t target) {
     _skip.Reader().EnsureSorted();
@@ -2892,7 +2885,7 @@ class SingleWandIterator : public DocIterator {
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
 
-  uint32_t _enc_buf[IteratorTraits::kEncBufSize];
+  uint32_t _enc_buf[IteratorTraits::kBlockSize];
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
     _collected_freqs;
   [[no_unique_address]] utils::Need<
@@ -2923,7 +2916,7 @@ SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
     if constexpr (IteratorTraits::Frequency()) {
       std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
     }
-    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - N);
+    auto* p = reinterpret_cast<score_t*>(std::begin(_enc_buf));
     score.ScorePostingBlock(p);
     return p;
   } else {
@@ -2936,7 +2929,7 @@ SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
       const auto offset = docs.data() - std::data(_docs);
       std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
     }
-    auto* p = reinterpret_cast<score_t*>(EncBufEnd() - docs.size());
+    auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - docs.size());
     score.Score(p, docs.size());
     return p;
   }
@@ -3527,125 +3520,861 @@ template<typename IteratorTraits>
 struct Type<PositionImpl<IteratorTraits>> : Type<PosAttr> {};
 
 struct FormatTraits128 {
-  using AlignType = __m128i;
-
   // TODO(mbkkt) rename to "block_128"
   static constexpr std::string_view kName = "1_5simd";
 
-  static constexpr uint32_t kBlockSize = SIMDBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
+  static constexpr uint32_t kBlockSize = 128;
 
-  static constexpr auto kEncBufByteSize =
-    std::max(2 * streamvbyte_max_compressedbytes(kBlockSize - 1),
-             kBlockSize * sizeof(uint32_t));
-  static constexpr auto kEncBufSize =
-    (kEncBufByteSize + sizeof(uint32_t)) / sizeof(uint32_t);
+  static_assert(kBlockSize > 1);
+  static_assert(kBlockSize % BitsRequired<byte_type>() == 0);
+  // For bitset encoding.
+  static_assert(kBlockSize % BitsRequired<uint64_t>() == 0);
 
   IRS_FORCE_INLINE static void write_block_delta(BufferedOutput& out,
                                                  uint32_t* in, uint32_t prev,
                                                  uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32(
-      [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
-         uint32_t bits) IRS_FORCE_INLINE {
-        ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded),
-                              bits);
-      },
-      out, in, buf, kBlockSize);
+    write_tail_delta(kBlockSize, out, in, prev, buf);
   }
 
-  IRS_FORCE_INLINE static void write_tail_delta(uint32_t tail,
+  IRS_FORCE_INLINE static void write_tail_delta(uint32_t len,
                                                 BufferedOutput& out,
                                                 uint32_t* in, uint32_t prev,
                                                 uint32_t* buf) {
-    SDB_ASSERT(tail != 0);
-    SDB_ASSERT(tail < kBlockSize);
-    auto* encoded = reinterpret_cast<byte_type*>(buf);
-    const uint16_t size = streamvbyte_delta_encode(in, tail, encoded, prev);
-    out.WriteU16(size);
-    out.WriteBytes(encoded, size);
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= kBlockSize);
+    SDB_ASSERT(std::is_sorted(in, in + len));
+    SDB_ASSERT(std::adjacent_find(in, in + len) == in + len);
+    SDB_ASSERT(prev < in[0]);
+    byte_type best_encoding = de_values;
+    uint32_t best_size = len * sizeof(uint32_t);
+
+    bool all_same = true;
+
+    const uint32_t max = in[len - 1];
+
+    const uint32_t for_base = prev;
+    const uint32_t for_max = max - for_base;
+    SDB_ASSERT(for_max != 0);
+
+    uint32_t delta_prev = prev;
+    uint32_t delta_max = in[0] - delta_prev;
+    SDB_ASSERT(delta_max != 0);
+
+    [&] IRS_FORCE_INLINE {
+      const uint32_t streamvbyte_groups = (len + 3) / 4;
+      uint32_t size_streamvbyte1234 = 2 + streamvbyte_groups;
+      // uint32_t size_for_streamvbyte1234 = size_streamvbyte1234;
+      uint32_t size_delta_streamvbyte1234 = size_streamvbyte1234;
+
+      for (uint32_t i = 0; i != len; ++i) {
+        const auto value = in[i];
+        SDB_ASSERT(value != 0);
+        // const auto for_value = value - for_base;
+        // SDB_ASSERT(for_value != 0);
+        const auto delta_value = value - std::exchange(delta_prev, value);
+        SDB_ASSERT(delta_value != 0);
+
+        all_same &= delta_max == delta_value;
+
+        delta_max = std::max(delta_max, delta_value);
+
+        size_streamvbyte1234 += ByteSize1234(value);
+        // size_for_streamvbyte1234 += ByteSize1234(for_value);
+        size_delta_streamvbyte1234 += ByteSize1234(delta_value);
+      }
+
+      if (all_same) {
+        switch (ByteSize0124(delta_max)) {
+          case 1:
+            best_encoding = de_delta_all_same_08;
+            best_size = 1;
+            return;
+          case 2:
+            best_encoding = de_delta_all_same_16;
+            best_size = 2;
+            return;
+          case 4:
+            best_encoding = de_delta_all_same_32;
+            best_size = 4;
+            return;
+          default:
+            SDB_UNREACHABLE();
+        }
+      }
+
+      if (SupportIfBlock(len)) {
+        const auto bits = std::bit_width(delta_max);
+        SDB_ASSERT(bits >= 2);
+        const auto size = FromBits<byte_type>(kBlockSize * bits);
+        if (size < best_size) {
+          SDB_ASSERT(bits <= 31);
+          best_encoding = de_delta_bitpack_02 + (bits - 2);
+          best_size = size;
+        }
+      }
+
+      if (SupportIfTail(len) && size_streamvbyte1234 < best_size) {
+        best_encoding = de_streamvbyte1234;
+        best_size = size_streamvbyte1234;
+      }
+      // if (SupportForTail(len) && size_for_streamvbyte1234 < best_size) {
+      //   best_encoding = de_for_streamvbyte1234;
+      //   best_size = size_for_streamvbyte1234;
+      // }
+      if (SupportIfTail(len) && size_delta_streamvbyte1234 < best_size) {
+        best_encoding = de_delta_streamvbyte1234;
+        best_size = size_delta_streamvbyte1234;
+      }
+
+      if constexpr (kSupportBitset) {
+        const auto size =
+          1 + FromBits<uint64_t>(for_max + 1) * sizeof(uint64_t);
+        if (size - 2 < best_size) {
+          best_encoding = de_for_bitset;
+          best_size = size;
+        }
+      }
+    }();
+
+    out.WriteByte(best_encoding);
+
+    switch (best_encoding) {
+      case de_values: {
+        static_assert(std::endian::native == std::endian::little);
+        out.WriteBytes(reinterpret_cast<byte_type*>(in), best_size);
+      } break;
+
+      case de_delta_all_same_08: {
+        SDB_ASSERT(delta_max <= std::numeric_limits<byte_type>::max());
+        out.WriteByte(delta_max);
+      } break;
+      case de_delta_all_same_16: {
+        SDB_ASSERT(delta_max <= std::numeric_limits<uint16_t>::max());
+        out.WriteU16(delta_max);
+      } break;
+      case de_delta_all_same_32: {
+        out.WriteU32(delta_max);
+      } break;
+
+      case de_for_bitset: {
+        WriteBitset(best_size, prev, in, len, buf, out);
+      } break;
+
+      case de_streamvbyte1234: {
+        const auto size =
+          streamvbyte_encode(in, len, reinterpret_cast<uint8_t*>(buf));
+        SDB_ASSERT(2 + size == best_size);
+        out.WriteU16(size);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+      } break;
+      // case de_for_streamvbyte1234: {
+      //   const auto size = streamvbyte_for_encode(
+      //     in, len, reinterpret_cast<uint8_t*>(buf), prev);
+      //   SDB_ASSERT(2 + size == best_size);
+      //   out.WriteU16(size);
+      //   out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+      // } break;
+      case de_delta_streamvbyte1234: {
+        const auto size = streamvbyte_delta_encode(
+          in, len, reinterpret_cast<uint8_t*>(buf), prev);
+        SDB_ASSERT(2 + size == best_size);
+        out.WriteU16(size);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+      } break;
+
+      case de_delta_bitpack_02:
+      case de_delta_bitpack_03:
+      case de_delta_bitpack_04:
+      case de_delta_bitpack_05:
+      case de_delta_bitpack_06:
+      case de_delta_bitpack_07:
+      case de_delta_bitpack_08:
+      case de_delta_bitpack_09:
+      case de_delta_bitpack_10:
+      case de_delta_bitpack_11:
+      case de_delta_bitpack_12:
+      case de_delta_bitpack_13:
+      case de_delta_bitpack_14:
+      case de_delta_bitpack_15:
+      case de_delta_bitpack_16:
+      case de_delta_bitpack_17:
+      case de_delta_bitpack_18:
+      case de_delta_bitpack_19:
+      case de_delta_bitpack_20:
+      case de_delta_bitpack_21:
+      case de_delta_bitpack_22:
+      case de_delta_bitpack_23:
+      case de_delta_bitpack_24:
+      case de_delta_bitpack_25:
+      case de_delta_bitpack_26:
+      case de_delta_bitpack_27:
+      case de_delta_bitpack_28:
+      case de_delta_bitpack_29:
+      case de_delta_bitpack_30:
+      case de_delta_bitpack_31: {
+        MakeBlockFromTail(in, len);
+        const auto bits = (best_encoding - de_delta_bitpack_02) + 2;
+        // TODO: Avoid additional switch
+        simdpackwithoutmaskd1(prev, in, reinterpret_cast<__m128i*>(buf), bits);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
+      } break;
+
+      default:
+        SDB_UNREACHABLE();
+    }
   }
 
-  IRS_FORCE_INLINE static void write_block(BufferedOutput& out,
-                                           const uint32_t* in, uint32_t* buf) {
-    bitpack::write_block32(
-      [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
-         uint32_t bits) IRS_FORCE_INLINE {
-        ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded),
-                              bits);
-      },
-      out, in, buf, kBlockSize);
+  IRS_FORCE_INLINE static void write_block(BufferedOutput& out, uint32_t* in,
+                                           uint32_t* buf) {
+    write_tail(kBlockSize, out, in, buf);
   }
 
-  IRS_FORCE_INLINE static void write_tail(uint32_t tail, BufferedOutput& out,
-                                          const uint32_t* in, uint32_t* buf) {
-    SDB_ASSERT(tail != 0);
-    SDB_ASSERT(tail < kBlockSize);
-    auto* encoded = reinterpret_cast<byte_type*>(buf);
-    const uint16_t size = streamvbyte_encode(in, tail, encoded);
-    out.WriteU16(size);
-    out.WriteBytes(encoded, size);
+  IRS_FORCE_INLINE static void write_tail(uint32_t len, BufferedOutput& out,
+                                          uint32_t* in, uint32_t* buf) {
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= kBlockSize);
+    byte_type best_encoding = e_values;
+    uint32_t best_size = len * sizeof(uint32_t);
+
+    bool all_same = true;
+
+    uint32_t max = in[0];
+
+    [&] IRS_FORCE_INLINE {
+      const uint32_t streamvbyte_groups = (len + 3) / 4;
+      uint32_t size_streamvbyte1234 = 2 + streamvbyte_groups;
+
+      for (uint32_t i = 0; i != len; ++i) {
+        const auto value = in[i];
+
+        all_same &= max == value;
+        max = std::max(max, value);
+
+        size_streamvbyte1234 += ByteSize1234(value);
+      }
+
+      if (all_same) {
+        switch (ByteSize0124(max)) {
+          case 0:
+          case 1:
+            best_encoding = e_all_same_08;
+            best_size = 1;
+            return;
+          case 2:
+            best_encoding = e_all_same_16;
+            best_size = 2;
+            return;
+          case 4:
+            best_encoding = e_all_same_32;
+            best_size = 4;
+            return;
+          default:
+            SDB_UNREACHABLE();
+        }
+      }
+
+      if (SupportIfBlock(len)) {
+        const auto bits = std::bit_width(max);
+        SDB_ASSERT(bits >= 1);
+        const auto size = FromBits<byte_type>(kBlockSize * bits);
+        if (size < best_size) {
+          SDB_ASSERT(bits <= 31);
+          best_encoding = e_bitpack_01 + (bits - 1);
+          best_size = size;
+        }
+      }
+
+      if (SupportIfTail(len) && size_streamvbyte1234 < best_size) {
+        best_encoding = e_streamvbyte1234;
+        best_size = size_streamvbyte1234;
+      }
+    }();
+
+    out.WriteByte(best_encoding);
+
+    switch (best_encoding) {
+      case e_values: {
+        static_assert(std::endian::native == std::endian::little);
+        out.WriteBytes(reinterpret_cast<byte_type*>(in), best_size);
+      } break;
+
+      case e_all_same_08: {
+        SDB_ASSERT(max <= std::numeric_limits<byte_type>::max());
+        out.WriteByte(max);
+      } break;
+      case e_all_same_16: {
+        SDB_ASSERT(max <= std::numeric_limits<uint16_t>::max());
+        out.WriteU16(max);
+      } break;
+      case e_all_same_32: {
+        out.WriteU32(max);
+      } break;
+
+      case e_streamvbyte1234: {
+        const auto size =
+          streamvbyte_encode(in, len, reinterpret_cast<uint8_t*>(buf));
+        SDB_ASSERT(2 + size == best_size);
+        out.WriteU16(size);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+      } break;
+
+      case e_bitpack_01:
+      case e_bitpack_02:
+      case e_bitpack_03:
+      case e_bitpack_04:
+      case e_bitpack_05:
+      case e_bitpack_06:
+      case e_bitpack_07:
+      case e_bitpack_08:
+      case e_bitpack_09:
+      case e_bitpack_10:
+      case e_bitpack_11:
+      case e_bitpack_12:
+      case e_bitpack_13:
+      case e_bitpack_14:
+      case e_bitpack_15:
+      case e_bitpack_16:
+      case e_bitpack_17:
+      case e_bitpack_18:
+      case e_bitpack_19:
+      case e_bitpack_20:
+      case e_bitpack_21:
+      case e_bitpack_22:
+      case e_bitpack_23:
+      case e_bitpack_24:
+      case e_bitpack_25:
+      case e_bitpack_26:
+      case e_bitpack_27:
+      case e_bitpack_28:
+      case e_bitpack_29:
+      case e_bitpack_30:
+      case e_bitpack_31: {
+        MakeBlockFromTail(in, len);
+        const auto bits = (best_encoding - e_bitpack_01) + 1;
+        // TODO: Avoid additional switch
+        simdpackwithoutmask(in, reinterpret_cast<__m128i*>(buf), bits);
+        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
+      } break;
+
+      default:
+        SDB_UNREACHABLE();
+    }
   }
 
   template<typename InputType>
   IRS_FORCE_INLINE static void read_block_delta(InputType& in, uint32_t* buf,
                                                 uint32_t* out, uint32_t prev) {
-    bitpack::read_block_delta32(
-      [](uint32_t prev, uint32_t* IRS_RESTRICT decoded,
-         const uint32_t* IRS_RESTRICT encoded, uint32_t bits) IRS_FORCE_INLINE {
-        ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded),
-                       decoded, bits);
-      },
-      in, buf, out, kBlockSize, prev);
+    read_tail_delta(kBlockSize, in, buf, out, prev);
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void read_tail_delta(uint32_t tail, InputType& in,
+  IRS_FORCE_INLINE static void read_tail_delta(uint32_t len, InputType& in,
                                                uint32_t* buf, uint32_t* out,
                                                uint32_t prev) {
-    SDB_ASSERT(tail != 0);
-    SDB_ASSERT(tail < kBlockSize);
-    const uint16_t size = in.ReadI16();
-    auto* encoded = reinterpret_cast<byte_type*>(buf);
-    const auto* view = in.ReadView(size);
-    if (!view) {
-      [[maybe_unused]] const auto read = in.ReadBytes(encoded, size);
-      SDB_ASSERT(read == size);
-      view = encoded;
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= kBlockSize);
+    const auto type = static_cast<DeltaEncoding>(in.ReadByte());
+    auto* const begin = out + (kBlockSize - len);
+    switch (type) {
+      case de_values: {
+        in.ReadBytes(reinterpret_cast<byte_type*>(begin),
+                     len * sizeof(uint32_t));
+        static_assert(std::endian::native == std::endian::little);
+      } break;
+
+      case de_delta_all_same_08: {
+        FillSameDelta(begin, len, prev, in.ReadByte());
+      } break;
+      case de_delta_all_same_16: {
+        FillSameDelta(begin, len, prev, static_cast<uint16_t>(in.ReadI16()));
+      } break;
+      case de_delta_all_same_32: {
+        FillSameDelta(begin, len, prev, in.ReadI32());
+      } break;
+
+      case de_for_bitset: {
+        const auto words = in.ReadByte();
+        const auto bytes = words * sizeof(uint64_t);
+        const auto* const data = ReadDataImpl(bytes, in, buf);
+        const auto* const bitset = reinterpret_cast<const uint64_t*>(data);
+        auto* end = begin;
+        for (uint32_t i = 0; i != words; ++i) {
+          auto word = bitset[i];
+          if (word == 0) {
+            continue;
+          }
+          const auto offset = prev + i * BitsRequired<uint64_t>();
+          do {
+            *end++ = offset + std::countr_zero(word);
+            word = PopBit(word);
+          } while (word != 0);
+        }
+        SDB_ASSERT(begin + len == end);
+      } break;
+
+      case de_streamvbyte1234: {
+        const auto* const data = ReadDataDelta(type, in, buf);
+        streamvbyte_decode(data, begin, len);
+      } break;
+      // case de_for_streamvbyte1234: {
+      //   const auto* const data = ReadDataDelta(type, in, buf);
+      //   streamvbyte_for_decode(data, begin, len, prev);
+      // } break;
+      case de_delta_streamvbyte1234: {
+        const auto* const data = ReadDataDelta(type, in, buf);
+        streamvbyte_delta_decode(data, begin, len, prev);
+      } break;
+
+      case de_delta_bitpack_02:
+      case de_delta_bitpack_03:
+      case de_delta_bitpack_04:
+      case de_delta_bitpack_05:
+      case de_delta_bitpack_06:
+      case de_delta_bitpack_07:
+      case de_delta_bitpack_08:
+      case de_delta_bitpack_09:
+      case de_delta_bitpack_10:
+      case de_delta_bitpack_11:
+      case de_delta_bitpack_12:
+      case de_delta_bitpack_13:
+      case de_delta_bitpack_14:
+      case de_delta_bitpack_15:
+      case de_delta_bitpack_16:
+      case de_delta_bitpack_17:
+      case de_delta_bitpack_18:
+      case de_delta_bitpack_19:
+      case de_delta_bitpack_20:
+      case de_delta_bitpack_21:
+      case de_delta_bitpack_22:
+      case de_delta_bitpack_23:
+      case de_delta_bitpack_24:
+      case de_delta_bitpack_25:
+      case de_delta_bitpack_26:
+      case de_delta_bitpack_27:
+      case de_delta_bitpack_28:
+      case de_delta_bitpack_29:
+      case de_delta_bitpack_30:
+      case de_delta_bitpack_31: {
+        const auto* const data = ReadDataDelta(type, in, buf);
+        const auto bits = (type - de_delta_bitpack_02) + 2;
+        // TODO: Avoid additional switch
+        simdunpackd1(prev, reinterpret_cast<const __m128i*>(data), out, bits);
+      } break;
+
+      default:
+        SDB_UNREACHABLE();
     }
-    streamvbyte_delta_decode(view, out + kBlockSize - tail, tail, prev);
   }
 
   template<typename InputType>
   IRS_FORCE_INLINE static void read_block(InputType& in, uint32_t* buf,
                                           uint32_t* out) {
-    bitpack::read_block32(
-      [](uint32_t* IRS_RESTRICT decoded, const uint32_t* IRS_RESTRICT encoded,
-         uint32_t bits) IRS_FORCE_INLINE {
-        ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded,
-                     bits);
-      },
-      in, buf, out, kBlockSize);
+    read_tail(kBlockSize, in, buf, out);
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static void read_tail(uint32_t tail, InputType& in,
+  IRS_FORCE_INLINE static void read_tail(uint32_t len, InputType& in,
                                          uint32_t* buf, uint32_t* out) {
-    SDB_ASSERT(tail != 0);
-    SDB_ASSERT(tail < kBlockSize);
-    const uint16_t size = in.ReadI16();
-    auto* encoded = reinterpret_cast<byte_type*>(buf);
-    const auto* view = in.ReadView(size);
-    if (!view) {
-      [[maybe_unused]] const auto read = in.ReadBytes(encoded, size);
-      SDB_ASSERT(read == size);
-      view = encoded;
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= kBlockSize);
+    const auto type = static_cast<Encoding>(in.ReadByte());
+    auto* const begin = out + (kBlockSize - len);
+    switch (type) {
+      case e_values: {
+        in.ReadBytes(reinterpret_cast<byte_type*>(begin),
+                     len * sizeof(uint32_t));
+        static_assert(std::endian::native == std::endian::little);
+      } break;
+
+      case e_all_same_08: {
+        FillSame(begin, len, in.ReadByte());
+      } break;
+      case e_all_same_16: {
+        FillSame(begin, len, static_cast<uint16_t>(in.ReadI16()));
+      } break;
+      case e_all_same_32: {
+        FillSame(begin, len, in.ReadI32());
+      } break;
+
+      case e_streamvbyte1234: {
+        const auto* const data = ReadData(type, in, buf);
+        streamvbyte_decode(data, begin, len);
+      } break;
+
+      case e_bitpack_01:
+      case e_bitpack_02:
+      case e_bitpack_03:
+      case e_bitpack_04:
+      case e_bitpack_05:
+      case e_bitpack_06:
+      case e_bitpack_07:
+      case e_bitpack_08:
+      case e_bitpack_09:
+      case e_bitpack_10:
+      case e_bitpack_11:
+      case e_bitpack_12:
+      case e_bitpack_13:
+      case e_bitpack_14:
+      case e_bitpack_15:
+      case e_bitpack_16:
+      case e_bitpack_17:
+      case e_bitpack_18:
+      case e_bitpack_19:
+      case e_bitpack_20:
+      case e_bitpack_21:
+      case e_bitpack_22:
+      case e_bitpack_23:
+      case e_bitpack_24:
+      case e_bitpack_25:
+      case e_bitpack_26:
+      case e_bitpack_27:
+      case e_bitpack_28:
+      case e_bitpack_29:
+      case e_bitpack_30:
+      case e_bitpack_31: {
+        const auto* const data = ReadData(type, in, buf);
+        const auto bits = (type - e_bitpack_01) + 1;
+        // TODO: Avoid additional switch
+        simdunpack(reinterpret_cast<const __m128i*>(data), out, bits);
+      } break;
+
+      default:
+        SDB_UNREACHABLE();
     }
-    streamvbyte_decode(view, out + kBlockSize - tail, tail);
   }
 
-  IRS_FORCE_INLINE static void skip_block(DataInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
+  template<typename InputType>
+  IRS_FORCE_INLINE static void skip_block(InputType& in) {
+    skip_tail(kBlockSize, in);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void skip_tail(uint32_t tail, InputType& in) {
+    const auto type = static_cast<Encoding>(in.ReadByte());
+    const auto size = Size(tail, type, in);
+    in.Skip(size);
+  }
+
+  enum DeltaEncoding : byte_type {
+    // NOLINTBEGIN
+
+    de_values = 0,
+
+    de_delta_all_same_08,
+    de_delta_all_same_16,
+    de_delta_all_same_32,
+
+    de_for_bitset,
+
+    de_streamvbyte1234,
+    de_for_streamvbyte1234,  // TODO: Implement in streamvbyte
+    de_delta_streamvbyte1234,
+
+    // de_delta_bitpack_00,  // delta != 0
+    // de_delta_bitpack_01,  // covered by de_delta_all_same_08
+    de_delta_bitpack_02,
+    de_delta_bitpack_03,
+    de_delta_bitpack_04,
+    de_delta_bitpack_05,
+    de_delta_bitpack_06,
+    de_delta_bitpack_07,
+    de_delta_bitpack_08,
+    de_delta_bitpack_09,
+    de_delta_bitpack_10,
+    de_delta_bitpack_11,
+    de_delta_bitpack_12,
+    de_delta_bitpack_13,
+    de_delta_bitpack_14,
+    de_delta_bitpack_15,
+    de_delta_bitpack_16,
+    de_delta_bitpack_17,
+    de_delta_bitpack_18,
+    de_delta_bitpack_19,
+    de_delta_bitpack_20,
+    de_delta_bitpack_21,
+    de_delta_bitpack_22,
+    de_delta_bitpack_23,
+    de_delta_bitpack_24,
+    de_delta_bitpack_25,
+    de_delta_bitpack_26,
+    de_delta_bitpack_27,
+    de_delta_bitpack_28,
+    de_delta_bitpack_29,
+    de_delta_bitpack_30,
+    de_delta_bitpack_31,
+    // de_delta_bitpack_32,  // covered by de_values
+
+    // NOLINTEND
+  };
+
+  enum Encoding : byte_type {
+    // NOLINTBEGIN
+
+    e_values = 0,
+
+    e_all_same_08,
+    e_all_same_16,
+    e_all_same_32,
+
+    e_streamvbyte1234,
+
+    // e_bitpack_00,  // covered by e_all_same_08
+    e_bitpack_01,
+    e_bitpack_02,
+    e_bitpack_03,
+    e_bitpack_04,
+    e_bitpack_05,
+    e_bitpack_06,
+    e_bitpack_07,
+    e_bitpack_08,
+    e_bitpack_09,
+    e_bitpack_10,
+    e_bitpack_11,
+    e_bitpack_12,
+    e_bitpack_13,
+    e_bitpack_14,
+    e_bitpack_15,
+    e_bitpack_16,
+    e_bitpack_17,
+    e_bitpack_18,
+    e_bitpack_19,
+    e_bitpack_20,
+    e_bitpack_21,
+    e_bitpack_22,
+    e_bitpack_23,
+    e_bitpack_24,
+    e_bitpack_25,
+    e_bitpack_26,
+    e_bitpack_27,
+    e_bitpack_28,
+    e_bitpack_29,
+    e_bitpack_30,
+    e_bitpack_31,
+    // e_bitpack_32,  // covered by e_values
+
+    // NOLINTEND
+  };
+
+ private:
+  // TODO: To make bitset fast needs custom logic outside of FormatTraits
+  static constexpr bool kSupportBitset = false;
+
+  // TODO: Should always return true
+  static constexpr bool SupportIfBlock(uint32_t len) {
+    return len == kBlockSize;
+  }
+
+  // TODO: Should always return true
+  static constexpr bool SupportIfTail(uint32_t len) {
+    return len != kBlockSize;
+  }
+
+  static constexpr uint32_t ByteSize1234(uint32_t value) {
+    if (value < (uint32_t{1} << 8)) {
+      return 1;
+    }
+    if (value < (uint32_t{1} << 16)) {
+      return 2;
+    }
+    if (value < (uint32_t{1} << 24)) {
+      return 3;
+    }
+    return 4;
+  }
+
+  static constexpr uint32_t ByteSize0124(uint32_t value) {
+    if (value == 0) {
+      return 0;
+    }
+    if (value < (uint32_t{1} << 8)) {
+      return 1;
+    }
+    if (value < (uint32_t{1} << 16)) {
+      return 2;
+    }
+    return 4;
+  }
+
+  template<typename T>
+  static constexpr uint32_t FromBits(uint32_t bits) {
+    return (bits + BitsRequired<T>() - 1) / BitsRequired<T>();
+  }
+
+  IRS_FORCE_INLINE static void WriteBitset(uint32_t best_size, uint32_t prev,
+                                           uint32_t* IRS_RESTRICT in,
+                                           uint32_t len,
+                                           uint32_t* IRS_RESTRICT buf,
+                                           BufferedOutput& out) {
+    const auto bytes = best_size - 1;
+    SDB_ASSERT(bytes <= kBlockSize * sizeof(uint32_t));
+    SDB_ASSERT(bytes % sizeof(uint64_t) == 0);
+    const auto bits = bytes * BitsRequired<byte_type>();
+    const auto words = bits / BitsRequired<uint64_t>();
+
+    auto* const bitset = reinterpret_cast<uint64_t*>(buf);
+    std::memset(bitset, 0, bytes);
+    for (uint32_t i = 0; i != len; ++i) {
+      const auto value = in[i] - prev;
+      SDB_ASSERT(value < bits);
+      SetBit(bitset[value / BitsRequired<uint64_t>()],
+             value % BitsRequired<uint64_t>());
+    }
+
+    SDB_ASSERT(words <= std::numeric_limits<byte_type>::max());
+    out.WriteByte(words);
+    static_assert(std::endian::native == std::endian::little);
+    out.WriteBytes(reinterpret_cast<byte_type*>(buf), bytes);
+  }
+
+  IRS_FORCE_INLINE static void MakeBlockFromTail(uint32_t* IRS_RESTRICT in,
+                                                 uint32_t len) {
+    if (len != kBlockSize) {
+      const auto rest = kBlockSize - len;
+      std::memmove(in + rest, in, len * sizeof(uint32_t));
+      std::fill_n(in, rest, in[0]);
+    }
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static uint32_t SizeDelta(DeltaEncoding type,
+                                             InputType& in) {
+    switch (type) {
+      case de_streamvbyte1234:
+      // case de_for_streamvbyte1234:
+      case de_delta_streamvbyte1234:
+        return static_cast<uint16_t>(in.ReadI16());
+
+      case de_delta_bitpack_02:
+      case de_delta_bitpack_03:
+      case de_delta_bitpack_04:
+      case de_delta_bitpack_05:
+      case de_delta_bitpack_06:
+      case de_delta_bitpack_07:
+      case de_delta_bitpack_08:
+      case de_delta_bitpack_09:
+      case de_delta_bitpack_10:
+      case de_delta_bitpack_11:
+      case de_delta_bitpack_12:
+      case de_delta_bitpack_13:
+      case de_delta_bitpack_14:
+      case de_delta_bitpack_15:
+      case de_delta_bitpack_16:
+      case de_delta_bitpack_17:
+      case de_delta_bitpack_18:
+      case de_delta_bitpack_19:
+      case de_delta_bitpack_20:
+      case de_delta_bitpack_21:
+      case de_delta_bitpack_22:
+      case de_delta_bitpack_23:
+      case de_delta_bitpack_24:
+      case de_delta_bitpack_25:
+      case de_delta_bitpack_26:
+      case de_delta_bitpack_27:
+      case de_delta_bitpack_28:
+      case de_delta_bitpack_29:
+      case de_delta_bitpack_30:
+      case de_delta_bitpack_31:
+        return ((type - de_delta_bitpack_02) + 2) *
+               (kBlockSize / BitsRequired<byte_type>());
+
+      default:
+        SDB_UNREACHABLE();
+    }
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static uint32_t Size(uint32_t len, Encoding type,
+                                        InputType& in) {
+    switch (type) {
+      case e_values:
+        return len * sizeof(uint32_t);
+
+      case e_all_same_08:
+        return 1;
+      case e_all_same_16:
+        return 2;
+      case e_all_same_32:
+        return 4;
+
+      case e_streamvbyte1234:
+        return static_cast<uint16_t>(in.ReadI16());
+
+      case e_bitpack_01:
+      case e_bitpack_02:
+      case e_bitpack_03:
+      case e_bitpack_04:
+      case e_bitpack_05:
+      case e_bitpack_06:
+      case e_bitpack_07:
+      case e_bitpack_08:
+      case e_bitpack_09:
+      case e_bitpack_10:
+      case e_bitpack_11:
+      case e_bitpack_12:
+      case e_bitpack_13:
+      case e_bitpack_14:
+      case e_bitpack_15:
+      case e_bitpack_16:
+      case e_bitpack_17:
+      case e_bitpack_18:
+      case e_bitpack_19:
+      case e_bitpack_20:
+      case e_bitpack_21:
+      case e_bitpack_22:
+      case e_bitpack_23:
+      case e_bitpack_24:
+      case e_bitpack_25:
+      case e_bitpack_26:
+      case e_bitpack_27:
+      case e_bitpack_28:
+      case e_bitpack_29:
+      case e_bitpack_30:
+      case e_bitpack_31:
+        return ((type - e_bitpack_01) + 1) *
+               (kBlockSize / BitsRequired<byte_type>());
+
+      default:
+        SDB_UNREACHABLE();
+    }
+  }
+
+  IRS_FORCE_INLINE static void FillSameDelta(uint32_t* IRS_RESTRICT out,
+                                             uint32_t len, uint32_t prev,
+                                             uint32_t value) {
+    for (uint32_t i = 0; i != len; ++i) {
+      out[i] = prev + value + value * i;
+    }
+  }
+
+  IRS_FORCE_INLINE static void FillSame(uint32_t* IRS_RESTRICT out,
+                                        uint32_t len, uint32_t value) {
+    std::fill_n(out, len, value);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static const byte_type* ReadDataImpl(
+    uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
+    if (const auto* data = in.ReadView(size)) {
+      return data;
+    }
+    [[maybe_unused]] const auto read =
+      in.ReadBytes(reinterpret_cast<byte_type*>(buf), size);
+    SDB_ASSERT(read == size);
+    return reinterpret_cast<byte_type*>(buf);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static const byte_type* ReadDataDelta(
+    DeltaEncoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
+    const auto size = SizeDelta(type, in);
+    return ReadDataImpl(size, in, buf);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static const byte_type* ReadData(
+    Encoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
+    const auto size = Size(0, type, in);
+    return ReadDataImpl(size, in, buf);
   }
 };
 

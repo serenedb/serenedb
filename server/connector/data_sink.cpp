@@ -418,9 +418,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     }
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
-  for (const auto& writer : _index_writers) {
-    writer->Finish();
-  }
   _number_of_rows_affected += affected_rows;
 }
 
@@ -2576,7 +2573,6 @@ velox::connector::DataSink::Stats RocksDBDataSinkBase<DataWriterType>::stats()
 }
 
 RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
-  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
@@ -2591,18 +2587,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
         std::vector<std::unique_ptr<SinkIndexWriter>> w;
         w.push_back(std::move(index_writer));
         return w;
-      }()} {
-  // lock all the table before index backfill.
-  // TODO: don't lock all the table.
-  std::string table_prefix = key_utils::PrepareTableKey(object_key);
-  rocksdb::Endpoint start_ep{table_prefix, false};
-  rocksdb::Endpoint end_ep{table_prefix, true};
-  auto lock_status = transaction.GetRangeLock(&cf, start_ep, end_ep);
-  if (!lock_status.ok()) {
-    SDB_THROW(ERROR_LOCK_TIMEOUT, "Failed to lock table for index backfill: ",
-              lock_status.ToString());
-  }
-}
+      }()} {}
 
 void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
@@ -2630,12 +2615,10 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = input->childrenSize();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     if (_columns_info[i].id == catalog::Column::kGeneratedPKId) {
-      break;
+      continue;
     }
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
-
-  writer.Finish();
 }
 
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(

@@ -129,7 +129,7 @@ class Transaction : public Config {
     Filter&& filter = nullptr) {
     for (auto& index_shard : index_shards) {
       auto index =
-        snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
+        snapshot->template GetObject<catalog::Index>(index_shard->GetIndexId());
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {

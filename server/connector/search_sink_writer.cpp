@@ -63,7 +63,7 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   std::span<const catalog::Column::Id> columns)
   : ColumnSinkWriterImplBase{columns},
     _analyzer_provider{std::move(analyzer_provider)},
-    _trx{trx} {
+    _trx{&trx} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
 }
@@ -218,7 +218,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   if (_document) {
     _document.reset();
   }
-  _document.emplace(_trx.Insert(false, batch_size));
+  _document.emplace(_trx->Insert(false, batch_size));
   _emit_pk = true;
 }
 
@@ -340,7 +340,7 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   irs::IndexWriter::Transaction& trx)
-  : _trx{trx} {}
+  : _trx{&trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
@@ -356,7 +356,7 @@ void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
   if (_remove_filter && !_remove_filter->Empty()) {
-    _trx.Remove(std::move(_remove_filter));
+    _trx->Remove(std::move(_remove_filter));
   }
   _remove_filter.reset();
 }

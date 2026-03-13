@@ -26,8 +26,10 @@
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "primary_key.hpp"
+#include "search/inverted_index_shard.h"
 #include "search_remove_filter.hpp"
 #include "sink_writer_base.hpp"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector::search {
 
@@ -35,6 +37,13 @@ class SearchRemoveFilterBase;
 
 using AnalyzerProvider =
   absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
+
+inline AnalyzerProvider MakeAnalyzerProvider(
+  const catalog::InvertedIndex& index) {
+  return [&index](catalog::Column::Id column_id) {
+    return index.GetColumnAnalyzer(column_id);
+  };
+}
 
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
@@ -137,7 +146,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   Field _null_field;
   std::string _name_buffer;
   std::string _null_name_buffer;
-  irs::IndexWriter::Transaction& _trx;
+  irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
   Writer _current_writer;
@@ -156,8 +165,8 @@ class SearchSinkDeleteBaseImpl {
 
   void AbortImpl() { _remove_filter.reset(); }
 
- private:
-  irs::IndexWriter::Transaction& _trx;
+ protected:
+  irs::IndexWriter::Transaction* _trx;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
@@ -239,6 +248,59 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
   }
 
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
+};
+
+struct SearchSinkBackfillTrxHolder {
+  irs::IndexWriter::Transaction _trx_storage;
+};
+
+class SearchSinkBackfillWriter final : public SinkIndexWriter,
+                                       SearchSinkBackfillTrxHolder,
+                                       public SearchSinkInsertBaseImpl {
+ public:
+  SearchSinkBackfillWriter(sdb::search::InvertedIndexShard& shard,
+                           RocksDBEngineCatalog& engine,
+                           AnalyzerProvider&& analyzer_provider,
+                           std::span<const catalog::Column::Id> columns)
+    : SearchSinkBackfillTrxHolder{shard.GetTransaction()},
+      SearchSinkInsertBaseImpl{_trx_storage, std::move(analyzer_provider),
+                               columns},
+      _shard{shard},
+      _engine{engine} {}
+
+  void Init(size_t batch_size) final { InitImpl(batch_size); }
+
+  bool SwitchColumn(const velox::Type& type, bool have_nulls,
+                    catalog::Column::Id column_id) final {
+    return SwitchColumnImpl(type, have_nulls, column_id);
+  }
+
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) final {
+    WriteImpl(cell_slices, full_key);
+    if (_trx->FlushRequired()) {
+      FlushCommit();
+    }
+  }
+
+  void Finish() final {
+    FinishImpl();
+    FlushCommit();
+  }
+
+  void Abort() final {
+    AbortImpl();
+    _trx_storage.Abort();
+  }
+
+ private:
+  void FlushCommit() {
+    _trx_storage.Commit(_engine.currentTick());
+    _trx_storage = _shard.GetTransaction();
+  }
+
+  sdb::search::InvertedIndexShard& _shard;
+  RocksDBEngineCatalog& _engine;
 };
 
 }  // namespace sdb::connector::search

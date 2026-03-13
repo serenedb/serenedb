@@ -61,6 +61,7 @@
 #include "query/utils.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
@@ -91,16 +92,12 @@ template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   irs::IndexWriter::Transaction& transaction,
   const catalog::InvertedIndex& index) {
-  auto analyzer_provider = [&](catalog::Column::Id column_id) {
-    return index.GetColumnAnalyzer(column_id);
-  };
-
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<search::SearchSinkInsertWriter>(
-      transaction, analyzer_provider, index.GetColumnIds());
+      transaction, search::MakeAnalyzerProvider(index), index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<search::SearchSinkUpdateWriter>(
-      transaction, analyzer_provider, index.GetColumnIds());
+      transaction, search::MakeAnalyzerProvider(index), index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
@@ -957,14 +954,23 @@ class SereneDBConnector final : public velox::connector::Connector {
               serene_insert_handle.NumberOfRowsAffected(),
               std::move(update_sinks));
           } else if (table.BackfillIndexId().isSet()) {
-            auto backfill_sinks =
-              CreateIndexWriters<axiom::connector::WriteKind::kInsert>(
-                object_key, transaction, {}, false, table.BackfillIndexId());
-            SDB_ASSERT(backfill_sinks.size() == 1);
+            auto snapshot = transaction.GetCatalogSnapshot();
+            auto shard = snapshot->GetIndexShard(table.BackfillIndexId());
+            SDB_ASSERT(shard);
+            auto& inverted_shard =
+              basics::downCast<sdb::search::InvertedIndexShard>(*shard);
+            auto& index = basics::downCast<const catalog::InvertedIndex>(
+              *snapshot->template GetObject<catalog::Index>(
+                shard->GetIndexId()));
+            auto& engine = GetServerEngine();
+            auto backfill_writer =
+              std::make_unique<search::SearchSinkBackfillWriter>(
+                inverted_shard, engine, search::MakeAnalyzerProvider(index),
+                index.GetColumnIds());
             return std::make_unique<RocksDBIndexBackfillDataSink>(
-              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
+              *connector_query_ctx->memoryPool(),
               object_key, pk_indices, columns,
-              std::move(backfill_sinks.front()));
+              std::move(backfill_writer));
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

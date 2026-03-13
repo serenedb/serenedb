@@ -48,6 +48,24 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
+auto GetRollback(const std::shared_ptr<ConnectionContext>& connection_ctx,
+                 const char* schemaname, const char* name,
+                 Result (catalog::LogicalCatalog::*drop)(ObjectId,
+                                                         std::string_view,
+                                                         std::string_view)) {
+  return [connection_ctx, schemaname = absl::NullSafeStringView(schemaname),
+          name = std::string_view{name}, drop] noexcept {
+    auto db = connection_ctx->GetDatabaseId();
+    std::string current_schema = connection_ctx->GetCurrentSchema();
+    const std::string_view schema =
+      schemaname.empty() ? std::string_view{current_schema} : schemaname;
+    SDB_ASSERT(!schema.empty());
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    std::ignore = (catalog.*drop)(db, schema, name);
+  };
+}
+
 std::unique_ptr<query::Query> CreateCTASPipeline(
   const VeloxQuery& query_desc, query::QueryContext& query_ctx,
   const std::shared_ptr<ConnectionContext>& connection_ctx) {
@@ -70,17 +88,6 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   auto create_table = std::make_unique<CTASCreateTableExecutor>(
     connection_ctx, *into, if_not_exists);
-  auto rollback = [connection_ctx, into] noexcept {
-    auto db = connection_ctx->GetDatabaseId();
-    const auto& rel = *into->rel;
-    std::string current_schema = connection_ctx->GetCurrentSchema();
-    const std::string_view schema =
-      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
-    SDB_ASSERT(!schema.empty());
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    std::ignore = catalog.DropTable(db, schema, into->rel->relname);
-  };
   auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
     connection_ctx, absl::NullSafeStringView(into->rel->schemaname),
@@ -94,6 +101,9 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   query_ctx.command_type.Add(query::CommandType::Query);
 
+  auto rollback =
+    GetRollback(connection_ctx, into->rel->schemaname, into->rel->relname,
+                &catalog::LogicalCatalog::DropTable);
   return query::Query::CreateWithExecutor(
     query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
@@ -109,18 +119,6 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
 
   auto create_index =
     std::make_unique<CreateIndexExecutor>(connection_ctx, index_stmt);
-
-  auto rollback = [connection_ctx, &index_stmt] noexcept {
-    auto db = connection_ctx->GetDatabaseId();
-    const auto& rel = *index_stmt.relation;
-    std::string current_schema = connection_ctx->GetCurrentSchema();
-    const std::string_view schema =
-      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
-    SDB_ASSERT(!schema.empty());
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    std::ignore = catalog.DropIndex(db, schema, index_stmt.idxname);
-  };
   auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
     connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
@@ -138,6 +136,9 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
 
   query_ctx.command_type.Add(query::CommandType::Query);
 
+  auto rollback =
+    GetRollback(connection_ctx, index_stmt.relation->schemaname,
+                index_stmt.idxname, &catalog::LogicalCatalog::DropIndex);
   return query::Query::CreateWithExecutor(
     query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }

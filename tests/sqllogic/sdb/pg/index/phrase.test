@@ -1,3 +1,5 @@
+hash-threshold 100
+
 statement ok
 CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
 
@@ -57,7 +59,6 @@ a	b	c
 statement ok
 DROP TABLE foo;
 
-
 statement count 100000
 CREATE TABLE clickclack AS
 SELECT
@@ -65,31 +66,81 @@ SELECT
     WHEN vedernikoff_team.crook % 2 = 0 THEN 
       'team member vedernikoff has ' || (crook / 10)::text || ' stocks'
     ELSE 
-      'team member cutelooked has ' || ((boss + 1) * 1000)::text || ' stocks'
+      'team member cutelooked has ' || (boss * 1000)::text || ' stocks'
   END AS fact
 FROM
   generate_series(1, 1000) as vedernikoff_team(crook),
   generate_series(1, 100) as cutelooked_team(boss);
 
-
 statement ok
 CREATE INDEX clickclack_facts ON clickclack USING inverted(fact);
 
-
 query
-SELECT COUNT(*) FROM clickclack_facts WHERE PHRASE(fact, 'team member');
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'team member');
 ----
 
 query
-SELECT COUNT(*) FROM clickclack_facts WHERE PHRASE(fact, 'vedernikoff has');
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'vedernikoff has');
 ----
-
 
 query
-SELECT COUNT(*) FROM clickclack_facts WHERE PHRASE(fact, 'cutelooked has');
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'cutelooked has');
 ----
-
 
 query
 SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'has 0 stocks');
 ----
+
+statement ok
+DROP TABLE clickclack;
+
+statement ok
+CREATE TABLE clickclack_pk (fact TEXT PRIMARY KEY, detail TEXT);
+
+statement count 10000
+INSERT INTO clickclack_pk
+SELECT
+  CASE
+    WHEN rn % 2 = 0 THEN
+      'team member vedernikoff has ' || rn::text || ' stocks'
+    ELSE
+      'team member cutelooked has ' || rn::text || ' stocks'
+  END AS fact,
+  CASE
+    WHEN rn % 2 = 0 THEN
+      'vedernikoff row ' || rn::text
+    ELSE
+      'cutelooked row ' || rn::text
+  END AS detail
+FROM
+  generate_series(1, 10000) AS s(rn);
+
+statement ok
+CREATE INDEX clickclack_pk_facts ON clickclack_pk USING inverted(fact, detail);
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'team member') ORDER BY fact;
+----
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'vedernikoff has') ORDER BY fact;
+----
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'cutelooked has') ORDER BY fact;
+----
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'has 0 stocks') ORDER BY fact;
+----
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(detail, 'vedernikoff row') ORDER BY fact;
+----
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(detail, 'cutelooked row') ORDER BY fact;
+----
+
+statement ok
+DROP TABLE clickclack_pk;

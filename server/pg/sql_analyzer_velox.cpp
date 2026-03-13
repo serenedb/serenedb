@@ -2623,18 +2623,23 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
 
-  auto table_state =
-    ProcessTable(&state, schemaname, relname, *object, stmt.relation, false);
-  const auto& input_type = *table_state.root->outputType();
-
   const auto& table = basics::downCast<catalog::Table>(*object->object);
   const auto& table_type = *table.RowType();
 
+  auto table_state =
+    ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
+  const auto& input_type = *table_state.root->outputType();
+
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
-  size_t size = list_length(stmt.indexParams);
-  column_names.reserve(size);
-  column_exprs.reserve(size);
+  FillColumnsInfo(table_state, *table.PKType(), table_type, column_names,
+                  column_exprs);
+
+  containers::FlatHashSet<std::string_view> pk_names;
+  pk_names.reserve(column_names.size());
+  for (const auto& name : column_names) {
+    pk_names.emplace(name);
+  }
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
     const std::string_view colname = index_elem.name;
@@ -2642,6 +2647,9 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     if (!maybe_col_idx) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("column \"", colname, "\" does not exist"));
+    }
+    if (pk_names.contains(colname)) {
+      return;
     }
     size_t col_idx = *maybe_col_idx;
     column_names.emplace_back(colname);

@@ -185,6 +185,12 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   auto catalog_index = snapshot->GetRelation(db, schema, stmt.idxname);
   SDB_ASSERT(catalog_index);
 
+  auto shard = snapshot->GetIndexShard(catalog_index->GetId());
+  SDB_ASSERT(shard);
+  SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+  auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+  inverted_index.StartTasks();
+
   const auto& logical_plan = *query.GetLogicalPlan();
   SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));
   auto& root =

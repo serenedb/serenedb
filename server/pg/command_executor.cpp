@@ -150,7 +150,6 @@ yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl() {
                                                   yaclib::Result<>&&) {
     auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
     inverted_index.FinishCreation();
-    inverted_index.StartTasks();
   });
 }
 

@@ -2602,7 +2602,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _store_keys_buffers.emplace_back();
-    key_utils::MakeColumnKey(
+    key_utils::MakeColumnKey<false>(
       input, _key_childs, row_idx, table_key, [&](auto) {}, key_buffer);
     key_utils::SetupColumnForKey(key_buffer, _columns_info.front().id);
   }
@@ -2615,7 +2615,10 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = input->childrenSize();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     if (_columns_info[i].id == catalog::Column::kGeneratedPKId) {
-      continue;
+      SDB_ASSERT(i + 1 == num_columns,
+                 "RocksDBDataSink: generated primary column should be the last "
+                 "one in the input vectors");
+      break;
     }
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }

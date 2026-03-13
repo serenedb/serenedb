@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "basics/assert.h"
@@ -82,26 +83,18 @@ struct OptionInfo {
     }
   }
 
-  using DefaultValueT = std::variant<std::string_view, bool, int, double, char>;
+  using DefaultValueT =
+    std::variant<std::monostate, std::string_view, bool, int, double, char>;
 
   std::string_view name;
   Type type;
   std::string_view description;
 
-  bool required = false;
-  std::optional<DefaultValueT> default_value;
+  DefaultValueT default_value;
 
   bool (*constraint)(const DefaultValueT&) = nullptr;
 
   std::span<const std::string_view> enum_values;
-
-  consteval OptionInfo(std::string_view name, Type type,
-                       std::string_view description,
-                       bool (*constraint)(const DefaultValueT&) = nullptr)
-    : name{name},
-      type{type},
-      description{description},
-      constraint{constraint} {}
 
   template<typename T>
   consteval OptionInfo(std::string_view name, RequiredTag<T>,
@@ -110,7 +103,6 @@ struct OptionInfo {
     : name{name},
       type{GetType<T>()},
       description{desc},
-      required{true},
       constraint{constraint} {}
 
   template<typename T>
@@ -123,56 +115,22 @@ struct OptionInfo {
       default_value{default_value},
       constraint{constraint} {}
 
-  template<typename T>
-  constexpr std::optional<T> DefaultValue() const {
-    return default_value.and_then([&](const auto& def) -> std::optional<T> {
-      if constexpr (std::is_enum_v<T>) {
-        const auto& value_str = std::get<std::string_view>(def);
-        auto value =
-          magic_enum::enum_cast<T>(value_str, magic_enum::case_insensitive);
-        return {value};
-      } else {
-        return {std::get<T>(def)};
-      }
-    });
+  bool IsRequired() const {
+    return std::holds_alternative<std::monostate>(default_value);
   }
 
-  bool CheckValue(const Node* node) const;
-
-  void ApplyValueOrDefault(const Node* node, auto&& callback) const {
-    auto process_value = [&]<typename T>() {
-      SDB_ASSERT(!required || (required && (node != nullptr)));
-      if (node == nullptr) {
-        if (default_value) {
-          callback(std::get<T>(*default_value));
-        }
-        return;
-      }
-      std::optional<T> val;
-      if constexpr (std::is_same_v<T, char>) {
-        val = TryGet<std::string_view>(node).and_then(
-          [](const auto& str) -> std::optional<char> {
-            return str.size() == 1 ? std::optional{str[0]} : std::nullopt;
-          });
-      } else {
-        val = TryGet<T>(node);
-      }
-      SDB_ASSERT(val);
-      callback(*val);
-    };
-    switch (type) {
-      case OptionInfo::Type::Boolean:
-        return process_value.template operator()<bool>();
-      case OptionInfo::Type::Integer:
-        return process_value.template operator()<int>();
-      case OptionInfo::Type::Double:
-        return process_value.template operator()<double>();
-      case OptionInfo::Type::String:
-        return process_value.template operator()<std::string_view>();
-      case OptionInfo::Type::Character:
-        return process_value.template operator()<char>();
-      default:
-        SDB_UNREACHABLE();
+  template<typename T>
+  constexpr std::optional<T> DefaultValue() const {
+    SDB_ASSERT(!IsRequired());
+    if constexpr (std::is_enum_v<T>) {
+      SDB_ASSERT(std::holds_alternative<std::string_view>(default_value));
+      const auto& value_str = std::get<std::string_view>(default_value);
+      auto value =
+        magic_enum::enum_cast<T>(value_str, magic_enum::case_insensitive);
+      return {value};
+    } else {
+      SDB_ASSERT(std::holds_alternative<T>(default_value));
+      return {std::get<T>(default_value)};
     }
   }
 
@@ -203,8 +161,25 @@ struct OptionInfo {
 
   std::string ErrorMessage(std::string_view operation,
                            std::string_view raw_value) const {
-    return absl::StrCat("invalid ", TypeName(), " value for ", operation,
-                        " parameter \"", name, "\": \"", raw_value, "\"");
+    switch (type) {
+      case Type::Boolean:
+        return absl::StrCat("invalid value for ", operation, " parameter \"",
+                            name, "\": \"", raw_value, "\"");
+      case Type::Integer:
+        return absl::StrCat("invalid input syntax for type integer: \"",
+                            raw_value, "\"");
+      case Type::Double:
+        return absl::StrCat("invalid input syntax for type double: \"",
+                            raw_value, "\"");
+      case Type::Character:
+        return absl::StrCat(operation, " ", name,
+                            " must be a single one-byte character");
+      case Type::String:
+        return absl::StrCat(operation, " ", name, " must be a string");
+      case Type::Enum:
+        return absl::StrCat(operation, " ", absl::AsciiStrToUpper(name), " \"",
+                            raw_value, "\" not recognized");
+    }
   }
 };
 

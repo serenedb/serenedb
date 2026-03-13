@@ -20,10 +20,23 @@
 
 #pragma once
 
+#include <iresearch/analysis/classification_tokenizer.hpp>
+#include <iresearch/analysis/collation_tokenizer.hpp>
+#include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/minhash_tokenizer.hpp>
+#include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/stemming_tokenizer.hpp>
+#include <iresearch/analysis/stopwords_tokenizer.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
+#include <variant>
 
+#include "basics/assert.h"
 #include "pg/option_help.h"
 
 namespace sdb::pg::tokenizer_options {
@@ -55,6 +68,7 @@ inline constexpr OptionInfo kAccent{"accent", true, "Preserve accent marks"};
 inline constexpr OptionInfo kCase{
   "case", "none"sv, "Text case conversion: none, lower, upper",
   [](const OptionInfo::DefaultValueT& value) {
+    SDB_ASSERT(std::holds_alternative<std::string_view>(value));
     auto str = std::get<std::string_view>(value);
     return str == "none" || str == "lower" || str == "upper";
   }};
@@ -73,8 +87,7 @@ inline constexpr OptionInfo kStopwords{
   "stopwords", ""sv, "Comma-separated list of inline stop words"};
 
 inline constexpr OptionInfo kStopwordsPath{
-  "stopwordspath", OptionInfo::Type::String,
-  "Path to file containing stop words"};
+  "stopwordspath", ""sv, "Path to file containing stop words"};
 
 // NGram
 
@@ -89,18 +102,17 @@ inline constexpr OptionInfo kInputType{"inputtype", "utf8"sv,
                                        "Input stream encoding: binary, utf8"};
 
 inline constexpr OptionInfo kStartMarker{
-  "startmarker", OptionInfo::Type::String,
-  "Prefix marker appended at n-gram boundary"};
+  "startmarker", ""sv, "Prefix marker appended at n-gram boundary"};
 
 inline constexpr OptionInfo kEndMarker{
-  "endmarker", OptionInfo::Type::String,
-  "Suffix marker appended at n-gram boundary"};
+  "endmarker", ""sv, "Suffix marker appended at n-gram boundary"};
 
 // Classification
 
 inline constexpr OptionInfo kThreshold{
   "threshold", 0.0, "Minimum confidence score (0.0 to 1.0)",
   [](const OptionInfo::DefaultValueT& value) {
+    SDB_ASSERT(std::holds_alternative<double>(value));
     auto val = std::get<double>(value);
     return 0. <= val && val <= 1.;
   }};
@@ -122,8 +134,9 @@ inline constexpr OptionInfo kBreak{
 
 // Delimiter
 
-inline constexpr OptionInfo kDelimiter{"delimiter", OptionInfo::Type::String,
-                                       "Token delimiter character or string"};
+inline constexpr OptionInfo kDelimiter{
+  "delimiter", OptionInfo::RequiredTag<std::string_view>{},
+  "Token delimiter character or string"};
 
 // Per-tokenizer option arrays
 
@@ -165,23 +178,61 @@ inline constexpr OptionGroup kEdgeNGramGroup{
   "edgengram", kEdgeNGramOptions, {}};
 inline constexpr OptionGroup kTextSubgroups[] = {kEdgeNGramGroup};
 inline constexpr OptionGroup kFeaturesGroup{"features", kFeaturesOptions, {}};
-inline constexpr OptionGroup kTextGroup{"text", kTextOptions, kTextSubgroups};
-inline constexpr OptionGroup kNGramGroup{"ngram", kNGramOptions, {}};
+inline constexpr OptionGroup kTextGroup{
+  irs::analysis::TextTokenizer::type_name(),
+  kTextOptions,
+  kTextSubgroups,
+};
+inline constexpr OptionGroup kNGramGroup{
+  irs::analysis::NGramTokenizerBase::type_name(),
+  kNGramOptions,
+  {},
+};
 inline constexpr OptionGroup kNearestNeighborsGroup{
-  "nearest_neighbors", kNearestNeighborsOptions, {}};
-inline constexpr OptionGroup kStemmingGroup{"stem", kStemmingOptions, {}};
+  irs::analysis::NearestNeighborsTokenizer::type_name(),
+  kNearestNeighborsOptions,
+  {},
+};
+inline constexpr OptionGroup kStemmingGroup{
+  irs::analysis::StemmingTokenizer::type_name(),
+  kStemmingOptions,
+  {},
+};
 inline constexpr OptionGroup kStopwordsGroup{
-  "stopwords", kStopwordsTokenizerOptions, {}};
+  irs::analysis::StopwordsTokenizer::type_name(),
+  kStopwordsTokenizerOptions,
+  {},
+};
 inline constexpr OptionGroup kClassificationGroup{
-  "classification", kClassificationOptions, {}};
+  irs::analysis::ClassificationTokenizer::type_name(),
+  kClassificationOptions,
+  {},
+};
 inline constexpr OptionGroup kCollationGroup{
-  "collation", kCollationOptions, {}};
+  irs::analysis::CollationTokenizer::type_name(),
+  kCollationOptions,
+  {},
+};
 inline constexpr OptionGroup kDelimiterGroup{
-  "delimiter", kDelimiterOptions, {}};
-inline constexpr OptionGroup kMinHashGroup{"minhash", kMinHashOptions, {}};
-inline constexpr OptionGroup kNormGroup{"norm", kNormOptions, {}};
+  irs::analysis::DelimitedTokenizer::type_name(),
+  kDelimiterOptions,
+  {},
+};
+inline constexpr OptionGroup kMinHashGroup{
+  irs::analysis::MinHashTokenizer::type_name(),
+  kMinHashOptions,
+  {},
+};
+inline constexpr OptionGroup kNormGroup{
+  irs::analysis::NormalizingTokenizer::type_name(),
+  kNormOptions,
+  {},
+};
 inline constexpr OptionGroup kSegmentationGroup{
-  "segmentation", kSegmentationOptions, {}};
+  irs::analysis::SegmentationTokenizer::type_name(),
+  kSegmentationOptions,
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,

@@ -23,6 +23,8 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <variant>
+
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
@@ -40,30 +42,29 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
 
   for (const auto& opt : group.options) {
     absl::StrAppend(&out, prefix, "  ", opt.name,
-                    opt.required ? "[required]" : "", " (", opt.TypeName(),
+                    opt.IsRequired() ? "[required]" : "", " (", opt.TypeName(),
                     ")");
-    if (!opt.default_value.has_value()) {
-      if (!opt.required) {
-        absl::StrAppend(&out, " [default: none]");
-      }
+    if (opt.IsRequired()) {
+      absl::StrAppend(&out, " [default: none]");
     } else {
-      auto value = *opt.default_value;
       switch (opt.type) {
         case OptionInfo::Type::String: {
-          auto str = std::get<std::string_view>(value);
+          auto str = std::get<std::string_view>(opt.default_value);
           if (!str.empty()) {
             absl::StrAppend(&out, " [default: ", str, "]");
           }
         } break;
         case OptionInfo::Type::Boolean:
-          absl::StrAppend(
-            &out, " [default: ", std::get<bool>(value) ? "true" : "false", "]");
+          absl::StrAppend(&out, " [default: ",
+                          std::get<bool>(opt.default_value) ? "true" : "false",
+                          "]");
           break;
         case OptionInfo::Type::Integer:
-          absl::StrAppend(&out, " [default: ", std::get<int>(value), "]");
+          absl::StrAppend(&out, " [default: ", std::get<int>(opt.default_value),
+                          "]");
           break;
         case OptionInfo::Type::Character: {
-          char c = std::get<char>(value);
+          char c = std::get<char>(opt.default_value);
           switch (c) {
             case '\t':
               absl::StrAppend(&out, " [default: \\t]");
@@ -84,11 +85,12 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
           }
         } break;
         case OptionInfo::Type::Double:
-          absl::StrAppend(&out, " [default: ", std::get<double>(value), "]");
+          absl::StrAppend(
+            &out, " [default: ", std::get<double>(opt.default_value), "]");
           break;
         case OptionInfo::Type::Enum:
           absl::StrAppend(
-            &out, " [default: ", std::get<std::string_view>(value),
+            &out, " [default: ", std::get<std::string_view>(opt.default_value),
             ", values: ", absl::StrJoin(opt.enum_values, ", "), "]");
           break;
       }
@@ -127,42 +129,6 @@ std::vector<std::string_view> AllOptionNames(
     names.insert(names.end(), group_names.begin(), group_names.end());
   }
   return names;
-}
-
-// Enum is not supported
-bool OptionInfo::CheckValue(const Node* node) const {
-  auto check_value = [&]<typename T>() {
-    std::optional<T> val;
-    auto tag = nodeTag(node);
-    if (tag != T_Integer && tag != T_Float && tag != T_String &&
-        tag != T_Boolean) {
-      // Can check only integer, float, boolean and string types
-      return true;
-    }
-    if constexpr (std::is_same_v<T, char>) {
-      val = TryGet<std::string_view>(node).and_then(
-        [](const auto& str) -> std::optional<char> {
-          return str.size() == 1 ? std::optional{str[0]} : std::nullopt;
-        });
-    } else {
-      val = TryGet<T>(node);
-    }
-    return val && (!constraint || constraint(*val));
-  };
-  switch (type) {
-    case OptionInfo::Type::Boolean:
-      return check_value.template operator()<bool>();
-    case OptionInfo::Type::Integer:
-      return check_value.template operator()<int>();
-    case OptionInfo::Type::Double:
-      return check_value.template operator()<double>();
-    case OptionInfo::Type::String:
-      return check_value.template operator()<std::string_view>();
-    case OptionInfo::Type::Character:
-      return check_value.template operator()<char>();
-    case OptionInfo::Type::Enum:
-      return true;
-  }
 }
 
 }  // namespace sdb::pg

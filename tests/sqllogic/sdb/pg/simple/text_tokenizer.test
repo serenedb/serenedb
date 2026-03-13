@@ -15,11 +15,15 @@ CREATE TEXT SEARCH DICTIONARY t_err1(
 
 # --- Invalid template value ---
 
-statement error invalid string value for CREATE TEXT SEARCH DICTIONARY parameter "template": "whaaat"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err2(
     template = 'whaaat',
     locale = 'en_US.UTF-8'
 )
+----
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY "template" does not satisfy the constraint
+HINT: Tokenizer template type
+
 
 
 # --- Duplicate option ---
@@ -34,64 +38,92 @@ CREATE TEXT SEARCH DICTIONARY t_err3(
 
 # --- Invalid case value ---
 
-statement error invalid string value for CREATE TEXT SEARCH DICTIONARY parameter "case": "invalid"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err4(
     template = 'text',
     locale = 'en_US.UTF-8',
     case = 'invalid'
 )
+----
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY "case" does not satisfy the constraint
+HINT: Text case conversion: none, lower, upper
+
 
 
 # --- Option not supported by tokenizer ---
 
-statement error option "locale" is not supported by tokenizer "ngram"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err5(
     template = 'ngram',
     locale = 'en_US.UTF-8'
 )
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
 
 
-statement error option "stopwords" is not supported by tokenizer "stem"
+
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err6(
     template = 'stem',
     stopwords = 'a,the'
 )
+----
+db error: ERROR: option "stopwords" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
 
 
-statement error option "accent" is not supported by tokenizer "segmentation"
+
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err7(
     template = 'segmentation',
     accent = true
 )
+----
+db error: ERROR: option "accent" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
 
 
-statement error option "numhashes" is not supported by tokenizer "text"
+
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err8(
     template = 'text',
     locale = 'en_US.UTF-8',
     numhashes = 5
 )
+----
+db error: ERROR: option "numhashes" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
 
 
-statement error option "delimiter" is not supported by tokenizer "norm"
+
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err9(
     template = 'norm',
     locale = 'en_US.UTF-8',
     delimiter = ','
 )
+----
+db error: ERROR: option "delimiter" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
 
 
-statement error option "mingram" is not supported by tokenizer "collation"
+
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err10(
     template = 'collation',
     locale = 'en_US.UTF-8',
     mingram = 2
 )
+----
+db error: ERROR: option "mingram" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
 
 
 # --- Invalid boolean value ---
 
-statement error invalid boolean value for CREATE TEXT SEARCH DICTIONARY parameter "accent": "maybe"
+statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "accent": "maybe"
 CREATE TEXT SEARCH DICTIONARY t_err11(
     template = 'text',
     locale = 'en_US.UTF-8',
@@ -99,7 +131,7 @@ CREATE TEXT SEARCH DICTIONARY t_err11(
 )
 
 
-statement error invalid boolean value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
+statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
 CREATE TEXT SEARCH DICTIONARY t_err12(
     template = 'text',
     locale = 'en_US.UTF-8',
@@ -107,7 +139,7 @@ CREATE TEXT SEARCH DICTIONARY t_err12(
 )
 
 
-statement error invalid boolean value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "1"
+statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "1"
 CREATE TEXT SEARCH DICTIONARY t_err13(
     template = 'ngram',
     mingram = 2,
@@ -118,7 +150,7 @@ CREATE TEXT SEARCH DICTIONARY t_err13(
 
 # --- Invalid integer value ---
 
-statement error invalid integer value for CREATE TEXT SEARCH DICTIONARY parameter "mingram": "abc"
+statement error db error: ERROR: invalid input syntax for type integer: "abc"
 CREATE TEXT SEARCH DICTIONARY t_err14(
     template = 'ngram',
     mingram = 'abc',
@@ -126,7 +158,7 @@ CREATE TEXT SEARCH DICTIONARY t_err14(
 )
 
 
-statement error invalid integer value for CREATE TEXT SEARCH DICTIONARY parameter "maxgram": "three"
+statement error db error: ERROR: invalid input syntax for type integer: "three"
 CREATE TEXT SEARCH DICTIONARY t_err15(
     template = 'ngram',
     mingram = 2,
@@ -134,7 +166,7 @@ CREATE TEXT SEARCH DICTIONARY t_err15(
 )
 
 
-statement error invalid integer value for CREATE TEXT SEARCH DICTIONARY parameter "numhashes": "two"
+statement error db error: ERROR: invalid input syntax for type integer: "two"
 CREATE TEXT SEARCH DICTIONARY t_err16(
     template = 'minhash',
     numhashes = 'two'
@@ -143,18 +175,26 @@ CREATE TEXT SEARCH DICTIONARY t_err16(
 
 # --- Invalid threshold (out of range 0.0 to 1.0) ---
 
-statement error invalid double value for CREATE TEXT SEARCH DICTIONARY parameter "threshold": "1.5"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err17(
     template = 'classification',
     threshold = 1.5
 )
+----
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY "threshold" does not satisfy the constraint
+HINT: Minimum confidence score (0.0 to 1.0)
 
 
-statement error invalid double value for CREATE TEXT SEARCH DICTIONARY parameter "threshold": "-0.1"
+
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err18(
     template = 'classification',
     threshold = -0.1
 )
+----
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY "threshold" does not satisfy the constraint
+HINT: Minimum confidence score (0.0 to 1.0)
+
 
 
 # --- ts_lexize on non-existent dictionary ---
@@ -755,18 +795,21 @@ ts_lexize
 # FEATURES (norm, frequency, position, offset)
 # ===========================================================================
 
-statement ok
+statement error
 CREATE TEXT SEARCH DICTIONARY text_norm_feature(
     template = 'text',
     locale = 'en_US.UTF-8',
     norm = true
 )
+----
+db error: ERROR: missing feature 'frequency' required when 'norm' feature is specified
 
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY text_frequency_feature(
     template = 'text',
     locale = 'en_US.UTF-8',
+    norm = true,
     frequency = true
 )
 

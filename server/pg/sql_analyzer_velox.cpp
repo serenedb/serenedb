@@ -2064,27 +2064,13 @@ class CopyOptionsParser : public FileOptionsParser {
       }
     }();
 
-    if (const auto* option = EraseOption(kRejectLimit)) {
+    if (auto max_reject_limit = EraseOptionOrDefault<kRejectLimit>()) {
       if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
       }
-      auto maybe_reject_limit = TryGet<int>(option->arg);
-      if (!maybe_reject_limit) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid input syntax for type bigint: \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      if (*maybe_reject_limit <= 0) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("REJECT_LIMIT (", *maybe_reject_limit,
-                                ") must be greater than zero"));
-      }
-      reject_limit = *maybe_reject_limit;
+      reject_limit = max_reject_limit;
     }
 
     for (const auto& info : kUnsupportedTextCsvOptions) {

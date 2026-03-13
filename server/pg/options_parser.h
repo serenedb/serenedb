@@ -29,7 +29,9 @@
 #include <algorithm>
 #include <functional>
 #include <type_traits>
+#include <variant>
 
+#include "basics/errors.h"
 #include "pg/option_help.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
@@ -104,7 +106,20 @@ class OptionsParser {
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG(Info.ErrorMessage(_operation, DeparseValue(option->arg))));
       }
+      if constexpr (Info.constraint) {
+        if (!Info.constraint(*value)) {
+          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                          ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG(_operation, " \"", Info.name,
+                                  "\" does not satisfy the constraint"),
+                          ERR_HINT(Info.description));
+        }
+      }
       return *value;
+    } else if (Info.IsRequired()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.name, "\" was not found"));
     }
     auto value = Info.DefaultValue<T>();
     SDB_ASSERT(value.has_value());
@@ -169,12 +184,6 @@ class OptionsParser {
     return option;
   }
 
-  void ApplyOnOptionOrDefault(const OptionInfo& opt, auto&& callback) {
-    auto it = _options.find(opt.name);
-    const Node* node = it == _options.end() ? nullptr : it->second->arg;
-    opt.ApplyValueOrDefault(node, std::move(callback));
-  }
-
   bool HasOption(const OptionInfo& info) const {
     return _options.contains(info.name);
   }
@@ -191,34 +200,11 @@ class OptionsParser {
 
   template<typename F>
   void ParseOptions(F&& parse) {
-    CheckOptions();
     parse();
     CheckUnrecognizedOptions();
   }
 
  private:
-  void CheckOptions() const {
-    for (const auto& group : _option_groups) {
-      group.VisitOptions([&](const auto& opt) {
-        auto it = _options.find(opt.name);
-        if (opt.required && it == _options.end()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_SYNTAX_ERROR),
-            ERR_MSG("required parameter \"", opt.name, "\" was not found"));
-        }
-        if (it == _options.end()) {
-          return;
-        }
-        if (it->second->arg && !opt.CheckValue(it->second->arg)) {
-          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
-                          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                          ERR_MSG(opt.ErrorMessage(
-                            _operation, DeparseValue(it->second->arg))));
-        }
-      });
-    }
-  }
-
   void CheckUnrecognizedOptions() const {
     auto known_names = AllOptionNames(_option_groups);
     known_names.emplace_back("help");

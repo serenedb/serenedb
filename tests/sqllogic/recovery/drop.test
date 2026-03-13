@@ -23,7 +23,8 @@ CREATE TEXT SEARCH DICTIONARY s1.d(
     locale = 'en_US.UTF-8',
     mingram = 2,
     case = 'lower',
-    norm = true
+    norm = true,
+    frequency = true
 )
 
 
@@ -31,7 +32,7 @@ query
 SELECT ts_lexize('s1.d', 'A quicK Brown FOX');
 ----
 ts_lexize
-{a,quick,brown,fox}
+{qu,qui,br,bro,fo,fox}
 
 
 statement ok

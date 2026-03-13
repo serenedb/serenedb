@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <variant>
+
 #include "pg/option_help.h"
 
 namespace sdb::pg::file_options {
@@ -121,7 +123,11 @@ inline constexpr OptionInfo kProgress{"progress", false,
 inline constexpr EnumOptionInfo<CopyOnError> kOnError{
   "on_error", CopyOnError::Stop, "Error handling"};
 inline constexpr OptionInfo kRejectLimit{
-  "reject_limit", 0, "Max rows to skip (requires on_error = ignore)"};
+  "reject_limit", 0, "Max rows to skip (requires on_error = ignore)",
+  [](const auto& value) {
+    SDB_ASSERT(std::holds_alternative<int>(value));
+    return std::get<int>(value) >= 0;
+  }};
 inline constexpr EnumOptionInfo<CopyLogVerbosity> kLogVerbosity{
   "log_verbosity", CopyLogVerbosity::Default, "Logging level"};
 

@@ -39,8 +39,11 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
+#include <type_traits>
+#include <utility>
 #include <yaclib/async/make.hpp>
 
+#include "basics/assert.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "pg/commands.h"
@@ -77,11 +80,6 @@ constexpr auto kNameMappings =
     {tokenizer_options::kTopK.name, "top_k"},
     {tokenizer_options::kNumHashes.name, "numHashes"},
   });
-
-void InvalidParameterThrow(const OptionInfo& opt) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("Incorrect value for parameter \"", opt.name, "\""));
-}
 
 void ParseCommaSeparated(std::string_view input,
                          std::invocable<std::string_view> auto&& callback) {
@@ -129,16 +127,15 @@ constexpr OptionInfo kTemplate{
     return kTokenizerTypes.count(str) == 1;
   }};
 constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
-constexpr OptionGroup kTSDictionaryOptionGroups[] = {
-  {"Text Search Dictionary", kTSDictionaryRootOptions,
-   tokenizer_options::kTokenizerSubgroups},
-};
+constexpr OptionGroup kTSDictionaryGroup = {
+  "Text Search Dictionary", kTSDictionaryRootOptions,
+  tokenizer_options::kTokenizerSubgroups};
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(const List* ts_dictionary_options)
     : OptionsParser(MakeOptions(ts_dictionary_options, {}),
-                    kTSDictionaryOptionGroups,
+                    {kTSDictionaryGroup},
                     {.operation = "CREATE TEXT SEARCH DICTIONARY"}) {
     ParseOptions([&] { Parse(); });
   }
@@ -147,96 +144,86 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
  private:
   void Parse() {
-    ParseFeatures();
-
-    const auto* tmpl_opt = EraseOption(kTemplate);
-    SDB_ASSERT(tmpl_opt);
-    auto tmpl_name = TryGet<std::string_view>(tmpl_opt->arg);
-    SDB_ASSERT(tmpl_name);
-    const std::string_view type = *tmpl_name;
-
-    const OptionGroup* subgroup = nullptr;
-    for (const auto& g : tokenizer_options::kTokenizerSubgroups) {
-      if (g.name == type) {
-        subgroup = &g;
-        break;
-      }
-    }
-    SDB_ASSERT(subgroup);
-
-    // Validate all remaining options belong to this template's group
-    auto valid_names = subgroup->FlatNames();
-    for (const auto& [name, opt] : _options) {
-      if (std::ranges::find(valid_names, name) == valid_names.end()) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(opt))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("option \"", name, "\" is not supported by tokenizer \"",
-                  type, "\""));
-      }
-    }
-
+    const std::string_view type = EraseOptionOrDefault<kTemplate>();
     _builder.openObject();
     _builder.add("analyzer", vpack::Value{vpack::ValueType::Object});
     _builder.add("properties", vpack::Value{vpack::ValueType::Object});
 
-    WriteTokenizerOptions(*subgroup);
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      (
+        [&] {
+          constexpr const auto& kGroup = kTSDictionaryGroup.subgroups[Is];
+          if (kGroup.name == type) {
+            WriteTokenizerOptions<kGroup>();
+          }
+        }(),
+        ...);
+    }(std::make_index_sequence<std::size(kTSDictionaryGroup.subgroups)>{});
 
     _builder.close();  // close properties
     _builder.add("type", type);
     _builder.close();  // close analyzer
     _builder.close();  // close object
+    ParseFeatures(type);
   }
 
-  void WriteTokenizerOptions(const OptionGroup& subgroup) {
-    auto write_to_builder = [&](const auto& options) {
-      for (const auto& opt : options) {
-        if (opt.name == tokenizer_options::kStopwords.name) {
-          std::string_view stopwords =
-            EraseOptionOrDefault<tokenizer_options::kStopwords>();
-          _builder.add("stopwords", vpack::Value{vpack::ValueType::Array});
-          ParseCommaSeparated(
-            stopwords, [&](std::string_view word) { _builder.add(word); });
-          _builder.close();
-        } else {
-          ApplyOnOptionOrDefault(opt, [&](const auto& val) {
-            _builder.add(GetVPackName(opt.name), val);
-          });
-        }
-        EraseOption(opt);
-      }
-    };
-
-    if (subgroup.name == tokenizer_options::kTextGroup.name) {
-      // process edge ngram
-      const auto& edge_ngram = tokenizer_options::kEdgeNGramGroup;
-      bool has_ngram = false;
-      for (const auto& opt : edge_ngram.options) {
-        has_ngram |= _options.contains(opt.name);
-      }
+  template<const OptionGroup& Group>
+  void WriteTokenizerOptions() {
+    if constexpr (Group.name == tokenizer_options::kTextGroup.name) {
+      bool has_ngram = HasOption(tokenizer_options::kMinGram) ||
+                       HasOption(tokenizer_options::kMaxGram) ||
+                       HasOption(tokenizer_options::kPreserveOriginal);
       if (has_ngram) {
         _builder.add(GetVPackName(tokenizer_options::kEdgeNGramGroup.name),
                      vpack::Value{vpack::ValueType::Object});
-        write_to_builder(edge_ngram.options);
+        WriteTokenizerOptions<Group.subgroups[0]>();
         _builder.close();
       }
     }
-
-    write_to_builder(subgroup.options);
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      (
+        [&] {
+          constexpr const auto& kOption = Group.options[Is];
+          auto value = EraseOptionOrDefault<kOption>();
+          if constexpr (kOption.name == tokenizer_options::kStopwords.name) {
+            _builder.add(GetVPackName(kOption.name),
+                         vpack::Value{vpack::ValueType::Array});
+            ParseCommaSeparated(
+              value, [&](std::string_view word) { _builder.add(word); });
+            _builder.close();
+          } else {
+            if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
+                                         std::string_view>) {
+              if (value.empty()) {
+                return;
+              }
+            }
+            _builder.add(GetVPackName(kOption.name), value);
+          }
+        }(),
+        ...);
+    }(std::make_index_sequence<std::size(Group.options)>{});
   }
 
-  void ParseFeatures() {
-    const auto& features_subgroup = tokenizer_options::kFeaturesGroup;
-    auto features = features_subgroup.FlatOptions();
-    for (const auto& feature : features) {
-      auto it = _options.find(feature.name);
-      if (it == _options.end()) {
-        continue;
-      }
-      _options.erase(it);
-      if (!_features.Add(feature.name)) {
-        InvalidParameterThrow(feature);
-      }
+  void ParseFeatures(std::string_view type) {
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      (
+        [&] {
+          constexpr const auto& kFeature =
+            tokenizer_options::kFeaturesOptions[Is];
+          bool use_feature = EraseOptionOrDefault<kFeature>();
+          if (use_feature) {
+            bool added = _features.Add(kFeature.name);
+            SDB_ASSERT(added);
+          }
+        }(),
+        ...);
+    }(std::make_index_sequence<std::size(
+        tokenizer_options::kFeaturesOptions)>{});
+    auto r = _features.Validate(type);
+    if (!r.ok()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()));
     }
   }
 

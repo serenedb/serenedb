@@ -3538,6 +3538,11 @@ class FormatImpl final : public FormatBase {
 template<typename IteratorTraits>
 struct Type<PositionImpl<IteratorTraits>> : Type<PosAttr> {};
 
+// TODO(mbkkt)
+// I think current "in-memory speed" properties of this format is quite ok.
+// It's not ideal, for an example avx512/avx2 sometimes better, they can be used
+// for even bitpacking. Or larger block size.
+// But in general we need to think more about size of data.
 struct FormatTraits128 {
   // TODO(mbkkt) rename to "block_128"
   static constexpr std::string_view kName = "1_5simd";
@@ -4074,10 +4079,15 @@ struct FormatTraits128 {
     in.Skip(size);
   }
 
+  // This encodings used for docs,
+  // docs are special because they're sorted and unique.
   enum DeltaEncoding : byte_type {
     // NOLINTBEGIN
 
     de_values = 0,
+
+    // TODO: Maybe de_delta_all_equal_to_1?
+    // I think this is quite popular.
 
     de_delta_all_same_08,
     de_delta_all_same_16,
@@ -4085,9 +4095,16 @@ struct FormatTraits128 {
 
     de_for_bitset,
 
+    // non-delta versions here only for speed
     de_streamvbyte1234,
     de_for_streamvbyte1234,  // TODO: Implement in streamvbyte
     de_delta_streamvbyte1234,
+
+    // TODO: We can have non-delta versions here for speed
+    // but when I tried it never was choosen, so I think it's very low
+    // probability.
+    // Actually we can have other versions of delta too: D4, DM, D2
+    // This can speedup delta compute.
 
     // de_delta_bitpack_00,  // delta != 0
     // de_delta_bitpack_01,  // covered by de_delta_all_same_08
@@ -4126,10 +4143,21 @@ struct FormatTraits128 {
     // NOLINTEND
   };
 
+  // TODO: This quite suboptimal way to encode block of integers.
+  // We needs to improve this, because freqs/positions/offsets are large now.
+  // positions/offsets block actually can be different size with docs/freqs.
+  // The only good formats here are
+  // fallback: e_values and e_all_same
+  // In general we need to think about nested encoding schemas.
+  // And FormatTraits should define not only block size but also block metadata.
+  // And we don't need to have separate SkipList, etc.
   enum Encoding : byte_type {
     // NOLINTBEGIN
 
     e_values = 0,
+
+    // TODO: Maybe e_all_equal_to_1?
+    // I think they're quite popular for freqs/posititions
 
     e_all_same_08,
     e_all_same_16,

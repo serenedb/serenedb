@@ -65,13 +65,10 @@ inline constexpr OptionInfo kLocale{"locale", ""sv,
 
 inline constexpr OptionInfo kAccent{"accent", true, "Preserve accent marks"};
 
+void CheckCase(std::string_view value);
+
 inline constexpr OptionInfo kCase{
-  "case", "none"sv, "Text case conversion: none, lower, upper",
-  [](const OptionInfo::DefaultValueT& value) {
-    SDB_ASSERT(std::holds_alternative<std::string_view>(value));
-    auto str = std::get<std::string_view>(value);
-    return str == "none" || str == "lower" || str == "upper";
-  }};
+  "case", "none"sv, "Text case conversion: none, lower, upper", CheckCase};
 
 inline constexpr OptionInfo kModelLocation{"modellocation", ""sv,
                                            "Path to the ML model file"};
@@ -109,13 +106,10 @@ inline constexpr OptionInfo kEndMarker{
 
 // Classification
 
+void CheckThreshold(double);
+
 inline constexpr OptionInfo kThreshold{
-  "threshold", 0.0, "Minimum confidence score (0.0 to 1.0)",
-  [](const OptionInfo::DefaultValueT& value) {
-    SDB_ASSERT(std::holds_alternative<double>(value));
-    auto val = std::get<double>(value);
-    return 0. <= val && val <= 1.;
-  }};
+  "threshold", 0.0, "Minimum confidence score (0.0 to 1.0)", CheckThreshold};
 
 // Stopwords tokenizer
 

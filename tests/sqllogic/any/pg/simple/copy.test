@@ -267,8 +267,7 @@ SELECT * FROM donsimon ORDER BY 1, 2;
 statement error
 COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT -1);
 ----
-db error: ERROR: COPY "reject_limit" does not satisfy the constraint
-HINT: Max rows to skip (requires on_error = ignore)
+db error: ERROR: REJECT_LIMIT (-1) must be greater than zero
 
 
 onlyif serenedb

@@ -72,7 +72,7 @@ query
 SELECT ts_lexize('s1.d', 'A quicK Brown FOX');
 ----
 ts_lexize
-{a,quick,brown,fox}
+{qu,qui,br,bro,fo,fox}
 
 
 connection after_index_drop

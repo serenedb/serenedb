@@ -107,14 +107,9 @@ class OptionsParser {
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG(Info.ErrorMessage(_operation, DeparseValue(option->arg))));
       }
-      if constexpr (Info.constraint) {
-        if (!Info.constraint(*value)) {
-          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                          ERR_CODE(ERROR_BAD_PARAMETER),
-                          ERR_MSG(_operation, " \"", Info.name,
-                                  "\" does not satisfy the constraint"),
-                          ERR_HINT(Info.description));
-        }
+      if constexpr (!std::holds_alternative<std::monostate>(Info.constraint)) {
+        SDB_ASSERT(std::holds_alternative<void (*)(T)>(Info.constraint));
+        std::get<void (*)(T)>(Info.constraint)(*value);
       }
       return *value;
     } else if (Info.IsRequired()) {

@@ -106,26 +106,30 @@ std::string_view GetVPackName(std::string_view pg_name) {
   return it != kNameMappings.end() ? it->second : pg_name;
 }
 
-constexpr OptionInfo kTemplate{
-  "template", OptionInfo::RequiredTag<std::string_view>{},
-  "Tokenizer template type", [](const OptionInfo::DefaultValueT& value) {
-    static constexpr auto kTokenizerTypes = frozen::make_unordered_set({
-      irs::analysis::TextTokenizer::type_name(),
-      irs::analysis::NormalizingTokenizer::type_name(),
-      irs::analysis::NGramTokenizerBase::type_name(),
-      irs::analysis::CollationTokenizer::type_name(),
-      irs::analysis::DelimitedTokenizer::type_name(),
-      irs::analysis::MultiDelimitedTokenizer::type_name(),
-      irs::analysis::SegmentationTokenizer::type_name(),
-      irs::analysis::ClassificationTokenizer::type_name(),
-      irs::analysis::MinHashTokenizer::type_name(),
-      irs::analysis::NearestNeighborsTokenizer::type_name(),
-      irs::analysis::StemmingTokenizer::type_name(),
-      irs::analysis::StopwordsTokenizer::type_name(),
-    });
-    auto str = std::get<std::string_view>(value);
-    return kTokenizerTypes.count(str) == 1;
-  }};
+void CheckTemplate(std::string_view value) {
+  static constexpr auto kTokenizerTypes = frozen::make_unordered_set({
+    irs::analysis::TextTokenizer::type_name(),
+    irs::analysis::NormalizingTokenizer::type_name(),
+    irs::analysis::NGramTokenizerBase::type_name(),
+    irs::analysis::CollationTokenizer::type_name(),
+    irs::analysis::DelimitedTokenizer::type_name(),
+    irs::analysis::MultiDelimitedTokenizer::type_name(),
+    irs::analysis::SegmentationTokenizer::type_name(),
+    irs::analysis::ClassificationTokenizer::type_name(),
+    irs::analysis::MinHashTokenizer::type_name(),
+    irs::analysis::NearestNeighborsTokenizer::type_name(),
+    irs::analysis::StemmingTokenizer::type_name(),
+    irs::analysis::StopwordsTokenizer::type_name(),
+  });
+  if (kTokenizerTypes.count(value) != 1) {
+    THROW_SQL_ERROR(ERR_MSG(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Invalid type of text search dictionary"));
+  }
+}
+
+constexpr OptionInfo kTemplate{"template",
+                               OptionInfo::RequiredTag<std::string_view>{},
+                               "Tokenizer template type", CheckTemplate};
 constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
 constexpr OptionGroup kTSDictionaryGroup = {
   "Text Search Dictionary", kTSDictionaryRootOptions,

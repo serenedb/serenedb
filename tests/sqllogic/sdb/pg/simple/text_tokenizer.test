@@ -21,8 +21,7 @@ CREATE TEXT SEARCH DICTIONARY t_err2(
     locale = 'en_US.UTF-8'
 )
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY "template" does not satisfy the constraint
-HINT: Tokenizer template type
+db error: ERROR: Invalid type of text search dictionary
 
 
 
@@ -45,7 +44,7 @@ CREATE TEXT SEARCH DICTIONARY t_err4(
     case = 'invalid'
 )
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY "case" does not satisfy the constraint
+db error: ERROR: invalid value in "case" parameter
 HINT: Text case conversion: none, lower, upper
 
 
@@ -181,9 +180,8 @@ CREATE TEXT SEARCH DICTIONARY t_err17(
     threshold = 1.5
 )
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY "threshold" does not satisfy the constraint
+db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
 HINT: Minimum confidence score (0.0 to 1.0)
-
 
 
 statement error
@@ -192,9 +190,8 @@ CREATE TEXT SEARCH DICTIONARY t_err18(
     threshold = -0.1
 )
 ----
-db error: ERROR: CREATE TEXT SEARCH DICTIONARY "threshold" does not satisfy the constraint
+db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
 HINT: Minimum confidence score (0.0 to 1.0)
-
 
 
 # --- ts_lexize on non-existent dictionary ---

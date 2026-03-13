@@ -23,6 +23,7 @@
 #include <variant>
 
 #include "pg/option_help.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::pg::file_options {
 
@@ -122,12 +123,12 @@ inline constexpr OptionInfo kProgress{"progress", false,
                                       "Show progress notices during COPY"};
 inline constexpr EnumOptionInfo<CopyOnError> kOnError{
   "on_error", CopyOnError::Stop, "Error handling"};
+
+void CheckRejectLimit(int value);
+
 inline constexpr OptionInfo kRejectLimit{
   "reject_limit", 0, "Max rows to skip (requires on_error = ignore)",
-  [](const auto& value) {
-    SDB_ASSERT(std::holds_alternative<int>(value));
-    return std::get<int>(value) >= 0;
-  }};
+  CheckRejectLimit};
 inline constexpr EnumOptionInfo<CopyLogVerbosity> kLogVerbosity{
   "log_verbosity", CopyLogVerbosity::Default, "Logging level"};
 

@@ -85,35 +85,41 @@ struct OptionInfo {
 
   using DefaultValueT =
     std::variant<std::monostate, std::string_view, bool, int, double, char>;
-
+  using ConstraintFn =
+    std::variant<std::monostate, void (*)(std::string_view), void (*)(bool),
+                 void (*)(int), void (*)(double), void (*)(char)>;
   std::string_view name;
   Type type;
   std::string_view description;
 
-  DefaultValueT default_value;
+  DefaultValueT default_value = std::monostate{};
 
-  bool (*constraint)(const DefaultValueT&) = nullptr;
+  ConstraintFn constraint = std::monostate{};
 
   std::span<const std::string_view> enum_values;
 
   template<typename T>
   consteval OptionInfo(std::string_view name, RequiredTag<T>,
                        std::string_view desc,
-                       bool (*constraint)(const DefaultValueT&) = nullptr)
-    : name{name},
-      type{GetType<T>()},
-      description{desc},
-      constraint{constraint} {}
+                       void (*constraint_fn)(T) = nullptr)
+    : name{name}, type{GetType<T>()}, description{desc} {
+    if (constraint_fn) {
+      constraint = constraint_fn;
+    }
+  }
 
   template<typename T>
   consteval OptionInfo(std::string_view name, T default_value,
                        std::string_view desc,
-                       bool (*constraint)(const DefaultValueT&) = nullptr)
+                       void (*constraint_fn)(T) = nullptr)
     : name{name},
       type{GetType<T>()},
       description{desc},
-      default_value{default_value},
-      constraint{constraint} {}
+      default_value{default_value} {
+    if (constraint_fn) {
+      constraint = constraint_fn;
+    }
+  }
 
   bool IsRequired() const {
     return std::holds_alternative<std::monostate>(default_value);

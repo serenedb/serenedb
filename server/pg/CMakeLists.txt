@@ -26,4 +26,6 @@ target_sources(
         sql_utils.cpp
         isolation_level.cpp
         option_help.cpp
+        file_options.cpp
+        tokenizer_options.cpp
 )

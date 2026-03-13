@@ -23,6 +23,12 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/nodes.h"
+LIBPG_QUERY_INCLUDES_END
+
 namespace sdb::pg {
 
 namespace {
@@ -121,6 +127,42 @@ std::vector<std::string_view> AllOptionNames(
     names.insert(names.end(), group_names.begin(), group_names.end());
   }
   return names;
+}
+
+// Enum is not supported
+bool OptionInfo::CheckValue(const Node* node) const {
+  auto check_value = [&]<typename T>() {
+    std::optional<T> val;
+    auto tag = nodeTag(node);
+    if (tag != T_Integer && tag != T_Float && tag != T_String &&
+        tag != T_Boolean) {
+      // Can check only integer, float, boolean and string types
+      return true;
+    }
+    if constexpr (std::is_same_v<T, char>) {
+      val = TryGet<std::string_view>(node).and_then(
+        [](const auto& str) -> std::optional<char> {
+          return str.size() == 1 ? std::optional{str[0]} : std::nullopt;
+        });
+    } else {
+      val = TryGet<T>(node);
+    }
+    return val && (!constraint || constraint(*val));
+  };
+  switch (type) {
+    case OptionInfo::Type::Boolean:
+      return check_value.template operator()<bool>();
+    case OptionInfo::Type::Integer:
+      return check_value.template operator()<int>();
+    case OptionInfo::Type::Double:
+      return check_value.template operator()<double>();
+    case OptionInfo::Type::String:
+      return check_value.template operator()<std::string_view>();
+    case OptionInfo::Type::Character:
+      return check_value.template operator()<char>();
+    case OptionInfo::Type::Enum:
+      return true;
+  }
 }
 
 }  // namespace sdb::pg

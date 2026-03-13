@@ -271,10 +271,10 @@ db error: ERROR: REJECT_LIMIT (-1) must be greater than zero
 
 
 onlyif serenedb
-statement error
+statement error 
 COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR labudadadab);
 ----
-db error: ERROR: COPY ON_ERROR "labudadadab" not recognized
+db error: ERROR: invalid enum value for COPY parameter "on_error": "labudadadab"
 HINT: Allowed values: STOP, IGNORE
 
 
@@ -415,7 +415,7 @@ onlyif serenedb
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
 ----
-db error: ERROR: COPY FORMAT "1" not recognized
+db error: ERROR: invalid enum value for COPY parameter "format": "1"
 HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC
 
 
@@ -423,7 +423,7 @@ onlyif serenedb
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
 ----
-db error: ERROR: COPY LOG_VERBOSITY "228.228" not recognized
+db error: ERROR: invalid enum value for COPY parameter "log_verbosity": "228.228"
 HINT: Allowed values: SILENT, DEFAULT, VERBOSE
 
 

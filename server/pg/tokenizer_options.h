@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/index/norm.hpp>
+#include <iresearch/utils/type_id.hpp>
+
 #include "pg/option_help.h"
 
 namespace sdb::pg::tokenizer_options {
@@ -28,17 +32,18 @@ using namespace std::string_view_literals;
 
 // Features
 
-inline constexpr OptionInfo kNormFeature{"norm", false,
+inline constexpr OptionInfo kNormFeature{irs::Type<irs::Norm>::name(), false,
                                          "Enables norm feature in index"};
 
-inline constexpr OptionInfo kFreqFeature{"freq", false,
+inline constexpr OptionInfo kFreqFeature{irs::Type<irs::FreqAttr>::name(),
+                                         false,
                                          "Enables frequency feature in index"};
 
-inline constexpr OptionInfo kPosFeature{"position", false,
+inline constexpr OptionInfo kPosFeature{irs::Type<irs::PosAttr>::name(), false,
                                         "Enables position feature in index"};
 
-inline constexpr OptionInfo kOffsetFeature{"offset", false,
-                                           "Enables offset feature in index"};
+inline constexpr OptionInfo kOffsetFeature{
+  irs::Type<irs::OffsAttr>::name(), false, "Enables offset feature in index"};
 
 // Common
 
@@ -65,8 +70,7 @@ inline constexpr OptionInfo kStemming{"stemming", true,
                                       "Apply stemming to tokens"};
 
 inline constexpr OptionInfo kStopwords{
-  "stopwords", OptionInfo::Type::String,
-  "Comma-separated list of inline stop words"};
+  "stopwords", ""sv, "Comma-separated list of inline stop words"};
 
 inline constexpr OptionInfo kStopwordsPath{
   "stopwordspath", OptionInfo::Type::String,
@@ -127,8 +131,7 @@ inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
                                                   kPosFeature, kFreqFeature};
 
 inline constexpr OptionInfo kTextOptions[] = {
-  kLocale,        kAccent, kStemming, kStopwords,
-  kStopwordsPath, kCase,   kMinGram,  kMaxGram};
+  kLocale, kAccent, kStemming, kStopwords, kStopwordsPath, kCase};
 
 inline constexpr OptionInfo kNGramOptions[] = {
   kMinGram, kMaxGram, kPreserveOriginal, kInputType, kStartMarker, kEndMarker};
@@ -153,10 +156,16 @@ inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
+inline constexpr OptionInfo kEdgeNGramOptions[] = {kMinGram, kMaxGram,
+                                                   kPreserveOriginal};
+
 // Groups
 
+inline constexpr OptionGroup kEdgeNGramGroup{
+  "edgengram", kEdgeNGramOptions, {}};
+inline constexpr OptionGroup kTextSubgroups[] = {kEdgeNGramGroup};
 inline constexpr OptionGroup kFeaturesGroup{"features", kFeaturesOptions, {}};
-inline constexpr OptionGroup kTextGroup{"text", kTextOptions, {}};
+inline constexpr OptionGroup kTextGroup{"text", kTextOptions, kTextSubgroups};
 inline constexpr OptionGroup kNGramGroup{"ngram", kNGramOptions, {}};
 inline constexpr OptionGroup kNearestNeighborsGroup{
   "nearest_neighbors", kNearestNeighborsOptions, {}};

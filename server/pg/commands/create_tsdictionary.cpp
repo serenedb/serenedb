@@ -65,16 +65,17 @@ using namespace std::string_view_literals;
 
 constexpr auto kNameMappings =
   frozen::make_unordered_map<std::string_view, std::string_view>({
-    {"stopwordspath", "stopwordsPath"},
-    {"mingram", "min"},
-    {"maxgram", "max"},
-    {"preserveoriginal", "preserveOriginal"},
-    {"inputtype", "streamType"},
-    {"startmarker", "startMarker"},
-    {"endmarker", "endMarker"},
-    {"modellocation", "model_location"},
-    {"topk", "top_k"},
-    {"numhashes", "numHashes"},
+    {tokenizer_options::kStopwordsPath.name, "stopwordsPath"},
+    {tokenizer_options::kMinGram.name, "min"},
+    {tokenizer_options::kMaxGram.name, "max"},
+    {tokenizer_options::kEdgeNGramGroup.name, "edgeNGram"},
+    {tokenizer_options::kPreserveOriginal.name, "preserveOriginal"},
+    {tokenizer_options::kInputType.name, "streamType"},
+    {tokenizer_options::kStartMarker.name, "startMarker"},
+    {tokenizer_options::kEndMarker.name, "endMarker"},
+    {tokenizer_options::kModelLocation.name, "model_location"},
+    {tokenizer_options::kTopK.name, "top_k"},
+    {tokenizer_options::kNumHashes.name, "numHashes"},
   });
 
 void InvalidParameterThrow(const OptionInfo& opt) {
@@ -145,15 +146,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
   auto Result() && { return std::make_pair(std::move(_builder), _features); }
 
  private:
-  static const OptionGroup* FindSubgroup(std::string_view name) {
-    for (const auto& group : tokenizer_options::kTokenizerSubgroups) {
-      if (group.name == name) {
-        return &group;
-      }
-    }
-    return nullptr;
-  }
-
   void Parse() {
     ParseFeatures();
 
@@ -163,7 +155,13 @@ class CreateTSDictionaryOptions : public OptionsParser {
     SDB_ASSERT(tmpl_name);
     const std::string_view type = *tmpl_name;
 
-    const auto* subgroup = FindSubgroup(type);
+    const OptionGroup* subgroup = nullptr;
+    for (const auto& g : tokenizer_options::kTokenizerSubgroups) {
+      if (g.name == type) {
+        subgroup = &g;
+        break;
+      }
+    }
     SDB_ASSERT(subgroup);
 
     // Validate all remaining options belong to this template's group
@@ -191,38 +189,45 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void WriteTokenizerOptions(const OptionGroup& subgroup) {
-    if (const auto* opt = EraseOption(tokenizer_options::kStopwords)) {
-      auto val = TryGet<std::string_view>(opt->arg);
-      if (!val) {
-        InvalidParameterThrow(tokenizer_options::kStopwords);
+    auto write_to_builder = [&](const auto& options) {
+      for (const auto& opt : options) {
+        if (opt.name == tokenizer_options::kStopwords.name) {
+          std::string_view stopwords =
+            EraseOptionOrDefault<tokenizer_options::kStopwords>();
+          _builder.add("stopwords", vpack::Value{vpack::ValueType::Array});
+          ParseCommaSeparated(
+            stopwords, [&](std::string_view word) { _builder.add(word); });
+          _builder.close();
+        } else {
+          ApplyOnOptionOrDefault(opt, [&](const auto& val) {
+            _builder.add(GetVPackName(opt.name), val);
+          });
+        }
+        EraseOption(opt);
       }
-      _builder.add("stopwords", vpack::Value{vpack::ValueType::Array});
-      ParseCommaSeparated(*val,
-                          [&](std::string_view word) { _builder.add(word); });
-      _builder.close();  // close stopwords array
+    };
+
+    if (subgroup.name == tokenizer_options::kTextGroup.name) {
+      // process edge ngram
+      const auto& edge_ngram = tokenizer_options::kEdgeNGramGroup;
+      bool has_ngram = false;
+      for (const auto& opt : edge_ngram.options) {
+        has_ngram |= _options.contains(opt.name);
+      }
+      if (has_ngram) {
+        _builder.add(GetVPackName(tokenizer_options::kEdgeNGramGroup.name),
+                     vpack::Value{vpack::ValueType::Object});
+        write_to_builder(edge_ngram.options);
+        _builder.close();
+      }
     }
 
-    for (const auto& opt : subgroup.FlatOptions()) {
-      auto it = _options.find(opt.name);
-      if (it == _options.end()) {
-        continue;
-      }
-      const auto* def = it->second;
-      _options.erase(it);
-
-      opt.Apply(def->arg, [&](const auto& val) {
-        _builder.add(GetVPackName(opt.name), val);
-      });
-    }
+    write_to_builder(subgroup.options);
   }
 
   void ParseFeatures() {
-    const auto* features_subgroup =
-      FindSubgroup(tokenizer_options::kFeaturesGroup.name);
-    if (!features_subgroup) {
-      return;
-    }
-    auto features = features_subgroup->FlatOptions();
+    const auto& features_subgroup = tokenizer_options::kFeaturesGroup;
+    auto features = features_subgroup.FlatOptions();
     for (const auto& feature : features) {
       auto it = _options.find(feature.name);
       if (it == _options.end()) {

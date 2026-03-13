@@ -34,6 +34,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/result.h"
 #include "basics/system-compiler.h"
@@ -136,40 +137,17 @@ struct OptionInfo {
     });
   }
 
-  // Enum is not supported
-  bool CheckValue(const Node* node) const {
-    SDB_ASSERT(constraint);
-    auto check_value = [&]<typename T>() {
-      std::optional<T> val;
-      if constexpr (std::is_same_v<T, char>) {
-        val = TryGet<std::string_view>(node).and_then(
-          [](const auto& str) -> std::optional<char> {
-            return str.size() == 1 ? std::optional{str[0]} : std::nullopt;
-          });
-      } else {
-        val = TryGet<T>(node);
-      }
-      return val && constraint(*val);
-    };
-    switch (type) {
-      case OptionInfo::Type::Boolean:
-        return check_value.template operator()<bool>();
-      case OptionInfo::Type::Integer:
-        return check_value.template operator()<int>();
-      case OptionInfo::Type::Double:
-        return check_value.template operator()<double>();
-      case OptionInfo::Type::String:
-        return check_value.template operator()<std::string_view>();
-      case OptionInfo::Type::Character:
-        return check_value.template operator()<char>();
-      case OptionInfo::Type::Enum:
-        return true;
-    }
-  }
+  bool CheckValue(const Node* node) const;
 
-  // Enum type is not supported
-  void Apply(const Node* node, auto&& callback) const {
+  void ApplyValueOrDefault(const Node* node, auto&& callback) const {
     auto process_value = [&]<typename T>() {
+      SDB_ASSERT(!required || (required && (node != nullptr)));
+      if (node == nullptr) {
+        if (default_value) {
+          callback(std::get<T>(*default_value));
+        }
+        return;
+      }
       std::optional<T> val;
       if constexpr (std::is_same_v<T, char>) {
         val = TryGet<std::string_view>(node).and_then(
@@ -179,6 +157,7 @@ struct OptionInfo {
       } else {
         val = TryGet<T>(node);
       }
+      SDB_ASSERT(val);
       callback(*val);
     };
     switch (type) {
@@ -224,25 +203,8 @@ struct OptionInfo {
 
   std::string ErrorMessage(std::string_view operation,
                            std::string_view raw_value) const {
-    switch (type) {
-      case Type::Boolean:
-        return absl::StrCat("invalid value for ", operation, " parameter \"",
-                            name, "\": \"", raw_value, "\"");
-      case Type::Integer:
-        return absl::StrCat("invalid input syntax for type integer: \"",
-                            raw_value, "\"");
-      case Type::Double:
-        return absl::StrCat("invalid input syntax for type double: \"",
-                            raw_value, "\"");
-      case Type::Character:
-        return absl::StrCat(operation, " ", name,
-                            " must be a single one-byte character");
-      case Type::String:
-        return absl::StrCat(operation, " ", name, " must be a string");
-      case Type::Enum:
-        return absl::StrCat(operation, " ", absl::AsciiStrToUpper(name), " \"",
-                            raw_value, "\" not recognized");
-    }
+    return absl::StrCat("invalid ", TypeName(), " value for ", operation,
+                        " parameter \"", name, "\": \"", raw_value, "\"");
   }
 };
 

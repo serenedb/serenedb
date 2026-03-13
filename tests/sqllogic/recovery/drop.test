@@ -22,8 +22,8 @@ CREATE TEXT SEARCH DICTIONARY s1.d(
     template = 'text',
     locale = 'en_US.UTF-8',
     mingram = 2,
-    maxgram = 3,
-    case = 'lower'
+    case = 'lower',
+    norm = true
 )
 
 

@@ -24,6 +24,10 @@ if test -z "$WORKSPACE"; then
 	export WORKSPACE=$(realpath "$SQLLOGIC_DIR/../../")
 fi
 
+# Resources directory as seen inside the serenedb container
+# ($WORKSPACE is mounted at /serenedb, so resources lives at /serenedb/resources)
+export RESOURCES="/serenedb/resources"
+
 if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi

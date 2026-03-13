@@ -169,6 +169,12 @@ class OptionsParser {
     return option;
   }
 
+  void ApplyOnOptionOrDefault(const OptionInfo& opt, auto&& callback) {
+    auto it = _options.find(opt.name);
+    const Node* node = it == _options.end() ? nullptr : it->second->arg;
+    opt.ApplyValueOrDefault(node, std::move(callback));
+  }
+
   bool HasOption(const OptionInfo& info) const {
     return _options.contains(info.name);
   }
@@ -197,21 +203,22 @@ class OptionsParser {
         auto it = _options.find(opt.name);
         if (opt.required && it == _options.end()) {
           THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+            ERR_CODE(ERRCODE_SYNTAX_ERROR),
             ERR_MSG("required parameter \"", opt.name, "\" was not found"));
         }
         if (it == _options.end()) {
           return;
         }
-        if (it->second->arg && opt.constraint &&
-            !opt.CheckValue(it->second->arg)) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG("invalid value of the parameter \"", opt.name, "\""));
+        if (it->second->arg && !opt.CheckValue(it->second->arg)) {
+          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
+                          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG(opt.ErrorMessage(
+                            _operation, DeparseValue(it->second->arg))));
         }
       });
     }
   }
+
   void CheckUnrecognizedOptions() const {
     auto known_names = AllOptionNames(_option_groups);
     known_names.emplace_back("help");

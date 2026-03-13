@@ -31,6 +31,7 @@
 #include <type_traits>
 #include <variant>
 
+#include "basics/assert.h"
 #include "basics/errors.h"
 #include "pg/option_help.h"
 #include "pg/pg_list_utils.h"
@@ -121,9 +122,7 @@ class OptionsParser {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("required parameter \"", Info.name, "\" was not found"));
     }
-    auto value = Info.DefaultValue<T>();
-    SDB_ASSERT(value.has_value());
-    return *value;
+    return Info.DefaultValue<T>();
   }
 
   template<const auto& Info>
@@ -161,9 +160,13 @@ class OptionsParser {
       return *result;
     }
 
-    auto value = Info.base.template DefaultValue<E>();
-    SDB_ASSERT(value.has_value());
-    return *value;
+    if (Info.base.IsRequired()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.base.name, "\" was not found"));
+    }
+
+    return Info.base.template DefaultValue<E>();
   }
 
   // requires_parameter == presence flag like ... WITH (FLAG)

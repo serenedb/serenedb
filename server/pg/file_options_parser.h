@@ -25,8 +25,6 @@
 #include "catalog/types.h"
 #include "pg/file_options.h"
 #include "pg/options_parser.h"
-#include "pg/sql_exception_macro.h"
-#include "utils/elog.h"
 
 namespace sdb::pg {
 
@@ -73,19 +71,19 @@ class FileOptionsParser : public OptionsParser {
                 kS3IamRole.name, " cannot be specified together"));
     }
 
-    std::string access_key{EraseOptionOrDefault<kS3AccessKey>()};
-    std::string secret_key{EraseOptionOrDefault<kS3SecretKey>()};
-    std::string iam_role{EraseOptionOrDefault<kS3IamRole>()};
+    auto access_key = EraseOptionOrDefault<kS3AccessKey>();
+    auto secret_key = EraseOptionOrDefault<kS3SecretKey>();
+    auto iam_role = EraseOptionOrDefault<kS3IamRole>();
 
-    std::string endpoint{EraseOptionOrDefault<kS3Endpoint>()};
-    std::string region{EraseOptionOrDefault<kS3Region>()};
+    auto endpoint = EraseOptionOrDefault<kS3Endpoint>();
+    auto region = EraseOptionOrDefault<kS3Region>();
     auto path_style = EraseOptionOrDefault<kS3PathStyleAccess>();
     auto ssl_enabled = EraseOptionOrDefault<kS3SslEnabled>();
     auto use_creds = EraseOptionOrDefault<kS3UseInstanceCredentials>();
     return std::make_unique<S3StorageOptions>(
-      std::string{_file_path}, std::move(access_key), std::move(secret_key),
-      std::move(endpoint), std::move(region), std::move(iam_role), path_style,
-      ssl_enabled, use_creds);
+      std::string{_file_path}, std::string{access_key}, std::string{secret_key},
+      std::string{endpoint}, std::string{region}, std::string{iam_role},
+      path_style, ssl_enabled, use_creds);
   }
 
   std::optional<file_options::FormatType> TryFormatFromFile() const {
@@ -149,7 +147,7 @@ class FileOptionsParser : public OptionsParser {
     uint8_t escape = EraseOptionOrDefault<kEscape>();
 
     constexpr auto& kNull = IsCsv ? kCsvNull : kTextNull;
-    std::string null_string{EraseOptionOrDefault<kNull>()};
+    auto null_string = EraseOptionOrDefault<kNull>();
 
     // TODO: make variant option info
     auto header = kHeader.DefaultValue<bool>();
@@ -177,13 +175,8 @@ class FileOptionsParser : public OptionsParser {
       }
     }
 
-    if (!header) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-                      ERR_MSG("header option was not provided"));
-    }
-
-    return std::make_shared<TextFormatOptions>(delim, escape,
-                                               std::move(null_string), *header);
+    return std::make_shared<TextFormatOptions>(
+      delim, escape, std::string{null_string}, header);
   }
 
   std::shared_ptr<ParquetFormatOptions> ParseParquetFormatOptions() {

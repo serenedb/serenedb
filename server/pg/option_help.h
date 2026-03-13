@@ -120,17 +120,18 @@ struct OptionInfo {
   }
 
   template<typename T>
-  constexpr std::optional<T> DefaultValue() const {
+  constexpr T DefaultValue() const {
     SDB_ASSERT(!IsRequired());
     if constexpr (std::is_enum_v<T>) {
       SDB_ASSERT(std::holds_alternative<std::string_view>(default_value));
       const auto& value_str = std::get<std::string_view>(default_value);
       auto value =
         magic_enum::enum_cast<T>(value_str, magic_enum::case_insensitive);
-      return {value};
+      SDB_ASSERT(value);
+      return *value;
     } else {
       SDB_ASSERT(std::holds_alternative<T>(default_value));
-      return {std::get<T>(default_value)};
+      return std::get<T>(default_value);
     }
   }
 

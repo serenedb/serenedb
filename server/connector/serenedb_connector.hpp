@@ -117,9 +117,6 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
 
   auto resolve_index_writer = [&](auto& transaction,
                                   const catalog::Index& index) {
-    if (backfill_index_id.isSet() && index.GetId() != backfill_index_id) {
-      return;
-    }
     if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
                                  irs::IndexWriter::Transaction>) {
       const auto& inverted_index =
@@ -131,7 +128,9 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
     }
   };
 
-  if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
+  if (backfill_index_id.isSet()) {
+    transaction.EnsureIndexTransaction(backfill_index_id, resolve_index_writer);
+  } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     containers::FlatHashSet<catalog::Column::Id> update_column_ids;
     if (!pk_updated) {
       update_column_ids.reserve(updated_columns.size());

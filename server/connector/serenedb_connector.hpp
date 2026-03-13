@@ -964,7 +964,8 @@ class SereneDBConnector final : public velox::connector::Connector {
             SDB_ASSERT(backfill_sinks.size() == 1);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, columns, std::move(backfill_sinks.front()));
+              object_key, pk_indices, columns,
+              std::move(backfill_sinks.front()));
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

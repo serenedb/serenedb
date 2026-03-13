@@ -94,9 +94,8 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   query_ctx.command_type.Add(query::CommandType::Query);
 
-  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                          std::move(executors),
-                                          std::move(rollback));
+  return query::Query::CreateWithExecutor(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
 
 std::unique_ptr<query::Query> CreateIndexPipeline(
@@ -139,9 +138,8 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
 
   query_ctx.command_type.Add(query::CommandType::Query);
 
-  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                          std::move(executors),
-                                          std::move(rollback));
+  return query::Query::CreateWithExecutor(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
 
 }  // namespace

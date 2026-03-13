@@ -56,3 +56,40 @@ a	b	c
 
 statement ok
 DROP TABLE foo;
+
+
+statement count 100000
+CREATE TABLE clickclack AS
+SELECT
+  CASE
+    WHEN vedernikoff_team.crook % 2 = 0 THEN 
+      'team member vedernikoff has ' || (crook / 10)::text || ' stocks'
+    ELSE 
+      'team member cutelooked has ' || ((boss + 1) * 1000)::text || ' stocks'
+  END AS fact
+FROM
+  generate_series(1, 1000) as vedernikoff_team(crook),
+  generate_series(1, 100) as cutelooked_team(boss);
+
+
+statement ok
+CREATE INDEX clickclack_facts ON clickclack USING inverted(fact);
+
+
+query
+SELECT COUNT(*) FROM clickclack_facts WHERE PHRASE(fact, 'team member');
+----
+
+query
+SELECT COUNT(*) FROM clickclack_facts WHERE PHRASE(fact, 'vedernikoff has');
+----
+
+
+query
+SELECT COUNT(*) FROM clickclack_facts WHERE PHRASE(fact, 'cutelooked has');
+----
+
+
+query
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'has 0 stocks');
+----

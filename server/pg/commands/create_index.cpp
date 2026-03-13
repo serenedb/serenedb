@@ -184,16 +184,15 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   SDB_ASSERT(catalog_table);
   auto catalog_index = snapshot->GetRelation(db, schema, stmt.idxname);
   SDB_ASSERT(catalog_index);
-  auto& transaction = static_cast<query::Transaction&>(conn_ctx);
 
-  auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
-    basics::downCast<const axiom::logical_plan::TableWriteNode>(
-      *query.GetLogicalPlan()));
+  const auto& logical_plan = *query.GetLogicalPlan();
+  SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));
+  auto& root =
+    static_cast<const axiom::logical_plan::TableWriteNode&>(logical_plan);
+  auto& table = static_cast<connector::RocksDBTable&>(
+    const_cast<axiom::connector::Table&>(*root.table()));
+  table.BackfillIndexId() = catalog_index->GetId();
 
-  auto axiom_table =
-    std::make_shared<connector::RocksDBTable>(*catalog_table, transaction);
-  axiom_table->BackfillIndexId() = catalog_index->GetId();
-  write_node.setTable(std::move(axiom_table));
   query.CompileQuery();
   query.MakeRunner();
 

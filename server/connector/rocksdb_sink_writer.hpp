@@ -68,6 +68,8 @@ class NoopSinkWriter {
   void SetColumnIndex(size_t column_idx) {}
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) {}
+  void Finish() {}
+  void Abort() {}
 };
 
 }  //  namespace sdb::connector

@@ -2632,6 +2632,9 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
 
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
+  size_t size = list_length(stmt.indexParams);
+  column_names.reserve(size);
+  column_exprs.reserve(size);
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
     const std::string_view colname = index_elem.name;
@@ -2647,8 +2650,9 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     column_exprs.emplace_back(std::move(expr));
   });
 
+  object->EnsureTable(_transaction);
   state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(table_state.root), nullptr,
+    _id_generator.NextPlanId(), std::move(table_state.root), object->table,
     axiom::connector::WriteKind::kInsert, std::move(column_names),
     std::move(column_exprs));
 }

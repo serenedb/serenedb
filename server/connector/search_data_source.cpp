@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "search_data_source.hpp"
+#include <rocksdb/statistics.h>
 
 #include "connector/primary_key.hpp"
 #include "connector/search_remove_filter.hpp"
@@ -69,7 +70,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
     SDB_ASSERT(!_doc);
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
-      _doc = _query.execute({.segment = segment});
+      _doc = segment.mask(_query.execute({.segment = segment}));
       const auto* pk_column =
         segment.column(sdb::connector::search::kPkFieldName);
       _pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);
@@ -102,6 +103,15 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
   }
   if (index_keys.empty()) {
     _current_split.reset();
+   /* std::string cache_stats;
+    _db->GetProperty("rocksdb.block-cache-usage", &cache_stats);
+    SDB_WARN("xxxxx", Logger::FIXME, "Cache usage:", cache_stats);
+    if(_db->GetOptions().statistics) {
+      uint64_t hits = _db->GetOptions().statistics->getTickerCount(rocksdb::BLOCK_CACHE_HIT);
+      uint64_t misses = _db->GetOptions().statistics->getTickerCount(rocksdb::BLOCK_CACHE_MISS);
+      SDB_WARN("xxxxx", Logger::FIXME, "Cache stats:",  hits, "/", misses);
+    }
+    */
     return nullptr;
   }
 

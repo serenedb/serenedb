@@ -1865,6 +1865,9 @@ rocksdb::BlockBasedTableOptions RocksDBOptionFeature::doGetTableOptions()
   } else {
     result.no_block_cache = true;
   }
+  result.data_block_index_type = rocksdb::BlockBasedTableOptions::kDataBlockBinarySearch;
+  result.data_block_hash_table_util_ratio = 0.75; // tune as needed
+  result.block_restart_interval = 1;
 
   result.block_size = _table_block_size;
   result.filter_policy.reset(

@@ -213,10 +213,12 @@ velox::variant ExtractScalarVariant(const velox::BaseVector& vec) {
 }
 
 velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
-  if (!expr.hasValueVector())
+  if (!expr.hasValueVector()) {
     return expr.value();
-  if (expr.isNull())
+  }
+  if (expr.isNull()) {
     return velox::variant(expr.type()->kind());
+  }
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
@@ -338,8 +340,9 @@ void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type) {
       SDB_ASSERT(lhs_filter && rhs_filter);
       const auto lhs_val = ToVariant(*lhs_filter);
       const auto rhs_val = ToVariant(*rhs_filter);
-      if (lhs_val != rhs_val)
+      if (lhs_val != rhs_val) {
         return lhs_val < rhs_val;
+      }
     }
     return false;
   });

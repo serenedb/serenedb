@@ -37,8 +37,9 @@ class NotifyingCounter {
     : _cond(cond), _count(0), _notify_after(notify_after) {}
   NotifyingCounter& operator++() {
     std::lock_guard<decltype(_lock)> lock(_lock);
-    if (++_count >= _notify_after)
+    if (++_count >= _notify_after) {
       _cond.notify_all();
+    }
     return *this;
   }
   explicit operator bool() {
@@ -84,8 +85,9 @@ TEST(thread_pool_test, test_run_3tasks_seq_mt) {
       std::lock_guard lock(mutex);
     }
     std::unique_lock lock(sync_mutex, std::try_to_lock);
-    if (lock.owns_lock())
+    if (lock.owns_lock()) {
       ++count;
+    }
     std::this_thread::sleep_for(300ms);
   };
   auto task2 = [&mutex, &sync_mutex, &count]() -> void {
@@ -93,8 +95,9 @@ TEST(thread_pool_test, test_run_3tasks_seq_mt) {
       std::lock_guard lock(mutex);
     }
     std::unique_lock lock(sync_mutex, std::try_to_lock);
-    if (lock.owns_lock())
+    if (lock.owns_lock()) {
       ++count;
+    }
     std::this_thread::sleep_for(300ms);
   };
   auto task3 = [&mutex, &sync_mutex, &count]() -> void {
@@ -102,8 +105,9 @@ TEST(thread_pool_test, test_run_3tasks_seq_mt) {
       std::lock_guard lock(mutex);
     }
     std::unique_lock lock(sync_mutex, std::try_to_lock);
-    if (lock.owns_lock())
+    if (lock.owns_lock()) {
       ++count;
+    }
     std::this_thread::sleep_for(300ms);
   };
   std::unique_lock lock(mutex);
@@ -882,8 +886,9 @@ TEST(thread_pool_test, test_multiple_calls_stop_mt) {
 
   // As declaration for wait_for contains "It may also be unblocked spuriously."
   // for all platforms
-  while (!stop && result == std::cv_status::no_timeout)
+  while (!stop && result == std::cv_status::no_timeout) {
     result = cond2.wait_for(lock2, 1000ms);
+  }
 
   ASSERT_EQ(std::cv_status::timeout, result);
   // ^^^ expecting timeout because pool should block indefinitely

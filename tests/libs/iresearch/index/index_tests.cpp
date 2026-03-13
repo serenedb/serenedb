@@ -3063,8 +3063,9 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       // As declaration for wait_for contains "It may also be unblocked
       // spuriously." for all platforms
-      while (!stop && result == std::cv_status::no_timeout)
+      while (!stop && result == std::cv_status::no_timeout) {
         result = cond.wait_for(cond_lock, 100ms);
+      }
 
       // FIXME TODO add once segment_context will not block flush_all()
       // ASSERT_TRUE(stop);
@@ -3257,8 +3258,9 @@ TEST_P(IndexTestCase, document_context) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field.wait = false;
@@ -3393,8 +3395,9 @@ TEST_P(IndexTestCase, document_context) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field_cond_lock
@@ -3468,8 +3471,9 @@ TEST_P(IndexTestCase, document_context) {
                   // segment_context will not block flush_all()
 
     // override spurious wakeup
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field_cond_lock
@@ -12786,8 +12790,9 @@ TEST_P(IndexTestCase, segment_options) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!stop && result == std::cv_status::no_timeout)
+    while (!stop && result == std::cv_status::no_timeout) {
       result = cond.wait_for(lock, 1000ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     // ^^^ expecting timeout because pool should block indefinitely

@@ -51,8 +51,9 @@ InputBuf::int_type InputBuf::underflow() {
 }
 
 InputBuf::int_type InputBuf::uflow() {
-  if (_in->IsEOF())
+  if (_in->IsEOF()) {
     return EOF;
+  }
   return traits_type::to_int_type(_in->ReadByte());
 }
 

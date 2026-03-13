@@ -62,7 +62,6 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 extern "C" {
@@ -1199,11 +1198,6 @@ class PostingIteratorBase : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
-                                      uint64_t* IRS_RESTRICT const doc_mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final;
-
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
@@ -1236,8 +1230,8 @@ class PostingIteratorBase : public DocIterator {
   using Attributes = AttributesImpl<IteratorTraits>;
   using Position = PositionImpl<IteratorTraits>;
 
-  virtual void ReadBlock(doc_id_t prev_doc) = 0;
-  virtual bool SeekToBlock(doc_id_t target) = 0;
+  virtual void ReadLeaf(doc_id_t prev_doc) = 0;
+  virtual bool SeekToLeaf(doc_id_t target) = 0;
 
   template<size_t N>
   IRS_FORCE_INLINE const score_t* ScoreBlock(std::span<const doc_id_t, N> docs,
@@ -1274,7 +1268,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
       return _doc = doc_limits::eof();
     }
 
-    ReadBlock(_doc);
+    ReadLeaf(_doc);
   }
 
   _doc = *(std::end(_docs) - _left_in_leaf);
@@ -1300,7 +1294,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     return _doc;
   }
 
-  if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+  if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
     _left_in_leaf = 0;
     return _doc = doc_limits::eof();
   }
@@ -1349,7 +1343,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
       return _doc = doc_limits::eof();
     };
 
-    if (_max_in_leaf < target && !SeekToBlock(target)) [[unlikely]] {
+    if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
       return seal();
     }
 
@@ -1381,88 +1375,6 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
 }
 
 template<typename IteratorTraits>
-std::pair<doc_id_t, bool> PostingIteratorBase<IteratorTraits>::FillBlock(
-  const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT const doc_mask,
-  FillBlockScoreContext score, FillBlockMatchContext match) {
-  SDB_ASSERT(!IteratorTraits::Position());
-  SDB_ASSERT(min < max);
-  SDB_ASSERT(value() >= min);
-
-  if (!score.score || score.score->IsDefault()) {
-    score.merge_type = ScoreMergeType::Noop;
-  }
-
-  return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
-    return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
-      // value() was consumed by advance/seek/previous FillBlock
-      // but still sits in _docs just before the leftover range
-      SDB_ASSERT(_left_in_leaf < kPostingBlock);
-
-      bool empty = true;
-
-      // leftover from previous call
-      {
-        auto count = _left_in_leaf;
-
-        if (*(std::end(_docs) - count - 1) == value()) {
-          ++count;
-        }
-
-        if (count > 0) {
-          if (*(std::end(_docs) - 1) >= max) {
-            _left_in_leaf = count;
-            goto fill_block_tail;
-          }
-          empty &= ProcessBatch<MergeType, TrackMatch>(
-            std::span<const doc_id_t>{std::end(_docs) - count, count}, min,
-            doc_mask, score, match);
-        }
-      }
-
-      // full blocks only
-      for (;;) {
-        if (_left_in_list == 0) [[unlikely]] {
-          _left_in_leaf = 0;
-          goto fill_block_done;
-        }
-        ReadBlock(*(std::end(_docs) - 1));
-        if (*(std::end(_docs) - 1) >= max || _left_in_leaf != kPostingBlock) {
-          goto fill_block_tail;
-        }
-        empty &= ProcessBatch<MergeType, TrackMatch>(
-          std::span<const doc_id_t, kPostingBlock>{std::begin(_docs),
-                                                   kPostingBlock},
-          min, doc_mask, score, match);
-      }
-
-    fill_block_tail: {
-      const auto* begin = std::end(_docs) - _left_in_leaf;
-      const auto* tail_end = std::find_if(
-        begin, std::cend(_docs), [&](doc_id_t doc) { return doc >= max; });
-      if (tail_end != begin) {
-        empty &= ProcessBatch<MergeType, TrackMatch>(
-          std::span{begin, tail_end}, min, doc_mask, score, match);
-      }
-      _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - tail_end);
-    }
-
-    fill_block_done:
-      if (_left_in_leaf > 0) {
-        _doc = *(std::end(_docs) - _left_in_leaf);
-        --_left_in_leaf;
-      } else {
-        _doc = doc_limits::eof();
-      }
-
-      if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
-      }
-      return std::pair{_doc, empty};
-    });
-  });
-}
-
-template<typename IteratorTraits>
 void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
                                                   ColumnArgsFetcher& fetcher,
                                                   ScoreCollector& collector) {
@@ -1485,12 +1397,12 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
     }
 
     while (_left_in_list >= kPostingBlock) {
-      ReadBlock(*(std::end(_docs) - 1));
+      ReadLeaf(*(std::end(_docs) - 1));
       process_block.template operator()<kPostingBlock>(kPostingBlock);
     }
 
     if (_left_in_list) {
-      ReadBlock(*(std::end(_docs) - 1));
+      ReadLeaf(*(std::end(_docs) - 1));
       process_block.template operator()<std::dynamic_extent>(
         std::exchange(_left_in_leaf, 0));
     }
@@ -1559,26 +1471,27 @@ bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
     }
   }
 
-  bool empty = true;
+  [[maybe_unused]] bool empty = true;
   for (size_t i = 0; i < docs.size(); ++i) {
     const size_t offset = docs[i] - min;
-    if constexpr (!TrackMatch) {
-      SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
-             offset % BitsRequired<uint64_t>());
-    } else {
+    if constexpr (TrackMatch) {
       const bool has_match = ++match.matches[offset] >= match.min_match_count;
       SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
              offset % BitsRequired<uint64_t>(), has_match);
       empty &= !has_match;
+    } else {
+      SetBit(doc_mask[offset / BitsRequired<uint64_t>()],
+             offset % BitsRequired<uint64_t>());
     }
     if constexpr (MergeType != ScoreMergeType::Noop) {
       Merge<MergeType>(score_window[offset], score_ptr[i]);
     }
   }
-  if constexpr (!TrackMatch) {
-    empty = false;
+  if constexpr (TrackMatch) {
+    return empty;
+  } else {
+    return false;
   }
-  return empty;
 }
 
 static_assert(kMaxScorers < WandContext::kDisable);
@@ -1703,6 +1616,11 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
+  std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
+                                      uint64_t* IRS_RESTRICT const doc_mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final;
+
  private:
   IRS_FORCE_INLINE InputType& GetDocIn() const noexcept {
     return sdb::basics::downCast<InputType>(*this->_doc_in);
@@ -1790,11 +1708,12 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     SkipState* _prev{};  // Pointer to skip context used by skip reader
   };
 
-  IRS_FORCE_INLINE void ReadTailBlock(doc_id_t prev_doc);
-  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc) final;
+  IRS_FORCE_INLINE void ReadTail(doc_id_t prev_doc);
+  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
+  IRS_FORCE_INLINE void ReadLeaf(doc_id_t prev_doc) final;
   IRS_FORCE_INLINE bool SeekAfterInit(SkipState& last, doc_id_t target);
   IRS_NO_INLINE bool InitAndSeek(SkipState& last, doc_id_t target);
-  bool SeekToBlock(doc_id_t target) final;
+  bool SeekToLeaf(doc_id_t target) final;
 
   uint64_t _skip_offs{};
   SkipReader<ReadSkip, InputType> _skip;
@@ -1884,8 +1803,100 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
          typename InputType>
+std::pair<doc_id_t, bool>
+PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                    InputType>::FillBlock(const doc_id_t min,
+                                          const doc_id_t max,
+                                          uint64_t* IRS_RESTRICT const doc_mask,
+                                          FillBlockScoreContext score,
+                                          FillBlockMatchContext match) {
+  SDB_ASSERT(min < max);
+  SDB_ASSERT(this->value() >= min);
+  // value() was consumed by advance/seek/previous FillBlock
+  // but still sits in _docs just before the leftover range
+  SDB_ASSERT(this->_left_in_leaf < kPostingBlock);
+  if constexpr (!IteratorTraits::Position()) {
+    if (!score.score || score.score->IsDefault()) {
+      score.merge_type = ScoreMergeType::Noop;
+    }
+
+    return ResolveBool(match.matches, [&]<bool TrackMatch> {
+      return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+        bool empty = true;
+
+        // leftover from previous call
+        {
+          auto count = this->_left_in_leaf;
+
+          if (*(std::end(this->_docs) - count - 1) == this->value()) {
+            ++count;
+          }
+
+          if (count > 0) {
+            if (*(std::end(this->_docs) - 1) >= max) {
+              this->_left_in_leaf = count;
+              goto fill_block_tail;
+            }
+            empty &= this->template ProcessBatch<MergeType, TrackMatch>(
+              std::span<const doc_id_t>{std::end(this->_docs) - count, count},
+              min, doc_mask, score, match);
+          }
+        }
+
+        // full blocks only
+        for (;;) {
+          if (this->_left_in_list == 0) [[unlikely]] {
+            this->_left_in_leaf = 0;
+            goto fill_block_done;
+          }
+          ReadLeaf(*(std::end(this->_docs) - 1));
+          if (*(std::end(this->_docs) - 1) >= max ||
+              this->_left_in_leaf != kPostingBlock) {
+            goto fill_block_tail;
+          }
+          empty &= this->template ProcessBatch<MergeType, TrackMatch>(
+            std::span<const doc_id_t, kPostingBlock>{std::begin(this->_docs),
+                                                     kPostingBlock},
+            min, doc_mask, score, match);
+        }
+
+      fill_block_tail: {
+        const auto* begin = std::end(this->_docs) - this->_left_in_leaf;
+        const auto* tail_end =
+          std::find_if(begin, std::cend(this->_docs),
+                       [&](doc_id_t doc) { return doc >= max; });
+        if (tail_end != begin) {
+          empty &= this->template ProcessBatch<MergeType, TrackMatch>(
+            std::span{begin, tail_end}, min, doc_mask, score, match);
+        }
+        this->_left_in_leaf =
+          static_cast<uint32_t>(std::end(this->_docs) - tail_end);
+      }
+
+      fill_block_done:
+        if (this->_left_in_leaf > 0) {
+          this->_doc = *(std::end(this->_docs) - this->_left_in_leaf);
+          --this->_left_in_leaf;
+        } else {
+          this->_doc = doc_limits::eof();
+        }
+
+        if constexpr (IteratorTraits::Frequency()) {
+          std::get<FreqBlockAttr>(this->_attrs).value = this->_collected_freqs;
+        }
+        return std::pair{this->_doc, empty};
+      });
+    });
+  } else {
+    SDB_ASSERT(false);
+    return std::pair{this->_doc, true};
+  }
+}
+
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
-                         InputType>::ReadTailBlock(doc_id_t prev_doc) {
+                         InputType>::ReadTail(doc_id_t prev_doc) {
   const auto tail = this->_left_in_list;
   SDB_ASSERT(tail < IteratorTraits::kBlockSize);
   IteratorTraits::read_tail_delta(tail, GetDocIn(), this->_enc_buf, this->_docs,
@@ -1902,19 +1913,26 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
          typename InputType>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
                          InputType>::ReadBlock(doc_id_t prev_doc) {
+  IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
+                                   prev_doc);
+  this->_max_in_leaf = *(std::end(this->_docs) - 1);
+  this->_left_in_leaf = IteratorTraits::kBlockSize;
+  this->_left_in_list -= IteratorTraits::kBlockSize;
+  if constexpr (IteratorTraits::Frequency()) {
+    IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
+  } else if constexpr (FieldTraits::Frequency()) {
+    IteratorTraits::skip_block(GetDocIn());
+  }
+}
+
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::ReadLeaf(doc_id_t prev_doc) {
   if (this->_left_in_list >= IteratorTraits::kBlockSize) [[likely]] {
-    IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
-                                     prev_doc);
-    this->_max_in_leaf = *(std::end(this->_docs) - 1);
-    this->_left_in_leaf = IteratorTraits::kBlockSize;
-    this->_left_in_list -= IteratorTraits::kBlockSize;
-    if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
-    } else if constexpr (FieldTraits::Frequency()) {
-      IteratorTraits::skip_block(GetDocIn());
-    }
+    ReadBlock(prev_doc);
   } else {
-    ReadTailBlock(prev_doc);
+    ReadTail(prev_doc);
   }
 }
 
@@ -1939,7 +1957,7 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
     pos.template Prepare<InputType>(last);  // Notify positions
   }
 
-  ReadBlock(last.doc);
+  ReadLeaf(last.doc);
   return true;
 }
 
@@ -1981,7 +1999,7 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
          typename InputType>
 bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
-                         InputType>::SeekToBlock(doc_id_t target) {
+                         InputType>::SeekToLeaf(doc_id_t target) {
   const bool avoid_seek = [&] IRS_FORCE_INLINE {
     if constexpr (!IteratorTraits::Position()) {
       const auto distance = target - this->_max_in_leaf;
@@ -1996,7 +2014,7 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
     if (this->_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    ReadBlock(this->_max_in_leaf);
+    ReadLeaf(this->_max_in_leaf);
     return true;
   }
 
@@ -2868,7 +2886,7 @@ class SingleWandIterator : public DocIterator {
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
   void PrepareSkipReader(uint64_t skip_offs, uint32_t docs_count);
 
-  void SeekToBlock(doc_id_t target) {
+  void SeekToLeaf(doc_id_t target) {
     _skip.Reader().EnsureSorted();
     // Ensured by WandPrepare(...)
     SDB_ASSERT(_skip.NumLevels());
@@ -2929,6 +2947,7 @@ SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
       const auto offset = docs.data() - std::data(_docs);
       std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
     }
+    // TODO(mbkkt) use offset here?
     auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - docs.size());
     score.Score(p, docs.size());
     return p;
@@ -2991,7 +3010,7 @@ doc_id_t SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
   }
 
   if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
-    SeekToBlock(target);
+    SeekToLeaf(target);
   }
 
   if (_left_in_leaf == 0) [[unlikely]] {

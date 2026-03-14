@@ -83,18 +83,18 @@ struct OptionInfo {
     }
   }
 
-  using DefaultValueT =
+  using DefaultValue =
     std::variant<std::monostate, std::string_view, bool, int, double, char>;
-  using ConstraintFn =
+  using ConstraintFunction =
     std::variant<std::monostate, void (*)(std::string_view), void (*)(bool),
                  void (*)(int), void (*)(double), void (*)(char)>;
   std::string_view name;
   Type type;
   std::string_view description;
 
-  DefaultValueT default_value = std::monostate{};
+  DefaultValue default_value = std::monostate{};
 
-  ConstraintFn constraint = std::monostate{};
+  ConstraintFunction constraint = std::monostate{};
 
   std::span<const std::string_view> enum_values;
 
@@ -126,7 +126,7 @@ struct OptionInfo {
   }
 
   template<typename T>
-  constexpr T DefaultValue() const {
+  constexpr T GetDefaultValue() const {
     SDB_ASSERT(!IsRequired());
     if constexpr (std::is_enum_v<T>) {
       SDB_ASSERT(std::holds_alternative<std::string_view>(default_value));

@@ -20,6 +20,9 @@
 
 #include "pg/tokenizer_options.h"
 
+#include <iresearch/analysis/tokenizer.hpp>
+
+#include "magic_enum/magic_enum.hpp"
 #include "pg/sql_exception_macro.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -29,7 +32,7 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg::tokenizer_options {
 
 void CheckCase(std::string_view value) {
-  if (value != "none" && value != "upper" && value != "lower") {
+  if (!magic_enum::enum_cast<irs::Case>(value, magic_enum::case_insensitive)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("invalid value in \"", kCase.name, "\" parameter"),
                     ERR_HINT(kCase.description));

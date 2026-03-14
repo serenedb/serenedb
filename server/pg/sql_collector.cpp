@@ -639,10 +639,10 @@ Objects::ObjectName ParseObjectName(const List* names,
 
 Objects::ObjectName ParseObjectName(std::string_view name,
                                     std::string_view default_schema) {
-  auto pos = name.find('.');
-  std::string_view schema_name =
+  const auto pos = name.find('.');
+  auto schema_name =
     pos == std::string_view::npos ? default_schema : name.substr(0, pos);
-  std::string_view object_name =
+  auto object_name =
     pos == std::string_view::npos ? name : name.substr(pos + 1);
   return {.schema = schema_name, .relation = object_name};
 }

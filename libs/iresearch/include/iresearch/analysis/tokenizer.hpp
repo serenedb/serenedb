@@ -38,13 +38,6 @@ class Tokenizer : public AttributeProvider {
   virtual bool next() = 0;
 };
 
-enum CaseConvertT { kLower, kNone, kUpper };
-
-constexpr frozen::unordered_map<std::string_view, CaseConvertT, 3>
-  kCaseConvertMap = {
-    {"lower", CaseConvertT::kLower},
-    {"none", CaseConvertT::kNone},
-    {"upper", CaseConvertT::kUpper},
-};
+enum class Case : uint8_t { Lower = 0, None, Upper };
 
 }  // namespace irs

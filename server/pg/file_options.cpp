@@ -20,6 +20,8 @@
 
 #include "pg/file_options.h"
 
+#include "pg/sql_exception_macro.h"
+
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 LIBPG_QUERY_INCLUDES_END
@@ -33,4 +35,5 @@ void CheckRejectLimit(int value) {
       ERR_MSG("REJECT_LIMIT (", value, ") must be greater than zero"));
   }
 }
+
 }  // namespace sdb::pg::file_options

@@ -138,10 +138,12 @@ class ResolutionTable {
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
         if (inserted) {
-          auto [_, insert_rel] = _relations.try_emplace(object_id);
+          auto [_, insert_relation] = _relations.try_emplace(object_id);
           auto [_, insert_function] = _functions.try_emplace(object_id);
-          auto [_, insert_ts_dicts] = _tokenizers.try_emplace(object_id);
-          SDB_ASSERT(insert_rel && insert_function && insert_ts_dicts);
+          auto [_, insert_tokenizer] = _tokenizers.try_emplace(object_id);
+          SDB_ASSERT(insert_relation);
+          SDB_ASSERT(insert_function);
+          SDB_ASSERT(insert_tokenizer);
           return {};
         }
         return {ERROR_SERVER_DUPLICATE_NAME};
@@ -262,7 +264,7 @@ class ResolutionTable {
   MapById<MapByName<ObjectId>> _relations;
   // schema_id -> (function_name -> object_id)
   MapById<MapByName<ObjectId>> _functions;
-  // schema_id -> (ts_dict_name -> object_id)
+  // schema_id -> (tokenizer_name -> object_id)
   MapById<MapByName<ObjectId>> _tokenizers;
 };
 

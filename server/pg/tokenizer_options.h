@@ -109,7 +109,7 @@ inline constexpr OptionInfo kEndMarker{
 void CheckThreshold(double);
 
 inline constexpr OptionInfo kThreshold{
-  "threshold", 0.0, "Minimum confidence score (0.0 to 1.0)", CheckThreshold};
+  "threshold", 0.0, "Minimum confidence score [0.0..1.0]", CheckThreshold};
 
 // Stopwords tokenizer
 

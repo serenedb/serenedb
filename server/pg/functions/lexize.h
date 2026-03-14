@@ -56,16 +56,17 @@ struct PgTsLexize {
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<velox::Varchar>>& result,
-                                const arg_type<velox::Varchar>& ts_dict,
+                                const arg_type<velox::Varchar>& tokenizer_name,
                                 const arg_type<velox::Varchar>& text) {
     auto snapshot = catalog::GetCatalog().GetSnapshot();
-    auto object_name = ParseObjectName(ts_dict, current_schema);
+    auto object_name = ParseObjectName(tokenizer_name, current_schema);
     auto dict =
       snapshot->GetTokenizer(db_id, object_name.schema, object_name.relation);
     if (!dict) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_NAME),
-                      ERR_MSG("text search dictionary \"",
-                              std::string_view{ts_dict}, "\" does not exist"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_NAME),
+        ERR_MSG("text search dictionary \"", std::string_view{tokenizer_name},
+                "\" does not exist"));
     }
 
     auto tokenizer = dict->GetTokenizer();

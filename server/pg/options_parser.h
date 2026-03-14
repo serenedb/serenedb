@@ -117,7 +117,7 @@ class OptionsParser {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("required parameter \"", Info.name, "\" was not found"));
     }
-    return Info.DefaultValue<T>();
+    return Info.GetDefaultValue<T>();
   }
 
   template<const auto& Info>
@@ -161,7 +161,7 @@ class OptionsParser {
         ERR_MSG("required parameter \"", Info.base.name, "\" was not found"));
     }
 
-    return Info.base.template DefaultValue<E>();
+    return Info.base.template GetDefaultValue<E>();
   }
 
   // requires_parameter == presence flag like ... WITH (FLAG)

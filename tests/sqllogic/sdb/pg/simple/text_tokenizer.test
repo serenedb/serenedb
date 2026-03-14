@@ -181,7 +181,7 @@ CREATE TEXT SEARCH DICTIONARY t_err17(
 )
 ----
 db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
-HINT: Minimum confidence score (0.0 to 1.0)
+HINT: Minimum confidence score [0.0..1.0]
 
 
 statement error
@@ -191,7 +191,7 @@ CREATE TEXT SEARCH DICTIONARY t_err18(
 )
 ----
 db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
-HINT: Minimum confidence score (0.0 to 1.0)
+HINT: Minimum confidence score [0.0..1.0]
 
 
 # --- ts_lexize on non-existent dictionary ---

@@ -44,7 +44,7 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
 
   struct OptionsT {
     // lowercase tokens, match original implementation
-    CaseConvertT case_convert{CaseConvertT::kLower};
+    Case case_convert{Case::Lower};
     stopwords_t explicit_stopwords;
     icu::Locale locale;
     std::string stopwords_path{

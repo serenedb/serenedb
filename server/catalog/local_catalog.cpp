@@ -1723,16 +1723,15 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto dict_id =
-    _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
-  if (!dict_id) {
+  auto id = _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
+  if (!id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-    auto dict = clone->GetObject<Tokenizer>(*dict_id);
+    auto dict = clone->GetObject<Tokenizer>(*id);
     SDB_ASSERT(dict);
-    auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::Tokenizer,
-                                     *dict_id);
+    auto r =
+      _engine->DropDefinition(*schema_id, RocksDBEntryType::Tokenizer, *id);
     if (!r.ok()) {
       return r;
     }

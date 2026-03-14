@@ -150,7 +150,7 @@ class FileOptionsParser : public OptionsParser {
     auto null_string = EraseOptionOrDefault<kNull>();
 
     // TODO: make variant option info
-    auto header = kHeader.DefaultValue<bool>();
+    auto header = kHeader.GetDefaultValue<bool>();
     if (const auto* option = EraseOption(kHeader)) {
       if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
         if (*maybe_match == "match") {

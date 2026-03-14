@@ -20,10 +20,7 @@
 
 #pragma once
 
-#include <variant>
-
 #include "pg/option_help.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::pg::file_options {
 

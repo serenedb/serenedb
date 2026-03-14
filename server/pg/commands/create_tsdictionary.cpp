@@ -259,9 +259,10 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
 
   if (!r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("unable to create text search dictionary"));
+                    ERR_MSG("text search dictionary \"", dict_name.relation,
+                            "\" already exists"));
   }
-  return yaclib::MakeFuture();
+  return {};
 }
 
 }  // namespace sdb::pg

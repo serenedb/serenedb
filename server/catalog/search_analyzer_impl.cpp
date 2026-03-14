@@ -373,34 +373,6 @@ Result AnalyzerImpl::FromVPack(ObjectId database, vpack::Slice slice,
   return {};
 }
 
-std::shared_ptr<catalog::Function> MakeAnalyzer(ObjectId database,
-                                                std::string_view name,
-                                                std::string_view type,
-                                                vpack::Slice options,
-                                                Features features) {
-  catalog::FunctionProperties properties{
-    .options =
-      {
-        .language = catalog::FunctionLanguage::AnalyzerJson,
-        .state = catalog::FunctionState::Immutable,
-        .parallel = catalog::FunctionParallel::Safe,
-      },
-    .name = std::string{name},
-    .id = ObjectId{},  // TODO(gnusi): what to do?
-    .implementation = options,
-  };
-
-  auto impl = std::make_unique<AnalyzerImpl>();
-  auto r = impl->init(type, options, features, FunctionValueType::Json,
-                      FunctionValueType::Json);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  return std::make_shared<catalog::Function>(std::move(properties),
-                                             std::move(impl), database);
-}
-
 bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
                     vpack::Slice properties, Features features) {
   std::string normalized_properties;

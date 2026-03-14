@@ -2067,6 +2067,7 @@ class CopyOptionsParser : public FileOptionsParser {
     if (auto max_reject_limit = EraseOptionOrDefault<kRejectLimit>()) {
       if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(OptionLocation(kRejectLimit))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
       }
@@ -2603,8 +2604,7 @@ void SqlAnalyzer::ProcessDefineStmt(State& state, const DefineStmt& stmt) {
   switch (stmt.kind) {
     case OBJECT_TSDICTIONARY: {
       state.pgsql_node = castNode(Node, &stmt);
-      return;
-    }
+    } break;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),

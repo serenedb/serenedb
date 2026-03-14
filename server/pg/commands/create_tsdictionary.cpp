@@ -61,6 +61,7 @@
 #include "vpack/value_type.h"
 
 namespace sdb::pg {
+namespace {
 
 using namespace std::string_view_literals;
 
@@ -233,6 +234,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
   vpack::Builder _builder;
   search::Features _features;
 };
+
+}  // namespace
 
 yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(ctx);

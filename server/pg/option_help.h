@@ -26,12 +26,22 @@
 
 #include <cassert>
 #include <magic_enum/magic_enum.hpp>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <variant>
 #include <vector>
+
+#include "basics/assert.h"
+#include "basics/errors.h"
+#include "basics/result.h"
+#include "basics/system-compiler.h"
+#include "folly/Function.h"
+#include "pg/pg_catalog/pg_type.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::pg {
 
@@ -51,71 +61,89 @@ struct OptionInfo {
     Enum
   };
 
+  template<typename T>
+  struct RequiredTag {};
+
+  template<typename T>
+  static consteval Type GetType() {
+    if constexpr (std::is_same_v<T, std::string_view>) {
+      return Type::String;
+    } else if constexpr (std::is_same_v<T, int>) {
+      return Type::Integer;
+    } else if constexpr (std::is_same_v<T, bool>) {
+      return Type::Boolean;
+    } else if constexpr (std::is_same_v<T, double>) {
+      return Type::Double;
+    } else if constexpr (std::is_same_v<T, char>) {
+      return Type::Character;
+    } else if constexpr (std::is_enum_v<T>) {
+      return Type::Enum;
+    } else {
+      static_assert(false);
+    }
+  }
+
+  using DefaultValue =
+    std::variant<std::monostate, std::string_view, bool, int, double, char>;
+  using ConstraintFunction =
+    std::variant<std::monostate, void (*)(std::string_view), void (*)(bool),
+                 void (*)(int), void (*)(double), void (*)(char)>;
   std::string_view name;
   Type type;
   std::string_view description;
 
-  union {
-    std::string_view string_val;
-    bool bool_val;
-    int int_val;
-    double double_val;
-    char char_val;
-  };
+  DefaultValue default_value = std::monostate{};
+
+  ConstraintFunction constraint = std::monostate{};
 
   std::span<const std::string_view> enum_values;
 
-  consteval OptionInfo(std::string_view name, std::string_view def,
-                       std::string_view desc)
-    : name{name}, type{Type::String}, description{desc}, string_val{def} {}
-
-  consteval OptionInfo(std::string_view name, bool def, std::string_view desc)
-    : name{name}, type{Type::Boolean}, description{desc}, bool_val{def} {}
-
-  consteval OptionInfo(std::string_view name, char def, std::string_view desc)
-    : name{name}, type{Type::Character}, description{desc}, char_val{def} {}
-
-  consteval OptionInfo(std::string_view name, int def, std::string_view desc)
-    : name{name}, type{Type::Integer}, description{desc}, int_val{def} {}
-
-  consteval OptionInfo(std::string_view name, double def, std::string_view desc)
-    : name{name}, type{Type::Double}, description{desc}, double_val{def} {}
+  template<typename T>
+  consteval OptionInfo(std::string_view name, RequiredTag<T>,
+                       std::string_view desc,
+                       void (*constraint_fn)(T) = nullptr)
+    : name{name}, type{GetType<T>()}, description{desc} {
+    if (constraint_fn) {
+      constraint = constraint_fn;
+    }
+  }
 
   template<typename T>
-  constexpr T DefaultValue() const {
-    if constexpr (std::is_same_v<T, std::string_view>) {
-      assert(type == Type::String || type == Type::Enum);
-      return string_val;
-    } else if constexpr (std::is_same_v<T, std::string>) {
-      assert(type == Type::String || type == Type::Enum);
-      return std::string{string_val};
-    } else if constexpr (std::is_same_v<T, bool>) {
-      assert(type == Type::Boolean);
-      return bool_val;
-    } else if constexpr (std::is_same_v<T, uint8_t> ||
-                         std::is_same_v<T, char>) {
-      assert(type == Type::Character);
-      return static_cast<T>(char_val);
-    } else if constexpr (std::is_same_v<T, int>) {
-      assert(type == Type::Integer);
-      return int_val;
-    } else if constexpr (std::is_same_v<T, double>) {
-      assert(type == Type::Double);
-      return double_val;
-    } else if constexpr (std::is_enum_v<T>) {
-      assert(type == Type::Enum);
-      auto result =
-        magic_enum::enum_cast<T>(string_val, magic_enum::case_insensitive);
-      assert(result.has_value());
-      return *result;
+  consteval OptionInfo(std::string_view name, T default_value,
+                       std::string_view desc,
+                       void (*constraint_fn)(T) = nullptr)
+    : name{name},
+      type{GetType<T>()},
+      description{desc},
+      default_value{default_value} {
+    if (constraint_fn) {
+      constraint = constraint_fn;
+    }
+  }
+
+  bool IsRequired() const {
+    return std::holds_alternative<std::monostate>(default_value);
+  }
+
+  template<typename T>
+  constexpr T GetDefaultValue() const {
+    SDB_ASSERT(!IsRequired());
+    if constexpr (std::is_enum_v<T>) {
+      SDB_ASSERT(std::holds_alternative<std::string_view>(default_value));
+      const auto& value_str = std::get<std::string_view>(default_value);
+      auto value =
+        magic_enum::enum_cast<T>(value_str, magic_enum::case_insensitive);
+      SDB_ASSERT(value);
+      return *value;
     } else {
-      static_assert(false, "Unsupported type for DefaultValue");
+      SDB_ASSERT(std::holds_alternative<T>(default_value));
+      return std::get<T>(default_value);
     }
   }
 
   template<Type V>
   using CppType = std::conditional_t<
-    V == Type::String || V == Type::Enum, std::string,
+    V == Type::String || V == Type::Enum, std::string_view,
     std::conditional_t<
       V == Type::Boolean, bool,
       std::conditional_t<V == Type::Integer, int,
@@ -192,6 +220,15 @@ struct OptionGroup {
   std::vector<std::string_view> FlatNames() const {
     return FlatOptions() | std::views::transform(&OptionInfo::name) |
            std::ranges::to<std::vector>();
+  }
+
+  void VisitOptions(auto&& visit) const {
+    for (const auto& opt : options) {
+      visit(opt);
+    }
+    for (const auto& group : subgroups) {
+      group.VisitOptions(visit);
+    }
   }
 
  private:

@@ -57,6 +57,7 @@ services:
     environment:
       - COMPOSE_NETWORK=${COMPOSE_PROJECT_NAME}_test-network
       - LOG_DIR=/logs
+      - RESOURCES
     networks:
       - test-network
     command: sqllogic/run_serene_and_pg.sh

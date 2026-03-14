@@ -28,6 +28,7 @@
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <memory>
 #include <tuple>
 #include <vector>
 
@@ -38,35 +39,21 @@
 
 namespace sdb::catalog {
 
-class AnalyzersPool {
- public:
-  AnalyzersPool(std::string data) : _data{std::move(data)} {}
-
-  ResultOr<irs::analysis::Analyzer::ptr> GetAnalyzer();
-
-  void PushAnalyzer(irs::analysis::Analyzer::ptr analyzer) noexcept;
-
-  vpack::Slice GetAnalyzerOptions() const {
-    return vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
-  }
-
- protected:
-  irs::analysis::Analyzer::ptr CreateAnalyzer() const;
-
- private:
-  absl::Mutex _m;
-  std::vector<irs::analysis::Analyzer::ptr> _pool;
-  std::string _data;
-};
-
 class Tokenizer : public SchemaObject {
  public:
-  ResultOr<irs::analysis::Analyzer::ptr> GetTokenizer() const {
-    return _pool->GetAnalyzer();
-  }
-  void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
-    return _pool->PushAnalyzer(std::move(analyzer));
-  }
+  struct Deleter {
+    Tokenizer& tokenizer;
+
+    void operator()(irs::analysis::Analyzer* analyzer) {
+      tokenizer.PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+    }
+  };
+
+  using AnalyzerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
+
+  ResultOr<AnalyzerWrapper> GetTokenizer();
+
+  void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept;
 
   void WriteInternal(vpack::Builder& b) const final;
 
@@ -74,7 +61,11 @@ class Tokenizer : public SchemaObject {
             std::string data);
 
  private:
-  std::unique_ptr<AnalyzersPool> _pool;
+  irs::analysis::Analyzer::ptr CreateAnalyzer() const;
+
+  mutable absl::Mutex _m;
+  std::vector<irs::analysis::Analyzer::ptr> _pool;
+  std::string _data;
   search::Features _features;
 };
 

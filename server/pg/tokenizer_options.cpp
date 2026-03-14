@@ -47,4 +47,5 @@ void CheckThreshold(double value) {
                     ERR_HINT(kThreshold.description));
   }
 }
+
 }  // namespace sdb::pg::tokenizer_options

@@ -62,8 +62,6 @@
 
 namespace sdb::pg {
 
-namespace {
-
 using namespace std::string_view_literals;
 
 constexpr auto kNameMappings =
@@ -120,6 +118,7 @@ void CheckTemplate(std::string_view value) {
     irs::analysis::NearestNeighborsTokenizer::type_name(),
     irs::analysis::StemmingTokenizer::type_name(),
     irs::analysis::StopwordsTokenizer::type_name(),
+    // TODO(codeworse): add more tokenizers
   });
   if (kTokenizerTypes.count(value) != 1) {
     THROW_SQL_ERROR(ERR_MSG(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -234,8 +233,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
   vpack::Builder _builder;
   search::Features _features;
 };
-
-}  // namespace
 
 yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(ctx);

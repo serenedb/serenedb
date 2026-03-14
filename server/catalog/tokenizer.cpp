@@ -23,6 +23,7 @@
 #include <expected>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 
 #include "basics/assert.h"
 #include "basics/errors.h"
@@ -32,7 +33,7 @@
 
 namespace sdb::catalog {
 
-ResultOr<irs::analysis::Analyzer::ptr> AnalyzersPool::GetAnalyzer() {
+ResultOr<Tokenizer::AnalyzerWrapper> Tokenizer::GetTokenizer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
     auto analyzer = CreateAnalyzer();
@@ -40,22 +41,21 @@ ResultOr<irs::analysis::Analyzer::ptr> AnalyzersPool::GetAnalyzer() {
       return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                      "Failed to create analyzer"};
     }
-    return {std::move(analyzer)};
+    return AnalyzerWrapper{analyzer.release(), Deleter{*this}};
   }
   auto analyzer = std::move(_pool.back());
   SDB_ASSERT(analyzer);
   _pool.pop_back();
-  return analyzer;
+  return AnalyzerWrapper{analyzer.release(), Deleter{*this}};
 }
 
-void AnalyzersPool::PushAnalyzer(
-  irs::analysis::Analyzer::ptr analyzer) noexcept {
+void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
   SDB_ASSERT(analyzer);
   absl::MutexLock lock{&_m};
   _pool.push_back(std::move(analyzer));
 }
 
-irs::analysis::Analyzer::ptr AnalyzersPool::CreateAnalyzer() const {
+irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
   vpack::Slice slice{reinterpret_cast<const uint8_t*>(_data.data())};
   irs::analysis::Analyzer::ptr output;
   irs::analysis::analyzers::MakeAnalyzer(slice, output);
@@ -65,12 +65,14 @@ irs::analysis::Analyzer::ptr AnalyzersPool::CreateAnalyzer() const {
 Tokenizer::Tokenizer(ObjectId id, std::string_view name,
                      search::Features features, std::string data)
   : SchemaObject{{}, {}, {}, id, name, ObjectType::Tokenizer},
-    _pool{std::make_unique<AnalyzersPool>(std::move(data))},
+    _data{std::move(data)},
     _features{features} {}
 
 void Tokenizer::WriteInternal(vpack::Builder& b) const {
+  auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
+
   b.add("name", GetName());
-  b.add("analyzer", _pool->GetAnalyzerOptions().get("analyzer"));
+  b.add("analyzer", slice.get("analyzer"));
   b.add("features");
   _features.ToVPack(b);
 }

@@ -74,10 +74,6 @@ struct PgTsLexize {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG(tokenizer.error().errorMessage()));
     }
-    irs::Finally return_tokenizer = [&] mutable noexcept {
-      dict->PushTokenizer(std::move(*tokenizer));
-    };
-
     bool r = (*tokenizer)->reset(text);
     if (!r) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

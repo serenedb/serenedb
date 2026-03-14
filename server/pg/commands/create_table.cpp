@@ -456,7 +456,8 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
 }
 
 yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
-                                 const IntoClause& into, bool if_not_exists) {
+                                 const IntoClause& into, bool if_not_exists,
+                                 CTASState& state) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -495,6 +496,8 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
                        {.create_with_tombstone = true})) {
     return {};
   }
+
+  state.created = true;
 
   auto snapshot = catalog.GetSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, table_name);

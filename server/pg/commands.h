@@ -24,6 +24,7 @@
 #include <string_view>
 
 #include "catalog/fwd.h"
+#include "pg/command_executor.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
 
@@ -49,7 +50,7 @@ yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 yaclib::Future<> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
 
 yaclib::Future<> CreateIndex(ExecContext& ctx, query::Query& query,
-                             const IndexStmt& stmt);
+                             const IndexStmt& stmt, CreateIndexState& state);
 
 yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
@@ -68,7 +69,8 @@ std::shared_ptr<catalog::Function> CreateSystemFunction(
   const CreateFunctionStmt& stmt);
 
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
-                                 const IntoClause& into, bool if_not_exists);
+                                 const IntoClause& into, bool if_not_exists,
+                                 CTASState& state);
 
 yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
                                  std::string_view name);

@@ -59,10 +59,16 @@ class DDLExecutor final : public CommandExecutor {
   const Node& _node;
 };
 
+struct CTASState {
+  bool created = false;
+};
+
 class CTASCreateTableExecutor final : public CommandExecutor {
  public:
   CTASCreateTableExecutor(std::shared_ptr<ExecContext> context,
                           const IntoClause& into, bool if_not_exists);
+
+  CTASState& GetState() noexcept { return _state; }
 
  protected:
   yaclib::Future<> ExecuteImpl() override;
@@ -70,6 +76,11 @@ class CTASCreateTableExecutor final : public CommandExecutor {
  private:
   const IntoClause& _into;
   bool _if_not_exists;
+  CTASState _state;
+};
+
+struct CreateIndexState {
+  bool created = false;
 };
 
 class CreateIndexExecutor final : public CommandExecutor {
@@ -77,11 +88,14 @@ class CreateIndexExecutor final : public CommandExecutor {
   CreateIndexExecutor(std::shared_ptr<ExecContext> context,
                       const IndexStmt& stmt);
 
+  CreateIndexState& GetState() noexcept { return _state; }
+
  protected:
   yaclib::Future<> ExecuteImpl() override;
 
  private:
   const IndexStmt& _stmt;
+  CreateIndexState _state;
 };
 
 class FinishCreateIndexExecutor final : public CommandExecutor {

@@ -128,7 +128,7 @@ class CreateIndexOptionsParser : public OptionsParser {
 
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
-                             const IndexStmt& stmt) {
+                             const IndexStmt& stmt, CreateIndexState& state) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
 
@@ -178,6 +178,8 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index type is not supported"));
   }
+
+  state.created = true;
 
   auto snapshot = catalog.GetSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, relation_name);

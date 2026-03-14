@@ -108,7 +108,7 @@ CTASCreateTableExecutor::CTASCreateTableExecutor(
 
 yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl() {
   SDB_ASSERT(_query);
-  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists);
+  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists, _state);
 }
 
 CreateIndexExecutor::CreateIndexExecutor(std::shared_ptr<ExecContext> context,
@@ -117,7 +117,7 @@ CreateIndexExecutor::CreateIndexExecutor(std::shared_ptr<ExecContext> context,
 
 yaclib::Future<> CreateIndexExecutor::ExecuteImpl() {
   SDB_ASSERT(_query);
-  return CreateIndex(*_context, *_query, _stmt);
+  return CreateIndex(*_context, *_query, _stmt, _state);
 }
 
 FinishCreateIndexExecutor::FinishCreateIndexExecutor(
@@ -147,7 +147,8 @@ yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl() {
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
   return inverted_index.CommitWait().ThenInline([shard = std::move(shard)](
-                                                  yaclib::Result<>&&) {
+                                                  yaclib::Result<> r) {
+    std::ignore = std::move(r).Ok();
     auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
     inverted_index.FinishCreation();
   });

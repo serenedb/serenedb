@@ -48,13 +48,19 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
+template<typename State>
 auto GetRollback(const std::shared_ptr<ConnectionContext>& connection_ctx,
                  const char* schemaname, const char* name,
                  Result (catalog::LogicalCatalog::*drop)(ObjectId,
                                                          std::string_view,
-                                                         std::string_view)) {
+                                                         std::string_view),
+                 State& state) {
   return [connection_ctx, schemaname = absl::NullSafeStringView(schemaname),
-          name = std::string_view{name}, drop] noexcept {
+          name = std::string_view{name}, drop, &state] noexcept {
+    if (!state.created) {
+      // protection from deleting existing object
+      return;
+    }
     auto db = connection_ctx->GetDatabaseId();
     std::string current_schema = connection_ctx->GetCurrentSchema();
     const std::string_view schema =
@@ -88,6 +94,7 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   auto create_table = std::make_unique<CTASCreateTableExecutor>(
     connection_ctx, *into, if_not_exists);
+  auto& state = create_table->GetState();
   auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
     connection_ctx, absl::NullSafeStringView(into->rel->schemaname),
@@ -103,7 +110,7 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   auto rollback =
     GetRollback(connection_ctx, into->rel->schemaname, into->rel->relname,
-                &catalog::LogicalCatalog::DropTable);
+                &catalog::LogicalCatalog::DropTable, state);
   return query::Query::CreateWithExecutor(
     query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
@@ -119,6 +126,7 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
 
   auto create_index =
     std::make_unique<CreateIndexExecutor>(connection_ctx, index_stmt);
+  auto& state = create_index->GetState();
   auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
     connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
@@ -138,7 +146,7 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
 
   auto rollback =
     GetRollback(connection_ctx, index_stmt.relation->schemaname,
-                index_stmt.idxname, &catalog::LogicalCatalog::DropIndex);
+                index_stmt.idxname, &catalog::LogicalCatalog::DropIndex, state);
   return query::Query::CreateWithExecutor(
     query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }

@@ -54,6 +54,7 @@ class Cursor {
   Cursor(UserTask&& user_task, Query& query);
 
   Process NextImpl(velox::RowVectorPtr& batch);
+  Process HandleBatch(velox::RowVectorPtr& batch);
 
   UserTask _user_task;
   Query& _query;

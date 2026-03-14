@@ -450,14 +450,18 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
     request.type = std::to_underlying(TableType::File);
   }
 
-  CreateTableImpl(catalog, *database, db, schema, table, std::move(request),
-                  stmt.if_not_exists, {});
+  if (!CreateTableImpl(catalog, *database, db, schema, table,
+                       std::move(request), stmt.if_not_exists, {})) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table, "\" already exists, skipping")));
+  }
   return {};
 }
 
 yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
                                  const IntoClause& into, bool if_not_exists,
-                                 CTASState& state) {
+                                 CTASState& state, velox::RowVectorPtr& batch) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -494,6 +498,10 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
   if (!CreateTableImpl(catalog, *database, db, schema, table_name,
                        std::move(request), if_not_exists,
                        {.create_with_tombstone = true})) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_name, "\" already exists, skipping")));
+    query::Executor::SetEarlyExit(batch);
     return {};
   }
 

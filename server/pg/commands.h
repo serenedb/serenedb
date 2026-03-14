@@ -50,7 +50,8 @@ yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 yaclib::Future<> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
 
 yaclib::Future<> CreateIndex(ExecContext& ctx, query::Query& query,
-                             const IndexStmt& stmt, CreateIndexState& state);
+                             const IndexStmt& stmt, CreateIndexState& state,
+                             velox::RowVectorPtr& batch);
 
 yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
@@ -70,7 +71,7 @@ std::shared_ptr<catalog::Function> CreateSystemFunction(
 
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
                                  const IntoClause& into, bool if_not_exists,
-                                 CTASState& state);
+                                 CTASState& state, velox::RowVectorPtr& batch);
 
 yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
                                  std::string_view name);

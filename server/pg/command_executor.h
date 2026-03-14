@@ -42,7 +42,7 @@ class CommandExecutor : public query::Executor {
   yaclib::Future<> RequestCancel() final;
 
  protected:
-  virtual yaclib::Future<> ExecuteImpl() = 0;
+  virtual yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) = 0;
 
   std::shared_ptr<ExecContext> _context;
   query::Query* _query = nullptr;
@@ -53,7 +53,7 @@ class DDLExecutor final : public CommandExecutor {
   DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node);
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   const Node& _node;
@@ -71,7 +71,7 @@ class CTASCreateTableExecutor final : public CommandExecutor {
   CTASState& GetState() noexcept { return _state; }
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   const IntoClause& _into;
@@ -91,7 +91,7 @@ class CreateIndexExecutor final : public CommandExecutor {
   CreateIndexState& GetState() noexcept { return _state; }
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   const IndexStmt& _stmt;
@@ -105,7 +105,7 @@ class FinishCreateIndexExecutor final : public CommandExecutor {
                             std::string_view index_name);
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   std::string_view _schemaname;
@@ -118,7 +118,7 @@ class RemoveTombstoneExecutor final : public CommandExecutor {
                           std::string_view schemaname, std::string_view name);
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   std::string_view _schemaname;

@@ -19,10 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "basics/debugging.h"
+#include "basics/down_cast.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/databases.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
+#include "pg/sql_exception_macro.h"
 #include "yaclib/async/make.hpp"
 
 namespace sdb::pg {
@@ -30,6 +33,9 @@ namespace sdb::pg {
 yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt) {
   auto r = catalog::DropDatabase(ctx, stmt.dbname);
   if (stmt.missing_ok && r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
+    basics::downCast<ConnectionContext>(ctx).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+      ERR_MSG("database \"", stmt.dbname, "\" does not exist, skipping")));
     r = {};
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }

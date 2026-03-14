@@ -128,7 +128,8 @@ class CreateIndexOptionsParser : public OptionsParser {
 
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
-                             const IndexStmt& stmt, CreateIndexState& state) {
+                             const IndexStmt& stmt, CreateIndexState& state,
+                             velox::RowVectorPtr& batch) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
 
@@ -164,6 +165,10 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
       shard_options, {.create_with_tombstone = true});
 
     if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("relation \"", stmt.idxname, "\" already exists, skipping")));
+      query::Executor::SetEarlyExit(batch);
       return {};
     }
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {

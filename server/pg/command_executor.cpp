@@ -44,7 +44,7 @@ yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
     return {};
   }
 
-  auto f = ExecuteImpl();
+  auto f = ExecuteImpl(batch);
   _query = nullptr;  // set fired
   return f;
 }
@@ -52,7 +52,7 @@ yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
 DDLExecutor::DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node)
   : CommandExecutor{std::move(context)}, _node{node} {}
 
-yaclib::Future<> DDLExecutor::ExecuteImpl() {
+yaclib::Future<> DDLExecutor::ExecuteImpl(velox::RowVectorPtr& batch) {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);
@@ -106,18 +106,20 @@ CTASCreateTableExecutor::CTASCreateTableExecutor(
     _into{into},
     _if_not_exists{if_not_exists} {}
 
-yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl() {
+yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl(
+  velox::RowVectorPtr& batch) {
   SDB_ASSERT(_query);
-  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists, _state);
+  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists, _state,
+                         batch);
 }
 
 CreateIndexExecutor::CreateIndexExecutor(std::shared_ptr<ExecContext> context,
                                          const IndexStmt& stmt)
   : CommandExecutor{std::move(context)}, _stmt{stmt} {}
 
-yaclib::Future<> CreateIndexExecutor::ExecuteImpl() {
+yaclib::Future<> CreateIndexExecutor::ExecuteImpl(velox::RowVectorPtr& batch) {
   SDB_ASSERT(_query);
-  return CreateIndex(*_context, *_query, _stmt, _state);
+  return CreateIndex(*_context, *_query, _stmt, _state, batch);
 }
 
 FinishCreateIndexExecutor::FinishCreateIndexExecutor(
@@ -127,7 +129,8 @@ FinishCreateIndexExecutor::FinishCreateIndexExecutor(
     _schemaname{schemaname},
     _index_name{index_name} {}
 
-yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl() {
+yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl(
+  velox::RowVectorPtr& batch) {
   const auto db = _context->GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -159,7 +162,8 @@ RemoveTombstoneExecutor::RemoveTombstoneExecutor(
   std::string_view name)
   : CommandExecutor{std::move(context)}, _schemaname{schemaname}, _name{name} {}
 
-yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl() {
+yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl(
+  velox::RowVectorPtr& batch) {
   return RemoveTombstone(*_context, _schemaname, _name);
 }
 

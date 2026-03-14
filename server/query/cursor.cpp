@@ -46,7 +46,7 @@ Cursor::Process Cursor::NextImpl(velox::RowVectorPtr& batch) {
     auto f = executor->Execute(batch);
     if (batch) {
       SDB_ASSERT(!f.Valid());
-      return Process::More;
+      return HandleBatch(batch);
     }
 
     if (!f.Valid()) {
@@ -86,6 +86,14 @@ Cursor::~Cursor() {
   if (!_query.GetContext().transaction->HasTransactionBegin()) {
     _query.GetContext().transaction->Destroy();
   }
+}
+
+Cursor::Process Cursor::HandleBatch(velox::RowVectorPtr& batch) {
+  if (Executor::IsEarlyExit(batch)) {
+    batch = nullptr;
+    return Process::Done;
+  }
+  return Process::More;
 }
 
 }  // namespace sdb::query

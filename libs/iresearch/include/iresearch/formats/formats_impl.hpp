@@ -66,7 +66,7 @@
 
 extern "C" {
 #include <avxbitpacking.h>
-#include <avxintegratedbitpacking.h>
+#include <simdintegratedbitpacking.h>
 }
 
 namespace irs {
@@ -3547,6 +3547,7 @@ struct FormatTraits128 {
   static constexpr std::string_view kName = "1_5simd";
 
   static constexpr uint32_t kBlockSize = 256;
+  static constexpr uint32_t kDeltaBlockSize = kBlockSize / 2;
 
   static_assert(kBlockSize > 1);
   static_assert(kBlockSize % BitsRequired<byte_type>() == 0);
@@ -3737,7 +3738,10 @@ struct FormatTraits128 {
         MakeBlockFromTail(in, len);
         const auto bits = (best_encoding - de_delta_bitpack_02) + 2;
         // TODO: Avoid additional switch
-        avxpackwithoutmaskd1(prev, in, reinterpret_cast<__m256i*>(buf), bits);
+        simdpackd1(prev, in, reinterpret_cast<__m128i*>(buf), bits);
+        const auto* const next = in + kDeltaBlockSize;
+        simdpackd1(*(next - 1), next, reinterpret_cast<__m128i*>(buf) + bits,
+                   bits);
         out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
       } break;
 
@@ -3980,7 +3984,10 @@ struct FormatTraits128 {
         const auto* const data = ReadDataDelta(type, in, buf);
         const auto bits = (type - de_delta_bitpack_02) + 2;
         // TODO: Avoid additional switch
-        avxunpackd1(prev, reinterpret_cast<const __m256i*>(data), out, bits);
+        simdunpackd1(prev, reinterpret_cast<const __m128i*>(data), out, bits);
+        auto* const next = out + kDeltaBlockSize;
+        simdunpackd1(*(next - 1), reinterpret_cast<const __m128i*>(data) + bits,
+                     next, bits);
       } break;
 
       default:

@@ -146,7 +146,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   Field _null_field;
   std::string _name_buffer;
   std::string _null_name_buffer;
-  irs::IndexWriter::Transaction* _trx;
+  irs::IndexWriter::Transaction& _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
   Writer _current_writer;
@@ -166,7 +166,7 @@ class SearchSinkDeleteBaseImpl {
   void AbortImpl() { _remove_filter.reset(); }
 
  protected:
-  irs::IndexWriter::Transaction* _trx;
+  irs::IndexWriter::Transaction& _trx;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
@@ -282,7 +282,7 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     SearchSinkInsertBaseImpl::WriteImpl(cell_slices, full_key);
-    if (_trx->FlushRequired()) {
+    if (_trx.FlushRequired()) {
       Commit();
     }
   }

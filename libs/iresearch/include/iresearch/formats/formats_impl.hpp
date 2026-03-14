@@ -65,8 +65,8 @@
 #include "iresearch/utils/type_limits.hpp"
 
 extern "C" {
-#include <simdbitpacking.h>
-#include <simdintegratedbitpacking.h>
+#include <avxbitpacking.h>
+#include <avxintegratedbitpacking.h>
 }
 
 namespace irs {
@@ -3546,7 +3546,7 @@ struct FormatTraits128 {
   // TODO(mbkkt) rename to "block_128"
   static constexpr std::string_view kName = "1_5simd";
 
-  static constexpr uint32_t kBlockSize = 128;
+  static constexpr uint32_t kBlockSize = 256;
 
   static_assert(kBlockSize > 1);
   static_assert(kBlockSize % BitsRequired<byte_type>() == 0);
@@ -3737,7 +3737,7 @@ struct FormatTraits128 {
         MakeBlockFromTail(in, len);
         const auto bits = (best_encoding - de_delta_bitpack_02) + 2;
         // TODO: Avoid additional switch
-        simdpackwithoutmaskd1(prev, in, reinterpret_cast<__m128i*>(buf), bits);
+        avxpackwithoutmaskd1(prev, in, reinterpret_cast<__m256i*>(buf), bits);
         out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
       } break;
 
@@ -3874,7 +3874,7 @@ struct FormatTraits128 {
         MakeBlockFromTail(in, len);
         const auto bits = (best_encoding - e_bitpack_01) + 1;
         // TODO: Avoid additional switch
-        simdpackwithoutmask(in, reinterpret_cast<__m128i*>(buf), bits);
+        avxpackwithoutmask(in, reinterpret_cast<__m256i*>(buf), bits);
         out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
       } break;
 
@@ -3980,7 +3980,7 @@ struct FormatTraits128 {
         const auto* const data = ReadDataDelta(type, in, buf);
         const auto bits = (type - de_delta_bitpack_02) + 2;
         // TODO: Avoid additional switch
-        simdunpackd1(prev, reinterpret_cast<const __m128i*>(data), out, bits);
+        avxunpackd1(prev, reinterpret_cast<const __m256i*>(data), out, bits);
       } break;
 
       default:
@@ -4057,7 +4057,7 @@ struct FormatTraits128 {
         const auto* const data = ReadData(type, in, buf);
         const auto bits = (type - e_bitpack_01) + 1;
         // TODO: Avoid additional switch
-        simdunpack(reinterpret_cast<const __m128i*>(data), out, bits);
+        avxunpack(reinterpret_cast<const __m256i*>(data), out, bits);
       } break;
 
       default:

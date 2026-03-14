@@ -142,28 +142,10 @@ Result catalog::Function::Instantiate(
   switch (properties.options.language) {
     case FunctionLanguage::SQL:
       return from_vpack.operator()<pg::FunctionImpl>();
-    case FunctionLanguage::AnalyzerJson:
-      return from_vpack.operator()<search::AnalyzerImpl>();
     default:
       return {ERROR_BAD_PARAMETER,
               "Unsupported function language: ", properties.options.language};
   }
-}
-
-catalog::Function::Function(std::string_view name, FunctionSignature signature,
-                            FunctionOptions options, aql::FunctionImpl impl)
-  : SchemaObject{{},
-                 {},
-                 {},
-                 {},  // TOOD(mbkkt) think about id
-                 std::string{name},
-                 ObjectType::Function},
-    _signature{std::move(signature)},
-    _options{std::move(options)},
-    _aql_impl{std::move(impl)} {
-  SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_options.language == FunctionLanguage::AqlNative);
-  SDB_ASSERT(_aql_impl);
 }
 
 catalog::Function::Function(std::string_view name, FunctionSignature signature,
@@ -179,23 +161,6 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
   SDB_ASSERT(!this->GetName().empty());
   SDB_ASSERT(_options.language == FunctionLanguage::VeloxNative ||
              _options.language == FunctionLanguage::Decorator);
-}
-
-catalog::Function::Function(FunctionProperties&& properties,
-                            std::unique_ptr<search::AnalyzerImpl> analyzer,
-                            ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 properties.id,
-                 std::move(properties.name),
-                 ObjectType::Function},
-    _signature{std::move(properties.signature)},
-    _options{std::move(properties.options)},
-    _analyzer_impl{std::move(analyzer)} {
-  SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_options.language == FunctionLanguage::AnalyzerJson);
-  SDB_ASSERT(_analyzer_impl);
 }
 
 catalog::Function::Function(FunctionProperties&& properties,

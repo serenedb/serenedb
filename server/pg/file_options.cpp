@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2016 by EMC Corporation, All Rights Reserved
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,29 +15,25 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is EMC Corporation
-///
-/// @author Andrey Abramov
-/// @author Vasiliy Nabatchikov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "pg/file_options.h"
 
-#include <frozen/unordered_map.h>
+#include "pg/sql_exception_macro.h"
 
-#include <memory>
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+LIBPG_QUERY_INCLUDES_END
 
-#include "iresearch/utils/attribute_provider.hpp"
+namespace sdb::pg::file_options {
 
-namespace irs {
+void CheckRejectLimit(int value) {
+  if (value < 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("REJECT_LIMIT (", value, ") must be greater than zero"));
+  }
+}
 
-class Tokenizer : public AttributeProvider {
- public:
-  using ptr = std::unique_ptr<Tokenizer>;
-
-  virtual bool next() = 0;
-};
-
-enum class Case : uint8_t { Lower = 0, None, Upper };
-
-}  // namespace irs
+}  // namespace sdb::pg::file_options

@@ -984,9 +984,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertUpdateDeleteMultiBatch) {
               std::string_view{"9002", 4}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
+
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -1039,9 +1040,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertUpdateDeleteMultiBatch) {
               std::string_view{"9002_updated", 12}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -1080,9 +1081,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertUpdateDeleteMultiBatch) {
     ASSERT_TRUE(_data_writer->Commit());
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 

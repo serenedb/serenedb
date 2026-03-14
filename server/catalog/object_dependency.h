@@ -22,6 +22,7 @@
 
 #include <memory>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
 
@@ -51,8 +52,10 @@ struct SchemaDependency : public ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> tables;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
+  containers::FlatHashSet<ObjectId> tokenizers;
   bool Empty() const {
-    return tables.empty() && functions.empty() && views.empty();
+    return tables.empty() && functions.empty() && views.empty() &&
+           tokenizers.empty();
   }
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);

@@ -168,7 +168,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${FLEX_EXECUTABLE} -L -o
+        ${CMAKE_SOURCE_DIR}/scripts/generate-c.sh ${FLEX_EXECUTABLE}
         libs/iresearch/include/iresearch/parser/lucene_lexer.cpp
         libs/iresearch/include/iresearch/parser/lucene_lexer.l
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
@@ -179,7 +179,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${CMAKE_SOURCE_DIR}/scripts/bison-c.sh ${BISON_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/scripts/generate-c.sh ${BISON_EXECUTABLE}
         libs/iresearch/include/iresearch/parser/lucene_parser.cpp
         libs/iresearch/include/iresearch/parser/lucene_parser.y
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y

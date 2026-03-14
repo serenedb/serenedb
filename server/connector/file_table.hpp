@@ -244,7 +244,6 @@ class FileDataSink final : public velox::connector::DataSink {
  private:
   std::shared_ptr<velox::dwio::common::Writer> _writer;
   velox::connector::DataSink::Stats _stats;
-  bool _closed = false;
 };
 
 class FileDataSource final : public velox::connector::DataSource {

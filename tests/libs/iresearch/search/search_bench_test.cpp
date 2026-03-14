@@ -441,8 +441,9 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
   for (auto& segment : reader) {
     auto* column = segment.column("id");
     EXPECT_NE(column, nullptr) << "'id' column not found";
-    if (!column)
+    if (!column) {
       return {};
+    }
 
     auto it = column->iterator(irs::ColumnHint::Normal);
     auto* payload = irs::get<irs::PayAttr>(*it);

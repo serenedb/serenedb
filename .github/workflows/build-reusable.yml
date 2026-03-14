@@ -48,6 +48,17 @@ on:
         type: string
         required: false
         default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+        default: '{}'
+      CREATE_GITHUB_RELEASE:
+        description: 'Create a GitHub Release with packages'
+        required: true
+        type: boolean
+        default: false
+      LTS:
+        description: 'Mark release as LTS'
+        required: true
+        type: boolean
+        default: false
     secrets:
       PAT_TOKEN:
         required: true
@@ -59,6 +70,10 @@ on:
         required: true
       TG_USER_MAP:
         required: true
+      DOCKER_HUB_USERNAME:
+        required: false
+      DOCKER_HUB_TOKEN:
+        required: false
 
 env:
   WORKSPACE: ${{ github.workspace }}
@@ -234,6 +249,15 @@ jobs:
         if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         run: ./private/ci/steps/08-ci-rta.bash
 
+      # ==================== CREATE GITHUB RELEASE ====================
+      - name: Create GitHub Release
+        id: create_release
+        if: steps.rta.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          LTS: ${{ inputs.LTS }}
+        run: ./private/ci/steps/09-ci-create-github-release.bash
+
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
@@ -243,7 +267,11 @@ jobs:
       # ==================== BUILD DOCKER IMAGES ====================
       - name: Build Docker Images
         id: build_docker_images
-        if: steps.serenedb_packages.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
+        if: steps.serenedb_packages.outcome == 'success' && steps.rta.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
+        env:
+          DOCKER_REGISTRY: serenedb
+          DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: ./packages/build_docker.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
@@ -297,6 +325,11 @@ jobs:
 
           if [[ "${{ steps.rta.outcome }}" == "failure" ]]; then
             echo "RTA failed"
+            HAS_FAILURES=true
+          fi
+
+          if [[ "${{ steps.create_release.outcome }}" == "failure" ]]; then
+            echo "GitHub Release creation failed"
             HAS_FAILURES=true
           fi
 

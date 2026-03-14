@@ -57,6 +57,17 @@ on:
         type: string
         required: false
         default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+        default: '{}'
+      CREATE_GITHUB_RELEASE:
+        description: 'Create a GitHub Release with packages'
+        required: true
+        type: boolean
+        default: false
+      LTS:
+        description: 'Mark release as LTS'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   statuses: write
@@ -75,5 +86,7 @@ jobs:
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+      CREATE_GITHUB_RELEASE: ${{ inputs.CREATE_GITHUB_RELEASE }}
+      LTS: ${{ inputs.LTS }}
 
     secrets: inherit

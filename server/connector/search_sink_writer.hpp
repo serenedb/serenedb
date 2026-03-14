@@ -250,7 +250,10 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
 };
 
-struct SearchSinkBackfillTrxHolder {
+class SearchSinkBackfillTrxHolder {
+ protected:
+  SearchSinkBackfillTrxHolder(irs::IndexWriter::Transaction trx)
+    : _trx_storage{std::move(trx)} {}
   irs::IndexWriter::Transaction _trx_storage;
 };
 
@@ -272,29 +275,30 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
 
   bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(type, have_nulls, column_id);
+    return SearchSinkInsertBaseImpl::SwitchColumnImpl(type, have_nulls,
+                                                      column_id);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
-    WriteImpl(cell_slices, full_key);
+    SearchSinkInsertBaseImpl::WriteImpl(cell_slices, full_key);
     if (_trx->FlushRequired()) {
-      FlushCommit();
+      Commit();
     }
   }
 
   void Finish() final {
-    FinishImpl();
-    FlushCommit();
+    SearchSinkInsertBaseImpl::FinishImpl();
+    Commit();
   }
 
   void Abort() final {
-    AbortImpl();
+    SearchSinkInsertBaseImpl::AbortImpl();
     _trx_storage.Abort();
   }
 
  private:
-  void FlushCommit() {
+  void Commit() {
     _trx_storage.Commit(_engine.currentTick());
     _trx_storage = _shard.GetTransaction();
   }

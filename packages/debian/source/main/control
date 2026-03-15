@@ -6,7 +6,7 @@ Build-Depends: debhelper (>= 9), docker-ce
 
 Package: serenedb
 Architecture: @ARCHITECTURE@
-Depends: ${misc:Depends}
+Depends: ${misc:Depends}, tzdata
 Description: a real-time search & OLAP database
 
 Package: serenedb-dbg

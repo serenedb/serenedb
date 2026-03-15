@@ -1,0 +1,49 @@
+services:
+  serenedb-single:
+    image: "$RTA_IMAGE"
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - "$WORKSPACE:/serenedb"
+      - "$WORKSPACE/logs:/var/log/serenedb"
+    networks:
+      - test-network
+    command: >
+      sh -c '
+        exec /usr/sbin/serened \
+          --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+          --server.authentication 0 \
+          --log.foreground-tty true
+      '
+
+  tests:
+    image: ${BUILD_IMAGE}
+    volumes:
+      - "$SQLLOGIC_DIR:/sqllogic"
+      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "$WORKSPACE/logs:/logs"
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - serenedb-single
+    environment:
+      - COMPOSE_NETWORK=${COMPOSE_PROJECT_NAME}_test-network
+      - LOG_DIR=/logs
+      - RESOURCES
+    networks:
+      - test-network
+    command: >
+      sh -c '
+        cd /sqllogic &&
+        ./run.sh \
+          --host serenedb-single \
+          --single-port 7777 \
+          --test "sdb/**/*.test*" \
+          --junit /logs/rta-tests \
+          --protocol both \
+          --runner /sqllogictest-rs
+      '
+
+networks:
+  test-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_test-network

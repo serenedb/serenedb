@@ -423,6 +423,9 @@ constexpr auto kMapping =
     {"pg_table_size",
      {"pg_table_size", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"ts_lexize",
+     {"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
     // Search functions
     {"phrase", {search::functions::kPhrase, false}},
     {"term_eq", {search::functions::kTermEq, false}},

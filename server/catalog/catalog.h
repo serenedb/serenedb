@@ -43,6 +43,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/tokenizer.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -106,6 +107,9 @@ struct Snapshot {
   virtual std::shared_ptr<Function> GetFunction(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
+  virtual std::shared_ptr<Tokenizer> GetTokenizer(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
   virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
                                           std::string_view schema,
                                           std::string_view name) const = 0;
@@ -163,6 +167,9 @@ struct LogicalCatalog {
   virtual Result RegisterFunction(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Function> function) = 0;
+  virtual Result RegisterTokenizer(
+    ObjectId database_id, ObjectId schema_id,
+    std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
   virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
     IndexBaseOptions options) = 0;
@@ -179,6 +186,8 @@ struct LogicalCatalog {
   virtual Result CreateFunction(ObjectId database_id, std::string_view schema,
                                 std::shared_ptr<catalog::Function> function,
                                 bool replace) = 0;
+  virtual Result CreateTokenizer(ObjectId database_id, std::string_view schema,
+                                 std::shared_ptr<Tokenizer> dict) = 0;
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
@@ -210,6 +219,8 @@ struct LogicalCatalog {
                             bool cascade) = 0;
   virtual Result DropFunction(ObjectId database, std::string_view schema,
                               std::string_view name) = 0;
+  virtual Result DropTokenizer(ObjectId database, std::string_view schema,
+                               std::string_view name) = 0;
   virtual Result DropView(ObjectId database, std::string_view schema,
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,

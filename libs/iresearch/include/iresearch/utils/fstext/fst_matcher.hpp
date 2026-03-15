@@ -99,8 +99,9 @@ class explicit_matcher final  // NOLINT
     for (; !_matcher.Done(); _matcher.Next()) {
       const auto& label = _match_type == MATCH_INPUT ? _matcher.Value().ilabel
                                                      : _matcher.Value().olabel;
-      if (label != kNoLabel)
+      if (label != kNoLabel) {
         return;
+      }
     }
   }
 

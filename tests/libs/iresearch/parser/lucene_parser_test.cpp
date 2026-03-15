@@ -69,8 +69,9 @@ void AssertWildcard(const irs::Filter& f, std::string_view field,
   const auto& wc = sdb::basics::downCast<irs::ByWildcard>(f);
   EXPECT_EQ(field, wc.field());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{wc.options().term}));
-  if (boost > 0.0f)
+  if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, wc.Boost());
+  }
 }
 
 void AssertFuzzy(const irs::Filter& f, std::string_view field,
@@ -79,8 +80,9 @@ void AssertFuzzy(const irs::Filter& f, std::string_view field,
   EXPECT_EQ(field, fuzzy.field());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(distance, fuzzy.options().max_distance);
-  if (boost > 0.0f)
+  if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, fuzzy.Boost());
+  }
 }
 
 void AssertRange(const irs::Filter& f, std::string_view field,

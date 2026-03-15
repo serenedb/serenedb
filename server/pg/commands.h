@@ -27,6 +27,7 @@
 #include "pg/command_executor.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
+#include "yaclib/async/future.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -77,5 +78,7 @@ yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
                                  std::string_view name);
 
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
+
+yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);
 
 }  // namespace sdb::pg

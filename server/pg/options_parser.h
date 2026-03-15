@@ -29,11 +29,15 @@
 #include <algorithm>
 #include <functional>
 #include <type_traits>
+#include <variant>
 
+#include "basics/assert.h"
+#include "basics/errors.h"
 #include "pg/option_help.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "utils/elog.h"
 
 namespace sdb::pg {
 
@@ -103,10 +107,17 @@ class OptionsParser {
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG(Info.ErrorMessage(_operation, DeparseValue(option->arg))));
       }
+      if constexpr (!std::holds_alternative<std::monostate>(Info.constraint)) {
+        SDB_ASSERT(std::holds_alternative<void (*)(T)>(Info.constraint));
+        std::get<void (*)(T)>(Info.constraint)(*value);
+      }
       return *value;
+    } else if (Info.IsRequired()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.name, "\" was not found"));
     }
-
-    return Info.DefaultValue<T>();
+    return Info.GetDefaultValue<T>();
   }
 
   template<const auto& Info>
@@ -144,7 +155,13 @@ class OptionsParser {
       return *result;
     }
 
-    return Info.base.template DefaultValue<E>();
+    if (Info.base.IsRequired()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.base.name, "\" was not found"));
+    }
+
+    return Info.base.template GetDefaultValue<E>();
   }
 
   // requires_parameter == presence flag like ... WITH (FLAG)

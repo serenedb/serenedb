@@ -88,6 +88,7 @@
 #include "query/transaction.h"
 #include "query/types.h"
 #include "query/utils.h"
+#include "utils/elog.h"
 #include "utils/query_string.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -736,6 +737,7 @@ class SqlAnalyzer {
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+  void ProcessDefineStmt(State& state, const DefineStmt& stmt);
 
   void ProcessIntoClause(State& state, const IntoClause& into);
   void ProcessIndexStmt(State& state, const IndexStmt& stmt);
@@ -2063,27 +2065,14 @@ class CopyOptionsParser : public FileOptionsParser {
       }
     }();
 
-    if (const auto* option = EraseOption(kRejectLimit)) {
+    if (auto max_reject_limit = EraseOptionOrDefault<kRejectLimit>()) {
       if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          CURSOR_POS(ErrorPosition(OptionLocation(kRejectLimit))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
       }
-      auto maybe_reject_limit = TryGet<int>(option->arg);
-      if (!maybe_reject_limit) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid input syntax for type bigint: \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      if (*maybe_reject_limit <= 0) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("REJECT_LIMIT (", *maybe_reject_limit,
-                                ") must be greater than zero"));
-      }
-      reject_limit = *maybe_reject_limit;
+      reject_limit = max_reject_limit;
     }
 
     for (const auto& info : kUnsupportedTextCsvOptions) {
@@ -2665,6 +2654,18 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     std::move(column_exprs));
 }
 
+void SqlAnalyzer::ProcessDefineStmt(State& state, const DefineStmt& stmt) {
+  switch (stmt.kind) {
+    case OBJECT_TSDICTIONARY: {
+      state.pgsql_node = castNode(Node, &stmt);
+    } break;
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                      ERR_MSG("Such define statement is not supported"));
+  }
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
                                         bool allowed_select_into) {
   switch (node.type) {
@@ -2776,6 +2777,11 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_VacuumStmt: {
       state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_DefineStmt: {
+      const auto& stmt = *castNode(DefineStmt, &node);
+      ProcessDefineStmt(state, stmt);
       return SqlCommandType::DDL;
     }
     default:

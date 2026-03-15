@@ -183,8 +183,9 @@ inline uint64_t wyhash(const void* key, size_t len, uint64_t seed,
     } else if (_likely_(len > 0)) {
       a = _wyr3(p, len);
       b = 0;
-    } else
+    } else {
       a = b = 0;
+    }
   } else {
     size_t i = len;
     if (_unlikely_(i >= 48)) {

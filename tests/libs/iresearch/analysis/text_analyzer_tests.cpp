@@ -281,7 +281,7 @@ TEST_F(TextAnalyzerParserTestSuite, test_text_analyzer) {
 
     {
       irs::analysis::TextTokenizer::OptionsT options;
-      options.case_convert = irs::analysis::TextTokenizer::kLower;
+      options.case_convert = irs::Case::Lower;
       options.locale = icu::Locale::createFromName("en_US.UTF-8");
       irs::analysis::TextTokenizer stream(options, options.explicit_stopwords);
       test_func(data, &stream);
@@ -319,7 +319,7 @@ TEST_F(TextAnalyzerParserTestSuite, test_text_analyzer) {
 
     {
       irs::analysis::TextTokenizer::OptionsT options;
-      options.case_convert = irs::analysis::TextTokenizer::kUpper;
+      options.case_convert = irs::Case::Upper;
       options.locale = icu::Locale::createFromName("en_US.UTF-8");
       irs::analysis::TextTokenizer stream(options, options.explicit_stopwords);
       test_func(data, &stream);
@@ -357,7 +357,7 @@ TEST_F(TextAnalyzerParserTestSuite, test_text_analyzer) {
 
     {
       irs::analysis::TextTokenizer::OptionsT options;
-      options.case_convert = irs::analysis::TextTokenizer::kNone;
+      options.case_convert = irs::Case::None;
       options.locale = icu::Locale::createFromName("en_US.UTF-8");
       irs::analysis::TextTokenizer stream(options, options.explicit_stopwords);
       test_func(data, &stream);

@@ -639,4 +639,14 @@ Objects::ObjectName ParseObjectName(const List* names,
            });
 }
 
+Objects::ObjectName ParseObjectName(std::string_view name,
+                                    std::string_view default_schema) {
+  const auto pos = name.find('.');
+  auto schema_name =
+    pos == std::string_view::npos ? default_schema : name.substr(0, pos);
+  auto object_name =
+    pos == std::string_view::npos ? name : name.substr(pos + 1);
+  return {.schema = schema_name, .relation = object_name};
+}
+
 }  // namespace sdb::pg

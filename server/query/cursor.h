@@ -21,10 +21,11 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <absl/functional/function_ref.h>
 #include <velox/exec/Task.h>
 #include <velox/vector/ComplexVector.h>
 
-#include <vector>
+#include <span>
 
 #include "query/context.h"
 #include "query/executor.h"
@@ -52,9 +53,13 @@ class Cursor {
   friend class Query;
   Cursor(UserTask&& user_task, Query& query);
 
+  Process NextImpl(velox::RowVectorPtr& batch);
+  Process HandleBatch(velox::RowVectorPtr& batch);
+
   UserTask _user_task;
   Query& _query;
-  std::vector<std::unique_ptr<Executor>> _executors;
+  std::span<const std::unique_ptr<Executor>> _executors;
+  absl::FunctionRef<void()> _on_error;
   size_t _current = 0;
 };
 

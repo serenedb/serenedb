@@ -20,6 +20,7 @@
 
 #include "pg/sql_statement.h"
 
+#include <absl/strings/string_view.h>
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
@@ -47,6 +48,30 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
+template<typename State>
+auto GetRollback(const std::shared_ptr<ConnectionContext>& connection_ctx,
+                 const char* schemaname, const char* name,
+                 Result (catalog::LogicalCatalog::*drop)(ObjectId,
+                                                         std::string_view,
+                                                         std::string_view),
+                 State& state) {
+  return [connection_ctx, schemaname = absl::NullSafeStringView(schemaname),
+          name = std::string_view{name}, drop, &state] noexcept {
+    if (!state.created) {
+      // protection from deleting existing object
+      return;
+    }
+    auto db = connection_ctx->GetDatabaseId();
+    std::string current_schema = connection_ctx->GetCurrentSchema();
+    const std::string_view schema =
+      schemaname.empty() ? std::string_view{current_schema} : schemaname;
+    SDB_ASSERT(!schema.empty());
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    std::ignore = (catalog.*drop)(db, schema, name);
+  };
+}
+
 std::unique_ptr<query::Query> CreateCTASPipeline(
   const VeloxQuery& query_desc, query::QueryContext& query_ctx,
   const std::shared_ptr<ConnectionContext>& connection_ctx) {
@@ -69,21 +94,11 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   auto create_table = std::make_unique<CTASCreateTableExecutor>(
     connection_ctx, *into, if_not_exists);
-  auto rollback = [connection_ctx, into] noexcept {
-    auto db = connection_ctx->GetDatabaseId();
-    const auto& rel = *into->rel;
-    std::string current_schema = connection_ctx->GetCurrentSchema();
-    const std::string_view schema =
-      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
-    SDB_ASSERT(!schema.empty());
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    std::ignore = catalog.DropTable(db, schema, into->rel->relname);
-  };
-  auto velox_exec =
-    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
-  auto remove_tombstone =
-    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, *into->rel);
+  auto& state = create_table->GetState();
+  auto velox_exec = std::make_unique<query::VeloxExecutor>();
+  auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
+    connection_ctx, absl::NullSafeStringView(into->rel->schemaname),
+    into->rel->relname);
 
   std::vector<std::unique_ptr<query::Executor>> executors;
   executors.reserve(3);
@@ -93,8 +108,47 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   query_ctx.command_type.Add(query::CommandType::Query);
 
-  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                          std::move(executors));
+  auto rollback =
+    GetRollback(connection_ctx, into->rel->schemaname, into->rel->relname,
+                &catalog::LogicalCatalog::DropTable, state);
+  return query::Query::CreateWithExecutor(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
+}
+
+std::unique_ptr<query::Query> CreateIndexPipeline(
+  const VeloxQuery& query_desc, query::QueryContext& query_ctx,
+  const std::shared_ptr<ConnectionContext>& connection_ctx) {
+  SDB_ASSERT(query_desc.pgsql_node);
+  SDB_ASSERT(query_desc.root);
+  SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+
+  const auto& index_stmt = *castNode(IndexStmt, query_desc.pgsql_node);
+
+  auto create_index =
+    std::make_unique<CreateIndexExecutor>(connection_ctx, index_stmt);
+  auto& state = create_index->GetState();
+  auto velox_exec = std::make_unique<query::VeloxExecutor>();
+  auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
+    connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
+    index_stmt.idxname);
+  auto remove_tombstone = std::make_unique<RemoveTombstoneExecutor>(
+    connection_ctx, absl::NullSafeStringView(index_stmt.relation->schemaname),
+    index_stmt.idxname);
+
+  std::vector<std::unique_ptr<query::Executor>> executors;
+  executors.reserve(4);
+  executors.emplace_back(std::move(create_index));
+  executors.emplace_back(std::move(velox_exec));
+  executors.emplace_back(std::move(finish_creation));
+  executors.emplace_back(std::move(remove_tombstone));
+
+  query_ctx.command_type.Add(query::CommandType::Query);
+
+  auto rollback =
+    GetRollback(connection_ctx, index_stmt.relation->schemaname,
+                index_stmt.idxname, &catalog::LogicalCatalog::DropIndex, state);
+  return query::Query::CreateWithExecutor(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
 
 }  // namespace
@@ -157,6 +211,11 @@ bool SqlStatement::ProcessNextRoot(
 
   if (query_desc.type == pg::SqlCommandType::CTAS) {
     query = CreateCTASPipeline(query_desc, query_ctx, connection_ctx);
+    return true;
+  }
+
+  if (query_desc.type == pg::SqlCommandType::CreateIndex) {
+    query = CreateIndexPipeline(query_desc, query_ctx, connection_ctx);
     return true;
   }
 

@@ -418,9 +418,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     }
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
-  for (const auto& writer : _index_writers) {
-    writer->Finish();
-  }
   _number_of_rows_affected += affected_rows;
 }
 
@@ -2573,6 +2570,58 @@ velox::connector::DataSink::Stats RocksDBDataSinkBase<DataWriterType>::stats()
   const {
   // TODO(Dronplane) implement
   return {};
+}
+
+RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<ColumnInfo> columns,
+  std::unique_ptr<SinkIndexWriter> index_writer)
+  : RocksDBDataSinkBase<NoopSinkWriter>{
+      NoopSinkWriter{},
+      memory_pool,
+      object_key,
+      key_childs,
+      std::move(columns),
+      [&] {
+        std::vector<std::unique_ptr<SinkIndexWriter>> w;
+        w.push_back(std::move(index_writer));
+        return w;
+      }()} {}
+
+void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
+  static_assert(basics::IsLittleEndian());
+  SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+  SDB_ASSERT(input->type()->size() == _columns_info.size());
+  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
+
+  _store_keys_buffers.clear();
+  const auto num_rows = input->size();
+  _store_keys_buffers.reserve(num_rows);
+
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    auto& key_buffer = _store_keys_buffers.emplace_back();
+    key_utils::MakeColumnKey<false>(
+      input, _key_childs, row_idx, table_key, [&](auto) {}, key_buffer);
+    key_utils::SetupColumnForKey(key_buffer, _columns_info.front().id);
+  }
+
+  auto& writer = *_index_writers.front();
+  writer.Init(num_rows);
+
+  const velox::IndexRange all_rows{0, num_rows};
+  const folly::Range all_rows_range{&all_rows, 1};
+  const auto num_columns = input->childrenSize();
+  for (velox::column_index_t i = 0; i < num_columns; ++i) {
+    if (_columns_info[i].id == catalog::Column::kGeneratedPKId) {
+      SDB_ASSERT(i + 1 == num_columns,
+                 "RocksDBDataSink: generated primary column should be the last "
+                 "one in the input vectors");
+      break;
+    }
+    WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
+  }
 }
 
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(

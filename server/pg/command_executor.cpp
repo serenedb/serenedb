@@ -20,8 +20,14 @@
 
 #include "pg/command_executor.h"
 
+#include "app/app_server.h"
+#include "basics/debugging.h"
+#include "basics/down_cast.h"
 #include "basics/misc.hpp"
+#include "catalog/catalog.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
+#include "search/inverted_index_shard.h"
 
 namespace sdb::pg {
 
@@ -38,7 +44,7 @@ yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
     return {};
   }
 
-  auto f = ExecuteImpl();
+  auto f = ExecuteImpl(batch);
   _query = nullptr;  // set fired
   return f;
 }
@@ -46,7 +52,7 @@ yaclib::Future<> CommandExecutor::Execute(velox::RowVectorPtr& batch) {
 DDLExecutor::DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node)
   : CommandExecutor{std::move(context)}, _node{node} {}
 
-yaclib::Future<> DDLExecutor::ExecuteImpl() {
+yaclib::Future<> DDLExecutor::ExecuteImpl(velox::RowVectorPtr& batch) {
   switch (_node.type) {
     case NodeTag::T_CreatedbStmt: {
       const auto& stmt = *castNode(CreatedbStmt, &_node);
@@ -59,10 +65,6 @@ yaclib::Future<> DDLExecutor::ExecuteImpl() {
     case NodeTag::T_CreateStmt: {
       const auto& stmt = *castNode(CreateStmt, &_node);
       return CreateTable(*_context, stmt);
-    }
-    case NodeTag::T_IndexStmt: {
-      const auto& stmt = *castNode(IndexStmt, &_node);
-      return CreateIndex(*_context, stmt);
     }
     case NodeTag::T_ViewStmt: {
       const auto& stmt = *castNode(ViewStmt, &_node);
@@ -108,17 +110,65 @@ CTASCreateTableExecutor::CTASCreateTableExecutor(
     _into{into},
     _if_not_exists{if_not_exists} {}
 
-yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl() {
+yaclib::Future<> CTASCreateTableExecutor::ExecuteImpl(
+  velox::RowVectorPtr& batch) {
   SDB_ASSERT(_query);
-  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists);
+  return CreateTableCTAS(*_context, *_query, _into, _if_not_exists, _state,
+                         batch);
+}
+
+CreateIndexExecutor::CreateIndexExecutor(std::shared_ptr<ExecContext> context,
+                                         const IndexStmt& stmt)
+  : CommandExecutor{std::move(context)}, _stmt{stmt} {}
+
+yaclib::Future<> CreateIndexExecutor::ExecuteImpl(velox::RowVectorPtr& batch) {
+  SDB_ASSERT(_query);
+  return CreateIndex(*_context, *_query, _stmt, _state, batch);
+}
+
+FinishCreateIndexExecutor::FinishCreateIndexExecutor(
+  std::shared_ptr<ExecContext> context, std::string_view schemaname,
+  std::string_view index_name)
+  : CommandExecutor{std::move(context)},
+    _schemaname{schemaname},
+    _index_name{index_name} {}
+
+yaclib::Future<> FinishCreateIndexExecutor::ExecuteImpl(
+  velox::RowVectorPtr& batch) {
+  const auto db = _context->GetDatabaseId();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
+  const std::string_view schema =
+    _schemaname.empty() ? std::string_view{current_schema} : _schemaname;
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto snapshot = catalog.GetSnapshot();
+  auto index = snapshot->GetRelation(db, schema, _index_name);
+  SDB_ASSERT(index);
+  auto shard = snapshot->GetIndexShard(index->GetId());
+  SDB_ASSERT(shard);
+  SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+  auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+
+  SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
+
+  return inverted_index.CommitWait().ThenInline([shard = std::move(shard)](
+                                                  yaclib::Result<> r) {
+    std::ignore = std::move(r).Ok();
+    auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+    inverted_index.FinishCreation();
+  });
 }
 
 RemoveTombstoneExecutor::RemoveTombstoneExecutor(
-  std::shared_ptr<ExecContext> context, const RangeVar& relation)
-  : CommandExecutor{std::move(context)}, _relation{relation} {}
+  std::shared_ptr<ExecContext> context, std::string_view schemaname,
+  std::string_view name)
+  : CommandExecutor{std::move(context)}, _schemaname{schemaname}, _name{name} {}
 
-yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl() {
-  return RemoveTombstone(*_context, _relation);
+yaclib::Future<> RemoveTombstoneExecutor::ExecuteImpl(
+  velox::RowVectorPtr& batch) {
+  return RemoveTombstone(*_context, _schemaname, _name);
 }
 
 }  // namespace sdb::pg

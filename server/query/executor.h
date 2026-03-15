@@ -32,6 +32,17 @@ class Query;
 
 class Executor {
  public:
+  static inline const velox::RowVectorPtr kEarlyExitBatch{
+    reinterpret_cast<velox::RowVector*>(0x1), [](auto*) {}};
+
+  static void SetEarlyExit(velox::RowVectorPtr& batch) {
+    batch = kEarlyExitBatch;
+  }
+
+  static bool IsEarlyExit(const velox::RowVectorPtr& batch) {
+    return batch == kEarlyExitBatch;
+  }
+
   virtual void Init(Query& query) = 0;
   virtual yaclib::Future<> Execute(velox::RowVectorPtr& batch) = 0;
   virtual yaclib::Future<> RequestCancel() = 0;

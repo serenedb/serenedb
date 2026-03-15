@@ -74,7 +74,6 @@ Result Transaction::Commit() {
 
     // id is first write operation seqno in the WAL
     auto post_commit_seq = _rocksdb_transaction->GetId();
-    // add number of operations to get last operation seqno
     post_commit_seq += num_ops - 1;
 
     std::move(rollback).Cancel();

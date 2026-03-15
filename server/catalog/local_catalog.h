@@ -85,8 +85,9 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
                      const std::vector<std::string>& column_names,
-                     IndexBaseOptions options,
-                     IndexShardOptions& shard_options) final;
+                     IndexBaseOptions options, IndexShardOptions& shard_options,
+                     CreateIndexOperationOptions operation_options = {}) final;
+
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
 

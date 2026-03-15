@@ -313,6 +313,18 @@ class SSTInsertDataSink final
 extern template class SSTInsertDataSink<true>;
 extern template class SSTInsertDataSink<false>;
 
+class RocksDBIndexBackfillDataSink final
+  : public RocksDBDataSinkBase<NoopSinkWriter> {
+ public:
+  RocksDBIndexBackfillDataSink(
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<ColumnInfo> columns,
+    std::unique_ptr<SinkIndexWriter> index_writer);
+
+  void appendData(velox::RowVectorPtr input) final;
+};
+
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
   RocksDBDeleteDataSink(

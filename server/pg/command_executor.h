@@ -21,13 +21,15 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "query/executor.h"
 #include "utils/exec_context.h"
 
+struct IndexStmt;
 struct IntoClause;
 struct Node;
-struct RangeVar;
 
 namespace sdb::pg {
 
@@ -40,7 +42,7 @@ class CommandExecutor : public query::Executor {
   yaclib::Future<> RequestCancel() final;
 
  protected:
-  virtual yaclib::Future<> ExecuteImpl() = 0;
+  virtual yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) = 0;
 
   std::shared_ptr<ExecContext> _context;
   query::Query* _query = nullptr;
@@ -51,10 +53,14 @@ class DDLExecutor final : public CommandExecutor {
   DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node);
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   const Node& _node;
+};
+
+struct CTASState {
+  bool created = false;
 };
 
 class CTASCreateTableExecutor final : public CommandExecutor {
@@ -62,24 +68,61 @@ class CTASCreateTableExecutor final : public CommandExecutor {
   CTASCreateTableExecutor(std::shared_ptr<ExecContext> context,
                           const IntoClause& into, bool if_not_exists);
 
+  CTASState& GetState() noexcept { return _state; }
+
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
   const IntoClause& _into;
   bool _if_not_exists;
+  CTASState _state;
+};
+
+struct CreateIndexState {
+  bool created = false;
+};
+
+class CreateIndexExecutor final : public CommandExecutor {
+ public:
+  CreateIndexExecutor(std::shared_ptr<ExecContext> context,
+                      const IndexStmt& stmt);
+
+  CreateIndexState& GetState() noexcept { return _state; }
+
+ protected:
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+
+ private:
+  const IndexStmt& _stmt;
+  CreateIndexState _state;
+};
+
+class FinishCreateIndexExecutor final : public CommandExecutor {
+ public:
+  FinishCreateIndexExecutor(std::shared_ptr<ExecContext> context,
+                            std::string_view schemaname,
+                            std::string_view index_name);
+
+ protected:
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+
+ private:
+  std::string_view _schemaname;
+  std::string_view _index_name;
 };
 
 class RemoveTombstoneExecutor final : public CommandExecutor {
  public:
   RemoveTombstoneExecutor(std::shared_ptr<ExecContext> context,
-                          const RangeVar& relation);
+                          std::string_view schemaname, std::string_view name);
 
  protected:
-  yaclib::Future<> ExecuteImpl() override;
+  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
 
  private:
-  const RangeVar& _relation;
+  std::string_view _schemaname;
+  std::string_view _name;
 };
 
 }  // namespace sdb::pg

@@ -213,7 +213,7 @@ jobs:
       # ==================== RELEASE TEST AUTOMATION ====================
       - name: Release Test Automation (RTA)
         id: rta
-        if: steps.serenedb_packages.outcome == 'success'
+        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         run: ./private/ci/steps/08-ci-rta.bash
 
       # ==================== COVERAGE REPORT ====================

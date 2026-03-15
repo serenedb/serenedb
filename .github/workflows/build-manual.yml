@@ -25,11 +25,6 @@ on:
           - arm
           - self-hosted
         default: 'self-hosted'
-      BRANCH:
-        description: 'SereneDB branch to test (defaults to current branch)'
-        type: string
-        required: false
-        default: ''
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true

@@ -933,7 +933,6 @@ struct DocState {
   const IndexInput* pos_in;
   const IndexInput* pay_in;
   const TermMetaImpl* term_state;
-  const uint32_t* freq;
   uint32_t* enc_buf;
 };
 
@@ -962,7 +961,7 @@ class PositionImpl final : public PosAttr {
   }
 
   value_t seek(value_t target) final {
-    const uint32_t freq = *_freq;
+    const uint32_t freq = _freq;
     if (_pend_pos > freq) {
       Skip(_pend_pos - freq);
       _pend_pos = freq;
@@ -992,7 +991,7 @@ class PositionImpl final : public PosAttr {
       return false;
     }
 
-    const uint32_t freq = *_freq;
+    const uint32_t freq = _freq;
 
     if (_pend_pos > freq) {
       Skip(_pend_pos - freq);
@@ -1038,7 +1037,6 @@ class PositionImpl final : public PosAttr {
     _cookie.pend_pos = state.term_state->pos_offset;
     sdb::basics::downCast<InputType>(*_pos_in).Seek(
       state.term_state->pos_start);
-    _freq = state.freq;
     _enc_buf = state.enc_buf;
     _pend_pos = _cookie.pend_pos;
 
@@ -1073,7 +1071,8 @@ class PositionImpl final : public PosAttr {
   }
 
   // notify iterator that corresponding DocIterator has moved forward
-  void Notify(uint32_t n) {
+  void Notify(uint32_t freq, uint32_t n) {
+    _freq = freq;
     _pend_pos += n;
     _cookie.pend_pos += n;
   }
@@ -1083,7 +1082,7 @@ class PositionImpl final : public PosAttr {
     ClearAttributes();
   }
 
-  uint32_t DocFreq() const noexcept { return *_freq; }
+  uint32_t DocFreq() const noexcept { return _freq; }
 
  private:
   void Skip(uint64_t count) {
@@ -1149,7 +1148,7 @@ class PositionImpl final : public PosAttr {
     _offs_start_deltas;
   [[no_unique_address]] ForOffset<uint32_t[IteratorTraits::kBlockSize]>
     _offs_lengths;
-  const uint32_t* _freq;   // lenght of the posting list for a document
+  uint32_t _freq;          // lenght of the posting list for a document
   uint32_t* _enc_buf;      // auxillary buffer to decode data
   uint64_t _pend_pos = 0;  // how many positions "behind" we are
   uint64_t _buf_pos = IteratorTraits::kBlockSize;  // position in pos_deltas_
@@ -1162,9 +1161,9 @@ class PositionImpl final : public PosAttr {
 template<typename IteratorTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<FreqAttr, FreqBlockAttr, CostAttr, PositionImpl<IteratorTraits>>,
+  std::tuple<FreqBlockAttr, CostAttr, PositionImpl<IteratorTraits>>,
   std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<FreqAttr, FreqBlockAttr, CostAttr>,
+                     std::tuple<FreqBlockAttr, CostAttr>,
                      std::tuple<CostAttr>>>;
 
 template<typename IteratorTraits>
@@ -1216,7 +1215,7 @@ class PostingIteratorBase : public DocIterator {
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(_collected_freqs);
-      _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
+      _collected_freqs[index] = *(std::end(_freqs) - _left_in_leaf - 1);
     }
   }
 
@@ -1273,15 +1272,11 @@ doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
 
   _doc = *(std::end(_docs) - _left_in_leaf);
 
-  if constexpr (IteratorTraits::Frequency()) {
-    auto& freq_value = std::get<FreqAttr>(_attrs).value;
-    freq_value = *(std::end(_freqs) - _left_in_leaf);
-
-    if constexpr (IteratorTraits::Position()) {
-      auto& pos = std::get<Position>(_attrs);
-      pos.Notify(freq_value);
-      pos.Clear();
-    }
+  if constexpr (IteratorTraits::Position()) {
+    auto& pos = std::get<Position>(_attrs);
+    const auto freq = *(std::end(_freqs) - _left_in_leaf);
+    pos.Notify(freq, freq);
+    pos.Clear();
   }
 
   --_left_in_leaf;
@@ -1308,14 +1303,9 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     }
 
     if (target <= doc) {
-      if constexpr (IteratorTraits::Frequency()) {
-        auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(_freqs) - left_in_leaf);
-      }
-
       if constexpr (IteratorTraits::Position()) {
         auto& pos = std::get<Position>(_attrs);
-        pos.Notify(notify);
+        pos.Notify(*(std::end(_freqs) - left_in_leaf), notify);
         pos.Clear();
       }
 
@@ -1348,10 +1338,6 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
     }
 
     auto next = [&](uint32_t left_in_leaf, doc_id_t doc) IRS_FORCE_INLINE {
-      if constexpr (IteratorTraits::Frequency()) {
-        auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(_freqs) - left_in_leaf);
-      }
       _left_in_leaf = left_in_leaf - 1;
       return _doc = doc;
     };
@@ -1782,7 +1768,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
       .pos_in = pos_in,
       .pay_in = pay_in,
       .term_state = &term_state,
-      .freq = &std::get<FreqAttr>(this->_attrs).value,
       .enc_buf = this->_enc_buf,
     };
 
@@ -2746,7 +2731,7 @@ class SingleWandIterator : public DocIterator {
   void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(_collected_freqs);
-      _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
+      _collected_freqs[index] = *(std::end(_freqs) - _left_in_leaf - 1);
     }
   }
 
@@ -3031,9 +3016,6 @@ doc_id_t SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
     --_left_in_leaf;
 
     if (target <= doc) {
-      auto& freq_value = std::get<FreqAttr>(_attrs).value;
-      freq_value = *(std::end(_freqs) - (_left_in_leaf + 1));
-
       return _doc = doc;
     }
   }

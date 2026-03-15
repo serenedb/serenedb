@@ -176,7 +176,7 @@ jobs:
         run: printenv
 
       - name: Set sanitizer options
-        if: inputs.SANITIZERS != '' || inputs.USE_COVERAGE != ''
+        if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
         run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file

@@ -54,7 +54,7 @@ Cursor::Process Cursor::NextImpl(velox::RowVectorPtr& batch) {
     }
 
     if (f.Ready()) {
-      // for future completed in this thread DetachInline would call user_task
+      // for futures completed in this thread DetachInline would call user_task
       // on this thread and would cause a deadlock - ProcessWakeup locks mtx
       std::ignore = std::move(f).Touch().Ok();
       continue;

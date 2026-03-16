@@ -59,7 +59,7 @@ class Cursor {
   UserTask _user_task;
   Query& _query;
   std::span<const std::unique_ptr<Executor>> _executors;
-  const absl::AnyInvocable<void() &> _on_error;
+  absl::AnyInvocable<void()>& _on_error;
   size_t _current = 0;
 };
 

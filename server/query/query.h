@@ -88,7 +88,7 @@ class Query {
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
   auto GetExecutors() const { return std::span{_executors}; }
-  auto& GetOnError() const { return _on_error; }
+  auto& GetOnError() { return _on_error; }
 
   std::unique_ptr<Cursor> MakeCursor(UserTask&& user_task);
 

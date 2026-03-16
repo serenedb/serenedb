@@ -16,9 +16,8 @@ import "react-resizable/css/styles.css";
 import { cleanupDashboardInteractiveSelections } from "../model/useInteractiveSelection";
 import { useDashboardGrid } from "../model/useDashboardGrid";
 import { DashboardAddCardButton } from "./DashboardAddCardButton";
+import { DashboardGridBlock } from "./DashboardGridBlock";
 import { DashboardScaleButton } from "./DashboardScaleButton";
-import { DashboardTextCard } from "./cards/DashboardTextCard";
-import { DashboardQueryBlockCard } from "./DashboardQueryBlockCard";
 import { DashboardSettingsButton } from "./DashboardSettingsButton";
 
 interface DashboardGridProps {
@@ -34,51 +33,6 @@ const dashboardBackgroundUrl = new URL(
     "../../../../shared/assets/icons/dashboard-bg.svg",
     import.meta.url,
 ).href;
-
-const renderDashboardBlock = (
-    block: DashboardBlockSchema,
-    isMoving: boolean,
-    dashboardId: number,
-    dashboard?: DashboardSchema | null,
-    onDeleteBlock?: (block: DashboardBlockSchema) => void | Promise<void>,
-    onDuplicateBlock?: (block: DashboardBlockSchema) => void | Promise<void>,
-    onEditBlock?: (block: DashboardBlockSchema) => void,
-) => {
-    const handleDelete = () => onDeleteBlock?.(block);
-    const handleDuplicate = () => onDuplicateBlock?.(block);
-    const handleEdit = () => onEditBlock?.(block);
-
-    switch (block.type) {
-        case "text":
-            return (
-                <DashboardTextCard
-                    block={block}
-                    dashboardId={dashboardId}
-                    onDelete={handleDelete}
-                    onDuplicate={handleDuplicate}
-                />
-            );
-        case "spacer":
-            return <div className="flex-1" />;
-        case "table":
-        case "single_string":
-        case "bar_chart":
-        case "line_chart":
-        case "pie_chart":
-            return (
-                <DashboardQueryBlockCard
-                    block={block}
-                    dashboard={dashboard}
-                    isMoving={isMoving}
-                    onDelete={handleDelete}
-                    onDuplicate={handleDuplicate}
-                    onEdit={handleEdit}
-                />
-            );
-    }
-
-    return null;
-};
 
 export const DashboardGrid: React.FC<DashboardGridProps> = ({
     currentDashboard,
@@ -250,15 +204,15 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                             gridConfig={{ cols: 36, rowHeight: 36 }}>
                             {previewBlocks.map((block) => (
                                 <div className="flex" key={String(block.id)}>
-                                    {renderDashboardBlock(
-                                        block,
-                                        isMoving,
-                                        currentDashboard.id,
-                                        currentDashboard,
-                                        handleDeleteBlock,
-                                        handleDuplicateBlock,
-                                        onEditBlock,
-                                    )}
+                                    <DashboardGridBlock
+                                        block={block}
+                                        isMoving={isMoving}
+                                        dashboardId={currentDashboard.id}
+                                        dashboard={currentDashboard}
+                                        onDeleteBlock={handleDeleteBlock}
+                                        onDuplicateBlock={handleDuplicateBlock}
+                                        onEditBlock={onEditBlock}
+                                    />
                                 </div>
                             ))}
                         </ReactGridLayout>

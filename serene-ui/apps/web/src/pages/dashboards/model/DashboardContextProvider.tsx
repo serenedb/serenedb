@@ -5,15 +5,14 @@ export interface DashboardPageContextType {
     currentDashboard: DashboardSchema | null;
     currentDashboardId: number | null;
     editedBlock: DashboardBlockSchema | null;
-    handleCloseEditor: () => void;
-    handleOpenEditor: (block: DashboardBlockSchema) => void;
-    handleSetEditedBlock: (block: DashboardBlockSchema | null) => void;
-    handleSetCurrentDashboard: (dashboardId: number | null) => void;
+    closeEditor: () => void;
+    openEditor: (block: DashboardBlockSchema) => void;
+    setEditedBlock: (block: DashboardBlockSchema | null) => void;
+    setCurrentDashboardId: (dashboardId: number | null) => void;
     isEditorOpened: boolean;
     isDashboardsFetched: boolean;
     isDashboardsLoading: boolean;
     isExplorerOpened: boolean;
-    toggleEditor: () => void;
     toggleExplorer: () => void;
 }
 

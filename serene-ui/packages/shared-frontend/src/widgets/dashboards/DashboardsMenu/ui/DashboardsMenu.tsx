@@ -9,14 +9,12 @@ import {
     type DashboardsMenuSectionId,
     useDashboardsMenu,
 } from "../model";
-import { DashboardsList } from "./DashboarsList";
+import { DashboardsList } from "./DashboardsList";
 import { FavoritesList } from "./FavoritesList";
-import { BlockTemplatesList } from "./BlockTemplatesList";
 import { SavedQueriesList } from "./SavedQueriesList";
-import { DashboardExplorer } from "./DashboardExplorer";
 
 interface DashboardsMenuComponentProps {
-    handleSetCurrentDashboard: (dashboardId: number) => void;
+    onCurrentDashboardChange: (dashboardId: number) => void;
 }
 
 const SECTION_ORDER: DashboardsMenuSectionId[] = [
@@ -26,7 +24,7 @@ const SECTION_ORDER: DashboardsMenuSectionId[] = [
 ];
 
 const DashboardsMenuContent: React.FC<DashboardsMenuComponentProps> = ({
-    handleSetCurrentDashboard,
+    onCurrentDashboardChange,
 }) => {
     const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
     const { sections, setSectionSizeUnits } = useDashboardsMenu();
@@ -148,6 +146,15 @@ const DashboardsMenuContent: React.FC<DashboardsMenuComponentProps> = ({
         return openSectionIds[index + 1] ?? null;
     };
 
+    const getResizeHandler = (topId: DashboardsMenuSectionId) => {
+        return (event: React.PointerEvent<HTMLDivElement>) => {
+            const nextSectionId = getNextOpenSectionId(topId);
+            if (nextSectionId) {
+                startResize(topId, nextSectionId, event);
+            }
+        };
+    };
+
     const startResize = (
         topId: DashboardsMenuSectionId,
         bottomId: DashboardsMenuSectionId,
@@ -193,30 +200,15 @@ const DashboardsMenuContent: React.FC<DashboardsMenuComponentProps> = ({
                     showResizeHandle={Boolean(
                         getNextOpenSectionId("favorites"),
                     )}
-                    onResizePointerDown={(
-                        event: React.PointerEvent<HTMLDivElement>,
-                    ) => {
-                        const nextSectionId = getNextOpenSectionId("favorites");
-                        if (nextSectionId) {
-                            startResize("favorites", nextSectionId, event);
-                        }
-                    }}
+                    onResizePointerDown={getResizeHandler("favorites")}
                 />
                 <DashboardsList
                     bodyHeight={bodyHeights.dashboards ?? 0}
-                    handleSetCurrentDashboard={handleSetCurrentDashboard}
+                    onCurrentDashboardChange={onCurrentDashboardChange}
                     showResizeHandle={Boolean(
                         getNextOpenSectionId("dashboards"),
                     )}
-                    onResizePointerDown={(
-                        event: React.PointerEvent<HTMLDivElement>,
-                    ) => {
-                        const nextSectionId =
-                            getNextOpenSectionId("dashboards");
-                        if (nextSectionId) {
-                            startResize("dashboards", nextSectionId, event);
-                        }
-                    }}
+                    onResizePointerDown={getResizeHandler("dashboards")}
                 />
                 <SavedQueriesList bodyHeight={bodyHeights.savedQueries ?? 0} />
             </div>
@@ -225,12 +217,12 @@ const DashboardsMenuContent: React.FC<DashboardsMenuComponentProps> = ({
 };
 
 export const DashboardsMenu: React.FC<DashboardsMenuComponentProps> = ({
-    handleSetCurrentDashboard,
+    onCurrentDashboardChange,
 }) => {
     return (
         <DashboardsMenuProvider>
             <DashboardsMenuContent
-                handleSetCurrentDashboard={handleSetCurrentDashboard}
+                onCurrentDashboardChange={onCurrentDashboardChange}
             />
         </DashboardsMenuProvider>
     );

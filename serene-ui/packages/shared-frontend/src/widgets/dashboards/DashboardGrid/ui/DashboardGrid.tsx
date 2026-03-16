@@ -19,7 +19,7 @@ import {
 import { useDashboardGrid } from "../model/useDashboardGrid";
 import { DashboardAddCardButton } from "./DashboardAddCardButton";
 import { DashboardScaleButton } from "./DashboardScaleButton";
-import { DashboardTextCard } from "./cards/DasboardTextCard";
+import { DashboardTextCard } from "./cards/DashboardTextCard";
 import { DashboardQueryBlockCard } from "./DashboardQueryBlockCard";
 import { DashboardSettingsButton } from "./DashboardSettingsButton";
 

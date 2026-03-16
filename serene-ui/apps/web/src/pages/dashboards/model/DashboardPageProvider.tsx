@@ -67,24 +67,13 @@ export const DashboardPageProvider = ({
         });
     }, []);
 
-    const toggleEditor = useCallback(() => {
-        setIsEditorOpened((prev) => {
-            const next = !prev;
-
-            setIsExplorerOpened(!next);
-            setEditedBlock(null);
-
-            return next;
-        });
-    }, []);
-
-    const handleOpenEditor = useCallback((block: DashboardBlockSchema) => {
+    const openEditor = useCallback((block: DashboardBlockSchema) => {
         setEditedBlock(block);
         setIsEditorOpened(true);
         setIsExplorerOpened(false);
     }, []);
 
-    const handleCloseEditor = useCallback(() => {
+    const closeEditor = useCallback(() => {
         setIsEditorOpened(false);
         setEditedBlock(null);
     }, []);
@@ -95,15 +84,14 @@ export const DashboardPageProvider = ({
                 currentDashboard,
                 currentDashboardId,
                 editedBlock,
-                handleCloseEditor,
-                handleOpenEditor,
-                handleSetEditedBlock: setEditedBlock,
-                handleSetCurrentDashboard: setCurrentDashboardId,
+                closeEditor,
+                openEditor,
+                setEditedBlock,
+                setCurrentDashboardId,
                 isEditorOpened,
                 isDashboardsFetched,
                 isDashboardsLoading,
                 isExplorerOpened,
-                toggleEditor,
                 toggleExplorer,
             }}>
             {children}

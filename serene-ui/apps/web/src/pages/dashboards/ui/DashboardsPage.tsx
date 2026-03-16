@@ -13,10 +13,10 @@ export const DashboardsPage = () => {
     const {
         currentDashboard,
         editedBlock,
-        handleCloseEditor,
-        handleOpenEditor,
-        handleSetEditedBlock,
-        handleSetCurrentDashboard,
+        closeEditor,
+        openEditor,
+        setEditedBlock,
+        setCurrentDashboardId,
         isEditorOpened,
         isExplorerOpened,
         toggleExplorer,
@@ -32,8 +32,8 @@ export const DashboardsPage = () => {
             <DashboardGrid
                 currentDashboard={currentDashboard}
                 editedBlock={editedBlock}
-                onCloseEditor={handleCloseEditor}
-                onEditBlock={handleOpenEditor}
+                onCloseEditor={closeEditor}
+                onEditBlock={openEditor}
             />
         </div>
     );
@@ -50,9 +50,7 @@ export const DashboardsPage = () => {
                         minSize={20}
                         maxSize={35}>
                         <DashboardsMenu
-                            handleSetCurrentDashboard={
-                                handleSetCurrentDashboard
-                            }
+                            onCurrentDashboardChange={setCurrentDashboardId}
                         />
                     </ResizablePanel>
                     <ResizableHandle className="bg-border" tabIndex={-1} />
@@ -74,8 +72,8 @@ export const DashboardsPage = () => {
                         maxSize={50}>
                         <DashboardCardEditor
                             editedBlock={editedBlock}
-                            onClose={handleCloseEditor}
-                            onEditedBlockChange={handleSetEditedBlock}
+                            onClose={closeEditor}
+                            onEditedBlockChange={setEditedBlock}
                         />
                     </ResizablePanel>
                 </>

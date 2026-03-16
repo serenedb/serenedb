@@ -7,14 +7,14 @@ import { DashboardsMenuSection } from "./DashboardsMenuSection";
 import { DashboardExplorer } from "./DashboardExplorer";
 type DashboardsListProps = {
     bodyHeight: number;
-    handleSetCurrentDashboard: (dashboardId: number) => void;
+    onCurrentDashboardChange: (dashboardId: number) => void;
     showResizeHandle?: boolean;
     onResizePointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
 };
 
 export function DashboardsList({
     bodyHeight,
-    handleSetCurrentDashboard,
+    onCurrentDashboardChange,
     showResizeHandle = false,
     onResizePointerDown,
 }: DashboardsListProps) {
@@ -32,7 +32,7 @@ export function DashboardsList({
             parentId: null,
             context: {
                 dashboardId: dashboard.id,
-                action: () => handleSetCurrentDashboard(dashboard.id),
+                action: () => onCurrentDashboardChange(dashboard.id),
             },
         }),
     );
@@ -46,7 +46,7 @@ export function DashboardsList({
             onResizePointerDown={onResizePointerDown}
             actions={
                 <CreateDashboardButton
-                    onCreateDashboard={handleSetCurrentDashboard}
+                    onCreateDashboard={onCurrentDashboardChange}
                 />
             }>
             <DashboardExplorer

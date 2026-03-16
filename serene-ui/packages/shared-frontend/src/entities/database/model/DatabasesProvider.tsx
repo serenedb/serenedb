@@ -29,6 +29,7 @@ export const DatabasesProvider = ({
 
     const abortControllerRef = useRef<AbortController | null>(null);
     const hasLoadedRef = useRef(false);
+    const autoSelectedConnectionIdRef = useRef<number | null>(null);
 
     const connectionIdKey = currentConnection.connectionId;
 
@@ -39,21 +40,40 @@ export const DatabasesProvider = ({
     }, [connections, currentConnection.connectionId]);
 
     useEffect(() => {
-        if (
-            activeConnection?.database &&
-            activeConnection.database.trim() !== "" &&
-            activeConnection.database !== currentConnection.database
-        ) {
-            setCurrentConnection((prev) => ({
-                ...prev,
-                database: activeConnection.database,
-            }));
+        if (!connectionIdKey || connectionIdKey === -1) {
+            autoSelectedConnectionIdRef.current = null;
+            return;
         }
-    }, [
-        activeConnection?.database,
-        currentConnection.database,
-        setCurrentConnection,
-    ]);
+
+        if (!activeConnection) {
+            return;
+        }
+
+        if (autoSelectedConnectionIdRef.current === connectionIdKey) {
+            return;
+        }
+
+        autoSelectedConnectionIdRef.current = connectionIdKey;
+
+        const defaultDatabase = activeConnection.database?.trim();
+
+        // Apply the connection's default database only once per connection
+        // switch so it doesn't fight with database validation in the combobox.
+        if (!defaultDatabase) {
+            return;
+        }
+
+        setCurrentConnection((prev) => {
+            if (prev.connectionId !== connectionIdKey || prev.database) {
+                return prev;
+            }
+
+            return {
+                ...prev,
+                database: defaultDatabase,
+            };
+        });
+    }, [activeConnection, connectionIdKey, setCurrentConnection]);
 
     useEffect(() => {
         hasLoadedRef.current = false;

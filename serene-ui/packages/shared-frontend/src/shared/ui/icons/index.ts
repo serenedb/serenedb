@@ -1,23 +1,34 @@
 // lucide-react icons
 export {
+    BarChart3Icon,
+    BarChartHorizontalIcon,
+    ChevronDownIcon,
     Check as CheckIcon,
     PenIcon as EditIcon,
     AlignRight as EntitiesIcon,
     XCircle as ErrorIcon,
+    FileTextIcon,
+    LineChartIcon,
     LoaderIcon,
+    RefreshCwIcon as RefreshIcon,
     BellIcon as NotificationsIcon,
+    PieChartIcon,
     SearchIcon,
+    StarIcon,
     SettingsIcon,
     CheckCircle2 as SuccessIcon,
     HelpCircle as SupportIcon,
+    Trash2 as TrashIcon,
     UploadIcon as ImportIcon,
     DownloadIcon as ExportIcon,
+    EllipsisVerticalIcon as ThreeDotsIcon,
+    Settings2Icon as DashboardSettingsIcon,
 } from "lucide-react";
 // styled icons
 export { ArrowDownIcon } from "./ArrowDownIcon";
 export { ConsoleIcon } from "./ConsoleIcon";
 export { DarkThemeIcon } from "./DarkThemeIcon";
-export { FramesIcon } from "./FramesIcon";
+export { DashboardsIcon } from "./DashboardsIcon";
 export { LightThemeIcon } from "./LightThemeIcon";
 // svg icons
 export { default as ClockIcon } from "../../assets/icons/ic-clock.svg?react";

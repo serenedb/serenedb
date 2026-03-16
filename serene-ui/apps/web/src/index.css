@@ -5,6 +5,18 @@
 @source "../../../node_modules/@serene-ui/shared-frontend";
 
 @layer base {
+    html,
+    body,
+    #root {
+        height: 100%;
+    }
+
+    html,
+    body {
+        overscroll-behavior: none;
+        overflow: hidden;
+    }
+
     * {
         @apply border-border outline-ring;
     }

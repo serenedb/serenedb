@@ -29,14 +29,18 @@ const ConsoleContent = () => {
     }
 
     return (
-        <ResizablePanelGroup direction="horizontal" className="w-full h-full">
+        <ResizablePanelGroup
+            direction="horizontal"
+            autoSaveId="console-layout-main"
+            className="w-full h-full">
             {!isMaximized && <ConsoleLeftPanel />}
 
             <ResizablePanel defaultSize={70}>
                 <ResizablePanelGroup
                     direction={
                         layout === "horizontal" ? "horizontal" : "vertical"
-                    }>
+                    }
+                    autoSaveId={`console-layout-editor-results-${layout}`}>
                     <ResizablePanel
                         className="flex"
                         minSize={30}

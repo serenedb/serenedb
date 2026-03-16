@@ -1,7 +1,7 @@
 import {
     CommandGroup,
     ConsoleIcon,
-    FramesIcon,
+    DashboardsIcon,
     navigationMap,
     ReplicationIcon,
 } from "@serene-ui/shared-frontend/shared";
@@ -23,9 +23,9 @@ export const PageSelectorCommandGroup = () => {
             icon: <ConsoleIcon />,
         },
         {
-            title: "Frames",
-            route: navigationMap.frames,
-            icon: <FramesIcon />,
+            title: "Dashboards",
+            route: navigationMap.dashboards,
+            icon: <DashboardsIcon />,
         },
         {
             title: "Replication",

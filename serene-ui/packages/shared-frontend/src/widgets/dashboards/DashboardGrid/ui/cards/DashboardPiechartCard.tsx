@@ -103,14 +103,19 @@ export const DashboardPiechartCard: React.FC<DashboardPiechartCardProps> = ({
             onDuplicate={onDuplicate}
             onEdit={onEdit}>
             {isMoving ? (
-                <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-4">
-                    <div
-                        className={
-                            isDonut
-                                ? "bg-muted/30 border-border/50 flex aspect-square h-full max-h-full w-auto max-w-full self-center rounded-full border-[18px]"
-                                : "bg-muted/30 border-border/50 flex aspect-square h-full max-h-full w-auto max-w-full self-center rounded-full border"
-                        }
-                    />
+                <div className="flex min-h-0 flex-1 items-center justify-center p-2">
+                    <div className="bg-muted/30 border-border/50 flex h-full w-full max-h-full max-w-full flex-col justify-center self-center overflow-hidden rounded-xs border p-4">
+                        <div className="relative mx-auto aspect-square h-full max-h-full w-auto max-w-full">
+                            {isDonut ? (
+                                <>
+                                    <div className="border-muted-foreground/20 absolute inset-0 rounded-full border-[18px]" />
+                                    <div className="bg-muted/30 absolute inset-[28%] rounded-full" />
+                                </>
+                            ) : (
+                                <div className="bg-muted-foreground/20 absolute inset-0 rounded-full" />
+                            )}
+                        </div>
+                    </div>
                 </div>
             ) : (
                 <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-4">

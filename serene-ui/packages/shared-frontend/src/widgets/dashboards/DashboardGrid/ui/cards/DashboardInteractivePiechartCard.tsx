@@ -134,15 +134,20 @@ export const DashboardInteractivePiechartCard: React.FC<
     return (
         <div className="bg-background border-1 rounded-xs flex min-h-0 flex-1 flex-col overflow-hidden">
             {isMoving ? (
-                <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-4">
-                    <div className="bg-muted/30 border-border/50 flex aspect-square h-full max-h-full w-auto max-w-full flex-col items-center justify-center gap-3 self-center overflow-hidden rounded-xs border p-4">
-                        <div className="border-muted-foreground/20 aspect-square h-full max-h-32 w-auto max-w-full rounded-full border-[18px]" />
-                        <p className="text-xs text-muted-foreground">
-                            {activeLabel}
-                        </p>
-                        <p className="text-lg font-semibold">
-                            {activeValue.toLocaleString()}
-                        </p>
+                <div className="flex min-h-0 flex-1 items-center justify-center p-2">
+                    <div className="bg-muted/30 border-border/50 flex h-full w-full max-h-full max-w-full flex-col justify-center self-center overflow-hidden rounded-xs border p-4">
+                        <div className="relative mx-auto aspect-square h-full max-h-full w-auto max-w-full">
+                            <div className="border-muted-foreground/20 absolute inset-0 rounded-full border-[18px]" />
+                            <div className="bg-muted/30 absolute inset-[28%] rounded-full" />
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-center">
+                                <p className="truncate text-xs text-muted-foreground">
+                                    {activeLabel}
+                                </p>
+                                <p className="text-lg font-semibold">
+                                    {activeValue.toLocaleString()}
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             ) : (

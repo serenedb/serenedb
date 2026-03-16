@@ -38,11 +38,19 @@ class CommandExecutor : public query::Executor {
   explicit CommandExecutor(std::shared_ptr<ExecContext> context);
 
   void Init(query::Query& query) final { _query = &query; }
-  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final;
 
  protected:
-  virtual yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) = 0;
+  template<typename Func>
+  yaclib::Future<> OneShot(Func&& func) {
+    if (!_query) {  // was fired
+      return {};
+    }
+
+    auto f = std::forward<Func>(func)();
+    _query = nullptr;  // set fired
+    return f;
+  }
 
   std::shared_ptr<ExecContext> _context;
   query::Query* _query = nullptr;
@@ -52,8 +60,7 @@ class DDLExecutor final : public CommandExecutor {
  public:
   DDLExecutor(std::shared_ptr<ExecContext> context, const Node& node);
 
- protected:
-  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   const Node& _node;
@@ -69,9 +76,7 @@ class CTASCreateTableExecutor final : public CommandExecutor {
                           const IntoClause& into, bool if_not_exists);
 
   CTASState& GetState() noexcept { return _state; }
-
- protected:
-  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   const IntoClause& _into;
@@ -89,9 +94,7 @@ class CreateIndexExecutor final : public CommandExecutor {
                       const IndexStmt& stmt);
 
   CreateIndexState& GetState() noexcept { return _state; }
-
- protected:
-  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   const IndexStmt& _stmt;
@@ -104,8 +107,7 @@ class FinishCreateIndexExecutor final : public CommandExecutor {
                             std::string_view schemaname,
                             std::string_view index_name);
 
- protected:
-  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   std::string_view _schemaname;
@@ -117,8 +119,7 @@ class RemoveTombstoneExecutor final : public CommandExecutor {
   RemoveTombstoneExecutor(std::shared_ptr<ExecContext> context,
                           std::string_view schemaname, std::string_view name);
 
- protected:
-  yaclib::Future<> ExecuteImpl(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   std::string_view _schemaname;

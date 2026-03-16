@@ -7,8 +7,9 @@ RUN rm -f package-lock.json && npm install --include=peer --include=dev
 
 RUN npm run build
 
-RUN npx playwright install
-RUN npx playwright install-deps
+RUN npx playwright install --with-deps
 
-# Keep-Alive
-CMD ["tail", "-f", "/dev/null"]
+EXPOSE 3000
+CMD ["npm", "run", "dev:backend"]
+
+

@@ -1,6 +1,6 @@
 export const navigationMap = {
     loading: "/loading",
     console: "/console",
-    frames: "/frames",
+    dashboards: "/dashboards",
     replication: "/replication",
 };

@@ -34,7 +34,8 @@ export const ConnectionsSidebar = () => {
                 <Button
                     onClick={() => setCurrentConnection(EMPTY_CONNECTION)}
                     variant="secondary"
-                    size="iconSmall">
+                    size="iconSmall"
+                    aria-label="Add connection">
                     <PlusIcon className="size-3.5" />
                 </Button>
             </div>
@@ -55,7 +56,7 @@ export const ConnectionsSidebar = () => {
                             className={cn(
                                 "flex justify-start items-start h-auto w-full rounded-none pl-4 pr-2 cursor-pointer",
                                 {
-                                    "bg-secondary text-accent-foreground/50":
+                                    "bg-accent":
                                         conn.id === currentConnection.id,
                                 },
                             )}
@@ -83,6 +84,7 @@ export const ConnectionsSidebar = () => {
                                     <Button
                                         variant="ghost"
                                         size="iconSmall"
+                                        aria-label="Delete connection"
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             if (

@@ -31,6 +31,7 @@ export const ConnectionTypeButton = ({
                             "opacity-100 border border-primary/50",
                     )}
                     size="icon"
+                    aria-label={`Select ${type} connection type`}
                     onClick={() => handleSelectChange("type", type)}>
                     {icon}
                 </Button>

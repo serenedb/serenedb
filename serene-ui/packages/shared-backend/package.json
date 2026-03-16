@@ -22,7 +22,8 @@
     },
     "dependencies": {
         "@orpc/server": "^1.13.0",
-        "@serene-ui/shared-core": "*"
+        "@serene-ui/shared-core": "*",
+        "libpg-query": "^17.7.3"
     },
     "peerDependencies": {
         "better-sqlite3": "^12.2.0",

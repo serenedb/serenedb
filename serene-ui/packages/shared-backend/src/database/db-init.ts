@@ -5,6 +5,7 @@ let DBClient: Database.Database;
 
 export const initDatabase = (dbPath: string, migrationsPath?: string) => {
     DBClient = new Database(dbPath);
+    DBClient.pragma("foreign_keys = ON");
     handleMigrations(migrationsPath);
 };
 

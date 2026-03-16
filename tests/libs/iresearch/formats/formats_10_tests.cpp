@@ -42,24 +42,9 @@ using tests::FormatTestCase;
 
 class Format10TestCase : public tests::FormatTestCase {
  protected:
-  struct BasicAttributeProvider : irs::AttributeProvider {
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      if (type == irs::Type<irs::FreqAttr>::id()) {
-        return freq;
-      }
-      if (type == irs::Type<irs::TermMeta>::id()) {
-        return meta;
-      }
-      return nullptr;
-    }
-
-    irs::FreqAttr* freq{};
-    irs::TermMeta* meta{};
-  };
-
   void AssertFrequencyAndPositions(irs::DocIterator& expected,
                                    irs::DocIterator& actual) {
-    auto* expected_freq = irs::GetMutable<irs::FreqAttr>(&expected);
+    auto* expected_freq = irs::GetMutable<irs::FreqBlockAttr>(&expected);
     auto* actual_freq = irs::GetMutable<irs::FreqBlockAttr>(&actual);
     ASSERT_EQ(!expected_freq, !actual_freq);
 

@@ -87,7 +87,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
   FreqThresholdDocIterator(irs::DocIterator& impl, uint32_t threshold,
                            bool is_strict)
     : _impl{&impl},
-      _freq{irs::get<irs::FreqAttr>(impl)},
+      _freq{irs::get<irs::FreqBlockAttr>(impl)},
       _threshold{threshold},
       _is_strict{is_strict} {
     SDB_ASSERT(_impl);
@@ -130,14 +130,14 @@ class FreqThresholdDocIterator : public irs::DocIterator {
  private:
   bool Less() {
     if (_is_strict) {
-      return _freq->value <= _threshold;
+      return _freq->value[0] <= _threshold;
     } else {
-      return _freq->value < _threshold;
+      return _freq->value[0] < _threshold;
     }
   }
 
   irs::DocIterator* _impl;
-  const irs::FreqAttr* _freq;
+  const irs::FreqBlockAttr* _freq;
   uint32_t _threshold;
   bool _is_strict;
 };
@@ -214,11 +214,12 @@ SkipList SkipList::Make(irs::DocIterator& it, irs::doc_id_t skip_0,
     }
   };
 
-  auto* freq = irs::get<irs::FreqAttr>(it);
+  auto* freq = irs::get<irs::FreqBlockAttr>(it);
 
   if (freq) {
     for (irs::doc_id_t i = 1; it.next(); ++i) {
-      add(i, it.value(), freq->value);
+      it.FetchScoreArgs(0);
+      add(i, it.value(), freq->value[0]);
     }
 
     for (auto& [step, level] : skip_list) {

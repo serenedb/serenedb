@@ -141,16 +141,13 @@ irs::bytes_view Field::max() const {
 }
 
 uint64_t Field::total_freq() const {
-  using FreqT = decltype(irs::FreqAttr{}.value);
-  static_assert(std::is_unsigned_v<FreqT>);
-
-  FreqT value{0};
+  uint64_t value = 0;
   for (auto& term : terms) {
     for (auto& post : term.postings) {
       const auto sum = value + post.positions().size();
       EXPECT_GE(sum, value);
       EXPECT_GE(sum, post.positions().size());
-      value += static_cast<FreqT>(post.positions().size());
+      value += post.positions().size();
     }
   }
 
@@ -426,7 +423,7 @@ class DocIteratorImpl : public irs::DocIterator {
 
     _prev = _next, ++_next;
     _doc = _prev->id();
-    _freq.value = static_cast<uint32_t>(_prev->positions().size());
+    _freq = static_cast<uint32_t>(_prev->positions().size());
     _pos.Clear();
 
     return _doc;
@@ -499,7 +496,8 @@ class DocIteratorImpl : public irs::DocIterator {
 
   const tests::Term& _data;
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
-  irs::FreqAttr _freq;
+  uint32_t _freq = 0;
+  irs::FreqBlockAttr _freq_block{.value = &_freq};
   irs::CostAttr _cost;
   PosIterator _pos;
   std::set<Posting>::const_iterator _prev;
@@ -515,7 +513,7 @@ DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
   _attrs[irs::Type<irs::CostAttr>::id()] = &_cost;
 
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
-    _attrs[irs::Type<irs::FreqAttr>::id()] = &_freq;
+    _attrs[irs::Type<irs::FreqBlockAttr>::id()] = &_freq_block;
   }
 
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
@@ -644,17 +642,18 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
 
     // check document attributes
     {
-      auto* expected_freq = irs::get<irs::FreqAttr>(*expected_docs);
+      auto* expected_freq = irs::get<irs::FreqBlockAttr>(*expected_docs);
       auto* actual_seq_freq = irs::get<irs::FreqBlockAttr>(*seq_docs);
       auto* actual_seek_freq = irs::get<irs::FreqBlockAttr>(*seek_docs);
 
       if (expected_freq) {
+        expected_docs->FetchScoreArgs(0);
         ASSERT_FALSE(!actual_seq_freq);
         ASSERT_FALSE(!actual_seek_freq);
         seq_docs->FetchScoreArgs(0);
-        ASSERT_EQ(expected_freq->value, actual_seq_freq->value[0]);
+        ASSERT_EQ(expected_freq->value[0], actual_seq_freq->value[0]);
         seek_docs->FetchScoreArgs(0);
-        ASSERT_EQ(expected_freq->value, actual_seek_freq->value[0]);
+        ASSERT_EQ(expected_freq->value[0], actual_seek_freq->value[0]);
       }
 
       auto* expected_pos = irs::GetMutable<irs::PosAttr>(expected_docs.get());

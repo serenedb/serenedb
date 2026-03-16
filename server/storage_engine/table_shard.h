@@ -25,6 +25,8 @@
 
 #include <atomic>
 
+#include <absl/synchronization/mutex.h>
+
 #include "catalog/fwd.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
@@ -54,6 +56,8 @@ class TableShard : public catalog::Object {
 
   auto GetTableId() const noexcept { return _table_id; }
 
+  absl::Mutex& GetTableLock() noexcept { return _table_lock; }
+
   void UpdateNumRows(int64_t delta) noexcept {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
   }
@@ -79,6 +83,8 @@ class TableShard : public catalog::Object {
   ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
+  // TODO: remove table lock when we have a proper create index
+  absl::Mutex _table_lock;
 };
 
 }  // namespace sdb

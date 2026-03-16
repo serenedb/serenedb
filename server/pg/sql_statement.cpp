@@ -201,7 +201,8 @@ bool SqlStatement::ProcessNextRoot(
   if (query_desc.type == pg::SqlCommandType::Show) {
     SDB_ASSERT(query_desc.pgsql_node);
     const auto* show_stmt = castNode(VariableShowStmt, query_desc.pgsql_node);
-    if (!strcmp(show_stmt->name, "all")) {
+    std::string_view name = show_stmt->name;
+    if (name == "all") {
       query = query::Query::CreateShowAll(query_ctx);
     } else {
       query = query::Query::CreateShow(show_stmt->name, query_ctx);

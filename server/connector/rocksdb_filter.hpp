@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/fwd.h"
 
 namespace sdb::connector {
@@ -68,9 +70,9 @@ class Point {
 
  private:
   std::span<const std::string> _pk_names;
-  absl::flat_hash_map<std::string, velox::core::ConstantTypedExprPtr>
+  containers::FlatHashMap<std::string, velox::core::ConstantTypedExprPtr>
     _column_filters;
-  absl::flat_hash_set<const velox::core::ITypedExpr*> _source_exprs;
+  containers::FlatHashSet<const velox::core::ITypedExpr*> _source_exprs;
 };
 
 // Materialises a point set into a velox RowVector using the supplied memory

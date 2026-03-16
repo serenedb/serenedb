@@ -25,6 +25,7 @@
 #include <velox/vector/FlatVector.h>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 
 namespace sdb::connector {
@@ -163,7 +164,7 @@ std::vector<Point> ExtractFilterOr(const velox::core::CallTypedExpr* func_call,
 // changed (avoids allocations on the happy path).
 velox::core::TypedExprPtr RewriteExpr(
   const velox::core::TypedExprPtr& expr,
-  const absl::flat_hash_set<const velox::core::ITypedExpr*>& sources) {
+  const containers::FlatHashSet<const velox::core::ITypedExpr*>& sources) {
   if (!expr->isCallKind()) {
     return expr;
   }
@@ -324,7 +325,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   }
 
   // Collect the unique source sub-expressions to get rid of them.
-  absl::flat_hash_set<const velox::core::ITypedExpr*> sources;
+  containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
   for (const auto& p : pts) {
     sources.insert(p.GetSourceExprs().begin(), p.GetSourceExprs().end());
   }
@@ -337,7 +338,8 @@ void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type) {
     for (std::string_view col_name : pk_type.names()) {
       const auto* lhs_filter = lhs.FindFilter(col_name);
       const auto* rhs_filter = rhs.FindFilter(col_name);
-      SDB_ASSERT(lhs_filter && rhs_filter);
+      SDB_ASSERT(rhs_filter);
+      SDB_ASSERT(lhs_filter);
       const auto lhs_val = ToVariant(*lhs_filter);
       const auto rhs_val = ToVariant(*rhs_filter);
       if (lhs_val != rhs_val) {

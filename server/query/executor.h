@@ -32,8 +32,8 @@ class Query;
 
 class Executor {
  public:
-  static inline const velox::RowVectorPtr kEarlyExitBatch{
-    reinterpret_cast<velox::RowVector*>(0x1), [](auto*) {}};
+  inline static const velox::RowVectorPtr kEarlyExitBatch{
+    velox::RowVectorPtr{}, reinterpret_cast<velox::RowVector*>(0x1)};
 
   static void SetEarlyExit(velox::RowVectorPtr& batch) {
     batch = kEarlyExitBatch;

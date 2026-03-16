@@ -88,7 +88,7 @@ class Query {
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
   auto GetExecutors() const { return std::span{_executors}; }
-  absl::FunctionRef<void()> GetOnError() const { return _on_error; }
+  auto& GetOnError() const { return _on_error; }
 
   std::unique_ptr<Cursor> MakeCursor(UserTask&& user_task);
 
@@ -128,7 +128,7 @@ class Query {
 
   Runner _runner;  // runner is supposed to be destroyed after executors.
   std::vector<std::unique_ptr<Executor>> _executors;
-  std::function<void()> _on_error = [] {};
+  absl::AnyInvocable<void()> _on_error = [] {};
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;

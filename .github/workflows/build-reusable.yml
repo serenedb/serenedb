@@ -189,6 +189,10 @@ jobs:
         if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
         run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
 
+      - name: Print environment
+        if: env.DEBUG_PRINT_ENV == 'true'
+        run: printenv
+
       - name: Build Docker environment file
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 

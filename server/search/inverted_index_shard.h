@@ -129,12 +129,6 @@ class Snapshot {
 class InvertedIndexShard final
   : public std::enable_shared_from_this<InvertedIndexShard>,
     public IndexShard {
- private:
-  struct PrivateTag final {
-    explicit PrivateTag() = default;
-  };
-
-  void InitPostRecovery(bool is_new);
 
  public:
   struct Stats {

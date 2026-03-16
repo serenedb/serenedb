@@ -328,7 +328,7 @@ void Materializer::SeekIterateColumnKeys(std::string_view column_key,
                                        _upper_bound_keys_data.size() -
                                        ColumnKeySize,
                                      ColumnKeySize);
-    //it_options.iterate_upper_bound = &_upper_bound_slices.back();
+    it_options.iterate_upper_bound = &_upper_bound_slices.back();
     column_iterator = _iterators.emplace(column_id, std::unique_ptr<rocksdb::Iterator>(
                                     _db->NewIterator(_read_options, &_cf))).first->second.get();
   } else {

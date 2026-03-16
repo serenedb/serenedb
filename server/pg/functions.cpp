@@ -41,6 +41,7 @@
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "search/functions.hpp"
 #include "query/config.h"
 #include "query/types.h"
 
@@ -652,7 +653,7 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgTableSize, int64_t, velox::Varchar>(
     {prefix + "table_size"});
   registerExtractFunctions(prefix);
-  registerSearchFunctions(prefix);
+  search::functions::registerSearchFunctions();
 }
 
 }  // namespace sdb::pg::functions

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <velox/common/memory/HashStringAllocator.h>
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
@@ -28,8 +29,6 @@
 #include <velox/vector/VectorTypeUtils.h>
 
 #include <vector>
-
-#include <absl/synchronization/mutex.h>
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
@@ -330,8 +329,7 @@ class RocksDBIndexBackfillDataSink final
     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
-    std::unique_ptr<SinkIndexWriter> index_writer,
-    absl::Mutex& table_lock);
+    std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock);
   void appendData(velox::RowVectorPtr input) final;
 
  private:

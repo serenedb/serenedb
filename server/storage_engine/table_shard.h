@@ -21,11 +21,10 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <rocksdb/types.h>
 
 #include <atomic>
-
-#include <absl/synchronization/mutex.h>
 
 #include "catalog/fwd.h"
 #include "catalog/object.h"

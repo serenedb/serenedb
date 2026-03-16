@@ -242,5 +242,3 @@ Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
-
-

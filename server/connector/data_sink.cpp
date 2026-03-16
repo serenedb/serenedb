@@ -2582,19 +2582,18 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
-  std::unique_ptr<SinkIndexWriter> index_writer,
-  absl::Mutex& table_lock)
-  : RocksDBDataSinkBase<NoopSinkWriter>{
-      NoopSinkWriter{},
-      memory_pool,
-      object_key,
-      key_childs,
-      std::move(columns),
-      [&] {
-        std::vector<std::unique_ptr<SinkIndexWriter>> w;
-        w.push_back(std::move(index_writer));
-        return w;
-      }()},
+  std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock)
+  : RocksDBDataSinkBase<
+      NoopSinkWriter>{NoopSinkWriter{},
+                      memory_pool,
+                      object_key,
+                      key_childs,
+                      std::move(columns),
+                      [&] {
+                        std::vector<std::unique_ptr<SinkIndexWriter>> w;
+                        w.push_back(std::move(index_writer));
+                        return w;
+                      }()},
     _table_lock_guard{table_lock} {}
 
 void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {

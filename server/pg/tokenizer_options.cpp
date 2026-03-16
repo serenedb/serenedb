@@ -20,6 +20,9 @@
 
 #include "pg/tokenizer_options.h"
 
+#include <frozen/unordered_set.h>
+
+#include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
@@ -30,6 +33,13 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::tokenizer_options {
+
+void CheckFileExists(std::string_view name) {
+  if (!std::filesystem::exists(name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("File \"", name, "\" does not exist"));
+  }
+}
 
 void CheckCase(std::string_view value) {
   if (!magic_enum::enum_cast<irs::Case>(value, magic_enum::case_insensitive)) {
@@ -45,6 +55,36 @@ void CheckThreshold(double value) {
                     ERR_MSG("invalid value in \"", kThreshold.name,
                             "\" parameter. Should be in [0, 1]"),
                     ERR_HINT(kThreshold.description));
+  }
+}
+
+void CheckTemplate(std::string_view value) {
+  static constexpr auto kTokenizerTypes = frozen::make_unordered_set({
+    irs::analysis::TextTokenizer::type_name(),
+    irs::analysis::NormalizingTokenizer::type_name(),
+    irs::analysis::NGramTokenizerBase::type_name(),
+    irs::analysis::CollationTokenizer::type_name(),
+    irs::analysis::DelimitedTokenizer::type_name(),
+    irs::analysis::MultiDelimitedTokenizer::type_name(),
+    irs::analysis::SegmentationTokenizer::type_name(),
+    irs::analysis::ClassificationTokenizer::type_name(),
+    irs::analysis::MinHashTokenizer::type_name(),
+    irs::analysis::NearestNeighborsTokenizer::type_name(),
+    irs::analysis::StemmingTokenizer::type_name(),
+    irs::analysis::StopwordsTokenizer::type_name(),
+    irs::analysis::PipelineTokenizer::type_name(),
+    // TODO(codeworse): add more tokenizers
+  });
+  if (kTokenizerTypes.count(value) != 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Invalid type of text search dictionary"));
+  }
+}
+
+void CheckNumHashes(int value) {
+  if (value <= 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("The number of hashes should be positive number"));
   }
 }
 

@@ -65,7 +65,7 @@ HINT: Use WITH (HELP) to see available options
 statement error
 CREATE TEXT SEARCH DICTIONARY t_err6(
     template = 'stem',
-    stopwords = 'a,the'
+    stopwords = '"a","the"'
 )
 ----
 db error: ERROR: option "stopwords" is not applicable in this context
@@ -168,6 +168,8 @@ CREATE TEXT SEARCH DICTIONARY t_err15(
 statement error db error: ERROR: invalid input syntax for type integer: "two"
 CREATE TEXT SEARCH DICTIONARY t_err16(
     template = 'minhash',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = '|',
     numhashes = 'two'
 )
 
@@ -352,7 +354,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY t4(
     template = 'text',
     locale = 'en_US.UTF-8',
-    stopwords = ' a  , and ,of   ',
+    stopwords = '"a","and","of"',
     case = 'lower'
 )
 
@@ -616,20 +618,198 @@ ts_lexize
 
 
 # ===========================================================================
+# MULTI-DELIMITER TEMPLATE
+# ===========================================================================
+
+# --- Single character delimiter (test_delimiter) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_single(
+    template = 'multi_delimiter',
+    delimiters = '"a"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_single', 'baccaad');
+----
+ts_lexize
+{b,cc,d}
+
+
+# --- Empty result when input is only delimiters (test_delimiter_empty_match) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_dot(
+    template = 'multi_delimiter',
+    delimiters = '"."'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_dot', '..');
+----
+ts_lexize
+{}
+
+
+# --- Three single-character delimiters (test_delimiter_3) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_3(
+    template = 'multi_delimiter',
+    delimiters = '";", "|", "."'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_3', 'a;b||c.d.ff');
+----
+ts_lexize
+{a,b,c,d,ff}
+
+
+# --- Five single-character delimiters (test_delimiter_5) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_5(
+    template = 'multi_delimiter',
+    delimiters = '":", ";", " ", ".", "|"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_5', 'a:b||c.d ff.');
+----
+ts_lexize
+{a,b,c,d,ff}
+
+
+# --- Long string delimiter (test_delimiter_single_long) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_long(
+    template = 'multi_delimiter',
+    delimiters = '"foo"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_long', 'foobarfoobazbarfoobar');
+----
+ts_lexize
+{bar,bazbar,bar}
+
+
+# --- Multiple word delimiters (multi_words) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_words(
+    template = 'multi_delimiter',
+    delimiters = '"foo", "bar", "baz"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_words', 'fooxyzbarbazz');
+----
+ts_lexize
+{xyz,z}
+
+
+# --- All input consumed by consecutive delimiters (multi_words_2) ---
+
+query
+SELECT ts_lexize('multi_delim_words', 'foobarbaz');
+----
+ts_lexize
+{}
+
+
+# --- Overlapping delimiter prefixes (trick_matching_1) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_trick(
+    template = 'multi_delimiter',
+    delimiters = '"foo", "ffa"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_trick', 'abcffoobar');
+----
+ts_lexize
+{abcf,bar}
+
+
+# ===========================================================================
 # MINHASH TEMPLATE
 # ===========================================================================
+
+# --- Inner delimiter analyzer, numhashes=2 ---
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY t12(
     template = 'minhash',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ',',
     numhashes = 2
 )
 
 
-statement ok
-CREATE TEXT SEARCH DICTIONARY minhash_default(
-    template = 'minhash'
+query
+SELECT ts_lexize('t12', 'abaca,aba,caaa');
+----
+ts_lexize
+{ooh9OW4bsnE,gpxnmE69/UA}
+
+
+# --- numhashes=0: CREATE succeeds, ts_lexize fails ---
+statement error
+CREATE TEXT SEARCH DICTIONARY minhash_zero_hashes(
+    template = 'minhash',
+    numhashes = 0
 )
+----
+db error: ERROR: required parameter "template" was not found
+
+
+# --- Custom inner analyzer: segmentation with explicit break and case ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
+    template = 'minhash',
+    numhashes = 3,
+    analyzer_template = 'segmentation',
+    analyzer_break = 'alpha',
+    analyzer_case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('minhash_seg_explicit', 'a Real(!) QuICK, BrowN FOX!');
+----
+ts_lexize
+{3Nw3PlObK0w,9zSo3KwmNhA,U9QEhWO/5Dw}
+
+
+
+# --- Custom inner analyzer: text tokenizer ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_with_text(
+    template = 'minhash',
+    numhashes = 6,
+    analyzer_template = 'text',
+    analyzer_locale = 'en_US.UTF-8',
+    analyzer_case = 'lower',
+    analyzer_stemming = false
+)
+
+
+query
+SELECT ts_lexize('minhash_with_text', 'A QUICK Jumping Brownish FOX');
+----
+ts_lexize
+{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
 
 
 # ===========================================================================
@@ -714,7 +894,7 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY stopwords_filter(
     template = 'stopwords',
-    stopwords = 'the,a,an'
+    stopwords = '"the","a","an"'
 )
 
 
@@ -749,7 +929,7 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY stopwords_hex_false(
     template = 'stopwords',
-    stopwords = 'foo,bar',
+    stopwords = '"foo","bar"',
     hex = false
 )
 
@@ -786,6 +966,44 @@ SELECT ts_lexize('stopwords_empty', 'anything');
 ----
 ts_lexize
 {anything}
+
+
+# --- hex = true: stopwords are hex-decoded before matching ---
+# 616263 = 'abc', 6D6e6F = 'mno'
+statement ok
+CREATE TEXT SEARCH DICTIONARY stopwords_hex_true(
+    template = 'stopwords',
+    stopwords = '"616263","6D6e6F"',
+    hex = true
+)
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', 'abc');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', 'mno');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', 'def');
+----
+ts_lexize
+{def}
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', '616263');
+----
+ts_lexize
+{616263}
 
 
 # ===========================================================================
@@ -837,19 +1055,26 @@ CREATE TEXT SEARCH DICTIONARY ngram_with_features(
 # ===========================================================================
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t7(
+CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk2(
     template = 'nearest_neighbors',
     modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    topk = 1
+    topk = 2
 )
 
 
-statement ok
-CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk3(
+statement error
+CREATE TEXT SEARCH DICTIONARY nearest_neighbors_no_file(
     template = 'nearest_neighbors',
-    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    topk = 3
+    modellocation = '${RESOURCES}/tests/iresearch/model_cookies.bin',
+    topk = 2
 )
+
+
+query
+SELECT ts_lexize('nearest_neighbors_topk2', 'salt')
+----
+ts_lexize
+{homogenized,teach}
 
 
 # ===========================================================================
@@ -857,17 +1082,169 @@ CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk3(
 # ===========================================================================
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY t9(
+CREATE TEXT SEARCH DICTIONARY classification(
     template = 'classification',
-    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    topk = 1
+    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin'
 )
 
 
+query
+SELECT ts_lexize('classification', 'pasta coca-cola');
+----
+ts_lexize
+{__label__pasta}
+
+
+query
+SELECT ts_lexize('classification', 'Why not put knives in the dishwasher?');
+----
+ts_lexize
+{__label__knives}
+
+
+# ===========================================================================
+# PIPELINE TEMPLATE
+# ===========================================================================
+
+# --- Invalid step template ---
+statement error
+CREATE TEXT SEARCH DICTIONARY pipe_err1(
+    template = 'pipeline',
+    step1_template = 'invalid_tokenizer'
+)
+----
+db error: ERROR: Invalid type of text search dictionary
+
+
+# --- Three-step: delimiter → text with correct stopwords → norm ---
 statement ok
-CREATE TEXT SEARCH DICTIONARY classification_with_threshold(
-    template = 'classification',
-    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin',
-    topk = 3,
-    threshold = 0.5
+CREATE TEXT SEARCH DICTIONARY pipe_correct_stopwords(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = 'A',
+    step2_template = 'text',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower',
+    step2_accent = false,
+    step2_stemming = true,
+    step2_stopwords = '"fox"',
+    step3_template = 'norm',
+    step3_locale = 'en_US.UTF-8',
+    step3_case = 'upper'
 )
+
+query
+SELECT ts_lexize('pipe_correct_stopwords', 'QuickABrownAFOXAjUmps');
+----
+ts_lexize
+{QUICK,BROWN,JUMP}
+
+
+# --- Single-step pipeline with text tokenizer ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_single_text(
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step1_stemming = true
+)
+
+query
+SELECT ts_lexize('pipe_single_text', 'QuIck broWn fox jumps');
+----
+ts_lexize
+{quick,brown,fox,jump}
+
+
+# --- Single-step pipeline with norm (non-tokenizer) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_single_norm(
+    template = 'pipeline',
+    step1_template = 'norm',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_single_norm', 'QuIck');
+----
+ts_lexize
+{quick}
+
+
+# --- Two norm steps (no real tokenizer in pipeline) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_two_norms(
+    template = 'pipeline',
+    step1_template = 'norm',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'upper',
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_two_norms', 'QuIck');
+----
+ts_lexize
+{quick}
+
+
+# --- Text then norm (source-modifying tokenizer) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_text_norm(
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'none',
+    step1_stemming = true,
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_text_norm', 'QuIck broWn fox jumps');
+----
+ts_lexize
+{quick,brown,fox,jump}
+
+
+# --- Ngram then norm (lowercasing ngrams) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_ngram_norm(
+    template = 'pipeline',
+    step1_template = 'ngram',
+    step1_mingram = 2,
+    step1_maxgram = 3,
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_ngram_norm', 'QuIck');
+----
+ts_lexize
+{qu,qui,ui,uic,ic,ick,ck}
+
+
+# --- Two-step: delimiter then text ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_delim_text(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ',',
+    step2_template = 'text',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower',
+    step2_stemming = false
+)
+
+query
+SELECT ts_lexize('pipe_delim_text', 'hello,world,foo,bar');
+----
+ts_lexize
+{hello,world,foo,bar}

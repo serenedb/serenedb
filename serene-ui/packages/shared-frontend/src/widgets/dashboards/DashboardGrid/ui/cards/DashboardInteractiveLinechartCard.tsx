@@ -12,7 +12,7 @@ import {
 } from "@serene-ui/shared-frontend";
 import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
 import { parseDashboardNumericValue } from "../../../model/dashboardChartColumns";
-import { useDashboardInteractiveSelection } from "../../model/interactiveSelection";
+import { useDashboardInteractiveSelection } from "../../model/useInteractiveSelection";
 import { DashboardCardActions } from "./DashboardCardActions";
 
 export interface DashboardInteractiveLinechartSeries {

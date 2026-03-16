@@ -8,7 +8,7 @@ import {
 import {
     isDashboardInteractiveBlock,
     syncDashboardInteractiveSelection,
-} from "./interactiveSelection";
+} from "./useInteractiveSelection";
 import {
     type DashboardQueryBlock,
     getColumnMetaByName,
@@ -31,13 +31,17 @@ export const useDashboardQueryBlockCardState = ({
     });
 
     const columns = React.useMemo(
-        () => collectDashboardColumnMetadata({ rows: rows as DashboardQueryRow[] }),
+        () =>
+            collectDashboardColumnMetadata({
+                rows: rows as DashboardQueryRow[],
+            }),
         [rows],
     );
 
-    const columnsByName = React.useMemo(() => getColumnMetaByName(columns), [
-        columns,
-    ]);
+    const columnsByName = React.useMemo(
+        () => getColumnMetaByName(columns),
+        [columns],
+    );
 
     const barLineDateFormatter = React.useCallback(
         (value: string | number) => formatDashboardDateValue(value),

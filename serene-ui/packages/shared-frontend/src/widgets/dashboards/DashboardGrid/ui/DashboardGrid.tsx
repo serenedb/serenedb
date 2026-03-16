@@ -13,9 +13,7 @@ import { gridBounds, minMaxSize } from "react-grid-layout/core";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
-import {
-    cleanupDashboardInteractiveSelections,
-} from "../model/interactiveSelection";
+import { cleanupDashboardInteractiveSelections } from "../model/useInteractiveSelection";
 import { useDashboardGrid } from "../model/useDashboardGrid";
 import { DashboardAddCardButton } from "./DashboardAddCardButton";
 import { DashboardScaleButton } from "./DashboardScaleButton";
@@ -146,7 +144,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
 
             const duplicateCard = toDashboardCardAddInput(block);
             const nextX = Math.min(
-                block.bounds.x + 1,
+                block.bounds.x,
                 Math.max(GRID_COLUMNS - block.bounds.width, 0),
             );
 

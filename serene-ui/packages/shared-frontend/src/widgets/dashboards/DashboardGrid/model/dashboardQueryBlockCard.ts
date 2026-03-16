@@ -6,7 +6,7 @@ import {
     normalizeDashboardChartValue,
     parseDashboardNumericValue,
 } from "../../model/dashboardChartColumns";
-import { isDashboardInteractiveBlock } from "./interactiveSelection";
+import { isDashboardInteractiveBlock } from "./useInteractiveSelection";
 
 export type DashboardQueryBlock = Extract<
     DashboardBlockSchema,
@@ -61,7 +61,9 @@ export const getBarLineRenderState = (
 
     const validSeries = block.series.filter((series) => {
         const column = columnsByName.get(series.key);
-        return Boolean(column?.isNumeric) && series.key !== validAxisColumn.name;
+        return (
+            Boolean(column?.isNumeric) && series.key !== validAxisColumn.name
+        );
     });
 
     if (validSeries.length === 0) {
@@ -80,7 +82,9 @@ export const getBarLineRenderState = (
                 return false;
             }
 
-            return validSeries.some((series) => hasNumericValue(row[series.key]));
+            return validSeries.some((series) =>
+                hasNumericValue(row[series.key]),
+            );
         })
         .map(toChartRow);
 
@@ -148,11 +152,11 @@ export const getInteractiveSelectionValues = ({
         );
     }
 
-    const { dimensionColumn, valueColumn, rows: chartRows } = getPieRenderState(
-        block,
-        rows,
-        columnsByName,
-    );
+    const {
+        dimensionColumn,
+        valueColumn,
+        rows: chartRows,
+    } = getPieRenderState(block, rows, columnsByName);
 
     if (!dimensionColumn || !valueColumn) {
         return [];

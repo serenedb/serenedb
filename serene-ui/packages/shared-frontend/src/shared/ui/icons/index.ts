@@ -1,12 +1,18 @@
 // lucide-react icons
 export {
+    BarChart3Icon,
+    BarChartHorizontalIcon,
+    ChevronDownIcon,
     Check as CheckIcon,
     PenIcon as EditIcon,
     AlignRight as EntitiesIcon,
     XCircle as ErrorIcon,
+    FileTextIcon,
+    LineChartIcon,
     LoaderIcon,
     RefreshCwIcon as RefreshIcon,
     BellIcon as NotificationsIcon,
+    PieChartIcon,
     SearchIcon,
     SettingsIcon,
     CheckCircle2 as SuccessIcon,

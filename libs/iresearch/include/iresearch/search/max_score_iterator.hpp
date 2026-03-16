@@ -61,14 +61,12 @@ class MaxScoreIterator : public DocIterator {
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
   static constexpr auto kNumBlocks = 64;
   static constexpr doc_id_t kWindow = kBlockSize * kNumBlocks;
-  static constexpr size_t kSubBlock = kPostingBlock;
-  static constexpr size_t kSubWindows = kWindow / kSubBlock;
 
   struct AdapterWrapper : Adapter {
     ScoreFunction scorer;
-    CostAttr::Type cost{};
-    score_t max_score{};
-    double prefix_score_sum{};
+    CostAttr::Type cost = 0;
+    score_t max_score = 0;
+    double prefix_score_sum = 0;
   };
 
   explicit MaxScoreIterator(std::vector<DocIterator::ptr> itrs) {
@@ -247,12 +245,18 @@ class MaxScoreIterator : public DocIterator {
     _cand_scores.clear();
     auto* IRS_RESTRICT mask = _mask;
     for (size_t i = 0; i < kNumBlocks; ++i) {
-      for (auto bits = std::exchange(mask[i], 0); bits; bits = PopBit(bits)) {
+      auto bits = mask[i];
+      if (!bits) {
+        continue;
+      }
+      mask[i] = 0;
+      do {
         const size_t bit = std::countr_zero(bits);
         const size_t offset = i * kBlockSize + bit;
         _cand_docs.push_back(min + static_cast<doc_id_t>(offset));
         _cand_scores.push_back(std::exchange(_scores[offset], 0));
-      }
+        bits = PopBit(bits);
+      } while (bits);
     }
   }
 

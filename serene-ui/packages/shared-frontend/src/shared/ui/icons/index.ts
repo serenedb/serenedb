@@ -5,6 +5,7 @@ export {
     AlignRight as EntitiesIcon,
     XCircle as ErrorIcon,
     LoaderIcon,
+    RefreshCwIcon as RefreshIcon,
     BellIcon as NotificationsIcon,
     SearchIcon,
     SettingsIcon,

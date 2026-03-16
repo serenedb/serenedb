@@ -24,6 +24,7 @@ interface DashboardGridProps {
     currentDashboard?: DashboardSchema | null;
     editedBlock?: DashboardBlockSchema | null;
     isPanelResizing?: boolean;
+    manualRefreshToken?: number;
     onCloseEditor?: () => void;
     onEditBlock?: (block: DashboardBlockSchema) => void;
 }
@@ -39,6 +40,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     currentDashboard,
     editedBlock,
     isPanelResizing = false,
+    manualRefreshToken = 0,
     onCloseEditor,
     onEditBlock,
 }) => {
@@ -212,6 +214,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                                         isMoving={isLayoutMoving}
                                         dashboardId={currentDashboard.id}
                                         dashboard={currentDashboard}
+                                        manualRefreshToken={manualRefreshToken}
                                         onDeleteBlock={handleDeleteBlock}
                                         onDuplicateBlock={handleDuplicateBlock}
                                         onEditBlock={onEditBlock}

@@ -13,10 +13,12 @@ import { useDashboardPage } from "../model";
 export const DashboardsPage = () => {
     const [isPanelResizing, setIsPanelResizing] = React.useState(false);
     const {
+        chartsRefreshToken,
         currentDashboard,
         editedBlock,
         closeEditor,
         openEditor,
+        refreshAllCharts,
         setEditedBlock,
         setCurrentDashboardId,
         isEditorOpened,
@@ -33,11 +35,13 @@ export const DashboardsPage = () => {
                 currentDashboard={currentDashboard}
                 isExplorerOpened={isExplorerOpened}
                 onToggleExplorer={toggleExplorer}
+                onRefreshAllCharts={refreshAllCharts}
             />
             <DashboardGrid
                 currentDashboard={currentDashboard}
                 editedBlock={editedBlock}
                 isPanelResizing={isPanelResizing}
+                manualRefreshToken={chartsRefreshToken}
                 onCloseEditor={closeEditor}
                 onEditBlock={openEditor}
             />

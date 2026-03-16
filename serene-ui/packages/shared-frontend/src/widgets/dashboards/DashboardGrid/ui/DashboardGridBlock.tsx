@@ -12,6 +12,7 @@ interface DashboardGridBlockProps {
     dashboardId: number;
     dashboard?: DashboardSchema | null;
     isMoving: boolean;
+    manualRefreshToken?: number;
     onDeleteBlock?: (block: DashboardBlockSchema) => void | Promise<void>;
     onDuplicateBlock?: (block: DashboardBlockSchema) => void | Promise<void>;
     onEditBlock?: (block: DashboardBlockSchema) => void;
@@ -22,6 +23,7 @@ export const DashboardGridBlock: React.FC<DashboardGridBlockProps> = ({
     dashboardId,
     dashboard,
     isMoving,
+    manualRefreshToken = 0,
     onDeleteBlock,
     onDuplicateBlock,
     onEditBlock,
@@ -53,6 +55,7 @@ export const DashboardGridBlock: React.FC<DashboardGridBlockProps> = ({
                     block={block}
                     dashboard={dashboard}
                     isMoving={isMoving}
+                    manualRefreshToken={manualRefreshToken}
                     onDelete={handleDelete}
                     onDuplicate={handleDuplicate}
                     onEdit={handleEdit}

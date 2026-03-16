@@ -92,17 +92,19 @@ const normalizeRows = (
 interface UseDashboardQueryBlockProps {
     block: DashboardQueryBlock;
     dashboard?: DashboardSchema | null;
+    manualRefreshToken?: number;
 }
 
 export const useDashboardQueryBlock = ({
     block,
     dashboard,
+    manualRefreshToken = 0,
 }: UseDashboardQueryBlockProps) => {
     const { data: connections } = useGetConnections();
     const { mutateAsync: executeQuery } =
         useExecuteQuery<QueryExecutionResultSchema[]>();
     const requestIdRef = React.useRef(0);
-    const [refreshToken, setRefreshToken] = React.useState(0);
+    const [autoRefreshToken, setAutoRefreshToken] = React.useState(0);
     const [rawRows, setRawRows] = React.useState<QueryRow[]>([]);
     const [status, setStatus] =
         React.useState<DashboardQueryBlockStatus>("missing_query");
@@ -135,7 +137,7 @@ export const useDashboardQueryBlock = ({
         }
 
         const intervalId = window.setInterval(() => {
-            setRefreshToken((currentValue) => currentValue + 1);
+            setAutoRefreshToken((currentValue) => currentValue + 1);
         }, refreshIntervalSeconds * 1000);
 
         return () => {
@@ -209,7 +211,8 @@ export const useDashboardQueryBlock = ({
         executeQuery,
         limit,
         query,
-        refreshToken,
+        autoRefreshToken,
+        manualRefreshToken,
     ]);
 
     const rows = React.useMemo(

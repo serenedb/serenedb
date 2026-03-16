@@ -1,5 +1,5 @@
 import { SidebarIcon } from "lucide-react";
-import { Button } from "@serene-ui/shared-frontend";
+import { Button, RefreshIcon } from "@serene-ui/shared-frontend";
 import type { DashboardSchema } from "@serene-ui/shared-core";
 import React from "react";
 
@@ -7,12 +7,14 @@ interface DashboardsTopbarProps {
     currentDashboard?: DashboardSchema | null;
     isExplorerOpened: boolean;
     onToggleExplorer: () => void;
+    onRefreshAllCharts?: () => void;
 }
 
 export const DashboardsTopbar: React.FC<DashboardsTopbarProps> = ({
     currentDashboard,
     isExplorerOpened,
     onToggleExplorer,
+    onRefreshAllCharts,
 }) => {
     return (
         <div className="w-full h-12 flex px-2.5 items-center justify-between border-b-1">
@@ -33,9 +35,15 @@ export const DashboardsTopbar: React.FC<DashboardsTopbarProps> = ({
                 </p>
             </div>
             <div className="flex gap-1">
-                <Button size="icon" variant="secondary"></Button>
-                <Button size="icon" variant="secondary"></Button>
-                <Button size="icon" variant="secondary"></Button>
+                <Button
+                    size="icon"
+                    variant="secondary"
+                    title="Refresh all charts"
+                    aria-label="Refresh all charts"
+                    disabled={!currentDashboard}
+                    onClick={onRefreshAllCharts}>
+                    <RefreshIcon />
+                </Button>
             </div>
         </div>
     );

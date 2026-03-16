@@ -2,11 +2,13 @@ import { createContext, useContext } from "react";
 import type { DashboardBlockSchema, DashboardSchema } from "@serene-ui/shared-core";
 
 export interface DashboardPageContextType {
+    chartsRefreshToken: number;
     currentDashboard: DashboardSchema | null;
     currentDashboardId: number | null;
     editedBlock: DashboardBlockSchema | null;
     closeEditor: () => void;
     openEditor: (block: DashboardBlockSchema) => void;
+    refreshAllCharts: () => void;
     setEditedBlock: (block: DashboardBlockSchema | null) => void;
     setCurrentDashboardId: (dashboardId: number | null) => void;
     isEditorOpened: boolean;

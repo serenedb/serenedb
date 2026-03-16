@@ -17,6 +17,7 @@ export const DashboardPageProvider = ({
     );
     const [isExplorerOpened, setIsExplorerOpened] = useState(true);
     const [isEditorOpened, setIsEditorOpened] = useState(false);
+    const [chartsRefreshToken, setChartsRefreshToken] = useState(0);
     const {
         data: dashboards,
         isFetched: isDashboardsFetched,
@@ -78,14 +79,20 @@ export const DashboardPageProvider = ({
         setEditedBlock(null);
     }, []);
 
+    const refreshAllCharts = useCallback(() => {
+        setChartsRefreshToken((currentValue) => currentValue + 1);
+    }, []);
+
     return (
         <DashboardPageContext.Provider
             value={{
+                chartsRefreshToken,
                 currentDashboard,
                 currentDashboardId,
                 editedBlock,
                 closeEditor,
                 openEditor,
+                refreshAllCharts,
                 setEditedBlock,
                 setCurrentDashboardId,
                 isEditorOpened,

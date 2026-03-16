@@ -41,6 +41,7 @@ interface DashboardQueryBlockCardProps {
     block: DashboardQueryBlock;
     dashboard?: DashboardSchema | null;
     isMoving: boolean;
+    manualRefreshToken?: number;
     onDelete?: () => void | Promise<void>;
     onDuplicate?: () => void | Promise<void>;
     onEdit?: () => void;
@@ -218,6 +219,7 @@ export const DashboardQueryBlockCard: React.FC<DashboardQueryBlockCardProps> = (
     block,
     dashboard,
     isMoving,
+    manualRefreshToken = 0,
     onDelete,
     onDuplicate,
     onEdit,
@@ -226,6 +228,7 @@ export const DashboardQueryBlockCard: React.FC<DashboardQueryBlockCardProps> = (
         useDashboardQueryBlockCardState({
             block,
             dashboard,
+            manualRefreshToken,
         });
 
     if (

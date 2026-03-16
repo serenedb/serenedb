@@ -19,15 +19,18 @@ import { useDashboardQueryBlock } from "./useDashboardQueryBlock";
 interface UseDashboardQueryBlockCardStateProps {
     block: DashboardQueryBlock;
     dashboard?: DashboardSchema | null;
+    manualRefreshToken?: number;
 }
 
 export const useDashboardQueryBlockCardState = ({
     block,
     dashboard,
+    manualRefreshToken = 0,
 }: UseDashboardQueryBlockCardStateProps) => {
     const { rows, status, errorMessage } = useDashboardQueryBlock({
         block,
         dashboard,
+        manualRefreshToken,
     });
 
     const columns = React.useMemo(

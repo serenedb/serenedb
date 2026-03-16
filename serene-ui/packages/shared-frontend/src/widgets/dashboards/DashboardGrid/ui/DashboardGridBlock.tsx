@@ -35,6 +35,7 @@ export const DashboardGridBlock: React.FC<DashboardGridBlockProps> = ({
             return (
                 <DashboardTextCard
                     block={block}
+                    isMoving={isMoving}
                     dashboardId={dashboardId}
                     onDelete={handleDelete}
                     onDuplicate={handleDuplicate}

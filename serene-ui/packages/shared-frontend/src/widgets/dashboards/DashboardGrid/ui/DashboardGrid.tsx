@@ -23,6 +23,7 @@ import { DashboardSettingsButton } from "./DashboardSettingsButton";
 interface DashboardGridProps {
     currentDashboard?: DashboardSchema | null;
     editedBlock?: DashboardBlockSchema | null;
+    isPanelResizing?: boolean;
     onCloseEditor?: () => void;
     onEditBlock?: (block: DashboardBlockSchema) => void;
 }
@@ -37,6 +38,7 @@ const dashboardBackgroundUrl = new URL(
 export const DashboardGrid: React.FC<DashboardGridProps> = ({
     currentDashboard,
     editedBlock,
+    isPanelResizing = false,
     onCloseEditor,
     onEditBlock,
 }) => {
@@ -70,6 +72,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
             ),
         [blocks, editedBlock],
     );
+    const isLayoutMoving = isMoving || isPanelResizing;
 
     React.useEffect(() => {
         if (!currentDashboard) {
@@ -206,7 +209,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                                 <div className="flex" key={String(block.id)}>
                                     <DashboardGridBlock
                                         block={block}
-                                        isMoving={isMoving}
+                                        isMoving={isLayoutMoving}
                                         dashboardId={currentDashboard.id}
                                         dashboard={currentDashboard}
                                         onDeleteBlock={handleDeleteBlock}

@@ -1,6 +1,6 @@
 import React from "react";
 import type { DashboardBlockSchema } from "@serene-ui/shared-core";
-import { Textarea, getErrorMessage } from "@serene-ui/shared-frontend";
+import { Skeleton, Textarea, getErrorMessage } from "@serene-ui/shared-frontend";
 import { toast } from "sonner";
 
 import { useUpdateDashboardCard } from "../../../../../entities/dashboard-card";
@@ -11,6 +11,7 @@ type DashboardTextBlock = Extract<DashboardBlockSchema, { type: "text" }>;
 interface DashboardTextCardProps {
     block: DashboardTextBlock;
     dashboardId: number;
+    isMoving?: boolean;
     onDelete?: () => void | Promise<void>;
     onDuplicate?: () => void | Promise<void>;
 }
@@ -18,6 +19,7 @@ interface DashboardTextCardProps {
 export const DashboardTextCard: React.FC<DashboardTextCardProps> = ({
     block,
     dashboardId,
+    isMoving = false,
     onDelete,
     onDuplicate,
 }) => {
@@ -103,6 +105,18 @@ export const DashboardTextCard: React.FC<DashboardTextCardProps> = ({
             setIsEditing(false);
         }
     }, [block, dashboardId, draftText, updateDashboardCard]);
+
+    if (isMoving) {
+        return (
+            <div className="group bg-background border-1 rounded-xs relative flex flex-1 overflow-hidden p-4">
+                <div className="flex min-h-0 flex-1 flex-col gap-3">
+                    <Skeleton className="h-4 w-3/5" />
+                    <Skeleton className="h-4 w-4/5" />
+                    <Skeleton className="h-4 w-2/3" />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div

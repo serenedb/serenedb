@@ -270,6 +270,20 @@ export const DashboardQueryBlockCard: React.FC<DashboardQueryBlockCardProps> = (
     }
 
     if (block.type === "table") {
+        if (isMoving) {
+            return (
+                <DashboardQueryStateCard
+                    name={block.name}
+                    description={block.description}
+                    title="Resizing..."
+                    details="Table preview is temporarily hidden while resizing."
+                    onDelete={onDelete}
+                    onDuplicate={onDuplicate}
+                    onEdit={onEdit}
+                />
+            );
+        }
+
         return (
             <DashboardTableCard
                 block={block}
@@ -283,6 +297,20 @@ export const DashboardQueryBlockCard: React.FC<DashboardQueryBlockCardProps> = (
     }
 
     if (block.type === "single_string") {
+        if (isMoving) {
+            return (
+                <DashboardQueryStateCard
+                    name={block.name}
+                    description={block.description}
+                    title="Resizing..."
+                    details="Value preview is temporarily hidden while resizing."
+                    onDelete={onDelete}
+                    onDuplicate={onDuplicate}
+                    onEdit={onEdit}
+                />
+            );
+        }
+
         return (
             <DashboardSingleStringCard
                 block={block}

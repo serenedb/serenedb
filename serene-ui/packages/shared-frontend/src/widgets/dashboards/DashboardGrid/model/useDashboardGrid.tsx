@@ -12,6 +12,7 @@ import { type LayoutItem, useContainerWidth } from "react-grid-layout";
 import { transformStrategy } from "react-grid-layout/core";
 
 const GRID_SCALE_OPTIONS = [0.5, 0.75, 1] as const;
+const RESIZE_SETTLE_DELAY_MS = 220;
 
 interface UseDashboardGridProps {
     currentDashboard?: DashboardSchema | null;
@@ -26,7 +27,18 @@ export const useDashboardGrid = ({
         React.useState<(typeof GRID_SCALE_OPTIONS)[number]>(1);
     const [isDragging, setIsDragging] = React.useState(false);
     const [isResizing, setIsResizing] = React.useState(false);
-    const isMoving = isResizing || isDragging;
+    const [isResizeSettling, setIsResizeSettling] = React.useState(false);
+    const resizeSettleTimeoutRef = React.useRef<number | null>(null);
+    const isMoving = isResizing || isDragging || isResizeSettling;
+
+    const clearResizeSettleTimeout = React.useCallback(() => {
+        if (resizeSettleTimeoutRef.current === null) {
+            return;
+        }
+
+        window.clearTimeout(resizeSettleTimeoutRef.current);
+        resizeSettleTimeoutRef.current = null;
+    }, []);
 
     const positionStrategy = React.useMemo(
         () => ({
@@ -137,15 +149,30 @@ export const useDashboardGrid = ({
     );
 
     const handleResizeStart = React.useCallback(() => {
+        clearResizeSettleTimeout();
+        setIsResizeSettling(false);
         setIsResizing(true);
-    }, []);
+    }, [clearResizeSettleTimeout]);
 
     const handleResizeStop = React.useCallback(
         (layoutItem: LayoutItem | null) => {
             setIsResizing(false);
             handleCardBoundsChange(layoutItem);
+            clearResizeSettleTimeout();
+            setIsResizeSettling(true);
+            resizeSettleTimeoutRef.current = window.setTimeout(() => {
+                setIsResizeSettling(false);
+                resizeSettleTimeoutRef.current = null;
+            }, RESIZE_SETTLE_DELAY_MS);
         },
-        [handleCardBoundsChange],
+        [clearResizeSettleTimeout, handleCardBoundsChange],
+    );
+
+    React.useEffect(
+        () => () => {
+            clearResizeSettleTimeout();
+        },
+        [clearResizeSettleTimeout],
     );
 
     return {

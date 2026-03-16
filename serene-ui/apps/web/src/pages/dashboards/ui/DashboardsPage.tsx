@@ -1,3 +1,4 @@
+import React from "react";
 import {
     DashboardCardEditor,
     DashboardGrid,
@@ -10,6 +11,7 @@ import {
 import { useDashboardPage } from "../model";
 
 export const DashboardsPage = () => {
+    const [isPanelResizing, setIsPanelResizing] = React.useState(false);
     const {
         currentDashboard,
         editedBlock,
@@ -21,6 +23,9 @@ export const DashboardsPage = () => {
         isExplorerOpened,
         toggleExplorer,
     } = useDashboardPage();
+    const handlePanelDragging = React.useCallback((isDragging: boolean) => {
+        setIsPanelResizing(isDragging);
+    }, []);
 
     const dashboardContent = (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -32,6 +37,7 @@ export const DashboardsPage = () => {
             <DashboardGrid
                 currentDashboard={currentDashboard}
                 editedBlock={editedBlock}
+                isPanelResizing={isPanelResizing}
                 onCloseEditor={closeEditor}
                 onEditBlock={openEditor}
             />
@@ -53,7 +59,11 @@ export const DashboardsPage = () => {
                             onCurrentDashboardChange={setCurrentDashboardId}
                         />
                     </ResizablePanel>
-                    <ResizableHandle className="bg-border" tabIndex={-1} />
+                    <ResizableHandle
+                        className="bg-border"
+                        tabIndex={-1}
+                        onDragging={handlePanelDragging}
+                    />
                 </>
             )}
             <ResizablePanel
@@ -64,7 +74,11 @@ export const DashboardsPage = () => {
             </ResizablePanel>
             {isEditorOpened && (
                 <>
-                    <ResizableHandle className="bg-border" tabIndex={-1} />
+                    <ResizableHandle
+                        className="bg-border"
+                        tabIndex={-1}
+                        onDragging={handlePanelDragging}
+                    />
                     <ResizablePanel
                         className="flex min-h-0 min-w-0 overflow-hidden"
                         defaultSize={30}

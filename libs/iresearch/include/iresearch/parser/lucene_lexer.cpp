@@ -1699,6 +1699,7 @@ YY_BUFFER_STATE yy_scan_buffer  (char * base, yy_size_t  size )
  */
 YY_BUFFER_STATE yy_scan_string (const char * yystr )
 {
+
 	return yy_scan_bytes( yystr, (int) strlen(yystr) );
 }
 
@@ -1773,6 +1774,7 @@ static void yynoreturn yy_fatal_error (const char* msg )
  */
 int yyget_lineno  (void)
 {
+
     return yylineno;
 }
 
@@ -1815,6 +1817,7 @@ char *yyget_text  (void)
  */
 void yyset_lineno (int  _line_number )
 {
+
     yylineno = _line_number;
 }
 
@@ -1901,6 +1904,7 @@ int yylex_destroy  (void)
 #ifndef yytext_ptr
 static void yy_flex_strncpy (char* s1, const char * s2, int n )
 {
+
 	int i;
 	for ( i = 0; i < n; ++i )
 		s1[i] = s2[i];
@@ -1925,6 +1929,7 @@ void *yyalloc (yy_size_t  size )
 
 void *yyrealloc  (void * ptr, yy_size_t  size )
 {
+
 	/* The cast to (char *) in the following accommodates both
 	 * implementations that use char* generic pointers, and those
 	 * that use void* generic pointers.  It works with the latter

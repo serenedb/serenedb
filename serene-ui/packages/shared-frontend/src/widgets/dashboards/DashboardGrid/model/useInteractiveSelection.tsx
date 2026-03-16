@@ -25,7 +25,9 @@ const parseSelectionPayload = (value: string | null) => {
     }
 
     try {
-        const parsed = JSON.parse(value) as Partial<DashboardInteractiveSelectionPayload>;
+        const parsed = JSON.parse(
+            value,
+        ) as Partial<DashboardInteractiveSelectionPayload>;
 
         if (
             typeof parsed.query !== "string" ||

@@ -59,7 +59,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
   void AssertFrequencyAndPositions(irs::DocIterator& expected,
                                    irs::DocIterator& actual) {
-    auto* expected_freq = irs::GetMutable<irs::FreqBlockAttr>(&expected);
+    auto* expected_freq = irs::GetMutable<irs::FreqAttr>(&expected);
     auto* actual_freq = irs::GetMutable<irs::FreqBlockAttr>(&actual);
     ASSERT_EQ(!expected_freq, !actual_freq);
 
@@ -946,7 +946,7 @@ static const auto kTestValues =
                      ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
-INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,
+INSTANTIATE_TEST_SUITE_P(Format10Test, Format10TestCase, kTestValues,
                          Format10TestCase::to_string);
 
 }  // namespace

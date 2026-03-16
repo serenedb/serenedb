@@ -156,6 +156,8 @@ class FormatTestCase : public IndexTestBase {
       return value();
     }
 
+    uint32_t GetFreq() const final { return _freq.value; }
+
     irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       const auto it = _attrs.find(type);
       return it == _attrs.end() ? nullptr : it->second;

@@ -39,12 +39,12 @@ struct EmptyColumnProvider : irs::ColumnProvider {
 };
 
 struct FreqScorerContext : public irs::ScoreOperator {
-  FreqScorerContext(const auto* freq) : freq_source{freq} {}
+  FreqScorerContext(const irs::FreqBlockAttr* freq) : freq_source{freq} {}
 
   template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
   void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
     ASSERT_EQ(1, n);
-    irs::Merge<MergeType>(*res, freq_source->value);
+    irs::Merge<MergeType>(*res, freq_source->value[0]);
   }
 
   void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
@@ -57,7 +57,7 @@ struct FreqScorerContext : public irs::ScoreOperator {
     ScoreImpl<irs::ScoreMergeType::Max>(res, n);
   }
 
-  const irs::FreqAttr* freq_source;
+  const irs::FreqBlockAttr* freq_source;
 };
 
 struct FreqScorer : irs::ScorerBase<void> {
@@ -66,7 +66,7 @@ struct FreqScorer : irs::ScorerBase<void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
     return irs::ScoreFunction::Make<FreqScorerContext>(freq);

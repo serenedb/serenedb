@@ -353,6 +353,7 @@ class PostingsWriterBase : public PostingsWriter {
     ValueIndex doc;
     FreqAttr freq;
 
+    FreqAttr* wand_freq{};
     PosAttr* pos{};
     const OffsAttr* offs{};
 
@@ -362,7 +363,7 @@ class PostingsWriterBase : public PostingsWriter {
       }
 
       if (type == irs::Type<FreqAttr>::id()) {
-        return &freq;
+        return wand_freq;
       }
 
       return nullptr;
@@ -420,6 +421,9 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   if (!_columns) [[unlikely]] {
     return;
   }
+
+  // Enable/Disable frequency for WandWriter::Prepare
+  _attrs.wand_freq = _features.HasFrequency() ? &_attrs.freq : nullptr;
 
   for (size_t i = 0; auto& writer : _writers) {
     const bool valid = writer && writer->Prepare(*_columns, meta, _attrs);
@@ -1200,6 +1204,7 @@ class PostingIteratorBase : public DocIterator {
 
   IRS_FORCE_INLINE uint32_t GetFreq() const final {
     if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(_left_in_leaf < IteratorTraits::kBlockSize);
       return *(std::end(_freqs) - _left_in_leaf - 1);
     } else {
       return 0;
@@ -2726,6 +2731,7 @@ class SingleWandIterator : public DocIterator {
 
   void FetchScoreArgs(uint16_t index) final {
     SDB_ASSERT(_collected_freqs);
+    SDB_ASSERT(_left_in_leaf < IteratorTraits::kBlockSize);
     _collected_freqs[index] = *(std::end(_freqs) - _left_in_leaf - 1);
   }
 

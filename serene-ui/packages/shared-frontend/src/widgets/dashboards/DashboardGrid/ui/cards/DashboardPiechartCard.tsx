@@ -16,6 +16,9 @@ export interface DashboardPiechartCardDatum {
 interface DashboardPiechartCardProps {
     name?: string;
     description?: string;
+    onDelete?: () => void | Promise<void>;
+    onDuplicate?: () => void | Promise<void>;
+    onEdit?: () => void;
     data: DashboardPiechartCardDatum[];
     nameKey: string;
     valueKey: string;
@@ -33,6 +36,9 @@ interface DashboardPiechartCardProps {
 export const DashboardPiechartCard: React.FC<DashboardPiechartCardProps> = ({
     name,
     description,
+    onDelete,
+    onDuplicate,
+    onEdit,
     data,
     nameKey,
     valueKey,
@@ -90,7 +96,12 @@ export const DashboardPiechartCard: React.FC<DashboardPiechartCardProps> = ({
     const isDonut = variant === "donut";
 
     return (
-        <DashboardChartCardBase name={name} description={description}>
+        <DashboardChartCardBase
+            name={name}
+            description={description}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+            onEdit={onEdit}>
             {isMoving ? (
                 <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-4">
                     <div

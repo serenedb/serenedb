@@ -27,7 +27,7 @@ export const DashboardScaleButton: React.FC<DashboardScaleButtonProps> = ({
             <PopoverTrigger asChild>
                 <Button
                     variant="secondary"
-                    className="h-9 min-w-20 justify-between rounded-lg px-3 bg-[#282828]"
+                    className="h-9 min-w-20 justify-between rounded-lg px-3 bg-[#282828] hover:bg-[#282828] border-1"
                     title="Dashboard scale">
                     <span>{Math.round(scale * 100)}%</span>
                     <ChevronDownIcon className="size-4" />

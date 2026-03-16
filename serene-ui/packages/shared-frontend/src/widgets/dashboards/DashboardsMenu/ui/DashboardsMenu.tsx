@@ -13,17 +13,21 @@ import { DashboardsList } from "./DashboarsList";
 import { FavoritesList } from "./FavoritesList";
 import { BlockTemplatesList } from "./BlockTemplatesList";
 import { SavedQueriesList } from "./SavedQueriesList";
+import { DashboardExplorer } from "./DashboardExplorer";
 
-interface DashboardsMenuComponentProps {}
+interface DashboardsMenuComponentProps {
+    handleSetCurrentDashboard: (dashboardId: number) => void;
+}
 
 const SECTION_ORDER: DashboardsMenuSectionId[] = [
     "favorites",
     "dashboards",
-    "blockTemplates",
     "savedQueries",
 ];
 
-const DashboardsMenuContent: React.FC = () => {
+const DashboardsMenuContent: React.FC<DashboardsMenuComponentProps> = ({
+    handleSetCurrentDashboard,
+}) => {
     const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
     const { sections, setSectionSizeUnits } = useDashboardsMenu();
     const dragStateRef = useRef<{
@@ -200,6 +204,7 @@ const DashboardsMenuContent: React.FC = () => {
                 />
                 <DashboardsList
                     bodyHeight={bodyHeights.dashboards ?? 0}
+                    handleSetCurrentDashboard={handleSetCurrentDashboard}
                     showResizeHandle={Boolean(
                         getNextOpenSectionId("dashboards"),
                     )}
@@ -213,31 +218,20 @@ const DashboardsMenuContent: React.FC = () => {
                         }
                     }}
                 />
-                <BlockTemplatesList
-                    bodyHeight={bodyHeights.blockTemplates ?? 0}
-                    showResizeHandle={Boolean(
-                        getNextOpenSectionId("blockTemplates"),
-                    )}
-                    onResizePointerDown={(
-                        event: React.PointerEvent<HTMLDivElement>,
-                    ) => {
-                        const nextSectionId =
-                            getNextOpenSectionId("blockTemplates");
-                        if (nextSectionId) {
-                            startResize("blockTemplates", nextSectionId, event);
-                        }
-                    }}
-                />
                 <SavedQueriesList bodyHeight={bodyHeights.savedQueries ?? 0} />
             </div>
         </div>
     );
 };
 
-export const DashboardsMenu: React.FC<DashboardsMenuComponentProps> = () => {
+export const DashboardsMenu: React.FC<DashboardsMenuComponentProps> = ({
+    handleSetCurrentDashboard,
+}) => {
     return (
         <DashboardsMenuProvider>
-            <DashboardsMenuContent />
+            <DashboardsMenuContent
+                handleSetCurrentDashboard={handleSetCurrentDashboard}
+            />
         </DashboardsMenuProvider>
     );
 };

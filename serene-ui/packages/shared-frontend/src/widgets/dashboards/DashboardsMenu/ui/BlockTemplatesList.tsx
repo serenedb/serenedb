@@ -1,6 +1,7 @@
 import React from "react";
 
 import { DashboardsMenuSection } from "./DashboardsMenuSection";
+import { DashboardExplorer } from "./DashboardExplorer";
 type BlockTemplatesListProps = {
     bodyHeight: number;
     showResizeHandle?: boolean;
@@ -18,7 +19,12 @@ export function BlockTemplatesList({
             title="Block Templates"
             bodyHeight={bodyHeight}
             showResizeHandle={showResizeHandle}
-            onResizePointerDown={onResizePointerDown}
-        />
+            onResizePointerDown={onResizePointerDown}>
+            <DashboardExplorer
+                initialData={[]}
+                isDataFetched
+                emptyState="No block templates yet"
+            />
+        </DashboardsMenuSection>
     );
 }

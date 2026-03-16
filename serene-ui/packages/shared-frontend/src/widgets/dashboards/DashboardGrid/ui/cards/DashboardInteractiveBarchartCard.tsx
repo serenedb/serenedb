@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
     ChartConfig,
     ChartContainer,
@@ -12,6 +12,9 @@ import {
 } from "@serene-ui/shared-frontend";
 import type { LayoutConstraint } from "react-grid-layout/core";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
+import { parseDashboardNumericValue } from "../../../model/dashboardChartColumns";
+import { useDashboardInteractiveSelection } from "../../model/interactiveSelection";
+import { DashboardCardActions } from "./DashboardCardActions";
 
 export interface DashboardInteractiveBarchartSeries {
     key: string;
@@ -24,6 +27,9 @@ export interface DashboardInteractiveBarchartDatum {
 }
 
 interface DashboardInteractiveChartCardProps {
+    dashboardId: number;
+    blockId: number;
+    query: string;
     name?: string;
     description?: string;
     data: DashboardInteractiveBarchartDatum[];
@@ -34,11 +40,17 @@ interface DashboardInteractiveChartCardProps {
     valueLabel?: string;
     formatXAxisTick?: (value: string | number) => string;
     formatTooltipLabel?: (value: string | number) => string;
+    onDelete?: () => void | Promise<void>;
+    onDuplicate?: () => void | Promise<void>;
+    onEdit?: () => void;
 }
 
 export const DashboardInteractiveChartCard: React.FC<
     DashboardInteractiveChartCardProps
 > = ({
+    dashboardId,
+    blockId,
+    query,
     name,
     description,
     data,
@@ -49,6 +61,9 @@ export const DashboardInteractiveChartCard: React.FC<
     valueLabel = "Value",
     formatXAxisTick,
     formatTooltipLabel,
+    onDelete,
+    onDuplicate,
+    onEdit,
 }) => {
     const chartConfig = useMemo(
         () =>
@@ -64,16 +79,18 @@ export const DashboardInteractiveChartCard: React.FC<
             ]) satisfies ChartConfig,
         [series, valueLabel],
     );
-
-    const [activeChart, setActiveChart] = useState(
-        defaultActiveKey ?? series[0]?.key ?? "",
+    const availableSeriesKeys = useMemo(
+        () => series.map((item) => item.key),
+        [series],
     );
 
-    useEffect(() => {
-        if (!series.some((item) => item.key === activeChart)) {
-            setActiveChart(defaultActiveKey ?? series[0]?.key ?? "");
-        }
-    }, [activeChart, defaultActiveKey, series]);
+    const { selectedValue: activeChart, setSelectedValue: setActiveChart } =
+        useDashboardInteractiveSelection({
+            dashboardId,
+            blockId,
+            query,
+            availableValues: availableSeriesKeys,
+        });
 
     const totals = useMemo(
         () =>
@@ -81,8 +98,10 @@ export const DashboardInteractiveChartCard: React.FC<
                 series.map((item) => [
                     item.key,
                     data.reduce((acc, entry) => {
-                        const value = entry[item.key];
-                        return acc + (typeof value === "number" ? value : 0);
+                        const value = parseDashboardNumericValue(
+                            entry[item.key],
+                        );
+                        return acc + (value ?? 0);
                     }, 0),
                 ]),
             ),
@@ -195,11 +214,20 @@ export const DashboardInteractiveChartCard: React.FC<
                     </BarChart>
                 </ChartContainer>
             )}
-            <div className="flex flex-col border-t-1 p-3 w-full mt-auto gap-0.5">
-                <p className="uppercase text-xs font-extrabold text-primary-foreground">
-                    {name}
-                </p>
-                <p className="text-xs text-muted-foreground">{description}</p>
+            <div className="mt-auto flex w-full items-center justify-between border-t-1 p-3">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                    <p className="uppercase text-xs font-extrabold text-primary-foreground">
+                        {name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                        {description}
+                    </p>
+                </div>
+                <DashboardCardActions
+                    onDelete={onDelete}
+                    onDuplicate={onDuplicate}
+                    onEdit={onEdit}
+                />
             </div>
         </div>
     );

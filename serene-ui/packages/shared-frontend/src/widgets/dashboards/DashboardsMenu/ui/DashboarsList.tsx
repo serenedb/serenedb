@@ -1,17 +1,42 @@
 import React from "react";
+import { useGetDashboards } from "../../../../entities/dashboard";
+import { CreateDashboardButton } from "../../../../features";
+import type { ExplorerNodeData } from "../../../shared/Explorer";
 
 import { DashboardsMenuSection } from "./DashboardsMenuSection";
+import { DashboardExplorer } from "./DashboardExplorer";
 type DashboardsListProps = {
     bodyHeight: number;
+    handleSetCurrentDashboard: (dashboardId: number) => void;
     showResizeHandle?: boolean;
     onResizePointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
 };
 
 export function DashboardsList({
     bodyHeight,
+    handleSetCurrentDashboard,
     showResizeHandle = false,
     onResizePointerDown,
 }: DashboardsListProps) {
+    const {
+        data: dashboards,
+        isFetched: isDataFetched,
+        isLoading: isDataLoading,
+    } = useGetDashboards();
+
+    const initialData: ExplorerNodeData[] = (dashboards ?? []).map(
+        (dashboard) => ({
+            id: `dashboard-${dashboard.id}`,
+            name: dashboard.name,
+            type: "dashboard",
+            parentId: null,
+            context: {
+                dashboardId: dashboard.id,
+                action: () => handleSetCurrentDashboard(dashboard.id),
+            },
+        }),
+    );
+
     return (
         <DashboardsMenuSection
             sectionId="dashboards"
@@ -19,6 +44,16 @@ export function DashboardsList({
             bodyHeight={bodyHeight}
             showResizeHandle={showResizeHandle}
             onResizePointerDown={onResizePointerDown}
-        />
+            actions={
+                <CreateDashboardButton
+                    onCreateDashboard={handleSetCurrentDashboard}
+                />
+            }>
+            <DashboardExplorer
+                initialData={initialData}
+                isDataFetched={isDataFetched && !isDataLoading}
+                emptyState="No dashboards yet"
+            />
+        </DashboardsMenuSection>
     );
 }

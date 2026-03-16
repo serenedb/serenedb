@@ -34,7 +34,7 @@ const createInitialSections = (): Record<
         sizeUnits: DEFAULT_SECTION_SIZE_UNITS,
     },
     dashboards: {
-        isOpen: false,
+        isOpen: true,
         sizeUnits: DEFAULT_SECTION_SIZE_UNITS,
     },
     blockTemplates: {
@@ -73,7 +73,9 @@ export const DashboardsMenuProvider = ({
             setSections((prevSections) => {
                 const nextSections = { ...prevSections };
 
-                for (const [sectionId, nextSizeUnits] of Object.entries(updates)) {
+                for (const [sectionId, nextSizeUnits] of Object.entries(
+                    updates,
+                )) {
                     if (nextSizeUnits === undefined) {
                         continue;
                     }

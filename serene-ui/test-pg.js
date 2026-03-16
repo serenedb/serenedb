@@ -1,12 +1,12 @@
-import pg from "pg";
+import pg, { Pool } from "pg";
 import Cursor from "pg-cursor";
 
-const query = "SELECT * FROM t1;";
+const query = "SELECT 1; SELECT 2;";
 
-const host = "192.168.1.216";
+const host = "localhost";
 //const host = "localhost";
 
-const client = new pg.Client({
+const pool = new Pool({
     user: "postgres",
     host,
     database: "postgres",
@@ -14,12 +14,9 @@ const client = new pg.Client({
     port: host === "192.168.1.216" ? 6161 : 5432,
 });
 
-client.connect();
+const cursor = await pool.query(`
+SELECT 1;
+SELECT 2;
+`);
 
-const cursor = client.query(new Cursor(query, []));
-
-const rows = await cursor.read(100);
-
-await cursor.close();
-
-console.log(rows);
+console.log(cursor);

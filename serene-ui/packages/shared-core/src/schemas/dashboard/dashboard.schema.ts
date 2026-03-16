@@ -1,6 +1,7 @@
 import z from "zod";
+import { DashboardBlockSchema } from "./dashboard-block.schema";
 
-export const DashboardSchema = z.object({
+export const DashboardBaseSchema = z.object({
     id: z.number(),
     name: z.string().max(255),
     auto_refresh: z.boolean().default(false),
@@ -9,3 +10,9 @@ export const DashboardSchema = z.object({
     created_at: z.string().datetime().optional(),
     updated_at: z.string().datetime().optional(),
 });
+export type DashboardBaseSchema = z.infer<typeof DashboardBaseSchema>;
+
+export const DashboardSchema = DashboardBaseSchema.extend({
+    blocks: z.array(DashboardBlockSchema).default([]),
+});
+export type DashboardSchema = z.infer<typeof DashboardSchema>;

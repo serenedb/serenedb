@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
     ChartConfig,
     ChartContainer,
@@ -12,12 +12,18 @@ import {
 } from "@serene-ui/shared-frontend";
 import { Label, Pie, PieChart, Sector } from "recharts";
 import type { PieSectorDataItem } from "recharts/types/polar/Pie";
+import { parseDashboardNumericValue } from "../../../model/dashboardChartColumns";
+import { useDashboardInteractiveSelection } from "../../model/interactiveSelection";
+import { DashboardCardActions } from "./DashboardCardActions";
 
 export interface DashboardInteractivePiechartDatum {
     [key: string]: string | number | null | undefined;
 }
 
 interface DashboardInteractivePiechartCardProps {
+    dashboardId: number;
+    blockId: number;
+    query: string;
     name?: string;
     description?: string;
     data: DashboardInteractivePiechartDatum[];
@@ -29,11 +35,17 @@ interface DashboardInteractivePiechartCardProps {
     colorKey?: string;
     formatSliceLabel?: (value: string | number) => string;
     formatTooltipLabel?: (value: string | number) => string;
+    onDelete?: () => void | Promise<void>;
+    onDuplicate?: () => void | Promise<void>;
+    onEdit?: () => void;
 }
 
 export const DashboardInteractivePiechartCard: React.FC<
     DashboardInteractivePiechartCardProps
 > = ({
+    dashboardId,
+    blockId,
+    query,
     name,
     description,
     data,
@@ -45,6 +57,9 @@ export const DashboardInteractivePiechartCard: React.FC<
     colorKey = "fill",
     formatSliceLabel,
     formatTooltipLabel,
+    onDelete,
+    onDuplicate,
+    onEdit,
 }) => {
     const sliceNames = useMemo(
         () =>
@@ -55,6 +70,10 @@ export const DashboardInteractivePiechartCard: React.FC<
                         typeof item === "string" || typeof item === "number",
                 ),
         [data, nameKey],
+    );
+    const availableSliceNames = useMemo(
+        () => sliceNames.map((item) => String(item)),
+        [sliceNames],
     );
 
     const chartConfig = useMemo(
@@ -86,15 +105,13 @@ export const DashboardInteractivePiechartCard: React.FC<
         [colorKey, data, formatSliceLabel, nameKey, valueKey, valueLabel],
     );
 
-    const [activeSlice, setActiveSlice] = useState(
-        defaultActiveKey ?? String(sliceNames[0] ?? ""),
-    );
-
-    useEffect(() => {
-        if (!sliceNames.some((item) => String(item) === activeSlice)) {
-            setActiveSlice(defaultActiveKey ?? String(sliceNames[0] ?? ""));
-        }
-    }, [activeSlice, defaultActiveKey, sliceNames]);
+    const { selectedValue: activeSlice, setSelectedValue: setActiveSlice } =
+        useDashboardInteractiveSelection({
+            dashboardId,
+            blockId,
+            query,
+            availableValues: availableSliceNames,
+        });
 
     const activeIndex = useMemo(
         () =>
@@ -109,15 +126,14 @@ export const DashboardInteractivePiechartCard: React.FC<
             Object.fromEntries(
                 data.map((item) => [
                     String(item[nameKey] ?? ""),
-                    typeof item[valueKey] === "number" ? item[valueKey] : 0,
+                    parseDashboardNumericValue(item[valueKey]) ?? 0,
                 ]),
             ),
         [data, nameKey, valueKey],
     );
 
     const activeItem = activeIndex >= 0 ? data[activeIndex] : undefined;
-    const activeValue =
-        typeof activeItem?.[valueKey] === "number" ? activeItem[valueKey] : 0;
+    const activeValue = parseDashboardNumericValue(activeItem?.[valueKey]) ?? 0;
     const activeLabel = chartConfig[activeSlice]?.label ?? activeSlice;
 
     return (
@@ -229,11 +245,20 @@ export const DashboardInteractivePiechartCard: React.FC<
                     </ChartContainer>
                 </div>
             )}
-            <div className="flex flex-col border-t-1 p-3 w-full mt-auto gap-0.5">
-                <p className="uppercase text-xs font-extrabold text-primary-foreground">
-                    {name}
-                </p>
-                <p className="text-xs text-muted-foreground">{description}</p>
+            <div className="mt-auto flex w-full items-center justify-between border-t-1 p-3">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                    <p className="uppercase text-xs font-extrabold text-primary-foreground">
+                        {name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                        {description}
+                    </p>
+                </div>
+                <DashboardCardActions
+                    onDelete={onDelete}
+                    onDuplicate={onDuplicate}
+                    onEdit={onEdit}
+                />
             </div>
         </div>
     );

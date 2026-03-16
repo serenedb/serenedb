@@ -1,6 +1,7 @@
 export * from "./authorizeGithub";
 export * from "./changeConsoleLayout";
 export * from "./copyText";
+export * from "./createDashboard";
 export * from "./downloadResults";
 export * from "./executeQuery";
 export * from "./leaveGithubStar";
@@ -12,3 +13,4 @@ export * from "./openSupportModal";
 export * from "./testConnection";
 export * from "./refreshDatabases";
 export * from "./changeTheme";
+export * from "./deleteDashboard";

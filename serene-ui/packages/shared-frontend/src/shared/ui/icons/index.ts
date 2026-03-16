@@ -10,8 +10,11 @@ export {
     SettingsIcon,
     CheckCircle2 as SuccessIcon,
     HelpCircle as SupportIcon,
+    Trash2 as TrashIcon,
     UploadIcon as ImportIcon,
     DownloadIcon as ExportIcon,
+    EllipsisVerticalIcon as ThreeDotsIcon,
+    Settings2Icon as DashboardSettingsIcon,
 } from "lucide-react";
 // styled icons
 export { ArrowDownIcon } from "./ArrowDownIcon";

@@ -3,6 +3,7 @@ import type { NodeRendererProps } from "react-arborist";
 export type ExplorerNodeContext = {
     connectionId?: number;
     database?: string;
+    dashboardId?: number;
     schemaId?: number;
     catalogId?: number;
     tableId?: number;

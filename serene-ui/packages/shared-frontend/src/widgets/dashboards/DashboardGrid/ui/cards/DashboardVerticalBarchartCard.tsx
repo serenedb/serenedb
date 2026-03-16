@@ -24,6 +24,9 @@ export interface DashboardVerticalBarchartCardSeries {
 interface DashboardVerticalBarchartCardProps {
     name?: string;
     description?: string;
+    onDelete?: () => void | Promise<void>;
+    onDuplicate?: () => void | Promise<void>;
+    onEdit?: () => void;
     data: DashboardVerticalBarchartCardDatum[];
     xAxisKey: string;
     barKey: string;
@@ -41,6 +44,9 @@ export const DashboardVerticalBarchartCard: React.FC<
 > = ({
     name,
     description,
+    onDelete,
+    onDuplicate,
+    onEdit,
     data,
     xAxisKey,
     barKey,
@@ -77,7 +83,12 @@ export const DashboardVerticalBarchartCard: React.FC<
     const showLegend = isStacked && normalizedSeries.length > 1;
 
     return (
-        <DashboardChartCardBase name={name} description={description}>
+        <DashboardChartCardBase
+            name={name}
+            description={description}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+            onEdit={onEdit}>
             {isMoving ? (
                 <div className="flex min-h-0 flex-1 items-center justify-center p-2">
                     <div className="bg-muted/30 border-border/50 flex h-full w-full max-h-full max-w-full items-end self-center overflow-hidden rounded-xs border p-4">

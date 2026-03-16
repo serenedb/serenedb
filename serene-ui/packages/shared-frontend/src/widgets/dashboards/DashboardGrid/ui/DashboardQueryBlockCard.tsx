@@ -1,7 +1,6 @@
 import React from "react";
-import type { DashboardBlockSchema, DashboardSchema } from "@serene-ui/shared-core";
+import type { DashboardSchema } from "@serene-ui/shared-core";
 import {
-    Button,
     Table,
     TableBody,
     TableCell,
@@ -10,43 +9,33 @@ import {
     TableRow,
 } from "../../../../shared/ui";
 import {
-    type DashboardChartBlock,
     type DashboardColumnMeta,
     type DashboardQueryRow,
-    collectDashboardColumnMetadata,
-    formatDashboardDateValue,
     formatDashboardDisplayValue,
-    normalizeDashboardChartValue,
-    parseDashboardNumericValue,
 } from "../../model/dashboardChartColumns";
 import {
-    isDashboardInteractiveBlock,
-    syncDashboardInteractiveSelection,
-} from "../model/interactiveSelection";
-import { useDashboardQueryBlock } from "../model/useDashboardQueryBlock";
-import { DashboardChartCardBase } from "./cards/DashboardChartCardBase";
+    type DashboardQueryBlock,
+    getBarLineRenderState,
+    getPieRenderState,
+} from "../model/dashboardQueryBlockCard";
+import { useDashboardQueryBlockCardState } from "../model/useDashboardQueryBlockCardState";
 import { DashboardHorizontalBarchartCard } from "./cards/DashboardHorizontalBarchartCard";
 import { DashboardInteractiveChartCard } from "./cards/DashboardInteractiveBarchartCard";
 import { DashboardInteractiveLinechartCard } from "./cards/DashboardInteractiveLinechartCard";
 import { DashboardInteractivePiechartCard } from "./cards/DashboardInteractivePiechartCard";
 import { DashboardLinechartCard } from "./cards/DashboardLinechartCard";
 import { DashboardPiechartCard } from "./cards/DashboardPiechartCard";
+import { DashboardQueryStateCard } from "./cards/DashboardQueryStateCard";
 import { DashboardVerticalBarchartCard } from "./cards/DashboardVerticalBarchartCard";
+import { DashboardChartCardBase } from "./cards/DashboardChartCardBase";
 
-type DashboardQueryBlock = Extract<
-    DashboardBlockSchema,
-    {
-        type:
-            | "table"
-            | "single_string"
-            | "bar_chart"
-            | "line_chart"
-            | "pie_chart";
-    }
->;
-
-type ChartDatumValue = string | number | null | undefined;
-type ChartDatum = Record<string, ChartDatumValue>;
+type DashboardQueryBlockStatus =
+    | "missing_query"
+    | "missing_connection"
+    | "missing_database"
+    | "loading"
+    | "error"
+    | "ready";
 
 interface DashboardQueryBlockCardProps {
     block: DashboardQueryBlock;
@@ -57,65 +46,13 @@ interface DashboardQueryBlockCardProps {
     onEdit?: () => void;
 }
 
-const hasCategoryValue = (value: unknown) =>
-    value !== null && value !== undefined && value !== "";
-
-const hasNumericValue = (value: unknown) =>
-    parseDashboardNumericValue(value) !== null;
-
-const getColumnMetaByName = (columns: DashboardColumnMeta[]) =>
-    new Map(columns.map((column) => [column.name, column]));
-
-const DashboardQueryStateCard: React.FC<{
-    name?: string;
-    description?: string;
-    title: string;
-    details?: string;
-    onDelete?: () => void | Promise<void>;
-    onDuplicate?: () => void | Promise<void>;
-    onEdit?: () => void;
-}> = ({
-    name,
-    description,
-    title,
-    details,
-    onDelete,
-    onDuplicate,
-    onEdit,
-}) => {
-    return (
-        <DashboardChartCardBase
-            name={name}
-            description={description}
-            onDelete={onDelete}
-            onDuplicate={onDuplicate}
-            onEdit={onEdit}>
-            <div className="flex min-h-0 flex-1 items-center justify-center p-4">
-                <div className="flex max-w-64 flex-col items-center gap-3 text-center">
-                    <p className="text-sm font-medium text-primary-foreground">
-                        {title}
-                    </p>
-                    {details ? (
-                        <p className="text-xs text-muted-foreground">
-                            {details}
-                        </p>
-                    ) : null}
-                    {onEdit ? (
-                        <Button
-                            type="button"
-                            size="small"
-                            variant="secondary"
-                            onMouseDown={(event) => {
-                                event.stopPropagation();
-                            }}
-                            onClick={onEdit}>
-                            Edit
-                        </Button>
-                    ) : null}
-                </div>
-            </div>
-        </DashboardChartCardBase>
-    );
+const SETUP_STATE_DETAILS: Record<
+    Exclude<DashboardQueryBlockStatus, "loading" | "error" | "ready">,
+    string
+> = {
+    missing_query: "Add a query and choose chart params in Edit.",
+    missing_connection: "Select a local connection in Edit.",
+    missing_database: "Select a local database in Edit.",
 };
 
 const DashboardSingleStringCard: React.FC<{
@@ -174,14 +111,14 @@ const DashboardTableCard: React.FC<{
     onDuplicate?: () => void | Promise<void>;
     onEdit?: () => void;
 }> = ({ block, rows, columns, onDelete, onDuplicate, onEdit }) => {
-    const columnsByName = React.useMemo(() => getColumnMetaByName(columns), [
-        columns,
-    ]);
+    const columnsByName = React.useMemo(
+        () => new Map(columns.map((column) => [column.name, column])),
+        [columns],
+    );
+
     const previewColumns = React.useMemo(() => {
         const orderedColumnNames =
-            block.columns?.length
-                ? block.columns
-                : columns.map((column) => column.name);
+            block.columns?.length ? block.columns : columns.map((column) => column.name);
 
         return orderedColumnNames.slice(0, 6).map((columnName) => {
             return (
@@ -196,6 +133,7 @@ const DashboardTableCard: React.FC<{
             );
         });
     }, [block.columns, columns, columnsByName]);
+
     const previewRows = rows.slice(0, 10);
 
     if (previewColumns.length === 0) {
@@ -224,9 +162,7 @@ const DashboardTableCard: React.FC<{
                     <TableHeader>
                         <TableRow>
                             {previewColumns.map((column) => (
-                                <TableHead key={column.name}>
-                                    {column.name}
-                                </TableHead>
+                                <TableHead key={column.name}>{column.name}</TableHead>
                             ))}
                         </TableRow>
                     </TableHeader>
@@ -252,103 +188,30 @@ const DashboardTableCard: React.FC<{
     );
 };
 
-const toChartRow = (row: DashboardQueryRow): ChartDatum =>
-    Object.fromEntries(
-        Object.entries(row).map(([key, value]) => [
-            key,
-            normalizeDashboardChartValue(value) as ChartDatumValue,
-        ]),
+const renderSetupState = ({
+    block,
+    status,
+    onDelete,
+    onDuplicate,
+    onEdit,
+}: {
+    block: DashboardQueryBlock;
+    status: Exclude<DashboardQueryBlockStatus, "loading" | "error" | "ready">;
+    onDelete?: () => void | Promise<void>;
+    onDuplicate?: () => void | Promise<void>;
+    onEdit?: () => void;
+}) => {
+    return (
+        <DashboardQueryStateCard
+            name={block.name}
+            description={block.description}
+            title="Set up your chart"
+            details={SETUP_STATE_DETAILS[status]}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+            onEdit={onEdit}
+        />
     );
-
-const getBarLineRenderState = (
-    block: Extract<DashboardChartBlock, { type: "bar_chart" | "line_chart" }>,
-    rows: DashboardQueryRow[],
-    columnsByName: Map<string, DashboardColumnMeta>,
-) => {
-    const axisKey =
-        block.type === "bar_chart" ? block.category_key : block.x_axis_key;
-    const axisColumn = columnsByName.get(axisKey);
-    const validAxisColumn =
-        axisColumn && axisColumn.isCategoryLike ? axisColumn : undefined;
-
-    if (!validAxisColumn) {
-        return {
-            axisColumn: undefined,
-            rows: [] as ChartDatum[],
-            series: [],
-        };
-    }
-
-    const validSeries = block.series.filter((series) => {
-        const column = columnsByName.get(series.key);
-        return (
-            Boolean(column?.isNumeric) && series.key !== validAxisColumn.name
-        );
-    });
-
-    if (validSeries.length === 0) {
-        return {
-            axisColumn: validAxisColumn,
-            rows: [] as ChartDatum[],
-            series: [],
-        };
-    }
-
-    const validRows = rows
-        .filter((row) => {
-            const axisValue = row[validAxisColumn.name];
-
-            if (!hasCategoryValue(axisValue)) {
-                return false;
-            }
-
-            return validSeries.some((series) =>
-                hasNumericValue(row[series.key]),
-            );
-        })
-        .map(toChartRow);
-
-    return {
-        axisColumn: validAxisColumn,
-        rows: validRows,
-        series: validSeries,
-    };
-};
-
-const getPieRenderState = (
-    block: Extract<DashboardChartBlock, { type: "pie_chart" }>,
-    rows: DashboardQueryRow[],
-    columnsByName: Map<string, DashboardColumnMeta>,
-) => {
-    const dimensionColumn = columnsByName.get(block.name_key);
-    const valueColumn = columnsByName.get(block.value_key);
-
-    if (
-        !dimensionColumn?.isCategoryLike ||
-        !valueColumn?.isNumeric ||
-        dimensionColumn.name === valueColumn.name
-    ) {
-        return {
-            dimensionColumn: undefined,
-            valueColumn: undefined,
-            rows: [] as ChartDatum[],
-        };
-    }
-
-    const validRows = rows
-        .filter((row) => {
-            return (
-                hasCategoryValue(row[dimensionColumn.name]) &&
-                hasNumericValue(row[valueColumn.name])
-            );
-        })
-        .map(toChartRow);
-
-    return {
-        dimensionColumn,
-        valueColumn,
-        rows: validRows,
-    };
 };
 
 export const DashboardQueryBlockCard: React.FC<DashboardQueryBlockCardProps> = ({
@@ -359,136 +222,24 @@ export const DashboardQueryBlockCard: React.FC<DashboardQueryBlockCardProps> = (
     onDuplicate,
     onEdit,
 }) => {
-    const { rows, status, errorMessage } = useDashboardQueryBlock({
-        block,
-        dashboard,
-    });
-    const columns = React.useMemo(
-        () =>
-            collectDashboardColumnMetadata({
-                rows,
-            }),
-        [rows],
-    );
-    const columnsByName = React.useMemo(() => getColumnMetaByName(columns), [
-        columns,
-    ]);
-    const barLineDateFormatter = React.useCallback(
-        (value: string | number) => formatDashboardDateValue(value),
-        [],
-    );
-    const interactiveSelectionValues = React.useMemo(() => {
-        if (!isDashboardInteractiveBlock(block) || status !== "ready") {
-            return null;
-        }
-
-        if (block.type === "bar_chart" || block.type === "line_chart") {
-            return getBarLineRenderState(block, rows, columnsByName).series.map(
-                (series) => series.key,
-            );
-        }
-
-        const { dimensionColumn, valueColumn, rows: chartRows } =
-            getPieRenderState(block, rows, columnsByName);
-
-        if (!dimensionColumn || !valueColumn) {
-            return [];
-        }
-
-        return Array.from(
-            new Set(
-                chartRows
-                    .map((row) => row[dimensionColumn.name])
-                    .filter(
-                        (value): value is string | number =>
-                            typeof value === "string" ||
-                            typeof value === "number",
-                    )
-                    .map(String),
-            ),
-        );
-    }, [block, columnsByName, rows, status]);
-    const interactiveSelectionValuesKey = React.useMemo(
-        () => interactiveSelectionValues?.join("\u0000") ?? "",
-        [interactiveSelectionValues],
-    );
-    const interactiveSelectionBlockKey = React.useMemo(() => {
-        if (!isDashboardInteractiveBlock(block)) {
-            return "static";
-        }
-
-        if (block.type === "pie_chart") {
-            return `pie:${block.interactive ? "interactive" : "static"}`;
-        }
-
-        return `${block.type}:${block.variant}`;
-    }, [block]);
-
-    React.useEffect(() => {
-        if (
-            !isDashboardInteractiveBlock(block) ||
-            status !== "ready" ||
-            !interactiveSelectionValues
-        ) {
-            return;
-        }
-
-        syncDashboardInteractiveSelection({
-            dashboardId: dashboard?.id ?? block.dashboard_id,
-            blockId: block.id,
-            query: block.query,
-            availableValues: interactiveSelectionValues,
+    const { rows, status, errorMessage, columns, columnsByName, barLineDateFormatter } =
+        useDashboardQueryBlockCardState({
+            block,
+            dashboard,
         });
-    }, [
-        block.id,
-        block.dashboard_id,
-        block.query,
-        dashboard?.id,
-        interactiveSelectionBlockKey,
-        interactiveSelectionValuesKey,
-        status,
-    ]);
 
-    if (status === "missing_query") {
-        return (
-            <DashboardQueryStateCard
-                name={block.name}
-                description={block.description}
-                title="Set up your chart"
-                details="Add a query and choose chart params in Edit."
-                onDelete={onDelete}
-                onDuplicate={onDuplicate}
-                onEdit={onEdit}
-            />
-        );
-    }
-
-    if (status === "missing_connection") {
-        return (
-            <DashboardQueryStateCard
-                name={block.name}
-                description={block.description}
-                title="Set up your chart"
-                details="Select a local connection in Edit."
-                onDelete={onDelete}
-                onDuplicate={onDuplicate}
-                onEdit={onEdit}
-            />
-        );
-    }
-
-    if (status === "missing_database") {
-        return (
-            <DashboardQueryStateCard
-                name={block.name}
-                description={block.description}
-                title="Set up your chart"
-                details="Select a local database in Edit."
-                onDelete={onDelete}
-                onDuplicate={onDuplicate}
-                onEdit={onEdit}
-            />
-        );
+    if (
+        status === "missing_query" ||
+        status === "missing_connection" ||
+        status === "missing_database"
+    ) {
+        return renderSetupState({
+            block,
+            status,
+            onDelete,
+            onDuplicate,
+            onEdit,
+        });
     }
 
     if (status === "loading") {

@@ -270,6 +270,11 @@ struct DocIterator : AttributeProvider {
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
+  virtual uint32_t GetFreq() const {
+    SDB_ASSERT(false);
+    return 0;
+  }
+
  protected:
   mutable doc_id_t _doc = doc_limits::invalid();
 

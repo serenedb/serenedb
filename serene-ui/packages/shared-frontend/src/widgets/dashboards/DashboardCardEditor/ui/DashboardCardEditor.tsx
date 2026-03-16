@@ -37,9 +37,21 @@ const CARD_TYPE_OPTIONS: Array<{
 ];
 
 const BAR_CHART_VARIANT_OPTIONS = [
-    { value: "interactive", label: "Interactive" },
-    { value: "vertical", label: "Vertical" },
-    { value: "horizontal", label: "Horizontal" },
+    { value: "interactive", variant: "interactive", isStacked: false, label: "Interactive" },
+    { value: "vertical", variant: "vertical", isStacked: false, label: "Vertical" },
+    { value: "horizontal", variant: "horizontal", isStacked: false, label: "Horizontal" },
+    {
+        value: "vertical_stacked",
+        variant: "vertical",
+        isStacked: true,
+        label: "Vertical Stacked",
+    },
+    {
+        value: "horizontal_stacked",
+        variant: "horizontal",
+        isStacked: true,
+        label: "Horizontal Stacked",
+    },
 ] as const;
 
 const PIE_CHART_VARIANT_OPTIONS = [
@@ -70,6 +82,13 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
         displayEditedBlock?.type === "pie_chart"
             ? displayEditedBlock.interactive
                 ? "interactive"
+                : displayEditedBlock.variant
+            : undefined;
+    const barChartVariantValue =
+        displayEditedBlock?.type === "bar_chart"
+            ? displayEditedBlock.is_stacked &&
+              displayEditedBlock.variant !== "interactive"
+                ? `${displayEditedBlock.variant}_stacked`
                 : displayEditedBlock.variant
             : undefined;
 
@@ -128,12 +147,18 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                     <div className="flex flex-col gap-2 px-4">
                         <Label htmlFor="dashboard-card-variant">Variant</Label>
                         <Select
-                            value={displayEditedBlock.variant}
+                            value={barChartVariantValue}
                             onValueChange={(value) => {
+                                const selectedOption =
+                                    BAR_CHART_VARIANT_OPTIONS.find(
+                                        (item) => item.value === value,
+                                    ) ??
+                                    BAR_CHART_VARIANT_OPTIONS[0];
+
                                 onEditedBlockChange?.({
                                     ...displayEditedBlock,
-                                    variant:
-                                        value as (typeof BAR_CHART_VARIANT_OPTIONS)[number]["value"],
+                                    variant: selectedOption.variant,
+                                    is_stacked: selectedOption.isStacked,
                                 });
                             }}>
                             <SelectTrigger

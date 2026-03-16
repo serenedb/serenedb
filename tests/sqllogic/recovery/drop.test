@@ -18,6 +18,24 @@ CREATE FUNCTION s1.f() RETURNS INTEGER AS 'SELECT 1' LANGUAGE SQL;
 
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY s1.d(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    mingram = 2,
+    case = 'lower',
+    norm = true,
+    frequency = true
+)
+
+
+query
+SELECT ts_lexize('s1.d', 'A quicK Brown FOX');
+----
+ts_lexize
+{qu,qui,br,bro,fo,fox}
+
+
+statement ok
 CREATE INDEX i ON s1.t USING inverted(id);
 
 
@@ -47,6 +65,14 @@ SELECT * FROM s1.f();
 ----
 f
 1
+
+
+connection after_index_drop
+query
+SELECT ts_lexize('s1.d', 'A quicK Brown FOX');
+----
+ts_lexize
+{qu,qui,br,bro,fo,fox}
 
 
 connection after_index_drop

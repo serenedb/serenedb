@@ -58,8 +58,9 @@ SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
   size_t line_number{};
   for (const auto& line : lines) {
     line_number++;
-    if (line.empty() || line[0] == '#')
+    if (line.empty() || line[0] == '#') {
       continue;
+    }
     std::vector<std::string_view> sides = absl::StrSplit(line, "=>");
 
     SynonymsLine synonyms_line;

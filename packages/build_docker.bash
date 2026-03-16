@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Environment Configuration:
-#   DOCKER_TAG               Set version (default: from find_version.bash)
+#   DOCKER_TAG               Set version (if unset, derived from find_version.bash)
 #   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
 #   PUSH_IMAGES_2_REGISTRY   'true' to push to registry after build
 #   DOCKER_REGISTRY          Registry URL (default: registry.serenedb.com:5000)
@@ -32,19 +32,6 @@ error() {
 }
 
 # Determine version and Docker tag
-if [ -n "${DOCKER_TAG_OVERRIDE:-}" ]; then
-	VERSION="$DOCKER_TAG_OVERRIDE"
-	log "Using version override: ${VERSION}"
-elif [ -n "${DOCKER_TAG:-}" ]; then
-	# DOCKER_TAG already set in environment
-	VERSION="$DOCKER_TAG"
-	log "Using DOCKER_TAG from environment: ${VERSION}"
-else
-	# Get from find_version.bash
-	VERSION=$(get_version_and_tag)
-	log "Using version from find_version.bash: ${VERSION}"
-fi
-# -----------------------------------------------------------------------------
 [ -z "${DOCKER_TAG:-}" ] && source "${SCRIPT_DIR}/find_version.bash"
 [ -z "${DOCKER_TAG:-}" ] && error "Failed to determine DOCKER_TAG"
 VERSION="$DOCKER_TAG"

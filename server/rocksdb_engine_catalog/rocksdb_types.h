@@ -46,6 +46,7 @@ enum class RocksDBEntryType : char {
   View = '>',
   Table = '1',
   Index = '?',
+  Tokenizer = '2',
 
   Tombstone = '~',
 

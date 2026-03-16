@@ -81,9 +81,9 @@ class FileOptionsParser : public OptionsParser {
     auto ssl_enabled = EraseOptionOrDefault<kS3SslEnabled>();
     auto use_creds = EraseOptionOrDefault<kS3UseInstanceCredentials>();
     return std::make_unique<S3StorageOptions>(
-      std::string{_file_path}, std::move(access_key), std::move(secret_key),
-      std::move(endpoint), std::move(region), std::move(iam_role), path_style,
-      ssl_enabled, use_creds);
+      std::string{_file_path}, std::string{access_key}, std::string{secret_key},
+      std::string{endpoint}, std::string{region}, std::string{iam_role},
+      path_style, ssl_enabled, use_creds);
   }
 
   std::optional<file_options::FormatType> TryFormatFromFile() const {
@@ -150,7 +150,7 @@ class FileOptionsParser : public OptionsParser {
     auto null_string = EraseOptionOrDefault<kNull>();
 
     // TODO: make variant option info
-    auto header = kHeader.DefaultValue<bool>();
+    auto header = kHeader.GetDefaultValue<bool>();
     if (const auto* option = EraseOption(kHeader)) {
       if (auto maybe_match = TryGet<std::string_view>(option->arg)) {
         if (*maybe_match == "match") {

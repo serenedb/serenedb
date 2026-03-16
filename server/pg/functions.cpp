@@ -37,6 +37,7 @@
 #include "pg/functions/extract.h"
 #include "pg/functions/interval.h"
 #include "pg/functions/json.h"
+#include "pg/functions/lexize.h"
 #include "pg/functions/size.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
@@ -652,6 +653,9 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "schema_size"});
   velox::registerFunction<PgTableSize, int64_t, velox::Varchar>(
     {prefix + "table_size"});
+  velox::registerFunction<PgTsLexize, velox::Array<velox::Varchar>,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "ts_lexize"});
   registerExtractFunctions(prefix);
   search::functions::registerSearchFunctions();
 }

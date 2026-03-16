@@ -2,7 +2,16 @@ statement ok
 CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
 
 statement ok
-CREATE INDEX foo_idx ON foo USING inverted(a, b, c);
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE INDEX foo_idx ON foo USING inverted(a, to_tsvector('test_english', b), to_tsvector('test_english', c));
 
 statement ok
 INSERT INTO foo values (1, 'quick brown fox jumps over lazy dog', 'value a');

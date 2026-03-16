@@ -3,6 +3,7 @@
 #include <iresearch/analysis/analyzers.hpp>
 
 #include "basics/down_cast.h"
+#include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
@@ -24,14 +25,19 @@ void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   catalog::Column::Id column_id) const {
-  // TODO(Dronplane): implement analyzer pool for caching. And do not create
-  // analyzer on demand! implement analyzer options storage - store in catalog
-  // or smth.
-  auto options = vpack::Slice::emptyObjectSlice();
-  return {.analyzer = irs::analysis::analyzers::Get(
-            _options.analyzer_name, irs::Type<irs::text_format::VPack>::get(),
-            {options.startAs<char>(), options.byteSize()}),
-          .features = _options.features};
+  if (!_options.text_dictionary.isSet()) {
+    // TODO(Dronplane): implement default text dictionary like in PG
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Default text dictionary is not implemented.");
+  }
+  auto snapshot = GetCatalog().GetSnapshot();
+
+  auto dict = snapshot->GetObject<Tokenizer>(_options.text_dictionary);
+  SDB_ENSURE(dict, ERROR_INTERNAL,
+             "Dictionary for inverted index does not exists");
+  auto tokenizer = dict->GetTokenizer();
+  SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+  return {.analyzer = *std::move(tokenizer), .features = _options.features};
 }
 
 }  // namespace sdb::catalog

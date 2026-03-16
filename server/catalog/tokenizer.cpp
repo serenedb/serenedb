@@ -41,12 +41,12 @@ ResultOr<Tokenizer::AnalyzerWrapper> Tokenizer::GetTokenizer() {
       return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                      "Failed to create analyzer"};
     }
-    return AnalyzerWrapper{analyzer.release(), Deleter{*this}};
+    return AnalyzerWrapper{analyzer.release(), Deleter{this}};
   }
   auto analyzer = std::move(_pool.back());
   SDB_ASSERT(analyzer);
   _pool.pop_back();
-  return AnalyzerWrapper{analyzer.release(), Deleter{*this}};
+  return AnalyzerWrapper{analyzer.release(), Deleter{this}};
 }
 
 void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {

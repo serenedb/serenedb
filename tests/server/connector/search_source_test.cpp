@@ -52,7 +52,13 @@ class DataSourceWithSearchTest : public ::testing::Test,
                                  public velox::test::VectorTestBase {
  public:
   static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
-    return {.analyzer = {std::make_unique<irs::StringTokenizer>()},
+    auto make_identity = [] {
+      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
+                         vpack::Slice::emptyObjectSlice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
             .features = irs::IndexFeatures::None};
   }
 

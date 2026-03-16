@@ -75,6 +75,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Table;
   } else if constexpr (std::is_same_v<T, Index>) {
     return ObjectType::Index;
+  } else if constexpr (std::is_same_v<T, Tokenizer>) {
+    return ObjectType::Tokenizer;
   } else {
     static_assert(false);
   }

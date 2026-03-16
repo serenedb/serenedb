@@ -276,18 +276,19 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   sdb::catalog::ColumnAnalyzer&& column_analyzer) {
   index_features = column_analyzer.features;
+  SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();
   string_analyzer = std::move(column_analyzer.analyzer);
 }
 
 void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {
   SDB_ASSERT(analyzer || string_analyzer);
-  SDB_ASSERT((analyzer == nullptr) || (string_analyzer == nullptr));
+  SDB_ASSERT((analyzer == nullptr) || !string_analyzer.has_value());
   if (analyzer) {
     auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
     sstream.reset(value);
   } else {
-    string_analyzer->reset(value);
+    string_analyzer.value()->reset(value);
   }
 }
 

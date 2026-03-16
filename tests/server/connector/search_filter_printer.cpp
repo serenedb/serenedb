@@ -29,6 +29,7 @@
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
+#include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/search_range.hpp>
@@ -208,6 +209,79 @@ std::ostream& operator<<(std::ostream& os, const ByWildcard& filter) {
   return os;
 }
 
+std::ostream& operator<<(std::ostream& os, const ByPhrase& filter) {
+  struct PartVisitor : util::Noncopyable {
+    auto operator()(const ByTermOptions& opts) const {
+      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
+      os << "Term:" << term_value;
+    }
+
+    auto operator()(const ByTermsOptions& opts) const {
+      os << "Terms:[";
+      for (auto& [term, boost] : opts.terms) {
+        os << "['" << ViewCast<char>(irs::bytes_view{term}) << "', " << boost
+           << "],";
+      }
+      os << "]";
+    }
+
+    auto operator()(const ByPrefixOptions& opts) const {
+      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
+      os << "Prefix:" << term_value;
+    }
+
+    auto operator()(const ByWildcardOptions& opts) const {
+      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
+      os << "Wildcard:" << term_value;
+    }
+
+    auto operator()(const ByEditDistanceOptions& opts) const {
+      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
+      os << "Levenshtein:" << term_value;
+    }
+    auto operator()(const ByRangeOptions& opts) const {
+      os << "Range: ";
+      if (opts.range.min_type == irs::BoundType::Unbounded) {
+        os << "*";
+      } else {
+        if (opts.range.min_type == irs::BoundType::Inclusive) {
+          os << "[";
+        } else {
+          os << "(";
+        }
+        os << std::string(reinterpret_cast<const char*>(opts.range.min.data()),
+                          opts.range.min.size());
+      }
+      os << "..";
+      if (opts.range.max_type == irs::BoundType::Unbounded) {
+        os << "*";
+      } else {
+        os << std::string(reinterpret_cast<const char*>(opts.range.max.data()),
+                          opts.range.max.size());
+        if (opts.range.max_type == irs::BoundType::Inclusive) {
+          os << "]";
+        } else {
+          os << ")";
+        }
+      }
+    }
+
+    PartVisitor(std::ostream& o) noexcept : os{o} {}
+
+    std::ostream& os;
+  };
+
+  os << "PHRASE[";
+  os << filter.field() << " = <";
+  for (const auto& part : filter.options()) {
+    part.part.visit(PartVisitor{os});
+    os << "(" << part.offs_max << ", " << part.offs_min << ")";
+    os << "; ";
+  }
+  os << ">]";
+  return os;
+}
+
 std::ostream& operator<<(std::ostream& os, const Filter& filter) {
   const auto& type = filter.type();
   if (type == irs::Type<All>::id()) {
@@ -240,6 +314,8 @@ std::ostream& operator<<(std::ostream& os, const Filter& filter) {
     return os << static_cast<const ByWildcard&>(filter);
   } else if (type == irs::Type<Empty>::id()) {
     return os << static_cast<const Empty&>(filter);
+  } else if (type == irs::Type<ByPhrase>::id()) {
+    return os << static_cast<const ByPhrase&>(filter);
   } else {
     return os << "[Unknown filter " << type().name() << " ]";
   }

@@ -5,21 +5,21 @@
 #include "basics/object_pool.hpp"
 #include "catalog/index.h"
 #include "catalog/search_analyzer_impl.h"
+#include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
 
 struct InvertedIndexOptions {
-  // TODO(Dronplane): make this configurable
-  std::string_view analyzer_name = "segmentation";
-  // We want to run PHRASE queries so need this for now
+  ObjectId text_dictionary = ObjectId::none();
+  bool store_values = false;
+  // TODO (Dronplane): make it configurable
   irs::IndexFeatures features =
     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
-  bool store_values = false;
 };
 
 struct ColumnAnalyzer {
-  irs::analysis::Analyzer::ptr analyzer;
+  Tokenizer::AnalyzerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
 

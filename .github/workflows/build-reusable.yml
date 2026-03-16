@@ -91,7 +91,7 @@ jobs:
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Address" >> $GITHUB_ENV
-              echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
             tsan)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
@@ -99,7 +99,7 @@ jobs:
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Thread" >> $GITHUB_ENV
-              echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
             msan)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
@@ -107,6 +107,22 @@ jobs:
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Memory" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+            ubsan)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=Undefined" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+            coverage)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=" >> $GITHUB_ENV
               echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
               ;;
             build)

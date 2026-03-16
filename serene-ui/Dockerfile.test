@@ -11,5 +11,3 @@ RUN npx playwright install --with-deps
 
 EXPOSE 3000
 CMD ["npm", "run", "dev:backend"]
-
-

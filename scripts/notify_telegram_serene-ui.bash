@@ -35,29 +35,29 @@ set -euo pipefail
 #------------------------------------------------------------------------------
 
 required_vars=(
-  "TG_TOKEN"
-  "TG_CHAT_ID"
-  "TG_THREAD_ID_MAIN"
-  "TG_THREAD_ID_BUILD"
-  "JOB_STATUS"
-  "BRANCH"
-  "ACTOR"
-  "WORKFLOW"
-  "RUN_NUMBER"
-  "RUN_URL"
+	"TG_TOKEN"
+	"TG_CHAT_ID"
+	"TG_THREAD_ID_MAIN"
+	"TG_THREAD_ID_BUILD"
+	"JOB_STATUS"
+	"BRANCH"
+	"ACTOR"
+	"WORKFLOW"
+	"RUN_NUMBER"
+	"RUN_URL"
 )
 
 missing_vars=()
 for var in "${required_vars[@]}"; do
-  if [[ -z "${!var:-}" ]]; then
-    missing_vars+=("$var")
-  fi
+	if [[ -z "${!var:-}" ]]; then
+		missing_vars+=("$var")
+	fi
 done
 
 if [[ ${#missing_vars[@]} -gt 0 ]]; then
-  echo "ERROR: Missing required environment variables:"
-  printf '  - %s\n' "${missing_vars[@]}"
-  exit 1
+	echo "ERROR: Missing required environment variables:"
+	printf '  - %s\n' "${missing_vars[@]}"
+	exit 1
 fi
 
 #------------------------------------------------------------------------------
@@ -67,18 +67,18 @@ fi
 TG_USERNAME="${ACTOR}"
 
 if [[ -n "${TG_USER_MAP:-}" ]]; then
-  if command -v jq &>/dev/null; then
-    MAPPED_USER=$(echo "${TG_USER_MAP}" | jq -r --arg user "${ACTOR}" '.[$user] // empty' 2>/dev/null || true)
-  else
-    # Fallback: simple pattern matching for JSON like {"user":"tg_user"}
-    MAPPED_USER=$(echo "${TG_USER_MAP}" | grep -o "\"${ACTOR}\":\"[^\"]*\"" | sed 's/.*:"$[^"]*$"/\1/' 2>/dev/null || true)
-  fi
+	if command -v jq &>/dev/null; then
+		MAPPED_USER=$(echo "${TG_USER_MAP}" | jq -r --arg user "${ACTOR}" '.[$user] // empty' 2>/dev/null || true)
+	else
+		# Fallback: simple pattern matching for JSON like {"user":"tg_user"}
+		MAPPED_USER=$(echo "${TG_USER_MAP}" | grep -o "\"${ACTOR}\":\"[^\"]*\"" | sed 's/.*:"$[^"]*$"/\1/' 2>/dev/null || true)
+	fi
 
-  if [[ -n "${MAPPED_USER}" ]]; then
-    TG_USERNAME="${MAPPED_USER}"
-    # Mask the Telegram username so it won't appear in logs
-    echo "::add-mask::${TG_USERNAME}"
-  fi
+	if [[ -n "${MAPPED_USER}" ]]; then
+		TG_USERNAME="${MAPPED_USER}"
+		# Mask the Telegram username so it won't appear in logs
+		echo "::add-mask::${TG_USERNAME}"
+	fi
 fi
 
 #------------------------------------------------------------------------------
@@ -87,17 +87,17 @@ fi
 
 case "${JOB_STATUS}" in
 success)
-  EMOJI="✅"
-  RESULT="SUCCESS"
-  ;;
+	EMOJI="✅"
+	RESULT="SUCCESS"
+	;;
 cancelled)
-  EMOJI="⚠️"
-  RESULT="CANCELLED"
-  ;;
+	EMOJI="⚠️"
+	RESULT="CANCELLED"
+	;;
 *)
-  EMOJI="💥"
-  RESULT="FAILURE"
-  ;;
+	EMOJI="💥"
+	RESULT="FAILURE"
+	;;
 esac
 
 #------------------------------------------------------------------------------
@@ -105,9 +105,9 @@ esac
 #------------------------------------------------------------------------------
 
 if [[ "${BRANCH}" == "main" ]]; then
-  THREAD_ID="${TG_THREAD_ID_MAIN}"
+	THREAD_ID="${TG_THREAD_ID_MAIN}"
 else
-  THREAD_ID="${TG_THREAD_ID_BUILD}"
+	THREAD_ID="${TG_THREAD_ID_BUILD}"
 fi
 
 #------------------------------------------------------------------------------
@@ -115,13 +115,13 @@ fi
 #------------------------------------------------------------------------------
 
 job_status_emoji() {
-  case "${1:-}" in
-  success) echo "✅" ;;
-  failure) echo "💥" ;;
-  cancelled) echo "⚠️" ;;
-  skipped) echo "⏭️" ;;
-  *) echo "➖" ;;
-  esac
+	case "${1:-}" in
+	success) echo "✅" ;;
+	failure) echo "💥" ;;
+	cancelled) echo "⚠️" ;;
+	skipped) echo "⏭️" ;;
+	*) echo "➖" ;;
+	esac
 }
 
 #------------------------------------------------------------------------------
@@ -134,26 +134,26 @@ MESSAGE="${EMOJI} @${TG_USERNAME} ${RESULT}: BRANCH=${BRANCH} ${WORKFLOW} #${RUN
 JOB_LINES=""
 
 declare -A JOB_MAP=(
-  ["Docker"]="${JOB_STATUS_DOCKER:-}"
-  ["Linux"]="${JOB_STATUS_LINUX:-}"
-  ["Windows"]="${JOB_STATUS_WINDOWS:-}"
-  ["macOS"]="${JOB_STATUS_MACOS:-}"
-  ["Release"]="${JOB_STATUS_RELEASE:-}"
+	["Docker"]="${JOB_STATUS_DOCKER:-}"
+	["Linux"]="${JOB_STATUS_LINUX:-}"
+	["Windows"]="${JOB_STATUS_WINDOWS:-}"
+	["macOS"]="${JOB_STATUS_MACOS:-}"
+	["Release"]="${JOB_STATUS_RELEASE:-}"
 )
 
 # Preserve a consistent display order
 JOB_ORDER=("Docker" "Linux" "Windows" "macOS" "Release")
 
 for job_name in "${JOB_ORDER[@]}"; do
-  job_result="${JOB_MAP[$job_name]}"
-  if [[ -n "${job_result}" ]]; then
-    job_emoji=$(job_status_emoji "${job_result}")
-    JOB_LINES+=$'\n'"  ${job_emoji} ${job_name}: ${job_result}"
-  fi
+	job_result="${JOB_MAP[$job_name]}"
+	if [[ -n "${job_result}" ]]; then
+		job_emoji=$(job_status_emoji "${job_result}")
+		JOB_LINES+=$'\n'"  ${job_emoji} ${job_name}: ${job_result}"
+	fi
 done
 
 if [[ -n "${JOB_LINES}" ]]; then
-  MESSAGE+=$'\n'"Jobs:${JOB_LINES}"
+	MESSAGE+=$'\n'"Jobs:${JOB_LINES}"
 fi
 
 #------------------------------------------------------------------------------
@@ -166,16 +166,16 @@ echo "  Branch:  ${BRANCH}"
 echo "  Actor:   ${ACTOR} (GitHub)"
 
 curl \
-  --silent \
-  --show-error \
-  --location \
-  --request POST \
-  --form "text=${MESSAGE}" \
-  --form "chat_id=${TG_CHAT_ID}" \
-  --form "message_thread_id=${THREAD_ID}" \
-  --form 'link_preview_options={"is_disabled":true}' \
-  "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-  >/dev/null ||
-  echo "WARNING: Failed to send Telegram notification"
+	--silent \
+	--show-error \
+	--location \
+	--request POST \
+	--form "text=${MESSAGE}" \
+	--form "chat_id=${TG_CHAT_ID}" \
+	--form "message_thread_id=${THREAD_ID}" \
+	--form 'link_preview_options={"is_disabled":true}' \
+	"https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+	>/dev/null ||
+	echo "WARNING: Failed to send Telegram notification"
 
 echo "Done."

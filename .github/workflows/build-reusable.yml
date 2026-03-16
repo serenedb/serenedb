@@ -4,47 +4,47 @@ on:
   workflow_call:
     inputs:
       PRESET:
-        description: 'Build preset'
+        description: "Build preset"
         type: string
         required: true
-        default: 'build'
+        default: "build"
       LOCATION:
-        description: 'Where the load is executed'
+        description: "Where the load is executed"
         type: string
         required: true
-        default: 'self-hosted'
+        default: "self-hosted"
       BRANCH:
-        description: 'SereneDB branch to test (defaults to current branch)'
+        description: "SereneDB branch to test (defaults to current branch)"
         type: string
         required: false
-        default: ''
+        default: ""
       DOCKER_SERENEDB_IMAGE:
-        description: 'Produce SereneDB Docker Images'
+        description: "Produce SereneDB Docker Images"
         required: true
         type: boolean
         default: false
       DOCKER_EXTRA_TAGS:
-        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        description: "(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE"
         required: false
         type: string
-        default: ''
+        default: ""
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Private Docker Registry'
+        description: "Push images to Private Docker Registry"
         required: true
         type: boolean
         default: false
       EXTRA_ARTIFACTS:
-        description: 'Keep these artifacts additionally'
+        description: "Keep these artifacts additionally"
         type: string
         required: false
-        default: ''
+        default: ""
       DOCKER_BUILD_IMAGES:
-        description: 'Produce SereneDB Build Images'
+        description: "Produce SereneDB Build Images"
         required: true
         type: boolean
         default: false
       BUILD_CONFIG:
-        description: 'JSON configuration for builds and job settings'
+        description: "JSON configuration for builds and job settings"
         type: string
         required: false
         default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
@@ -70,8 +70,8 @@ env:
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
   CLUSTER_BRANCH: main
   BUILD_IMAGE: registry.serenedb.com:5000/serenedb-build-ubuntu:latest
-  SDB_CLUSTER: 'Off'
-  DEBUG_PRINT_ENV: 'false'
+  SDB_CLUSTER: "Off"
+  DEBUG_PRINT_ENV: "false"
 
 jobs:
   build-test-package:
@@ -231,7 +231,7 @@ jobs:
         run: ./packages/build_docker.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
-      - name: Produce Build Images
+      - name: Produce Build Image
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
@@ -369,13 +369,13 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID_MAIN: '51'
-          TG_THREAD_ID_BUILD: '53'
+          TG_THREAD_ID_MAIN: "51"
+          TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ env.BRANCH }}
           JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
-          WORKFLOW: ${{ github.workflow }}
+          RUN_NAME: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash

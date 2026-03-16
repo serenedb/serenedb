@@ -1,6 +1,6 @@
 name: SereneDB-Build-Manual
 
-run-name: "SereneDB [${{ inputs.PRESET }}] by @${{ github.actor }}"
+run-name: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
 
 on:
   workflow_dispatch:

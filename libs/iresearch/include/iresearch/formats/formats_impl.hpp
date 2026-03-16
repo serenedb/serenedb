@@ -3140,20 +3140,17 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, WandExtent,
     return;
   }
 
-  score_t tmp_scores[kPostingBlock];
-
   auto process_batch = [&]<size_t N>(std::span<const doc_id_t, N> docs) {
-    // Append docs via memcpy into reserved storage.
     const auto old_size = out_docs.size();
     const auto new_size = old_size + docs.size();
     SDB_ASSERT(new_size <= out_docs.capacity());
 
-    // TODO(gnus): this takes ~2% due to 0 initialization
     out_docs.resize(new_size);
     std::memcpy(out_docs.data() + old_size, docs.data(),
                 docs.size() * sizeof(doc_id_t));
 
-    auto* out_score = tmp_scores;
+    auto* scores = out_scores.data() + out_scores.size();
+
     if constexpr (N == kPostingBlock) {
       SDB_ASSERT(std::data(_docs) == docs.data());
       if (fetcher) {
@@ -3162,7 +3159,8 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, WandExtent,
       if constexpr (IteratorTraits::Frequency()) {
         std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
       }
-      scorer.ScorePostingBlock(out_score);
+      out_scores.resize(out_scores.size() + docs.size());
+      scorer.ScorePostingBlock(scores);
     } else {
       SDB_ASSERT(std::data(_docs) <= docs.data());
       SDB_ASSERT(docs.data() <= std::data(_docs) + std::size(_docs));
@@ -3173,12 +3171,9 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, WandExtent,
         const auto offset = docs.data() - std::data(_docs);
         std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
       }
-      scorer.Score(out_score, docs.size());
+      out_scores.resize(out_scores.size() + docs.size());
+      scorer.Score(scores, docs.size());
     }
-    const auto score_old = out_scores.size();
-    out_scores.resize(score_old + docs.size());
-    std::memcpy(out_scores.data() + score_old, out_score,
-                docs.size() * sizeof(score_t));
   };
 
   // ShallowSeekToBlock may have repositioned the skip reader without

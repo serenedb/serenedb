@@ -164,18 +164,18 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
     // Process groups of 8 with AVX2.
     for (; i + 8 <= count; i += 8) {
-      auto vscores = _mm256_loadu_ps(scores + i);
-      auto vcmp = _mm256_cmp_ps(vscores, threshold, _CMP_GT_OQ);
-      auto pass = static_cast<unsigned>(_mm256_movemask_ps(vcmp));
+      auto scores_vec = _mm256_loadu_ps(scores + i);
+      auto cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+      auto pass = static_cast<unsigned>(_mm256_movemask_ps(cmp));
 
-      while (pass != 0) {
+      while (pass) {
         const int bit = std::countr_zero(pass);
-        pass &= pass - 1;
+        pass = PopBit(pass);
         const score_t score = scores[i + bit];
         if (AddImpl(score, docs[i + bit])) {
           threshold = _mm256_set1_ps(*_score_threshold);
-          vcmp = _mm256_cmp_ps(vscores, threshold, _CMP_GT_OQ);
-          pass &= static_cast<unsigned>(_mm256_movemask_ps(vcmp));
+          cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+          pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
         }
       }
     }

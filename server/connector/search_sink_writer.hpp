@@ -250,6 +250,8 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
 };
 
+// SearchSinkInsertBaseImpl stores a reference to the transaction, so the
+// transaction object must exist before it is constructed.
 class SearchSinkBackfillTrxHolder {
  protected:
   SearchSinkBackfillTrxHolder(irs::IndexWriter::Transaction trx)

@@ -1036,7 +1036,6 @@ Result LocalCatalog::CreateIndex(
       r = clone->RegisterObject(*shard, (*index)->GetId(), false);
       SDB_ASSERT(r.ok());
 
-      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       if (operation_options.create_with_tombstone) {
         r =
           _engine->WriteTombstone((*index)->GetRelationId(), (*index)->GetId());
@@ -1045,6 +1044,7 @@ Result LocalCatalog::CreateIndex(
         }
         (*index)->SetTombstoned(true);
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {  // Write index definition
         vpack::Builder b;
         (*index)->WriteInternal(b);
@@ -1192,14 +1192,13 @@ Result LocalCatalog::CreateTable(
 
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
-      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-
       if (operation_options.create_with_tombstone) {
         r = _engine->WriteTombstone(*schema_id, table->GetId());
         if (!r.ok()) {
           return r;
         }
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder b;
       b.openObject();

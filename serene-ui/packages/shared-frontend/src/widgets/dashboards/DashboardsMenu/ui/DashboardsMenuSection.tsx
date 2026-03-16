@@ -41,6 +41,7 @@ export const DashboardsMenuSection: React.FC<DashboardsMenuSectionProps> = ({
                 <button
                     type="button"
                     onClick={() => toggleSection(sectionId)}
+                    data-testid={`dashboardsMenuSection-toggle-${sectionId}`}
                     className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left">
                     <ArrowDownIcon
                         className={cn(
@@ -66,6 +67,7 @@ export const DashboardsMenuSection: React.FC<DashboardsMenuSectionProps> = ({
                         <div
                             role="separator"
                             aria-orientation="horizontal"
+                            data-testid={`dashboardsMenuSection-resize-${sectionId}`}
                             onPointerDown={onResizePointerDown}
                             className="group relative h-1.5 cursor-row-resize touch-none">
                             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-border" />

@@ -186,7 +186,9 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
 
     if (!currentDashboard) {
         return (
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+            <div
+                className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+                data-testid="dashboardGrid-emptyState">
                 <div className="rounded-xs border bg-background px-6 py-5 shadow-sm">
                     <p className="text-sm text-primary-foreground/70">
                         select dashboard
@@ -199,6 +201,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     return (
         <div
             ref={containerRef}
+            data-testid="dashboardGrid-root"
             className="relative flex min-h-0 flex-1 overflow-hidden [&_.recharts-sector:focus]:outline-none [&_.recharts-sector:focus-visible]:outline-none [&_.recharts-surface:focus]:outline-none [&_.recharts-surface:focus-visible]:outline-none [&_.recharts-rectangle:focus]:outline-none [&_.recharts-rectangle:focus-visible]:outline-none [&_.recharts-dot:focus]:outline-none [&_.recharts-dot:focus-visible]:outline-none [&_.recharts-symbols:focus]:outline-none [&_.recharts-symbols:focus-visible]:outline-none [&_.recharts-trapezoid:focus]:outline-none [&_.recharts-trapezoid:focus-visible]:outline-none">
             <div className="absolute bottom-4 left-4 z-20">
                 <DashboardScaleButton scale={scale} onScaleChange={setScale} />
@@ -213,6 +216,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                 />
             </div>
             <div
+                data-testid="dashboardGrid-scrollArea"
                 className="relative z-10 min-h-0 flex-1 overflow-auto"
                 style={{
                     backgroundImage: `url(${dashboardBackgroundUrl})`,

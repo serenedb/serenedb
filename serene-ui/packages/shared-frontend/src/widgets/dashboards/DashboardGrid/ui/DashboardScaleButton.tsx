@@ -28,6 +28,7 @@ export const DashboardScaleButton: React.FC<DashboardScaleButtonProps> = ({
                 <Button
                     variant="secondary"
                     className="h-9 min-w-20 justify-between rounded-lg px-3 bg-[#282828] hover:bg-[#282828] border-1"
+                    data-testid="dashboardScaleButton-trigger"
                     title="Dashboard scale">
                     <span>{Math.round(scale * 100)}%</span>
                     <ChevronDownIcon className="size-4" />
@@ -46,6 +47,7 @@ export const DashboardScaleButton: React.FC<DashboardScaleButtonProps> = ({
                             <Button
                                 key={option}
                                 variant={isActive ? "default" : "ghost"}
+                                data-testid={`dashboardScaleButton-option-${Math.round(option * 100)}`}
                                 className="justify-start rounded-md px-2"
                                 onClick={() => {
                                     onScaleChange(option);

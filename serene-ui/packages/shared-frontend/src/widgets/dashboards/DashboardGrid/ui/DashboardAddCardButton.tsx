@@ -287,6 +287,7 @@ export const DashboardAddCardButton: React.FC<DashboardAddCardButtonProps> = ({
                 <Button
                     variant="default"
                     className="h-9 min-w-20 justify-between rounded-lg px-3"
+                    data-testid="dashboardAddCardButton-trigger"
                     title="Add card">
                     <span>Add card</span>
                     <span>|</span>
@@ -305,6 +306,7 @@ export const DashboardAddCardButton: React.FC<DashboardAddCardButtonProps> = ({
                             type="button"
                             variant="ghost"
                             disabled={isPending}
+                            data-testid={`dashboardAddCardButton-option-${option.key}`}
                             className="h-auto w-full flex-col items-start gap-0.5 rounded-md px-3 py-2 text-left"
                             onClick={() => void handleAddCard(option)}>
                             <span className="text-sm text-primary-foreground">

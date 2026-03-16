@@ -103,6 +103,7 @@ export const DashboardSettingsButton: React.FC<
                     variant="secondary"
                     size="icon"
                     className="size-9"
+                    data-testid="dashboardSettingsButton-trigger"
                     title="Dashboard settings">
                     <DashboardSettingsIcon />
                 </Button>
@@ -124,6 +125,7 @@ export const DashboardSettingsButton: React.FC<
                         </div>
                         <Checkbox
                             id="dashboard-auto-refresh"
+                            data-testid="dashboardSettingsButton-autoRefresh"
                             checked={draft.auto_refresh}
                             onCheckedChange={(checked) => {
                                 setDraft((currentValue) => ({
@@ -142,6 +144,7 @@ export const DashboardSettingsButton: React.FC<
                             type="number"
                             min={1}
                             step={1}
+                            data-testid="dashboardSettingsButton-refreshInterval"
                             value={draft.refresh_interval}
                             onChange={(event) => {
                                 setDraft((currentValue) => ({
@@ -158,6 +161,7 @@ export const DashboardSettingsButton: React.FC<
                             type="number"
                             min={1}
                             step={1}
+                            data-testid="dashboardSettingsButton-rowLimit"
                             value={draft.row_limit}
                             onChange={(event) => {
                                 setDraft((currentValue) => ({

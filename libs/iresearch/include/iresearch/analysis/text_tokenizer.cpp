@@ -41,7 +41,6 @@
 #include <cctype>  // for std::isspace(...)
 #include <filesystem>
 #include <fstream>
-#include <iresearch/analysis/tokenizer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <mutex>
 #include <string_view>
@@ -53,6 +52,7 @@
 #include "basics/runtime_utils.hpp"
 #include "basics/thread_utils.hpp"
 #include "basics/utf8_utils.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"

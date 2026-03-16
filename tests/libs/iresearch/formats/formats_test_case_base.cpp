@@ -116,14 +116,15 @@ void FormatTestCase::AssertFrequencyAndPositions(irs::DocIterator& expected,
   }
 
   auto* expected_freq = irs::get<irs::FreqAttr>(expected);
-  auto* actual_freq = irs::get<irs::FreqAttr>(actual);
+  auto* actual_freq = irs::get<irs::FreqBlockAttr>(actual);
   ASSERT_EQ(!expected_freq, !actual_freq);
 
   if (!expected_freq) {
     return;
   }
 
-  ASSERT_EQ(expected_freq->value, actual_freq->value);
+  actual.FetchScoreArgs(0);
+  ASSERT_EQ(expected_freq->value, actual_freq->value[0]);
 
   auto* expected_pos = irs::GetMutable<irs::PosAttr>(&expected);
   auto* actual_pos = irs::GetMutable<irs::PosAttr>(&actual);

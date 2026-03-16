@@ -59,8 +59,8 @@ class Format10TestCase : public tests::FormatTestCase {
 
   void AssertFrequencyAndPositions(irs::DocIterator& expected,
                                    irs::DocIterator& actual) {
-    auto* expected_freq = irs::GetMutable<irs::FreqAttr>(&expected);
-    auto* actual_freq = irs::GetMutable<irs::FreqAttr>(&actual);
+    auto* expected_freq = irs::GetMutable<irs::FreqBlockAttr>(&expected);
+    auto* actual_freq = irs::GetMutable<irs::FreqBlockAttr>(&actual);
     ASSERT_EQ(!expected_freq, !actual_freq);
 
     if (!expected_freq) {

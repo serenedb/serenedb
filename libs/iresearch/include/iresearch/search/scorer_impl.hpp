@@ -88,6 +88,4 @@ struct TermCollectorImpl final : TermCollector {
   void write(DataOutput& out) const final { out.WriteV64(docs_with_term); }
 };
 
-inline constexpr FreqAttr kEmptyFreq;
-
 }  // namespace irs

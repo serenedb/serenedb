@@ -351,9 +351,8 @@ class PostingsWriterBase : public PostingsWriter {
 
   struct Attributes final : AttributeProvider {
     ValueIndex doc;
-    FreqAttr freq_value;
+    FreqAttr freq;
 
-    const FreqAttr* freq{};
     PosAttr* pos{};
     const OffsAttr* offs{};
 
@@ -363,22 +362,19 @@ class PostingsWriterBase : public PostingsWriter {
       }
 
       if (type == irs::Type<FreqAttr>::id()) {
-        return const_cast<FreqAttr*>(freq);
+        return &freq;
       }
 
       return nullptr;
     }
 
     void Reset(AttributeProvider& attrs) noexcept {
-      pos = &PosAttr::empty();
-      offs = nullptr;
-
-      freq = irs::get<FreqAttr>(attrs);
-      if (freq) {
-        if (auto* p = irs::GetMutable<PosAttr>(&attrs)) {
-          pos = p;
-          offs = irs::get<OffsAttr>(*pos);
-        }
+      if (auto* p = irs::GetMutable<PosAttr>(&attrs)) {
+        pos = p;
+        offs = irs::get<OffsAttr>(*pos);
+      } else {
+        pos = &PosAttr::empty();
+        offs = nullptr;
       }
     }
   };
@@ -424,9 +420,6 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   if (!_columns) [[unlikely]] {
     return;
   }
-
-  // Make frequency avaliable for Prepare
-  _attrs.freq = _features.HasFrequency() ? &_attrs.freq_value : nullptr;
 
   for (size_t i = 0; auto& writer : _writers) {
     const bool valid = writer && writer->Prepare(*_columns, meta, _attrs);
@@ -739,7 +732,7 @@ void PostingsWriterImpl<FormatTraits>::BeginField(const FieldProperties& meta) {
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::BeginDocument() {
   if (const auto id = _attrs.doc.value; _doc.last < id) [[likely]] {
-    _doc.Push(id, _attrs.freq_value.value);
+    _doc.Push(id, _attrs.freq.value);
 
     if (_doc.Full()) {
       FormatTraits::WriteBlockDelta(*_doc_out, _doc.docs.data(),
@@ -821,19 +814,13 @@ void PostingsWriterImpl<FormatTraits>::End() {
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
                                              TermMeta& base_meta) {
-  auto refresh = [this, no_freq = FreqAttr{}](auto& attrs) noexcept {
-    _attrs.Reset(attrs);
-    if (!_attrs.freq) {
-      _attrs.freq = &no_freq;
-    }
-  };
+  auto refresh = [&](auto& attrs) noexcept { _attrs.Reset(attrs); };
 
   if (!_volatile_attributes) {
     refresh(docs);
   } else {
     auto* subscription = irs::get<AttrProviderChangeAttr>(docs);
     SDB_ASSERT(subscription);
-
     subscription->Subscribe(refresh);
   }
 
@@ -851,9 +838,8 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
     if (doc_limits::eof(doc)) {
       break;
     }
-    SDB_ASSERT(_attrs.freq);
     _attrs.doc.value = doc;
-    _attrs.freq_value.value = _attrs.freq->value;
+    _attrs.freq.value = docs.GetFreq();
 
     if (doc_limits::valid(_doc.last) && _doc.Empty()) {
       _skip.Skip(docs_count, [this](size_t level, MemoryIndexOutput& out) {
@@ -878,7 +864,7 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
       AddPosition(_attrs.pos->value());
     }
     ++docs_count;
-    total_freq += _attrs.freq_value.value;
+    total_freq += _attrs.freq.value;
     EndDocument();
   }
 
@@ -933,7 +919,6 @@ struct DocState {
   const IndexInput* pos_in;
   const IndexInput* pay_in;
   const TermMetaImpl* term_state;
-  const uint32_t* freq;
   uint32_t* enc_buf;
 };
 
@@ -962,7 +947,7 @@ class PositionImpl final : public PosAttr {
   }
 
   value_t seek(value_t target) final {
-    const uint32_t freq = *_freq;
+    const uint32_t freq = _freq;
     if (_pend_pos > freq) {
       Skip(_pend_pos - freq);
       _pend_pos = freq;
@@ -992,7 +977,7 @@ class PositionImpl final : public PosAttr {
       return false;
     }
 
-    const uint32_t freq = *_freq;
+    const uint32_t freq = _freq;
 
     if (_pend_pos > freq) {
       Skip(_pend_pos - freq);
@@ -1038,7 +1023,6 @@ class PositionImpl final : public PosAttr {
     _cookie.pend_pos = state.term_state->pos_offset;
     sdb::basics::downCast<InputType>(*_pos_in).Seek(
       state.term_state->pos_start);
-    _freq = state.freq;
     _enc_buf = state.enc_buf;
     _pend_pos = _cookie.pend_pos;
 
@@ -1073,7 +1057,8 @@ class PositionImpl final : public PosAttr {
   }
 
   // notify iterator that corresponding DocIterator has moved forward
-  void Notify(uint32_t n) {
+  void Notify(uint32_t freq, uint32_t n) {
+    _freq = freq;
     _pend_pos += n;
     _cookie.pend_pos += n;
   }
@@ -1083,7 +1068,7 @@ class PositionImpl final : public PosAttr {
     ClearAttributes();
   }
 
-  uint32_t DocFreq() const noexcept { return *_freq; }
+  uint32_t DocFreq() const noexcept { return _freq; }
 
  private:
   void Skip(uint64_t count) {
@@ -1149,7 +1134,7 @@ class PositionImpl final : public PosAttr {
     _offs_start_deltas;
   [[no_unique_address]] ForOffset<uint32_t[IteratorTraits::kBlockSize]>
     _offs_lengths;
-  const uint32_t* _freq;   // lenght of the posting list for a document
+  uint32_t _freq = 0;      // length of the posting list for a document
   uint32_t* _enc_buf;      // auxillary buffer to decode data
   uint64_t _pend_pos = 0;  // how many positions "behind" we are
   uint64_t _buf_pos = IteratorTraits::kBlockSize;  // position in pos_deltas_
@@ -1162,9 +1147,9 @@ class PositionImpl final : public PosAttr {
 template<typename IteratorTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<FreqAttr, FreqBlockAttr, CostAttr, PositionImpl<IteratorTraits>>,
+  std::tuple<FreqBlockAttr, CostAttr, PositionImpl<IteratorTraits>>,
   std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<FreqAttr, FreqBlockAttr, CostAttr>,
+                     std::tuple<FreqBlockAttr, CostAttr>,
                      std::tuple<CostAttr>>>;
 
 template<typename IteratorTraits>
@@ -1213,10 +1198,18 @@ class PostingIteratorBase : public DocIterator {
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final;
 
+  IRS_FORCE_INLINE uint32_t GetFreq() const final {
+    if constexpr (IteratorTraits::Frequency()) {
+      return *(std::end(_freqs) - _left_in_leaf - 1);
+    } else {
+      return 0;
+    }
+  }
+
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(_collected_freqs);
-      _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
+      _collected_freqs[index] = GetFreq();
     }
   }
 
@@ -1249,8 +1242,10 @@ class PostingIteratorBase : public DocIterator {
   score_t _boost = kNoBoost;
 
   uint32_t _enc_buf[IteratorTraits::kBlockSize];
+  // TODO(gnusi) we don't need collected freqs if we don't compute score
+  // But for positions we need freqs, even without score
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
-    _collected_freqs;
+    _collected_freqs = nullptr;
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
@@ -1273,15 +1268,11 @@ doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
 
   _doc = *(std::end(_docs) - _left_in_leaf);
 
-  if constexpr (IteratorTraits::Frequency()) {
-    auto& freq_value = std::get<FreqAttr>(_attrs).value;
-    freq_value = *(std::end(_freqs) - _left_in_leaf);
-
-    if constexpr (IteratorTraits::Position()) {
-      auto& pos = std::get<Position>(_attrs);
-      pos.Notify(freq_value);
-      pos.Clear();
-    }
+  if constexpr (IteratorTraits::Position()) {
+    auto& pos = std::get<Position>(_attrs);
+    const auto freq = *(std::end(_freqs) - _left_in_leaf);
+    pos.Notify(freq, freq);
+    pos.Clear();
   }
 
   --_left_in_leaf;
@@ -1308,14 +1299,9 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     }
 
     if (target <= doc) {
-      if constexpr (IteratorTraits::Frequency()) {
-        auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(_freqs) - left_in_leaf);
-      }
-
       if constexpr (IteratorTraits::Position()) {
         auto& pos = std::get<Position>(_attrs);
-        pos.Notify(notify);
+        pos.Notify(*(std::end(_freqs) - left_in_leaf), notify);
         pos.Clear();
       }
 
@@ -1348,10 +1334,6 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
     }
 
     auto next = [&](uint32_t left_in_leaf, doc_id_t doc) IRS_FORCE_INLINE {
-      if constexpr (IteratorTraits::Frequency()) {
-        auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(_freqs) - left_in_leaf);
-      }
       _left_in_leaf = left_in_leaf - 1;
       return _doc = doc;
     };
@@ -1782,7 +1764,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
       .pos_in = pos_in,
       .pay_in = pay_in,
       .term_state = &term_state,
-      .freq = &std::get<FreqAttr>(this->_attrs).value,
       .enc_buf = this->_enc_buf,
     };
 
@@ -2744,10 +2725,8 @@ class SingleWandIterator : public DocIterator {
                ScoreCollector& collector) final;
 
   void FetchScoreArgs(uint16_t index) final {
-    if constexpr (IteratorTraits::Frequency()) {
-      SDB_ASSERT(_collected_freqs);
-      _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
-    }
+    SDB_ASSERT(_collected_freqs);
+    _collected_freqs[index] = *(std::end(_freqs) - _left_in_leaf - 1);
   }
 
   void Init(const PostingCookie& cookie) noexcept {
@@ -2904,10 +2883,8 @@ class SingleWandIterator : public DocIterator {
   score_t _boost = kNoBoost;
 
   uint32_t _enc_buf[IteratorTraits::kBlockSize];
-  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
-    _collected_freqs;
-  [[no_unique_address]] utils::Need<
-    IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
+  uint32_t* _collected_freqs = nullptr;
+  [[no_unique_address]] uint32_t _freqs[IteratorTraits::kBlockSize];
   doc_id_t _docs[IteratorTraits::kBlockSize];
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
@@ -2931,9 +2908,7 @@ SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
     if (fetcher) {
       fetcher->FetchPostingBlock(docs);
     }
-    if constexpr (IteratorTraits::Frequency()) {
-      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
-    }
+    std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
     auto* p = reinterpret_cast<score_t*>(std::begin(_enc_buf));
     score.ScorePostingBlock(p);
     return p;
@@ -2943,10 +2918,8 @@ SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
     if (fetcher) {
       fetcher->Fetch(docs);
     }
-    if constexpr (IteratorTraits::Frequency()) {
-      const auto offset = docs.data() - std::data(_docs);
-      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
-    }
+    const auto offset = docs.data() - std::data(_docs);
+    std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
     // TODO(mbkkt) use offset here?
     auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - docs.size());
     score.Score(p, docs.size());
@@ -3031,9 +3004,6 @@ doc_id_t SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
     --_left_in_leaf;
 
     if (target <= doc) {
-      auto& freq_value = std::get<FreqAttr>(_attrs).value;
-      freq_value = *(std::end(_freqs) - (_left_in_leaf + 1));
-
       return _doc = doc;
     }
   }
@@ -3119,19 +3089,13 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = IteratorTraits::kBlockSize;
     _left_in_list -= IteratorTraits::kBlockSize;
-    if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::ReadBlock(GetDocIn(), _enc_buf, _freqs);
-    } else if (FieldTraits::Frequency()) {
-      IteratorTraits::SkipBlock(GetDocIn());
-    }
+    IteratorTraits::ReadBlock(GetDocIn(), _enc_buf, _freqs);
   } else {
     IteratorTraits::ReadTailDelta(tail, GetDocIn(), _enc_buf, _docs, prev_doc);
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = tail;
     _left_in_list = 0;
-    if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::ReadTail(tail, GetDocIn(), _enc_buf, _freqs);
-    }
+    IteratorTraits::ReadTail(tail, GetDocIn(), _enc_buf, _freqs);
   }
 }
 

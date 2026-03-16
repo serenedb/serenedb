@@ -645,14 +645,16 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
     // check document attributes
     {
       auto* expected_freq = irs::get<irs::FreqAttr>(*expected_docs);
-      auto* actual_seq_freq = irs::get<irs::FreqAttr>(*seq_docs);
-      auto* actual_seek_freq = irs::get<irs::FreqAttr>(*seek_docs);
+      auto* actual_seq_freq = irs::get<irs::FreqBlockAttr>(*seq_docs);
+      auto* actual_seek_freq = irs::get<irs::FreqBlockAttr>(*seek_docs);
 
       if (expected_freq) {
         ASSERT_FALSE(!actual_seq_freq);
         ASSERT_FALSE(!actual_seek_freq);
-        ASSERT_EQ(expected_freq->value, actual_seq_freq->value);
-        ASSERT_EQ(expected_freq->value, actual_seek_freq->value);
+        seq_docs->FetchScoreArgs(0);
+        ASSERT_EQ(expected_freq->value, actual_seq_freq->value[0]);
+        seek_docs->FetchScoreArgs(0);
+        ASSERT_EQ(expected_freq->value, actual_seek_freq->value[0]);
       }
 
       auto* expected_pos = irs::GetMutable<irs::PosAttr>(expected_docs.get());

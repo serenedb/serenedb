@@ -453,7 +453,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
                                 threshold, strict);
 
     auto score_function =
-      irs::get<irs::FreqAttr>(*actual)
+      irs::get<irs::FreqBlockAttr>(*actual)
         ? actual->PrepareScore(
             {.scorer = &scorer, .segment = &irs::SubReader::empty()})
         : irs::ScoreFunction::Constant(
@@ -524,7 +524,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
                               threshold, strict);
 
   auto score_function =
-    irs::get<irs::FreqAttr>(*actual)
+    irs::get<irs::FreqBlockAttr>(*actual)
       ? actual->PrepareScore(
           {.scorer = &scorer, .segment = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
@@ -603,7 +603,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
                               threshold, strict);
 
   auto score_function =
-    irs::get<irs::FreqAttr>(*actual)
+    irs::get<irs::FreqBlockAttr>(*actual)
       ? actual->PrepareScore(
           {.scorer = &scorer, .segment = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());

@@ -1,0 +1,4 @@
+# Stub config for find_package(AWSSDK 1.11.654 ...) for velox
+set(PACKAGE_VERSION "1.11.654")
+set(PACKAGE_VERSION_COMPATIBLE TRUE)
+set(PACKAGE_VERSION_EXACT TRUE)

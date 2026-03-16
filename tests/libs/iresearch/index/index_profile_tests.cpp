@@ -21,15 +21,15 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <thread>
 
 #include "basics/file_utils_ext.hpp"
 #include "index_tests.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/index_utils.hpp"
 
 namespace {
 bool Visit(const irs::ColumnReader& reader,
@@ -37,17 +37,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }

@@ -21,12 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/directory_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

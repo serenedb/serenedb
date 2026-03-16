@@ -23,11 +23,11 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
-#include <iresearch/utils/utf8_character_tables.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/utils/utf8_character_tables.hpp"
 #include "tests_config.hpp"
 
 namespace {

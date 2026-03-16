@@ -20,13 +20,12 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/proxy_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/proxy_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -44,16 +43,11 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
   }
 
   Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    if (irs::Type<irs::DocAttr>::id() == id) {
-      return &_doc;
-    }
     if (irs::Type<irs::CostAttr>::id() == id) {
       return &_cost;
     }
     return nullptr;
   }
-
-  doc_id_t value() const noexcept final { return _doc.value; }
 
   doc_id_t advance() final {
     if (_resetted) {
@@ -62,31 +56,30 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
     }
 
     if (_current != _end) {
-      _doc.value = *_current;
+      _doc = *_current;
       ++_current;
     } else {
-      _doc.value = doc_limits::eof();
+      _doc = doc_limits::eof();
     }
-    return _doc.value;
+    return _doc;
   }
 
   doc_id_t seek(doc_id_t target) final {
-    while (_doc.value < target && next()) {
+    while (_doc < target && next()) {
     }
-    return _doc.value;
+    return _doc;
   }
 
   void Reset() noexcept {
     _current = _end;
     _resetted = true;
-    _doc.value = doc_limits::invalid();
+    _doc = doc_limits::invalid();
   }
 
  private:
   std::vector<doc_id_t>::const_iterator _begin;
   std::vector<doc_id_t>::const_iterator _current;
   std::vector<doc_id_t>::const_iterator _end;
-  irs::DocAttr _doc;
   irs::CostAttr _cost;
   bool _resetted;
 };

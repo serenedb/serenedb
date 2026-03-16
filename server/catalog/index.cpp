@@ -21,46 +21,106 @@
 #include "catalog/index.h"
 
 #include "basics/errors.h"
+#include "catalog/inverted_index.h"
 #include "catalog/object.h"
-#include "catalog/secondary_index.h"
+#include "catalog/types.h"
 #include "vpack/serializer.h"
 
 namespace sdb::catalog {
 namespace {
-template<typename T>
-ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
-                                           IndexOptions<vpack::Slice> options) {
-  IndexOptions<typename T::Options> impl_options{
-    .base = std::move(options.base),
-  };
 
-  auto r = vpack::ReadTupleNothrow(options.impl, impl_options.impl);
-  if (!r.ok()) {
-    return std::unexpected{std::move(r)};
-  }
+ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
+  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  catalog::IndexBaseOptions options) {
+  catalog::IndexOptions<InvertedIndexOptions> inverted_options;
 
-  return std::make_shared<T>(std::move(impl_options), database_id);
+  inverted_options.base = std::move(options);
+
+  return std::make_shared<InvertedIndex>(database_id, schema_id, id,
+                                         relation_id, inverted_options);
 }
+
+Result ValidateInvertedIndexOptions(std::span<const Column*> indexed_columns) {
+  for (auto c : indexed_columns) {
+    if (c->type->providesCustomComparison()) {
+      return {ERROR_BAD_PARAMETER, "Column ", c->name,
+              " has type with custom comparison and can not be indexed."};
+    }
+    if (!c->type->isPrimitiveType()) {
+      return {ERROR_BAD_PARAMETER, "Column ", c->name,
+              " has non primitive type and can not be indexed."};
+    }
+    if (c->type->kind() == velox::TypeKind::TIMESTAMP ||
+        c->type->kind() == velox::TypeKind::HUGEINT) {
+      return {ERROR_BAD_PARAMETER, "Column ", c->name,
+              " has unsupported kind and can not be indexed."};
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
-Index::Index(IndexBaseOptions options, ObjectId database_id)
+Result ValidateIndexOptions(const IndexBaseOptions& options,
+                            std::span<const Column*> indexed_columns) {
+  switch (options.type) {
+    case IndexType::Inverted:
+      return ValidateInvertedIndexOptions(indexed_columns);
+    default:
+      // TODO implement necessary validation on create for other index type
+      return {};
+  }
+}
+
+ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
+                                           ObjectId schema_id, ObjectId id,
+                                           ObjectId relation_id,
+                                           IndexBaseOptions options) {
+  switch (options.type) {
+    case IndexType::Inverted:
+      return CreateInvertedIndex(database_id, schema_id, id, relation_id,
+                                 std::move(options));
+    case IndexType::Secondary:
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
+                                     "Secondary index is not implemented"};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
+  }
+}
+
+// NOLINTBEGIN
+// View wrapper for IndexBaseOptions for light-weight serialization
+struct Index::IndexOutput {
+  std::string_view name;
+  IndexType type;
+  std::span<const Column::Id> column_ids;
+};
+// NOLINTEND
+
+Index::IndexOutput Index::MakeIndexOutput() const {
+  return {
+    .name = GetName(),
+    .type = GetIndexType(),
+    .column_ids = _column_ids,
+  };
+}
+
+void Index::WriteInternal(vpack::Builder& builder) const {
+  vpack::WriteTuple(builder, MakeIndexOutput());
+}
+
+Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
+             ObjectId relation_id, IndexBaseOptions options)
   : SchemaObject{{},
                  database_id,
-                 {},
-                 options.id,
+                 schema_id,
+                 id,
                  std::move(options.name),
                  ObjectType::Index},
-    _relation_id{options.relation_id},
-    _type(options.type) {}
-
-ResultOr<std::shared_ptr<Index>> CreateIndex(
-  ObjectId database_id, IndexOptions<vpack::Slice> options) {
-  switch (options.base.type) {
-    case IndexType::Secondary:
-      return MakeIndex<SecondaryIndex>(database_id, std::move(options));
-    case IndexType::Inverted:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
-  }
+    _relation_id{relation_id},
+    _type(options.type),
+    _column_ids{std::move(options.column_ids)} {
+  SDB_ASSERT(GetId().isSet());
 }
 
 }  // namespace sdb::catalog

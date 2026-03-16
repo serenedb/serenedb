@@ -24,16 +24,15 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/analysis/ngram_tokenizer.hpp>
-#include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <vector>
 
-#include "basics/runtime_utils.hpp"
 #include "gtest/gtest.h"
+#include "iresearch/analysis/delimited_tokenizer.hpp"
+#include "iresearch/analysis/ngram_tokenizer.hpp"
+#include "iresearch/analysis/pipeline_tokenizer.hpp"
+#include "iresearch/analysis/text_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
 #include "tests_config.hpp"
 
 namespace {

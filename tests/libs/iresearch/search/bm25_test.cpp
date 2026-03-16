@@ -21,22 +21,22 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/column_existence_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/scorers.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/column_existence_filter.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorers.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -104,7 +104,6 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
   }
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B(), true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -112,6 +111,7 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
   ASSERT_NE(nullptr, column);
 
   MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
 
   // by_range multiple
   {
@@ -136,16 +136,26 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+
+    fetcher.Clear();
+
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -188,15 +198,25 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
+
+    fetcher.Clear();
+
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -244,24 +264,14 @@ TEST_P(Bm25TestCase, make_from_array) {
   {
     auto scorer =
       irs::scorers::Get("bm25", irs::Type<irs::text_format::Json>::get(), "[]");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::Type<irs::BM25>::id(), scorer->type());
-    auto& bm25 = dynamic_cast<irs::BM25&>(*scorer);
-    ASSERT_EQ(irs::BM25::K(), bm25.k());
-    ASSERT_EQ(irs::BM25::B(), bm25.b());
-    ASSERT_EQ(irs::BM25::BOOST_AS_SCORE(), bm25.use_boost_as_score());
+    ASSERT_EQ(nullptr, scorer);
   }
 
   // `k` argument
   {
     auto scorer = irs::scorers::Get(
       "bm25", irs::Type<irs::text_format::Json>::get(), "[ 1.5 ]");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::Type<irs::BM25>::id(), scorer->type());
-    auto& bm25 = dynamic_cast<irs::BM25&>(*scorer);
-    ASSERT_EQ(1.5f, bm25.k());
-    ASSERT_EQ(irs::BM25::B(), bm25.b());
-    ASSERT_EQ(irs::BM25::BOOST_AS_SCORE(), bm25.use_boost_as_score());
+    ASSERT_EQ(nullptr, scorer);
   }
 
   // invalid `k` argument
@@ -383,7 +393,6 @@ TEST_P(Bm25TestCase, test_phrase) {
 
   auto impl = irs::scorers::Get(
     "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
-  auto prepared_order = irs::Scorers::Prepare(*impl);
 
   // read segment
   auto index = open_reader();
@@ -391,6 +400,7 @@ TEST_P(Bm25TestCase, test_phrase) {
   auto& segment = *(index.begin());
 
   MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
 
   // "jumps high" with order
   {
@@ -412,12 +422,19 @@ TEST_P(Bm25TestCase, test_phrase) {
     auto prepared_filter = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = impl.get(),
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+
+    fetcher.Clear();
+
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = impl.get(),
+    });
+    auto score = docs->PrepareScore({
+      .scorer = impl.get(),
+      .segment = &segment,
+    });
 
     auto column = segment.column("name");
     ASSERT_NE(nullptr, column);
@@ -427,8 +444,10 @@ TEST_P(Bm25TestCase, test_phrase) {
     ASSERT_NE(nullptr, actual_value);
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
 
       sorted.emplace(score_value,
@@ -478,12 +497,19 @@ TEST_P(Bm25TestCase, test_phrase) {
     auto prepared_filter = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = impl.get(),
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+
+    fetcher.Clear();
+
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = impl.get(),
+    });
+    auto score = docs->PrepareScore({
+      .scorer = impl.get(),
+      .segment = &segment,
+    });
 
     auto column = segment.column("name");
     ASSERT_NE(nullptr, column);
@@ -493,8 +519,10 @@ TEST_P(Bm25TestCase, test_phrase) {
     ASSERT_NE(nullptr, actual_value);
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
 
       sorted.emplace(score_value,
@@ -530,10 +558,7 @@ TEST_P(Bm25TestCase, test_query) {
     add_segment(gen);
   }
 
-  irs::BM25 impl{irs::BM25::K(), irs::BM25::B(), true};
-  const irs::Scorer* sort{&impl};
-
-  auto prepared_order = irs::Scorers::Prepare(std::span{&sort, 1});
+  irs::BM25 scorer{irs::BM25::K(), irs::BM25::B(), true};
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -541,6 +566,7 @@ TEST_P(Bm25TestCase, test_query) {
   ASSERT_NE(nullptr, column);
 
   MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
 
   // by_term
   {
@@ -561,16 +587,24 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
+
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -653,24 +687,33 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
+    irs::ColumnArgsFetcher fetcher;
     for (auto& segment : reader) {
+      fetcher.Clear();
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
       auto values = column->iterator(irs::ColumnHint::Normal);
       ASSERT_NE(nullptr, values);
       auto* actual_value = irs::get<irs::PayAttr>(*values);
       ASSERT_NE(nullptr, actual_value);
-      auto docs = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
-      auto* score = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_TRUE(bool(score));
+      auto docs = prepared_filter->execute({
+        .segment = segment,
+        .scorer = &scorer,
+      });
+      auto score = docs->PrepareScore({
+        .scorer = &scorer,
+        .segment = &segment,
+        .fetcher = &fetcher,
+      });
 
       while (docs->next()) {
+        fetcher.Fetch(docs->value());
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
-        (*score)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -766,24 +809,32 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     for (auto& segment : reader) {
+      fetcher.Clear();
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
       auto values = column->iterator(irs::ColumnHint::Normal);
       ASSERT_NE(nullptr, values);
       auto* actual_value = irs::get<irs::PayAttr>(*values);
       ASSERT_NE(nullptr, actual_value);
-      auto docs = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
-      auto* score = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_TRUE(bool(score));
+      auto docs = prepared_filter->execute({
+        .segment = segment,
+        .scorer = &scorer,
+      });
+      auto score = docs->PrepareScore({
+        .scorer = &scorer,
+        .segment = &segment,
+        .fetcher = &fetcher,
+      });
 
       while (docs->next()) {
+        fetcher.Fetch(docs->value());
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
-        (*score)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -869,24 +920,33 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
+    irs::ColumnArgsFetcher fetcher;
     for (auto& segment : reader) {
+      fetcher.Clear();
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
       auto values = column->iterator(irs::ColumnHint::Normal);
       ASSERT_NE(nullptr, values);
       auto* actual_value = irs::get<irs::PayAttr>(*values);
       ASSERT_NE(nullptr, actual_value);
-      auto docs = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
-      auto* score = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_TRUE(bool(score));
+      auto docs = prepared_filter->execute({
+        .segment = segment,
+        .scorer = &scorer,
+      });
+      auto score = docs->PrepareScore({
+        .scorer = &scorer,
+        .segment = &segment,
+        .fetcher = &fetcher,
+      });
 
       while (docs->next()) {
+        fetcher.Fetch(docs->value());
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
-        (*score)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -930,15 +990,23 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -983,16 +1051,23 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1035,15 +1110,23 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1086,16 +1169,24 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1139,15 +1230,23 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1181,18 +1280,24 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
+      fetcher.Fetch(docs->value());
       ASSERT_EQ(doc, docs->value());
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       ++doc;
       ASSERT_EQ(1.5f, score_value);
@@ -1216,20 +1321,26 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
-    ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       ASSERT_EQ(doc, docs->value());
 
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       ++doc;
       ASSERT_EQ(0.f, score_value);
@@ -1254,23 +1365,30 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       ASSERT_EQ(doc, docs->value());
 
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       ++doc;
-      ASSERT_EQ(1.f, score_value);
+      ASSERT_EQ(0.f, score_value);
     }
     ASSERT_EQ(irs::doc_limits::eof(), docs->value());
   }
@@ -1293,20 +1411,27 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_TRUE(bool(score));
-    ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    fetcher.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = segment,
+      .scorer = &scorer,
+    });
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       ASSERT_EQ(doc, docs->value());
 
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
-      (*score)(&score_value);
+      score.Score(&score_value, 1);
 
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       ++doc;
@@ -1585,6 +1710,7 @@ TEST_P(Bm25TestCase, test_order) {
   auto& segment = *(reader.begin());
 
   MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
 
   irs::ByTerm query;
   *query.mutable_field() = "field";
@@ -1595,12 +1721,6 @@ TEST_P(Bm25TestCase, test_order) {
   irs::BM25 sort1{0.f, 0.1337f};
   for (irs::score_t boost : {0.f, 0.5f, irs::kNoBoost}) {
     for (auto& sort : {sort25, sort15, sort11, sort1}) {
-      const irs::Scorer* impl{&sort};
-
-      auto prepared_order = irs::Scorers::Prepare(std::span{&impl, 1});
-      ASSERT_EQ(sizeof(irs::score_t), prepared_order.score_size());
-      ASSERT_EQ(1, prepared_order.buckets().size());
-
       uint64_t seq = 0;
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
@@ -1621,17 +1741,24 @@ TEST_P(Bm25TestCase, test_order) {
         auto prepared = query.prepare({
           .index = reader,
           .memory = counter,
-          .scorers = prepared_order,
+          .scorer = &sort,
           .boost = boost,
         });
-        auto docs =
-          prepared->execute({.segment = segment, .scorers = prepared_order});
-        auto* score = irs::get<irs::ScoreAttr>(*docs);
-        ASSERT_TRUE(bool(score));
+        fetcher.Clear();
+        auto docs = prepared->execute({
+          .segment = segment,
+          .scorer = &sort,
+        });
+        auto score = docs->PrepareScore({
+          .scorer = &sort,
+          .segment = &segment,
+          .fetcher = &fetcher,
+        });
 
         for (; docs->next();) {
+          fetcher.Fetch(docs->value());
           irs::score_t score_value{};
-          (*score)(&score_value);
+          score.Score(&score_value, 1);
 
           ASSERT_EQ(docs->value(), values->seek(docs->value()));
           in.reset(actual_value->value);

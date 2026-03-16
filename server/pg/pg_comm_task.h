@@ -83,9 +83,9 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void ProcessFirstRoot() noexcept;
   void ProcessNextRoot() noexcept;
-  void ProcessWakeup() noexcept;
+  void ProcessWakeup(yaclib::Result<> r) noexcept;
 
-  virtual void SendAsync(message::SequenceView data) = 0;
+  virtual void SendAsync(message::SequenceView data) noexcept = 0;
 
   void ParseClientParameters(std::string_view data);
   void CancelPacket();
@@ -204,7 +204,7 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
 
  private:
   void Start() final;
-  void SendAsync(message::SequenceView data) final;
+  void SendAsync(message::SequenceView data) noexcept final;
   void Stop() final {
     this->CancelPacket();
     Base::Stop();

@@ -21,11 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <unordered_set>
 
 #include "formats_test_case_base.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/store/directory_attributes.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -21,10 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/ref_counter.hpp>
 #include <unordered_map>
 
 #include "gtest/gtest.h"
+#include "iresearch/utils/ref_counter.hpp"
 
 namespace tests {
 class RefCounterTests : public ::testing::Test {

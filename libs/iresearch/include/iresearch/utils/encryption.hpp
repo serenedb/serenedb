@@ -111,22 +111,22 @@ class EncryptedInput : public BufferedIndexInput, util::Noncopyable {
   EncryptedInput(IndexInput::ptr&& in, Encryption::Stream& cipher,
                  size_t buf_size, size_t padding = 0);
 
-  IndexInput::ptr Dup() const final;
+  uint64_t Length() const noexcept final { return _length; }
+  bool IsEOF() const noexcept final { return Position() >= Length(); }
 
+  IndexInput::ptr Dup() const final;
   IndexInput::ptr Reopen() const final;
 
-  uint64_t Length() const noexcept final { return _length; }
+  uint32_t Checksum(uint64_t offset) const final;
 
-  uint32_t Checksum(size_t offset) const final;
-
-  size_t buffer_size() const noexcept { return _buf_size; }
+  size_t BufferSize() const noexcept { return _buf_size; }
 
   const IndexInput& stream() const noexcept { return *_in; }
 
   IndexInput::ptr release() noexcept { return std::move(_managed_in); }
 
  protected:
-  void SeekInternal(size_t pos) final;
+  void SeekInternal(uint64_t pos) final;
 
   size_t ReadInternal(byte_type* b, size_t count) final;
 
@@ -139,7 +139,7 @@ class EncryptedInput : public BufferedIndexInput, util::Noncopyable {
   IndexInput* _in;
   Encryption::Stream* _cipher;
   const uint64_t _start;
-  const size_t _length;
+  const uint64_t _length;
 };
 
 }  // namespace irs

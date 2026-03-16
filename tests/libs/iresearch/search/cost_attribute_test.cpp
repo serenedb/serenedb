@@ -21,10 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/search/filter.hpp>
 #include <limits>
 
 #include "filter_test_case_base.hpp"
+#include "iresearch/search/filter.hpp"
 #include "tests_shared.hpp"
 
 static_assert("cost" == irs::Type<irs::CostAttr>::name());

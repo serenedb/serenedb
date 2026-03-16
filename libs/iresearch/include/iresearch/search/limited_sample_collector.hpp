@@ -126,7 +126,7 @@ class LimitedSampleCollector : private util::Noncopyable {
   }
 
   // Finish collecting and evaluate stats
-  void score(const IndexReader& index, const Scorers& order,
+  void score(const IndexReader& index, const Scorer* scorer,
              MultiTermQuery::Stats& stats) {
     if (!_scored_terms_limit) {
       return;  // nothing to score (optimization)
@@ -145,7 +145,7 @@ class LimitedSampleCollector : private util::Noncopyable {
       // find the stats for the current term
       const auto res =
         term_stats.try_emplace(hashed_bytes_view{scored_state.term}, index,
-                               field, order, stats_offset);
+                               field, scorer, stats_offset);
 
       auto& stats_entry = res.first->second;
 
@@ -165,7 +165,7 @@ class LimitedSampleCollector : private util::Noncopyable {
     stats.resize(stats_offset);
     for (auto& entry : term_stats) {
       auto& stats_entry = stats[entry.second.stats_offset];
-      stats_entry.resize(order.stats_size());
+      stats_entry.resize(scorer ? scorer->stats_size() : 0);
       auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
 
       entry.second.term_stats.finish(stats_buf, 0, entry.second.field_stats,
@@ -176,10 +176,10 @@ class LimitedSampleCollector : private util::Noncopyable {
  private:
   struct StatsState {
     explicit StatsState(const IndexReader& index, const TermReader& field,
-                        const Scorers& order, uint32_t& state_offset)
-      : field_stats(order),
-        term_stats(order, 1) {  // 1 term per bstring because a range is
-                                // treated as a disjunction
+                        const Scorer* scorer, uint32_t& state_offset)
+      : field_stats(scorer),
+        term_stats(scorer, 1) {  // 1 term per bstring because a range is
+                                 // treated as a disjunction
 
       // once per every 'state' collect field statistics over the entire index
       for (auto& segment : index) {

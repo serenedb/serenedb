@@ -37,43 +37,28 @@ namespace sdb {
 /// needs to be changed
 struct RocksDBColumnFamilyManager {
   enum class Family : size_t {
-    Definitions = 0,
-    Documents = 1,
-    PrimaryIndex = 2,
-    EdgeIndex = 3,
-    VPackIndex = 4,  // persistent, skiplist, hash, ttl
-    Data = 5,        // serenedb connector persistent data
-
-    Invalid = 1024  // special placeholder
+    Default = 0,      // serenedb connector data
+    Definitions = 1,  // serenedb catalog data
+    Invalid = std::numeric_limits<size_t>::max(),
   };
 
-  enum class NameMode {
-    Internal,  // for use within RocksDB
-    External   // for display to users
-  };
-
-  static constexpr size_t kMinNumberOfColumnFamilies = 5;
-  static constexpr size_t kNumberOfColumnFamilies = 6;
-
-  static void initialize();
+  static constexpr size_t kMinNumberOfColumnFamilies = 2;
+  static constexpr size_t kNumberOfColumnFamilies = 2;
 
   static rocksdb::ColumnFamilyHandle* get(Family family);
   static void set(Family family, rocksdb::ColumnFamilyHandle* handle);
 
-  static const char* name(Family family, NameMode mode = NameMode::Internal);
-  static const char* name(rocksdb::ColumnFamilyHandle* handle,
-                          NameMode mode = NameMode::External);
+  static const char* name(Family family);
+  static const char* name(rocksdb::ColumnFamilyHandle* handle);
 
   static const std::array<rocksdb::ColumnFamilyHandle*,
                           kNumberOfColumnFamilies>&
   allHandles();
 
  private:
-  static std::array<const char*, kNumberOfColumnFamilies> gInternalNames;
-  static std::array<const char*, kNumberOfColumnFamilies> gExternalNames;
+  static std::array<const char*, kNumberOfColumnFamilies> gNames;
   static std::array<rocksdb::ColumnFamilyHandle*, kNumberOfColumnFamilies>
     gHandles;
-  static rocksdb::ColumnFamilyHandle* gDefaultHandle;
 };
 
 }  // namespace sdb

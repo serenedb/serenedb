@@ -150,4 +150,7 @@ Objects::ObjectName ParseObjectName(const List* names,
                                     std::string_view database,
                                     std::string_view default_schema = {});
 
+Objects::ObjectName ParseObjectName(std::string_view name,
+                                    std::string_view default_schema = {});
+
 }  // namespace sdb::pg

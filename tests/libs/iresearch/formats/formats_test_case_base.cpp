@@ -25,17 +25,17 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <iresearch/formats/format_utils.hpp>
-#include <iresearch/index/column_finalizer.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/utils/lz4compression.hpp>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "basics/resource_manager.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/format_utils.hpp"
+#include "iresearch/index/column_finalizer.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace {
@@ -45,17 +45,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }

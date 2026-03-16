@@ -36,28 +36,22 @@ namespace sdb {
 // TODO(mbkkt) these values are random shit, fix it
 enum class RocksDBEntryType : char {
   Placeholder = '\0',
-  Database = '0',
-  Collection = '1',
-  CounterValue = '2',
-  Document = '3',
-  PrimaryIndexValue = '4',
-  EdgeIndexValue = '5',
-  VPackIndexValue = '6',
-  UniqueVPackIndexValue = '7',
-  SettingsValue = '8',
-  ReplicationApplierConfig = '9',
-  IndexEstimateValue = '<',
-  KeyGeneratorValue = '=',
-  View = '>',
-  RevisionTreeValue = '*',
-  Function = '_',
+
+  SettingsValue = '8',  // TODO(mbkkt) remove this
+
   Role = '-',
+  Database = '0',
   Schema = '+',
-  TableTombstone = '|',
-  IndexTombstone = '/',
-  ScopeTombstone = '~',
+  Function = '_',
+  View = '>',
+  Table = '1',
   Index = '?',
-  Stats = '@',
+  Tokenizer = '2',
+
+  Tombstone = '~',
+
+  TableShard = '@',
+  IndexShard = '!',
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -124,5 +118,4 @@ enum class RocksDBSettingsType : char {
 
 inline constexpr char kRocksDBFormatVersion = '1';
 
-const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type);
 }  // namespace sdb

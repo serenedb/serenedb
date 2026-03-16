@@ -69,12 +69,11 @@ BEGIN;
 statement count 1
 INSERT INTO t2 VALUES (1, 10);
 
-# We do not support 'Read Your Own Writes' yet
-onlyif serenedb
 query
 SELECT * FROM t2 ORDER BY a;
 ----
 a	b
+1	10
 
 # But still cannot insert into table as values is in transaction
 statement error
@@ -92,6 +91,51 @@ query
 SELECT * FROM t2 ORDER BY a;
 ----
 a	b
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO t2 VALUES (1, 10);
+
+statement count 1
+DELETE FROM t2 WHERE a = 1;
+
+query
+SELECT * FROM t2 ORDER BY a;
+----
+a	b
+
+statement count 1
+INSERT INTO t2 VALUES (1, 10);
+
+query
+SELECT * FROM t2 ORDER BY a;
+----
+a	b
+1	10
+
+statement count 1
+UPDATE t2 SET a = 2, b = 20 WHERE a = 1;
+
+query
+SELECT * FROM t2 ORDER BY a;
+----
+a	b
+2	20
+
+statement count 1
+INSERT INTO t2 VALUES (1, 10);
+
+query
+SELECT * FROM t2 ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+statement ok
+COMMIT;
 
 statement ok
 DROP TABLE t2;

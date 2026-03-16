@@ -20,7 +20,7 @@
 
 #include "utils/write_helpers.hpp"
 
-#include <iresearch/utils/numeric_utils.hpp>
+#include "iresearch/utils/numeric_utils.hpp"
 
 namespace tests {
 

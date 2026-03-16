@@ -220,6 +220,13 @@ set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 add_subdirectory(benchmark)
 
 ################################################################################
+### streamvbyte library
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "streamvbyte" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+add_subdirectory(streamvbyte)
+
+################################################################################
 ### sse2neon library -- need this after abseil and highway, but before simdcomp
 ################################################################################
 
@@ -933,6 +940,19 @@ sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.
 add_subdirectory(folly)
 target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
+# Velox S3 connector uses folly::Uri
+target_sources(folly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/folly/folly/Uri.cpp)
+
+################################################################################
+## AWS SDK (monolithic build)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "aws-sdk-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(aws-cmake)
+
+set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
+set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
+set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 
 ################################################################################
 ## velox
@@ -957,6 +977,7 @@ set(VELOX_ENABLE_EXEC ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_AGGREGATES ON CACHE BOOL "" FORCE)
 set(VELOX_BUILD_MINIMAL_WITH_DWIO ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_HIVE_CONNECTOR OFF CACHE BOOL "" FORCE)
+set(VELOX_ENABLE_HIVE_CONNECTOR_UTILS ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_TPCH_CONNECTOR OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_TPCDS_CONNECTOR OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_PRESTO_FUNCTIONS ON CACHE BOOL "" FORCE)
@@ -966,7 +987,7 @@ set(VELOX_ENABLE_EXPRESSION ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_BENCHMARKS_BASIC OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_S3 OFF CACHE BOOL "" FORCE)
+set(VELOX_ENABLE_S3 ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_GCS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_ABFS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_HDFS OFF CACHE BOOL "" FORCE)

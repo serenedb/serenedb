@@ -75,19 +75,24 @@ Result Parse(ObjectId database_id, std::string_view query, pg::Objects& objects,
 }  // namespace
 
 Result FunctionImpl::Init(ObjectId database, std::string_view name,
-                          std::string query, bool is_procedure) {
+                          std::string query, bool is_procedure,
+                          const Config* config) {
   auto r =
     Parse(database, query, _objects, _memory_context, _stmt, is_procedure);
   if (!r.ok()) {
     return r;
   }
-  auto search_path = Config().Get<VariableType::PgSearchPath>("search_path");
-  r = basics::SafeCall([&] {
-    pg::Objects objects;
-    pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
-    pg::ResolveSqlFunction(database, search_path, objects, disallowed,
-                           _objects);
-  });
+  if (config) {
+    // config is present -> non system view, need for validation
+    auto search_path = config->Get<VariableType::PgSearchPath>("search_path");
+    r = basics::SafeCall([&] {
+      pg::Objects objects;
+      pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
+      pg::ResolveSqlFunction(database, search_path, objects, disallowed,
+                             _objects, *config);
+    });
+  }
+
   if (!r.ok()) {
     return r;
   }

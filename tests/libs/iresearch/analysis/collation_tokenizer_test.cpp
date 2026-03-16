@@ -26,9 +26,8 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/collation_tokenizer.hpp>
-#include <iresearch/analysis/collation_tokenizer_encoder.hpp>
-
+#include "iresearch/analysis/collation_tokenizer.hpp"
+#include "iresearch/analysis/collation_tokenizer_encoder.hpp"
 #include "tests_shared.hpp"
 
 namespace {

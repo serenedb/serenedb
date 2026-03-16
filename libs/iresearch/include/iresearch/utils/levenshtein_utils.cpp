@@ -28,10 +28,9 @@
 #include "automaton_utils.hpp"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
-#include "basics/misc.hpp"
+#include "basics/containers/small_vector.h"
 #include "basics/shared.hpp"
 #include "basics/utf8_utils.hpp"
-#include "hash_utils.hpp"
 #include "iresearch/store/store_utils.hpp"
 
 namespace irs {

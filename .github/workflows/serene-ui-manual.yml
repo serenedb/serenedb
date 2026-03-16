@@ -53,7 +53,7 @@ jobs:
     build:
         uses: ./.github/workflows/serene-ui-reusable.yml
         permissions:
-          contents: write
+            contents: write
         with:
             BRANCH: ${{ inputs.BRANCH }}
             BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}

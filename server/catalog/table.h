@@ -37,20 +37,6 @@ namespace sdb {
 // Read from storage engine if unknown
 static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
 
-struct IndexTombstone {
-  ObjectId id;
-  IndexType type = IndexType::kTypeUnknown;
-  uint64_t number_documents = kRead;
-  bool unique = false;
-};
-
-struct TableTombstone {
-  ObjectId table;
-  ObjectId old_schema;
-  ObjectId old_database;
-  uint64_t number_documents = kRead;
-  std::vector<IndexTombstone> indexes;
-};
 }  // namespace sdb
 
 namespace sdb::catalog {
@@ -104,7 +90,7 @@ class Table : public SchemaObject {
     SDB_ASSERT(_sharding_strategy);
     return *_sharding_strategy;
   }
-
+  const auto& GetFileInfo() const noexcept { return _file_info; }
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {
@@ -141,6 +127,7 @@ class Table : public SchemaObject {
   // writes will be disallowed if we know we cannot fulfill it.
   // _write_concern <= _replication_factor
   uint32_t _write_concern = 1;
+  FileInfo _file_info;
 };
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

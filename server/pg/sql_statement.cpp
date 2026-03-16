@@ -23,9 +23,11 @@
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/logger/logger.h"
+#include "catalog/catalog.h"
 #include "general_server/state.h"
-#include "pg/executor.h"
+#include "pg/command_executor.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
@@ -33,6 +35,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_resolver.h"
 #include "pg/sql_statement.h"
+#include "query/velox_executor.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -42,6 +45,59 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
+namespace {
+
+std::unique_ptr<query::Query> CreateCTASPipeline(
+  const VeloxQuery& query_desc, query::QueryContext& query_ctx,
+  const std::shared_ptr<ConnectionContext>& connection_ctx) {
+  SDB_ASSERT(query_desc.pgsql_node);
+  SDB_ASSERT(query_desc.root);
+  SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+
+  const IntoClause* into = nullptr;
+  bool if_not_exists = false;
+  if (nodeTag(query_desc.pgsql_node) == T_CreateTableAsStmt) {
+    const auto& ctas_stmt = *castNode(CreateTableAsStmt, query_desc.pgsql_node);
+    into = ctas_stmt.into;
+    if_not_exists = ctas_stmt.if_not_exists;
+  } else {
+    SDB_ASSERT(nodeTag(query_desc.pgsql_node) == T_SelectStmt);
+    const auto& select_stmt = *castNode(SelectStmt, query_desc.pgsql_node);
+    into = select_stmt.intoClause;
+  }
+  SDB_ASSERT(into);
+
+  auto create_table = std::make_unique<CTASCreateTableExecutor>(
+    connection_ctx, *into, if_not_exists);
+  auto rollback = [connection_ctx, into] noexcept {
+    auto db = connection_ctx->GetDatabaseId();
+    const auto& rel = *into->rel;
+    std::string current_schema = connection_ctx->GetCurrentSchema();
+    const std::string_view schema =
+      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+    SDB_ASSERT(!schema.empty());
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    std::ignore = catalog.DropTable(db, schema, into->rel->relname);
+  };
+  auto velox_exec =
+    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
+  auto remove_tombstone =
+    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, *into->rel);
+
+  std::vector<std::unique_ptr<query::Executor>> executors;
+  executors.reserve(3);
+  executors.emplace_back(std::move(create_table));
+  executors.emplace_back(std::move(velox_exec));
+  executors.emplace_back(std::move(remove_tombstone));
+
+  query_ctx.command_type.Add(query::CommandType::Query);
+
+  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
+                                          std::move(executors));
+}
+
+}  // namespace
 
 void* SqlTree::GetRoot() const { return list_nth(list, root_idx - 1); }
 
@@ -91,7 +147,6 @@ bool SqlStatement::ProcessNextRoot(
   if (query_desc.type == pg::SqlCommandType::Show) {
     SDB_ASSERT(query_desc.pgsql_node);
     const auto* show_stmt = castNode(VariableShowStmt, query_desc.pgsql_node);
-    query_ctx.command_type.Add(query::CommandType::Show);
     if (!strcmp(show_stmt->name, "all")) {
       query = query::Query::CreateShowAll(query_ctx);
     } else {
@@ -100,12 +155,16 @@ bool SqlStatement::ProcessNextRoot(
     return true;
   }
 
+  if (query_desc.type == pg::SqlCommandType::CTAS) {
+    query = CreateCTASPipeline(query_desc, query_ctx, connection_ctx);
+    return true;
+  }
+
   if (query_desc.pgsql_node) {
     SDB_ASSERT(query_desc.pgsql_node);
     auto executor =
-      std::make_unique<Executor>(connection_ctx, *query_desc.pgsql_node);
-    query_ctx.command_type.Add(query::CommandType::External);
-    query = query::Query::CreateExternal(std::move(executor), query_ctx);
+      std::make_unique<DDLExecutor>(connection_ctx, *query_desc.pgsql_node);
+    query = query::Query::CreateDDL(std::move(executor), query_ctx);
     return true;
   }
 
@@ -164,6 +223,7 @@ bool SqlStatement::NextRoot(
   // After completing previous stmt
   // query could be non-nullptr
   query.reset();
+  connection_ctx->OnNewStatement();
   while (!query) {
     if (!ProcessNextRoot(connection_ctx)) {
       return false;

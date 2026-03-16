@@ -22,11 +22,14 @@
 
 #include "iresearch/index/iterators.hpp"
 
+#include "basics/misc.hpp"
 #include "basics/singleton.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -34,15 +37,15 @@ namespace {
 
 // Represents an iterator with no documents
 struct EmptyDocIterator : ResettableDocIterator {
+  EmptyDocIterator() { _doc = doc_limits::eof(); }
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    if (Type<DocAttr>::id() == id) {
-      return &_doc;
-    }
     return Type<CostAttr>::id() == id ? &_cost : nullptr;
   }
-  doc_id_t value() const noexcept final { return doc_limits::eof(); }
   doc_id_t advance() noexcept final { return doc_limits::eof(); }
   doc_id_t seek(doc_id_t /*target*/) noexcept final {
+    return doc_limits::eof();
+  }
+  doc_id_t LazySeek(doc_id_t /*target*/) noexcept final {
     return doc_limits::eof();
   }
   uint32_t count() noexcept final { return 0; }
@@ -50,7 +53,6 @@ struct EmptyDocIterator : ResettableDocIterator {
 
  private:
   CostAttr _cost{0};
-  DocAttr _doc{doc_limits::eof()};
 };
 
 EmptyDocIterator gEmptyDocIterator;
@@ -121,7 +123,7 @@ struct EmptyColumnReader final : ColumnReader {
     return ResettableDocIterator::empty();
   }
 
-  doc_id_t size() const final { return 0; }
+  doc_id_t size() const noexcept final { return 0; }
 };
 
 const EmptyColumnReader kEmptyColumnReader;

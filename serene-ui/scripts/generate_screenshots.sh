@@ -4,6 +4,7 @@ set -o pipefail
 
 echo "ℹ️ Starting serene-ui Docker container..."
 docker compose -f docker-compose.test-docker.yaml up --build -d serene-ui
+
 sleep 10 # Wait for it to start
 
 echo "ℹ️ Generating screenshots..."

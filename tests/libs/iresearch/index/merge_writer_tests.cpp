@@ -21,21 +21,21 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/merge_writer.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/type_limits.hpp>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "index_tests.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/merge_writer.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace {
@@ -56,17 +56,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
@@ -131,7 +127,6 @@ void ValidateTerms(
     for (auto docs_itr = segment.mask(term_itr->postings(index_features));
          docs_itr->next();) {  // FIXME
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
-      ASSERT_TRUE(irs::get<irs::DocAttr>(*docs_itr));
 
       if (frequency) {
         ASSERT_TRUE(irs::get<irs::FreqAttr>(*docs_itr));

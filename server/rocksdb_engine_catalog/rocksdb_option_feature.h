@@ -140,10 +140,7 @@ class RocksDBOptionFeature final : public SerenedFeature {
   bool _allow_fallocate;
   bool _enable_blob_garbage_collection;
   bool _min_write_buffer_number_to_merge_touched;
-  bool _partition_files_for_documents_cf;
-  bool _partition_files_for_primary_index_cf;
-  bool _partition_files_for_edge_index_cf;
-  bool _partition_files_for_vpack_index_cf;
+  bool _partition_files_for_default_cf;
   std::string _io_uring;
 
  public:

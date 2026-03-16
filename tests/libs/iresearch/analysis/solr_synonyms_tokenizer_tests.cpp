@@ -18,10 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
-
 #include "gtest/gtest.h"
+#include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 
 using SolrSynonymsTokenizer = irs::analysis::SolrSynonymsTokenizer;
 

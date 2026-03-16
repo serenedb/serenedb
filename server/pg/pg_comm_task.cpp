@@ -149,6 +149,18 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
+CommandTag GetCommandTag(Node* node) {
+  if (nodeTag(node) == T_RawStmt) {
+    auto* stmt = castNode(RawStmt, node)->stmt;
+    if (nodeTag(stmt) == T_CreateTableAsStmt) {
+      // PostgreSQL returns SELECT N for CTAS
+      return CMDTAG_SELECT;
+    }
+  }
+  const auto tag = CreateCommandTag(node);
+  return tag;
+}
+
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
@@ -216,11 +228,15 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
   }
 }
 
-void PgSQLCommTaskBase::ProcessWakeup() noexcept {
+void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   std::lock_guard lock{_execution_mutex};
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
   SafeCall([&] {
+    if (!r) {
+      std::ignore = std::move(r).Ok();
+    }
+
     auto state = ProcessState::DonePacket;
     do {
       state = ProcessQueryResult();
@@ -366,7 +382,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
 void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
   // Crash injection for recovery testing
-  SDB_IF_FAILURE("crash_on_packet") { exit(1); }
+  SDB_IF_FAILURE("crash_on_packet") { SDB_IMMEDIATE_ABORT(); }
 
   // 1 byte type + 4 byte length
   SDB_ASSERT(packet.size() >= 5);
@@ -931,9 +947,8 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal) {
   }
   SDB_ASSERT(portal.stmt->query);
   auto cursor = portal.stmt->query->MakeCursor(
-    [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())] {
-      user_task->ProcessWakeup();
-    });
+    [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())](
+      yaclib::Result<> r) { user_task->ProcessWakeup(std::move(r)); });
   if (RegisterCursor(std::move(cursor), portal)) {
     SDB_ASSERT(&portal == _current_portal);
     // Throws if soft shutdown is ongoing!
@@ -1025,7 +1040,7 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   decoded_columns.reserve(batch_columns);
   for (uint16_t i = 0; i < batch_columns; ++i) {
     const auto& column = *batch->childAt(i);
-    decoded_columns.emplace_back().decode(column, false);
+    decoded_columns.emplace_back().decode(column, true);
   }
 
   for (velox::vector_size_t row = 0; row < batch_rows; ++row) {
@@ -1081,7 +1096,7 @@ void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree,
   SDB_ASSERT(tree.root_idx);
   auto* root = castNode(Node, tree.GetRoot());
 
-  const auto command_tag = CreateCommandTag(root);
+  const auto command_tag = GetCommandTag(root);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
   {
@@ -1134,7 +1149,10 @@ void PgSQLCommTaskBase::CancelPacket() {
   std::unique_lock lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
   if (_current_portal && _current_portal->cursor) {
-    _current_portal->cursor->RequestCancel();
+    auto f = _current_portal->cursor->RequestCancel();
+    if (f.Valid()) {
+      std::move(f).Detach();
+    }
   }
   _copy_queue.Abort(lock);
 }
@@ -1304,10 +1322,15 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
     _send.WriteUncommitted({"\0W", 2});
     _send.WriteUncommitted(context);
   }
-  if (query.size() > 1) {
-    _send.WriteUncommitted({"\0q", 2});
-    _send.WriteUncommitted({query.data(), query.size() - 1});
-  }
+
+  // TODO: 'q' (internal query) and 'p' (internal position) fields should only
+  // be sent for errors originating from internally-generated queries
+  // (e.g. PL/pgSQL functions, triggers).
+  // if (query.size() > 1) {
+  //   _send.WriteUncommitted({"\0q", 2});
+  //   _send.WriteUncommitted({query.data(), query.size() - 1});
+  // }
+
   if (cursor_pos > 0) {
     _send.WriteUncommitted({"\0P", 2});
     // TODO: zero copy serialization here
@@ -1341,12 +1364,13 @@ void PgSQLCommTask<T>::Start() {
 }
 
 template<rest::SocketType T>
-void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
+void PgSQLCommTask<T>::SendAsync(message::SequenceView data) noexcept {
   if (_send_should_close.load(std::memory_order_acquire)) {
     Base::Close(this->_close_error);
     return;
   }
   if (data.Empty()) {
+    this->_send.FlushDone();
     return;
   }
   SDB_LOG_PGSQL("Sending Packet:", data.Print());

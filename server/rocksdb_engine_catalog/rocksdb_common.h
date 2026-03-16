@@ -32,10 +32,8 @@
 #include "basics/common.h"
 #include "basics/result.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_value.h"
 
 namespace rocksdb {
 class Comparator;
@@ -63,13 +61,6 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
                      rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,
                      const rocksdb::Snapshot* snapshot,
                      bool prefix_same_as_start);
-size_t CountKeyRange(rocksdb::DB*, const RocksDBKeyBounds&,
-                     const rocksdb::Snapshot* snapshot,
-                     bool prefix_same_as_start);
-
-/// whether or not the specified range has keys
-bool HasKeys(rocksdb::DB*, const RocksDBKeyBounds&,
-             const rocksdb::Snapshot* snapshot, bool prefix_same_as_start);
 
 /// helper method to remove large ranges of data
 Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,

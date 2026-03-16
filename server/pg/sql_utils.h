@@ -25,6 +25,7 @@
 
 #include "basics/assert.h"
 #include "catalog/fwd.h"
+#include "query/config.h"
 
 struct Node;
 struct AConst;
@@ -62,6 +63,7 @@ struct JsonObjectConstructor;
 struct SQLValueFunction;
 struct SubLink;
 struct TypeName;
+struct CreateFunctionStmt;
 
 namespace sdb {
 class QueryString;
@@ -139,7 +141,17 @@ enum class SqlCommandType : uint32_t {
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
   Copy,         // copy stmt
+  CTAS          // create table as select
 };
+
+template<typename T>
+std::optional<T> TryGet(const Node* expr);
+
+template<typename T>
+std::optional<T> TryGet(const Node& node);
+
+template<typename T>
+std::optional<T> TryGet(const List* list, size_t i);
 
 }  // namespace pg
 }  // namespace sdb

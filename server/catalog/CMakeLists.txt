@@ -3,12 +3,15 @@ target_sources(
     PRIVATE
         column_expr.cpp
         database.cpp
+        drop_task.cpp
         schema.cpp
         databases.cpp
         local_catalog.cpp
         catalog.cpp
         object.cpp
         table_options.cpp
+        format_options.cpp
+        storage_options.cpp
         key_generator.cpp
         search_analyzer_impl.cpp
         sql_function_impl.cpp
@@ -25,10 +28,11 @@ target_sources(
         replication_common.cpp
         role.cpp
         secondary_index.cpp
-        # TODO search
         identity_analyzer.cpp
+        inverted_index.cpp
         analyzer.cpp
         mangling.cpp
+        tokenizer.cpp
 )
 
 add_subdirectory(identifiers)

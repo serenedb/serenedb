@@ -28,18 +28,14 @@ namespace irs {
 
 BitsetDocIterator::BitsetDocIterator(const word_t* begin,
                                      const word_t* end) noexcept
-  : _cost(math::Popcount(begin, end)),
-    _doc(_cost.estimate() ? doc_limits::invalid() : doc_limits::eof()),
-    _begin(begin),
-    _end(end) {
+  : _cost{math::Popcount(begin, end)}, _begin{begin}, _end{end} {
+  if (_cost.estimate() == 0) {
+    _doc = doc_limits::eof();
+  }
   reset();
 }
 
 Attribute* BitsetDocIterator::GetMutable(TypeInfo::type_id id) noexcept {
-  if (Type<DocAttr>::id() == id) {
-    return &_doc;
-  }
-
   return Type<CostAttr>::id() == id ? &_cost : nullptr;
 }
 
@@ -52,12 +48,12 @@ doc_id_t BitsetDocIterator::advance() {
       }
 
       _word = 0;
-      return _doc.value = doc_limits::eof();
+      return _doc = doc_limits::eof();
     }
 
     _word = *_next++;
     _base += BitsRequired<word_t>();
-    _doc.value = _base - 1;
+    _doc = _base - 1;
   }
 
   const auto delta = std::countr_zero(_word);
@@ -65,7 +61,7 @@ doc_id_t BitsetDocIterator::advance() {
   SDB_ASSERT(delta < BitsRequired<word_t>());
 
   _word = (_word >> delta) >> 1;
-  return _doc.value += 1 + delta;
+  return _doc += 1 + delta;
 }
 
 doc_id_t BitsetDocIterator::seek(doc_id_t target) {
@@ -80,10 +76,10 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
         continue;
       }
 
-      _doc.value = doc_limits::eof();
+      _doc = doc_limits::eof();
       _word = 0;
 
-      return _doc.value;
+      return _doc;
     }
 
     break;
@@ -92,10 +88,15 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
   const doc_id_t bit_idx = target % BitsRequired<word_t>();
   _base = word_idx * BitsRequired<word_t>();
   _word = (*_next++) >> bit_idx;
-  _doc.value = _base - 1 + bit_idx;
+  _doc = _base - 1 + bit_idx;
 
   // FIXME consider inlining to speedup
   return advance();
+}
+
+doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) {
+  SDB_ASSERT(target >= value());
+  return seek(target);
 }
 
 uint32_t BitsetDocIterator::count() {
@@ -112,11 +113,25 @@ uint32_t BitsetDocIterator::count() {
         reset();
         continue;
       }
-      _doc.value = doc_limits::eof();
+      _doc = doc_limits::eof();
       return count;
     }
     count += std::popcount(*_next++);
   }
+}
+
+void BitsetDocIterator::Collect(const ScoreFunction& scorer,
+                                ColumnArgsFetcher& fetcher,
+                                ScoreCollector& collector) {
+  // TODO(mbkkt) optimize
+  return CollectImpl(*this, scorer, fetcher, collector);
+}
+
+std::pair<doc_id_t, bool> BitsetDocIterator::FillBlock(
+  doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
+  FillBlockMatchContext match) {
+  // TODO(mbkkt) optimize
+  return FillBlockImpl(*this, min, max, mask, score, match);
 }
 
 }  // namespace irs

@@ -1,0 +1,244 @@
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c')
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c')
+
+
+query
+SELECT * FROM t ORDER BY r;
+----
+r
+a
+a
+b
+b
+c
+c
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+statement error
+VACUUM (UPDATE_INDEXES) wrong_t_name;
+
+
+query
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+----
+indexname
+index_t
+
+
+statement ok
+DROP INDEX index_t;
+
+
+query
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+----
+indexname
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);
+
+
+query
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+----
+indexname
+index_t
+
+
+statement ok
+DROP TABLE t;
+
+
+query
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid;
+----
+indexname
+
+
+statement error db error: ERROR: relation "invalid" does not exist
+CREATE INDEX test_index ON invalid USING inverted (invalid);
+
+
+statement error db error: ERROR: relation "invalid" does not exist
+CREATE INDEX test_index ON invalid USING inverted (invalid);
+
+
+statement ok
+CREATE TABLE test(i int);
+
+
+statement error db error: ERROR: column "invalid" does not exist
+CREATE INDEX test_index ON test USING inverted (invalid);
+
+
+statement ok
+CREATE INDEX test_index ON test USING inverted (i);
+
+
+statement error db error: ERROR: relation "test_index" already exists
+CREATE INDEX test_index ON test USING inverted (i);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS test_index ON test USING inverted (i);
+
+
+query
+select oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
+----
+oid	relname	relkind
+<slt:ignore>	test_index	i
+
+
+query
+select indexrelid, indrelid FROM pg_index
+----
+indexrelid	indrelid
+<slt:ignore>	<slt:ignore>
+
+
+statement ok
+DROP INDEX test_index;
+
+
+query
+SELECT indexrelid, indrelid FROM pg_index
+----
+indexrelid	indrelid
+
+
+statement error db error: ERROR: index "test_index" does not exist
+DROP INDEX test_index;
+
+
+statement ok
+DROP INDEX IF EXISTS test_index;
+
+
+statement ok
+DROP TABLE test;
+
+
+query
+SELECT oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
+----
+oid	relname	relkind
+
+
+query
+SELECT indexrelid, indrelid FROM pg_index
+----
+indexrelid	indrelid
+
+statement ok
+CREATE TABLE tstest (a INTEGER, b TIMESTAMP);
+
+statement error db error: ERROR: Column b has unsupported kind and can not be indexed.
+CREATE INDEX index_ts on tstest USING inverted(b);
+
+statement ok
+DROP TABLE tstest;
+
+statement ok
+CREATE TABLE table_numeric_idx (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement ok
+CREATE INDEX test_index_numeric ON table_numeric_idx USING inverted (a, b);
+
+statement ok
+INSERT INTO table_numeric_idx VALUES (1,1), (2,3), (4,5);
+
+statement ok
+VACUUM (UPDATE_INDEXES) table_numeric_idx;
+
+query
+SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
+----
+a	b
+1	1
+2	3
+
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement count 3
+INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
+
+# With read_your_own_writes=on, we should fail
+query error
+SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (UPDATE_INDEXES) table_numeric_idx;
+
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+BEGIN;
+
+statement count 3
+INSERT INTO table_numeric_idx VALUES (23,1), (27,3), (28,5);
+
+query
+SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 OR a = 28 ORDER BY a;
+----
+a	b
+1	1
+2	3
+7	3
+17	5
+
+statement ok
+COMMIT;
+
+# restore default
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+DROP TABLE table_numeric_idx;
+
+
+statement ok
+CREATE TABLE help_test(r text);
+
+
+statement error
+CREATE INDEX help_idx ON help_test USING inverted(r) WITH (HELP);
+----
+db error: ERROR: 
+Index:
+  commit_interval (integer) [default: 1000] - Commit interval in milliseconds
+  consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
+  cleanup_interval_step (integer) [default: 1] - Cleanup interval step

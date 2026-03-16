@@ -59,22 +59,34 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx)
-  : _trx(trx) {
-  _pk_field.PrepareForStringValue();
+  irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+  std::span<const catalog::Column::Id> columns)
+  : ColumnSinkWriterImplBase{columns},
+    _analyzer_provider{std::move(analyzer_provider)},
+    _trx{trx} {
+  _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(velox::TypeKind kind,
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
-  if (kind == facebook::velox::TypeKind::UNKNOWN) {
+  if (!IsIndexed(column_id)) {
+#ifdef SDB_DEV
+    _current_writer = nullptr;
+#endif
+    return false;
+  }
+  // For now we do not support types that are not default comparable as our
+  // ranges depend on that.
+  SDB_ASSERT(!type.providesCustomComparison());
+  if (type.kind() == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
     // handling
     SetupColumnWriter<velox::TypeKind::UNKNOWN>(column_id, false);
   } else {
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, kind, column_id,
-                                       have_nulls);
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, type.kind(),
+                                       column_id, have_nulls);
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -135,7 +147,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
                        Kind == velox::TypeKind::VARBINARY) {
     mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue();
+    _field.PrepareForStringValue(_analyzer_provider(column_id));
     if (have_nulls) {
       _current_writer =
         MakeIndexWriter(make_nullable_writer_func(&WriteStringValue));
@@ -203,7 +215,9 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
-  SDB_ASSERT(!_document.has_value());
+  if (_document) {
+    _document.reset();
+  }
   _document.emplace(_trx.Insert(false, batch_size));
   _emit_pk = true;
 }
@@ -253,17 +267,32 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
   return field;
 }
 
-void SearchSinkInsertBaseImpl::Field::PrepareForStringValue() {
+void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gStringStreamPool.emplace(AnalyzerImpl::StringStreamTag{});
 }
 
+void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
+  sdb::catalog::ColumnAnalyzer&& column_analyzer) {
+  index_features = column_analyzer.features;
+  analyzer.reset();
+  string_analyzer = std::move(column_analyzer.analyzer);
+}
+
 void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {
-  auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
-  sstream.reset(value);
+  SDB_ASSERT(analyzer || string_analyzer);
+  SDB_ASSERT((analyzer == nullptr) || (string_analyzer == nullptr));
+  if (analyzer) {
+    auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
+    sstream.reset(value);
+  } else {
+    string_analyzer->reset(value);
+  }
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gNumberStreamPool.emplace(AnalyzerImpl::NumberStreamTag{});
 }
@@ -274,7 +303,7 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
   if constexpr (std::is_same_v<
                   T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
     // TODO(Dronplane): Native int128 support
-    nstream.reset(static_cast<double>(value));
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
   } else if constexpr (
     std::is_same_v<T,
                    velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType> ||
@@ -288,6 +317,7 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gBoolStreamPool.emplace(AnalyzerImpl::BoolStreamTag{});
 }
@@ -298,6 +328,7 @@ void SearchSinkInsertBaseImpl::Field::SetBooleanValue(bool value) {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForNullValue() {
+  string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gNullStreamPool.emplace(AnalyzerImpl::NullStreamTag{});
 }
@@ -309,7 +340,7 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   irs::IndexWriter::Transaction& trx)
-  : _trx(trx) {}
+  : _trx{trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
@@ -318,6 +349,7 @@ void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
 
 void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
+  FinishImpl();
   SDB_ASSERT(!_remove_filter);
   _remove_filter = std::make_shared<SearchRemoveFilter>(batch_size);
 }

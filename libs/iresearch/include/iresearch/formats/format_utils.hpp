@@ -23,7 +23,7 @@
 #pragma once
 #include <absl/strings/str_cat.h>
 
-#include "iresearch/index/field_meta.hpp"
+#include "iresearch/error/error.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 
@@ -43,7 +43,7 @@ void WriteFooter(IndexOutput& out);
 
 size_t HeaderLength(std::string_view format) noexcept;
 
-int32_t CheckHeader(IndexInput& in, std::string_view format, int32_t min_ver,
+int32_t CheckHeader(DataInput& in, std::string_view format, int32_t min_ver,
                     int32_t max_ver);
 
 inline int64_t ReadChecksum(IndexInput& in) {

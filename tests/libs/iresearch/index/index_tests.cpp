@@ -26,26 +26,27 @@
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/delta_compression.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/type_limits.hpp>
-#include <iresearch/utils/wildcard_utils.hpp>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/delta_compression.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::literals;
@@ -57,17 +58,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
@@ -2299,20 +2296,31 @@ class IndexTestCase : public tests::IndexTestBase {
     }
   }
 
-  void DocsBitUnion(irs::IndexFeatures features);
+  void DocsBitUnion(irs::IndexFeatures features, size_t docs_count_per_term);
 };
 
-void IndexTestCase::DocsBitUnion(irs::IndexFeatures features) {
+void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
+                                 size_t docs_count_per_term) {
   tests::StringViewField field("0", features);
-  const size_t n = irs::BitsRequired<uint64_t>(2) + 7;
-
+  const auto docs_count = docs_count_per_term * 2 + 1;
+  std::vector<uint64_t> expected_a;
+  std::vector<uint64_t> expected_b;
+  constexpr auto WordBits = irs::BitsRequired<uint64_t>();
+  const size_t num_words = (docs_count + WordBits - 1) / WordBits;
+  expected_a.resize(num_words, 0);
+  expected_b.resize(num_words, 0);
   {
     auto writer = open_writer();
 
     {
       auto docs = writer->GetBatch();
-      for (size_t i = 1; i <= n; ++i) {
+      for (size_t i = 1; i < docs_count; ++i) {
         const std::string_view value = i % 2 ? "A" : "B";
+        if (value == "A") {
+          irs::SetBit(expected_a[i / WordBits], i % WordBits);
+        } else {
+          irs::SetBit(expected_b[i / WordBits], i % WordBits);
+        }
         field.value(value);
         ASSERT_TRUE(docs.Insert().Insert<irs::Action::INDEX>(field));
       }
@@ -2329,27 +2337,17 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features) {
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(1, reader->size());
   auto& segment = (*reader)[0];
-  ASSERT_EQ(n + 1, segment.docs_count());
-  ASSERT_EQ(n + 1, segment.live_docs_count());
+  ASSERT_EQ(docs_count, segment.docs_count());
+  ASSERT_EQ(docs_count, segment.live_docs_count());
 
   const auto* term_reader = segment.field(field.Name());
   ASSERT_NE(nullptr, term_reader);
-  ASSERT_EQ(n + 1, term_reader->docs_count());
+  ASSERT_EQ(docs_count, term_reader->docs_count());
   ASSERT_EQ(3, term_reader->size());
   ASSERT_EQ("A", irs::ViewCast<char>(term_reader->min()));
   ASSERT_EQ("C", irs::ViewCast<char>(term_reader->max()));
   ASSERT_EQ(field.Name(), term_reader->meta().name);
   ASSERT_EQ(field.GetIndexFeatures(), term_reader->meta().index_features);
-
-  constexpr size_t kExpectedDocsB[]{
-    0b0101010101010101010101010101010101010101010101010101010101010100,
-    0b0101010101010101010101010101010101010101010101010101010101010101,
-    0b0000000000000000000000000000000000000000000000000000000001010101};
-
-  constexpr size_t kExpectedDocsA[]{
-    0b1010101010101010101010101010101010101010101010101010101010101010,
-    0b1010101010101010101010101010101010101010101010101010101010101010,
-    0b0000000000000000000000000000000000000000000000000000000010101010};
 
   irs::SeekCookie::ptr cookies[2];
 
@@ -2374,11 +2372,13 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features) {
     return nullptr;
   };
 
-  size_t actual_docs_ab[3]{};
-  ASSERT_EQ(n, term_reader->BitUnion(cookie_provider, actual_docs_ab));
-  ASSERT_EQ(kExpectedDocsA[0] | kExpectedDocsB[0], actual_docs_ab[0]);
-  ASSERT_EQ(kExpectedDocsA[1] | kExpectedDocsB[1], actual_docs_ab[1]);
-  ASSERT_EQ(kExpectedDocsA[2] | kExpectedDocsB[2], actual_docs_ab[2]);
+  std::vector<uint64_t> actual_docs_ab(num_words);
+  // -1 as we exclude C term
+  ASSERT_EQ(docs_count - 1,
+            term_reader->BitUnion(cookie_provider, actual_docs_ab.data()));
+  for (size_t i = 0; i < num_words; ++i) {
+    ASSERT_EQ(expected_a[i] | expected_b[i], actual_docs_ab[i]);
+  }
 }
 
 TEST_P(IndexTestCase, s2sequence) {
@@ -2825,8 +2825,25 @@ TEST_P(IndexTestCase, europarl_docs_big_automaton) {
 }
 
 TEST_P(IndexTestCase, docs_bit_union) {
-  DocsBitUnion(irs::IndexFeatures::None);
-  DocsBitUnion(irs::IndexFeatures::Freq);
+  // less than block
+  DocsBitUnion(irs::IndexFeatures::None, 63);
+  DocsBitUnion(irs::IndexFeatures::Freq, 63);
+
+  // exactly one block
+  DocsBitUnion(irs::IndexFeatures::None, 128);
+  DocsBitUnion(irs::IndexFeatures::Freq, 128);
+
+  // more than block
+  DocsBitUnion(irs::IndexFeatures::None, 135);
+  DocsBitUnion(irs::IndexFeatures::Freq, 135);
+
+  // exactly two blocks
+  DocsBitUnion(irs::IndexFeatures::None, 256);
+  DocsBitUnion(irs::IndexFeatures::Freq, 256);
+
+  // more than two blocks
+  DocsBitUnion(irs::IndexFeatures::None, 257);
+  DocsBitUnion(irs::IndexFeatures::Freq, 257);
 }
 
 TEST_P(IndexTestCase, monarch_eco_onthology) {
@@ -3046,8 +3063,9 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       // As declaration for wait_for contains "It may also be unblocked
       // spuriously." for all platforms
-      while (!stop && result == std::cv_status::no_timeout)
+      while (!stop && result == std::cv_status::no_timeout) {
         result = cond.wait_for(cond_lock, 100ms);
+      }
 
       // FIXME TODO add once segment_context will not block flush_all()
       // ASSERT_TRUE(stop);
@@ -3240,8 +3258,9 @@ TEST_P(IndexTestCase, document_context) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field.wait = false;
@@ -3376,8 +3395,9 @@ TEST_P(IndexTestCase, document_context) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field_cond_lock
@@ -3451,8 +3471,9 @@ TEST_P(IndexTestCase, document_context) {
                   // segment_context will not block flush_all()
 
     // override spurious wakeup
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field_cond_lock
@@ -12769,8 +12790,9 @@ TEST_P(IndexTestCase, segment_options) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!stop && result == std::cv_status::no_timeout)
+    while (!stop && result == std::cv_status::no_timeout) {
       result = cond.wait_for(lock, 1000ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     // ^^^ expecting timeout because pool should block indefinitely
@@ -13412,20 +13434,18 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 1);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 0);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 0);
     }
+
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 2);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 1);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 1);
     }
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 3);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 2);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 2);
     }
     EXPECT_FALSE(it->next());
     EXPECT_FALSE(it->next());

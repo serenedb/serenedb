@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "basics/assert.h"
 #include "basics/shared.hpp"
 
 namespace irs {
@@ -37,6 +38,12 @@ consteval uint32_t BitsRequired() noexcept {
 template<typename T>
 IRS_FORCE_INLINE constexpr size_t BitsRequired(size_t n) noexcept {
   return BitsRequired<T>() * n;
+}
+
+template<typename T>
+IRS_FORCE_INLINE constexpr T PopBit(T v) noexcept {
+  SDB_ASSERT(v);
+  return v & (v - 1);
 }
 
 template<typename T>

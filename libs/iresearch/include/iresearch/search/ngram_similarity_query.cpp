@@ -23,10 +23,18 @@
 
 #include "ngram_similarity_query.hpp"
 
+#include <memory>
+
+#include "basics/containers/small_vector.h"
+#include "basics/memory.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_reader.hpp"  // for SubReader/TermReader definitions
-#include "iresearch/search/min_match_disjunction.hpp"
-#include "iresearch/search/ngram_similarity_filter.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 namespace {
@@ -34,17 +42,12 @@ namespace {
 struct Position {
   template<typename Iterator>
   explicit Position(Iterator& itr) noexcept
-    : pos{&PosAttr::get(itr)},
-      doc{irs::get<DocAttr>(itr)},
-      scr{&ScoreAttr::get(itr)} {
+    : doc{itr.value()}, pos{&PosAttr::get(itr)} {
     SDB_ASSERT(pos);
-    SDB_ASSERT(doc);
-    SDB_ASSERT(scr);
   }
 
+  const doc_id_t& doc;
   PosAttr* pos;
-  const DocAttr* doc;
-  const ScoreAttr* scr;
 };
 
 struct PositionWithOffset : Position {
@@ -73,19 +76,19 @@ uint32_t GetOffset(const T& pos) noexcept {
 struct SearchState {
   template<typename T>
   SearchState(uint32_t p, const T& attrs)
-    : scr{attrs.scr}, len{1}, pos{p}, offs{GetOffset<true>(attrs)} {}
+    : origin{attrs.pos}, len{1}, pos{p}, offs{GetOffset<true>(attrs)} {}
 
   // appending constructor
   template<typename T>
   SearchState(std::shared_ptr<SearchState> other, uint32_t p, const T& attrs)
     : parent{std::move(other)},
-      scr{attrs.scr},
+      origin{attrs.pos},
       len{parent->len + 1},
       pos{p},
       offs{GetOffset<false>(attrs)} {}
 
   std::shared_ptr<SearchState> parent;
-  const ScoreAttr* scr;
+  const PosAttr* origin;
   uint32_t len;
   uint32_t pos;
   uint32_t offs;
@@ -95,20 +98,22 @@ using SearchStates =
   std::map<uint32_t, std::shared_ptr<SearchState>, std::greater<>>;
 
 template<bool FullMatch>
-class NGramApprox : public MinMatchDisjunction<NoopAggregator> {
-  using Base = MinMatchDisjunction<NoopAggregator>;
+class NGramApprox : public MinMatchDisjunction {
+  using Base = MinMatchDisjunction;
 
  public:
   using Base::Base;
+  NGramApprox(doc_id_t docs_count, CostAdapters&& itrs, size_t min_match)
+    : Base{std::move(itrs), min_match, docs_count} {}
 };
 
 template<>
-class NGramApprox<true> : public Conjunction<CostAdapter, NoopAggregator> {
-  using Base = Conjunction<CostAdapter, NoopAggregator>;
+class NGramApprox<true> : public Conjunction<CostAdapter> {
+  using Base = Conjunction<CostAdapter>;
 
  public:
-  NGramApprox(CostAdapters&& itrs, size_t min_match_count)
-    : Base{NoopAggregator{},
+  NGramApprox(doc_id_t docs_count, CostAdapters&& itrs, size_t min_match_count)
+    : Base{ScoreMergeType::Noop, docs_count,
            [](auto&& itrs) {
              absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
                return lhs.est < rhs.est;
@@ -209,6 +214,9 @@ class SerialPositionsChecker final : public Base {
     return nullptr;
   }
 
+  score_t GetFilterBoost() const noexcept { return _filter_boost.value; }
+  uint32_t GetFreq() const noexcept { return _seq_freq.value; }
+
  private:
   friend class NGramPosition;
 
@@ -222,7 +230,7 @@ class SerialPositionsChecker final : public Base {
 
   std::vector<PositionType> _pos;
   std::set<size_t> _used_pos;  // longest sequence positions overlaping detector
-  std::vector<const ScoreAttr*> _longest_sequence;
+  std::vector<const PosAttr*> _longest_sequence;
   std::vector<size_t> _pos_sequence;
   size_t _min_match_count;
   SearchStates _search_buf;
@@ -240,7 +248,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 
   _seq_freq.value = 0;
   for (const auto& pos_iterator : _pos) {
-    if (pos_iterator.doc->value == doc) {
+    if (pos_iterator.doc == doc) {
       auto& pos = *pos_iterator.pos;
       if (potential <= longest_sequence_len || potential < _min_match_count) {
         // this term could not start largest (or long enough) sequence.
@@ -264,10 +272,11 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
               auto current_sequence = found;
               // if we hit same position - set length to 0 to force checking
               // candidates to the left
-              uint32_t current_found_len{(found->first == current_pos ||
-                                          found_state->scr == pos_iterator.scr)
-                                           ? 0
-                                           : found_state->len + 1};
+              uint32_t current_found_len{
+                (found->first == current_pos ||
+                 found_state->origin == pos_iterator.pos)
+                  ? 0
+                  : found_state->len + 1};
               auto initial_found = found;
               if (current_found_len > longest_sequence_len) {
                 longest_sequence_len = current_found_len;
@@ -279,7 +288,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
                 for (++found; found != std::end(_search_buf); ++found) {
                   found_state = found->second.get();
                   SDB_ASSERT(found_state);
-                  if (found_state->scr != pos_iterator.scr &&
+                  if (found_state->origin != pos_iterator.pos &&
                       found_state->len + 1 > current_found_len) {
                     // we have better option. Replace this match!
                     current_sequence = found;
@@ -304,7 +313,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
                   swap_cache.emplace_back(current_pos,
                                           std::move(new_candidate));
                 }
-              } else if (initial_found->second->scr == pos_iterator.scr &&
+              } else if (initial_found->second->origin == pos_iterator.pos &&
                          potential > longest_sequence_len &&
                          potential >= _min_match_count) {
                 // we just hit same iterator and found no better place to
@@ -390,17 +399,17 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
           bool delete_candidate = false;
           // only first longest sequence will contribute to frequency
           if (_longest_sequence.empty()) {
-            _longest_sequence.push_back(state->scr);
+            _longest_sequence.push_back(state->origin);
             _pos_sequence.push_back(state->pos);
             auto cur_parent = state->parent;
             while (cur_parent) {
-              _longest_sequence.push_back(cur_parent->scr);
+              _longest_sequence.push_back(cur_parent->origin);
               _pos_sequence.push_back(cur_parent->pos);
               cur_parent = cur_parent->parent;
             }
           } else {
             if (_used_pos.find(state->pos) != std::end(_used_pos) ||
-                state->scr != _longest_sequence[0]) {
+                state->origin != _longest_sequence[0]) {
               delete_candidate = true;
             } else {
               _pos_sequence.push_back(state->pos);
@@ -408,7 +417,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
               size_t j = 1;
               while (cur_parent) {
                 SDB_ASSERT(j < _longest_sequence.size());
-                if (_longest_sequence[j] != cur_parent->scr ||
+                if (_longest_sequence[j] != cur_parent->origin ||
                     _used_pos.find(cur_parent->pos) != std::end(_used_pos)) {
                   delete_candidate = true;
                   break;
@@ -451,34 +460,56 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 }
 
 template<typename Approx, typename Checker>
-class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
+class NGramSimilarityDocIterator : public DocIterator {
  public:
-  NGramSimilarityDocIterator(CostAdapters&& itrs, size_t total_terms_count,
-                             size_t min_match_count, bool collect_all_states)
+  NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
+                             size_t total_terms_count, size_t min_match_count,
+                             bool collect_all_states)
     : _checker{std::begin(itrs), std::end(itrs), total_terms_count,
                min_match_count, collect_all_states},
       // we are not interested in disjunction`s // scoring
-      _approx{std::move(itrs), min_match_count} {
-    // avoid runtime conversion
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<DocAttr>(&_approx);
-
+      _approx{docs_count, std::move(itrs), min_match_count} {
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
   }
 
-  NGramSimilarityDocIterator(CostAdapters&& itrs, const SubReader& segment,
-                             const TermReader& field, score_t boost,
-                             const byte_type* stats, size_t total_terms_count,
-                             size_t min_match_count = 1,
-                             const Scorers& ord = Scorers::kUnordered)
-    : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
-                                 min_match_count, !ord.empty()} {
-    if (!ord.empty()) {
-      auto& score = std::get<ScoreAttr>(_attrs);
-      CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
+  NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
+                             size_t total_terms_count, size_t min_match_count,
+                             const FieldProperties& field,
+                             const byte_type* stats, score_t boost)
+    : NGramSimilarityDocIterator{docs_count, std::move(itrs), total_terms_count,
+                                 min_match_count, stats != nullptr} {
+    _stats = stats;
+    _field = field;
+    _boost = boost;
+  }
+
+  ~NGramSimilarityDocIterator() noexcept {
+    if (_collected_boost) {
+      std::allocator<score_t>{}.deallocate(_collected_boost, kScoreBlock);
     }
+    if (_collected_freq) {
+      std::allocator<uint32_t>{}.deallocate(_collected_freq, kScoreBlock);
+    }
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    _collected_boost = std::allocator<score_t>{}.allocate(kScoreBlock);
+    std::get<BoostBlockAttr>(_attrs).value = _collected_boost;
+
+    _collected_freq = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+    std::get<FreqBlockAttr>(_attrs).value = _collected_freq;
+
+    SDB_ASSERT(ctx.scorer);
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = _field,
+      .doc_attrs = *this,
+      .fetcher = ctx.fetcher,
+      .stats = _stats,
+      .boost = _boost,
+    });
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -487,15 +518,11 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     return attr != nullptr ? attr : _checker.GetMutableAttr(type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
@@ -506,20 +533,59 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
   }
 
-  uint32_t count() final { return Count(*this); }
+  doc_id_t LazySeek(doc_id_t target) final {
+    // TODO(mbkkt) should be SDB_ASSERT(target > value())
+    // but depends on underlying iterator implementation
+    SDB_ASSERT(target >= value());
+    const auto doc = _approx.LazySeek(target);
+    if (target != doc) {
+      return doc;
+    }
+    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      return _doc = doc;
+    }
+    return doc + 1;
+  }
+
+  uint32_t count() final { return CountImpl(*this); }
+
+  void FetchScoreArgs(uint16_t index) final {
+    SDB_ASSERT(_collected_boost);
+    SDB_ASSERT(_collected_freq);
+    _collected_boost[index] = _checker.GetFilterBoost();
+    _collected_freq[index] = _checker.GetFreq();
+  }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  private:
   using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
+    std::tuple<AttributePtr<CostAttr>, BoostBlockAttr, FreqBlockAttr>;
+
+  const byte_type* _stats{};
+  score_t _boost{1.0f};
+  FieldProperties _field;
 
   Checker _checker;
   Approx _approx;
   Attributes _attrs;
+  score_t* _collected_boost = nullptr;  // TODO(gnusi): maybe array?
+  uint32_t* _collected_freq = nullptr;
 };
 
 CostAdapters Execute(const NGramState& query_state,
@@ -542,8 +608,8 @@ CostAdapters Execute(const NGramState& query_state,
       continue;
     }
 
-    if (auto docs = field->Iterator(required_features, *term_state))
-      [[likely]] {
+    if (auto docs = field->Iterator(required_features,
+                                    {.cookie = term_state.get()})) [[likely]] {
       itrs.emplace_back(std::move(docs));
     }
   }
@@ -555,8 +621,7 @@ CostAdapters Execute(const NGramState& query_state,
 
 DocIterator::ptr NGramSimilarityQuery::execute(
   const ExecutionContext& ctx) const {
-  const auto& ord = ctx.scorers;
-  SDB_ASSERT(1 != _min_match_count || !ord.empty());
+  SDB_ASSERT(1 != _min_match_count || ctx.scorer);
 
   const auto& segment = ctx.segment;
   const auto* query_state = _states.find(segment);
@@ -565,25 +630,29 @@ DocIterator::ptr NGramSimilarityQuery::execute(
     return DocIterator::empty();
   }
 
-  auto itrs = Execute(*query_state, kRequiredFeatures, ord.features());
+  const auto features = GetFeatures(ctx.scorer);
+  auto itrs = Execute(*query_state, kRequiredFeatures, features);
 
   if (itrs.size() < _min_match_count) {
     return DocIterator::empty();
   }
+
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (itrs.size() == _min_match_count) {
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<Dummy>>>(
-      std::move(itrs), segment, *query_state->reader, _boost, _stats.c_str(),
-      query_state->terms.size(), _min_match_count, ord);
+      docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+      query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr,
+      _boost);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
-    std::move(itrs), segment, *query_state->reader, _boost, _stats.c_str(),
-    query_state->terms.size(), _min_match_count, ord);
+    docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+    query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr, _boost);
 }
 
 DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(
@@ -602,16 +671,19 @@ DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(
   }
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
+  const auto docs_count = static_cast<doc_id_t>(rdr.docs_count());
   if (itrs.size() == _min_match_count) {
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<NGramPosition>>>(
-      std::move(itrs), query_state->terms.size(), _min_match_count, true);
+      docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+      true);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<NGramPosition>>>(
-    std::move(itrs), query_state->terms.size(), _min_match_count, true);
+    docs_count, std::move(itrs), query_state->terms.size(), _min_match_count,
+    true);
 }
 
 }  // namespace irs

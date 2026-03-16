@@ -29,6 +29,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/sql_function_impl.h"
 #include "catalog/view.h"
 #include "general_server/state.h"
 #include "pg/commands.h"
@@ -82,6 +83,7 @@
 #include "pg/pg_catalog/pg_rewrite.h"
 #include "pg/pg_catalog/pg_seclabel.h"
 #include "pg/pg_catalog/pg_sequence.h"
+#include "pg/pg_catalog/pg_settings.h"
 #include "pg/pg_catalog/pg_shdepend.h"
 #include "pg/pg_catalog/pg_shdescription.h"
 #include "pg/pg_catalog/pg_shseclabel.h"
@@ -103,8 +105,10 @@
 #include "pg/pg_feature.h"
 #include "pg/sdb_catalog/sdb_log.h"
 #include "pg/sql_parser.h"
+#include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
+#include "search/functions.hpp"
 #include "vpack/serializer.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -115,6 +119,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
+
 using namespace catalog;
 
 struct HashEq {
@@ -211,6 +216,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
   MakeTable<SystemTable<SdbLog>>(),
+  MakeTable<SystemTable<SdbShowAllSettings>>(),
 };
 
 const PgSystemSchema kInformationSchema{
@@ -284,6 +290,7 @@ constexpr auto kMapping =
     {"tan", {"presto_tan", false}},
     {"trunc", {"presto_truncate", false}},
     {"width_bucket", {"presto_width_bucket", false}},
+    {"fail", {"pg_error", false}},
     // Date/Time functions
     {"date_trunc", {"presto_date_trunc", false}},
     {"extract", {"pg_extract", false}},
@@ -407,12 +414,38 @@ constexpr auto kMapping =
     {"json_extract_path_text",
      {"pg_json_extract_path_text", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"pg_schema_size",
+     {"pg_schema_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"pg_database_size",
+     {"pg_database_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"pg_table_size",
+     {"pg_table_size", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"ts_lexize",
+     {"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    // Search functions
+    {"phrase", {search::functions::kPhrase, false}},
+    {"term_eq", {search::functions::kTermEq, false}},
+    {"term_lt", {search::functions::kTermLt, false}},
+    {"term_lte", {search::functions::kTermLe, false}},
+    {"term_gte", {search::functions::kTermGe, false}},
+    {"term_gt", {search::functions::kTermGt, false}},
+    {"term_in", {search::functions::kTermIn, false}},
+    {"term_like", {search::functions::kTermLike, false}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {
   auto it = schema.find(name);
   return it == schema.end() ? nullptr : *it;
 }
+
+containers::FlatHashMap<std::string, std::shared_ptr<Function>>
+  gSystemFunctions;
+containers::FlatHashMap<std::string, std::shared_ptr<View>> gSystemViews;
+
 }  // namespace
 
 const VirtualTable* GetSystemTable(std::string_view schema,
@@ -448,7 +481,13 @@ void VisitSystemTables(
 }
 
 std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
+#ifndef SDB_GTEST
+  // For query building tests we need to run this without feature
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
+#endif
+  if (auto it = gSystemFunctions.find(name); it != gSystemFunctions.end()) {
+    return it->second;
+  }
   FunctionLanguage language = FunctionLanguage::VeloxNative;
   bool table = false;
   FunctionKind kind = FunctionKind::Scalar;
@@ -474,8 +513,6 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
     });
 }
 
-containers::FlatHashMap<std::string, std::shared_ptr<View>> gSystemViews;
-
 std::shared_ptr<View> GetView(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   auto it = gSystemViews.find(name);
@@ -487,11 +524,21 @@ std::shared_ptr<View> GetView(std::string_view name) {
 
 void RegisterSystemViews() {
   for (const auto system_view_query : kSystemViewsQueries) {
-    auto stmt = pg::ParseSystemView(system_view_query);
-    const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
+    const auto* raw_stmt = ParseSystemObject(system_view_query);
     const auto* view_stmt = castNode(ViewStmt, raw_stmt->stmt);
-    auto system_view = pg::CreateSystemView(*view_stmt);
-    gSystemViews[system_view->GetName()] = system_view;
+    SDB_ASSERT(view_stmt);
+    auto system_view = CreateSystemView(*view_stmt);
+    gSystemViews[system_view->GetName()] = std::move(system_view);
+  }
+}
+
+void RegisterSystemFunctions() {
+  for (const auto system_func_query : kSystemFunctionsQueries) {
+    const auto* raw_stmt = ParseSystemObject(system_func_query);
+    const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);
+    SDB_ASSERT(create_func_stmt);
+    auto func = CreateSystemFunction(*create_func_stmt);
+    gSystemFunctions[func->GetName()] = std::move(func);
   }
 }
 

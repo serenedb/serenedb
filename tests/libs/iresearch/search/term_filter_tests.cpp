@@ -21,11 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_query.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/term_query.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -75,9 +74,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       });
       auto sub = rdr.begin();
       auto docs0 = prepared->execute({.segment = *sub});
-      auto* doc = irs::get<irs::DocAttr>(*docs0);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs0->value(), doc->value);
       auto docs1 = prepared->execute({.segment = *sub});
       ASSERT_TRUE(docs0->next());
       ASSERT_EQ(docs0->value(), docs1->seek(docs0->value()));
@@ -115,7 +111,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     // create order
 
     auto scorer = tests::sort::Boost{};
-    auto pord = irs::Scorers::Prepare(scorer);
 
     MaxMemoryCounter counter;
 
@@ -124,27 +119,25 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto prep = filter.prepare({
         .index = rdr,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
-      auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs->value(), doc->value);
+      auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
 
-      auto* scr = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_FALSE(!scr);
+      auto score = docs->PrepareScore({
+        .scorer = &scorer,
+        .segment = &*(rdr.begin()),
+      });
 
       // first hit
       {
         ASSERT_TRUE(docs->next());
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
-        (*scr)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(0), score_value);
-        ASSERT_EQ(docs->value(), doc->value);
       }
 
       ASSERT_FALSE(docs->next());
-      ASSERT_EQ(docs->value(), doc->value);
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -158,18 +151,20 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto prep = filter.prepare({
         .index = rdr,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
-      auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
-
-      auto* scr = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_FALSE(!scr);
+      auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
+      auto score = docs->PrepareScore({
+        .scorer = &scorer,
+        .segment = &*(rdr.begin()),
+      });
 
       // first hit
       {
         ASSERT_TRUE(docs->next());
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
-        (*scr)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(value), score_value);
       }
 
@@ -297,12 +292,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -330,12 +321,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -363,12 +350,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -396,12 +379,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -429,12 +408,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -462,12 +437,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -495,12 +466,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -556,20 +523,22 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       };
 
       std::set<irs::doc_id_t> expected{31, 32};
-      auto pord = irs::Scorers::Prepare(scorer);
       auto prep = filter.prepare({
         .index = rdr,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
-      auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
+      auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
 
-      auto* scr = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_FALSE(!scr);
+      auto score = docs->PrepareScore({
+        .scorer = &scorer,
+        .segment = &*(rdr.begin()),
+      });
 
       while (docs->next()) {
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
-        (*scr)(&score_value);
+        score.Score(&score_value, 1);
         IRS_IGNORE(score_value);
         ASSERT_EQ(1, expected.erase(docs->value()));
       }

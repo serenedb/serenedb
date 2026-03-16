@@ -85,6 +85,11 @@ db error: ERROR: column "wrong_column" named in key does not exist
 statement ok
 CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
 
+
+statement error relation "vedernikoff" already exists
+CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
+
+
 statement error
 CREATE TABLE babsky (
     makak INTEGER,
@@ -97,3 +102,7 @@ db error: ERROR: column "makak" specified more than once
 
 statement ok
 DROP TABLE vedernikoff;
+
+skipif postgres
+statement error db error: ERROR: Column b has non primitive type and can not be part of primary key
+CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);

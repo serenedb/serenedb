@@ -21,9 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/analyzers.hpp>
-
 #include "basics/runtime_utils.hpp"
+#include "iresearch/analysis/analyzers.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 

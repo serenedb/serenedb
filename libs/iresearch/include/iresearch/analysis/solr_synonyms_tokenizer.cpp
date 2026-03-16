@@ -23,12 +23,12 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
-#include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
 #include <string_view>
 
 #include "basics/exceptions.h"
 #include "basics/result.h"
+#include "iresearch/analysis/pipeline_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 
 namespace irs::analysis {
 
@@ -58,8 +58,9 @@ SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
   size_t line_number{};
   for (const auto& line : lines) {
     line_number++;
-    if (line.empty() || line[0] == '#')
+    if (line.empty() || line[0] == '#') {
       continue;
+    }
     std::vector<std::string_view> sides = absl::StrSplit(line, "=>");
 
     SynonymsLine synonyms_line;

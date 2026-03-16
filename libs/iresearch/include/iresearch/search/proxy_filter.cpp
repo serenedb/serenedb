@@ -114,30 +114,25 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    if (Type<DocAttr>::id() == id) {
-      return &_doc;
-    }
     return Type<CostAttr>::id() == id ? &_cost : nullptr;
   }
-
-  doc_id_t value() const noexcept final { return _doc.value; }
 
   doc_id_t advance() final {
     while (!_word) {
       if (_bitset.Get(_word_idx, &_word)) {
         ++_word_idx;  // move only if ok. Or we could be overflowed!
         _base += BitsRequired<LazyFilterBitset::WordT>();
-        _doc.value = _base - 1;
+        _doc = _base - 1;
         continue;
       }
       _word = 0;
-      return _doc.value = doc_limits::eof();
+      return _doc = doc_limits::eof();
     }
     const auto delta = std::countr_zero(_word);
     SDB_ASSERT(0 <= delta);
     SDB_ASSERT(delta < BitsRequired<LazyFilterBitset::WordT>());
     _word = (_word >> delta) >> 1;
-    return _doc.value += 1 + delta;
+    return _doc += 1 + delta;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -146,20 +141,40 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
       const doc_id_t bit_idx = target % BitsRequired<LazyFilterBitset::WordT>();
       _base = _word_idx * BitsRequired<LazyFilterBitset::WordT>();
       _word >>= bit_idx;
-      _doc.value = _base - 1 + bit_idx;
+      _doc = _base - 1 + bit_idx;
       ++_word_idx;  // mark this word as consumed
       // FIXME consider inlining to speedup
       return advance();
     } else {
-      _doc.value = doc_limits::eof();
+      _doc = doc_limits::eof();
       _word = 0;
-      return _doc.value;
+      return _doc;
     }
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final {
+    SDB_ASSERT(target >= value());
+    // TODO: maybe optimize?
+    return seek(target);
   }
 
   uint32_t count() final {
     // TODO(mbkkt) custom implementation?
-    return Count(*this);
+    return CountImpl(*this);
+  }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(mbkkt) custom implementation?
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    // TODO(mbkkt) custom implementation?
+    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
   void Reset() noexcept {
@@ -167,13 +182,12 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     _word = 0;
     // before the first word
     _base = doc_limits::invalid() - BitsRequired<LazyFilterBitset::WordT>();
-    _doc.value = doc_limits::invalid();
+    _doc = doc_limits::invalid();
   }
 
  private:
   LazyFilterBitset& _bitset;
   CostAttr _cost;
-  DocAttr _doc;
   doc_id_t _word_idx{0};
   LazyFilterBitset::WordT _word{0};
   doc_id_t _base{doc_limits::invalid()};
@@ -237,8 +251,8 @@ class ProxyQuery : public Filter::Query {
 Filter::Query::ptr ProxyFilter::prepare(const PrepareContext& ctx) const {
   // Currently we do not support caching scores.
   // Proxy filter should not be used with scorers!
-  SDB_ASSERT(ctx.scorers.empty());
-  if (!_cache || !ctx.scorers.empty()) {
+  SDB_ASSERT(!ctx.scorer);
+  if (!_cache || ctx.scorer) {
     return Filter::Query::empty();
   }
   if (!_cache->real_filter_prepared) {

@@ -20,8 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/sparse_bitmap.hpp>
-
+#include "iresearch/formats/sparse_bitmap.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -150,10 +149,8 @@ void SparseBitmapTestCase::TestRwSeekRandomStateless(
         auto* index = irs::get<irs::ValueIndex>(it);
         ASSERT_NE(nullptr,
                   index);  // index value is unspecified for invalid docs
-        auto* doc = irs::get<irs::DocAttr>(it);
-        ASSERT_NE(nullptr, doc);
 
-        ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+        ASSERT_FALSE(irs::doc_limits::valid(it.value()));
         auto* cost = irs::get<irs::CostAttr>(it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(count, cost->estimate());
@@ -173,15 +170,13 @@ void SparseBitmapTestCase::TestRwSeekRandomStateless(
                                    IteratorOptions(bitmap_index, true), count};
       auto* index = irs::get<irs::ValueIndex>(it);
       ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-      auto* doc = irs::get<irs::DocAttr>(it);
-      ASSERT_NE(nullptr, doc);
-      ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+      ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto* cost = irs::get<irs::CostAttr>(it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(count, cost->estimate());
 
       ASSERT_EQ(std::get<1>(seek), it.seek(std::get<0>(seek)));
-      ASSERT_EQ(std::get<1>(seek), doc->value);
+      ASSERT_EQ(std::get<1>(seek), it.value());
       if (!irs::doc_limits::eof(std::get<1>(seek))) {
         ASSERT_EQ(std::get<2>(seek), it.index());
         ASSERT_EQ(std::get<2>(seek), index->value);
@@ -203,9 +198,7 @@ void SparseBitmapTestCase::TestRwSeekRandomStateless(
         auto* index = irs::get<irs::ValueIndex>(it);
         ASSERT_NE(nullptr,
                   index);  // index value is unspecified for invalid docs
-        auto* doc = irs::get<irs::DocAttr>(it);
-        ASSERT_NE(nullptr, doc);
-        ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+        ASSERT_FALSE(irs::doc_limits::valid(it.value()));
         auto* cost = irs::get<irs::CostAttr>(it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(count, cost->estimate());
@@ -225,15 +218,13 @@ void SparseBitmapTestCase::TestRwSeekRandomStateless(
                                    count};
       auto* index = irs::get<irs::ValueIndex>(it);
       ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-      auto* doc = irs::get<irs::DocAttr>(it);
-      ASSERT_NE(nullptr, doc);
-      ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+      ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto* cost = irs::get<irs::CostAttr>(it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(count, cost->estimate());
 
       ASSERT_EQ(std::get<1>(seek), it.seek(std::get<0>(seek)));
-      ASSERT_EQ(std::get<1>(seek), doc->value);
+      ASSERT_EQ(std::get<1>(seek), it.value());
       if (!irs::doc_limits::eof(std::get<1>(seek))) {
         ASSERT_EQ(std::get<2>(seek), it.index());
         ASSERT_EQ(std::get<2>(seek), index->value);
@@ -274,16 +265,14 @@ void SparseBitmapTestCase::TestRwSeekRandom(const RangeType (&ranges)[N],
                                  IteratorOptions(bitmap_index, true)};
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
 
     for (auto& seek : seeks) {
       ASSERT_EQ(std::get<1>(seek), it.seek(std::get<0>(seek)));
-      ASSERT_EQ(std::get<1>(seek), doc->value);
+      ASSERT_EQ(std::get<1>(seek), it.value());
       if (!irs::doc_limits::eof(std::get<1>(seek))) {
         ASSERT_EQ(std::get<2>(seek), it.index());
         ASSERT_EQ(std::get<2>(seek), index->value);
@@ -299,16 +288,14 @@ void SparseBitmapTestCase::TestRwSeekRandom(const RangeType (&ranges)[N],
     irs::SparseBitmapIterator it{std::move(stream), IteratorOptions({}, true)};
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
 
     for (auto& seek : seeks) {
       ASSERT_EQ(std::get<1>(seek), it.seek(std::get<0>(seek)));
-      ASSERT_EQ(std::get<1>(seek), doc->value);
+      ASSERT_EQ(std::get<1>(seek), it.value());
       if (!irs::doc_limits::eof(std::get<1>(seek))) {
         ASSERT_EQ(std::get<2>(seek), it.index());
         ASSERT_EQ(std::get<2>(seek), index->value);
@@ -354,9 +341,7 @@ void SparseBitmapTestCase::TestRwNext(const RangeType (&ranges)[N]) {
     ASSERT_EQ(TrackPrevious(), prev && *prev);
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(count, cost->estimate());
@@ -371,7 +356,6 @@ void SparseBitmapTestCase::TestRwNext(const RangeType (&ranges)[N]) {
         SCOPED_TRACE(expected_doc);
         ASSERT_TRUE(it.next());
         ASSERT_EQ(expected_doc, it.value());
-        ASSERT_EQ(expected_doc, doc->value);
         ASSERT_EQ(expected_index, it.index());
         ASSERT_EQ(expected_index, index->value);
         if (TrackPrevious()) {
@@ -400,9 +384,7 @@ void SparseBitmapTestCase::TestRwNext(const RangeType (&ranges)[N]) {
     ASSERT_EQ(TrackPrevious(), prev && *prev);
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(count, cost->estimate());
@@ -417,7 +399,6 @@ void SparseBitmapTestCase::TestRwNext(const RangeType (&ranges)[N]) {
         SCOPED_TRACE(expected_doc);
         ASSERT_TRUE(it.next());
         ASSERT_EQ(expected_doc, it.value());
-        ASSERT_EQ(expected_doc, doc->value);
         ASSERT_EQ(expected_index, it.index());
         ASSERT_EQ(expected_index, index->value);
         if (TrackPrevious()) {
@@ -471,9 +452,7 @@ void SparseBitmapTestCase::TestRwSeek(const RangeType (&ranges)[N]) {
                                  IteratorOptions(bitmap_index, true), count};
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(count, cost->estimate());
@@ -487,7 +466,6 @@ void SparseBitmapTestCase::TestRwSeek(const RangeType (&ranges)[N]) {
       while (expected_doc < range.second) {
         ASSERT_EQ(expected_doc, it.seek(expected_doc));
         ASSERT_EQ(expected_doc, it.value());
-        ASSERT_EQ(expected_doc, doc->value);
         ASSERT_EQ(expected_index, it.index());
         ASSERT_EQ(expected_index, index->value);
         ++expected_doc;
@@ -509,9 +487,7 @@ void SparseBitmapTestCase::TestRwSeek(const RangeType (&ranges)[N]) {
     irs::SparseBitmapIterator it{std::move(stream), IteratorOptions({}, false)};
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
@@ -525,7 +501,6 @@ void SparseBitmapTestCase::TestRwSeek(const RangeType (&ranges)[N]) {
       while (expected_doc < range.second) {
         ASSERT_EQ(expected_doc, it.seek(expected_doc));
         ASSERT_EQ(expected_doc, it.value());
-        ASSERT_EQ(expected_doc, doc->value);
         ASSERT_EQ(expected_index, it.index());
         ASSERT_EQ(expected_index, index->value);
         ++expected_doc;
@@ -594,16 +569,13 @@ void SparseBitmapTestCase::TestRwSeekNext(const RangeType (&ranges)[N]) {
         auto* index = irs::get<irs::ValueIndex>(it);
         ASSERT_NE(nullptr,
                   index);  // index value is unspecified for invalid docs
-        auto* doc = irs::get<irs::DocAttr>(it);
-        ASSERT_NE(nullptr, doc);
-        ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+        ASSERT_FALSE(irs::doc_limits::valid(it.value()));
         auto* cost = irs::get<irs::CostAttr>(it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(count, cost->estimate());
 
         ASSERT_EQ(expected_doc, it.seek(expected_doc));
         ASSERT_EQ(expected_doc, it.value());
-        ASSERT_EQ(expected_doc, doc->value);
         ASSERT_EQ(expected_index, it.index());
         ASSERT_EQ(expected_index, index->value);
 
@@ -614,7 +586,6 @@ void SparseBitmapTestCase::TestRwSeekNext(const RangeType (&ranges)[N]) {
           for (; expected_doc < max_doc;) {
             ASSERT_TRUE(it.next());
             ASSERT_EQ(expected_doc, it.value());
-            ASSERT_EQ(expected_doc, doc->value);
             ASSERT_EQ(expected_index, it.index());
             ASSERT_EQ(expected_index, index->value);
             ++expected_doc;
@@ -666,16 +637,13 @@ void SparseBitmapTestCase::TestRwSeekNext(const RangeType (&ranges)[N]) {
         auto* index = irs::get<irs::ValueIndex>(it);
         ASSERT_NE(nullptr,
                   index);  // index value is unspecified for invalid docs
-        auto* doc = irs::get<irs::DocAttr>(it);
-        ASSERT_NE(nullptr, doc);
-        ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+        ASSERT_FALSE(irs::doc_limits::valid(it.value()));
         auto* cost = irs::get<irs::CostAttr>(it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(0, cost->estimate());
 
         ASSERT_EQ(expected_doc, it.seek(expected_doc));
         ASSERT_EQ(expected_doc, it.value());
-        ASSERT_EQ(expected_doc, doc->value);
         ASSERT_EQ(expected_index, it.index());
         ASSERT_EQ(expected_index, index->value);
 
@@ -686,7 +654,6 @@ void SparseBitmapTestCase::TestRwSeekNext(const RangeType (&ranges)[N]) {
           for (; expected_doc < max_doc;) {
             ASSERT_TRUE(it.next());
             ASSERT_EQ(expected_doc, it.value());
-            ASSERT_EQ(expected_doc, doc->value);
             ASSERT_EQ(expected_index, it.index());
             ASSERT_EQ(expected_index, index->value);
             ++expected_doc;
@@ -786,9 +753,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
                                    IteratorOptions(bitmap_index, true), 65536};
       auto* index = irs::get<irs::ValueIndex>(it);
       ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-      auto* doc = irs::get<irs::DocAttr>(it);
-      ASSERT_NE(nullptr, doc);
-      ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+      ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto* cost = irs::get<irs::CostAttr>(it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(65536, cost->estimate());
@@ -814,9 +779,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
         []() noexcept -> irs::CostAttr::Type { return 65536; }};
       auto* index = irs::get<irs::ValueIndex>(it);
       ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-      auto* doc = irs::get<irs::DocAttr>(it);
-      ASSERT_NE(nullptr, doc);
-      ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+      ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto* cost = irs::get<irs::CostAttr>(it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(65536, cost->estimate());
@@ -842,9 +805,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
                                    IteratorOptions(bitmap_index, true)};
       auto* index = irs::get<irs::ValueIndex>(it);
       ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-      auto* doc = irs::get<irs::DocAttr>(it);
-      ASSERT_NE(nullptr, doc);
-      ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+      ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto* cost = irs::get<irs::CostAttr>(it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(0, cost->estimate());
@@ -869,9 +830,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
                                           IteratorOptions(bitmap_index, false)};
     auto* index = irs::get<irs::ValueIndex>(it);
     ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
-    ASSERT_FALSE(irs::doc_limits::valid(doc->value));
+    ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());

@@ -19,18 +19,16 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/analysis/geo_analyzer.hpp"
+
 #include <absl/strings/str_cat.h>
 #include <frozen/map.h>
-#include <iresearch/search/geo_filter.h>
 #include <s2/s2latlng.h>
 #include <s2/s2point_region.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
 #include <vpack/serializer.h>
 
-#include <iresearch/analysis/analyzers.hpp>
-#include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/utils/vpack_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
@@ -40,6 +38,9 @@
 #include "basics/result.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/search/geo_filter.h"
+#include "iresearch/utils/vpack_utils.hpp"
 
 namespace magic_enum {
 

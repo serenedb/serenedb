@@ -21,10 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/block_pool.hpp>
-#include <iresearch/utils/string.hpp>
-
 #include "basics/misc.hpp"
+#include "iresearch/utils/block_pool.hpp"
+#include "iresearch/utils/string.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

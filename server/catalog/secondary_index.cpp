@@ -24,26 +24,16 @@
 
 namespace sdb::catalog {
 
-SecondaryIndex::SecondaryIndex(IndexOptions<SecondaryIndexOptions> options,
-                               ObjectId database_id)
-  : Index(std::move(options.base), database_id),
-    _columns{std::move(options.impl.columns)},
+SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
+                               ObjectId id, ObjectId relation_id,
+                               IndexOptions<SecondaryIndexOptions> options)
+  : Index(database_id, schema_id, id, relation_id, std::move(options.base)),
     _unique{options.impl.unique} {}
 
 void SecondaryIndex::WriteInternal(vpack::Builder& builder) const {
-  IndexOptions<SecondaryIndexOptions> options{
-    .base =
-      {
-        .id = GetId(),
-        .relation_id = GetRelationId(),
-        .name = std::string{GetName()},
-        .type = GetIndexType(),
-      },
-    .impl =
-      {
-        .columns = std::vector<uint16_t>{_columns.begin(), _columns.end()},
-        .unique = _unique,
-      },
+  Index::WriteInternal(builder);
+  SecondaryIndexOptions options{
+    .unique = _unique,
   };
 
   vpack::WriteTuple(builder, options);

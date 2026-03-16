@@ -21,13 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/search/same_position_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/search/same_position_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
@@ -90,8 +89,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
 
-      auto pord = irs::Scorers::Prepare(scorer);
-      auto prepared = filter.prepare({.index = index, .scorers = pord});
+      auto prepared = filter.prepare({.index = index, .scorer = &scorer});
       ASSERT_EQ(0, collect_field_count);  // should not be executed
       ASSERT_EQ(0, collect_term_count);   // should not be executed
       ASSERT_EQ(0, finish_count);         // no terms optimization
@@ -130,11 +128,10 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
 
-      auto pord = irs::Scorers::Prepare(scorer);
       auto prepared = filter.prepare({
         .index = index,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
       ASSERT_EQ(2, collect_field_count);  // 1 field in 2 segments
       ASSERT_EQ(2, collect_term_count);   // 1 term in 2 segments
@@ -179,8 +176,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
 
-      auto pord = irs::Scorers::Prepare(scorer);
-      auto prepared = filter.prepare({.index = index, .scorers = pord});
+      auto prepared = filter.prepare({.index = index, .scorer = &scorer});
       ASSERT_EQ(4, collect_field_count);  // 2 fields (1 per term since treated
                                           // as a disjunction) in 2 segments
       ASSERT_EQ(4, collect_term_count);   // 2 term in 2 segments
@@ -225,11 +221,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       irs::BySamePosition q;
       auto prepared = q.prepare({.index = index});
       auto docs = prepared->execute({.segment = segment});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs->value(), doc->value);
       ASSERT_FALSE(docs->next());
-      ASSERT_EQ(docs->value(), doc->value);
     }
 
     // { a: 100 } - equal to 'by_term'
@@ -247,16 +239,12 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       auto expected_prepared = expected_query.prepare({.index = index});
 
       auto docs = prepared->execute({.segment = segment});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs->value(), doc->value);
       auto expected_docs = prepared->execute({.segment = segment});
 
       ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
       while (expected_docs->next()) {
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(expected_docs->value(), docs->value());
-        ASSERT_EQ(docs->value(), doc->value);
       }
       ASSERT_FALSE(docs->next());
       ASSERT_EQ(irs::doc_limits::eof(), docs->value());
@@ -274,8 +262,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         "c", irs::ViewCast<irs::byte_type>(std::string_view("9")));
       auto prepared = q.prepare({.index = index});
       auto docs = prepared->execute({.segment = segment});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_EQ(docs->value(), doc->value);
       ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(1, docs->value());
@@ -301,9 +287,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -325,9 +308,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ((irs::doc_limits::min)() + 6,
                   docs->seek((irs::doc_limits::min)()));
@@ -367,9 +347,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -391,9 +368,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ((irs::doc_limits::min)() + 91, docs->seek(27));
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -426,9 +400,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -494,9 +465,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, actual_value);
 
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_TRUE(docs->next());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -534,9 +502,6 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       // seek to the end
       {
         auto docs = prepared->execute({.segment = segment});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ(irs::doc_limits::eof(), docs->seek(irs::doc_limits::eof()));
         ASSERT_FALSE(docs->next());

@@ -129,6 +129,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
 
  private:
   bool Less() {
+    SDB_ASSERT(_freq->value);
     if (_is_strict) {
       return _freq->value[0] <= _threshold;
     } else {
@@ -463,6 +464,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
 
     auto actual_next = [&] {
       while (actual->next()) {
+        actual->FetchScoreArgs(0);
         irs::score_t actual_score{};
         score_function.Score(&actual_score, 1);
         if (!is_less(actual_score, threshold)) {
@@ -478,6 +480,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
         return doc;
       }
       do {
+        actual->FetchScoreArgs(0);
         irs::score_t actual_score{};
         score_function.Score(&actual_score, 1);
         if (!is_less(actual_score, threshold)) {
@@ -533,6 +536,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
 
   auto actual_next = [&] {
     while (actual->next()) {
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
@@ -548,6 +552,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
       return doc;
     }
     do {
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
@@ -615,6 +620,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
   auto actual_next = [&] {
     while (actual->next()) {
       ++total_next_calls;
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
@@ -630,6 +636,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
       return doc;
     }
     do {
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {

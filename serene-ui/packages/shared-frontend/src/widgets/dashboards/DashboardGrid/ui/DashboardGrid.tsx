@@ -143,10 +143,15 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
             }
 
             const duplicateCard = toDashboardCardAddInput(block);
-            const nextX = Math.min(
-                block.bounds.x,
-                Math.max(GRID_COLUMNS - block.bounds.width, 0),
-            );
+            const rightSpace =
+                GRID_COLUMNS - (block.bounds.x + block.bounds.width);
+            const canPlaceToRight = rightSpace >= duplicateCard.bounds.width;
+            const nextX = canPlaceToRight
+                ? block.bounds.x + block.bounds.width
+                : block.bounds.x;
+            const nextY = canPlaceToRight
+                ? block.bounds.y
+                : block.bounds.y + block.bounds.height;
 
             await addDashboardCard({
                 dashboardId: currentDashboard.id,
@@ -156,7 +161,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                     bounds: {
                         ...duplicateCard.bounds,
                         x: nextX,
-                        y: block.bounds.y + 1,
+                        y: nextY,
                     },
                 },
             });

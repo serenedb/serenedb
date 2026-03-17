@@ -201,8 +201,8 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   const auto& logical_plan = *query.GetLogicalPlan();
   SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));
   auto& root =
-    static_cast<const axiom::logical_plan::TableWriteNode&>(logical_plan);
-  auto& table = static_cast<connector::RocksDBTable&>(
+    basics::downCast<const axiom::logical_plan::TableWriteNode>(logical_plan);
+  auto& table = basics::downCast<connector::RocksDBTable>(
     const_cast<axiom::connector::Table&>(*root.table()));
   table.BackfillIndexId() = catalog_index->GetId();
 

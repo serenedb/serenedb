@@ -1,6 +1,6 @@
 {
     "name": "@serene-ui/shared-backend",
-    "version": "26.03.1",
+    "version": "26.03.2",
     "description": "Shared backend entities for Node.js/Express/Electron",
     "main": "dist/index.js",
     "module": "dist/index.mjs",

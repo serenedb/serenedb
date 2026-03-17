@@ -23,6 +23,16 @@ CREATE TABLE vedernikoff AS SELECT 1 AS id;
 db error: ERROR: relation "vedernikoff" already exists
 
 
+statement ok
+CREATE TABLE IF NOT EXISTS vedernikoff AS SELECT 1 AS id;
+
+
+query
+SELECT * FROM vedernikoff;
+----
+30003 values hashing to 4054c492260f852b8162b374b3e41700
+
+
 statement error
 CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
 ----

@@ -54,13 +54,22 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
                     rocksdb::ColumnFamilyHandle& cf)
     : RocksDBSinkWriterBase(transaction, cf) {}
 
-  void SetColumnIndex(size_t /*column_idx*/) {}
+  void SetColumnIndex(size_t column_idx) {}
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();
 
   void DeleteCell(std::string_view full_key);
+};
+
+class NoopSinkWriter {
+ public:
+  void SetColumnIndex(size_t column_idx) {}
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) {}
+  void Finish() {}
+  void Abort() {}
 };
 
 }  //  namespace sdb::connector

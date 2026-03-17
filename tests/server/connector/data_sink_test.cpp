@@ -2559,12 +2559,14 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   ASSERT_NE(transaction2, nullptr);
 
   size_t rows_affected = 0;
-  RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
-                                    row_type, object_key, column_ids,
-                                    rows_affected, {}, _table_lock);
+  {
+    RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
+                                      row_type, object_key, column_ids,
+                                      rows_affected, {}, _table_lock);
 
-  delete_sink.appendData(row_data);
-  ASSERT_TRUE(delete_sink.finish());
+    delete_sink.appendData(row_data);
+    ASSERT_TRUE(delete_sink.finish());
+  }
 
   // check for conflict
   {

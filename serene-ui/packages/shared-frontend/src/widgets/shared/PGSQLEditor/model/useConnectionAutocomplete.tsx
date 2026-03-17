@@ -53,9 +53,13 @@ export const useConnectionAutocomplete = () => {
         const key = jobMapRef.current[jobId];
         if (!key) return;
 
+        const rows = Array.isArray(result.results?.[0]?.rows)
+            ? result.results[0].rows
+            : [];
+
         const names = Array.from(
             new Set(
-                (result.result as unknown[])
+                (rows as unknown[])
                     .filter(
                         (r): r is { name: string } =>
                             typeof (r as any)?.name === "string",

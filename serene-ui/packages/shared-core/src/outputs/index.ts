@@ -5,6 +5,14 @@ export {
     ListMyConnectionOutput,
 } from "./connection.outputs";
 export {
+    AddDashboardOutput,
+    DeleteDashboardOutput,
+    GetDashboardOutput,
+    ListFavoriteDashboardsOutput,
+    ListMyDashboardsOutput,
+    UpdateDashboardOutput,
+} from "./dashboard.outputs";
+export {
     CreateIssueOutput,
     StartDeviceAuthorizationOutput,
     VerifyDeviceAuthorizationOutput,

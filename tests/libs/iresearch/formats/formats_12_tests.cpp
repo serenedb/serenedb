@@ -208,7 +208,7 @@ static const auto kTestValues =
                      ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 // 1.2 specific tests
-INSTANTIATE_TEST_SUITE_P(format_12_test, Format12TestCase, kTestValues,
+INSTANTIATE_TEST_SUITE_P(Format12Test, Format12TestCase, kTestValues,
                          Format12TestCase::to_string);
 
 }  // namespace

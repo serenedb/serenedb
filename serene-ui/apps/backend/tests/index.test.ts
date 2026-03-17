@@ -101,10 +101,7 @@ describe("apiRouter", () => {
         it("should be able to call dashboard endpoints through main router", () => {
             assert.strictEqual(typeof apiRouter.dashboard.add, "object");
             assert.strictEqual(typeof apiRouter.dashboard.listMy, "object");
-            assert.strictEqual(
-                typeof apiRouter.dashboard.favorites,
-                "object",
-            );
+            assert.strictEqual(typeof apiRouter.dashboard.favorites, "object");
             assert.strictEqual(typeof apiRouter.dashboard.get, "object");
             assert.strictEqual(typeof apiRouter.dashboard.update, "object");
             assert.strictEqual(typeof apiRouter.dashboard.delete, "object");

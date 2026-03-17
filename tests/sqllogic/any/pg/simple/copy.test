@@ -114,6 +114,38 @@ Fragment 0:  numWorkers=0:
         -- TableScan[0][File(text)] -> "id":INTEGER, "name":VARCHAR
 
 
+onlyif serenedb
+query
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'execution', FORMAT CSV, HEADER TRUE);
+----
+QUERY PLAN
+EXECUTION PLAN:
+<slt:ignore>
+
+
+onlyif serenedb
+query
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'physical', FORMAT CSV, HEADER TRUE);
+----
+QUERY PLAN
+PHYSICAL PLAN:
+<slt:ignore>
+
+
+onlyif serenedb
+statement error
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'blahblah');
+----
+db error: ERROR: option "blahblah" not recognized
+
+
+onlyif serenedb
+statement error
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'logikal');
+----
+db error: ERROR: option "logikal" not recognized, did you mean "logical"?
+
+
 statement count 3
 COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
@@ -483,3 +515,10 @@ Format:
     (no additional options)
   ORC:
     (no additional options)
+
+
+statement ok
+DELETE FROM arelav_consumer;
+
+onlyif serenedb
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN ANALYZE);

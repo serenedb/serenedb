@@ -237,8 +237,48 @@ CREATE TABLE help_test(r text);
 statement error
 CREATE INDEX help_idx ON help_test USING inverted(r) WITH (HELP);
 ----
-db error: ERROR: 
+db error: ERROR:
 Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
+
+
+statement ok
+CREATE TABLE explain_idx_t(r text);
+
+
+statement ok
+INSERT INTO explain_idx_t VALUES ('hello'), ('world');
+
+
+query
+EXPLAIN (EXECUTION) CREATE INDEX explain_idx ON explain_idx_t USING inverted(r);
+----
+QUERY PLAN
+EXECUTION PLAN:
+<slt:ignore>
+
+
+query error
+SELECT * FROM explain_idx;
+----
+db error: ERROR: relation "explain_idx" does not exist
+
+
+query
+EXPLAIN (ANALYZE, EXECUTION) CREATE INDEX explain_idx ON explain_idx_t USING inverted(r);
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+<slt:ignore>
+
+
+query
+SELECT * FROM explain_idx;
+----
+<slt:ignore>
+
+
+statement ok
+DROP TABLE explain_idx_t;

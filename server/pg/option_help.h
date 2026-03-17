@@ -88,6 +88,11 @@ struct OptionInfo {
   using ConstraintFunction =
     std::variant<std::monostate, void (*)(std::string_view), void (*)(bool),
                  void (*)(int), void (*)(double), void (*)(char)>;
+
+  bool operator==(std::string_view option_name) const {
+    return name == option_name;
+  }
+
   std::string_view name;
   Type type;
   std::string_view description;
@@ -240,9 +245,8 @@ struct OptionGroup {
   }
 };
 
-std::vector<std::string_view> AllOptionNames(
-  std::span<const OptionGroup> groups);
+std::vector<std::string_view> AllOptionNames(const OptionGroup& group);
 
-std::string FormatHelp(std::span<const OptionGroup> groups);
+std::string FormatHelp(const OptionGroup& group);
 
 }  // namespace sdb::pg

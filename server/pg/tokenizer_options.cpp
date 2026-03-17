@@ -59,26 +59,13 @@ void CheckThreshold(double value) {
 }
 
 void CheckTemplate(std::string_view value) {
-  static constexpr auto kTokenizerTypes = frozen::make_unordered_set({
-    irs::analysis::TextTokenizer::type_name(),
-    irs::analysis::NormalizingTokenizer::type_name(),
-    irs::analysis::NGramTokenizerBase::type_name(),
-    irs::analysis::CollationTokenizer::type_name(),
-    irs::analysis::DelimitedTokenizer::type_name(),
-    irs::analysis::MultiDelimitedTokenizer::type_name(),
-    irs::analysis::SegmentationTokenizer::type_name(),
-    irs::analysis::ClassificationTokenizer::type_name(),
-    irs::analysis::MinHashTokenizer::type_name(),
-    irs::analysis::NearestNeighborsTokenizer::type_name(),
-    irs::analysis::StemmingTokenizer::type_name(),
-    irs::analysis::StopwordsTokenizer::type_name(),
-    irs::analysis::PipelineTokenizer::type_name(),
-    // TODO(codeworse): add more tokenizers
-  });
-  if (kTokenizerTypes.count(value) != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Invalid type of text search dictionary"));
+  for (const auto& group : kTokenizerSubgroups) {
+    if (group.name == value) {
+      return;
+    }
   }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Invalid type of text search dictionary"));
 }
 
 void CheckNumHashes(int value) {

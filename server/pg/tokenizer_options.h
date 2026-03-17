@@ -146,6 +146,12 @@ inline constexpr OptionInfo kDelimiters{
   "delimiters", OptionInfo::RequiredTag<std::string_view>{},
   "The list of delimiters(e.g., \'\",\", \"|\", \"!\"\'"};
 
+// Copy From
+
+inline constexpr OptionInfo kFrom{"from",
+                                  OptionInfo::RequiredTag<std::string_view>{},
+                                  "the source tokenizer name"};
+
 // Template
 
 void CheckTemplate(std::string_view);
@@ -179,6 +185,8 @@ inline constexpr OptionInfo kCollationOptions[] = {kLocale};
 inline constexpr OptionInfo kDelimiterOptions[] = {kDelimiter};
 
 inline constexpr OptionInfo kMultiDelimiterOptions[] = {kDelimiters};
+
+inline constexpr OptionInfo kCopyFromOptions[] = {kFrom};
 
 inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
@@ -240,6 +248,7 @@ inline constexpr OptionGroup kMultiDelimiterGroup{
   kMultiDelimiterOptions,
   {},
 };
+inline constexpr OptionGroup kCopyFromGroup{"copy_from", kCopyFromOptions, {}};
 inline constexpr OptionGroup kMinHashGroup{
   irs::analysis::MinHashTokenizer::type_name(),
   kMinHashOptions,
@@ -266,6 +275,6 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
   kClassificationGroup,   kCollationGroup, kDelimiterGroup,
   kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
-  kSegmentationGroup,     kPipelineGroup};
+  kSegmentationGroup,     kPipelineGroup,  kCopyFromGroup};
 
 }  // namespace sdb::pg::tokenizer_options

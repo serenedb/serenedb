@@ -55,10 +55,13 @@ void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
   _pool.push_back(std::move(analyzer));
 }
 
+vpack::Slice Tokenizer::Slice() const noexcept {
+  return vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
+}
+
 irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
-  vpack::Slice slice{reinterpret_cast<const uint8_t*>(_data.data())};
   irs::analysis::Analyzer::ptr output;
-  irs::analysis::analyzers::MakeAnalyzer(slice, output);
+  irs::analysis::analyzers::MakeAnalyzer(Slice(), output);
   return output;
 }
 

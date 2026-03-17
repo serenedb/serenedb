@@ -1236,15 +1236,69 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_delim_text(
     template = 'pipeline',
     step1_template = 'delimiter',
-    step1_delimiter = ',',
+    step1_delimiter = '.',
     step2_template = 'text',
     step2_locale = 'en_US.UTF-8',
-    step2_case = 'lower',
+    step2_case = 'upper',
     step2_stemming = false
 )
 
 query
-SELECT ts_lexize('pipe_delim_text', 'hello,world,foo,bar');
+SELECT ts_lexize('pipe_delim_text', 'Hello.World.Foo.baR');
+----
+ts_lexize
+{HELLO,WORLD,FOO,BAR}
+
+
+# ===========================================================================
+# COPY FROM TEMPLATE
+# ===========================================================================
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_t1(
+    template = 'copy_from',
+    from = 't1',
+    case = 'upper'
+)
+
+
+query
+SELECT ts_lexize('t1', 'a QUICK Brown FoX');
+----
+ts_lexize
+{a,QUICK,Brown,FoX}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_pipe(
+    template = 'copy_from',
+    from = 'pipe_delim_text',
+    step1_delimiter = '|',
+    step2_case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('copy_pipe', 'Hello|World|Foo|baR');
 ----
 ts_lexize
 {hello,world,foo,bar}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_pipe2(
+    template = 'copy_from',
+    from = 'pipe_delim_text',
+    step1_delimiter = '|',
+    step2_case = 'lower',
+    step3_template = 'stopwords',
+    step3_stopwords = '"bar", "foo"'
+)
+
+
+query
+SELECT ts_lexize('copy_pipe2', 'Hello|World|Foo|baR');
+----
+ts_lexize
+{hello,world}

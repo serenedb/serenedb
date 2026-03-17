@@ -4,6 +4,14 @@ export {
     UpdateConnectionInput,
 } from "./connection.inputs";
 export {
+    AddDashboardBlockInput,
+    AddDashboardInput,
+    DeleteDashboardInput,
+    GetDashboardInput,
+    UpdateDashboardBlockInput,
+    UpdateDashboardInput,
+} from "./dashboard.inputs";
+export {
     CreateIssueInput,
     VerifyDeviceAuthorizationInput,
 } from "./github.inputs";

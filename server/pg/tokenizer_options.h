@@ -45,18 +45,21 @@ using namespace std::string_view_literals;
 
 // Features
 
-inline constexpr OptionInfo kNormFeature{irs::Type<irs::Norm>::name(), false,
+// TODO(codeworse) Add for option alternative names? dl, norms
+inline constexpr OptionInfo kNormFeature{"norm", false,
                                          "Enables norm feature in index"};
 
-inline constexpr OptionInfo kFreqFeature{irs::Type<irs::FreqAttr>::name(),
-                                         false,
+// TODO(codeworse) Add for option alternative names? freq, frequencies, freqs
+inline constexpr OptionInfo kFreqFeature{"frequency", false,
                                          "Enables frequency feature in index"};
 
-inline constexpr OptionInfo kPosFeature{irs::Type<irs::PosAttr>::name(), false,
+// TODO(codeworse) Add for option alternative names? pos, positions
+inline constexpr OptionInfo kPosFeature{"position", false,
                                         "Enables position feature in index"};
 
-inline constexpr OptionInfo kOffsetFeature{
-  irs::Type<irs::OffsAttr>::name(), false, "Enables offset feature in index"};
+// TODO(codeworse) Add for option alternative names? offsets
+inline constexpr OptionInfo kOffsetFeature{"offset", false,
+                                           "Enables offset feature in index"};
 
 // Common
 

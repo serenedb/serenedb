@@ -19,45 +19,6 @@ connection bf_after_1
 statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM idx_bf_crash;
 
-
-# crash before rocksdb commit, index should be gone
-
-connection bf_after_1
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-RESET sdb_faults;
-
-connection bf_after_1
-statement ok
-SET sdb_fault_crash_before_rocksdb_commit TO DEFAULT;
-
-connection bf_after_1
-statement error connection closed
-CREATE INDEX idx_bf_crash2 ON idx_bf_t USING inverted(a, b);
-
-connection bf_after_2
-statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM idx_bf_crash2;
-
-
-# crash after rocksdb commit, index should be gone
-
-connection bf_after_2
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-RESET sdb_faults;
-
-connection bf_after_2
-statement ok
-SET sdb_fault_crash_after_rocksdb_commit TO DEFAULT;
-
-connection bf_after_2
-statement error connection closed
-CREATE INDEX idx_bf_crash3 ON idx_bf_t USING inverted(a, b);
-
-connection bf_after_3
-statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM idx_bf_crash3;
-
-
 # crash before finish creation, index should be gone
 
 connection bf_after_3

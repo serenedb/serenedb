@@ -21,8 +21,10 @@
 #pragma once
 
 #include <memory>
+#include <string_view>
 
 #include "catalog/fwd.h"
+#include "pg/command_executor.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
 #include "yaclib/async/future.hpp"
@@ -48,7 +50,9 @@ yaclib::Future<> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 
 yaclib::Future<> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
 
-yaclib::Future<> CreateIndex(ExecContext& ctx, const IndexStmt& stmt);
+yaclib::Future<> CreateIndex(ExecContext& ctx, query::Query& query,
+                             const IndexStmt& stmt, CreateIndexState& state,
+                             velox::RowVectorPtr& batch);
 
 yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
@@ -67,9 +71,11 @@ std::shared_ptr<catalog::Function> CreateSystemFunction(
   const CreateFunctionStmt& stmt);
 
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
-                                 const IntoClause& into, bool if_not_exists);
+                                 const IntoClause& into, bool if_not_exists,
+                                 CTASState& state, velox::RowVectorPtr& batch);
 
-yaclib::Future<> RemoveTombstone(ExecContext& ctx, const RangeVar& rel);
+yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
+                                 std::string_view name);
 
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 

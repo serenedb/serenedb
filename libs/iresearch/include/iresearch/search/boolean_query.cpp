@@ -118,7 +118,7 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
 
 }  // namespace
 
-DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
+DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
   if (empty()) {
     return DocIterator::empty();
   }
@@ -126,6 +126,11 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   SDB_ASSERT(_excl);
   const auto excl_begin = this->excl_begin();
   const auto end = this->end();
+  ExecutionContext ctx{old};
+  if (excl_begin != end) {
+    // TODO(mbkkt) enable back?
+    ctx.wand.index = WandContext::kDisable;
+  }
 
   auto incl = execute(ctx, begin(), excl_begin);
 
@@ -321,7 +326,23 @@ DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {
   if (doc_limits::eof(opt->value())) {
     return req;
   }
-  // TODO(mbkkt) Optimize with term adapters specializations
+  using TermWithFreq = PostingIteratorBase<
+    IteratorTraitsImpl<FormatTraits128, true, false, false>>;
+  using TermAdapter = PostingAdapter<TermWithFreq>;
+  const bool req_is_term = dynamic_cast<TermWithFreq*>(req.get());
+  const bool opt_is_term = dynamic_cast<TermWithFreq*>(opt.get());
+  if (req_is_term && opt_is_term) {
+    return memory::make_managed<BoostIterator<TermAdapter, TermAdapter>>(
+      TermAdapter{std::move(req)}, TermAdapter{std::move(opt)});
+  }
+  if (req_is_term) {
+    return memory::make_managed<BoostIterator<TermAdapter, ScoreAdapter>>(
+      TermAdapter{std::move(req)}, ScoreAdapter{std::move(opt)});
+  }
+  if (opt_is_term) {
+    return memory::make_managed<BoostIterator<ScoreAdapter, TermAdapter>>(
+      ScoreAdapter{std::move(req)}, TermAdapter{std::move(opt)});
+  }
   return memory::make_managed<BoostIterator<ScoreAdapter, ScoreAdapter>>(
     ScoreAdapter{std::move(req)}, ScoreAdapter{std::move(opt)});
 }

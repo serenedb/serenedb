@@ -15,6 +15,13 @@ export const apiMap = {
         update: "/saved-queries/update",
         delete: "/saved-queries/delete",
     },
+    dashboards: {
+        getMy: "/dashboards",
+        favorites: "/dashboards/favorites",
+        add: "/dashboards/add",
+        update: "/dashboards/update",
+        delete: "/dashboards/delete",
+    },
     queryHistory: {
         getMy: "/query-history",
         add: "/query-history/add",

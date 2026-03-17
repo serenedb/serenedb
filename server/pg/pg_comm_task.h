@@ -164,7 +164,8 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   ProcessState ProcessQueryResult();
   void SendBatch(const velox::RowVectorPtr& batch);
-  void SendCommandComplete(const SqlTree& tree, uint64_t rows);
+  void SendCommandComplete(const SqlTree& tree, uint64_t rows,
+                           const query::QueryPtr& query);
 
   template<typename Func>
   void SafeCall(Func&& func) noexcept;

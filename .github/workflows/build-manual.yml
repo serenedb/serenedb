@@ -1,5 +1,7 @@
 name: SereneDB-Build-Manual
 
+run-name: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
+
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +13,9 @@ on:
         options:
           - asan
           - tsan
+          - msan
+          - ubsan
+          - coverage
           - build
           - release
       LOCATION:
@@ -22,16 +27,6 @@ on:
           - arm
           - self-hosted
         default: 'self-hosted'
-      BRANCH:
-        description: 'SereneDB branch to test'
-        type: string
-        required: true
-        default: 'main'
-      JOB_CONFIG:
-        description: 'JSON config for job settings'
-        type: string
-        required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true
@@ -58,10 +53,10 @@ on:
         type: boolean
         default: false
       BUILD_CONFIG:
-        description: 'Backup JSON configuration for builds'
+        description: 'JSON configuration for builds and job settings'
         type: string
         required: false
-        default: '{}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
 
 permissions:
   statuses: write
@@ -79,8 +74,6 @@ jobs:
       DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
       EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
-      # Job config environment
-      JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
 

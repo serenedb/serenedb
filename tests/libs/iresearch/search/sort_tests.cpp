@@ -66,11 +66,6 @@ class AlignedScorer final
 
 }  // namespace
 
-TEST(sort_tests, static_const) {
-  static_assert("filter_boost" == irs::Type<irs::FilterBoost>::name());
-  static_assert(irs::kNoBoost == irs::FilterBoost().value);
-}
-
 TEST(ScoreFunctionTest, Noop) {
   irs::score_t value{42.f};
 

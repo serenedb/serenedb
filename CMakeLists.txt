@@ -149,6 +149,22 @@ if(USE_DTRACE)
     add_definitions("-DUSE_DTRACE=1")
 endif()
 
+if(SDB_GEN_PGO)
+    # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
+    add_compile_options(-fprofile-generate)
+    add_link_options(-fprofile-generate)
+elseif(SDB_GEN_CS_PGO)
+    # TODO(mbkkt) seems like cs pgo didn't produce results with LTO :/
+    # https://github.com/llvm/llvm-project/issues/112103
+    add_compile_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
+    add_link_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
+elseif(SDB_USE_PGO)
+    add_compile_options(-fprofile-use=${SDB_USE_PGO})
+    add_link_options(-fprofile-use=${SDB_USE_PGO})
+    # TODO(mbkkt) for -ftemporal-profile
+    #   add_link_options(-Wl,--symbol-ordering-file=path-to-code.orderfile)
+endif()
+
 if(USE_COVERAGE STREQUAL "SourceBased")
     # add_definitions("-DUSE_COVERAGE=1")
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)

@@ -574,6 +574,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
                                       *castNode(CreateTableAsStmt, node));
     case T_CopyStmt:
       return CollectCopyStmt(state, *castNode(CopyStmt, node));
+    case T_IndexStmt:
+      return CollectRangeVar(state, castNode(IndexStmt, node)->relation);
     default:
       break;
   }

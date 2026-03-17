@@ -13,7 +13,7 @@
 #   JOB_STATUS          - Build status (success/failure/cancelled)
 #   BRANCH              - Git branch name
 #   ACTOR               - User who triggered the build (GitHub username)
-#   WORKFLOW            - Workflow name
+#   RUN_NAME            - Workflow run name
 #   RUN_NUMBER          - Build number
 #   RUN_URL             - URL to the build
 #
@@ -37,7 +37,7 @@ required_vars=(
 	"JOB_STATUS"
 	"BRANCH"
 	"ACTOR"
-	"WORKFLOW"
+	"RUN_NAME"
 	"RUN_NUMBER"
 	"RUN_URL"
 )
@@ -109,7 +109,7 @@ fi
 # Build Message
 #------------------------------------------------------------------------------
 
-MESSAGE="${EMOJI} @${TG_USERNAME} ${RESULT}: BRANCH=${BRANCH} ${WORKFLOW} #${RUN_NUMBER} ${RUN_URL}"
+MESSAGE="${EMOJI} @${TG_USERNAME} ${RESULT}: BRANCH=${BRANCH} ${RUN_NAME} #${RUN_NUMBER} ${RUN_URL}"
 
 #------------------------------------------------------------------------------
 # Send Notification

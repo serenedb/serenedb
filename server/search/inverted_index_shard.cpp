@@ -110,9 +110,7 @@ std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
   ObjectId id, const catalog::InvertedIndex& index,
   InvertedIndexShardOptions options, bool is_new) {
   auto shard = std::make_shared<InvertedIndexShard>(id, index, options, is_new);
-  // TODO(Dronpane) use actual is_new value when indexing of existing table
-  // would be implemented
-  shard->InitPostRecovery(false);
+  shard->InitPostRecovery(is_new);
   return shard;
 }
 
@@ -264,10 +262,8 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
         // If not finishCreation would be called later when indexing finishes
         if (!is_new) {
           self->FinishCreation();
+          self->StartTasks();
         }
-
-        // Start background maintenance tasks
-        self->StartTasks();
 
         return {};
       });

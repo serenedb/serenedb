@@ -134,13 +134,14 @@ constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
 constexpr OptionGroup kTSDictionaryGroup = {
   "Text Search Dictionary", kTSDictionaryRootOptions,
   tokenizer_options::kTokenizerSubgroups};
+constexpr OptionGroup kTSDictionaryGroups[] = {kTSDictionaryGroup};
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(const List* ts_dictionary_options)
-    : OptionsParser(MakeOptions(ts_dictionary_options, {}),
-                    {kTSDictionaryGroup},
-                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}) {
+    : OptionsParser{MakeOptions(ts_dictionary_options, {}),
+                    kTSDictionaryGroups,
+                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}} {
     ParseOptions([&] { Parse(); });
   }
 
@@ -241,26 +242,27 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(ctx);
   const auto db = ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
-  const auto dict_name =
+  const auto tokenizer_name =
     ParseObjectName(stmt.defnames, ctx.GetDatabase(), current_schema);
 
   auto [b, features] =
     std::move(CreateTSDictionaryOptions{stmt.definition}).Result();
 
-  auto ts_dict = std::make_shared<catalog::Tokenizer>(
-    ObjectId{0}, dict_name.relation, features,
+  auto tokenizer = std::make_shared<catalog::Tokenizer>(
+    ObjectId{0}, tokenizer_name.relation, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
-  auto r = catalog.CreateTokenizer(db, dict_name.schema, std::move(ts_dict));
+  auto r =
+    catalog.CreateTokenizer(db, tokenizer_name.schema, std::move(tokenizer));
 
   if (!r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("text search dictionary \"", dict_name.relation,
-                            "\" already exists"));
+                    ERR_MSG("text search dictionary \"",
+                            tokenizer_name.relation, "\" already exists"));
   }
   return {};
 }

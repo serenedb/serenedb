@@ -1,5 +1,7 @@
 export * from "./connection";
 export * from "./database";
+export * from "./dashboard";
+export * from "./dashboard-card";
 export * from "./github";
 export * from "./notification";
 export * from "./query-execution";

@@ -243,14 +243,6 @@ jobs:
         if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         run: ./private/ci/steps/08-ci-rta.bash
 
-      # ==================== CREATE GITHUB RELEASE ====================
-      - name: Create GitHub Release
-        id: create_release
-        if: steps.rta.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true
-        env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-        run: ./private/ci/steps/09-ci-create-github-release.bash
-
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
@@ -266,6 +258,14 @@ jobs:
           DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: ./packages/build_docker.bash
+
+      # ==================== CREATE GITHUB RELEASE ====================
+      - name: Create GitHub Release
+        id: create_release
+        if: steps.build_docker_images.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true && inputs.PUSH_IMAGES_2_REGISTRY == true
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: ./private/ci/steps/09-ci-create-github-release.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
       - name: Produce Build Image

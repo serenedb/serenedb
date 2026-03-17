@@ -101,35 +101,16 @@ class Transaction : public Config {
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
-  template<typename Visit>
-  void EnsureIndexTransaction(ObjectId index_id, Visit&& visit) {
-    auto snapshot = GetCatalogSnapshot();
-    auto shard = snapshot->GetIndexShard(index_id);
-    SDB_ASSERT(shard);
-    EnsureIndexesTransactionsImpl(snapshot, std::span{&shard, 1},
-                                  std::forward<Visit>(visit));
-  }
-
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
     auto snapshot = GetCatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
-    auto shards = snapshot->GetIndexShardsByTable(table_id);
-    EnsureIndexesTransactionsImpl(snapshot, shards, std::forward<Visit>(visit),
-                                  std::forward<Filter>(filter));
-  }
 
- private:
-  template<typename Visit, typename Filter = std::nullptr_t>
-  void EnsureIndexesTransactionsImpl(
-    const auto& snapshot,
-    std::span<const std::shared_ptr<IndexShard>> index_shards, Visit&& visit,
-    Filter&& filter = nullptr) {
-    for (auto& index_shard : index_shards) {
+    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
       auto index =
-        snapshot->template GetObject<catalog::Index>(index_shard->GetIndexId());
+        snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
@@ -154,6 +135,7 @@ class Transaction : public Config {
     }
   }
 
+ private:
   void ApplyTableStatsDiffs() noexcept;
 
   State _state = State::None;

@@ -152,6 +152,7 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
         auto& inverted_index =
           basics::downCast<search::InvertedIndexShard>(*shard);
         inverted_index.FinishCreation();
+        std::cerr << "kal finish" << std::endl;
       });
   });
 }

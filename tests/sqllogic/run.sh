@@ -1,5 +1,10 @@
 #!/bin/bash
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+: "${RESOURCES:=$(realpath "$SCRIPT_DIR/../../resources")}"
+export RESOURCES
+
 # Boolean flags configuration
 declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast)
 

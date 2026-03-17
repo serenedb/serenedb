@@ -105,11 +105,23 @@ std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   }
 }
 
+inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
+  ObjectId backfill_index_id, query::Transaction& transaction) {
+  auto snapshot = transaction.GetCatalogSnapshot();
+  auto shard = snapshot->GetIndexShard(backfill_index_id);
+  SDB_ASSERT(shard);
+  auto& inverted_shard =
+    basics::downCast<sdb::search::InvertedIndexShard>(*shard);
+  auto& index = basics::downCast<const catalog::InvertedIndex>(
+    *snapshot->template GetObject<catalog::Index>(shard->GetIndexId()));
+  return std::make_unique<search::SearchSinkBackfillWriter>(
+    inverted_shard, search::MakeAnalyzerProvider(index), index.GetColumnIds());
+}
+
 template<axiom::connector::WriteKind Kind>
 std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   ObjectId table_id, query::Transaction& transaction,
-  std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false,
-  ObjectId backfill_index_id = {}) {
+  std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
   auto resolve_index_writer = [&](auto& transaction,
@@ -125,9 +137,7 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
     }
   };
 
-  if (backfill_index_id.isSet()) {
-    transaction.EnsureIndexTransaction(backfill_index_id, resolve_index_writer);
-  } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
+  if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     containers::FlatHashSet<catalog::Column::Id> update_column_ids;
     if (!pk_updated) {
       update_column_ids.reserve(updated_columns.size());
@@ -960,19 +970,8 @@ class SereneDBConnector final : public velox::connector::Connector {
               serene_insert_handle.NumberOfRowsAffected(),
               std::move(update_sinks), table_lock);
           } else if (table.BackfillIndexId().isSet()) {
-            auto snapshot = transaction.GetCatalogSnapshot();
-            auto shard = snapshot->GetIndexShard(table.BackfillIndexId());
-            SDB_ASSERT(shard);
-            auto& inverted_shard =
-              basics::downCast<sdb::search::InvertedIndexShard>(*shard);
-            auto& index = basics::downCast<const catalog::InvertedIndex>(
-              *snapshot->template GetObject<catalog::Index>(
-                shard->GetIndexId()));
-            auto& engine = GetServerEngine();
             auto backfill_writer =
-              std::make_unique<search::SearchSinkBackfillWriter>(
-                inverted_shard, engine, search::MakeAnalyzerProvider(index),
-                index.GetColumnIds());
+              CreateBackfillIndexWriter(table.BackfillIndexId(), transaction);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, std::move(backfill_writer), table_lock);

@@ -264,14 +264,12 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
                                        public SearchSinkInsertBaseImpl {
  public:
   SearchSinkBackfillWriter(sdb::search::InvertedIndexShard& shard,
-                           RocksDBEngineCatalog& engine,
                            AnalyzerProvider&& analyzer_provider,
                            std::span<const catalog::Column::Id> columns)
     : SearchSinkBackfillTrxHolder{shard.GetTransaction()},
       SearchSinkInsertBaseImpl{_trx_storage, std::move(analyzer_provider),
                                columns},
-      _shard{shard},
-      _engine{engine} {}
+      _shard{shard} {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
@@ -301,12 +299,11 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
 
  private:
   void Commit() {
-    _trx_storage.Commit(_engine.currentTick());
+    _trx_storage.Commit();
     _trx_storage = _shard.GetTransaction();
   }
 
   sdb::search::InvertedIndexShard& _shard;
-  RocksDBEngineCatalog& _engine;
 };
 
 }  // namespace sdb::connector::search

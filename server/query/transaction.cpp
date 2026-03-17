@@ -36,13 +36,12 @@ void Transaction::OnNewStatement() {
 }
 
 Result Transaction::Commit() {
-  const uint64_t num_ops = _rocksdb_transaction
-                             ? _rocksdb_transaction->GetNumPuts() +
-                                 _rocksdb_transaction->GetNumDeletes()
-                             : 0;
+  uint64_t num_ops = _rocksdb_transaction
+                       ? _rocksdb_transaction->GetNumPuts() +
+                           _rocksdb_transaction->GetNumDeletes()
+                       : 0;
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
-
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -62,6 +61,19 @@ Result Transaction::Commit() {
       RollbackVariables();
       Destroy();
     };
+
+    // When updating non-PK columns with a search index, the search engine
+    // Remove consumes a tick from the same range as rocksdb seq numbers.
+    // With num_ops == _queries, first_tick == committed_tick which violates
+    // the strict ordering invariant. Add an extra Delete to bump seq by 1.
+    for (const auto& [id, trx] : _search_transactions) {
+      SDB_ASSERT(trx->GetQueries() <= num_ops);
+      if (trx->GetQueries() == num_ops) {
+        _rocksdb_transaction->Delete(rocksdb::Slice{});
+        ++num_ops;
+        break;
+      }
+    }
 
     SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
     auto status = _rocksdb_transaction->Commit();
@@ -85,6 +97,7 @@ Result Transaction::Commit() {
   }
   CommitVariables();
   Destroy();
+
   return {};
 }
 

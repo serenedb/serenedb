@@ -31,7 +31,7 @@ const config: ForgeConfig = {
         asar: true,
         name: "SereneUI",
         icon: path.resolve(__dirname, "./assets/icons/app.icns"),
-        executableName: "serene-ui-electron",
+        executableName: "SereneUI",
     },
     rebuildConfig: {},
     makers: [

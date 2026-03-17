@@ -1,6 +1,6 @@
 {
     "name": "@serene-ui/shared-frontend",
-    "version": "0.1.0",
+    "version": "26.03.1",
     "description": "SereneUI shared widgets, features and entities",
     "type": "module",
     "main": "dist/index.js",

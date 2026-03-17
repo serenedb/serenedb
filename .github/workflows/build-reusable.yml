@@ -4,55 +4,50 @@ on:
   workflow_call:
     inputs:
       PRESET:
-        description: 'Build preset'
+        description: "Build preset"
         type: string
         required: true
-        default: 'build'
+        default: "build"
       LOCATION:
-        description: 'Where the load is executed'
+        description: "Where the load is executed"
         type: string
         required: true
-        default: 'self-hosted'
+        default: "self-hosted"
       BRANCH:
-        description: 'SereneDB branch to test'
-        type: string
-        required: true
-        default: 'main'
-      JOB_CONFIG:
-        description: 'JSON config for job settings'
+        description: "SereneDB branch to test (defaults to current branch)"
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+        default: ""
       DOCKER_SERENEDB_IMAGE:
-        description: 'Produce SereneDB Docker Images'
+        description: "Produce SereneDB Docker Images"
         required: true
         type: boolean
         default: false
       DOCKER_EXTRA_TAGS:
-        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        description: "(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE"
         required: false
         type: string
-        default: ''
+        default: ""
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Private Docker Registry'
+        description: "Push images to Private Docker Registry"
         required: true
         type: boolean
         default: false
       EXTRA_ARTIFACTS:
-        description: 'Keep these artifacts additionally'
+        description: "Keep these artifacts additionally"
         type: string
         required: false
-        default: ''
+        default: ""
       DOCKER_BUILD_IMAGES:
-        description: 'Produce SereneDB Build Images'
+        description: "Produce SereneDB Build Images"
         required: true
         type: boolean
         default: false
       BUILD_CONFIG:
-        description: 'Backup JSON configuration for builds'
+        description: "JSON configuration for builds and job settings"
         type: string
         required: false
-        default: '{}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
     secrets:
       PAT_TOKEN:
         required: true
@@ -67,23 +62,16 @@ on:
 
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_CONFIG: ${{ inputs.build_config || '{}' }}
+  BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
   DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
   DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
   DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
-  # Job config environment (from JOB_CONFIG JSON)
-  CLUSTER_BRANCH: ${{ fromJSON(inputs.JOB_CONFIG).CLUSTER_BRANCH }}
-  BUILD_IMAGE: ${{ fromJSON(inputs.JOB_CONFIG).BUILD_IMAGE }}
-  SDB_CLUSTER: ${{ fromJSON(inputs.JOB_CONFIG).SDB_CLUSTER }}
-  DEBUG_PRINT_ENV: ${{ fromJSON(inputs.JOB_CONFIG).DEBUG_PRINT_ENV }}
   PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-
-  #BRANCH: ${{ inputs.BRANCH }}
-  #CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
-  #EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
-  #LOCATION: ${{ inputs.LOCATION }}
-  #STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
-  #WORKFLOW: ${{ github.workflow }}
+  # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
+  CLUSTER_BRANCH: main
+  BUILD_IMAGE: registry.serenedb.com:5000/serenedb-build-ubuntu:latest
+  SDB_CLUSTER: "Off"
+  DEBUG_PRINT_ENV: "false"
 
 jobs:
   build-test-package:
@@ -102,8 +90,8 @@ jobs:
               echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
-              echo "SANITIZERS=UndefinedAddress" >> $GITHUB_ENV
-              echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
+              echo "SANITIZERS=Address" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
             tsan)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
@@ -111,6 +99,30 @@ jobs:
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Thread" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+            msan)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=Memory" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+            ubsan)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=Undefined" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+            coverage)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=" >> $GITHUB_ENV
               echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
               ;;
             build)
@@ -131,6 +143,12 @@ jobs:
               ;;
           esac
 
+          BRANCH="${{ inputs.BRANCH }}"
+          if [[ -z "$BRANCH" ]]; then
+            BRANCH="$GITHUB_REF_NAME"
+          fi
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
           BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
           if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
             echo "$BUILD_CONFIG" | docker run --rm -i ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
@@ -142,7 +160,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: serenedb/serenedb
-          ref: ${{ inputs.BRANCH }}
+          ref: ${{ env.BRANCH }}
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
@@ -168,7 +186,7 @@ jobs:
         run: printenv
 
       - name: Set sanitizer options
-        if: inputs.SANITIZERS != '' || inputs.USE_COVERAGE != ''
+        if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
         run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
@@ -180,9 +198,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .gtest-parallel-cache
-          key: gtest-times-${{ inputs.PRESET }}-${{ inputs.BRANCH }}-${{ github.run_number }}
+          key: gtest-times-${{ inputs.PRESET }}-${{ env.BRANCH }}-${{ github.run_number }}
           restore-keys: |
-            gtest-times-${{ inputs.PRESET }}-${{ inputs.BRANCH }}-
+            gtest-times-${{ inputs.PRESET }}-${{ env.BRANCH }}-
             gtest-times-${{ inputs.PRESET }}-main-
             gtest-times-${{ inputs.PRESET }}-
 
@@ -229,7 +247,7 @@ jobs:
         run: ./packages/build_docker.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
-      - name: Produce Build Images
+      - name: Produce Build Image
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
@@ -367,13 +385,13 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID_MAIN: '51'
-          TG_THREAD_ID_BUILD: '53'
+          TG_THREAD_ID_MAIN: "51"
+          TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: ${{ inputs.BRANCH }}
+          BRANCH: ${{ env.BRANCH }}
           JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
-          WORKFLOW: ${{ github.workflow }}
+          RUN_NAME: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash

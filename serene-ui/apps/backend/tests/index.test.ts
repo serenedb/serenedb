@@ -7,6 +7,7 @@ describe("apiRouter", () => {
     describe("router structure", () => {
         it("should have all expected routers", () => {
             assert.ok("connection" in apiRouter);
+            assert.ok("dashboard" in apiRouter);
             assert.ok("github" in apiRouter);
             assert.ok("queryExecution" in apiRouter);
             assert.ok("savedQuery" in apiRouter);
@@ -38,6 +39,15 @@ describe("apiRouter", () => {
         it("should have github action endpoints", () => {
             assert.ok("leaveStar" in apiRouter.github.actions);
             assert.ok("createIssue" in apiRouter.github.actions);
+        });
+
+        it("should have dashboard router endpoints", () => {
+            assert.ok("add" in apiRouter.dashboard);
+            assert.ok("listMy" in apiRouter.dashboard);
+            assert.ok("favorites" in apiRouter.dashboard);
+            assert.ok("get" in apiRouter.dashboard);
+            assert.ok("update" in apiRouter.dashboard);
+            assert.ok("delete" in apiRouter.dashboard);
         });
 
         it("should have query execution router endpoints", () => {
@@ -88,6 +98,18 @@ describe("apiRouter", () => {
             );
         });
 
+        it("should be able to call dashboard endpoints through main router", () => {
+            assert.strictEqual(typeof apiRouter.dashboard.add, "object");
+            assert.strictEqual(typeof apiRouter.dashboard.listMy, "object");
+            assert.strictEqual(
+                typeof apiRouter.dashboard.favorites,
+                "object",
+            );
+            assert.strictEqual(typeof apiRouter.dashboard.get, "object");
+            assert.strictEqual(typeof apiRouter.dashboard.update, "object");
+            assert.strictEqual(typeof apiRouter.dashboard.delete, "object");
+        });
+
         it("should be able to call query execution endpoints through main router", () => {
             assert.strictEqual(
                 typeof apiRouter.queryExecution.execute,
@@ -111,6 +133,7 @@ describe("apiRouter", () => {
         it("should not have unexpected properties", () => {
             const expectedRouters = [
                 "connection",
+                "dashboard",
                 "github",
                 "queryExecution",
                 "savedQuery",
@@ -123,8 +146,8 @@ describe("apiRouter", () => {
             );
         });
 
-        it("should have exactly 4 routers", () => {
-            assert.strictEqual(Object.keys(apiRouter).length, 4);
+        it("should have exactly 5 routers", () => {
+            assert.strictEqual(Object.keys(apiRouter).length, 5);
         });
     });
 });

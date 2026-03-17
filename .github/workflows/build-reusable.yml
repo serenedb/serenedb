@@ -64,8 +64,6 @@ on:
         required: true
       TG_USER_MAP:
         required: true
-      DOCKER_HUB_USERNAME:
-        required: false
       DOCKER_HUB_TOKEN:
         required: false
 
@@ -255,7 +253,7 @@ jobs:
         if: steps.serenedb_packages.outcome == 'success' && steps.rta.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
         env:
           DOCKER_REGISTRY: serenedb
-          DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: ./packages/build_docker.bash
 

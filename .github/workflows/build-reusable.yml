@@ -83,6 +83,9 @@ env:
 jobs:
   build-test-package:
     name: Build, Test & Package
+    permissions:
+      statuses: write
+      contents: write
     runs-on:
       - self-hosted
       - ${{ inputs.LOCATION }}
@@ -262,7 +265,7 @@ jobs:
         id: create_release
         if: steps.build_docker_images.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true && inputs.PUSH_IMAGES_2_REGISTRY == true
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: ./private/ci/steps/09-ci-create-github-release.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================

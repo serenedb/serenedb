@@ -90,26 +90,15 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
 
 }  // namespace
 
-std::string FormatHelp(std::span<const OptionGroup> groups) {
+std::string FormatHelp(const OptionGroup& group) {
   std::string result;
   result.reserve(1024);
-
-  for (const auto& group : groups) {
-    FormatGroup(result, group, 0);
-    absl::StrAppend(&result, "\n");
-  }
-
+  FormatGroup(result, group, 0);
   return result;
 }
 
-std::vector<std::string_view> AllOptionNames(
-  std::span<const OptionGroup> groups) {
-  std::vector<std::string_view> names;
-  for (const auto& group : groups) {
-    auto group_names = group.FlatNames();
-    names.insert(names.end(), group_names.begin(), group_names.end());
-  }
-  return names;
+std::vector<std::string_view> AllOptionNames(const OptionGroup& group) {
+  return group.FlatNames();
 }
 
 }  // namespace sdb::pg

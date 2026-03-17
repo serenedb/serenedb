@@ -75,6 +75,7 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/explain_options.h"
 #include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
@@ -658,42 +659,6 @@ class TargetList {
   containers::FlatHashMap<std::string_view, lp::ExprPtr> _alias_to_expr;
 };
 
-std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
-  const DefElem* option) {
-  std::string_view name = option->defname;
-  VeloxQuery::OptionValue value;
-  SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
-  if (!option->arg) {
-    return std::pair{name, true};
-  }
-  SDB_ASSERT(option->arg);
-  switch (option->arg->type) {
-    case NodeTag::T_Integer:
-      value = intVal(option->arg);
-    case NodeTag::T_Boolean:
-      value = boolVal(option->arg);
-    case NodeTag::T_String:
-      value = strVal(option->arg);
-    case NodeTag::T_Float:
-      value = floatVal(option->arg);
-    default:
-      SDB_ASSERT(false);
-  }
-  return std::pair{name, std::move(value)};
-}
-
-using NameToOption =
-  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>;
-NameToOption ConvertOptions(const List* options) {
-  const size_t options_size = list_length(options);
-  NameToOption res;
-  res.reserve(options_size);
-  for (size_t i = 0; i < options_size; ++i) {
-    res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));
-  }
-  return res;
-}
-
 class SqlAnalyzer {
  public:
   explicit SqlAnalyzer(const QueryString& query_sting, const Objects& objects,
@@ -704,7 +669,8 @@ class SqlAnalyzer {
     : _objects{objects},
       _query_string{query_sting},
       _id_generator{id_generator},
-      _query_ctx{*query_ctx.velox_query_ctx},
+      _query_ctx{query_ctx},
+      _velox_query_ctx{*query_ctx.velox_query_ctx},
       _memory_pool{*query_ctx.query_memory_pool},
       _params{params},
       _transaction{*query_ctx.transaction},
@@ -1108,9 +1074,9 @@ class SqlAnalyzer {
   const Objects& _objects;
   const QueryString& _query_string;
   UniqueIdGenerator& _id_generator;
-  vc::QueryCtx& _query_ctx;
+  query::QueryContext& _query_ctx;
+  vc::QueryCtx& _velox_query_ctx;
   velox::memory::MemoryPool& _memory_pool;
-  NameToOption _options;
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
   query::Transaction& _transaction;
@@ -1529,7 +1495,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "RETURNING clause is not implemented yet");
   }
   const auto& config =
-    basics::downCast<Config>(*_query_ctx.queryConfig().config());
+    basics::downCast<Config>(*_velox_query_ctx.queryConfig().config());
   auto conflict_policy = config.Get<VariableType::SdbWriteConflictPolicy>(
     "sdb_write_conflict_policy");
   if (stmt.onConflictClause) {
@@ -1937,16 +1903,17 @@ class CopyOptionsParser : public FileOptionsParser {
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
-                    NameToOption& explain_options)
+                    explain_options::ExplainOptions& explain_options)
     : FileOptionsParser{file_path,
-                        MakeCopyOptions(options, query_string, explain_options),
-                        file_options::kCopyParserGroups,
+                        options,
+                        file_options::kCopyGroup,
                         {.operation = "COPY",
                          .query_string = query_string,
                          .notice =
                            [&send_buffer](std::string msg) {
                              WriteNoticeInBuffer(send_buffer, msg);
-                           }}},
+                           },
+                         .explain = &explain_options}},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1972,38 +1939,6 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
  private:
-  static Options MakeCopyOptions(const List* options,
-                                 std::string_view query_string,
-                                 NameToOption& explain_options) {
-    Options result;
-    result.reserve(list_length(options));
-    VisitNodes(options, [&](const DefElem& option) {
-      std::string_view option_name = option.defname;
-      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
-      if (option_name == "explain") {
-        auto maybe_explain = TryGet<std::string_view>(option.arg);
-        if (!maybe_explain) {
-          THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
-                            query_string, ExprLocation(&option))),
-                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                          ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
-        }
-        explain_options.emplace(*maybe_explain, true);
-        return;
-      }
-
-      auto [_, emplaced] = result.try_emplace(option_name, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
-                          query_string, ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-    return result;
-  }
-
   void Parse() {
     using namespace file_options;
 
@@ -2219,9 +2154,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
     SDB_ASSERT(_send_buffer);
-    return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
-                             file_path,   stmt.options,  *_send_buffer,
-                             _copy_queue, table_name,    _options};
+    return CopyOptionsParser{
+      type,        !stmt.is_from, _query_string.view(),
+      file_path,   stmt.options,  *_send_buffer,
+      _copy_queue, table_name,    _query_ctx.explain_params};
   };
 
   if (stmt.is_from) {
@@ -2660,9 +2596,13 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_ExplainStmt: {
       const auto& stmt = *castNode(ExplainStmt, &node);
-      _options = ConvertOptions(stmt.options);
-      ProcessStmt(state, *stmt.query);
-      return SqlCommandType::Explain;
+      ExplainStmtOptionsParser parser{stmt.options, _query_string.view()};
+      auto& explain = _query_ctx.explain_params;
+      explain = std::move(parser).GetExplainOptions();
+      if (!explain) {
+        explain.Add(query::ExplainWith::Execution);
+      }
+      return ProcessStmt(state, *stmt.query);
     }
     case T_ViewStmt: {  // CREATE VIEW
       const auto& stmt = *castNode(ViewStmt, &node);
@@ -2712,7 +2652,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     case T_CopyStmt: {
       const auto& stmt = *castNode(CopyStmt, &node);
       ProcessCopyStmt(state, stmt);
-      return _options.empty() ? SqlCommandType::Copy : SqlCommandType::Explain;
+      return SqlCommandType::Copy;
     }
     case T_VariableShowStmt: {
       state.pgsql_node = &node;
@@ -5846,7 +5786,6 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
   auto command_type = ProcessStmt(state, node, true);
   return {
     .root = std::move(state.root),
-    .options = std::move(_options),
     .pgsql_node = state.pgsql_node,
     .type = command_type,
   };

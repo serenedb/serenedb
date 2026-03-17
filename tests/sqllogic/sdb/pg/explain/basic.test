@@ -102,3 +102,6 @@ LOGICAL PLAN:
             [unnest:2] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
             [unnest:3] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
           - Values: 1 rows -> ROW<>
+
+query
+EXPLAIN SELECT 1;

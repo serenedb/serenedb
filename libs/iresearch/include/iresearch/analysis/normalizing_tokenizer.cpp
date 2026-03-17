@@ -31,10 +31,10 @@
 #include <vpack/parser.h>
 #include <vpack/slice.h>
 
-#include <iresearch/analysis/tokenizer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string_view>
 
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 

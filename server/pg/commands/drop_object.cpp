@@ -98,7 +98,7 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
                       ERR_MSG("DROP for this object type is not implemented: ",
                               magic_enum::enum_name(stmt.removeType)));
   }
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME) && !stmt.missing_ok) {
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     std::string_view object_type;
     switch (stmt.removeType) {
       case OBJECT_TABLE:
@@ -120,9 +120,13 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
         object_type = "object";
         break;
     }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG(object_type, " \"", name, "\" does not exist"));
-  } else if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (!stmt.missing_ok) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG(object_type, " \"", name, "\" does not exist"));
+    }
+    basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG(object_type, " \"", name, "\" does not exist, skipping")));
     r = {};
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }

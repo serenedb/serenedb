@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <velox/common/memory/HashStringAllocator.h>
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
@@ -238,7 +239,8 @@ class RocksDBInsertDataSink final
     ObjectId object_key, std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns, WriteConflictPolicy conflict_policy,
     uint64_t& number_of_rows_affected,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+    absl::Mutex& table_lock);
 
   void appendData(velox::RowVectorPtr input) final;
 
@@ -246,6 +248,7 @@ class RocksDBInsertDataSink final
   std::string_view _table_name;
   WriteConflictResolver _conflict_resolver;
   uint64_t& _number_of_rows_affected;
+  absl::ReaderMutexLock _table_lock_guard;
 };
 
 class RocksDBUpdateDataSink final
@@ -258,7 +261,8 @@ class RocksDBUpdateDataSink final
     std::vector<ColumnInfo> columns,
     std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
     velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+    absl::Mutex& table_lock);
 
   void appendData(velox::RowVectorPtr input) final;
 
@@ -292,6 +296,7 @@ class RocksDBUpdateDataSink final
     _column_id_to_type;
   containers::FlatHashSet<std::string_view> _batch_keys;
   bool _update_pk{};
+  absl::ReaderMutexLock _table_lock_guard;
 };
 
 template<bool IsGeneratedPK>
@@ -305,13 +310,31 @@ class SSTInsertDataSink final
     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+    absl::Mutex& table_lock);
 
   void appendData(velox::RowVectorPtr input) final;
+
+ private:
+  absl::ReaderMutexLock _table_lock_guard;
 };
 
 extern template class SSTInsertDataSink<true>;
 extern template class SSTInsertDataSink<false>;
+
+class RocksDBIndexBackfillDataSink final
+  : public RocksDBDataSinkBase<NoopSinkWriter> {
+ public:
+  RocksDBIndexBackfillDataSink(
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<ColumnInfo> columns,
+    std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock);
+  void appendData(velox::RowVectorPtr input) final;
+
+ private:
+  absl::WriterMutexLock _table_lock_guard;
+};
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
@@ -319,7 +342,8 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
     rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr row_type, ObjectId object_key,
     std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+    absl::Mutex& table_lock);
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;
@@ -337,6 +361,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   std::vector<ColumnInfo> _columns;
   std::vector<velox::column_index_t> _key_childs;
   uint64_t& _number_of_rows_affected;
+  absl::ReaderMutexLock _table_lock_guard;
 };
 
 }  // namespace sdb::connector

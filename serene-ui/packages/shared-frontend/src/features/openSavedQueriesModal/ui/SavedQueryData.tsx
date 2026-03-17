@@ -10,6 +10,7 @@ import { useSavedQueriesModal } from "../model";
 import { PGSQLEditor } from "@serene-ui/shared-frontend/widgets";
 import { ExecuteQueryButton } from "../../executeQuery";
 import { useState, useRef, useEffect } from "react";
+import { ExportSavedQueryButton, ImportSavedQueryButton } from "./buttons";
 
 export const SavedQueryData = () => {
     const {
@@ -93,6 +94,8 @@ export const SavedQueryData = () => {
                         onClick={() => handleSaveQuery()}>
                         <SaveIcon className="size-3" />
                     </Button>
+                    <ImportSavedQueryButton />
+                    <ExportSavedQueryButton />
                     <Button
                         variant="secondary"
                         size="iconSmall"

@@ -14,3 +14,4 @@ slim.report.json
 .env
 .env.*
 package-lock.json
+import_queries/

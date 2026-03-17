@@ -633,8 +633,8 @@ class IndexTestCase : public tests::IndexTestBase {
               //               ASSERT_EQ(expected_attrs.features(),
               //               actual_attrs.features());
 
-              auto* actual_freq = irs::get<irs::FreqAttr>(*act_docs_itr);
-              auto* expected_freq = irs::get<irs::FreqAttr>(*exp_docs_itr);
+              auto* actual_freq = irs::get<irs::FreqBlockAttr>(*act_docs_itr);
+              auto* expected_freq = irs::get<irs::FreqBlockAttr>(*exp_docs_itr);
               ASSERT_FALSE(!actual_freq);
               ASSERT_FALSE(!expected_freq);
 
@@ -649,7 +649,8 @@ class IndexTestCase : public tests::IndexTestBase {
               while (act_docs_itr->next()) {
                 ASSERT_TRUE(exp_docs_itr->next());
                 ASSERT_EQ(exp_docs_itr->value(), act_docs_itr->value());
-                ASSERT_EQ(expected_freq->value, actual_freq->value);
+                act_docs_itr->FetchScoreArgs(0);
+                ASSERT_EQ(expected_freq->value[0], actual_freq->value[0]);
 
                 auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
                 auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);

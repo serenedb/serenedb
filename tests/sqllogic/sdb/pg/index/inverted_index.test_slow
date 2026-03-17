@@ -1,0 +1,97 @@
+show-column-names false
+hash-threshold 100
+
+statement count 100000
+CREATE TABLE clickclack AS
+SELECT
+  CASE
+    WHEN vedernikoff_team.crook % 2 = 0 THEN
+      'team member vedernikoff has ' || (crook / 10)::text || ' stocks'
+    ELSE
+      'team member cutelooked has ' || (boss * 1000)::text || ' stocks'
+  END AS fact
+FROM
+  generate_series(1, 1000) as vedernikoff_team(crook),
+  generate_series(1, 100) as cutelooked_team(boss);
+
+statement ok
+CREATE INDEX clickclack_facts ON clickclack USING inverted(fact);
+
+query
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'team member');
+----
+100000 values hashing to b3b411b881b6ec438b321353df0f649a
+
+query
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'vedernikoff has');
+----
+50000 values hashing to 35095a4a5bb116b794f23c400f703bff
+
+query
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'cutelooked has');
+----
+50000 values hashing to c14f95eb5c5b0511ba1836391cb2a703
+
+query
+SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'has 0 stocks');
+----
+400 values hashing to 281bddebb99a13518781132c8d56e194
+
+statement ok
+DROP TABLE clickclack;
+
+statement ok
+CREATE TABLE clickclack_pk (fact TEXT PRIMARY KEY, detail TEXT);
+
+statement count 10000
+INSERT INTO clickclack_pk
+SELECT
+  CASE
+    WHEN rn % 2 = 0 THEN
+      'team member vedernikoff has ' || rn::text || ' stocks'
+    ELSE
+      'team member cutelooked has ' || rn::text || ' stocks'
+  END AS fact,
+  CASE
+    WHEN rn % 2 = 0 THEN
+      'vedernikoff row ' || rn::text
+    ELSE
+      'cutelooked row ' || rn::text
+  END AS detail
+FROM
+  generate_series(1, 10000) AS s(rn);
+
+statement ok
+CREATE INDEX clickclack_pk_facts ON clickclack_pk USING inverted(fact, detail);
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'team member') ORDER BY fact;
+----
+20000 values hashing to c5e18a8a07f65b8031c775e242239353
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'vedernikoff has') ORDER BY fact;
+----
+10000 values hashing to b74729795b45633d271483956071de12
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'cutelooked has') ORDER BY fact;
+----
+10000 values hashing to 1d8c44c6f3d932d3b08d276682b5124e
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'has 0 stocks') ORDER BY fact;
+----
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(detail, 'vedernikoff row') ORDER BY fact;
+----
+10000 values hashing to b74729795b45633d271483956071de12
+
+query
+SELECT * FROM clickclack_pk_facts WHERE PHRASE(detail, 'cutelooked row') ORDER BY fact;
+----
+10000 values hashing to 1d8c44c6f3d932d3b08d276682b5124e
+
+statement ok
+DROP TABLE clickclack_pk;

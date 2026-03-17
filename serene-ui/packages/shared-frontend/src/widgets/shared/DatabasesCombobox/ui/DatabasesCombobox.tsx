@@ -59,17 +59,17 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <Button
-                    variant="thirdly"
+                    variant="secondary"
                     role="combobox"
                     aria-expanded={open}
                     aria-label="Select database"
-                    className="flex-1 justify-between max-w-full overflow-hidden">
+                    className="flex-1 justify-between max-w-full overflow-hidden transition-colors duration-150">
                     <div className="flex flex-1 gap-2 items-center min-w-0 overflow-hidden">
                         <DatabaseIcon className="flex-shrink-0" />
                         {isLoading && databases.length === 0 ? (
                             <Skeleton className="flex-1 h-4 max-w-40" />
                         ) : (
-                            <span className="text-left fade-in duration-100 truncate min-w-0 block flex-1">
+                            <span className="text-left truncate min-w-0 block flex-1">
                                 {label}
                             </span>
                         )}

@@ -161,7 +161,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
     RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),
                                *pool_.get(), object_key, pk, all_column_oids,
                                WriteConflictPolicy::Replace, rows_affected,
-                               std::move(index_writers));
+                               std::move(index_writers), _table_lock);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -194,6 +194,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
+  absl::Mutex _table_lock;
 };
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
@@ -464,9 +465,10 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
     std::unique_ptr<rocksdb::Transaction> transaction_delete{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     size_t rows_affected = 0;
-    RocksDBDeleteDataSink delete_sink(
-      *transaction_delete, *_cf_handles.front(), velox::ROW(names, types),
-      kObjectKey, all_columns, rows_affected, std::move(delete_writers));
+    RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
+                                      velox::ROW(names, types), kObjectKey,
+                                      all_columns, rows_affected,
+                                      std::move(delete_writers), _table_lock);
     auto delete_data = makeRowVector({makeFlatVector<int32_t>({100})});
     delete_sink.appendData(delete_data);
     ASSERT_TRUE(delete_sink.finish());

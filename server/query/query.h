@@ -28,7 +28,6 @@
 #include <velox/core/QueryCtx.h>
 #include <velox/exec/Task.h>
 
-#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -63,7 +62,7 @@ class Query {
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx,
     std::vector<std::unique_ptr<Executor>> executors,
-    std::function<void()> on_error = {});
+    absl::AnyInvocable<void()> on_error = {});
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
@@ -118,7 +117,7 @@ class Query {
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx,
         std::vector<std::unique_ptr<Executor>> executors,
-        std::function<void()> on_error);
+        absl::AnyInvocable<void()> on_error);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;

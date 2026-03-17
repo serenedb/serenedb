@@ -31,6 +31,17 @@
 
 namespace sdb::pg {
 
+template<typename Func>
+yaclib::Future<> CommandExecutor::OneShot(Func&& func) {
+  if (!_query) {  // was fired
+    return {};
+  }
+
+  auto f = std::forward<Func>(func)();
+  _query = nullptr;  // set fired
+  return f;
+}
+
 CommandExecutor::CommandExecutor(std::shared_ptr<ExecContext> context)
   : _context{std::move(context)} {}
 

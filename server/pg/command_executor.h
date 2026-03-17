@@ -42,15 +42,7 @@ class CommandExecutor : public query::Executor {
 
  protected:
   template<typename Func>
-  yaclib::Future<> OneShot(Func&& func) {
-    if (!_query) {  // was fired
-      return {};
-    }
-
-    auto f = std::forward<Func>(func)();
-    _query = nullptr;  // set fired
-    return f;
-  }
+  yaclib::Future<> OneShot(Func&& func);
 
   std::shared_ptr<ExecContext> _context;
   query::Query* _query = nullptr;

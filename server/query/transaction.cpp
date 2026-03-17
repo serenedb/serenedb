@@ -69,11 +69,16 @@ Result Transaction::Commit() {
     for (const auto& [id, trx] : _search_transactions) {
       SDB_ASSERT(trx->GetQueries() <= num_ops);
       if (trx->GetQueries() == num_ops) {
+        SDB_ASSERT(trx->GetQueries() != 0);
+        // TODO: I'm not sure in what column family we should write
         _rocksdb_transaction->Delete(rocksdb::Slice{});
         ++num_ops;
         break;
       }
     }
+    SDB_ASSERT(absl::c_all_of(_search_transactions, [&](const auto& p) {
+      return p.second->GetQueries() < num_ops;
+    }));
 
     SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
     auto status = _rocksdb_transaction->Commit();
@@ -86,6 +91,7 @@ Result Transaction::Commit() {
 
     // id is first write operation seqno in the WAL
     auto post_commit_seq = _rocksdb_transaction->GetId();
+    // add number of operations to get last operation seqno
     post_commit_seq += num_ops - 1;
 
     std::move(rollback).Cancel();

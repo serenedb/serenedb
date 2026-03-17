@@ -54,11 +54,6 @@ on:
         required: true
         type: boolean
         default: false
-      LTS:
-        description: 'Mark release as LTS'
-        required: true
-        type: boolean
-        default: false
     secrets:
       PAT_TOKEN:
         required: true
@@ -255,7 +250,6 @@ jobs:
         if: steps.rta.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-          LTS: ${{ inputs.LTS }}
         run: ./private/ci/steps/09-ci-create-github-release.bash
 
       # ==================== COVERAGE REPORT ====================

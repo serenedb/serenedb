@@ -63,12 +63,6 @@ on:
         required: true
         type: boolean
         default: false
-      LTS:
-        description: 'Mark release as LTS'
-        required: true
-        type: boolean
-        default: false
-
 permissions:
   statuses: write
 
@@ -87,6 +81,5 @@ jobs:
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
       CREATE_GITHUB_RELEASE: ${{ inputs.CREATE_GITHUB_RELEASE }}
-      LTS: ${{ inputs.LTS }}
 
     secrets: inherit

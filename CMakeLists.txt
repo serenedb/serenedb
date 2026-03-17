@@ -45,48 +45,31 @@ find_package(Git 1.5.3 REQUIRED)
 # VERSION information
 # ------------------------------------------------------------------------------
 
-# stable release:   MAJOR.MINOR.PATCH
-# hot fix:          MAJOR.MINOR.PATCH-FIXNUMBER
-# unstable release: MAJOR.MINOR.PATCH-TYPE.NUMBER
-# devel:            MAJOR.MINOR.0-devel
+# stable release: MAJOR.MINOR.PATCH
+# LTS release:    MAJOR.MINOR.PATCH-lts
+#
+# MAJOR = calendar year (e.g. 26)
+# MINOR = sequential release number, typically the month (e.g. 03)
+# PATCH = growing patch number
 #
 # These are mapped to the following variables:
 #
-# SERENEDB_VERSION_MAJOR = MAJOR
-# SERENEDB_VERSION_MINOR = MINOR
-# SERENEDB_VERSION_PATCH = PATCH
+# SERENEDB_VERSION_MAJOR        = MAJOR
+# SERENEDB_VERSION_MINOR        = MINOR
+# SERENEDB_VERSION_PATCH        = PATCH
+# SERENEDB_VERSION_RELEASE_TYPE = "lts" or empty
 #
-# for pre-releases, otherwise empty:
-#
-# SERENEDB_VERSION_PRELEASE_TYPE   = TYPE
-# SERENEDB_VERSION_PRELEASE_NUMBER = NUMBER
-#
-set(SERENEDB_VERSION_MAJOR "1")
-set(SERENEDB_VERSION_MINOR "0")
+set(SERENEDB_VERSION_MAJOR "26")
+set(SERENEDB_VERSION_MINOR "03")
 
-# when building the nightly SERENEDB_VERSION_PATCH will be set
 if(NOT DEFINED SERENEDB_VERSION_PATCH)
     set(SERENEDB_VERSION_PATCH "0")
-    set(SERENEDB_VERSION_RELEASE_TYPE "")
-    set(SERENEDB_VERSION_RELEASE_NUMBER "")
-else()
-    unset(SERENEDB_VERSION_RELEASE_TYPE) # do not remove space
-    unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
 endif()
 
-# unset TYPE and NUMBER in case they are empty
+# unset RELEASE_TYPE if empty
 if(DEFINED SERENEDB_VERSION_RELEASE_TYPE)
     if(SERENEDB_VERSION_RELEASE_TYPE STREQUAL "")
         unset(SERENEDB_VERSION_RELEASE_TYPE) # do not remove space
-        unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
-    endif()
-else()
-    unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
-endif()
-
-if(DEFINED SERENEDB_VERSION_RELEASE_NUMBER)
-    if(SERENEDB_VERSION_RELEASE_NUMBER STREQUAL "")
-        unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
     endif()
 endif()
 
@@ -96,15 +79,9 @@ set(SERENEDB_PLAIN_VERSION
 )
 
 if(DEFINED SERENEDB_VERSION_RELEASE_TYPE)
-    if(DEFINED SERENEDB_VERSION_RELEASE_NUMBER)
-        set(SERENEDB_VERSION
-            "${SERENEDB_PLAIN_VERSION}-${SERENEDB_VERSION_RELEASE_TYPE}.${SERENEDB_VERSION_RELEASE_NUMBER}"
-        )
-    else()
-        set(SERENEDB_VERSION
-            "${SERENEDB_PLAIN_VERSION}-${SERENEDB_VERSION_RELEASE_TYPE}"
-        )
-    endif()
+    set(SERENEDB_VERSION
+        "${SERENEDB_PLAIN_VERSION}-${SERENEDB_VERSION_RELEASE_TYPE}"
+    )
 else()
     set(SERENEDB_VERSION "${SERENEDB_PLAIN_VERSION}")
 endif()

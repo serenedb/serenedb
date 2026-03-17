@@ -193,6 +193,7 @@ class DocIteratorImpl : public DocIterator {
   // reset field
   void Reset(const FieldData& field) {
     _field = &field;
+    _freq.value = 0;
     auto& freq = std::get<AttributePtr<FreqAttr>>(_attrs);
     auto& pos = std::get<AttributePtr<PosAttr>>(_attrs);
     freq = nullptr;
@@ -286,6 +287,8 @@ class DocIteratorImpl : public DocIterator {
     return _doc = doc_limits::eof();
   }
 
+  uint32_t GetFreq() const final { return _freq.value; }
+
  private:
   using Attributes = std::tuple<AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
 
@@ -303,6 +306,7 @@ class SortingDocIteratorImpl : public DocIterator {
  public:
   // reset field
   void Reset(const FieldData& field) {
+    _freq.value = 0;
     SDB_ASSERT(field.prox_random_access());
     _byte_pool = &field._byte_writer->parent();
 
@@ -325,8 +329,8 @@ class SortingDocIteratorImpl : public DocIterator {
   // reset iterator,
   // docmap == null -> segment is already sorted
   void Reset(DocIteratorImpl& it, const DocMap* docmap) {
-    const FreqAttr no_frequency;
-    const FreqAttr* freq = &no_frequency;
+    static constexpr FreqAttr kNoFreq;
+    const FreqAttr* freq = &kNoFreq;
 
     const auto* freq_attr = irs::get<FreqAttr>(it);
     if (freq_attr) {
@@ -382,6 +386,8 @@ class SortingDocIteratorImpl : public DocIterator {
     SDB_ASSERT(false);
     return _doc = doc_limits::eof();
   }
+
+  uint32_t GetFreq() const final { return _freq.value; }
 
  private:
   using Attributes = std::tuple<AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;

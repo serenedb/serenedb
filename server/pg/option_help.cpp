@@ -126,7 +126,7 @@ std::vector<std::string_view> AllOptionNames(
   std::vector<std::string_view> names;
   for (const auto& group : groups) {
     auto group_names = group.FlatNames();
-    names.insert(names.end(), group_names.begin(), group_names.end());
+    names.append_range(std::move(group_names));
   }
   return names;
 }

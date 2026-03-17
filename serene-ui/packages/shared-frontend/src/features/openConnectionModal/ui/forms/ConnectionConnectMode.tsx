@@ -23,7 +23,7 @@ export const ConnectionConnectMode = () => {
                     onValueChange={(value) => {
                         handleSelectChange("mode", value);
                     }}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full" aria-label="Connection mode">
                         <div className="flex gap-2.5 items-center">
                             <KeyIcon />
                             <SelectValue placeholder="Select mode" />

@@ -1035,45 +1035,25 @@
 {"query": "+springfield -illinois -missouri", "tags": ["negated", "global", "negated:num_tokens_3"]}
 {"query": "+puma -cat -shoes", "tags": ["negated", "global", "negated:num_tokens_3"]}
 {"query": "+climate +policy", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+work AND (remote)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+data +privacy", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+vehicles AND (electric)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+global +markets", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+planning AND (urban)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+public +transit", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+safety AND (school)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+consumer +rights", "tags": ["intersection", "global", "intersection:num_tokens_2"]}
-{"query": "+devices AND (medical)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+financial +reporting +standards", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+risk AND (wildfire OR maps)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+mental +health +resources", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+records AND (public OR request)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+water +quality +report", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+marketing AND (digital OR strategy)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+housing +market +trends", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+security AND (airport OR rules)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+electric +grid +stability", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+panel AND (solar OR rebates)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+disaster +relief +funds", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+admissions AND (college OR criteria)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+insurance +claim +process", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+insurance AND (home OR quotes)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+credit +card +rewards", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+business AND (small OR grants)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+data +center +cooling", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+engine AND (search OR ranking)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+remote +learning +tools", "tags": ["intersection", "global", "intersection:num_tokens_3"]}
-{"query": "+accident AND (traffic OR reports)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_3"]}
 {"query": "+open +source +software +licenses", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+park AND (national OR visitor OR fees)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "+health +care +cost +trends", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+council AND (city OR meeting OR agenda)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "+renewable +energy +policy +goals", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+tax AND (federal OR filing OR deadline)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "+airport +security +screening +rules", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+election AND (local OR ballot OR measures)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "+climate +change +impact +report", "tags": ["intersection", "global", "intersection:num_tokens_>3"]}
-{"query": "+service AND (customer OR phone OR number)", "tags": ["intersection_union", "global", "intersection_union:num_tokens_>3"]}
 {"query": "+climate policy", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "remote +work", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}
 {"query": "+data privacy", "tags": ["intersection_union", "global", "intersection_union:num_tokens_2"]}

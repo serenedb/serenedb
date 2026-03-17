@@ -141,7 +141,8 @@ enum class SqlCommandType : uint32_t {
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
   Copy,         // copy stmt
-  CTAS          // create table as select
+  CTAS,         // create table as select
+  CreateIndex   // create index with backfill
 };
 
 template<typename T>

@@ -6,6 +6,7 @@ import {
     useUpdateConnection,
 } from "@serene-ui/shared-frontend/entities";
 import { ConnectionSchema } from "@serene-ui/shared-core";
+import { getErrorMessage } from "@serene-ui/shared-frontend/shared";
 
 export interface UseConnectionMutationsReturn {
     handleAddConnection: (connection: ConnectionSchema) => Promise<boolean>;
@@ -27,16 +28,20 @@ export const useConnectionMutations = (
     const { mutateAsync: deleteConnection, isPending: isDeleteRequestPending } =
         useDeleteConnection();
 
-    const showError = useCallback((title: string, description?: string) => {
-        toast.error(title, {
-            duration: 3000,
-            description,
-            action: {
-                label: "Close",
-                onClick: (e) => e.stopPropagation(),
-            },
-        });
-    }, []);
+    const showError = useCallback(
+        (title: string, error: unknown, fallbackMessage: string) => {
+            const description = getErrorMessage(error, fallbackMessage);
+            toast.error(title, {
+                duration: 3000,
+                description: description === title ? undefined : description,
+                action: {
+                    label: "Close",
+                    onClick: (e) => e.stopPropagation(),
+                },
+            });
+        },
+        [],
+    );
 
     /**
      * Tests a connection and shows an error if it fails.
@@ -49,9 +54,11 @@ export const useConnectionMutations = (
             try {
                 await onTestConnection(connection);
             } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : String(error);
-                showError("Connection test failed", message);
+                showError(
+                    "Connection test failed",
+                    error,
+                    "Connection test failed",
+                );
                 return false;
             }
 
@@ -107,7 +114,11 @@ export const useConnectionMutations = (
                 toast.success("Connection successfully added!");
             } catch (error) {
                 console.error("Error during connection addition:", error);
-                showError("An unexpected error occurred during the addition.");
+                showError(
+                    "Failed to add connection",
+                    error,
+                    "Failed to add connection",
+                );
                 return false;
             }
 
@@ -141,7 +152,11 @@ export const useConnectionMutations = (
                 toast.success("Connection successfully updated!");
             } catch (error) {
                 console.error("Error during connection update:", error);
-                showError("An unexpected error occurred during the update.");
+                showError(
+                    "Failed to update connection",
+                    error,
+                    "Failed to update connection",
+                );
                 return false;
             }
 
@@ -187,7 +202,11 @@ export const useConnectionMutations = (
                 return true;
             } catch (error) {
                 console.error("Error during connection deletion:", error);
-                showError("An unexpected error occurred during deletion.");
+                showError(
+                    "Failed to delete connection",
+                    error,
+                    "Failed to delete connection",
+                );
                 return false;
             }
         },

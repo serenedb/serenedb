@@ -1839,7 +1839,80 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
             this->_left_in_leaf = 0;
             goto fill_block_done;
           }
-          ReadLeaf(*(std::end(this->_docs) - 1));
+          if constexpr (!TrackMatch && MergeType == ScoreMergeType::Noop) {
+            SDB_ASSERT(!IteratorTraits::Frequency());
+            const auto tail =
+              std::min(this->_left_in_list, IteratorTraits::kBlockSize);
+            const auto base = *(std::end(this->_docs) - 1);
+            const auto [data, words] = IteratorTraits::ReadTailForFill(
+              tail, GetDocIn(), this->_enc_buf, this->_docs, base);
+            const auto* IRS_RESTRICT bitset =
+              reinterpret_cast<const uint64_t*>(data);
+            if (bitset) {
+              const doc_id_t max_offset =
+                (words - 1) * BitsRequired<uint64_t>() +
+                (BitsRequired<uint64_t>() - 1 -
+                 std::countl_zero(bitset[words - 1]));
+              this->_max_in_leaf = base + max_offset;
+            } else {
+              this->_max_in_leaf = *(std::end(this->_docs) - 1);
+            }
+            this->_left_in_leaf = tail;
+            this->_left_in_list -= tail;
+            if (this->_max_in_leaf >= max) {
+              if (bitset) {
+                IteratorTraits::MaterializeBitset(base, data, words,
+                                                  std::end(this->_docs) - tail,
+                                                  tail);
+              }
+            } else if (bitset) {
+              const uint32_t mask_words = (max - min) >> 6;
+              const auto offset = base >= min ? base - min : min - base;
+              const uint32_t word_offset = offset >> 6;
+              const uint32_t bit_offset = offset % BitsRequired<uint64_t>();
+              if (base >= min) {
+                if (bit_offset == 0) {
+                  for (uint8_t j = 0; j < words; ++j) {
+                    if (word_offset + j < mask_words) {
+                      doc_mask[word_offset + j] |= bitset[j];
+                    }
+                  }
+                } else {
+                  for (uint8_t j = 0; j < words; ++j) {
+                    if (word_offset + j < mask_words) {
+                      doc_mask[word_offset + j] |= bitset[j] << bit_offset;
+                    }
+                    if (word_offset + j + 1 < mask_words) {
+                      doc_mask[word_offset + j + 1] |=
+                        bitset[j] >> (BitsRequired<uint64_t>() - bit_offset);
+                    }
+                  }
+                }
+              } else {
+                for (uint32_t i = 0; i < mask_words; ++i) {
+                  const uint32_t j = word_offset + i;
+                  if (j < words) {
+                    doc_mask[i] |= bitset[j] >> bit_offset;
+                  }
+                  if (bit_offset != 0 && j + 1 < words) {
+                    doc_mask[i] |= bitset[j + 1]
+                                   << (BitsRequired<uint64_t>() - bit_offset);
+                  }
+                }
+              }
+              *(std::end(this->_docs) - 1) = this->_max_in_leaf;
+              empty = false;
+              if constexpr (FieldTraits::Frequency()) {
+                IteratorTraits::SkipTail(tail, GetDocIn());
+              }
+              continue;
+            }
+            if constexpr (FieldTraits::Frequency()) {
+              IteratorTraits::SkipTail(tail, GetDocIn());
+            }
+          } else {
+            ReadLeaf(*(std::end(this->_docs) - 1));
+          }
           if (*(std::end(this->_docs) - 1) >= max ||
               this->_left_in_leaf != kPostingBlock) {
             goto fill_block_tail;
@@ -4477,10 +4550,44 @@ struct FormatTraits128 {
     }
   }
 
+  IRS_FORCE_INLINE static void MaterializeBitset(uint32_t prev,
+                                                 const byte_type* data,
+                                                 uint32_t words,
+                                                 uint32_t* begin,
+                                                 uint32_t len) {
+    const auto* const bitset = reinterpret_cast<const uint64_t*>(data);
+    auto* end = begin;
+    for (uint32_t i = 0; i != words; ++i) {
+      auto word = bitset[i];
+      if (word == 0) {
+        continue;
+      }
+      const auto offset = prev + i * BitsRequired<uint64_t>();
+      do {
+        *end++ = offset + std::countr_zero(word);
+        word = PopBit(word);
+      } while (word != 0);
+    }
+    SDB_ASSERT(begin + len == end);
+  }
+
   template<typename InputType>
   IRS_FORCE_INLINE static void ReadBlockDelta(InputType& in, uint32_t* buf,
                                               uint32_t* out, uint32_t prev) {
     ReadTailDelta(kBlockSize, in, buf, out, prev);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static std::pair<const byte_type*, uint32_t> ReadTailForFill(
+    uint32_t len, InputType& in, uint32_t* buf, uint32_t* out, uint32_t prev) {
+    const auto raw_type = in.ReadByte();
+    if (raw_type == de_for_bitset) {
+      const auto words = in.ReadByte();
+      const auto bytes = words * sizeof(uint64_t);
+      return {ReadDataImpl(bytes, in, buf), words};
+    }
+    ReadTailDelta(raw_type, len, in, buf, out, prev);
+    return {nullptr, 0};
   }
 
   template<typename InputType>
@@ -4489,7 +4596,17 @@ struct FormatTraits128 {
                                              uint32_t prev) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= kBlockSize);
-    const auto type = static_cast<DeltaEncoding>(in.ReadByte());
+    const auto raw_type = in.ReadByte();
+    ReadTailDelta(raw_type, len, in, buf, out, prev);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static void ReadTailDelta(byte_type raw_type, uint32_t len,
+                                             InputType& in, uint32_t* buf,
+                                             uint32_t* out, uint32_t prev) {
+    SDB_ASSERT(1 <= len);
+    SDB_ASSERT(len <= kBlockSize);
+    const auto type = static_cast<DeltaEncoding>(raw_type);
     auto* const begin = out + (kBlockSize - len);
     switch (type) {
       case de_values: {
@@ -4512,20 +4629,7 @@ struct FormatTraits128 {
         const auto words = in.ReadByte();
         const auto bytes = words * sizeof(uint64_t);
         const auto* const data = ReadDataImpl(bytes, in, buf);
-        const auto* const bitset = reinterpret_cast<const uint64_t*>(data);
-        auto* end = begin;
-        for (uint32_t i = 0; i != words; ++i) {
-          auto word = bitset[i];
-          if (word == 0) {
-            continue;
-          }
-          const auto offset = prev + i * BitsRequired<uint64_t>();
-          do {
-            *end++ = offset + std::countr_zero(word);
-            word = PopBit(word);
-          } while (word != 0);
-        }
-        SDB_ASSERT(begin + len == end);
+        MaterializeBitset(prev, data, words, begin, len);
       } break;
 
       case de_streamvbyte1234: {
@@ -4795,8 +4899,7 @@ struct FormatTraits128 {
   };
 
  private:
-  // TODO: To make bitset fast needs custom logic outside of FormatTraits
-  static constexpr bool kSupportBitset = false;
+  static constexpr bool kSupportBitset = true;
 
   // TODO: Should always return true
   static constexpr bool SupportIfBlock(uint32_t len) {

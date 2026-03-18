@@ -175,6 +175,12 @@ CREATE INDEX index_ts on tstest USING inverted(c);
 statement error db error: ERROR: Column a has text dictionary defined but is not VARCHAR.
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 
+statement error db error: ERROR: Index column opclass options are not supported.
+CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
+
+statement error db error: ERROR: Index column definition is not supported.
+CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
+
 statement ok
 DROP TABLE tstest;
 

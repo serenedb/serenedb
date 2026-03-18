@@ -81,12 +81,12 @@ Result ParseIndexOptions(const IndexStmt& index,
     // can happen if column expression is a func call or similar.
     if (!index_elem->name) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "Index column definition is not supported");
+                "Index column definition is not supported.");
     }
 
     if (index_elem->opclassopts) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "Index column opclass options are not supported");
+                "Index column opclass options are not supported.");
     }
 
     columns.push_back(

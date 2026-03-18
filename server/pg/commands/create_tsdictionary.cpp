@@ -147,7 +147,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     ParseOptions([&] {
       _builder.openObject();
       _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
-      Parse<true>();
+      std::string_view type =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
+      Parse<true>(type);
       _builder.close();  // close analyzer
       _builder.close();  // close object
     });
@@ -223,9 +225,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     }
     if (!OptionsParser::HasOption(Info.name, path)) {
       std::string_view name = Info.name;
-      if constexpr (Info.name == tokenizer_options::kTemplate.name) {
-        name = kTypeField;
-      }
+      // tokenizer's properties vpack does not contains its type
+      // tokenizer: {"analyzer": {"type" : "some", "properties": {...}}}
+      SDB_ASSERT(name != tokenizer_options::kTemplate.name);
       auto value = GetFromCopy<R>(name, path);
       if (value) {
         return *value;
@@ -248,9 +250,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   template<bool IsRoot>
-  void Parse(std::string_view path = "") {
-    const std::string_view type =
-      EraseOptionOrDefault<tokenizer_options::kTemplate>(path);
+  void Parse(std::string_view type, std::string_view path = "") {
     if (type == tokenizer_options::kCopyFromGroup.name) {
       ParseCopyFrom(path);
     } else {
@@ -264,6 +264,39 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if constexpr (IsRoot) {
       ParseFeatures(type);
     }
+  }
+
+  template<const OptionGroup& Group>
+  void ParseTokenizerGroup(std::string_view path) {
+    VisitValues<Group.options>([&]<const OptionInfo & Option> {
+      if constexpr (Option.name == tokenizer_options::kStopwords.name ||
+                    Option.name == tokenizer_options::kDelimiters.name) {
+        if (!OptionsParser::HasOption(Option.name, path) &&
+            !_copy_from.empty()) {
+          auto slice = GetFromPath(Option.name, path, _copy_from.back().first,
+                                   _copy_from.back().second);
+          if (!slice.isNone()) {
+            _builder.add(GetVPackName(Option.name), slice);
+            return;
+          }
+        }
+        _builder.add(GetVPackName(Option.name),
+                     vpack::Value{vpack::ValueType::Array});
+        auto value = OptionsParser::EraseOptionOrDefault<Option>(path);
+        ParseCommaSeparated(value,
+                            [&](std::string_view word) { _builder.add(word); });
+        _builder.close();
+      } else {
+        auto value = EraseOptionOrDefault<Option>(path);
+        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
+                                     std::string_view>) {
+          if (value.empty()) {
+            return;
+          }
+        }
+        _builder.add(GetVPackName(Option.name), value);
+      }
+    });
   }
 
   template<const OptionGroup& Group>
@@ -289,41 +322,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
           _builder.close();
         }
       }
-      [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-        (
-          [&] {
-            constexpr const auto& kOption = Group.options[Is];
-            if constexpr (kOption.name == tokenizer_options::kStopwords.name ||
-                          kOption.name == tokenizer_options::kDelimiters.name) {
-              if (!OptionsParser::HasOption(kOption.name, path) &&
-                  !_copy_from.empty()) {
-                auto slice =
-                  GetFromPath(kOption.name, path, _copy_from.back().first,
-                              _copy_from.back().second);
-                if (!slice.isNone()) {
-                  _builder.add(GetVPackName(kOption.name), slice);
-                  return;
-                }
-              }
-              _builder.add(GetVPackName(kOption.name),
-                           vpack::Value{vpack::ValueType::Array});
-              auto value = OptionsParser::EraseOptionOrDefault<kOption>(path);
-              ParseCommaSeparated(
-                value, [&](std::string_view word) { _builder.add(word); });
-              _builder.close();
-            } else {
-              auto value = EraseOptionOrDefault<kOption>(path);
-              if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
-                                           std::string_view>) {
-                if (value.empty()) {
-                  return;
-                }
-              }
-              _builder.add(GetVPackName(kOption.name), value);
-            }
-          }(),
-          ...);
-      }(std::make_index_sequence<std::size(Group.options)>{});
+      ParseTokenizerGroup<Group>(path);
     }
   }
 
@@ -339,10 +338,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
     }
     while (true) {
       auto step_path = GetPath(path, "step", step);
+      std::string_view type;
+      bool type_from_copy = false;
       if (OptionsParser::HasOption(tokenizer_options::kTemplate, step_path)) {
-        _builder.openObject();
-        Parse<false>(step_path);
-        _builder.close();  // close step object
+        type =
+          OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+            step_path);
       } else if (!slice.isNone()) {
         if (step > slice.length()) {
           break;
@@ -351,17 +352,18 @@ class CreateTSDictionaryOptions : public OptionsParser {
         if (elem.isNone()) {
           break;
         }
-        std::string_view type = elem.get(kTypeField).stringView();
+        type_from_copy = true;
+        type = elem.get(kTypeField).stringView();
         _copy_from.emplace_back(step_path, elem.get(kPropertiesField));
-        _builder.openObject();
-        _builder.add(kTypeField, type);
-        _builder.add(kPropertiesField, vpack::Value{vpack::ValueType::Object});
-        ParseTemplateType(type, step_path);
-        _builder.close();  // close properties
-        _builder.close();  // close object
-        _copy_from.pop_back();
-      } else {
+      }
+      if (type.empty()) {
         break;
+      }
+      _builder.openObject();
+      Parse<false>(type, step_path);
+      _builder.close();
+      if (type_from_copy) {
+        _copy_from.pop_back();
       }
 
       step++;
@@ -370,17 +372,35 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseMinHash(std::string_view path) {
-    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
     auto analyzer_path = GetPath(path, kAnalyzerField);
-    Parse<false>(analyzer_path);
-    _builder.close();  // close analyzer object
+    std::string_view type;
+    bool type_from_template = false;
+    if (OptionsParser::HasOption(tokenizer_options::kTemplate, analyzer_path) ||
+        _copy_from.empty()) {
+      type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+        analyzer_path);
+    } else {
+      SDB_ASSERT(!_copy_from.empty());
+      auto slice = GetFromPath(kAnalyzerField, path, _copy_from.back().first,
+                               _copy_from.back().second);
+      type = slice.get(kTypeField).stringView();
+      _copy_from.emplace_back(analyzer_path, slice.get(kPropertiesField));
+      type_from_template = true;
+    }
+    SDB_ASSERT(!type.empty());
+    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+    Parse<false>(type, analyzer_path);
+    _builder.close();  // close analyzer
+    if (type_from_template) {
+      _copy_from.pop_back();
+    }
     int hashes = EraseOptionOrDefault<tokenizer_options::kNumHashes>(path);
     _builder.add(GetVPackName(tokenizer_options::kNumHashes.name), hashes);
   }
 
   void ParseCopyFrom(std::string_view path) {
     std::string_view from =
-      OptionsParser::template EraseOptionOrDefault<tokenizer_options::kFrom>();
+      OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(path);
     auto name = ParseObjectName(from, _current_schema);
     auto tokenizer =
       _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
@@ -389,33 +409,23 @@ class CreateTSDictionaryOptions : public OptionsParser {
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", from, "\" does not exist"));
     }
-    auto base = tokenizer->Slice();
-    auto slice = base.get(kAnalyzerField);
+    auto slice = tokenizer->Slice().get(kAnalyzerField);
 
     auto type = slice.get(kTypeField);
     _copy_from.emplace_back(path, slice.get(kPropertiesField));
-    _builder.add(kTypeField, type.stringView());
-    _builder.add(kPropertiesField, vpack::Value{vpack::ValueType::Object});
-    ParseTemplateType(type.stringView(), path);
-    _builder.close();  // close properties
+    Parse<false>(type.stringView(), path);
     _copy_from.pop_back();
   }
 
   void ParseFeatures(std::string_view type) {
-    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-      (
-        [&] {
-          constexpr const auto& kFeature =
-            tokenizer_options::kFeaturesOptions[Is];
-          bool use_feature = EraseOptionOrDefault<kFeature>();
-          if (use_feature) {
-            bool added = _features.Add(kFeature.name);
-            SDB_ASSERT(added);
-          }
-        }(),
-        ...);
-    }(std::make_index_sequence<std::size(
-        tokenizer_options::kFeaturesOptions)>{});
+    VisitValues<tokenizer_options::kFeaturesOptions>(
+      [&]<const OptionInfo & Feature> {
+        bool use_feature = EraseOptionOrDefault<Feature>();
+        if (use_feature) {
+          bool added = _features.Add(Feature.name);
+          SDB_ASSERT(added);
+        }
+      });
     auto r = _features.Validate(type);
     if (!r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

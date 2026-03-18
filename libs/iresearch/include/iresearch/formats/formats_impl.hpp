@@ -1258,6 +1258,9 @@ class PostingIteratorBase : public DocIterator {
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
+#ifdef __AVX2__
+  [[maybe_unused]] doc_id_t _placeholder_for_bitset_decoding[8];
+#endif
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
@@ -3082,6 +3085,9 @@ class SingleWandIterator : public DocIterator {
   uint32_t* _collected_freqs = nullptr;
   [[no_unique_address]] uint32_t _freqs[IteratorTraits::kBlockSize];
   doc_id_t _docs[IteratorTraits::kBlockSize];
+#ifdef __AVX2__
+  [[maybe_unused]] doc_id_t _placeholder_for_bitset_decoding[8];
+#endif
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
@@ -4549,24 +4555,68 @@ struct FormatTraits128 {
     }
   }
 
-  IRS_FORCE_INLINE static void MaterializeBitset(uint32_t prev,
-                                                 const byte_type* data,
-                                                 uint32_t words,
-                                                 uint32_t* begin,
-                                                 uint32_t len) {
+#ifdef __AVX2__
+  struct alignas(16) BitsetByteEntry {
+    uint8_t count;
+    uint8_t positions[8];
+  };
+
+  static constexpr std::array<BitsetByteEntry, 256> kBitsetByteTable = [] {
+    std::array<BitsetByteEntry, 256> t{};
+    for (uint32_t b = 0; b != 256; ++b) {
+      t[b].count = 0;
+      std::fill_n(t[b].positions, 8, 0);
+      for (uint32_t i = 0; i != 8; ++i) {
+        if (b & (1 << i)) {
+          t[b].positions[t[b].count++] = i;
+        }
+      }
+    }
+    return t;
+  }();
+#endif
+
+  IRS_FORCE_INLINE static void MaterializeBitset(
+    uint32_t prev, const byte_type* IRS_RESTRICT data, uint32_t words,
+    uint32_t* IRS_RESTRICT begin, uint32_t len) {
     const auto* const bitset = reinterpret_cast<const uint64_t*>(data);
     auto* end = begin;
-    for (uint32_t i = 0; i != words; ++i) {
-      auto word = bitset[i];
-      if (word == 0) {
-        continue;
+#ifdef __AVX2__
+    if (len == kBlockSize) {
+      for (uint32_t i = 0; i != words; ++i) {
+        const auto word = bitset[i];
+        if (word == 0) {
+          continue;
+        }
+        const uint8_t* word_bytes = reinterpret_cast<const uint8_t*>(&word);
+        for (uint32_t b = 0; b != 8; ++b) {
+          const auto& e = kBitsetByteTable[word_bytes[b]];
+          const __m256i base_vec =
+            _mm256_set1_epi32(prev + i * BitsRequired<uint64_t>() + b * 8);
+          const __m128i pos8 =
+            _mm_loadl_epi64(reinterpret_cast<const __m128i*>(e.positions));
+          const __m256i result =
+            _mm256_add_epi32(base_vec, _mm256_cvtepi8_epi32(pos8));
+          _mm256_storeu_si256(reinterpret_cast<__m256i*>(end), result);
+          end += e.count;
+        }
       }
-      const auto offset = prev + i * BitsRequired<uint64_t>();
-      do {
-        *end++ = offset + std::countr_zero(word);
-        word = PopBit(word);
-      } while (word != 0);
+    } else {
+#endif
+      for (uint32_t i = 0; i != words; ++i) {
+        auto word = bitset[i];
+        if (word == 0) {
+          continue;
+        }
+        const auto offset = prev + i * BitsRequired<uint64_t>();
+        do {
+          *end++ = offset + std::countr_zero(word);
+          word = PopBit(word);
+        } while (word != 0);
+      }
+#ifdef __AVX2__
     }
+#endif
     SDB_ASSERT(begin + len == end);
   }
 

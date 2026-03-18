@@ -63,10 +63,10 @@ TEST_F(PathHierarchyTokenizerTests, consts) {
   static_assert("path_hierarchy" == irs::Type<PathHierarchyTokenizer>::name());
 }
 
-using OptionsT = PathHierarchyTokenizer::OptionsT;
+using Options = PathHierarchyTokenizer::Options;
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
-  OptionsT options;
+  Options options;
   options.reverse = false;
 
   std::string_view data = "/a/b/c";
@@ -80,7 +80,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = false;
@@ -94,7 +94,7 @@ TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '-';
   options.replacement = '-';
   options.reverse = false;
@@ -109,7 +109,7 @@ TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reset_multiple_times) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   auto stream = PathHierarchyTokenizer::make(std::move(options));
   ASSERT_NE(nullptr, stream);
@@ -124,7 +124,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reset_multiple_times) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_empty_path) {
-  OptionsT options;
+  Options options;
   auto stream = PathHierarchyTokenizer::make(std::move(options));
   ASSERT_NE(nullptr, stream);
   ASSERT_TRUE(stream->reset(""));
@@ -133,7 +133,7 @@ TEST_F(PathHierarchyTokenizerTests, test_empty_path) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
-  OptionsT options;
+  Options options;
   auto stream = PathHierarchyTokenizer::make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
@@ -143,7 +143,7 @@ TEST_F(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 5;
   options.reverse = false;
@@ -157,7 +157,7 @@ TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 2;
   options.reverse = false;
@@ -172,7 +172,7 @@ TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '\0';
   options.reverse = false;
 
@@ -185,7 +185,7 @@ TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
 
   auto stream = PathHierarchyTokenizer::make(std::move(options));
@@ -199,7 +199,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.reverse = false;
 
@@ -214,7 +214,7 @@ TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '_';
   options.reverse = false;
@@ -229,7 +229,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.reverse = false;
 
@@ -245,7 +245,7 @@ TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.reverse = false;
 
@@ -259,7 +259,7 @@ TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.reverse = false;
 
@@ -272,7 +272,7 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.reverse = false;
 
@@ -285,7 +285,7 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 1;
   options.reverse = false;
@@ -300,7 +300,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 1;
   options.reverse = false;
@@ -315,7 +315,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 1;
   options.reverse = false;
@@ -331,7 +331,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
 
 TEST_F(PathHierarchyTokenizerTests,
        test_forward_start_of_char_end_of_delimiter_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 1;
   options.reverse = false;
@@ -346,7 +346,7 @@ TEST_F(PathHierarchyTokenizerTests,
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 1;
   options.reverse = false;
@@ -360,7 +360,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.skip = 1;
   options.reverse = false;
@@ -374,7 +374,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
-  OptionsT options;
+  Options options;
   options.delimiter = '\\';
   options.replacement = '\\';
   options.reverse = false;
@@ -390,7 +390,7 @@ TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
-  OptionsT options;
+  Options options;
   options.delimiter = '.';
   options.replacement = '-';
   options.reverse = true;
@@ -406,7 +406,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '.';
   options.replacement = '-';
   options.skip = 2;
@@ -422,7 +422,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = true;
@@ -438,7 +438,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = true;
@@ -455,7 +455,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests,
        test_reverse_start_of_char_end_of_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = true;
@@ -471,7 +471,7 @@ TEST_F(PathHierarchyTokenizerTests,
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = true;
@@ -486,7 +486,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.reverse = true;
@@ -501,7 +501,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.skip = 1;
@@ -517,7 +517,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.skip = 1;
@@ -532,7 +532,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.skip = 1;
@@ -547,7 +547,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.reverse = false;
 
@@ -582,7 +582,7 @@ TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.skip = 1;
@@ -599,7 +599,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
 
 TEST_F(PathHierarchyTokenizerTests,
        test_reverse_start_of_char_end_of_delimiter_skip) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.skip = 1;
@@ -615,7 +615,7 @@ TEST_F(PathHierarchyTokenizerTests,
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_skip2) {
-  OptionsT options;
+  Options options;
   options.delimiter = '/';
   options.replacement = '/';
   options.skip = 2;

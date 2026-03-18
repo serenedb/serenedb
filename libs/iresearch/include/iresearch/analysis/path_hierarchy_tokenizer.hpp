@@ -30,12 +30,11 @@
 namespace irs {
 namespace analysis {
 
-////////////////////////////////////////////////////////////////////////////////
-/// @class PathHierarchyTokenizer
 /// @brief tokenizer that treats text as a path hierarchy and generates
 ///        tokens at each level of the hierarchy
 /// @note expects UTF-8 encoded input, e.g. "/a/b/c" generates tokens:
-///       "/a", "/a/b", "/a/b/c" or in reverse mode: "c/b/a", "b/a", "a"
+///       "/a", "/a/b", "/a/b/c" or in reverse mode: "/a/b/c", "a/b/c", "b/c",
+///       "c"
 /// @note Configuration (compatible with Lucene PathHierarchyTokenizer):
 ///       - delimiter: path separator character (default: "/")
 ///       - replacement: optional replacement character for delimiter
@@ -43,10 +42,9 @@ namespace analysis {
 ///       - reverse: use reverse tokenization for domain-like hierarchies
 ///       (default: false)
 ///       - skip: number of initial tokens to skip (default: 0)
-////////////////////////////////////////////////////////////////////////////////
 class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
  public:
-  struct OptionsT {
+  struct Options {
     char delimiter = '/';       // path separator
     char replacement = '/';     // replacement character for delimiter
     size_t buffer_size = 1024;  // term buffer size hint
@@ -59,24 +57,18 @@ class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
   }
 
   static void init();  // trigger registration in static builds
-  static Analyzer::ptr make(OptionsT&& options);
+  static Analyzer::ptr make(Options&& options);
 
   ~PathHierarchyTokenizer() override;
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
  protected:
-  explicit PathHierarchyTokenizer(OptionsT&& options) noexcept;
+  explicit PathHierarchyTokenizer(Options&& options) noexcept;
 
-  // Helper method for derived classes: replaces delimiter characters in input
-  // with replacement and stores result in term_attr using provided buffer.
-  void apply_replacement(std::string_view input, TermAttr& term_attr,
-                         char delimiter, char replacement,
-                         std::string& buffer) const;
-
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  attributes _attrs;
-  const OptionsT _options;
+  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  Attributes _attrs;
+  const Options _options;
 
   bool _term_eof = true;
   std::string _replace_buffer;

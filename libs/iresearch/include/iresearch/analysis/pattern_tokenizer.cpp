@@ -24,6 +24,7 @@
 #include <vpack/builder.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 
 #include <string_view>
@@ -34,61 +35,40 @@ namespace {
 constexpr std::string_view kPatternParamName = "pattern";
 constexpr std::string_view kGroupParamName = "group";
 
-bool ParseVPackOptions(const vpack::Slice slice, std::string& pattern,
-                       int& group) {
+bool ParseVPackOptions(const vpack::Slice slice,
+                       PatternTokenizer::Options& options) {
   if (!slice.isObject()) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Slice for pattern_token_stream is not an object");
     return false;
   }
 
-  auto pattern_slice = slice.get(kPatternParamName);
-  if (pattern_slice.isNone()) {
+  auto r = vpack::ReadObjectNothrow(slice, options,
+                                    {
+                                      .skip_unknown = true,
+                                      .strict = false,
+                                    });
+  if (!r.ok()) {
+    SDB_WARN(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      "Failed to parse pattern_token_stream options: ", r.errorMessage());
+    return false;
+  }
+
+  if (options.pattern.empty()) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Missing 'pattern' while constructing pattern_token_stream from "
               "VPack arguments");
     return false;
   }
 
-  if (!pattern_slice.isString()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "Invalid type 'pattern' (string "
-             "expected) for pattern_token_stream "
-             "from VPack arguments");
-    return false;
-  }
-
-  pattern = pattern_slice.stringView();
-
-  // group (optional, default -1)
-  group = -1;
-  auto group_slice = slice.get(kGroupParamName);
-  if (!group_slice.isNone()) {
-    if (!group_slice.isNumber()) {
-      SDB_WARN(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Invalid type 'group' (integer expected) for pattern_token_stream "
-        "from VPack arguments");
-      return false;
-    }
-    try {
-      group = static_cast<int>(group_slice.getNumber<int64_t>());
-    } catch (...) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-               "Failed to parse 'group' for pattern_token_stream from VPack "
-               "arguments");
-      return false;
-    }
-  }
-
   return true;
 }
 
 Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  std::string pattern;
-  int group;
-  if (ParseVPackOptions(slice, pattern, group)) {
-    return PatternTokenizer::make(pattern, group);
+  PatternTokenizer::Options options;
+  if (ParseVPackOptions(slice, options)) {
+    return PatternTokenizer::make(options.pattern, options.group);
   }
   return nullptr;
 }
@@ -101,20 +81,16 @@ Analyzer::ptr MakeVPack(std::string_view args) {
 bool MakeVPackConfig(std::string_view pattern, int group,
                      vpack::Builder* vpack_builder) {
   vpack::ObjectBuilder object(vpack_builder);
-  {
-    vpack_builder->add(kPatternParamName, pattern);
-    vpack_builder->add(kGroupParamName, group);
-  }
-
+  vpack_builder->add(kPatternParamName, pattern);
+  vpack_builder->add(kGroupParamName, group);
   return true;
 }
 
 bool NormalizeVPackConfig(const vpack::Slice slice,
                           vpack::Builder* vpack_builder) {
-  std::string pattern;
-  int group;
-  if (ParseVPackOptions(slice, pattern, group)) {
-    return MakeVPackConfig(pattern, group, vpack_builder);
+  PatternTokenizer::Options options;
+  if (ParseVPackOptions(slice, options)) {
+    return MakeVPackConfig(options.pattern, options.group, vpack_builder);
   }
   return false;
 }
@@ -189,6 +165,12 @@ PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
 PatternTokenizer::~PatternTokenizer() = default;
 
 Analyzer::ptr PatternTokenizer::make(std::string_view pattern, int group) {
+  re2::RE2 re(pattern, re2::RE2::Quiet);
+  if (!re.ok()) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Invalid regex while constructing pattern_token_stream");
+    return nullptr;
+  }
   return std::make_unique<PatternTokenizer>(pattern, group);
 }
 
@@ -199,14 +181,8 @@ void PatternTokenizer::init() {
 
 bool PatternTokenizer::reset(std::string_view data) {
   _data = data;
-
   _current_pos = 0;
   _exhausted = false;
-
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = 0;
-
   return true;
 }
 
@@ -215,24 +191,27 @@ bool PatternTokenizer::next() {
     return false;
   }
 
-  auto& offset = std::get<OffsAttr>(_attrs);
-  auto& term = std::get<TermAttr>(_attrs);
+  auto& offset_attr = std::get<OffsAttr>(_attrs);
+  auto& term_attr = std::get<TermAttr>(_attrs);
+  auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  while (_current_pos <= _data.size()) {
-    re2::StringPiece input(_data.data() + _current_pos,
-                           _data.size() - _current_pos);
+  const char* const data_base = _data.data();
+  const size_t data_len = _data.size();
+
+  while (_current_pos <= data_len) {
+    re2::StringPiece input(data_base + _current_pos, data_len - _current_pos);
 
     if (!_pattern.Match(input, 0, input.size(), re2::RE2::UNANCHORED,
                         _matches.data(), _matches.size())) {
-      if (_group < 0 && _current_pos < _data.size()) {
-        size_t start = _current_pos;
-        size_t end = _data.size();
+      if (_group < 0 && _current_pos < data_len) {
+        const size_t start = _current_pos;
+        const size_t end = data_len;
 
-        offset.start = static_cast<uint32_t>(start);
-        offset.end = static_cast<uint32_t>(end);
-
-        term.value = ViewCast<byte_type>(
-          std::string_view(_data.data() + start, end - start));
+        offset_attr.start = static_cast<uint32_t>(start);
+        offset_attr.end = static_cast<uint32_t>(end);
+        term_attr.value =
+          ViewCast<byte_type>(std::string_view(data_base + start, end - start));
+        inc_attr.value = 1;
 
         _exhausted = true;
         return true;
@@ -252,20 +231,20 @@ bool PatternTokenizer::next() {
         const auto& g = _matches[_group];
 
         if (!g.empty()) {
-          size_t start = _current_pos + (g.data() - input.data());
-          size_t end = start + g.length();
+          const size_t start = _current_pos + (g.data() - input.data());
+          const size_t end = start + g.length();
 
-          offset.start = static_cast<uint32_t>(start);
-          offset.end = static_cast<uint32_t>(end);
-
-          term.value = ViewCast<byte_type>(g);
+          offset_attr.start = static_cast<uint32_t>(start);
+          offset_attr.end = static_cast<uint32_t>(end);
+          term_attr.value = ViewCast<byte_type>(g);
+          inc_attr.value = 1;
 
           _current_pos = match_end;
           return true;
         }
       }
 
-      _current_pos = match_end ? match_end : _current_pos + 1;
+      _current_pos = (match.length() == 0) ? _current_pos + 1 : match_end;
       continue;
     }
 
@@ -273,17 +252,17 @@ bool PatternTokenizer::next() {
       size_t start = _current_pos;
       size_t end = match_start;
 
-      offset.start = static_cast<uint32_t>(start);
-      offset.end = static_cast<uint32_t>(end);
-
-      term.value = ViewCast<byte_type>(
-        std::string_view(_data.data() + start, end - start));
+      offset_attr.start = static_cast<uint32_t>(start);
+      offset_attr.end = static_cast<uint32_t>(end);
+      term_attr.value =
+        ViewCast<byte_type>(std::string_view(data_base + start, end - start));
+      inc_attr.value = 1;
 
       _current_pos = match_end;
       return true;
     }
 
-    _current_pos = match_end ? match_end : _current_pos + 1;
+    _current_pos = (match.length() == 0) ? _current_pos + 1 : match_end;
   }
 
   return false;

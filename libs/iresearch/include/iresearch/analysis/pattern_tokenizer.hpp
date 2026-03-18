@@ -34,6 +34,18 @@ namespace irs::analysis {
 class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
                                private util::Noncopyable {
  public:
+  struct Options {
+    // RE2 regular expression used for matching or splitting
+    // Must be a valid regex
+    std::string pattern = "";
+
+    // Capture group to extract:
+    // -1 means "split mode" (emit text between matches),
+    //  0 means "whole match",
+    //  N>0 means "N-th capturing group"
+    int group = -1;
+  };
+
   static constexpr std::string_view type_name() noexcept { return "pattern"; }
   static void init();  // for triggering registration in a static build
   static ptr make(std::string_view pattern, int group = -1);

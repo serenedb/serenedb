@@ -18,15 +18,52 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <vpack/builder.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
+#include <vector>
+
 #include "gtest/gtest.h"
 #include "iresearch/analysis/pattern_tokenizer.hpp"
+#include "tests_config.hpp"
 
 namespace {
 
 class PatternTokenizerTests : public ::testing::Test {};
+
+void AssertTokenStreamContents(
+  irs::analysis::Analyzer* stream,
+  const std::vector<std::string_view>& expected_tokens,
+  const std::vector<size_t>& expected_start_offsets,
+  const std::vector<size_t>& expected_end_offsets,
+  const std::vector<int>& expected_pos_increments = {}) {
+  ASSERT_NE(nullptr, stream);
+  ASSERT_EQ(expected_tokens.size(), expected_start_offsets.size());
+  ASSERT_EQ(expected_tokens.size(), expected_end_offsets.size());
+  if (!expected_pos_increments.empty()) {
+    ASSERT_EQ(expected_tokens.size(), expected_pos_increments.size());
+  }
+
+  auto* term = irs::get<irs::TermAttr>(*stream);
+  auto* offset = irs::get<irs::OffsAttr>(*stream);
+  auto* inc = irs::get<irs::IncAttr>(*stream);
+
+  size_t token_idx = 0;
+  while (stream->next()) {
+    ASSERT_LT(token_idx, expected_tokens.size());
+    ASSERT_EQ(expected_tokens[token_idx], irs::ViewCast<char>(term->value));
+    ASSERT_EQ(expected_start_offsets[token_idx], offset->start);
+    ASSERT_EQ(expected_end_offsets[token_idx], offset->end);
+    if (!expected_pos_increments.empty()) {
+      ASSERT_EQ(expected_pos_increments[token_idx], inc->value);
+    }
+    ++token_idx;
+  }
+
+  ASSERT_EQ(token_idx, expected_tokens.size());
+  ASSERT_FALSE(stream->next());
+}
 
 }  // namespace
 
@@ -42,25 +79,8 @@ TEST_F(PatternTokenizerTests, test_split_mode) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-  ASSERT_EQ("foo", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(7, offset->end);
-  ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(8, offset->start);
-  ASSERT_EQ(11, offset->end);
-  ASSERT_EQ("baz", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"foo", "bar", "baz"}, {0, 4, 8},
+                            {3, 7, 11}, {1, 1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_split_whitespace) {
@@ -69,25 +89,8 @@ TEST_F(PatternTokenizerTests, test_split_whitespace) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-  ASSERT_EQ("hello", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(6, offset->start);
-  ASSERT_EQ(11, offset->end);
-  ASSERT_EQ("world", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(12, offset->start);
-  ASSERT_EQ(16, offset->end);
-  ASSERT_EQ("test", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"hello", "world", "test"}, {0, 6, 12},
+                            {5, 11, 16}, {1, 1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_group_extraction_0) {
@@ -96,20 +99,18 @@ TEST_F(PatternTokenizerTests, test_group_extraction_0) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
+  AssertTokenStreamContents(&stream, {"'bbb'", "'ccc'"}, {4, 10}, {9, 15},
+                            {1, 1});
+}
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(9, offset->end);
-  ASSERT_EQ("'bbb'", irs::ViewCast<char>(term->value));
+TEST_F(PatternTokenizerTests, test_group_extraction_0_match) {
+  std::string_view data("'aaa' bbb 'ccc' 'ddd'");
+  irs::analysis::PatternTokenizer stream("'(?:\\w*)'", 0);
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(10, offset->start);
-  ASSERT_EQ(15, offset->end);
-  ASSERT_EQ("'ccc'", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream.reset(data));
 
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"'aaa'", "'ccc'", "'ddd'"}, {0, 10, 16},
+                            {5, 15, 21}, {1, 1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_group_extraction_1) {
@@ -118,20 +119,7 @@ TEST_F(PatternTokenizerTests, test_group_extraction_1) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(5, offset->start);
-  ASSERT_EQ(8, offset->end);
-  ASSERT_EQ("bbb", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(11, offset->start);
-  ASSERT_EQ(14, offset->end);
-  ASSERT_EQ("ccc", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"bbb", "ccc"}, {5, 11}, {8, 14}, {1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_digits_extraction) {
@@ -140,25 +128,8 @@ TEST_F(PatternTokenizerTests, test_digits_extraction) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(6, offset->end);
-  ASSERT_EQ("123", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(9, offset->start);
-  ASSERT_EQ(12, offset->end);
-  ASSERT_EQ("456", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(15, offset->start);
-  ASSERT_EQ(18, offset->end);
-  ASSERT_EQ("789", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"123", "456", "789"}, {3, 9, 15},
+                            {6, 12, 18}, {1, 1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_empty_input) {
@@ -167,7 +138,7 @@ TEST_F(PatternTokenizerTests, test_empty_input) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {}, {}, {});
 }
 
 TEST_F(PatternTokenizerTests, test_no_match) {
@@ -176,7 +147,17 @@ TEST_F(PatternTokenizerTests, test_no_match) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {}, {}, {});
+}
+
+TEST_F(PatternTokenizerTests, test_bad_regex) {
+  // Invalid regex should make analyzer construction fail
+  ASSERT_EQ(nullptr, irs::analysis::PatternTokenizer::make("(", -1));
+  ASSERT_EQ(nullptr, irs::analysis::PatternTokenizer::make("(", 1));
+
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"pattern": "(", "group": -1})"));
 }
 
 TEST_F(PatternTokenizerTests, test_reset) {
@@ -185,35 +166,35 @@ TEST_F(PatternTokenizerTests, test_reset) {
   std::string_view data1("a,b");
   ASSERT_TRUE(stream.reset(data1));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(3, offset->end);
-  ASSERT_EQ("b", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"a", "b"}, {0, 2}, {1, 3}, {1, 1});
 
   std::string_view data2("x,y,z");
   ASSERT_TRUE(stream.reset(data2));
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-  ASSERT_EQ("x", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(2, offset->start);
-  ASSERT_EQ(3, offset->end);
-  ASSERT_EQ("y", irs::ViewCast<char>(term->value));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(4, offset->start);
-  ASSERT_EQ(5, offset->end);
-  ASSERT_EQ("z", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"x", "y", "z"}, {0, 2, 4}, {1, 3, 5},
+                            {1, 1, 1});
+}
+
+TEST_F(PatternTokenizerTests, test_reset_reuse_different_inputs) {
+  {
+    irs::analysis::PatternTokenizer stream(",", -1);
+    ASSERT_TRUE(stream.reset("a,b"));
+    AssertTokenStreamContents(&stream, {"a", "b"}, {0, 2}, {1, 3}, {1, 1});
+
+    ASSERT_TRUE(stream.reset("c,d,e"));
+    AssertTokenStreamContents(&stream, {"c", "d", "e"}, {0, 2, 4}, {1, 3, 5},
+                              {1, 1, 1});
+  }
+
+  {
+    irs::analysis::PatternTokenizer stream("'([^']+)'", 1);
+    ASSERT_TRUE(stream.reset("a 'foo'"));
+    AssertTokenStreamContents(&stream, {"foo"}, {3}, {6}, {1});
+
+    ASSERT_TRUE(stream.reset("b 'bar' c 'baz'"));
+    AssertTokenStreamContents(&stream, {"bar", "baz"}, {3, 11}, {6, 14},
+                              {1, 1});
+  }
 }
 
 TEST_F(PatternTokenizerTests, test_splitting_double_dash) {
@@ -222,25 +203,28 @@ TEST_F(PatternTokenizerTests, test_splitting_double_dash) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
+  AssertTokenStreamContents(&stream, {"aaa", "bbb", "ccc"}, {0, 5, 10},
+                            {3, 8, 13}, {1, 1, 1});
+}
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(3, offset->end);
-  ASSERT_EQ("aaa", irs::ViewCast<char>(term->value));
+TEST_F(PatternTokenizerTests, test_splitting_colon) {
+  std::string_view data("aaa:bbb:ccc");
+  irs::analysis::PatternTokenizer stream(":", -1);
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(5, offset->start);
-  ASSERT_EQ(8, offset->end);
-  ASSERT_EQ("bbb", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream.reset(data));
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(10, offset->start);
-  ASSERT_EQ(13, offset->end);
-  ASSERT_EQ("ccc", irs::ViewCast<char>(term->value));
+  AssertTokenStreamContents(&stream, {"aaa", "bbb", "ccc"}, {0, 4, 8},
+                            {3, 7, 11}, {1, 1, 1});
+}
 
-  ASSERT_FALSE(stream.next());
+TEST_F(PatternTokenizerTests, test_splitting_multi_space_and_tabs) {
+  std::string_view data("aaa   bbb \t\tccc  ");
+  irs::analysis::PatternTokenizer stream("\\s+", -1);
+
+  ASSERT_TRUE(stream.reset(data));
+
+  AssertTokenStreamContents(&stream, {"aaa", "bbb", "ccc"}, {0, 6, 12},
+                            {3, 9, 15}, {1, 1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_splitting_single_char) {
@@ -249,20 +233,7 @@ TEST_F(PatternTokenizerTests, test_splitting_single_char) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-  ASSERT_EQ("b", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(9, offset->end);
-  ASSERT_EQ(":and:f", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"b", ":and:f"}, {0, 3}, {1, 9}, {1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_group_zero_matches) {
@@ -271,20 +242,7 @@ TEST_F(PatternTokenizerTests, test_group_zero_matches) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(4, offset->end);
-  ASSERT_EQ(":", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(7, offset->start);
-  ASSERT_EQ(8, offset->end);
-  ASSERT_EQ(":", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {":", ":"}, {3, 7}, {4, 8}, {1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_offset_with_complex_pattern) {
@@ -293,25 +251,8 @@ TEST_F(PatternTokenizerTests, test_offset_with_complex_pattern) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(5, offset->end);
-  ASSERT_EQ("hello", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(6, offset->start);
-  ASSERT_EQ(11, offset->end);
-  ASSERT_EQ("world", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(12, offset->start);
-  ASSERT_EQ(16, offset->end);
-  ASSERT_EQ("test", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"hello", "world", "test"}, {0, 6, 12},
+                            {5, 11, 16}, {1, 1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_consecutive_delimiters) {
@@ -320,20 +261,7 @@ TEST_F(PatternTokenizerTests, test_consecutive_delimiters) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(1, offset->end);
-  ASSERT_EQ("a", irs::ViewCast<char>(term->value));
-
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(3, offset->start);
-  ASSERT_EQ(4, offset->end);
-  ASSERT_EQ("b", irs::ViewCast<char>(term->value));
-
-  ASSERT_FALSE(stream.next());
+  AssertTokenStreamContents(&stream, {"a", "b"}, {0, 3}, {1, 4}, {1, 1});
 }
 
 TEST_F(PatternTokenizerTests, test_delimiter_at_boundaries) {
@@ -342,18 +270,127 @@ TEST_F(PatternTokenizerTests, test_delimiter_at_boundaries) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  auto* term = irs::get<irs::TermAttr>(stream);
+  AssertTokenStreamContents(&stream, {"hello", "world"}, {1, 7}, {6, 12},
+                            {1, 1});
+}
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(1, offset->start);
-  ASSERT_EQ(6, offset->end);
-  ASSERT_EQ("hello", irs::ViewCast<char>(term->value));
+TEST_F(PatternTokenizerTests, test_vpack_options) {
+  // Valid: pattern only, default group -1 (split mode)
+  {
+    auto stream = irs::analysis::analyzers::Get(
+      "pattern", irs::Type<irs::text_format::Json>::get(),
+      R"({"pattern": ","})");
+    ASSERT_NE(nullptr, stream);
 
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(7, offset->start);
-  ASSERT_EQ(12, offset->end);
-  ASSERT_EQ("world", irs::ViewCast<char>(term->value));
+    std::string_view data("a,b,c");
+    ASSERT_TRUE(stream->reset(data));
 
-  ASSERT_FALSE(stream.next());
+    AssertTokenStreamContents(stream.get(), {"a", "b", "c"}, {0, 2, 4},
+                              {1, 3, 5}, {1, 1, 1});
+  }
+
+  // Valid: pattern + group 1 (extract first capturing group)
+  {
+    auto stream = irs::analysis::analyzers::Get(
+      "pattern", irs::Type<irs::text_format::Json>::get(),
+      R"({"pattern": "'([^']+)'", "group": 1})");
+    ASSERT_NE(nullptr, stream);
+
+    std::string_view data("a 'foo' b 'bar'");
+    ASSERT_TRUE(stream->reset(data));
+
+    AssertTokenStreamContents(stream.get(), {"foo", "bar"}, {3, 11}, {6, 14},
+                              {1, 1});
+  }
+
+  // Valid: group omitted -> default -1
+  {
+    auto stream = irs::analysis::analyzers::Get(
+      "pattern", irs::Type<irs::text_format::Json>::get(),
+      R"({"pattern": ":"})");
+    ASSERT_NE(nullptr, stream);
+
+    std::string_view data("a:b:c");
+    ASSERT_TRUE(stream->reset(data));
+
+    AssertTokenStreamContents(stream.get(), {"a", "b", "c"}, {0, 2, 4},
+                              {1, 3, 5}, {1, 1, 1});
+  }
+
+  // Invalid: empty object -> missing pattern
+  ASSERT_EQ(nullptr,
+            irs::analysis::analyzers::Get(
+              "pattern", irs::Type<irs::text_format::Json>::get(), "{}"));
+
+  // Invalid: missing pattern key
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"group": 0})"));
+
+  // Invalid: pattern not a string
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"pattern": 123})"));
+
+  // Invalid: empty pattern string
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"pattern": ""})"));
+
+  // Invalid: not an object
+  ASSERT_EQ(nullptr,
+            irs::analysis::analyzers::Get(
+              "pattern", irs::Type<irs::text_format::Json>::get(), "[]"));
+
+  // Invalid: not an object
+  ASSERT_EQ(nullptr,
+            irs::analysis::analyzers::Get(
+              "pattern", irs::Type<irs::text_format::Json>::get(), R"("x")"));
+
+  // Invalid: group wrong type
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"pattern": ",", "group": "ignored"})"));
+
+  // Invalid: group is non-integer number
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"pattern": ",", "group": 1.5})"));
+
+  // Invalid: group out of int range
+  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
+                       "pattern", irs::Type<irs::text_format::Json>::get(),
+                       R"({"pattern": ",", "group": 9223372036854775807})"));
+
+  // Invalid: unknown fields should be ignored
+  {
+    auto stream = irs::analysis::analyzers::Get(
+      "pattern", irs::Type<irs::text_format::Json>::get(),
+      R"({"pattern": ",", "unknown_field": 1, "group": -1})");
+    ASSERT_NE(nullptr, stream);
+
+    std::string_view data("a,b");
+    ASSERT_TRUE(stream->reset(data));
+
+    AssertTokenStreamContents(stream.get(), {"a", "b"}, {0, 2}, {1, 3}, {1, 1});
+  }
+
+  // Valid: config produces parseable definition
+  {
+    std::string definition;
+    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
+      definition, "pattern", irs::Type<irs::text_format::Json>::get(),
+      R"({"pattern": "\\s+", "group": -1})"));
+    ASSERT_FALSE(definition.empty());
+
+    auto stream = irs::analysis::analyzers::Get(
+      "pattern", irs::Type<irs::text_format::Json>::get(), definition);
+    ASSERT_NE(nullptr, stream);
+
+    std::string_view data("a b c");
+    ASSERT_TRUE(stream->reset(data));
+
+    AssertTokenStreamContents(stream.get(), {"a", "b", "c"}, {0, 2, 4},
+                              {1, 3, 5}, {1, 1, 1});
+  }
 }

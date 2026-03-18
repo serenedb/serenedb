@@ -26,7 +26,7 @@ on:
           - X64
           - arm
           - self-hosted
-        default: 'self-hosted'
+        default: 'X64'
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true

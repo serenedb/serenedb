@@ -12,7 +12,7 @@ on:
         description: "Where the load is executed"
         type: string
         required: true
-        default: "self-hosted"
+        default: "X64"
       BRANCH:
         description: "SereneDB branch to test (defaults to current branch)"
         type: string
@@ -77,7 +77,7 @@ jobs:
   build-test-package:
     name: Build, Test & Package
     runs-on:
-      - self-hosted
+      - X64
       - ${{ inputs.LOCATION }}
 
     steps:

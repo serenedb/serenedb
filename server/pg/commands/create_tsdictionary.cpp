@@ -331,7 +331,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     _builder.add(tokenizer_options::kPipelineGroup.name,
                  vpack::Value{vpack::ValueType::Array});
     auto slice = vpack::Slice::noneSlice();
-    if (!_copy_from.empty()) {
+    if (!_copy_from.empty() && _copy_from.back().first == path) {
       slice = GetFromPath(tokenizer_options::kPipelineGroup.name, path,
                           _copy_from.back().first, _copy_from.back().second);
       SDB_ASSERT(slice.isArray());

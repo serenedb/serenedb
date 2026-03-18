@@ -1116,6 +1116,30 @@ CREATE TEXT SEARCH DICTIONARY pipe_err1(
 db error: ERROR: Invalid type of text search dictionary
 
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_pipe(
+    template = 'pipeline',
+    step1_template = 'norm',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step2_template = 'pipeline',
+    step2_step1_template = 'delimiter',
+    step2_step1_delimiter = '|',
+    step2_step2_template = 'norm',
+    step2_step2_locale = 'en_US.UTF-8',
+    step2_step2_case = 'upper',
+    step3_template = 'stopwords',
+    step3_stopwords = '"A"'
+)
+
+
+query
+SELECT ts_lexize('pipe_pipe', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{QUICK,BROWN,FOX!}
+
+
 # --- Three-step: delimiter → text with correct stopwords → norm ---
 statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_correct_stopwords(
@@ -1355,6 +1379,56 @@ SELECT ts_lexize('copy_copy_pipe', 'A|QUICK|Jumping|Brownish|FOX');
 ----
 ts_lexize
 {3Nw3PlObK0w,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipes(
+    template = 'copy_from',
+    from = 'pipe_pipe',
+    step4_template = 'pipeline',
+    step4_step1_template = 'copy_from',
+    step4_step1_from = 'pipe_pipe'
+)
+
+
+query
+SELECT ts_lexize('pipe_pipe', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{QUICK,BROWN,FOX!}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY too_many_pipes(
+    template = 'copy_from',
+    from = 'pipes',
+    step5_template = 'pipeline',
+    step5_step1_template = 'copy_from',
+    step5_step1_from = 'pipes'
+)
+
+
+query
+SELECT ts_lexize('too_many_pipes', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{QUICK,BROWN,FOX!}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_copy5(
+    template = 'minhash',
+    numHashes = 5,
+    analyzer_template = 'copy_from',
+    analyzer_from = 'too_many_pipes'
+)
+
+
+query
+SELECT ts_lexize('minhash_copy5', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
 
 
 # ===========================================================================

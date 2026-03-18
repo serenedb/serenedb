@@ -1861,9 +1861,8 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
             this->_left_in_list -= tail;
             if (this->_max_in_leaf >= max) {
               if (bitset) {
-                IteratorTraits::MaterializeBitset(base, data, words,
-                                                  std::end(this->_docs) - tail,
-                                                  tail);
+                IteratorTraits::MaterializeBitset(
+                  base, data, words, std::end(this->_docs) - tail, tail);
               }
             } else if (bitset) {
               const uint32_t mask_words = (max - min) >> 6;

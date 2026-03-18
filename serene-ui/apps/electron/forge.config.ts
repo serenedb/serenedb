@@ -31,7 +31,7 @@ const config: ForgeConfig = {
         asar: true,
         name: "SereneUI",
         icon: path.resolve(__dirname, "./assets/icons/app.icns"),
-        executableName: "serene-ui-electron",
+        executableName: "SereneUI",
     },
     rebuildConfig: {},
     makers: [
@@ -42,8 +42,19 @@ const config: ForgeConfig = {
         }),
         new MakerZIP({}, ["darwin"]),
         new MakerDMG({ format: "ULFO" }),
-        new MakerRpm({}),
-        new MakerDeb({}, ["linux"]),
+        new MakerRpm({
+            options: {
+                bin: "SereneUI",
+            },
+        }),
+        new MakerDeb(
+            {
+                options: {
+                    bin: "SereneUI",
+                },
+            },
+            ["linux"],
+        ),
     ],
     plugins: [
         new AutoUnpackNativesPlugin({}),

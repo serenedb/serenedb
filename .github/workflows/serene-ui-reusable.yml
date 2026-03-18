@@ -48,6 +48,11 @@ on:
                 required: true
                 type: boolean
                 default: false
+            RELEASE_TAG:
+                description: "GitHub Release tag/name (required when PUSH_RELEASE=true)"
+                required: false
+                type: string
+                default: ""
         secrets:
             PAT_TOKEN:
                 required: true
@@ -362,6 +367,12 @@ jobs:
         permissions:
             contents: write
         steps:
+            - name: Validate release inputs
+              if: inputs.PUSH_RELEASE && inputs.RELEASE_TAG == ''
+              run: |
+                  echo "RELEASE_TAG is required when PUSH_RELEASE=true"
+                  exit 1
+
             - name: Clean release-assets directory
               run: rm -rf "${{ github.workspace }}/release-assets"
 
@@ -389,13 +400,13 @@ jobs:
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
               with:
-                  tag_name: serene-ui-v${{ github.run_number }}
-                  name: SereneUI Build #${{ github.run_number }}
+                  tag_name: ${{ inputs.RELEASE_TAG }}
+                  name: SereneUI ${{ inputs.RELEASE_TAG }}
                   body: |
                       SereneUI desktop app build from branch `${{ inputs.BRANCH }}`.
 
                       Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-                  draft: false
+                  draft: true
                   prerelease: true
                   token: ${{ secrets.GITHUB_TOKEN }}
                   files: release-assets/**/*

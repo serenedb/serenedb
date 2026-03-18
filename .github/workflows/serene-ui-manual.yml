@@ -48,6 +48,11 @@ on:
                 required: true
                 type: boolean
                 default: false
+            RELEASE_TAG:
+                description: "GitHub Release tag/name (required when PUSH_RELEASE=true)"
+                required: false
+                type: string
+                default: ""
 
 jobs:
     build:
@@ -64,6 +69,7 @@ jobs:
             BUILD_WINDOWS_APP: ${{ inputs.BUILD_WINDOWS_APP }}
             BUILD_MACOS_APP: ${{ inputs.BUILD_MACOS_APP }}
             PUSH_RELEASE: ${{ inputs.PUSH_RELEASE }}
+            RELEASE_TAG: ${{ inputs.RELEASE_TAG }}
         secrets:
             PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
             TG_TOKEN: ${{ secrets.TG_TOKEN }}

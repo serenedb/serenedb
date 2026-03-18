@@ -1,6 +1,6 @@
 {
     "name": "serene-ui-backend",
-    "version": "0.1.0",
+    "version": "26.03.2",
     "description": "SereneUI backend for docker version",
     "main": "./dist/index.js",
     "scripts": {

@@ -15,22 +15,22 @@ interface WithFeaturesProps {
 
 export const WithFeatures = ({ children }: WithFeaturesProps) => {
     return (
-        <CommandModalProvider>
-            <SettingsModalProvider>
-                <AuthorizeGithubProvider>
-                    <SupportModalProvider>
-                        <QueryResultsProvider>
-                            <ConnectionsModalProvider>
-                                <SavedQueriesModalProvider>
-                                    <ConsoleLayoutProvider>
+        <SettingsModalProvider>
+            <AuthorizeGithubProvider>
+                <SupportModalProvider>
+                    <QueryResultsProvider>
+                        <ConnectionsModalProvider>
+                            <SavedQueriesModalProvider>
+                                <ConsoleLayoutProvider>
+                                    <CommandModalProvider>
                                         {children}
-                                    </ConsoleLayoutProvider>
-                                </SavedQueriesModalProvider>
-                            </ConnectionsModalProvider>
-                        </QueryResultsProvider>
-                    </SupportModalProvider>
-                </AuthorizeGithubProvider>
-            </SettingsModalProvider>
-        </CommandModalProvider>
+                                    </CommandModalProvider>
+                                </ConsoleLayoutProvider>
+                            </SavedQueriesModalProvider>
+                        </ConnectionsModalProvider>
+                    </QueryResultsProvider>
+                </SupportModalProvider>
+            </AuthorizeGithubProvider>
+        </SettingsModalProvider>
     );
 };

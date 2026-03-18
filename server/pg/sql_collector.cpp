@@ -574,6 +574,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
                                       *castNode(CreateTableAsStmt, node));
     case T_CopyStmt:
       return CollectCopyStmt(state, *castNode(CopyStmt, node));
+    case T_IndexStmt:
+      return CollectRangeVar(state, castNode(IndexStmt, node)->relation);
     default:
       break;
   }
@@ -635,6 +637,16 @@ Objects::ObjectName ParseObjectName(const List* names,
                  "unsupported function call with too many dotted names");
              },
            });
+}
+
+Objects::ObjectName ParseObjectName(std::string_view name,
+                                    std::string_view default_schema) {
+  const auto pos = name.find('.');
+  auto schema_name =
+    pos == std::string_view::npos ? default_schema : name.substr(0, pos);
+  auto object_name =
+    pos == std::string_view::npos ? name : name.substr(pos + 1);
+  return {.schema = schema_name, .relation = object_name};
 }
 
 }  // namespace sdb::pg

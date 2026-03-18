@@ -1,6 +1,6 @@
 {
     "name": "@serene-ui/shared-backend",
-    "version": "0.1.0",
+    "version": "26.03.2",
     "description": "Shared backend entities for Node.js/Express/Electron",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
@@ -22,7 +22,8 @@
     },
     "dependencies": {
         "@orpc/server": "^1.13.0",
-        "@serene-ui/shared-core": "*"
+        "@serene-ui/shared-core": "*",
+        "libpg-query": "^17.7.3"
     },
     "peerDependencies": {
         "better-sqlite3": "^12.2.0",

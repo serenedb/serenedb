@@ -9,9 +9,8 @@ export function jobToRow(
     job: Omit<QueryExecutionJobSchema, "id">,
 ): Omit<QueryExecutionJobRow, "id"> {
     const bindVars = job.bind_vars ? JSON.stringify(job.bind_vars) : null;
-    const result = "result" in job ? JSON.stringify(job.result) : null;
+    const result = "results" in job ? JSON.stringify(job.results) : null;
     const error = "error" in job ? job.error : null;
-    const action_type = "action_type" in job ? job.action_type : null;
     const createdAt = job.created_at ?? null;
     const startedAt = job.execution_started_at ?? null;
     const finishedAt = job.execution_finished_at ?? null;
@@ -21,7 +20,6 @@ export function jobToRow(
         bind_vars: bindVars,
         result: result,
         error: error,
-        action_type,
         created_at: createdAt,
         execution_started_at: startedAt,
         execution_finished_at: finishedAt,
@@ -40,9 +38,8 @@ export function rowToJob(row: QueryExecutionJobRow): QueryExecutionJobSchema {
         query: r.query,
         status: r.status,
         bind_vars: r.bind_vars ? JSON.parse(r.bind_vars.toString()) : undefined,
-        result: r.result ? JSON.parse(r.result.toString()) : undefined,
+        results: r.result ? JSON.parse(r.result.toString()) : undefined,
         error: r.error ?? undefined,
-        action_type: r.action_type ?? undefined,
         created_at: r.created_at ?? undefined,
         execution_started_at: r.execution_started_at ?? undefined,
         execution_finished_at: r.execution_finished_at ?? undefined,

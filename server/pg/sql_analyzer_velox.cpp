@@ -88,6 +88,7 @@
 #include "query/transaction.h"
 #include "query/types.h"
 #include "query/utils.h"
+#include "utils/elog.h"
 #include "utils/query_string.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -736,8 +737,10 @@ class SqlAnalyzer {
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+  void ProcessDefineStmt(State& state, const DefineStmt& stmt);
 
   void ProcessIntoClause(State& state, const IntoClause& into);
+  void ProcessIndexStmt(State& state, const IndexStmt& stmt);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -2062,27 +2065,14 @@ class CopyOptionsParser : public FileOptionsParser {
       }
     }();
 
-    if (const auto* option = EraseOption(kRejectLimit)) {
+    if (auto max_reject_limit = EraseOptionOrDefault<kRejectLimit>()) {
       if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          CURSOR_POS(ErrorPosition(OptionLocation(kRejectLimit))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
       }
-      auto maybe_reject_limit = TryGet<int>(option->arg);
-      if (!maybe_reject_limit) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid input syntax for type bigint: \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      if (*maybe_reject_limit <= 0) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("REJECT_LIMIT (", *maybe_reject_limit,
-                                ") must be greater than zero"));
-      }
-      reject_limit = *maybe_reject_limit;
+      reject_limit = max_reject_limit;
     }
 
     for (const auto& info : kUnsupportedTextCsvOptions) {
@@ -2611,6 +2601,71 @@ void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
     std::move(column_exprs));
 }
 
+void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
+  SDB_ASSERT(stmt.relation);
+  const auto& relation = *stmt.relation;
+  const std::string_view relname = relation.relname;
+  const std::string_view schemaname =
+    absl::NullSafeStringView(relation.schemaname);
+
+  const auto* object = _objects.getRelation(schemaname, relname);
+  SDB_ASSERT(object);
+  SDB_ASSERT(object->object);
+
+  const auto& table = basics::downCast<catalog::Table>(*object->object);
+  const auto& table_type = *table.RowType();
+
+  auto table_state =
+    ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
+  const auto& input_type = *table_state.root->outputType();
+
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+  FillColumnsInfo(table_state, *table.PKType(), table_type, column_names,
+                  column_exprs);
+
+  containers::FlatHashSet<std::string_view> pk_names;
+  pk_names.reserve(column_names.size());
+  for (const auto& name : column_names) {
+    pk_names.emplace(name);
+  }
+
+  VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
+    const std::string_view colname = index_elem.name;
+    auto maybe_col_idx = table_type.getChildIdxIfExists(colname);
+    if (!maybe_col_idx) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", colname, "\" does not exist"));
+    }
+    if (pk_names.contains(colname)) {
+      return;
+    }
+    size_t col_idx = *maybe_col_idx;
+    column_names.emplace_back(colname);
+    auto expr = std::make_shared<lp::InputReferenceExpr>(
+      input_type.childAt(col_idx), input_type.nameOf(col_idx));
+    column_exprs.emplace_back(std::move(expr));
+  });
+
+  object->EnsureTable(_transaction);
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(table_state.root), object->table,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
+}
+
+void SqlAnalyzer::ProcessDefineStmt(State& state, const DefineStmt& stmt) {
+  switch (stmt.kind) {
+    case OBJECT_TSDICTIONARY: {
+      state.pgsql_node = castNode(Node, &stmt);
+    } break;
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                      ERR_MSG("Such define statement is not supported"));
+  }
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
                                         bool allowed_select_into) {
   switch (node.type) {
@@ -2690,7 +2745,9 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;
-      return SqlCommandType::DDL;
+      const auto& stmt = *castNode(IndexStmt, &node);
+      ProcessIndexStmt(state, stmt);
+      return SqlCommandType::CreateIndex;
     }
     case T_CreateRoleStmt:
     case T_DropRoleStmt:
@@ -2720,6 +2777,11 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_VacuumStmt: {
       state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_DefineStmt: {
+      const auto& stmt = *castNode(DefineStmt, &node);
+      ProcessDefineStmt(state, stmt);
       return SqlCommandType::DDL;
     }
     default:

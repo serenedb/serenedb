@@ -45,6 +45,7 @@ enum class ResolveType {
   Schema,
   Function,
   Relation,
+  Tokenizer,
 };
 
 class ResolutionTable {
@@ -77,6 +78,8 @@ class ResolutionTable {
         return resolve(_schemas, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Relation) {
         return resolve(_relations, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::Tokenizer) {
+        return resolve(_tokenizers, parent_id, object_name);
       } else {
         SDB_UNREACHABLE();
       }
@@ -135,14 +138,21 @@ class ResolutionTable {
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
         if (inserted) {
-          auto [_, insert_rel] = _relations.try_emplace(object_id);
+          auto [_, insert_relation] = _relations.try_emplace(object_id);
           auto [_, insert_function] = _functions.try_emplace(object_id);
-          SDB_ASSERT(insert_rel && insert_function);
+          auto [_, insert_tokenizer] = _tokenizers.try_emplace(object_id);
+          SDB_ASSERT(insert_relation);
+          SDB_ASSERT(insert_function);
+          SDB_ASSERT(insert_tokenizer);
           return {};
         }
         return {ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Relation) {
         return insert(_relations, parent_id, object_name, object_id)
+                 ? Result{}
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+      } else if constexpr (Type == ResolveType::Tokenizer) {
+        return insert(_tokenizers, parent_id, object_name, object_id)
                  ? Result{}
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else {
@@ -197,10 +207,13 @@ class ResolutionTable {
         if (result) {
           _relations.erase(*result);
           _functions.erase(*result);
+          _tokenizers.erase(*result);
         }
         return result;
       } else if constexpr (Type == ResolveType::Relation) {
         return remove(_relations, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::Tokenizer) {
+        return remove(_tokenizers, parent_id, object_name);
       } else {
         SDB_UNREACHABLE();
       }
@@ -217,15 +230,21 @@ class ResolutionTable {
     return it->second | std::views::values;
   }
 
-  auto GetRelationIds(ObjectId db_id, ObjectId schema_id) const {
+  auto GetRelationIds(ObjectId schema_id) const {
     auto it = _relations.find(schema_id);
     SDB_ASSERT(it != _relations.end());
     return it->second | std::views::values;
   }
 
-  auto GetFunctionIds(ObjectId db_id, ObjectId schema_id) const {
+  auto GetFunctionIds(ObjectId schema_id) const {
     auto it = _functions.find(schema_id);
     SDB_ASSERT(it != _functions.end());
+    return it->second | std::views::values;
+  }
+
+  auto GetTokenizerIds(ObjectId schema_id) const {
+    auto it = _tokenizers.find(schema_id);
+    SDB_ASSERT(it != _tokenizers.end());
     return it->second | std::views::values;
   }
 
@@ -245,6 +264,8 @@ class ResolutionTable {
   MapById<MapByName<ObjectId>> _relations;
   // schema_id -> (function_name -> object_id)
   MapById<MapByName<ObjectId>> _functions;
+  // schema_id -> (tokenizer_name -> object_id)
+  MapById<MapByName<ObjectId>> _tokenizers;
 };
 
 }  // namespace sdb::catalog

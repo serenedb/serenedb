@@ -152,12 +152,6 @@ class AnalyzerImpl final {
   FunctionValueType _return_type{FunctionValueType::Invalid};
 };
 
-std::shared_ptr<catalog::Function> MakeAnalyzer(ObjectId database,
-                                                std::string_view name,
-                                                std::string_view type,
-                                                vpack::Slice properties,
-                                                Features features);
-
 bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
                     vpack::Slice properties, Features features);
 

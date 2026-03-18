@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { QueryResult } from "./types";
+import type { QueryResult, StatementRange } from "./types";
 import { BindVarSchema } from "@serene-ui/shared-core";
 
 export interface ExecuteQueryResult {
@@ -12,6 +12,23 @@ export interface ExecuteQueryError {
     error: string;
 }
 
+export interface ExecuteQueryBatchJob {
+    jobId: number;
+    statementIndex: number;
+    statementQuery: string;
+    sourceQuery: string;
+    statementRange: StatementRange;
+}
+
+export interface ExecuteQueryBatchResult {
+    success: true;
+    jobs: ExecuteQueryBatchJob[];
+    stoppedOnError?: {
+        statementIndex: number;
+        error: string;
+    };
+}
+
 export interface QueryResultsContextType {
     executeQuery: (
         query: string,
@@ -19,6 +36,13 @@ export interface QueryResultsContextType {
         saveToHistory?: boolean,
         limit?: number,
     ) => Promise<ExecuteQueryResult | ExecuteQueryError>;
+    executeQueryBatch: (
+        query: string,
+        bind_vars?: BindVarSchema[],
+        saveToHistory?: boolean,
+        limit?: number,
+        onJobStarted?: (job: ExecuteQueryBatchJob) => void,
+    ) => Promise<ExecuteQueryBatchResult | ExecuteQueryError>;
     subscribe: (
         jobId: number,
         callback: (result: QueryResult) => void,

@@ -20,8 +20,6 @@
 
 #include "query/velox_executor.h"
 
-#include <absl/cleanup/cleanup.h>
-
 #include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
@@ -57,13 +55,6 @@ yaclib::Future<> VeloxExecutor::Execute(velox::RowVectorPtr& batch) {
 yaclib::Future<> VeloxExecutor::RequestCancel() {
   _query->GetRunner().RequestCancel();
   return {};
-}
-
-yaclib::Future<> RollbackVeloxExecutor::Execute(velox::RowVectorPtr& batch) {
-  absl::Cleanup rollback = [&]() noexcept { _on_error(); };
-  auto f = VeloxExecutor::Execute(batch);
-  std::move(rollback).Cancel();
-  return f;
 }
 
 }  // namespace sdb::query

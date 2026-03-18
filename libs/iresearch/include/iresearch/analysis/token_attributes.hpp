@@ -79,7 +79,7 @@ struct FreqBlockAttr final : Attribute {
     return "freq_block";
   }
 
-  const uint32_t* value = nullptr;
+  uint32_t* value = nullptr;
 };
 
 struct BoostBlockAttr final : Attribute {
@@ -87,7 +87,7 @@ struct BoostBlockAttr final : Attribute {
     return "boost_block";
   }
 
-  const score_t* value = nullptr;
+  score_t* value = nullptr;
 };
 
 // Iterator representing term positions in a document

@@ -120,8 +120,12 @@ inline constexpr OptionInfo kProgress{"progress", false,
                                       "Show progress notices during COPY"};
 inline constexpr EnumOptionInfo<CopyOnError> kOnError{
   "on_error", CopyOnError::Stop, "Error handling"};
+
+void CheckRejectLimit(int value);
+
 inline constexpr OptionInfo kRejectLimit{
-  "reject_limit", 0, "Max rows to skip (requires on_error = ignore)"};
+  "reject_limit", 0, "Max rows to skip (requires on_error = ignore)",
+  CheckRejectLimit};
 inline constexpr EnumOptionInfo<CopyLogVerbosity> kLogVerbosity{
   "log_verbosity", CopyLogVerbosity::Default, "Logging level"};
 

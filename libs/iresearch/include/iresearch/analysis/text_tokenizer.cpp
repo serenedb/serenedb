@@ -26,7 +26,7 @@
 #include "text_tokenizer.hpp"
 
 #include <absl/container/node_hash_map.h>
-#include <frozen/unordered_map.h>
+#include <absl/strings/ascii.h>
 #include <libstemmer.h>
 #include <unicode/brkiter.h>      // for icu::BreakIterator
 #include <unicode/normalizer2.h>  // for icu::Normalizer2
@@ -41,6 +41,7 @@
 #include <cctype>  // for std::isspace(...)
 #include <filesystem>
 #include <fstream>
+#include <magic_enum/magic_enum.hpp>
 #include <mutex>
 #include <string_view>
 
@@ -51,6 +52,7 @@
 #include "basics/runtime_utils.hpp"
 #include "basics/thread_utils.hpp"
 #include "basics/utf8_utils.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
@@ -337,13 +339,13 @@ bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
 
   // case-convert unicode
   switch (state.options.case_convert) {
-    case TextTokenizer::kLower:
+    case Case::Lower:
       state.token.toLower(state.options.locale);  // inplace case-conversion
       break;
-    case TextTokenizer::kUpper:
+    case Case::Upper:
       state.token.toUpper(state.options.locale);  // inplace case-conversion
       break;
-    case TextTokenizer::kNone:
+    case Case::None:
       break;
   }
 
@@ -398,14 +400,6 @@ constexpr std::string_view kEdgeNGramParamName = "edgeNGram";
 constexpr std::string_view kMinParamName = "min";
 constexpr std::string_view kMaxParamName = "max";
 constexpr std::string_view kPreserveOriginalParamName = "preserveOriginal";
-
-constexpr frozen::unordered_map<std::string_view, TextTokenizer::CaseConvertT,
-                                3>
-  kCaseConvertMap = {
-    {"lower", TextTokenizer::CaseConvertT::kLower},
-    {"none", TextTokenizer::CaseConvertT::kNone},
-    {"upper", TextTokenizer::CaseConvertT::kUpper},
-};
 
 bool InitFromOptions(const TextTokenizer::OptionsT& options,
                      IcuObjects* objects, bool print_errors) {
@@ -545,9 +539,10 @@ bool ParseVPackOptions(const vpack::Slice slice,
         return false;
       }
 
-      const auto* it = kCaseConvertMap.find(case_convert_slice.stringView());
+      const auto case_value = magic_enum::enum_cast<irs::Case>(
+        case_convert_slice.stringView(), magic_enum::case_insensitive);
 
-      if (it == kCaseConvertMap.end()) {
+      if (!case_value) {
         SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                  kCaseConvertParamName,
                  "' while constructing text_token_stream from VPack arguments");
@@ -555,7 +550,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
         return false;
       }
 
-      options.case_convert = it->second;
+      options.case_convert = *case_value;
     }
 
     if (auto stop_words_slice = slice.get(kStopwordsParamName);
@@ -681,19 +676,17 @@ bool MakeVPackConfig(const TextTokenizer::OptionsT& options,
     builder->add(kLocaleParamName, locale_name);
 
     // case convert
-    const auto case_value = absl::c_find_if(
-      kCaseConvertMap,
-      [&options](const auto& v) { return v.second == options.case_convert; });
-
-    if (case_value != kCaseConvertMap.end()) {
-      builder->add(kCaseConvertParamName, case_value->first);
-    } else {
+    const auto case_name_sv = magic_enum::enum_name(options.case_convert);
+    if (case_name_sv.empty()) {
       SDB_ERROR(
         "xxxxx", sdb::Logger::IRESEARCH,
         absl::StrCat("Invalid case_convert value in text analyzer options: ",
                      static_cast<int>(options.case_convert)));
       return false;
     }
+    std::string case_name{case_name_sv};
+    absl::AsciiStrToLower(&case_name);
+    builder->add(kCaseConvertParamName, case_name);
 
     // stopwords
     if (!options.explicit_stopwords.empty() || options.explicit_stopwords_set) {

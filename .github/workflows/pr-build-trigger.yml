@@ -15,7 +15,7 @@ jobs:
       pull-requests: write
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           sparse-checkout: .github/workflows/build-manual.yml
           sparse-checkout-cone-mode: false
@@ -193,18 +193,8 @@ jobs:
                 const dispatchInputs = { ...defaults,
                   PRESET: preset,
                   LOCATION: location,
-                  BRANCH: branch,
                   BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
                 };
-
-                await github.rest.repos.createCommitStatus({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  sha: sha,
-                  state: 'pending',
-                  description: `Build ${preset} on ${location} triggered...`,
-                  context: statusContext,
-                });
 
                 await github.rest.actions.createWorkflowDispatch({
                   owner: context.repo.owner,
@@ -218,22 +208,25 @@ jobs:
               }
             }
 
-            // Wait for runs to appear, then collect their URLs
-            await new Promise(r => setTimeout(r, 5000));
-            const after = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'build-manual.yml',
-              branch: branch,
-              per_page: jobs.length + 5,
-            });
-            const newRuns = after.data.workflow_runs.filter(r => r.id > latestIdBefore);
+            // Wait for runs to appear (retry up to 30s)
+            let newRuns = [];
+            for (let attempt = 0; attempt < 6; attempt++) {
+              await new Promise(r => setTimeout(r, 5000));
+              const after = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'build-manual.yml',
+                branch: branch,
+                per_page: jobs.length + 5,
+              });
+              newRuns = after.data.workflow_runs.filter(r => r.id > latestIdBefore);
+              if (newRuns.length >= jobs.length) break;
+            }
 
             // Build table rows — match runs to jobs by order (newest first = last dispatched)
             const reversedRuns = [...newRuns].reverse();
             const rows = jobs.map((job, i) => {
               const run = reversedRuns[i];
-              const link = run ? `[View run](${run.html_url})` : 'pending';
               if (run) {
                 github.rest.repos.createCommitStatus({
                   owner: context.repo.owner,
@@ -244,7 +237,10 @@ jobs:
                   context: job.statusContext,
                   target_url: run.html_url,
                 });
+              } else {
+                core.warning(`Could not find workflow run for ${job.preset} (${job.location}) — no commit status created`);
               }
+              const link = run ? `[View run](${run.html_url})` : '⚠️ not found';
               return `| \`${job.preset}\` | \`${job.location}\` | ${link} |`;
             });
 

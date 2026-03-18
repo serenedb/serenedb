@@ -128,9 +128,10 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
 std::unique_ptr<Query> Query::CreateWithExecutor(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx,
-  std::vector<std::unique_ptr<Executor>> executors) {
+  std::vector<std::unique_ptr<Executor>> executors,
+  absl::AnyInvocable<void()> on_error) {
   return std::unique_ptr<Query>(
-    new Query{root, query_ctx, std::move(executors)});
+    new Query{root, query_ctx, std::move(executors), std::move(on_error)});
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
@@ -141,10 +142,12 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx,
-             std::vector<std::unique_ptr<Executor>> executors)
+             std::vector<std::unique_ptr<Executor>> executors,
+             absl::AnyInvocable<void()> on_error)
   : _query_ctx{query_ctx},
     _logical_plan{root},
-    _output_type{root->outputType()} {
+    _output_type{root->outputType()},
+    _on_error{std::move(on_error)} {
   SetExecutors(std::move(executors));
 }
 

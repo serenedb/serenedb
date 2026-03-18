@@ -1,0 +1,2 @@
+ALTER TABLE dashboards
+    ADD COLUMN favorite BOOLEAN NOT NULL DEFAULT 0;

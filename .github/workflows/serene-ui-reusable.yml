@@ -1,9 +1,457 @@
 name: SereneUI-Build-Base
+
 on:
-  workflow_call:
+    workflow_call:
+        inputs:
+            BRANCH:
+                description: "SereneDB Client UI branch to test"
+                required: true
+                type: string
+                default: "main"
+            BUILD_IMAGE:
+                description: "Build SereneUI Docker image"
+                required: true
+                type: boolean
+                default: false
+            PUSH_IMAGE_TO_REGISTRY:
+                description: "Push SereneUI Docker image to Docker Registry"
+                required: true
+                type: boolean
+                default: false
+            RUN_TESTS:
+                description: "Run SereneUI screenshot tests"
+                required: true
+                type: boolean
+                default: true
+            DOCKER_TAG:
+                description: "Custom TAG for SereneUI Docker image"
+                required: false
+                type: string
+                default: "latest"
+            BUILD_LINUX_APP:
+                description: "Build SereneUI Linux desktop app"
+                required: true
+                type: boolean
+                default: false
+            BUILD_WINDOWS_APP:
+                description: "Build SereneUI Windows desktop app"
+                required: true
+                type: boolean
+                default: false
+            BUILD_MACOS_APP:
+                description: "Build SereneUI macOS desktop app"
+                required: true
+                type: boolean
+                default: false
+            PUSH_RELEASE:
+                description: "Publish desktop app builds as GitHub Release"
+                required: true
+                type: boolean
+                default: false
+            RELEASE_TAG:
+                description: "GitHub Release tag/name (required when PUSH_RELEASE=true)"
+                required: false
+                type: string
+                default: ""
+        secrets:
+            PAT_TOKEN:
+                required: true
+                description: "Personal Access Token with repo access"
+            TG_TOKEN:
+                required: true
+            APPLE_ID:
+                required: true
+            APPLE_ID_PASSWORD:
+                required: true
+            APPLE_TEAM_ID:
+                required: true
+            TG_CHAT_ID:
+                required: true
 
 jobs:
-  stub:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "stub"
+    build-docker:
+        name: Build Docker Image
+        if: inputs.RUN_TESTS || inputs.BUILD_IMAGE
+        runs-on: X64
+        permissions:
+            contents: read
+        timeout-minutes: 60
+        defaults:
+            run:
+                working-directory: ./serene-ui
+        env:
+            WORKSPACE: ${{ github.workspace }}
+            BRANCH: ${{ inputs.BRANCH }}
+            PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
+            DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
+            IMAGE: registry.serenedb.com:5000/serene-ui:${{ inputs.DOCKER_TAG }}
+        steps:
+            - name: Checkout SereneUI
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ env.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      serene-ui
+                  sparse-checkout-cone-mode: true
+
+            - name: Run tests
+              if: inputs.RUN_TESTS
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
+
+            - name: Update file ownership
+              if: always()
+              run: |
+                  export RUNNER_ID="$(id -u):$(id -g)"
+                  bash ./scripts/update_ownership.sh
+
+            - name: Upload test artifacts
+              if: inputs.RUN_TESTS
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-test-artifacts-docker
+                  path: |
+                      serene-ui/screenshots/diff/**/*
+                      serene-ui/logs/**/*
+                  if-no-files-found: ignore
+                  retention-days: 30
+
+            - name: Build Docker image
+              if: inputs.BUILD_IMAGE
+              run: |
+                  docker build --pull --no-cache --tag "$IMAGE" . 2>&1 | tee -a logs/build.log
+                  if [ "${{ inputs.PUSH_IMAGE_TO_REGISTRY }}" = "true" ]; then
+                    docker push "$IMAGE" 2>&1 | tee -a logs/build.log
+                  fi
+
+            - name: Cleanup workspace & Docker
+              if: always()
+              run: |
+                  docker system prune -f 2>/dev/null || true
+                  docker volume prune -f 2>/dev/null || true
+
+    build-linux-app:
+        name: Build Linux App
+        if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        timeout-minutes: 30
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
+        defaults:
+            run:
+                working-directory: ./serene-ui
+        steps:
+            - name: Checkout SereneUI
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ env.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      serene-ui
+                  sparse-checkout-cone-mode: true
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+
+            - name: Install dependencies & build
+              run: |
+                  rm -f package-lock.json
+                  npm install
+                  npm run build
+
+            - name: Install Playwright
+              if: inputs.RUN_TESTS
+              run: npx playwright install --with-deps
+
+            - name: Run tests
+              if: inputs.RUN_TESTS
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+
+            - name: Upload test artifacts
+              if: inputs.RUN_TESTS && !cancelled()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-test-artifacts-linux
+                  path: |
+                      serene-ui/screenshots/diff/**/*
+                      serene-ui/logs/**/*
+                  if-no-files-found: ignore
+                  retention-days: 30
+
+            - name: Build Electron distributables
+              if: inputs.BUILD_LINUX_APP
+              working-directory: ./serene-ui/apps/electron
+              run: |
+                  npm run package:prod
+                  npm run make:prod
+
+            - name: Upload Linux artifacts
+              if: inputs.BUILD_LINUX_APP
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-linux
+                  path: serene-ui/apps/electron/out/make/**/*
+                  if-no-files-found: error
+                  retention-days: 30
+
+    build-windows-app:
+        name: Build Windows App
+        if: inputs.RUN_TESTS || inputs.BUILD_WINDOWS_APP
+        runs-on: windows-latest
+        permissions:
+            contents: read
+        timeout-minutes: 30
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
+        defaults:
+            run:
+                shell: bash
+                working-directory: ./serene-ui
+        steps:
+            - name: Checkout SereneUI
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ env.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      serene-ui
+                  sparse-checkout-cone-mode: true
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+
+            - name: Install dependencies & build
+              run: |
+                  rm -f package-lock.json
+                  npm install
+                  npm run build
+
+            - name: Install Playwright
+              if: inputs.RUN_TESTS
+              run: npx playwright install
+
+            - name: Run tests
+              if: inputs.RUN_TESTS
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+
+            - name: Upload test artifacts
+              if: inputs.RUN_TESTS && !cancelled()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-test-artifacts-windows
+                  path: |
+                      serene-ui/screenshots/diff/**/*
+                      serene-ui/logs/**/*
+                  if-no-files-found: ignore
+                  retention-days: 30
+
+            - name: Build Electron distributables
+              if: inputs.BUILD_WINDOWS_APP
+              working-directory: ./serene-ui/apps/electron
+              run: |
+                  npm run package:prod
+                  npm run make:prod
+
+            - name: Upload Windows artifacts
+              if: inputs.BUILD_WINDOWS_APP
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-windows
+                  path: serene-ui/apps/electron/out/make/**/*
+                  if-no-files-found: error
+                  retention-days: 30
+
+    build-macos-app:
+        name: Build macOS App
+        if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
+        runs-on: macOS
+        permissions:
+            contents: read
+        timeout-minutes: 144000
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
+        defaults:
+            run:
+                working-directory: ./serene-ui
+        steps:
+            - name: Checkout SereneUI
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ env.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      serene-ui
+                  sparse-checkout-cone-mode: true
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+
+            - name: Install dependencies & build
+              run: |
+                  rm -f package-lock.json
+                  npm install
+                  npm run build
+
+            - name: Install Playwright
+              if: inputs.RUN_TESTS
+              run: npx playwright install --with-deps
+
+            - name: Run tests
+              if: inputs.RUN_TESTS
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+
+            - name: Upload test artifacts
+              if: inputs.RUN_TESTS && !cancelled()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-test-artifacts-macos
+                  path: |
+                      serene-ui/screenshots/diff/**/*
+                      serene-ui/logs/**/*
+                  if-no-files-found: ignore
+                  retention-days: 30
+
+            - name: Build Electron distributables
+              if: inputs.BUILD_MACOS_APP
+              working-directory: ./serene-ui/apps/electron
+              env:
+                  APPLE_ID: ${{ secrets.APPLE_ID }}
+                  APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+              run: |
+                  npm run package:prod
+                  npm run make:prod
+
+            - name: Upload macOS artifacts
+              if: inputs.BUILD_MACOS_APP
+              uses: actions/upload-artifact@v4
+              with:
+                  name: serene-ui-macos
+                  path: serene-ui/apps/electron/out/make/**/*
+                  if-no-files-found: error
+                  retention-days: 30
+
+    release:
+        name: Publish GitHub Release
+        needs: [build-linux-app, build-windows-app, build-macos-app]
+        if: >-
+            always()
+            && inputs.PUSH_RELEASE
+            && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP)
+            && !contains(needs.*.result, 'failure')
+        runs-on: X64
+        permissions:
+            contents: write
+        steps:
+            - name: Validate release inputs
+              if: inputs.PUSH_RELEASE && inputs.RELEASE_TAG == ''
+              run: |
+                  echo "RELEASE_TAG is required when PUSH_RELEASE=true"
+                  exit 1
+
+            - name: Clean release-assets directory
+              run: rm -rf "${{ github.workspace }}/release-assets"
+
+            - name: Download Linux artifacts
+              if: inputs.BUILD_LINUX_APP
+              uses: actions/download-artifact@v4
+              with:
+                  name: serene-ui-linux
+                  path: release-assets/linux
+
+            - name: Download Windows artifacts
+              if: inputs.BUILD_WINDOWS_APP
+              uses: actions/download-artifact@v4
+              with:
+                  name: serene-ui-windows
+                  path: release-assets/windows
+
+            - name: Download macOS artifacts
+              if: inputs.BUILD_MACOS_APP
+              uses: actions/download-artifact@v4
+              with:
+                  name: serene-ui-macos
+                  path: release-assets/macos
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ inputs.RELEASE_TAG }}
+                  name: SereneUI ${{ inputs.RELEASE_TAG }}
+                  body: |
+                      SereneUI desktop app build from branch `${{ inputs.BRANCH }}`.
+
+                      Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  draft: true
+                  prerelease: true
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  files: release-assets/**/*
+
+    notify:
+        name: Send Notification
+        needs:
+            [
+                build-docker,
+                build-linux-app,
+                build-windows-app,
+                build-macos-app,
+                release,
+            ]
+        if: always()
+        runs-on: X64
+        timeout-minutes: 5
+        steps:
+            - name: Checkout (for notify script)
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ inputs.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      scripts
+                  sparse-checkout-cone-mode: true
+
+            - name: Send Telegram notification
+              env:
+                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
+                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+                  TG_THREAD_ID_MAIN: "51"
+                  TG_THREAD_ID_BUILD: "53"
+                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+                  BRANCH: ${{ inputs.BRANCH }}
+                  JOB_STATUS: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
+                  ACTOR: ${{ github.actor }}
+                  WORKFLOW: ${{ github.workflow }}
+                  RUN_NUMBER: ${{ github.run_number }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  JOB_STATUS_DOCKER: ${{ needs.build-docker.result }}
+                  JOB_STATUS_LINUX: ${{ needs.build-linux-app.result }}
+                  JOB_STATUS_WINDOWS: ${{ needs.build-windows-app.result }}
+                  JOB_STATUS_MACOS: ${{ needs.build-macos-app.result }}
+                  JOB_STATUS_RELEASE: ${{ needs.release.result }}
+              run: ./scripts/notify_telegram_serene-ui.bash

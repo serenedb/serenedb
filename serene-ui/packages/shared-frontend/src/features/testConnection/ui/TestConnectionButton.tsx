@@ -5,6 +5,7 @@ import {
     ErrorIcon,
     LoaderIcon,
     SuccessIcon,
+    getErrorMessage,
 } from "@serene-ui/shared-frontend/shared";
 import { useTestConnection } from "../model/useTestConnection";
 import { toast } from "sonner";
@@ -77,10 +78,16 @@ export const TestConnectionButton: React.FC<TestConnectionButtonProps> = ({
                         toast.success("Successfully connected!");
                         isSuccess = true;
                     } catch (error) {
-                        const message = (error as Error).message;
-                        toast.error("Something went wrong!", {
+                        const message = getErrorMessage(
+                            error,
+                            "Connection test failed",
+                        );
+                        toast.error("Connection test failed", {
                             duration: 3000,
-                            description: message,
+                            description:
+                                message === "Connection test failed"
+                                    ? undefined
+                                    : message,
                             action: {
                                 label: "Close",
                                 onClick: (e) => {

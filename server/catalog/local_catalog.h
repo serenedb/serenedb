@@ -35,6 +35,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/tokenizer.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/slice.h"
 
@@ -58,6 +59,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterView(ObjectId schema_id, std::shared_ptr<View> view) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
+  Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
+                           std::shared_ptr<Tokenizer> tokenizer) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
@@ -82,8 +85,11 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
                      const std::vector<std::string>& column_names,
-                     IndexBaseOptions options,
-                     IndexShardOptions& shard_options) final;
+                     IndexBaseOptions options, IndexShardOptions& shard_options,
+                     CreateIndexOperationOptions operation_options = {}) final;
+
+  Result CreateTokenizer(ObjectId database_id, std::string_view schema,
+                         std::shared_ptr<Tokenizer> dict) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -104,6 +110,9 @@ class LocalCatalog final : public LogicalCatalog,
                   std::string_view name) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
                       std::string_view name) final;
+  Result DropTokenizer(ObjectId database_id, std::string_view schema,
+                       std::string_view name) final;
+
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,

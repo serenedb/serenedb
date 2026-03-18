@@ -308,6 +308,7 @@ if [[ "$cancellation" == "true" ]]; then
 	trap '' INT
 	# One background process that keeps sending SIGINT at random intervals
 	(
+		trap - INT
 		while true; do
 			sleep "$(awk "BEGIN{srand(); printf \"%.3f\", 0.05 + rand() * 2.0}")"
 			kill -INT 0 2>/dev/null || true

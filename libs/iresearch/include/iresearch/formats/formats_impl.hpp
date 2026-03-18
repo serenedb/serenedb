@@ -1259,7 +1259,7 @@ class PostingIteratorBase : public DocIterator {
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
 #ifdef __AVX2__
-  [[maybe_unused]] doc_id_t _placeholder_for_bitset_decoding[8];
+  [[maybe_unused]] doc_id_t _placeholder_for_bitset_materialize[8];
 #endif
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
@@ -3086,7 +3086,7 @@ class SingleWandIterator : public DocIterator {
   [[no_unique_address]] uint32_t _freqs[IteratorTraits::kBlockSize];
   doc_id_t _docs[IteratorTraits::kBlockSize];
 #ifdef __AVX2__
-  [[maybe_unused]] doc_id_t _placeholder_for_bitset_decoding[8];
+  [[maybe_unused]] doc_id_t _placeholder_for_bitset_materialize[8];
 #endif
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
@@ -3834,9 +3834,9 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                                        Factory&& factory);
 };
 
-template<typename FieldTraits, size_t N>
-void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
-                  uint32_t (&enc_buf)[N], size_t* set) {
+template<typename FieldTraits>
+void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
+                  uint32_t* enc_buf, size_t* set) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   size_t num_blocks = docs_count / FieldTraits::kBlockSize;
 
@@ -3848,10 +3848,10 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
     }
 
     // FIXME optimize
-    for (const auto doc : docs) {
+    for (const auto doc : std::span{docs, FieldTraits::kBlockSize}) {
       SetBit(set[doc / kBits], doc % kBits);
     }
-    prev_doc = docs[N - 1];
+    prev_doc = docs[FieldTraits::kBlockSize - 1];
   }
 
   const auto tail = docs_count % FieldTraits::kBlockSize;
@@ -3861,7 +3861,8 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   FieldTraits::ReadTailDelta(tail, doc_in, enc_buf, docs, prev_doc);
 
   // FIXME optimize
-  for (const auto doc : std::span{std::end(docs) - tail, tail}) {
+  for (const auto doc :
+       std::span{docs + FieldTraits::kBlockSize - tail, tail}) {
     SetBit(set[doc / kBits], doc % kBits);
   }
 }
@@ -3872,7 +3873,11 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   size_t* set, uint8_t wand_count) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   uint32_t enc_buf[FormatTraits::kBlockSize];
-  uint32_t docs[FormatTraits::kBlockSize];
+  doc_id_t docs[FormatTraits::kBlockSize
+#ifdef __AVX2__
+                + 8  // placeholder for bitset materialize
+#endif
+  ];
   const bool has_freq =
     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 

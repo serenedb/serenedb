@@ -503,12 +503,17 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                               ObjectId table_id, ObjectId index_id,
                               vpack::Slice slice) {
+  if (!slice.isObject()) {
+    return {ERROR_INTERNAL, "Index definition is not an object"};
+  }
   IndexBaseOptions options;
-  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+  if (auto r = vpack::ReadTupleNothrow(slice.get(kIndexBaseOptions), options);
+      !r.ok()) {
     return r;
   }
-  auto index = _catalog.RegisterIndex(database_id, schema_id, index_id,
-                                      table_id, std::move(options));
+  auto index =
+    _catalog.RegisterIndex(database_id, schema_id, index_id, table_id,
+                           std::move(options), slice.get(kIndexImplOptions));
   if (!index) {
     return std::move(index.error());
   }

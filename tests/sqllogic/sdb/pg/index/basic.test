@@ -1,13 +1,22 @@
 statement ok
 CREATE TABLE t(r text);
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
 
 statement ok
 VACUUM (UPDATE_INDEXES) t;
 
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r);
+CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 statement ok
@@ -59,7 +68,7 @@ INSERT INTO t VALUES ('a'), ('b'), ('c');
 
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r);
+CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 query
@@ -96,7 +105,7 @@ CREATE INDEX test_index ON test USING inverted (invalid);
 
 
 statement ok
-CREATE INDEX test_index ON test USING inverted (i);
+CREATE INDEX test_index ON test USING inverted (i test_english);
 
 
 statement error db error: ERROR: relation "test_index" already exists
@@ -104,7 +113,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 
 
 statement ok
-CREATE INDEX IF NOT EXISTS test_index ON test USING inverted (i);
+CREATE INDEX IF NOT EXISTS test_index ON test USING inverted (i test_english);
 
 
 query
@@ -155,10 +164,16 @@ SELECT indexrelid, indrelid FROM pg_index
 indexrelid	indrelid
 
 statement ok
-CREATE TABLE tstest (a INTEGER, b TIMESTAMP);
+CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR);
 
 statement error db error: ERROR: Column b has unsupported kind and can not be indexed.
 CREATE INDEX index_ts on tstest USING inverted(b);
+
+statement error db error: ERROR: Column c is VARCHAR but has no text dictionary defined.
+CREATE INDEX index_ts on tstest USING inverted(c);
+
+statement error db error: ERROR: Column a has text dictionary defined but is not VARCHAR.
+CREATE INDEX index_ts on tstest USING inverted(a test_english);
 
 statement ok
 DROP TABLE tstest;

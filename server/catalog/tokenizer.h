@@ -61,6 +61,8 @@ class Tokenizer : public SchemaObject {
   Tokenizer(ObjectId id, std::string_view name, search::Features features,
             std::string data);
 
+  const search::Features& GetFeatures() const noexcept { return _features; }
+
  private:
   irs::analysis::Analyzer::ptr CreateAnalyzer() const;
 

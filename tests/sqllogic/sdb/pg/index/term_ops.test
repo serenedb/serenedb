@@ -11,7 +11,7 @@ CREATE TEXT SEARCH DICTIONARY test_english(
 );
 
 statement ok
-CREATE INDEX test_term_ops_idx ON test_term_ops USING inverted(a, to_tsvector('test_english', b), to_tsvector('test_english', c));
+CREATE INDEX test_term_ops_idx ON test_term_ops USING inverted(a, b test_english, c test_english);
 
 statement ok
 INSERT INTO test_term_ops values (1, 'percentAnotAcontain and some other', 'a');
@@ -58,6 +58,9 @@ SELECT a FROM test_term_ops_idx WHERE TERM_EQ(c, 'd');
 ----
 a
 4
+
+query error
+SELECT a FROM test_term_ops_idx c = 'd';
 
 query
 SELECT a FROM test_term_ops_idx WHERE TERM_GT(c, 'd') ORDER BY a DESC;

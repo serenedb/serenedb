@@ -10,12 +10,14 @@
 
 namespace sdb::catalog {
 
-struct InvertedIndexOptions {
+struct InvertedIndexColumnInfo {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
-  // TODO (Dronplane): make it configurable
-  irs::IndexFeatures features =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
+  search::Features features;
+};
+
+struct InvertedIndexOptionsImpl {
+  containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo> columns;
 };
 
 struct ColumnAnalyzer {
@@ -23,11 +25,12 @@ struct ColumnAnalyzer {
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
 
+using InvertedIndexOptions = IndexOptions<InvertedIndexOptionsImpl>;
+
 class InvertedIndex final : public Index {
  public:
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id,
-                IndexOptions<InvertedIndexOptions> options)
+                ObjectId relation_id, InvertedIndexOptions options)
     : Index{database_id, schema_id, id, relation_id, std::move(options.base)},
       _options{std::move(options.impl)} {}
 
@@ -39,7 +42,7 @@ class InvertedIndex final : public Index {
 
  private:
   // TODO(codeworse): Add inverted index specific options
-  InvertedIndexOptions _options;
+  InvertedIndexOptionsImpl _options;
 };
 
 }  // namespace sdb::catalog

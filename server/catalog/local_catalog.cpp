@@ -930,9 +930,9 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
 
 ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexBaseOptions options) {
-  auto index =
-    MakeIndex(database_id, schema_id, id, relation_id, std::move(options));
+  IndexBaseOptions options, vpack::Slice impl_options) {
+  auto index = MakeIndex(database_id, schema_id, id, relation_id,
+                         std::move(options), impl_options);
   if (!index) {
     return std::unexpected<Result>(std::in_place, std::move(index).error());
   }
@@ -966,10 +966,11 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
 
 Result LocalCatalog::CreateIndex(
   ObjectId database_id, std::string_view relation_schema,
-  std::string_view relation_name, const std::vector<std::string>& column_names,
-  IndexBaseOptions options, IndexShardOptions& shard_options,
+  std::string_view relation_name,
+  std::vector<CreateIndexColumn>&& create_columns, IndexBaseOptions&& options,
+  IndexShardOptions& shard_options,
   CreateIndexOperationOptions operation_options) {
-  if (column_names.empty()) {
+  if (create_columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
   absl::MutexLock lock{&_mutex};
@@ -991,33 +992,27 @@ Result LocalCatalog::CreateIndex(
   }
 
   auto& table = basics::downCast<Table>(*relation);
-  auto& columns = table.Columns();
+  auto& table_columns = table.Columns();
   auto find_column = [&](std::string_view name) {
     auto it = absl::c_find_if(
-      columns, [&](const catalog::Column& c) { return c.name == name; });
-    return it != columns.end() ? &*it : nullptr;
+      table_columns, [&](const catalog::Column& c) { return c.name == name; });
+    return it != table_columns.end() ? &*it : nullptr;
   };
 
-  std::vector<const catalog::Column*> index_columns;
-  index_columns.reserve(column_names.size());
-  options.column_ids.reserve(column_names.size());
-  for (const auto& name : column_names) {
-    const auto* column = find_column(name);
+  options.column_ids.reserve(create_columns.size());
+  for (auto& c : create_columns) {
+    const auto* column = find_column(c.name);
     if (!column) {
-      return Result{ERROR_BAD_PARAMETER, "column \"", name,
+      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
     }
+    c.catalog_column = column;
     options.column_ids.push_back(column->id);
-    index_columns.push_back(column);
   }
 
-  auto validation_res = ValidateIndexOptions(options, index_columns);
-  if (validation_res.fail()) {
-    return validation_res;
-  }
-
-  auto index = MakeIndex(database_id, *schema_id, ObjectId{0}, table.GetId(),
-                         std::move(options));
+  auto index =
+    MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
+              table.GetId(), std::move(options), std::move(create_columns));
   if (!index) {
     return std::move(index).error();
   }

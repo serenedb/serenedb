@@ -20,24 +20,33 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
+  vpack::ObjectBuilder scope_object(&builder);
   Index::WriteInternal(builder);
+  vpack::ArrayBuilder ob(&builder, kIndexImplOptions);
+  vpack::WriteTuple(builder, _options);
 }
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   catalog::Column::Id column_id) const {
-  if (!_options.text_dictionary.isSet()) {
-    // TODO(Dronplane): implement default text dictionary like in PG
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "Default text dictionary is not implemented.");
+  auto it = _options.columns.find(column_id);
+  if (it == _options.columns.end()) {
+    SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
+              " not found in the index definition");
   }
+
+  // TODO(Dronplane): implement default text dictionary like in PG
+  SDB_ASSERT(it->second.text_dictionary.isSet(),
+             "Default text dictionary is not implemented.");
+
   auto snapshot = GetCatalog().GetSnapshot();
 
-  auto dict = snapshot->GetObject<Tokenizer>(_options.text_dictionary);
+  auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);
   SDB_ENSURE(dict, ERROR_INTERNAL,
              "Dictionary for inverted index does not exists");
   auto tokenizer = dict->GetTokenizer();
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-  return {.analyzer = *std::move(tokenizer), .features = _options.features};
+  return {.analyzer = *std::move(tokenizer),
+          .features = it->second.features.GetIndexFeatures()};
 }
 
 }  // namespace sdb::catalog

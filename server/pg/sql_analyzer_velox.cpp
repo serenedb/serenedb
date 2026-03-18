@@ -2624,6 +2624,9 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   FillColumnsInfo(table_state, *table.PKType(), table_type, column_names,
                   column_exprs);
 
+  // To prevent reallocation
+  column_names.reserve(column_names.size() + list_length(stmt.indexParams));
+
   containers::FlatHashSet<std::string_view> pk_names;
   pk_names.reserve(column_names.size());
   for (const auto& name : column_names) {

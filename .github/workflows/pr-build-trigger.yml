@@ -193,7 +193,6 @@ jobs:
                 const dispatchInputs = { ...defaults,
                   PRESET: preset,
                   LOCATION: location,
-                  BRANCH: branch,
                   BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
                 };
 

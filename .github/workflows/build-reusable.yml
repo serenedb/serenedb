@@ -225,7 +225,7 @@ jobs:
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
-        if: steps.serenedb_build.outcome == 'success' && env.SANITIZERS == ''
+        if: steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
         run: ./private/ci/steps/05-ci-in-docker-package.bash
 
       # ==================== RELEASE TEST AUTOMATION ====================

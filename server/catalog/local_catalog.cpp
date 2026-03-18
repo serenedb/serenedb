@@ -967,7 +967,7 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
 Result LocalCatalog::CreateIndex(
   ObjectId database_id, std::string_view relation_schema,
   std::string_view relation_name,
-  std::vector<CreateIndexColumn>&& create_columns, IndexBaseOptions&& options,
+  std::vector<CreateIndexColumn>&& create_columns, IndexBaseOptions options,
   IndexShardOptions& shard_options,
   CreateIndexOperationOptions operation_options) {
   if (create_columns.empty()) {

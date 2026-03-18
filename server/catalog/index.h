@@ -43,8 +43,10 @@ struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  // TODO(Dronplane): add map of opclass options key/value as string_views.
-  // Actual parsing is delegated to the index
+  // TODO(Dronplane): parse opclass options. Passing List* down to concrete
+  // index might be an option but that will leak SQL parsing too deep. On the
+  // other hand if we just parse to some generic map of strings it is unclear
+  // how to implement "help".
 };
 
 struct IndexBaseOptions {

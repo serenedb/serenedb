@@ -195,7 +195,7 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
-    std::vector<CreateIndexColumn>&& columns, IndexBaseOptions&& options,
+    std::vector<CreateIndexColumn>&& columns, IndexBaseOptions options,
     IndexShardOptions& shard_options,
     CreateIndexOperationOptions operation_options = {}) = 0;
 

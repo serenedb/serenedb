@@ -115,7 +115,6 @@ std::string FormatHelp(std::span<const OptionGroup> groups) {
 
   for (const auto& group : groups) {
     FormatGroup(result, group, 0);
-    absl::StrAppend(&result, "\n");
   }
 
   return result;

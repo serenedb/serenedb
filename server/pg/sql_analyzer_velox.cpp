@@ -779,7 +779,8 @@ class SqlAnalyzer {
                              const RangeVar* node);
 
   State ProcessFileTable(State* parent, const catalog::Table& table,
-                         std::string_view table_name, const RangeVar* node);
+                         std::string_view table_name, const RangeVar* node,
+                         bool implicit_pk_column);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -2619,16 +2620,11 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
   const auto& input_type = *table_state.root->outputType();
 
+  const auto& pk_type = *table.PKType();
+
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
-  FillColumnsInfo(table_state, *table.PKType(), table_type, column_names,
-                  column_exprs);
-
-  containers::FlatHashSet<std::string_view> pk_names;
-  pk_names.reserve(column_names.size());
-  for (const auto& name : column_names) {
-    pk_names.emplace(name);
-  }
+  FillColumnsInfo(table_state, pk_type, table_type, column_names, column_exprs);
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
     const std::string_view colname = index_elem.name;
@@ -2637,7 +2633,7 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("column \"", colname, "\" does not exist"));
     }
-    if (pk_names.contains(colname)) {
+    if (pk_type.containsChild(colname)) {
       return;
     }
     size_t col_idx = *maybe_col_idx;
@@ -3778,7 +3774,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
   const auto& table = basics::downCast<catalog::Table>(*object.object);
 
   if (table.GetTableType() == TableType::File) {
-    return ProcessFileTable(parent, table, table_name, node);
+    return ProcessFileTable(parent, table, table_name, node, load_implicit_pk);
   }
 
   auto type = table.RowType();
@@ -3825,7 +3821,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
 State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
                                     std::string_view table_name,
-                                    const RangeVar* node) {
+                                    const RangeVar* node,
+                                    bool implicit_pk_column) {
   const auto& file_info = table.GetFileInfo();
   SDB_ASSERT(file_info.storage_options);
   SDB_ASSERT(file_info.format_options);
@@ -3834,12 +3831,28 @@ State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
 
   auto [table_alias, column_names] =
     ProcessTableColumns(parent, node, row_type);
-  auto file_output_type =
-    velox::ROW(std::move(column_names), row_type->children());
 
   auto options = std::make_shared<connector::ReaderOptions>();
   options->storage_options = file_info.storage_options;
   options->dwio = file_info.format_options->createReaderOptions(row_type);
+
+  if (implicit_pk_column && table.PKColumns().empty()) {
+    auto generated_pk_name = catalog::Column::GeneratePKName(row_type->names());
+    options->row_index_column = generated_pk_name;
+
+    column_names.emplace_back(_id_generator.NextColumnName(generated_pk_name));
+
+    std::vector types = row_type->children();
+    std::vector type_names = row_type->names();
+
+    types.push_back(velox::BIGINT());
+    type_names.emplace_back(std::move(generated_pk_name));
+    row_type = velox::ROW(std::move(type_names), std::move(types));
+  }
+
+  auto file_output_type =
+    velox::ROW(std::move(column_names), row_type->children());
+
   auto read_file_table = std::make_shared<connector::ReadFileTable>(
     row_type, file_info.storage_options->Path(), std::move(options));
 

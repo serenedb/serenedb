@@ -65,6 +65,32 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
   _layout_handles.emplace_back(std::move(layout));
 }
 
+FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path,
+                     std::string_view row_index_column)
+  : Table{std::string{file_path}, [&] {
+            std::vector<std::unique_ptr<const axiom::connector::Column>>
+              column_handles;
+            column_handles.reserve(table_type->size());
+            catalog::Column::Id id = 0;
+            for (const auto& [type, name] : std::ranges::views::zip(
+                   table_type->children(), table_type->names())) {
+              auto col_id = (name == row_index_column)
+                              ? catalog::Column::kGeneratedPKId
+                              : id++;
+              column_handles.emplace_back(
+                std::make_unique<SereneDBColumn>(name, type, col_id));
+            }
+            return column_handles;
+          }()} {
+  auto connector = velox::connector::getConnector("serenedb");
+  auto layout = std::make_unique<SereneDBTableLayout>(
+    name(), *this, *connector, allColumns(),
+    std::vector<const axiom::connector::Column*>{},
+    std::vector<axiom::connector::SortOrder>{});
+  _layouts.emplace_back(layout.get());
+  _layout_handles.emplace_back(std::move(layout));
+}
+
 FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
                            velox::memory::MemoryPool& leaf_pool,
                            velox::memory::MemoryPool& aggregate_pool) {
@@ -106,6 +132,7 @@ FileDataSource::FileDataSource(
     _source{options->storage_options->CreateFileSource({})},
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
+    _row_index_column{std::move(options->row_index_column)},
     _report_callback{options->report_callback} {
   SDB_ASSERT(_row_reader_options);
   _reader_options->setMemoryPool(memory_pool);
@@ -117,7 +144,10 @@ FileDataSource::FileDataSource(
     SDB_ENSURE(handle_it != column_handles.end(), ERROR_INTERNAL,
                "FileDataSource: can't find column handle for ", names[i]);
     const auto& handle = *handle_it->second;
-    spec->addField(handle.name(), i);
+    auto* field = spec->addField(handle.name(), i);
+    if (!_row_index_column.empty() && handle.name() == _row_index_column) {
+      field->setColumnType(velox::common::ScanSpec::ColumnType::kRowIndex);
+    }
   }
 
   for (auto& [subfield, filter] : subfield_filters) {

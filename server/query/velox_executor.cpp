@@ -38,6 +38,7 @@ void VeloxExecutor::Init(Query& query) {
 
 yaclib::Future<> VeloxExecutor::Execute(velox::RowVectorPtr& batch) {
   auto& runner = _query->GetRunner();
+  std::cerr << _query->GetExecutionPlan() << std::endl;
   SDB_ASSERT(runner);
   yaclib::Future<> wait;
   batch = runner.Next(wait);

@@ -1048,7 +1048,7 @@ WITH (
   HELP
 );
 ----
-db error: ERROR: 
+db error: ERROR:
 External:
   path (string) - Path to external file (required)
 
@@ -1088,3 +1088,66 @@ Format:
     (no additional options)
   ORC:
     (no additional options)
+
+
+# parquet type casting: external table type differs from parquet physical type
+
+statement ok
+CREATE TABLE vedernikoff_src (weight INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_src VALUES (1), (2)
+
+statement ok
+COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.parquet' (FORMAT PARQUET);
+
+
+# vedernikoff: same type (INT4 -> INT4)
+statement ok
+CREATE TABLE vedernikoff(
+  weight INTEGER
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
+);
+
+query
+SELECT * FROM vedernikoff;
+----
+weight
+1
+2
+
+
+# fatter_vedernikoff: wider type (INT4 parquet -> INT8 external)
+statement ok
+CREATE TABLE fatter_vedernikoff(
+  weight INT8
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
+);
+
+query
+SELECT * FROM fatter_vedernikoff;
+----
+weight
+1
+2
+
+
+# thinner_vedernikoff: narrower type (INT4 parquet -> INT2 external)
+statement ok
+CREATE TABLE thinner_vedernikoff(
+  weight SMALLINT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
+);
+
+query
+SELECT * FROM thinner_vedernikoff;
+----
+weight
+1
+2

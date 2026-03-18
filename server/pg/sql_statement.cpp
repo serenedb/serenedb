@@ -36,6 +36,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_resolver.h"
 #include "pg/sql_statement.h"
+#include "query/explain_executor.h"
 #include "query/velox_executor.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN

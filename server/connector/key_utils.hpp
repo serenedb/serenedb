@@ -23,6 +23,7 @@
 #include <absl/base/internal/endian.h>
 #include <velox/vector/BaseVector.h>
 #include <velox/vector/ComplexVector.h>
+#include <velox/vector/FlatVector.h>
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
@@ -58,17 +59,19 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   if (!pk_columns.empty()) {
     primary_key::Create(*input, pk_columns, row_idx, key_buffer);
   } else {
+    // TODO: make unsigned when such types will be supported in Velox
+    int64_t generated_pk;
     if constexpr (GenerateNew) {
-      // TODO: make unsigned when such types will be supported in Velox
-      const auto generated_pk =
-        std::bit_cast<int64_t>(RevisionId::create().id());
-      primary_key::AppendSigned(key_buffer, generated_pk);
+      generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
     } else {
       SDB_ASSERT(input->childrenSize() != 0);
-      velox::column_index_t generated_pk_idx = input->childrenSize() - 1;
-      primary_key::Create(*input, std::span{&generated_pk_idx, 1}, row_idx,
-                          key_buffer);
+      const auto pk_idx = input->childrenSize() - 1;
+      const auto& cols = input->children();
+      const auto& pk_column = cols[pk_idx]->as<velox::SimpleVector<int64_t>>();
+      generated_pk = pk_column->valueAt(row_idx);
+      std::cerr << generated_pk << std::endl;
     }
+    primary_key::AppendSigned(key_buffer, generated_pk);
   }
 
   row_key_handle(std::string_view{

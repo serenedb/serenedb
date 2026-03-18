@@ -187,7 +187,7 @@ inline constexpr OptionInfo kPath{"path", ""sv,
 inline constexpr OptionInfo kCreateExternalOptions[] = {kPath};
 
 inline constexpr OptionGroup kCreateExternalGroup{
-  "External", kCreateExternalOptions, {}};
+  "Create table ... using external", kCreateExternalOptions, {}};
 
 inline constexpr OptionGroup kCopyParserGroups[] = {kStorageGroup,
                                                     kCopyFormatGroup};

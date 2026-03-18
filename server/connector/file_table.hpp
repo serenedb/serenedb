@@ -79,6 +79,9 @@ struct ReaderOptions {
   // if set then progress messages are written here
   ReportCallback report_callback;
   std::shared_ptr<StorageOptions> storage_options;
+  // if non-empty, this column is synthesized as a row index (BIGINT, 0-based)
+  // via ScanSpec::ColumnType::kRowIndex instead of being read from the file
+  std::string row_index_column;
 
   const auto& Reader() const { return dwio.reader; }
   auto& Reader() { return dwio.reader; }
@@ -108,6 +111,8 @@ class FileSplitSource final : public axiom::connector::SplitSource {
 class FileTable : public axiom::connector::Table {
  public:
   explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
+  FileTable(velox::RowTypePtr type, std::string_view file_path,
+            std::string_view row_index_column);
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
@@ -130,7 +135,8 @@ class ReadFileTable final : public FileTable {
  public:
   ReadFileTable(velox::RowTypePtr type, std::string_view file_path,
                 std::shared_ptr<ReaderOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+    : FileTable{std::move(type), file_path, options->row_index_column},
+      _options{std::move(options)} {}
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
@@ -279,6 +285,7 @@ class FileDataSource final : public velox::connector::DataSource {
   // We store RowReaderOptions to keep ScanSpec alive
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
+  std::string _row_index_column;
   uint64_t _completed_rows = 0;
   std::chrono::high_resolution_clock::time_point _last_report_time;
   ReportCallback _report_callback;

@@ -337,7 +337,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       SDB_ASSERT(slice.isArray());
     }
     while (true) {
-      auto step_path = GetPath(path, "step", step);
+      auto step_path = OptionInfo::GetPath(path, "step", step);
       std::string_view type;
       bool type_from_copy = false;
       if (OptionsParser::HasOption(tokenizer_options::kTemplate, step_path)) {
@@ -372,7 +372,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseMinHash(std::string_view path) {
-    auto analyzer_path = GetPath(path, kAnalyzerField);
+    auto analyzer_path = OptionInfo::GetPath(path, kAnalyzerField);
     std::string_view type;
     bool type_from_template = false;
     if (OptionsParser::HasOption(tokenizer_options::kTemplate, analyzer_path) ||
@@ -431,12 +431,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()));
     }
-  }
-
-  template<typename... Args>
-  std::string GetPath(std::string_view path, Args&&... args) {
-    return absl::StrCat(path, path.empty() ? "" : "_",
-                        std::forward<Args>(args)...);
   }
 
   vpack::Builder _builder;

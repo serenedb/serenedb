@@ -170,7 +170,7 @@ class OptionsParser {
                              std::string_view path = "") {
     decltype(_options)::iterator it;
     if (!path.empty()) {
-      auto full_name = absl::StrCat(path, "_", info.name);
+      auto full_name = OptionInfo::GetPath(path, info.name);
       it = _options.find(full_name);
     } else {
       it = _options.find(info.name);
@@ -195,7 +195,7 @@ class OptionsParser {
 
   bool HasOption(std::string_view name, std::string_view path = "") const {
     if (!path.empty()) {
-      auto full_name = absl::StrCat(path, "_", name);
+      auto full_name = OptionInfo::GetPath(path, name);
       return _options.contains(full_name);
     } else {
       return _options.contains(name);

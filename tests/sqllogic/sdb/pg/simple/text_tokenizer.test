@@ -1286,10 +1286,10 @@ CREATE TEXT SEARCH DICTIONARY copy_t1(
 
 
 query
-SELECT ts_lexize('t1', 'a QUICK Brown FoX');
+SELECT ts_lexize('copy_t1', 'a QUICK Brown FoX');
 ----
 ts_lexize
-{a,QUICK,Brown,FoX}
+{A,QUICK,BROWN,FOX}
 
 
 statement ok

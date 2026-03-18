@@ -4320,7 +4320,7 @@ struct FormatTraits128 {
         best_size = size_delta_streamvbyte1234;
       }
 
-      if constexpr (kSupportBitset) {
+      {
         const auto size =
           1 + FromBits<uint64_t>(for_max + 1) * sizeof(uint64_t);
         if (size - 2 < best_size) {
@@ -4948,8 +4948,6 @@ struct FormatTraits128 {
   };
 
  private:
-  static constexpr bool kSupportBitset = true;
-
   // TODO: Should always return true
   static constexpr bool SupportIfBlock(uint32_t len) {
     return len == kBlockSize;

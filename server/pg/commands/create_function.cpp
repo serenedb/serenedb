@@ -68,7 +68,6 @@ constexpr OptionInfo kFunctionOptions[] = {
   kLanguage, kVolatility, kParallel, kStrict,    kSecurity,
   kCost,     kRows,       kWindow,   kLeakproof, kAs};
 constexpr OptionGroup kFunctionGroup{"Function", kFunctionOptions, {}};
-constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
 
 // Parses options and return function body and catalog options.
 // For the pre-PG14 syntax function body is stored in the "as" option.
@@ -79,9 +78,8 @@ constexpr OptionGroup kFunctionOptionGroups[] = {kFunctionGroup};
 class CreateFunctionOptionsParser : public OptionsParser {
  public:
   CreateFunctionOptionsParser(const List* pg_options)
-    : OptionsParser{MakeOptions(pg_options, {}),
-                    kFunctionOptionGroups,
-                    {.operation = "CREATE FUNCTION"}} {
+    : OptionsParser{
+        pg_options, kFunctionGroup, {.operation = "CREATE FUNCTION"}} {
     ParseOptions([&] { Parse(); });
   }
 

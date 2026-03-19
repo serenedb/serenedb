@@ -38,8 +38,8 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "utils/elog.h"
 #include "query/context.h"
+#include "utils/elog.h"
 
 namespace sdb::pg {
 
@@ -69,11 +69,13 @@ inline constexpr OptionInfo kPlanOptions[] = {
 // parameters
 inline constexpr OptionInfo kAnalyze{"analyze", false,
                                      "Execute the query and show run times"};
-inline constexpr OptionInfo kRegisters{"registers", false,
-                                       "Show register allocation"};
-inline constexpr OptionInfo kOneline{"oneline", false,
-                                     "One-line output format"};
-inline constexpr OptionInfo kCost{"cost", false, "Show estimated costs"};
+inline constexpr OptionInfo kRegisters{
+  "registers", false,
+  "Show internal column register names in all plan outputs"};
+inline constexpr OptionInfo kOneline{
+  "oneline", false, "One-line output format for physical plan"};
+inline constexpr OptionInfo kCost{"cost", false,
+                                  "Show estimated costs in physical plan"};
 
 inline constexpr OptionInfo kParamOptions[] = {kAnalyze, kRegisters, kOneline,
                                                kCost};
@@ -271,9 +273,9 @@ class OptionsParser {
     if (it == _options.end()) {
       return;
     }
-    std::string help;
+    std::string help = "\n";
     if (_explain) {
-      absl::StrAppend(&help, "\nExplain, use WITH (EXPLAIN 'option_name'):\n");
+      absl::StrAppend(&help, "Explain, use WITH (EXPLAIN 'option_name'):\n");
       absl::StrAppend(&help, FormatHelp(explain_options::kExplainGroup));
     }
     absl::StrAppend(&help, FormatHelp(_option_group));

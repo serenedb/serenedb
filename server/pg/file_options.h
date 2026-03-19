@@ -186,16 +186,13 @@ inline constexpr OptionInfo kPath{"path", ""sv,
 
 inline constexpr OptionInfo kCreateExternalOptions[] = {kPath};
 
+inline constexpr OptionGroup kCreateExternalGroupSubgroups[] = {kStorageGroup,
+                                                                kFormatGroup};
 inline constexpr OptionGroup kCreateExternalGroup{
-  "External", kCreateExternalOptions, {}};
+  "External", kCreateExternalOptions, kCreateExternalGroupSubgroups};
 
 inline constexpr OptionGroup kCopySubgroups[] = {kStorageGroup,
                                                  kCopyFormatGroup};
 inline constexpr OptionGroup kCopyGroup{"Copy", {}, kCopySubgroups};
-
-inline constexpr OptionGroup kCreateExternalParserSubgroups[] = {
-  kCreateExternalGroup, kStorageGroup, kFormatGroup};
-inline constexpr OptionGroup kCreateExternalParserGroup{
-  "Create External", {}, kCreateExternalParserSubgroups};
 
 }  // namespace sdb::pg::file_options

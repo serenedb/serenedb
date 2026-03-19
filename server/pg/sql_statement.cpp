@@ -110,8 +110,8 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   auto rollback = GetRollback(connection_ctx, schemaname, name,
                               &catalog::LogicalCatalog::DropTable, state);
-  return query::Query::CreatePipeline(query_desc.root, query_ctx,
-                                      std::move(executors));
+  return query::Query::CreatePipeline(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
 
 std::unique_ptr<query::Query> CreateIndexPipeline(
@@ -146,8 +146,8 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
 
   auto rollback = GetRollback(connection_ctx, schemaname, name,
                               &catalog::LogicalCatalog::DropIndex, state);
-  return query::Query::CreatePipeline(query_desc.root, query_ctx,
-                                      std::move(executors));
+  return query::Query::CreatePipeline(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
 
 }  // namespace

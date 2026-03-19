@@ -1,64 +1,5 @@
 hash-threshold 100
 
-
-onlyif serenedb
-query
-EXPLAIN (LOGICAL) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
-----
-QUERY PLAN
-LOGICAL PLAN:
-<slt:ignore>
-
-
-onlyif serenedb
-query
-EXPLAIN (EXECUTION) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
-----
-QUERY PLAN
-EXECUTION PLAN:
-<slt:ignore>
-
-
-onlyif serenedb
-query
-EXPLAIN (LOGICAL, EXECUTION) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
-----
-QUERY PLAN
-LOGICAL PLAN:
-<slt:ignore>
-EXECUTION PLAN:
-<slt:ignore>
-
-
-onlyif serenedb
-query error
-SELECT * FROM vedernikoff;
-----
-db error: ERROR: relation "vedernikoff" does not exist
-
-
-onlyif serenedb
-query
-EXPLAIN (ANALYZE, EXECUTION) CREATE TABLE explain_ctas_t AS SELECT x FROM generate_series(1, 10) AS t(x);
-----
-QUERY PLAN
-EXECUTION PLAN WITH STATS:
-<slt:ignore>
-
-
-onlyif serenedb
-query
-SELECT count(*) FROM explain_ctas_t;
-----
-count
-10
-
-
-onlyif serenedb
-statement ok
-DROP TABLE explain_ctas_t;
-
-
 statement count 10000
 CREATE TABLE vedernikoff AS
 SELECT
@@ -235,3 +176,64 @@ INTO vedernikoff
 FROM
   generate_series(1, 100) AS clickclack(iq),
   generate_series(1, 100) AS serenedb(salary);
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+onlyif serenedb
+query
+EXPLAIN (LOGICAL) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    x := x
+  - Project: -> ROW<"x":BIGINT>
+      x := generate_series
+    - Project: -> ROW<"generate_series":BIGINT>
+        generate_series := generate_series
+      - Unnest: -> ROW<"generate_series":BIGINT>
+          [generate_series] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+        - Values: 1 rows -> ROW<>
+
+
+onlyif serenedb
+query error
+SELECT * FROM vedernikoff;
+----
+db error: ERROR: relation "vedernikoff" does not exist
+
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=1:
+-- TableWrite[5][serenedb(table=vedernikoff, kind=INSERT)] -> rows:BIGINT
+   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- Project[4][expressions: (x:BIGINT, "x"), (dt1.__p17:BIGINT, null)] -> "x":BIGINT, "dt1.__p17":BIGINT
+     Output: 10 rows (136B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 128B, Memory allocations: 1, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+    -- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
+       Output: 10 rows (128B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+      -- Unnest[2][dt4.__p10] -> "generate_series":BIGINT
+         Output: 10 rows (128B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 448B, Memory allocations: 4, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+        -- Project[1][expressions: (dt4.__p10:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...5 more})] -> "dt4.__p10":ARRAY<BIGINT>
+           Output: 1 rows (224B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+          -- Values[0][1 rows in 1 vectors] ->
+             Input: 0 rows (0B, 0 batches), Output: 1 rows (0B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff;
+----
+count
+10
+
+
+onlyif serenedb
+statement ok
+DROP TABLE vedernikoff;

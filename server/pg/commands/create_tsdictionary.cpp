@@ -134,13 +134,12 @@ constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
 constexpr OptionGroup kTSDictionaryGroup = {
   "Text Search Dictionary", kTSDictionaryRootOptions,
   tokenizer_options::kTokenizerSubgroups};
-constexpr OptionGroup kTSDictionaryGroups[] = {kTSDictionaryGroup};
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(const List* ts_dictionary_options)
-    : OptionsParser{MakeOptions(ts_dictionary_options, {}),
-                    kTSDictionaryGroups,
+    : OptionsParser{ts_dictionary_options,
+                    kTSDictionaryGroup,
                     {.operation = "CREATE TEXT SEARCH DICTIONARY"}} {
     ParseOptions([&] { Parse(); });
   }

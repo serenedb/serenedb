@@ -75,6 +75,7 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/create_index_options.h"
 #include "pg/explain_options.h"
 #include "pg/file_options.h"
 #include "pg/file_options_parser.h"
@@ -2582,6 +2583,12 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
       input_type.childAt(col_idx), input_type.nameOf(col_idx));
     column_exprs.emplace_back(std::move(expr));
   });
+
+  // TODO: reuse parsed shard options in CreateIndex to avoid double parsing.
+  // We must parse WITH options here at analysis time because they may contain
+  // EXPLAIN flags that affect query planning (e.g. choosing the explain
+  // executor).
+  CreateIndexOptionsParser{stmt.options, _query_ctx.explain_params};
 
   object->EnsureTable(_transaction);
   state.root = std::make_shared<lp::TableWriteNode>(

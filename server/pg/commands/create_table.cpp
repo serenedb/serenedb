@@ -56,7 +56,7 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
     : FileOptionsParser{
         {},
         options,
-        file_options::kCreateExternalParserGroup,
+        file_options::kCreateExternalGroup,
         {.operation = "CREATE TABLE", .notice = [&conn_ctx](std::string msg) {
            conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
          }}} {

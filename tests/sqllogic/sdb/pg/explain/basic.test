@@ -105,3 +105,28 @@ LOGICAL PLAN:
 
 query
 EXPLAIN SELECT 1;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[1][expressions: (?column?:INTEGER, 1)] -> "?column?":INTEGER
+  -- Values[0][1 rows in 1 vectors] ->
+
+
+query error
+EXPLAIN (HELP) SELECT 'please sell my soul for vedernikoff heart';
+----
+db error: ERROR: 
+Explain:
+  Plans:
+    all_plans (boolean) [default: false] - Show all plan stages
+    logical (boolean) [default: false] - Show logical plan
+    physical (boolean) [default: false] - Show physical plan
+    execution (boolean) [default: false] - Show execution plan
+    initial_query_graph (boolean) [default: false] - Show initial query graph
+    final_query_graph (boolean) [default: false] - Show final query graph
+  Parameters:
+    analyze (boolean) [default: false] - Execute the query and show run times
+    registers (boolean) [default: false] - Show internal column register names in all plan outputs
+    oneline (boolean) [default: false] - One-line output format for physical plan
+    cost (boolean) [default: false] - Show estimated costs in physical plan

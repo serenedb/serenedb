@@ -85,7 +85,7 @@ count
 
 connection after_index_drop
 query
-SELECT * FROM s1.t;
+SELECT id FROM s1.t;
 ----
 id
 1

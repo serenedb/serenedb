@@ -5,7 +5,7 @@
 
 namespace sdb::pg {
 
-namespace create_index_options {
+namespace sdb::pg {
 
 inline constexpr OptionInfo kCommitInterval{"commit_interval", 1000,
                                             "Commit interval in milliseconds"};

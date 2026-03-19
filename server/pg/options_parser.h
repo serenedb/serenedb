@@ -299,7 +299,7 @@ class OptionsParser {
 
   void CheckUnrecognizedOptions(const Options& options,
                                 const OptionGroup& option_group) const {
-    auto known_names = AllOptionNames(option_group);
+    auto known_names = option_group.FlatNames();
     known_names.emplace_back("help");
     if (_explain) {
       known_names.emplace_back("explain");

@@ -245,8 +245,6 @@ struct OptionGroup {
   }
 };
 
-std::vector<std::string_view> AllOptionNames(const OptionGroup& group);
-
 std::string FormatHelp(const OptionGroup& group);
 
 }  // namespace sdb::pg

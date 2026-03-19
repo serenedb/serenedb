@@ -116,8 +116,4 @@ std::string FormatHelp(const OptionGroup& group) {
   return result;
 }
 
-std::vector<std::string_view> AllOptionNames(const OptionGroup& group) {
-  return group.FlatNames();
-}
-
 }  // namespace sdb::pg

@@ -119,8 +119,15 @@ if [ "${PUSH_IMAGES_2_REGISTRY:=false}" = true ]; then
 
 	# Login if credentials provided
 	if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
-		log "Logging in to ${DOCKER_REGISTRY}..."
-		echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+		if [[ "${DOCKER_REGISTRY}" =~ [.:] ]]; then
+			log "Logging in to ${DOCKER_REGISTRY}..."
+			echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+			trap "docker logout ${DOCKER_REGISTRY}; log 'Logged out from ${DOCKER_REGISTRY}'" EXIT
+		else
+			log "Logging in to Docker Hub..."
+			echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+			trap "docker logout; log 'Logged out from Docker Hub'" EXIT
+		fi
 	fi
 
 	# Push version tag

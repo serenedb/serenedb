@@ -42,8 +42,19 @@ const config: ForgeConfig = {
         }),
         new MakerZIP({}, ["darwin"]),
         new MakerDMG({ format: "ULFO" }),
-        new MakerRpm({}),
-        new MakerDeb({}, ["linux"]),
+        new MakerRpm({
+            options: {
+                bin: "SereneUI",
+            },
+        }),
+        new MakerDeb(
+            {
+                options: {
+                    bin: "SereneUI",
+                },
+            },
+            ["linux"],
+        ),
     ],
     plugins: [
         new AutoUnpackNativesPlugin({}),

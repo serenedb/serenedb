@@ -173,6 +173,11 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
 PgSQLCommTaskBase::~PgSQLCommTaskBase() {
+  if (_connection_ctx && _connection_ctx->HasTransactionBegin()) {
+    // if it doesn't have BEGIN - it's supposed to be rollbacked / commited
+    // before, there're checks in ~Transaction to ensure that.
+    std::ignore = _connection_ctx->Rollback();
+  }
   if (_key != 0) {
     _feature.UnregisterTask(_key);
   }

@@ -1,7 +1,7 @@
 {
     "name": "serene-ui-electron",
     "productName": "SereneUI",
-    "version": "26.03.1",
+    "version": "26.03.2",
     "description": "SereneUI Electron application",
     "author": "SereneDB",
     "main": ".webpack/main",

@@ -131,15 +131,14 @@ constexpr OptionInfo kTSDictionaryRootOptions[] = {
 constexpr OptionGroup kTSDictionaryGroup = {
   "Text Search Dictionary", kTSDictionaryRootOptions,
   tokenizer_options::kTokenizerSubgroups};
-constexpr OptionGroup kTSDictionaryGroups[] = {kTSDictionaryGroup};
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(std::shared_ptr<const catalog::Snapshot> snapshot,
                             ObjectId db_id, std::string_view current_schema,
                             const List* ts_dictionary_options)
-    : OptionsParser{MakeOptions(ts_dictionary_options, {}),
-                    kTSDictionaryGroups,
+    : OptionsParser{ts_dictionary_options,
+                    kTSDictionaryGroup,
                     {.operation = "CREATE TEXT SEARCH DICTIONARY"}},
       _snapshot{std::move(snapshot)},
       _db_id{db_id},

@@ -196,7 +196,7 @@ CREATE INDEX index_ts on tstest USING inverted(a test_english);
 statement error db error: ERROR: Index column opclass options are not supported.
 CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
 
-statement error db error: ERROR: Index column definition is not supported.
+statement error db error: ERROR: Unsupported index column definition.
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 
 statement ok

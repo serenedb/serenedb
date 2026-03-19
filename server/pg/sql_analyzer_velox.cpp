@@ -2568,6 +2568,10 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   }
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
+    if (!index_elem.name) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("Unsupported index column definition"));
+    }
     const std::string_view colname = index_elem.name;
     auto maybe_col_idx = table_type.getChildIdxIfExists(colname);
     if (!maybe_col_idx) {

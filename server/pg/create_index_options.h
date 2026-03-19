@@ -4,8 +4,7 @@
 #include "search/inverted_index_shard.h"
 
 namespace sdb::pg {
-
-namespace sdb::pg {
+namespace create_index_options {
 
 inline constexpr OptionInfo kCommitInterval{"commit_interval", 1000,
                                             "Commit interval in milliseconds"};

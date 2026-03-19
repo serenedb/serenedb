@@ -20,6 +20,9 @@
 
 #include "pg/tokenizer_options.h"
 
+#include <frozen/unordered_set.h>
+
+#include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
@@ -30,6 +33,13 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::tokenizer_options {
+
+void CheckFileExists(std::string_view name) {
+  if (!std::filesystem::exists(name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("File \"", name, "\" does not exist"));
+  }
+}
 
 void CheckCase(std::string_view value) {
   if (!magic_enum::enum_cast<irs::Case>(value, magic_enum::case_insensitive)) {
@@ -45,6 +55,23 @@ void CheckThreshold(double value) {
                     ERR_MSG("invalid value in \"", kThreshold.name,
                             "\" parameter. Should be in [0, 1]"),
                     ERR_HINT(kThreshold.description));
+  }
+}
+
+void CheckTemplate(std::string_view value) {
+  for (const auto& group : kTokenizerSubgroups) {
+    if (group.name == value) {
+      return;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Invalid type of text search dictionary"));
+}
+
+void CheckNumHashes(int value) {
+  if (value <= 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("The number of hashes should be positive number"));
   }
 }
 

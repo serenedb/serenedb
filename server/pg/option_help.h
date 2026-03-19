@@ -83,11 +83,22 @@ struct OptionInfo {
     }
   }
 
+  template<typename... Args>
+  static std::string AdjustPrefix(std::string_view prefix, Args&&... args) {
+    return absl::StrCat(prefix, prefix.empty() ? "" : "_",
+                        std::forward<Args>(args)...);
+  }
+
   using DefaultValue =
     std::variant<std::monostate, std::string_view, bool, int, double, char>;
   using ConstraintFunction =
     std::variant<std::monostate, void (*)(std::string_view), void (*)(bool),
                  void (*)(int), void (*)(double), void (*)(char)>;
+
+  bool operator==(std::string_view option_name) const {
+    return name == option_name;
+  }
+
   std::string_view name;
   Type type;
   std::string_view description;
@@ -240,9 +251,6 @@ struct OptionGroup {
   }
 };
 
-std::vector<std::string_view> AllOptionNames(
-  std::span<const OptionGroup> groups);
-
-std::string FormatHelp(std::span<const OptionGroup> groups);
+std::string FormatHelp(const OptionGroup& group);
 
 }  // namespace sdb::pg

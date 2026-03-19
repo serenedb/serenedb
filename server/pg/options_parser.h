@@ -24,6 +24,7 @@
 #include <absl/strings/internal/damerau_levenshtein_distance.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/str_replace.h>
 #include <basics/containers/flat_hash_map.h>
 
 #include <algorithm>
@@ -37,64 +38,98 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "query/context.h"
 #include "utils/elog.h"
 
 namespace sdb::pg {
 
 using Options = containers::FlatHashMap<std::string_view, const DefElem*>;
 
+namespace explain_options {
+
+using query::ExplainWith;
+using ExplainOptions = query::EnumType<ExplainWith>;
+
+// plans
+inline constexpr OptionInfo kAllPlans{"all_plans", false,
+                                      "Show all plan stages"};
+inline constexpr OptionInfo kLogical{"logical", false, "Show logical plan"};
+inline constexpr OptionInfo kPhysical{"physical", false, "Show physical plan"};
+inline constexpr OptionInfo kExecution{"execution", false,
+                                       "Show execution plan"};
+inline constexpr OptionInfo kInitialQueryGraph{"initial_query_graph", false,
+                                               "Show initial query graph"};
+inline constexpr OptionInfo kFinalQueryGraph{"final_query_graph", false,
+                                             "Show final query graph"};
+
+inline constexpr OptionInfo kPlanOptions[] = {
+  kAllPlans,  kLogical,           kPhysical,
+  kExecution, kInitialQueryGraph, kFinalQueryGraph};
+
+// parameters
+inline constexpr OptionInfo kAnalyze{"analyze", false,
+                                     "Execute the query and show run times"};
+inline constexpr OptionInfo kRegisters{
+  "registers", false,
+  "Show internal column register names in all plan outputs"};
+inline constexpr OptionInfo kOneline{
+  "oneline", false, "One-line output format for physical plan"};
+inline constexpr OptionInfo kCost{"cost", false,
+                                  "Show estimated costs in physical plan"};
+
+inline constexpr OptionInfo kParamOptions[] = {kAnalyze, kRegisters, kOneline,
+                                               kCost};
+
+inline constexpr OptionGroup kPlanGroup{"Plans", kPlanOptions, {}};
+inline constexpr OptionGroup kParamGroup{"Parameters", kParamOptions, {}};
+inline constexpr OptionGroup kExplainSubgroups[] = {kPlanGroup, kParamGroup};
+inline constexpr OptionGroup kExplainGroup{"Explain", {}, kExplainSubgroups};
+
+inline void AddByName(std::string_view name, ExplainOptions& result) {
+  if (name == kAllPlans) {
+    result.Add(ExplainWith::Logical, ExplainWith::InitialQueryGraph,
+               ExplainWith::FinalQueryGraph, ExplainWith::Physical,
+               ExplainWith::Execution);
+    return;
+  }
+  SDB_ASSERT(absl::c_contains(kExplainGroup.FlatNames(), name));
+  // delete _ from snake case
+  auto normalized = absl::StrReplaceAll(name, {{"_", ""}});
+  auto flag = magic_enum::enum_cast<ExplainWith>(normalized,
+                                                 magic_enum::case_insensitive);
+  SDB_ASSERT(flag, "couldn't parse from string to enum: ", normalized);
+  result.Add(*flag);
+}
+
+}  // namespace explain_options
+
 struct OptionsContext {
   std::string_view operation;
   std::string_view query_string;
   std::function<void(std::string)> notice;
+  explain_options::ExplainOptions* explain = nullptr;
 };
 
 class OptionsParser {
  public:
-  OptionsParser(Options options, std::span<const OptionGroup> option_groups,
+  OptionsParser(const List* options, const OptionGroup& option_group,
                 OptionsContext context)
     : _query_string{context.query_string},
       _operation{context.operation},
       _notice{std::move(context.notice)},
-      _options{std::move(options)},
-      _option_groups{option_groups} {
-    HandleHelp(option_groups);
+      _explain{context.explain},
+      _option_group{option_group} {
+    MakeOptions(options);
+    HandleHelp();
   }
 
  protected:
-  static Options MakeOptions(const List* options,
-                             std::string_view query_string) {
-    Options result;
-    result.reserve(list_length(options));
-    VisitNodes(options, [&](const DefElem& option) {
-      auto [_, emplaced] =
-        result.try_emplace(std::string_view{option.defname}, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
-                          query_string, ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-    return result;
-  }
-
-  void HandleHelp(std::span<const OptionGroup> groups) {
-    auto it = _options.find("help");
-    if (it == _options.end()) {
-      return;
-    }
-    auto help = absl::StrCat("\n", FormatHelp(groups));
-    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
-                    ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(help));
-  }
-
   template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
-  T EraseOptionOrDefault() {
+  T EraseOptionOrDefault(std::string_view prefix = "") {
     static_assert(Info.type != OptionInfo::Type::Enum,
                   "Use EnumOptionInfo overload for enum options");
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
-    if (const auto* option = EraseOption(Info, !kIsBool)) {
+    if (const auto* option = EraseOption(Info, !kIsBool, prefix)) {
       if constexpr (kIsBool) {
         if (!option->arg) {
           return true;
@@ -123,7 +158,7 @@ class OptionsParser {
   template<const auto& Info>
     requires std::is_enum_v<
       typename std::remove_cvref_t<decltype(Info)>::enum_type>
-  auto EraseOptionOrDefault() {
+  auto EraseOptionOrDefault(std::string_view prefix = "") {
     using E = typename std::remove_cvref_t<decltype(Info)>::enum_type;
 
     auto make_hint = [&] {
@@ -135,7 +170,7 @@ class OptionsParser {
                       }));
     };
 
-    if (const auto* option = EraseOption(Info.base)) {
+    if (const auto* option = EraseOption(Info.base, true, prefix)) {
       auto raw = TryGet<std::string_view>(option->arg);
       if (!raw) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -166,8 +201,15 @@ class OptionsParser {
 
   // requires_parameter == presence flag like ... WITH (FLAG)
   const DefElem* EraseOption(const OptionInfo& info,
-                             bool requires_parameter = true) {
-    auto it = _options.find(info.name);
+                             bool requires_parameter = true,
+                             std::string_view prefix = "") {
+    decltype(_options)::iterator it;
+    if (!prefix.empty()) {
+      auto full_name = OptionInfo::AdjustPrefix(prefix, info.name);
+      it = _options.find(full_name);
+    } else {
+      it = _options.find(info.name);
+    }
     if (it == _options.end()) {
       return nullptr;
     }
@@ -182,8 +224,17 @@ class OptionsParser {
     return option;
   }
 
-  bool HasOption(const OptionInfo& info) const {
-    return _options.contains(info.name);
+  bool HasOption(const OptionInfo& info, std::string_view prefix = "") const {
+    return HasOption(info.name, prefix);
+  }
+
+  bool HasOption(std::string_view name, std::string_view prefix = "") const {
+    if (!prefix.empty()) {
+      auto full_name = OptionInfo::AdjustPrefix(prefix, name);
+      return _options.contains(full_name);
+    } else {
+      return _options.contains(name);
+    }
   }
 
   int OptionLocation(const OptionInfo& info) const {
@@ -203,11 +254,79 @@ class OptionsParser {
   }
 
  private:
-  void CheckUnrecognizedOptions() const {
-    auto known_names = AllOptionNames(_option_groups);
-    known_names.emplace_back("help");
+  void MakeOptions(const List* options) {
+    _options.reserve(list_length(options));
+    Options explain;
+    VisitNodes(options, [&](const DefElem& option) {
+      std::string_view option_name = option.defname;
+      if (_explain && option_name == "explain") {
+        auto name = TryGet<std::string_view>(option.arg);
+        if (!name) {
+          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                          ERR_MSG("invalid value for parameter \"explain\": \"",
+                                  DeparseValue(option.arg), "\""));
+        }
+        explain.try_emplace(*name, &option);
+        return;
+      }
+      auto [_, emplaced] = _options.try_emplace(option_name, &option);
+      if (!emplaced) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    });
 
-    for (const auto& [name, option] : _options) {
+    if (!explain.empty()) {
+      SDB_ASSERT(_explain);
+      ParseExplainElems(std::move(explain));
+    }
+  }
+
+  void HandleHelp() {
+    auto it = _options.find("help");
+    if (it == _options.end()) {
+      return;
+    }
+    std::string help = "\n";
+    if (_explain) {
+      absl::StrAppend(&help, "Explain, use WITH (EXPLAIN 'option_name'):\n");
+      absl::StrAppend(&help, FormatHelp(explain_options::kExplainGroup));
+    }
+    absl::StrAppend(&help, FormatHelp(_option_group));
+    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
+                    ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(help));
+  }
+
+  void ParseExplainElems(Options explain) {
+    for (const auto& name : explain_options::kExplainGroup.FlatNames()) {
+      if (auto it = std::ranges::find_if(explain,
+                                         [&](const auto& entry) {
+                                           return absl::EqualsIgnoreCase(
+                                             entry.first, name);
+                                         });
+          it != explain.end()) {
+        explain.erase(it);
+        explain_options::AddByName(name, *_explain);
+      }
+    }
+    CheckUnrecognizedOptions(explain, explain_options::kExplainGroup);
+  }
+
+  void CheckUnrecognizedOptions() const {
+    CheckUnrecognizedOptions(_options, _option_group);
+  }
+
+  void CheckUnrecognizedOptions(const Options& options,
+                                const OptionGroup& option_group) const {
+    auto known_names = option_group.FlatNames();
+    known_names.emplace_back("help");
+    if (_explain) {
+      known_names.emplace_back("explain");
+    }
+
+    for (const auto& [name, option] : options) {
       if (absl::c_contains(known_names, name)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -262,8 +381,9 @@ class OptionsParser {
   std::string_view _query_string;
   std::string _operation;
   std::function<void(std::string)> _notice;
+  explain_options::ExplainOptions* _explain;
   Options _options;
-  std::span<const OptionGroup> _option_groups;
+  const OptionGroup& _option_group;
 };
 
 }  // namespace sdb::pg

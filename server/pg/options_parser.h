@@ -90,11 +90,11 @@ class OptionsParser {
   }
 
   template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
-  T EraseOptionOrDefault(std::string_view path = "") {
+  T EraseOptionOrDefault(std::string_view prefix = "") {
     static_assert(Info.type != OptionInfo::Type::Enum,
                   "Use EnumOptionInfo overload for enum options");
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
-    if (const auto* option = EraseOption(Info, !kIsBool, path)) {
+    if (const auto* option = EraseOption(Info, !kIsBool, prefix)) {
       if constexpr (kIsBool) {
         if (!option->arg) {
           return true;
@@ -123,7 +123,7 @@ class OptionsParser {
   template<const auto& Info>
     requires std::is_enum_v<
       typename std::remove_cvref_t<decltype(Info)>::enum_type>
-  auto EraseOptionOrDefault(std::string_view path = "") {
+  auto EraseOptionOrDefault(std::string_view prefix = "") {
     using E = typename std::remove_cvref_t<decltype(Info)>::enum_type;
 
     auto make_hint = [&] {
@@ -135,7 +135,7 @@ class OptionsParser {
                       }));
     };
 
-    if (const auto* option = EraseOption(Info.base, true, path)) {
+    if (const auto* option = EraseOption(Info.base, true, prefix)) {
       auto raw = TryGet<std::string_view>(option->arg);
       if (!raw) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -167,10 +167,10 @@ class OptionsParser {
   // requires_parameter == presence flag like ... WITH (FLAG)
   const DefElem* EraseOption(const OptionInfo& info,
                              bool requires_parameter = true,
-                             std::string_view path = "") {
+                             std::string_view prefix = "") {
     decltype(_options)::iterator it;
-    if (!path.empty()) {
-      auto full_name = OptionInfo::GetPath(path, info.name);
+    if (!prefix.empty()) {
+      auto full_name = OptionInfo::AdjustPrefix(prefix, info.name);
       it = _options.find(full_name);
     } else {
       it = _options.find(info.name);
@@ -189,13 +189,13 @@ class OptionsParser {
     return option;
   }
 
-  bool HasOption(const OptionInfo& info, std::string_view path = "") const {
-    return HasOption(info.name, path);
+  bool HasOption(const OptionInfo& info, std::string_view prefix = "") const {
+    return HasOption(info.name, prefix);
   }
 
-  bool HasOption(std::string_view name, std::string_view path = "") const {
-    if (!path.empty()) {
-      auto full_name = OptionInfo::GetPath(path, name);
+  bool HasOption(std::string_view name, std::string_view prefix = "") const {
+    if (!prefix.empty()) {
+      auto full_name = OptionInfo::AdjustPrefix(prefix, name);
       return _options.contains(full_name);
     } else {
       return _options.contains(name);

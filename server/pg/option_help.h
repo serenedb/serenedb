@@ -84,8 +84,8 @@ struct OptionInfo {
   }
 
   template<typename... Args>
-  static std::string GetPath(std::string_view path, Args&&... args) {
-    return absl::StrCat(path, path.empty() ? "" : "_",
+  static std::string AdjustPrefix(std::string_view prefix, Args&&... args) {
+    return absl::StrCat(prefix, prefix.empty() ? "" : "_",
                         std::forward<Args>(args)...);
   }
 

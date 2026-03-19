@@ -37,7 +37,7 @@
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
-#include "pg/options_parser.h"
+#include "pg/create_index_options.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -98,43 +98,6 @@ Result ParseIndexOptions(const IndexStmt& index,
   return {};
 }
 
-constexpr OptionInfo kCommitInterval{"commit_interval", 1000,
-                                     "Commit interval in milliseconds"};
-constexpr OptionInfo kConsolidationInterval{
-  "consolidation_interval", 1000, "Consolidation interval in milliseconds"};
-constexpr OptionInfo kCleanupIntervalStep{"cleanup_interval_step", 1,
-                                          "Cleanup interval step"};
-constexpr OptionInfo kIndexOptions[] = {kCommitInterval, kConsolidationInterval,
-                                        kCleanupIntervalStep};
-constexpr OptionGroup kIndexGroup{"Index", kIndexOptions, {}};
-constexpr OptionGroup kIndexOptionGroups[] = {kIndexGroup};
-
-class CreateIndexOptionsParser : public OptionsParser {
- public:
-  CreateIndexOptionsParser(const List* options)
-    : OptionsParser{MakeOptions(options, {}),
-                    kIndexOptionGroups,
-                    {.operation = "CREATE INDEX"}} {
-    ParseOptions([&] { Parse(); });
-  }
-
-  search::InvertedIndexShardOptions GetOptions() && {
-    return std::move(_shard_options);
-  }
-
- private:
-  void Parse() {
-    _shard_options.base.commit_interval_ms =
-      EraseOptionOrDefault<kCommitInterval>();
-    _shard_options.base.consolidation_interval_ms =
-      EraseOptionOrDefault<kConsolidationInterval>();
-    _shard_options.base.cleanup_interval_step =
-      EraseOptionOrDefault<kCleanupIntervalStep>();
-  }
-
-  search::InvertedIndexShardOptions _shard_options;
-};
-
 }  // namespace
 
 // TODO: use ErrorPosition in ThrowSqlError
@@ -168,7 +131,8 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     SDB_THROW(std::move(r));
   }
   if (options.type == IndexType::Inverted) {
-    CreateIndexOptionsParser parser{stmt.options};
+    explain_options::ExplainOptions dummy;
+    CreateIndexOptionsParser parser{stmt.options, dummy};
     auto shard_options = std::move(parser).GetOptions();
     auto r = catalog.CreateIndex(db, schema, relation_name, std::move(columns),
                                  std::move(options), shard_options,

@@ -26,22 +26,27 @@ on:
           - X64
           - arm
           - self-hosted
-        default: 'self-hosted'
+        default: 'X64'
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true
         type: boolean
         default: false
-      DOCKER_EXTRA_TAGS:
-        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
-        required: false
-        type: string
-        default: ''
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Private Docker Registry'
+        description: 'Push images to Docker Hub/Registry'
         required: true
         type: boolean
         default: false
+      CREATE_GITHUB_RELEASE:
+        description: 'Create a GitHub Release draft'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_EXTRA_TAGS:
+        description: 'Optional Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        required: false
+        type: string
+        default: ''
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
@@ -57,9 +62,9 @@ on:
         type: string
         required: false
         default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
-
 permissions:
   statuses: write
+  contents: write
 
 jobs:
   call-reusable:
@@ -75,5 +80,6 @@ jobs:
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+      CREATE_GITHUB_RELEASE: ${{ inputs.CREATE_GITHUB_RELEASE }}
 
     secrets: inherit

@@ -350,9 +350,7 @@ struct DocIterator : AttributeProvider {
         }
         fetcher.Fetch(docs);
         scorer.ScoreBlock(scores.data());
-        for (size_t j = 0; j != kScoreBlock; ++j) {
-          collector.Add(scores[j], docs[j]);
-        }
+        collector.AddDocs(docs.data(), kScoreBlock, scores.data());
       }
     });
   }

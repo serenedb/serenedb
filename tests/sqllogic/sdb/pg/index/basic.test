@@ -259,6 +259,20 @@ statement error
 CREATE INDEX help_idx ON help_test USING inverted(r) WITH (HELP);
 ----
 db error: ERROR: 
+Explain, use WITH (EXPLAIN 'option_name'):
+Explain:
+  Plans:
+    all_plans (boolean) [default: false] - Show all plan stages
+    logical (boolean) [default: false] - Show logical plan
+    physical (boolean) [default: false] - Show physical plan
+    execution (boolean) [default: false] - Show execution plan
+    initial_query_graph (boolean) [default: false] - Show initial query graph
+    final_query_graph (boolean) [default: false] - Show final query graph
+  Parameters:
+    analyze (boolean) [default: false] - Execute the query and show run times
+    registers (boolean) [default: false] - Show internal column register names in all plan outputs
+    oneline (boolean) [default: false] - One-line output format for physical plan
+    cost (boolean) [default: false] - Show estimated costs in physical plan
 Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds

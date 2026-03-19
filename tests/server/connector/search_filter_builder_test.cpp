@@ -55,6 +55,7 @@ LIBPG_QUERY_INCLUDES_END
 #include "connector_mock.hpp"
 #include "pg/pg_functions_registration.hpp"
 #include "pg/system_catalog.h"
+#include "search_test_utils.hpp"
 
 namespace {
 
@@ -68,6 +69,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     gServerState.SetGTest(true);
     gServerState.SetRole(ServerState::Role::Single);
     sdb::pg::RegisterVeloxFunctionsAndTypes();
+    RegisterSearchEntities();
   }
 
   static void TearDownTestCase() { gServerState.Reset(); }
@@ -98,8 +100,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
     };
     static catalog::Tokenizer gStringTokenizer(
       ObjectId{12346}, "test_segmentation", {}, make_segmentation());
-    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
-            .features = Features};
+    auto tokenizer = gStringTokenizer.GetTokenizer();
+    if (!tokenizer) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to crete tokenizer");
+    }
+    return {.analyzer = *std::move(tokenizer), .features = Features};
   }
 
   static sdb::catalog::ColumnAnalyzer SegmentationAnalyzerProvider(

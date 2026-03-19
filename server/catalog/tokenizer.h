@@ -42,7 +42,7 @@ namespace sdb::catalog {
 class Tokenizer : public SchemaObject {
  public:
   struct Deleter {
-    Tokenizer* tokenizer;
+    Tokenizer* tokenizer{nullptr};
 
     void operator()(irs::analysis::Analyzer* analyzer) {
       SDB_ASSERT(tokenizer);

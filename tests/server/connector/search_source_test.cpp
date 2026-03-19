@@ -20,12 +20,10 @@
 
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
-#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 
@@ -39,6 +37,7 @@
 #include "gtest/gtest.h"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
+#include "search_test_utils.hpp"
 
 using namespace sdb;
 using namespace sdb::connector;
@@ -64,12 +63,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
 
   static void SetUpTestCase() {
     velox::memory::MemoryManager::testingSetInstance({});
-    // TODO(Dronplane): make it to the main function of tests
-    // while running this many times makes no harm but is redundant
-    irs::analysis::analyzers::Init();
-    irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
+    test::RegisterSearchEntities();
   }
 
   void SetUp() final {

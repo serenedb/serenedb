@@ -114,6 +114,18 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
         InvertedIndexColumnInfo index_col;
         if (!c.opclass.empty()) {
           auto object_name = pg::ParseObjectName(c.opclass, schema_name);
+          if (object_name.schema != schema_name) {
+            // Technically nothing prevents us from allowing so.
+            // But that will make shema drop more complicated as we will need to
+            // check if any dictionaries are used in the indexes from other
+            // schemas and even fail schema drops on this case. For now if we
+            // drop text dictionary as a child entity we can be sure that
+            // indexes will also be dropped along with tables from same schema.
+            return std::unexpected<Result>{
+              std::in_place, ERROR_BAD_PARAMETER,
+              "Accessing text dictionary from different schema is not "
+              "supported."};
+          }
           auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
                                              object_name.relation);
           if (!dict) {

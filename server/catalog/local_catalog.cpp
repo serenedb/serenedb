@@ -241,7 +241,7 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, object);
+      return AddObjectDefinition<TokenizerDependency>(parent_id, object);
     } else if constexpr (std::is_same_v<T, Table>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -353,6 +353,12 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Index: {
         auto table_deps = GetDependency<TableDependency>(parent_id);
         table_deps->indexes.insert(object->GetId());
+        const auto& index = basics::downCast<Index>(*object);
+        for (auto tokenizer_id : index.GetTokenizers()) {
+          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
+          SDB_ASSERT(dep);
+          dep->indexes.insert(object->GetId());
+        }
       } break;
       case ObjectType::TableShard: {
         auto table_deps = GetDependency<TableDependency>(parent_id);
@@ -551,6 +557,18 @@ class SnapshotImpl : public Snapshot {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
+  std::vector<std::shared_ptr<Index>> GetIndexesByTokenizer(
+    ObjectId tokenizer_id) const {
+    auto deps = GetDependency<TokenizerDependency>(tokenizer_id);
+    SDB_ASSERT(deps);
+    std::vector<std::shared_ptr<Index>> result;
+    result.reserve(deps->indexes.size());
+    for (auto id : deps->indexes) {
+      result.push_back(GetObject<Index>(id));
+    }
+    return result;
+  }
+
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto it = _objects.find(id);
@@ -707,6 +725,13 @@ class SnapshotImpl : public Snapshot {
           RemoveObjectDefinition(id, index_deps->shard_id);
           index_deps->shard_id = ObjectId::none();
         }
+        const auto& index = basics::downCast<Index>(*obj);
+        for (auto tokenizer_id : index.GetTokenizers()) {
+          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
+          SDB_ASSERT(dep);
+          dep->indexes.erase(obj->GetId());
+        }
+
       } break;
       case ObjectType::Function:
       case ObjectType::View:
@@ -1739,6 +1764,25 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
   if (!id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  auto deps = _snapshot->GetIndexesByTokenizer(*id);
+  if (!deps.empty()) {
+    constexpr size_t kReportIndexes = 5;
+    std::vector<std::string_view> confliciting_indexes;
+    for (auto index : deps) {
+      SDB_ASSERT(index);
+      confliciting_indexes.push_back(index->GetName());
+      if (confliciting_indexes.size() == kReportIndexes) {
+        break;
+      }
+    }
+    if (confliciting_indexes.size() < deps.size()) {
+      confliciting_indexes.push_back("...");
+    }
+    return Result{ERROR_INTERNAL,
+                  "Can not drop text dictionary used in the indexes ",
+                  absl::StrJoin(confliciting_indexes, ", ")};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
     auto dict = clone->GetObject<Tokenizer>(*id);
     SDB_ASSERT(dict);

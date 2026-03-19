@@ -74,6 +74,8 @@ class Index : public SchemaObject {
   }
   void WriteInternal(vpack::Builder& builder) const override;
 
+  virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
+
   // TODO(codeworse): support arguments for index shards
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions& options) const = 0;

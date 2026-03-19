@@ -40,6 +40,8 @@ class InvertedIndex final : public Index {
 
   ColumnAnalyzer GetColumnAnalyzer(catalog::Column::Id columnd_id) const;
 
+  containers::FlatHashSet<ObjectId> GetTokenizers() const final;
+
  private:
   // TODO(codeworse): Add inverted index specific options
   InvertedIndexOptionsImpl _options;

@@ -69,4 +69,11 @@ struct DatabaseDependency : public ObjectDependencyBase {
   }
 };
 
+struct TokenizerDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> indexes;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<TokenizerDependency>(*this);
+  }
+};
+
 }  // namespace sdb::catalog

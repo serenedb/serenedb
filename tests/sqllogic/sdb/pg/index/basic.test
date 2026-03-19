@@ -18,6 +18,8 @@ VACUUM (UPDATE_INDEXES) t;
 statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
+statement error db error: ERROR: Can not drop text dictionary used in the indexes index_t
+DROP TEXT SEARCH DICTIONARY test_english;
 
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c')
@@ -56,6 +58,17 @@ index_t
 statement ok
 DROP INDEX index_t;
 
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
 
 query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
@@ -87,6 +100,8 @@ SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indr
 ----
 indexname
 
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;
 
 statement error db error: ERROR: relation "invalid" does not exist
 CREATE INDEX test_index ON invalid USING inverted (invalid);
@@ -280,3 +295,54 @@ Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
+
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE SCHEMA s2;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s1.te(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s2.te(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok;
+CREATE TABLE s1.foo (a INTEGER, b VARCHAR);
+
+statement ok;
+CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
+
+statement error db error: ERROR: Accessing text dictionary from different schema is not supported.
+CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
+
+statement ok
+CREATE INDEX idx ON s1.foo USING inverted(b s1.te);
+
+statement ok
+CREATE INDEX idx ON s2.foo USING inverted(b s2.te);
+
+statement ok
+DROP SCHEMA s2 CASCADE;
+
+statement ok
+DROP TABLE s1.foo;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY s1.te;
+
+statement ok
+DROP SCHEMA s1;

@@ -49,4 +49,14 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
           .features = it->second.features.GetIndexFeatures()};
 }
 
+containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
+  containers::FlatHashSet<ObjectId> res;
+  for (const auto& col : _options.columns) {
+    if (col.second.text_dictionary.isSet()) {
+      res.insert(col.second.text_dictionary);
+    }
+  }
+  return res;
+}
+
 }  // namespace sdb::catalog

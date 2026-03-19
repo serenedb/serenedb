@@ -321,10 +321,10 @@ CREATE TEXT SEARCH DICTIONARY s2.te(
     accent = false
 );
 
-statement ok;
+statement ok
 CREATE TABLE s1.foo (a INTEGER, b VARCHAR);
 
-statement ok;
+statement ok
 CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
 
 statement error db error: ERROR: Accessing text dictionary from different schema is not supported

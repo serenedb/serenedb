@@ -10,7 +10,7 @@ CREATE SCHEMA s2;
 
 
 statement ok
-CREATE TABLE s1.t(id INTEGER);
+CREATE TABLE s1.t(id INTEGER, foo VARCHAR);
 
 
 statement ok
@@ -36,11 +36,11 @@ ts_lexize
 
 
 statement ok
-CREATE INDEX i ON s1.t USING inverted(id);
+CREATE INDEX i ON s1.t USING inverted(id, foo s1.d);
 
 
 statement ok
-INSERT INTO s1.t VALUES (1), (2), (3);
+INSERT INTO s1.t VALUES (1, 'foo'), (2, 'bar'), (3, 'bas');
 
 
 statement ok
@@ -92,6 +92,9 @@ id
 2
 3
 
+connection after_index_drop
+statement ok
+DROP TEXT SEARCH DICTIONARY s1.d;
 
 connection after_index_drop
 statement ok

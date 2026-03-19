@@ -5,7 +5,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY test_english(
     template = 'text',
     locale = 'en_US.UTF-8',
-    case = 'none',
+    case = 'lower',
     stemming = false,
     accent = false
 );

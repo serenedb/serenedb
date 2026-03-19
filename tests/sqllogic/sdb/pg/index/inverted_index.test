@@ -189,7 +189,7 @@ Fragment 0:  numWorkers=0:
   -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
 
 query
-CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = analyze);
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english) WITH (EXPLAIN = analyze);
 ----
 QUERY PLAN
 EXECUTION PLAN WITH STATS:

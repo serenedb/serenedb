@@ -43,26 +43,26 @@ Result ValidateInvertedIndexColumns(
     SDB_ASSERT(c.catalog_column);
     if (c.catalog_column->type->providesCustomComparison()) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " has type with custom comparison and can not be indexed."};
+              " has type with custom comparison and can not be indexed"};
     }
     if (!c.catalog_column->type->isPrimitiveType()) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " has non primitive type and can not be indexed."};
+              " has non primitive type and can not be indexed"};
     }
     if (c.catalog_column->type->kind() == velox::TypeKind::TIMESTAMP ||
         c.catalog_column->type->kind() == velox::TypeKind::HUGEINT) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " has unsupported kind and can not be indexed."};
+              " has unsupported kind and can not be indexed"};
     }
     // TODO(Dronplane): Remove when we have default text dictionary
     if (c.catalog_column->type->kind() == velox::TypeKind::VARCHAR &&
         c.opclass.empty()) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " is VARCHAR but has no text dictionary defined."};
+              " is VARCHAR but has no text dictionary defined"};
     } else if (c.catalog_column->type->kind() != velox::TypeKind::VARCHAR &&
                !c.opclass.empty()) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " has text dictionary defined but is not VARCHAR."};
+              " has text dictionary defined but is not VARCHAR"};
     }
   }
   return {};
@@ -124,7 +124,7 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
             return std::unexpected<Result>{
               std::in_place, ERROR_BAD_PARAMETER,
               "Accessing text dictionary from different schema is not "
-              "supported."};
+              "supported"};
           }
           auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
                                              object_name.relation);

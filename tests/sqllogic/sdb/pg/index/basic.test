@@ -296,6 +296,7 @@ Index:
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
 
+
 statement ok
 CREATE SCHEMA s1;
 

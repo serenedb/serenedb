@@ -83,6 +83,12 @@ struct OptionInfo {
     }
   }
 
+  template<typename... Args>
+  static std::string AdjustPrefix(std::string_view prefix, Args&&... args) {
+    return absl::StrCat(prefix, prefix.empty() ? "" : "_",
+                        std::forward<Args>(args)...);
+  }
+
   using DefaultValue =
     std::variant<std::monostate, std::string_view, bool, int, double, char>;
   using ConstraintFunction =

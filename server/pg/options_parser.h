@@ -284,10 +284,15 @@ class OptionsParser {
   }
 
   void ParseExplainElems(Options explain) {
-    for (const auto& info : explain_options::kExplainGroup.FlatOptions()) {
-      if (auto it = explain.find(info.name); it != explain.end()) {
+    for (const auto& name : explain_options::kExplainGroup.FlatNames()) {
+      if (auto it = std::ranges::find_if(explain,
+                                         [&](const auto& entry) {
+                                           return absl::EqualsIgnoreCase(
+                                             entry.first, name);
+                                         });
+          it != explain.end()) {
         explain.erase(it);
-        explain_options::AddByName(info.name, *_explain);
+        explain_options::AddByName(name, *_explain);
       }
     }
     CheckUnrecognizedOptions(explain, explain_options::kExplainGroup);

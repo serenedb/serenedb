@@ -558,7 +558,6 @@ db error: ERROR: option "ANALYZE" not recognized
 HINT: Use WITH (HELP) to see available options
 
 
-
 onlyif serenedb
 query
 SELECT * FROM arelav_consumer;

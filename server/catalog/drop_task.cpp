@@ -71,11 +71,12 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
         co_return {};
       }
       co_await scheduler->delay(task->GetName(),
-                                std::chrono::microseconds{task->delay});
+                                std::chrono::microseconds{task->_delay});
       auto r = co_await scheduler->queueWithFuture(
-        RequestLane::InternalLow, [task] { return (*task)(); });
+        RequestLane::InternalLow,
+        [task] { return DropTask::ExecuteTask(std::move(task)); });
       if (r.errorNumber() == ERROR_LOCKED) {
-        task->delay = std::min(kMaxDelay, task->delay * 2);
+        task->_delay = std::min(kMaxDelay, task->_delay * 2);
         continue;
       }
       if (!r.ok()) {
@@ -93,19 +94,19 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
   }
 }
 
-AsyncResult TableShardDrop::operator()() {
-  SDB_ASSERT(!is_root);
+AsyncResult TableShardDrop::Execute() {
+  SDB_ASSERT(!_is_root);
   auto& server = GetServerEngine();
   // TODO(codeworse): Probably we should store data by table shard id, not
   // table id. So, in that way here we would use id(not parent_id)
-  auto [start, end] = connector::key_utils::CreateTableRange(parent_id);
+  auto [start, end] = connector::key_utils::CreateTableRange(_parent_id);
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);
   // Drop table data
   // TODO(codeworse): add some parameter for large range(not just >= 1000)
-  auto r =
-    rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
-                                 rocksdb::Slice{end}, cf, true, (size >= 1000));
+  auto r = rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
+                                        rocksdb::Slice{end}, cf, true,
+                                        (_size >= 1000));
   if (!r.ok()) {
     return Schedule(shared_from_this());
   }
@@ -114,25 +115,25 @@ AsyncResult TableShardDrop::operator()() {
 
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::IndexShard);
+  auto r = server.DropEntry(_id, RocksDBEntryType::IndexShard);
   if (!r.ok()) {
     return r;
   }
-  if (is_root) {
-    r = server.DropDefinition(parent_id, RocksDBEntryType::Index, id);
+  if (_is_root) {
+    r = server.DropDefinition(_parent_id, RocksDBEntryType::Index, _id);
     if (!r.ok()) {
       return r;
     }
 
-    return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
+    return server.DropDefinition(_parent_id, RocksDBEntryType::Tombstone, _id);
   }
   return {};
 }
 
-AsyncResult IndexDrop::operator()() {
+AsyncResult IndexDrop::Execute() {
   Result r;
-  if (type == IndexType::Inverted && is_root) {
-    r = RemoveIndexShards(db_id, schema_id, parent_id, id);
+  if (_type == IndexType::Inverted && _is_root) {
+    r = RemoveIndexShards(_db_id, _schema_id, _parent_id, _id);
   }
   if (!r.ok() || !Finalize().ok()) {
     return Schedule(shared_from_this());
@@ -143,43 +144,41 @@ AsyncResult IndexDrop::operator()() {
 Result TableDrop::Finalize() {
   auto& server = GetServerEngine();
 
-  auto r = server.DropEntry(id);
+  auto r = server.DropEntry(_id);
   if (!r.ok()) {
     return r;
   }
 
-  if (is_root) {
-    r = server.DropDefinition(parent_id, RocksDBEntryType::Table, id);
+  if (_is_root) {
+    r = server.DropDefinition(_parent_id, RocksDBEntryType::Table, _id);
     if (!r.ok()) {
       return r;
     }
-    return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
+    return server.DropDefinition(_parent_id, RocksDBEntryType::Tombstone, _id);
   }
   return {};
 }
 
-AsyncResult TableDrop::operator()() {
+AsyncResult TableDrop::Execute() {
   std::vector<AsyncResult> async_results;
-  async_results.reserve(indexes.size());
-  if (is_root && !indexes.empty()) {
-    ObjectId db_id = indexes.back()->db_id;
-    ObjectId schema_id = indexes.back()->schema_id;
-    auto r = RemoveIndexShards(db_id, schema_id, id);
+  async_results.reserve(_indexes.size());
+  if (_is_root && !_indexes.empty()) {
+    ObjectId db_id = _indexes.back()->GetDatabaseId();
+    ObjectId schema_id = _parent_id;
+    auto r = RemoveIndexShards(db_id, schema_id, _id);
     if (!r.ok()) {
       co_return co_await Schedule(shared_from_this());
     }
   }
-  for (auto& index : indexes) {
+  for (auto& index : _indexes) {
     async_results.push_back(Schedule(index));
   }
   if (!async_results.empty()) {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
-  SDB_ASSERT(type != TableType::Unknown);
-  if (type == TableType::Document) {
-    auto shard_task =
-      std::make_shared<TableShardDrop>(id, shard_id, table_size);
-    auto r = co_await Schedule(std::move(shard_task));
+  SDB_ASSERT(_type != TableType::Unknown);
+  if (_type == TableType::Document) {
+    auto r = co_await Schedule(_shard_drop);
     if (!r.ok() || !Finalize().ok()) {
       co_return co_await Schedule(shared_from_this());
     }
@@ -189,17 +188,17 @@ AsyncResult TableDrop::operator()() {
 
 Result SchemaDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id);
+  auto r = server.DropEntry(_id);
   if (!r.ok()) {
     return r;
   }
 
-  if (is_root) {
-    auto r = server.DropDefinition(parent_id, RocksDBEntryType::Schema, id);
+  if (_is_root) {
+    auto r = server.DropDefinition(_parent_id, RocksDBEntryType::Schema, _id);
     if (!r.ok()) {
       return r;
     }
-    r = server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
+    r = server.DropDefinition(_parent_id, RocksDBEntryType::Tombstone, _id);
     if (!r.ok()) {
       return r;
     }
@@ -207,16 +206,16 @@ Result SchemaDrop::Finalize() {
   return {};
 }
 
-AsyncResult SchemaDrop::operator()() {
+AsyncResult SchemaDrop::Execute() {
   std::vector<AsyncResult> async_results;
-  if (is_root) {
-    auto r = RemoveIndexShards(parent_id, id);
+  if (_is_root) {
+    auto r = RemoveIndexShards(_parent_id, _id);
     if (!r.ok()) {
       co_return co_await Schedule(shared_from_this());
     }
   }
-  async_results.reserve(tables.size());
-  for (auto& table : tables) {
+  async_results.reserve(_tables.size());
+  for (auto& table : _tables) {
     async_results.push_back(Schedule(table));
   }
   if (!async_results.empty()) {
@@ -230,26 +229,26 @@ AsyncResult SchemaDrop::operator()() {
 
 Result DatabaseDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::Schema);
+  auto r = server.DropEntry(_id, RocksDBEntryType::Schema);
   if (!r.ok()) {
     return r;
   }
-  r = server.DropDefinition(id::kInstance, RocksDBEntryType::Database, id);
+  r = server.DropDefinition(id::kInstance, RocksDBEntryType::Database, _id);
   if (!r.ok()) {
     return r;
   }
-  return server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, id);
+  return server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, _id);
 }
 
-AsyncResult DatabaseDrop::operator()() {
-  SDB_ASSERT(is_root);
-  auto r = RemoveIndexShards(id);
+AsyncResult DatabaseDrop::Execute() {
+  SDB_ASSERT(_is_root);
+  auto r = RemoveIndexShards(_id);
   if (!r.ok()) {
     co_return co_await Schedule(shared_from_this());
   }
   std::vector<AsyncResult> async_results;
-  async_results.reserve(schemas.size());
-  for (auto& schema : schemas) {
+  async_results.reserve(_schemas.size());
+  for (auto& schema : _schemas) {
     async_results.push_back(Schedule(schema));
   }
   if (!async_results.empty()) {

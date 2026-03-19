@@ -102,7 +102,10 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   ObjectId table_id, ObjectId index_id, vpack::Slice definition,
   bool is_root = false) {
   IndexBaseOptions options;
-  if (auto r = vpack::ReadTupleNothrow(definition, options); !r.ok()) {
+  SDB_ASSERT(definition.isObject());
+  if (auto r =
+        vpack::ReadTupleNothrow(definition.get(kIndexBaseOptions), options);
+      !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   auto drop = std::make_shared<IndexDrop>(db_id, schema_id, table_id, index_id,

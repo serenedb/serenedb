@@ -23,7 +23,7 @@
 namespace sdb::connector::test {
 
 // Registration of search analyzers, formats, scorers etc.
-// Could be called many times will do just one init per test process lifetime  
+// Could be called many times will do just one init per test process lifetime
 void RegisterSearchEntities();
 
-} // namespace sdb::connector::test
+}  // namespace sdb::connector::test

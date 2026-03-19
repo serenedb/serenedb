@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "search_test_utils.hpp"
+
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/scorers.hpp>
@@ -37,4 +38,4 @@ void RegisterSearchEntities() {
   }
 }
 
-} // namespace sdb::connector::test
+}  // namespace sdb::connector::test

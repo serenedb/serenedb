@@ -22,7 +22,6 @@
 
 #include <absl/numeric/bits.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 #include <velox/type/Type.h>
 
 #include "basics/containers/flat_hash_set.h"

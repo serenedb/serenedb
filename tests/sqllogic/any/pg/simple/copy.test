@@ -551,15 +551,31 @@ SELECT * FROM arelav_consumer;
 eater
 
 onlyif serenedb
-query error
+query
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN 'ANALYZE');
 ----
-db error: ERROR: option "ANALYZE" not recognized
-HINT: Use WITH (HELP) to see available options
-
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=0:
+-- TableWrite[2][serenedb(table=arelav_consumer, kind=INSERT)] -> rows:BIGINT
+   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- Project[1][expressions: (eater:VARCHAR, "eater"), (dt1.__p8:BIGINT, null)] -> "eater":VARCHAR, "dt1.__p8":BIGINT
+     Output: 10 rows (23.91KB, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 128B, Memory allocations: 1, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+    -- TableScan[0][File(text)] -> "eater":VARCHAR
+       Input: 10 rows (23.91KB, 1 batches), Output: 10 rows (23.91KB, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 24.12KB, Memory allocations: 6, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
 
 onlyif serenedb
 query
 SELECT * FROM arelav_consumer;
 ----
 eater
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav

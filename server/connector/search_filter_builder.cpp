@@ -101,10 +101,13 @@ std::optional<velox::Variant> EvaluateConstant(
 const search::ColumnInfo& FindColumnInfo(
   const VeloxFilterContext& ctx,
   const velox::core::FieldAccessTypedExpr& expr) {
-  // TODO(Dronplane): Remove this cache whe analyzers would be pooled.
   auto cache_it = ctx.column_cache.find(expr.name());
   if (cache_it != ctx.column_cache.end()) {
-    SDB_ASSERT(cache_it->second.analyzer.analyzer);
+    // Text fields must have analyzer defined while others use built-in
+    // analyzers so here would be nullptr.
+    SDB_ASSERT(cache_it->second.info.type()->kind() !=
+                 velox::TypeKind::VARCHAR ||
+               cache_it->second.analyzer.analyzer);
     return cache_it->second;
   }
 

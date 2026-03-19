@@ -162,7 +162,7 @@ Index::IndexOutput Index::MakeIndexOutput() const {
 
 void Index::WriteInternal(vpack::Builder& builder) const {
   SDB_ASSERT(builder.isOpenObject());
-  vpack::ArrayBuilder ob(&builder, kIndexBaseOptions);
+  builder.add(kIndexBaseOptions);
   vpack::WriteTuple(builder, MakeIndexOutput());
 }
 

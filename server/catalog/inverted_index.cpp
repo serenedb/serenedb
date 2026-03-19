@@ -22,7 +22,7 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
 void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
   vpack::ObjectBuilder scope_object(&builder);
   Index::WriteInternal(builder);
-  vpack::ArrayBuilder ob(&builder, kIndexImplOptions);
+  builder.add(kIndexImplOptions);
   vpack::WriteTuple(builder, _options);
 }
 
@@ -34,9 +34,9 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
               " not found in the index definition");
   }
 
-  // TODO(Dronplane): implement default text dictionary like in PG
-  SDB_ASSERT(it->second.text_dictionary.isSet(),
-             "Default text dictionary is not implemented.");
+  if (!it->second.text_dictionary.isSet()) {
+    return {};
+  }
 
   auto snapshot = GetCatalog().GetSnapshot();
 

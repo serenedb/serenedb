@@ -105,7 +105,7 @@ CREATE INDEX test_index ON test USING inverted (invalid);
 
 
 statement ok
-CREATE INDEX test_index ON test USING inverted (i test_english);
+CREATE INDEX test_index ON test USING inverted (i);
 
 
 statement error db error: ERROR: relation "test_index" already exists
@@ -113,7 +113,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 
 
 statement ok
-CREATE INDEX IF NOT EXISTS test_index ON test USING inverted (i test_english);
+CREATE INDEX IF NOT EXISTS test_index ON test USING inverted (i);
 
 
 query
@@ -171,6 +171,9 @@ CREATE INDEX index_ts on tstest USING inverted(b);
 
 statement error db error: ERROR: Column c is VARCHAR but has no text dictionary defined.
 CREATE INDEX index_ts on tstest USING inverted(c);
+
+statement error db error: ERROR: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
+CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 
 statement error db error: ERROR: Column a has text dictionary defined but is not VARCHAR.
 CREATE INDEX index_ts on tstest USING inverted(a test_english);

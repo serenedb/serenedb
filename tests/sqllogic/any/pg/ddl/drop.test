@@ -1,154 +1,154 @@
 statement ok
-CREATE TABLE t(a integer);
+CREATE TABLE pudge(a integer);
 
 statement ok
-CREATE INDEX idx ON t USING inverted(a);
+CREATE INDEX deadinside ON pudge USING inverted(a);
 
 statement ok
-CREATE SCHEMA s;
+CREATE SCHEMA kostya;
 
 statement ok
-CREATE TABLE s.st(a integer);
+CREATE TABLE kostya.babsky(a integer);
 
 statement ok
-CREATE FUNCTION f() RETURNS TABLE(a integer) LANGUAGE SQL
+CREATE FUNCTION clickclack() RETURNS TABLE(a integer) LANGUAGE SQL
 BEGIN ATOMIC
-  SELECT * FROM t;
+  SELECT * FROM pudge;
 END;
 
 statement error
-DROP TABLE idx;
+DROP TABLE deadinside;
 ----
-db error: ERROR: "idx" is not a table
+db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
 
 
 statement error
-DROP TABLE IF EXISTS idx;
+DROP TABLE IF EXISTS deadinside;
 ----
-db error: ERROR: "idx" is not a table
+db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
 
 
 statement error
-DROP INDEX t;
+DROP INDEX pudge;
 ----
-db error: ERROR: "t" is not an index
+db error: ERROR: "pudge" is not an index
 HINT: Use DROP TABLE to remove a table.
 
 
 statement error
-DROP INDEX IF EXISTS t;
+DROP INDEX IF EXISTS pudge;
 ----
-db error: ERROR: "t" is not an index
+db error: ERROR: "pudge" is not an index
 HINT: Use DROP TABLE to remove a table.
 
 
 statement error
-DROP VIEW t;
+DROP VIEW pudge;
 ----
-db error: ERROR: "t" is not a view
+db error: ERROR: "pudge" is not a view
 HINT: Use DROP TABLE to remove a table.
 
 
 statement error
-DROP VIEW IF EXISTS t;
+DROP VIEW IF EXISTS pudge;
 ----
-db error: ERROR: "t" is not a view
+db error: ERROR: "pudge" is not a view
 HINT: Use DROP TABLE to remove a table.
 
 
 statement error
-DROP VIEW idx;
+DROP VIEW deadinside;
 ----
-db error: ERROR: "idx" is not a view
+db error: ERROR: "deadinside" is not a view
 HINT: Use DROP INDEX to remove an index.
 
 
 statement error
-DROP VIEW IF EXISTS idx;
+DROP VIEW IF EXISTS deadinside;
 ----
-db error: ERROR: "idx" is not a view
+db error: ERROR: "deadinside" is not a view
 HINT: Use DROP INDEX to remove an index.
 
 
 statement error
-DROP FUNCTION t;
+DROP FUNCTION pudge;
 ----
-db error: ERROR: could not find a function named "t"
+db error: ERROR: could not find a function named "pudge"
 
 
 statement error
-DROP FUNCTION idx;
+DROP FUNCTION deadinside;
 ----
-db error: ERROR: could not find a function named "idx"
+db error: ERROR: could not find a function named "deadinside"
 
 
 statement error
-DROP TABLE f;
+DROP TABLE clickclack;
 ----
-db error: ERROR: table "f" does not exist
+db error: ERROR: table "clickclack" does not exist
 
 
 statement error
-DROP INDEX f;
+DROP INDEX clickclack;
 ----
-db error: ERROR: index "f" does not exist
+db error: ERROR: index "clickclack" does not exist
 
 
 statement error
-DROP VIEW f;
+DROP VIEW clickclack;
 ----
-db error: ERROR: view "f" does not exist
+db error: ERROR: view "clickclack" does not exist
 
 
 statement error
-DROP TABLE nonexistent;
+DROP TABLE vedernikoff;
 ----
-db error: ERROR: table "nonexistent" does not exist
+db error: ERROR: table "vedernikoff" does not exist
 
 
 statement error
-DROP INDEX nonexistent;
+DROP INDEX vedernikoff;
 ----
-db error: ERROR: index "nonexistent" does not exist
+db error: ERROR: index "vedernikoff" does not exist
 
 
 statement error
-DROP VIEW nonexistent;
+DROP VIEW vedernikoff;
 ----
-db error: ERROR: view "nonexistent" does not exist
+db error: ERROR: view "vedernikoff" does not exist
 
 
 statement error
-DROP FUNCTION nonexistent;
+DROP FUNCTION vedernikoff;
 ----
-db error: ERROR: could not find a function named "nonexistent"
+db error: ERROR: could not find a function named "vedernikoff"
 
 
 statement ok
-DROP TABLE IF EXISTS nonexistent;
+DROP TABLE IF EXISTS vedernikoff;
 
 statement ok
-DROP INDEX IF EXISTS nonexistent;
+DROP INDEX IF EXISTS vedernikoff;
 
 statement ok
-DROP VIEW IF EXISTS nonexistent;
+DROP VIEW IF EXISTS vedernikoff;
 
 statement ok
-DROP FUNCTION IF EXISTS nonexistent;
+DROP FUNCTION IF EXISTS vedernikoff;
 
 statement ok
-DROP FUNCTION f;
+DROP FUNCTION clickclack;
 
 statement ok
-DROP TABLE s.st;
+DROP TABLE kostya.babsky;
 
 statement ok
-DROP SCHEMA s;
+DROP SCHEMA kostya;
 
 statement ok
-DROP INDEX idx;
+DROP INDEX deadinside;
 
 statement ok
-DROP TABLE t;
+DROP TABLE pudge;

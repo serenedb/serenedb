@@ -17,7 +17,7 @@
         "SDB_FAULT_INJECTION": "On",
         "SDB_GTEST": "On",
         "SDB_IOURING": "On",
-        "SDB_CLUSTER": "Off",
+        "SDB_CLUSTER": "Off"
       }
     },
     {

@@ -18,12 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/hnsw_index.hpp"
+#include "iresearch/formats/column/hnsw_index.hpp"
 
 #include <faiss/utils/distances.h>
 
 #include "basics/system-compiler.h"
-#include "iresearch/formats/columnstore2.hpp"
+#include "iresearch/formats/column/common.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/attribute_provider.hpp"

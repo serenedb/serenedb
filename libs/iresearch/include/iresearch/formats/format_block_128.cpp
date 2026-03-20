@@ -20,10 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-extern "C" {
-#include <simdbitpacking.h>
-#include <simdintegratedbitpacking.h>
-}
+#include "iresearch/formats/posting/format_block_128.hpp"
 
 #include "iresearch/formats/formats_impl.hpp"
 

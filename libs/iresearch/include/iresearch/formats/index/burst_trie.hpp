@@ -22,10 +22,9 @@
 
 #pragma once
 
-#include "formats.hpp"
+#include "iresearch/formats/formats.hpp"
 
-namespace irs {
-namespace burst_trie {
+namespace irs::burst_trie {
 
 enum class Version : int32_t {
   // * Encryption support
@@ -43,5 +42,4 @@ FieldWriter::ptr MakeWriter(Version version, PostingsWriter::ptr&& writer,
 FieldReader::ptr MakeReader(PostingsReader::ptr&& reader,
                             IResourceManager& resource_manager);
 
-}  // namespace burst_trie
-}  // namespace irs
+}  // namespace irs::burst_trie

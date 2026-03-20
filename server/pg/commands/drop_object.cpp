@@ -59,67 +59,12 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       return list_nth_node(List, stmt.objects, 0);
     }
   }();
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  auto current_schema = conn_ctx.GetCurrentSchema();
   auto [schema, name] =
     ParseObjectName(names, context.GetDatabase(), current_schema);
   Result r;
   const auto db = context.GetDatabaseId();
-
-  auto object_type_name = [&] -> std::string_view {
-    switch (stmt.removeType) {
-      case OBJECT_TABLE:
-        return "table";
-      case OBJECT_INDEX:
-        return "index";
-      case OBJECT_VIEW:
-        return "view";
-      case OBJECT_FUNCTION:
-        return "function";
-      case OBJECT_SCHEMA:
-        return "schema";
-      case OBJECT_TSDICTIONARY:
-        return "text search dictionary";
-      default:
-        SDB_ASSERT(false);  // it's better to specify the name
-        return "object";
-    }
-  }();
-
-  auto expected_relation = [&] {
-    switch (stmt.removeType) {
-      using enum catalog::ObjectType;
-      case OBJECT_TABLE:
-        return Table;
-      case OBJECT_INDEX:
-        return Index;
-      case OBJECT_VIEW:
-        return View;
-      default:
-        return Invalid;
-    }
-  }();
-
-  // For relation types check that we delete the same type (as PG does)
-  if (expected_relation != catalog::ObjectType::Invalid) {
-    auto snapshot = catalog.GetSnapshot();
-    if (auto relation = snapshot->GetRelation(db, schema, name)) {
-      auto actual_type = relation->GetType();
-      if (actual_type != expected_relation) {
-        auto actual_name =
-          absl::AsciiStrToLower(magic_enum::enum_name(actual_type));
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-          ERR_MSG("\"", name, "\" is not ",
-                  basics::string_utils::GetArticle(object_type_name), " ",
-                  object_type_name),
-          ERR_HINT("Use DROP ",
-                   absl::AsciiStrToUpper(magic_enum::enum_name(actual_type)),
-                   " to remove ", basics::string_utils::GetArticle(actual_name),
-                   " ", actual_name, "."));
-      }
-    }
-  }
 
   switch (stmt.removeType) {
     case OBJECT_TABLE:
@@ -155,6 +100,38 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
                       ERR_MSG("DROP for this object type is not implemented: ",
                               magic_enum::enum_name(stmt.removeType)));
   }
+  auto get_object_name = [&] -> std::string_view {
+    switch (stmt.removeType) {
+      case OBJECT_TABLE:
+        return "table";
+      case OBJECT_INDEX:
+        return "index";
+      case OBJECT_VIEW:
+        return "view";
+      case OBJECT_FUNCTION:
+        return "function";
+      case OBJECT_SCHEMA:
+        return "schema";
+      case OBJECT_TSDICTIONARY:
+        return "text search dictionary";
+      default:
+        SDB_ASSERT(false);  // it's better to specify the name
+        return "object";
+    }
+  };
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    // The error message from catalog contains the actual object type name
+    auto actual_type = r.errorMessage();
+    auto actual_name = absl::AsciiStrToLower(actual_type);
+    auto object_name = get_object_name();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", name, "\" is not ",
+              basics::string_utils::GetArticle(object_name), " ", object_name),
+      ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual_type), " to remove ",
+               basics::string_utils::GetArticle(actual_name), " ", actual_name,
+               "."));
+  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (stmt.removeType == OBJECT_FUNCTION) {
       if (!stmt.missing_ok) {
@@ -162,18 +139,19 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
           ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
           ERR_MSG("could not find a function named \"", name, "\""));
       }
-      basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
         ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
         ERR_MSG("function ", name, "() does not exist, skipping")));
     } else {
       if (!stmt.missing_ok) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-          ERR_MSG(object_type_name, " \"", name, "\" does not exist"));
+          ERR_MSG(get_object_name(), " \"", name, "\" does not exist"));
       }
-      basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG(object_type_name, " \"", name, "\" does not exist, skipping")));
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                       ERR_MSG(get_object_name(), " \"", name,
+                               "\" does not exist, skipping")));
     }
     r = {};
   }

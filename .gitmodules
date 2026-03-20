@@ -28,15 +28,9 @@
 [submodule "third_party/double-conversion"]
 	path = third_party/double-conversion
 	url = git@github.com:serenedb/double-conversion.git
-[submodule "third_party/wasm-micro-runtime"]
-	path = third_party/wasm-micro-runtime
-	url = https://github.com/bytecodealliance/wasm-micro-runtime.git
 [submodule "third_party/abseil-cpp"]
 	path = third_party/abseil-cpp
 	url = git@github.com:serenedb/abseil-cpp.git
-[submodule "third_party/faiss"]
-	path = third_party/faiss
-	url = https://github.com/serenedb/faiss.git
 [submodule "third_party/s2geometry"]
 	path = third_party/s2geometry
 	url = git@github.com:serenedb/s2geometry.git
@@ -79,9 +73,6 @@
 [submodule "third_party/date"]
 	path = third_party/date
 	url = git@github.com:serenedb/date.git
-[submodule "third_party/yaclib"]
-	path = third_party/yaclib
-	url = https://github.com/YACLib/YACLib.git
 [submodule "third_party/re2"]
 	path = third_party/re2
 	url = git@github.com:serenedb/re2.git
@@ -103,9 +94,6 @@
 [submodule "third_party/protobuf"]
 	path = third_party/protobuf
 	url = git@github.com:serenedb/protobuf.git
-[submodule "third_party/snappy"]
-	path = third_party/snappy
-	url = https://github.com/serenedb/snappy.git
 [submodule "third_party/arrow"]
 	path = third_party/arrow
 	url = git@github.com:serenedb/arrow.git
@@ -118,42 +106,54 @@
 [submodule "third_party/streamvbyte"]
 	path = third_party/streamvbyte
 	url = git@github.com:serenedb/streamvbyte.git
-[submodule "third_party/aws-sdk-cpp"]
-	path = third_party/aws-sdk-cpp
-	url = https://github.com/serenedb/aws-sdk-cpp.git
-[submodule "third_party/aws-c-common"]
-	path = third_party/aws-c-common
-	url = https://github.com/serenedb/aws-c-common
-[submodule "third_party/aws-crt-cpp"]
-	path = third_party/aws-crt-cpp
-	url = https://github.com/serenedb/aws-crt-cpp
-[submodule "third_party/aws-checksums"]
-	path = third_party/aws-checksums
-	url = https://github.com/serenedb/aws-checksums
-[submodule "third_party/aws-c-cal"]
-	path = third_party/aws-c-cal
-	url = https://github.com/serenedb/aws-c-cal
-[submodule "third_party/aws-c-io"]
-	path = third_party/aws-c-io
-	url = https://github.com/serenedb/aws-c-io
-[submodule "third_party/aws-c-compression"]
-	path = third_party/aws-c-compression
-	url = https://github.com/serenedb/aws-c-compression
-[submodule "third_party/aws-c-http"]
-	path = third_party/aws-c-http
-	url = https://github.com/serenedb/aws-c-http
-[submodule "third_party/aws-c-sdkutils"]
-	path = third_party/aws-c-sdkutils
-	url = https://github.com/serenedb/aws-c-sdkutils
 [submodule "third_party/aws-c-auth"]
 	path = third_party/aws-c-auth
-	url = https://github.com/serenedb/aws-c-auth
+	url = git@github.com:serenedb/aws-c-auth.git
+[submodule "third_party/aws-c-cal"]
+	path = third_party/aws-c-cal
+	url = git@github.com:serenedb/aws-c-cal.git
+[submodule "third_party/aws-c-common"]
+	path = third_party/aws-c-common
+	url = git@github.com:serenedb/aws-c-common.git
+[submodule "third_party/aws-c-compression"]
+	path = third_party/aws-c-compression
+	url = git@github.com:serenedb/aws-c-compression.git
 [submodule "third_party/aws-c-event-stream"]
 	path = third_party/aws-c-event-stream
-	url = https://github.com/serenedb/aws-c-event-stream
+	url = git@github.com:serenedb/aws-c-event-stream.git
+[submodule "third_party/aws-c-http"]
+	path = third_party/aws-c-http
+	url = git@github.com:serenedb/aws-c-http.git
+[submodule "third_party/aws-c-io"]
+	path = third_party/aws-c-io
+	url = git@github.com:serenedb/aws-c-io.git
 [submodule "third_party/aws-c-mqtt"]
 	path = third_party/aws-c-mqtt
-	url = https://github.com/serenedb/aws-c-mqtt
+	url = git@github.com:serenedb/aws-c-mqtt.git
 [submodule "third_party/aws-c-s3"]
 	path = third_party/aws-c-s3
-	url = https://github.com/serenedb/aws-c-s3
+	url = git@github.com:serenedb/aws-c-s3.git
+[submodule "third_party/aws-c-sdkutils"]
+	path = third_party/aws-c-sdkutils
+	url = git@github.com:serenedb/aws-c-sdkutils.git
+[submodule "third_party/aws-checksums"]
+	path = third_party/aws-checksums
+	url = git@github.com:serenedb/aws-checksums.git
+[submodule "third_party/aws-crt-cpp"]
+	path = third_party/aws-crt-cpp
+	url = git@github.com:serenedb/aws-crt-cpp.git
+[submodule "third_party/aws-sdk-cpp"]
+	path = third_party/aws-sdk-cpp
+	url = git@github.com:serenedb/aws-sdk-cpp.git
+[submodule "third_party/wasm-micro-runtime"]
+	path = third_party/wasm-micro-runtime
+	url = git@github.com:serenedb/wasm-micro-runtime.git
+[submodule "third_party/faiss"]
+	path = third_party/faiss
+	url = git@github.com:serenedb/faiss.git
+[submodule "third_party/yaclib"]
+	path = third_party/yaclib
+	url = git@github.com:YACLib/YACLib.git
+[submodule "third_party/snappy"]
+	path = third_party/snappy
+	url = git@github.com:serenedb/snappy.git

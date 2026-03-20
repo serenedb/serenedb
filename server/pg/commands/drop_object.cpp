@@ -45,7 +45,6 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 
 yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
-  using CatalogObjectType = catalog::ObjectType;
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
@@ -89,7 +88,7 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
 
   auto expected_relation = [&] {
     switch (stmt.removeType) {
-      using enum CatalogObjectType;
+      using enum catalog::ObjectType;
       case OBJECT_TABLE:
         return Table;
       case OBJECT_INDEX:
@@ -102,7 +101,7 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
   }();
 
   // For relation types check that we delete the same type (as PG does)
-  if (expected_relation != CatalogObjectType::Invalid) {
+  if (expected_relation != catalog::ObjectType::Invalid) {
     auto snapshot = catalog.GetSnapshot();
     if (auto relation = snapshot->GetRelation(db, schema, name)) {
       auto actual_type = relation->GetType();

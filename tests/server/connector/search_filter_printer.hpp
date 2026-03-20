@@ -18,12 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-
-
 #pragma once
 
 #include <iresearch/search/filter.hpp>
-
 #include <ostream>
 #include <string>
 

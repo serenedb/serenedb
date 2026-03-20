@@ -56,13 +56,12 @@ std::string ToString(Term term) {
 }
 
 std::string ToString(const std::vector<bstring>& terms) {
-  return absl::StrCat(
-    "( ",
-    absl::StrJoin(terms, " ",
-                  [](std::string* out, const bstring& t) {
-                    absl::StrAppend(out, ToString(t));
-                  }),
-    " )");
+  return absl::StrCat("( ",
+                      absl::StrJoin(terms, " ",
+                                    [](std::string* out, const bstring& t) {
+                                      absl::StrAppend(out, ToString(t));
+                                    }),
+                      " )");
 }
 
 template<typename T>
@@ -89,20 +88,19 @@ std::string RangeToString(const SearchRange<T>& range) {
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByRange& range) {
   sink.Append(absl::StrCat("Range(", ToString(range.field()),
-                            RangeToString(range.options().range), ")"));
+                           RangeToString(range.options().range), ")"));
 }
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByGranularRange& range) {
   sink.Append(absl::StrCat("GranularRange(", ToString(range.field()),
-                            RangeToString(range.options().range), ")"));
+                           RangeToString(range.options().range), ")"));
 }
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByTerm& term) {
   sink.Append(absl::StrCat("Term(", ToString(term.field()), "=",
-                            ToString(term.options().term),
-                            ")"));
+                           ToString(term.options().term), ")"));
 }
 
 template<typename Sink>
@@ -114,19 +112,18 @@ void AbslStringify(Sink& sink, const irs::ByNestedFilter& filter) {
   } else if (nullptr != std::get_if<irs::DocIteratorProvider>(&match)) {
     match_str = "<Predicate>";
   }
-  sink.Append(
-    absl::StrCat("NESTED[MATCH[", match_str, "], CHILD[", ToString(*child), "]]"));
+  sink.Append(absl::StrCat("NESTED[MATCH[", match_str, "], CHILD[",
+                           ToString(*child), "]]"));
 }
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const And& filter) {
-  sink.Append(absl::StrCat(
-    "AND[",
-    absl::StrJoin(filter, " && ",
-                  [](std::string* out, const auto& f) {
-                    absl::StrAppend(out, ToString(*f));
-                  }),
-    "]"));
+  sink.Append(absl::StrCat("AND[",
+                           absl::StrJoin(filter, " && ",
+                                         [](std::string* out, const auto& f) {
+                                           absl::StrAppend(out, ToString(*f));
+                                         }),
+                           "]"));
 }
 
 template<typename Sink>
@@ -135,13 +132,12 @@ void AbslStringify(Sink& sink, const Or& filter) {
   if (filter.min_match_count() != 1) {
     absl::StrAppend(&header, "(", filter.min_match_count(), ")");
   }
-  sink.Append(absl::StrCat(
-    header, "[",
-    absl::StrJoin(filter, " || ",
-                  [](std::string* out, const auto& f) {
-                    absl::StrAppend(out, ToString(*f));
-                  }),
-    "]"));
+  sink.Append(absl::StrCat(header, "[",
+                           absl::StrJoin(filter, " || ",
+                                         [](std::string* out, const auto& f) {
+                                           absl::StrAppend(out, ToString(*f));
+                                         }),
+                           "]"));
 }
 
 template<typename Sink>
@@ -151,13 +147,13 @@ void AbslStringify(Sink& sink, const Not& filter) {
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByNGramSimilarity& filter) {
-  sink.Append(absl::StrCat(
-    "NGRAM_SIMILARITY[", ToString(filter.field()), ", ",
-    absl::StrJoin(filter.options().ngrams, "",
-                  [](std::string* out, const auto& ngram) {
-                    absl::StrAppend(out, ToString(ngram));
-                  }),
-    ",", filter.options().threshold, "]"));
+  sink.Append(
+    absl::StrCat("NGRAM_SIMILARITY[", ToString(filter.field()), ", ",
+                 absl::StrJoin(filter.options().ngrams, "",
+                               [](std::string* out, const auto& ngram) {
+                                 absl::StrAppend(out, ToString(ngram));
+                               }),
+                 ",", filter.options().threshold, "]"));
 }
 
 template<typename Sink>
@@ -168,38 +164,34 @@ void AbslStringify(Sink& sink, const Empty&) {
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByColumnExistence& filter) {
   sink.Append(absl::StrCat("EXISTS[", ToString(filter.field()), ", ",
-                            size_t(filter.options().acceptor), "]"));
+                           size_t(filter.options().acceptor), "]"));
 }
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByEditDistance& lev) {
   sink.Append(absl::StrCat(
-    "LEVENSHTEIN_MATCH[", lev.field(), ", '",
-    ToString(lev.options().term), "', ",
-    static_cast<int>(lev.options().max_distance), ", ",
+    "LEVENSHTEIN_MATCH[", lev.field(), ", '", ToString(lev.options().term),
+    "', ", static_cast<int>(lev.options().max_distance), ", ",
     lev.options().with_transpositions, ", ", lev.options().max_terms, ", '",
     ToString(lev.options().prefix), "']"));
 }
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByPrefix& filter) {
-  sink.Append(absl::StrCat(
-    "STARTS_WITH[", ToString(filter.field()), ", '",
-    ToString(filter.options().term), "', ",
-    filter.options().scored_terms_limit, "]"));
+  sink.Append(absl::StrCat("STARTS_WITH[", ToString(filter.field()), ", '",
+                           ToString(filter.options().term), "', ",
+                           filter.options().scored_terms_limit, "]"));
 }
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByTerms& filter) {
   std::string terms_str = absl::StrJoin(
-    filter.options().terms, "",
-    [](std::string* out, const auto& term_boost) {
+    filter.options().terms, "", [](std::string* out, const auto& term_boost) {
       const auto& [term, boost] = term_boost;
-      absl::StrAppend(out, "['", ToString(term), "', ",
-                      boost, "],");
+      absl::StrAppend(out, "['", ToString(term), "', ", boost, "],");
     });
-  sink.Append(absl::StrCat("TERMS[", ToString(filter.field()), ", {", terms_str, "}, ",
-                            filter.options().min_match, "]"));
+  sink.Append(absl::StrCat("TERMS[", ToString(filter.field()), ", {", terms_str,
+                           "}, ", filter.options().min_match, "]"));
 }
 
 template<typename Sink>
@@ -209,9 +201,8 @@ void AbslStringify(Sink& sink, const All& filter) {
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const ByWildcard& filter) {
-  sink.Append(absl::StrCat(
-    "WILDCARD[", ToString(filter.field()), ", ",
-    ToString(filter.options().term), "]"));
+  sink.Append(absl::StrCat("WILDCARD[", ToString(filter.field()), ", ",
+                           ToString(filter.options().term), "]"));
 }
 
 template<typename Sink>
@@ -226,10 +217,8 @@ void AbslStringify(Sink& sink, const ByPhrase& filter) {
                       absl::StrJoin(opts.terms, "",
                                     [](std::string* o, const auto& tb) {
                                       const auto& [term, boost] = tb;
-                                      absl::StrAppend(
-                                        o, "['",
-                                        ToString(term),
-                                        "', ", boost, "],");
+                                      absl::StrAppend(o, "['", ToString(term),
+                                                      "', ", boost, "],");
                                     }),
                       "]");
     }
@@ -243,8 +232,7 @@ void AbslStringify(Sink& sink, const ByPhrase& filter) {
     }
 
     auto operator()(const ByEditDistanceOptions& opts) const {
-      absl::StrAppend(out, "Levenshtein:",
-                      ToString(opts.term));
+      absl::StrAppend(out, "Levenshtein:", ToString(opts.term));
     }
 
     auto operator()(const ByRangeOptions& opts) const {
@@ -327,8 +315,6 @@ std::ostream& operator<<(std::ostream& os, const Filter& filter) {
   return os << absl::StrCat(filter);
 }
 
-std::string ToString(const irs::Filter& f) {
-  return absl::StrCat(f);
-}
+std::string ToString(const irs::Filter& f) { return absl::StrCat(f); }
 
 }  // namespace irs

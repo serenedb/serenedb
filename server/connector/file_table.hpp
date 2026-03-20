@@ -107,7 +107,7 @@ class FileSplitSource final : public axiom::connector::SplitSource {
 
 class FileTable : public axiom::connector::Table {
  public:
-  explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
+  FileTable(velox::RowTypePtr type, std::string_view file_path, bool has_pk);
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
@@ -129,8 +129,9 @@ class FileTable : public axiom::connector::Table {
 class ReadFileTable final : public FileTable {
  public:
   ReadFileTable(velox::RowTypePtr type, std::string_view file_path,
-                std::shared_ptr<ReaderOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+                std::shared_ptr<ReaderOptions> options, bool has_pk)
+    : FileTable{std::move(type), file_path, has_pk},
+      _options{std::move(options)} {}
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
@@ -142,7 +143,7 @@ class WriteFileTable final : public FileTable {
  public:
   WriteFileTable(velox::RowTypePtr type, std::string_view file_path,
                  std::shared_ptr<WriterOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+    : FileTable{std::move(type), file_path, {}}, _options{std::move(options)} {}
 
   const std::shared_ptr<WriterOptions>& GetOptions() const { return _options; }
 

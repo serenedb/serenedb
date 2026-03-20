@@ -46,9 +46,10 @@ connector::DwioReaderOptions CreateDefaultReaderOptions(
   auto dwio_options =
     std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
   dwio_options->setFileFormat(format);
-  dwio_options->setFileSchema(std::move(schema));
+  dwio_options->setFileSchema(schema);
   auto row_reader_options =
     std::make_shared<velox::dwio::common::RowReaderOptions>();
+  row_reader_options->setRequestedType(std::move(schema));
   return {std::move(dwio_options), std::move(row_reader_options)};
 }
 

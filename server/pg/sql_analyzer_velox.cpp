@@ -774,12 +774,9 @@ class SqlAnalyzer {
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
-                     bool implicit_pk_column = false);
+                     bool load_implicit_pk = false);
   State ProcessInvertedIndex(State* parent, const Objects::ObjectData& object,
                              const RangeVar* node);
-
-  State ProcessFileTable(State* parent, const catalog::Table& table,
-                         std::string_view table_name, const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -3776,16 +3773,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 const Objects::ObjectData& object,
                                 const RangeVar* node, bool load_implicit_pk) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
-
-  if (table.GetTableType() == TableType::File) {
-    return ProcessFileTable(parent, table, table_name, node);
-  }
-
   auto type = table.RowType();
-
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
-
-  object.EnsureTable(_transaction);
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();
@@ -3807,47 +3796,34 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     std::vector types = type->children();
     std::vector type_names = type->names();
 
+    //  Important that  if the generated primary key is present, it must be the
+    //  last field in the type — there are data sources that rely on this
     types.push_back(velox::BIGINT());
     type_names.emplace_back(std::move(generated_pk_name));
     type = velox::ROW(std::move(type_names), std::move(types));
   }
 
+  axiom::connector::TablePtr scan_table;
+  if (table.GetTableType() == TableType::File) {
+    SDB_ASSERT(table.PKColumns().empty());
+    const auto& file_info = table.GetFileInfo();
+    auto file_options = std::make_shared<connector::ReaderOptions>();
+    file_options->storage_options = file_info.storage_options;
+    file_options->dwio = file_info.format_options->createReaderOptions(type);
+    auto read_file_table = std::make_shared<connector::ReadFileTable>(
+      type, file_info.storage_options->Path(), std::move(file_options),
+      load_implicit_pk);
+    scan_table = std::move(read_file_table);
+  } else {
+    object.EnsureTable(_transaction);
+    scan_table = object.table;
+  }
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type->children()), object.table,
-    type->names());
-
-  state.resolver.CreateTable(table_alias,
-                             MakePtrView(state.root->outputType()));
-  return state;
-}
-
-State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
-                                    std::string_view table_name,
-                                    const RangeVar* node) {
-  const auto& file_info = table.GetFileInfo();
-  SDB_ASSERT(file_info.storage_options);
-  SDB_ASSERT(file_info.format_options);
-
-  auto row_type = table.RowType();
-
-  auto [table_alias, column_names] =
-    ProcessTableColumns(parent, node, row_type);
-  auto file_output_type =
-    velox::ROW(std::move(column_names), row_type->children());
-
-  auto options = std::make_shared<connector::ReaderOptions>();
-  options->storage_options = file_info.storage_options;
-  options->dwio = file_info.format_options->createReaderOptions(row_type);
-  auto read_file_table = std::make_shared<connector::ReadFileTable>(
-    row_type, file_info.storage_options->Path(), std::move(options));
-
-  auto state = parent->MakeChild();
-  state.root = std::make_shared<lp::TableScanNode>(
-    _id_generator.NextPlanId(), std::move(file_output_type),
-    std::move(read_file_table), row_type->names());
-
+    velox::ROW(std::move(column_names), type->children()),
+    std::move(scan_table), type->names());
   state.resolver.CreateTable(table_alias,
                              MakePtrView(state.root->outputType()));
   return state;

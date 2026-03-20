@@ -43,18 +43,31 @@ auto CreateReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
 
 namespace sdb::connector {
 
-FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
+FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path,
+                     bool has_pk)
   : Table{std::string{file_path}, [&] {
-            std::vector<std::unique_ptr<const axiom::connector::Column>>
-              column_handles;
-            column_handles.reserve(table_type->size());
-            catalog::Column::Id id = 0;
-            for (const auto& [type, name] : std::ranges::views::zip(
-                   table_type->children(), table_type->names())) {
-              column_handles.emplace_back(
-                std::make_unique<SereneDBColumn>(name, type, id++));
+            std::vector<std::unique_ptr<const axiom::connector::Column>> cols;
+            cols.reserve(table_type->size());
+            // const auto& [type, name] : std::ranges::views::zip(
+            //  table_type->children(), table_type->names()
+            std::span names = table_type->names();
+            std::span types = table_type->children();
+            for (size_t i = 0; i < table_type->size(); ++i) {
+              catalog::Column::Id id;
+              if (has_pk && i == table_type->size() - 1) {
+                id = catalog::Column::kGeneratedPKId;
+              } else {
+                id = i;
+              }
+              const auto& name = names[i];
+              const auto& type = types[i];
+              auto col = std::make_unique<SereneDBColumn>(name, type, id);
+              cols.emplace_back(std::move(col));
             }
-            return column_handles;
+            if (has_pk) {
+              SDB_ASSERT(table_type->size() > 0);
+            }
+            return cols;
           }()} {
   auto connector = velox::connector::getConnector("serenedb");
   auto layout = std::make_unique<SereneDBTableLayout>(
@@ -116,8 +129,12 @@ FileDataSource::FileDataSource(
     auto handle_it = column_handles.find(names[i]);
     SDB_ENSURE(handle_it != column_handles.end(), ERROR_INTERNAL,
                "FileDataSource: can't find column handle for ", names[i]);
-    const auto& handle = *handle_it->second;
-    spec->addField(handle.name(), i);
+    const auto& handle =
+      basics::downCast<const SereneDBColumnHandle>(*handle_it->second);
+    auto* field = spec->addField(handle.name(), i);
+    if (handle.Id() == catalog::Column::kGeneratedPKId) {
+      field->setColumnType(velox::common::ScanSpec::ColumnType::kRowIndex);
+    }
   }
 
   for (auto& [subfield, filter] : subfield_filters) {

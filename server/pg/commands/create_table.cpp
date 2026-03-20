@@ -49,10 +49,10 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-class CreateTableUsingExternalOptions : public FileOptionsParser {
+class CreateTableOptionsParser : public FileOptionsParser {
  public:
-  CreateTableUsingExternalOptions(const List* options,
-                                  ConnectionContext& conn_ctx)
+  CreateTableOptionsParser(bool is_external, const List* options,
+                           ConnectionContext& conn_ctx)
     : FileOptionsParser{
         {},
         OptionsParser::MakeOptions(options, {}),
@@ -60,7 +60,14 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
         {.operation = "CREATE TABLE", .notice = [&conn_ctx](std::string msg) {
            conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
          }}} {
-    ParseOptions([&] { Parse(); });
+    if (is_external) {
+      ParseOptions([&] { Parse(); });
+    } else if (!_options.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(
+          "options are available only for CREATE TABLE ... USING EXTERNAL"));
+    }
   }
 
   void Parse() {
@@ -162,7 +169,13 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
   auto database = catalog.GetSnapshot()->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
-  bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
+  const auto access_method = absl::NullSafeStringView(stmt.accessMethod);
+  bool is_external = access_method == "external";
+  if (stmt.accessMethod && !is_external) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+      ERR_MSG("acess method ", "\\", access_method, "\\ does not exist"));
+  }
 
   catalog::CreateTableRequest request;
   request.name = table;
@@ -444,8 +457,8 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
   });
   SDB_ASSERT(!stmt.constraints);
 
+  CreateTableOptionsParser parser{is_external, stmt.options, conn_ctx};
   if (is_external) {
-    CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
     request.file_info = std::move(parser).GetFileInfo();
     request.type = std::to_underlying(TableType::File);
   }

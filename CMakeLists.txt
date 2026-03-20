@@ -114,12 +114,6 @@ set(CMAKE_COLOR_DIAGNOSTICS ON)
 add_definitions(-DABSL_MAX_VLOG_VERBOSITY=-1)
 add_definitions(-DABSL_MIN_LOG_LEVEL=3)
 
-# enable V8/JavaScript in executables.
-option(USE_V8 "build with V8/JavaScript support" OFF)
-if(USE_V8)
-    add_definitions("-DUSE_V8=1")
-endif()
-
 # enable dtrace
 option(USE_DTRACE "enable dtrace probes" OFF)
 if(USE_DTRACE)
@@ -643,10 +637,6 @@ endif()
 message(STATUS "DEFAULT_LIBS=${DEFAULT_LIBS}")
 set(CMAKE_CXX_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 set(CMAKE_C_STANDARD_LIBRARIES ${DEFAULT_LIBS})
-
-if(USE_V8)
-    set(SDB_SANITIZE "" CACHE STRING "" FORCE)
-endif()
 
 set(SDB_SANITIZE_WAS "${SDB_SANITIZE}")
 if(NOT "${SDB_SANITIZE}" STREQUAL "")

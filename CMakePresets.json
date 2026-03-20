@@ -18,7 +18,6 @@
         "SDB_GTEST": "On",
         "SDB_IOURING": "On",
         "SDB_CLUSTER": "Off",
-        "USE_V8": "Off"
       }
     },
     {

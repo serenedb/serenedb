@@ -186,10 +186,8 @@ void Query::CompileQuery() {
   irs::Finally set_explain_output_type = [&] noexcept {
     if (_query_ctx.command_type.Has(CommandType::Explain)) {
       _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
-    } else {
-      // supposed to be set in the end of the func from exec plan
-      SDB_ASSERT(_output_type);
     }
+    // _output_type could be nullptr in case of error.
   };
 
   if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&

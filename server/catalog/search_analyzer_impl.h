@@ -82,6 +82,16 @@ class Features final {
   irs::IndexFeatures _index_features;
 };
 
+void VPackWrite(auto ctx, const Features& features) {
+  features.ToVPack(ctx.vpack());
+}
+void VPackRead(auto ctx, Features& features) {
+  Result res = features.FromVPack(ctx.vpack());
+  if (res.fail()) {
+    SDB_THROW(std::move(res));
+  }
+}
+
 bool IsGeoAnalyzer(std::string_view type) noexcept;
 
 // TODO(mbkkt) rewrite this, I think we have such requirements:

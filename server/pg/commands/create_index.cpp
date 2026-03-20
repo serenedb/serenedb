@@ -64,7 +64,7 @@ IndexType GetIndexType(char* method) {
 }
 
 Result ParseIndexOptions(const IndexStmt& index,
-                         std::vector<std::string>& column_names,
+                         std::vector<catalog::CreateIndexColumn>& columns,
                          catalog::IndexBaseOptions& options) {
   if (!index.accessMethod) {
     return Result{ERROR_BAD_PARAMETER, "access method is not provided"};
@@ -76,10 +76,21 @@ Result ParseIndexOptions(const IndexStmt& index,
   }
 
   pg::PgListWrapper<IndexElem> index_columns{index.indexParams};
-  options.column_ids.reserve(index_columns.size());
 
   for (auto* index_elem : index_columns) {
-    column_names.push_back(index_elem->name);
+    // can happen if column expression is a func call or similar.
+    if (!index_elem->name) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Index column definition is not supported");
+    }
+
+    if (index_elem->opclassopts) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Index column opclass options are not supported");
+    }
+
+    columns.push_back(
+      {.name = index_elem->name, .opclass = NameToStr(index_elem->opclass)});
   }
 
   options.name = index.idxname;
@@ -113,20 +124,19 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("CONCURRENTLY is not implemented"));
   }
-  std::vector<std::string> column_names;
+  std::vector<catalog::CreateIndexColumn> columns;
   catalog::IndexBaseOptions options;
 
-  if (auto r = ParseIndexOptions(stmt, column_names, options); !r.ok()) {
+  if (auto r = ParseIndexOptions(stmt, columns, options); !r.ok()) {
     SDB_THROW(std::move(r));
   }
-
   if (options.type == IndexType::Inverted) {
     explain_options::ExplainOptions dummy;
     CreateIndexOptionsParser parser{stmt.options, dummy};
     auto shard_options = std::move(parser).GetOptions();
-    auto r = catalog.CreateIndex(
-      db, schema, relation_name, std::move(column_names), std::move(options),
-      shard_options, {.create_with_tombstone = true});
+    auto r = catalog.CreateIndex(db, schema, relation_name, std::move(columns),
+                                 std::move(options), shard_options,
+                                 {.create_with_tombstone = true});
 
     if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
       conn_ctx.AddNotice(SQL_ERROR_DATA(

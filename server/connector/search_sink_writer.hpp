@@ -78,8 +78,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     irs::Tokenizer& GetTokens() const noexcept {
       SDB_ASSERT(analyzer || string_analyzer);
-      SDB_ASSERT((analyzer == nullptr) || (string_analyzer == nullptr));
-      return analyzer ? *analyzer : *string_analyzer;
+      SDB_ASSERT((analyzer == nullptr) || !string_analyzer);
+      return analyzer ? *analyzer : **string_analyzer;
     }
 
     bool Write(irs::DataOutput& out) const {
@@ -105,7 +105,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void SetNullValue();
 
     sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
-    irs::analysis::Analyzer::ptr string_analyzer;
+    std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
     std::string_view name;
     irs::bytes_view value;
     irs::IndexFeatures index_features;

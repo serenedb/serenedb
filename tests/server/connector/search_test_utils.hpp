@@ -18,25 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/secondary_index.h"
+#pragma once
 
-#include "catalog/index.h"
+namespace sdb::connector::test {
 
-namespace sdb::catalog {
+// Registration of search analyzers, formats, scorers etc.
+// Could be called many times will do just one init per test process lifetime
+void RegisterSearchEntities();
 
-SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
-                               ObjectId id, ObjectId relation_id,
-                               SecondaryIndexOptionsWrapper options)
-  : Index(database_id, schema_id, id, relation_id, std::move(options.base)),
-    _unique{options.impl.unique} {}
-
-void SecondaryIndex::WriteInternal(vpack::Builder& builder) const {
-  Index::WriteInternalImpl(builder, [&] {
-    SecondaryIndexOptions options{
-      .unique = _unique,
-    };
-    vpack::WriteTuple(builder, options);
-  });
-}
-
-}  // namespace sdb::catalog
+}  // namespace sdb::connector::test

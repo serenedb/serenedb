@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,25 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/secondary_index.h"
+#include "search_test_utils.hpp"
 
-#include "catalog/index.h"
+#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/search/scorers.hpp>
 
-namespace sdb::catalog {
+namespace sdb::connector::test {
 
-SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
-                               ObjectId id, ObjectId relation_id,
-                               SecondaryIndexOptionsWrapper options)
-  : Index(database_id, schema_id, id, relation_id, std::move(options.base)),
-    _unique{options.impl.unique} {}
+void RegisterSearchEntities() {
+  static bool gInited = false;
 
-void SecondaryIndex::WriteInternal(vpack::Builder& builder) const {
-  Index::WriteInternalImpl(builder, [&] {
-    SecondaryIndexOptions options{
-      .unique = _unique,
-    };
-    vpack::WriteTuple(builder, options);
-  });
+  if (!gInited) {
+    irs::analysis::analyzers::Init();
+    irs::formats::Init();
+    irs::scorers::Init();
+    irs::compression::Init();
+    gInited = true;
+  }
 }
 
-}  // namespace sdb::catalog
+}  // namespace sdb::connector::test

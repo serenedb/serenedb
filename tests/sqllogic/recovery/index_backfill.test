@@ -1,5 +1,15 @@
 control substitution on
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
 
 # crash before tombstone removal, index should be gone
 
@@ -13,7 +23,7 @@ statement ok
 SET sdb_fault_crash_before_remove_tombstone TO DEFAULT;
 
 statement error connection closed
-CREATE INDEX idx_bf_crash ON idx_bf_t USING inverted(a, b);
+CREATE INDEX idx_bf_crash ON idx_bf_t USING inverted(a, b test_english);
 
 connection bf_after_1
 statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
@@ -31,7 +41,7 @@ SET sdb_fault_crash_before_finish_creation TO DEFAULT;
 
 connection bf_after_3
 statement error connection closed
-CREATE INDEX idx_bf_crash4 ON idx_bf_t USING inverted(a, b);
+CREATE INDEX idx_bf_crash4 ON idx_bf_t USING inverted(a, b test_english);
 
 connection bf_after_4
 statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
@@ -46,7 +56,7 @@ RESET sdb_faults;
 
 connection bf_after_4
 statement ok
-CREATE INDEX idx_bf_ok ON idx_bf_t USING inverted(a, b);
+CREATE INDEX idx_bf_ok ON idx_bf_t USING inverted(a, b test_english);
 
 connection bf_after_4
 statement ok

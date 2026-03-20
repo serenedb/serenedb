@@ -42,10 +42,11 @@ namespace sdb::catalog {
 class Tokenizer : public SchemaObject {
  public:
   struct Deleter {
-    Tokenizer& tokenizer;
+    Tokenizer* tokenizer{nullptr};
 
     void operator()(irs::analysis::Analyzer* analyzer) {
-      tokenizer.PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+      SDB_ASSERT(tokenizer);
+      tokenizer->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
     }
   };
 
@@ -61,6 +62,8 @@ class Tokenizer : public SchemaObject {
 
   Tokenizer(ObjectId id, std::string_view name, search::Features features,
             std::string data);
+
+  const search::Features& GetFeatures() const noexcept { return _features; }
 
  private:
   irs::analysis::Analyzer::ptr CreateAnalyzer() const;

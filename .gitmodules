@@ -145,9 +145,6 @@
 [submodule "third_party/aws-sdk-cpp"]
 	path = third_party/aws-sdk-cpp
 	url = git@github.com:serenedb/aws-sdk-cpp.git
-[submodule "third_party/wasm-micro-runtime"]
-	path = third_party/wasm-micro-runtime
-	url = git@github.com:serenedb/wasm-micro-runtime.git
 [submodule "third_party/faiss"]
 	path = third_party/faiss
 	url = git@github.com:serenedb/faiss.git

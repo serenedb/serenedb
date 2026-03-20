@@ -58,16 +58,13 @@ struct IndexBaseOptions {
 // polymorfic wrapper for concrete index wrappers
 // so we can make generic parsing/creating code.
 struct IndexImplOptionsBaseWrapper {
+  IndexImplOptionsBaseWrapper(IndexBaseOptions&& options) : base{options} {}
   virtual ~IndexImplOptionsBaseWrapper() = default;
+
+  IndexBaseOptions base;
 };
 
 using ImplOptsPtr = std::unique_ptr<IndexImplOptionsBaseWrapper>;
-
-template<typename Impl>
-struct IndexOptions {
-  IndexBaseOptions base;
-  Impl impl;
-};
 
 class Index : public SchemaObject {
  public:
@@ -101,12 +98,12 @@ class Index : public SchemaObject {
   std::vector<Column::Id> _column_ids;
 };
 
-ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions options,
+ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
                                      vpack::Slice impl_options_slice);
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexBaseOptions options, IndexImplOptionsBaseWrapper&& impl_options);
+  IndexImplOptionsBaseWrapper&& impl_options);
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,

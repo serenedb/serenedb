@@ -26,7 +26,7 @@ namespace sdb::catalog {
 
 SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
                                ObjectId id, ObjectId relation_id,
-                               IndexOptions<SecondaryIndexOptions> options)
+                               SecondaryIndexOptionsWrapper options)
   : Index(database_id, schema_id, id, relation_id, std::move(options.base)),
     _unique{options.impl.unique} {}
 

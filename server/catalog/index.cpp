@@ -32,7 +32,7 @@ namespace {
 
 ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  InvertedIndexOptions&& options) {
+  InvertedIndexOptionsWrapper&& options) {
   return std::make_shared<InvertedIndex>(database_id, schema_id, id,
                                          relation_id, options);
 }
@@ -70,12 +70,13 @@ Result ValidateInvertedIndexColumns(
 
 }  // namespace
 
-ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions options,
+ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
                                      vpack::Slice impl_options_slice) {
   switch (options.type) {
     case IndexType::Inverted: {
-      auto res = std::make_unique<InvertedIndexOptionsWrapper>();
-      if (auto r = vpack::ReadTupleNothrow(impl_options_slice, res->options);
+      auto res =
+        std::make_unique<InvertedIndexOptionsWrapper>(std::move(options));
+      if (auto r = vpack::ReadTupleNothrow(impl_options_slice, res->impl);
           !r.ok()) {
         return std::unexpected<Result>{std::move(r)};
       }
@@ -91,15 +92,12 @@ ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions options,
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexBaseOptions options, IndexImplOptionsBaseWrapper&& sub_options) {
-  switch (options.type) {
+  IndexImplOptionsBaseWrapper&& sub_options) {
+  switch (sub_options.base.type) {
     case IndexType::Inverted: {
-      InvertedIndexOptions impl_options;
-      impl_options.base = std::move(options);
-      impl_options.impl = std::move(
-        basics::downCast<InvertedIndexOptionsWrapper>(sub_options).options);
-      return CreateInvertedIndex(database_id, schema_id, id, relation_id,
-                                 std::move(impl_options));
+      return CreateInvertedIndex(
+        database_id, schema_id, id, relation_id,
+        std::move(basics::downCast<InvertedIndexOptionsWrapper>(sub_options)));
     }
     case IndexType::Secondary:
       return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
@@ -120,8 +118,7 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
         return std::unexpected<Result>(std::move(column_validation_res));
       }
 
-      InvertedIndexOptions impl_options;
-      impl_options.base = std::move(options);
+      InvertedIndexOptionsWrapper impl_options(std::move(options));
       auto snapshot = catalog::GetCatalog().GetSnapshot();
 
       for (const auto& c : columns) {

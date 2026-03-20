@@ -512,13 +512,13 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
       !r.ok()) {
     return r;
   }
-  auto impl_parsed = ParseImplSlice(options, slice.get(kIndexImplOptions));
+  auto impl_parsed =
+    ParseImplSlice(std::move(options), slice.get(kIndexImplOptions));
   if (!impl_parsed) {
     return std::move(impl_parsed.error());
   }
-  auto index =
-    _catalog.RegisterIndex(database_id, schema_id, index_id, table_id,
-                           std::move(options), std::move(**impl_parsed));
+  auto index = _catalog.RegisterIndex(database_id, schema_id, index_id,
+                                      table_id, std::move(**impl_parsed));
   if (!index) {
     return std::move(index.error());
   }

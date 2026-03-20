@@ -30,13 +30,16 @@ struct SecondaryIndexOptions {
   bool unique = false;
 };
 
+struct SecondaryIndexOptionsWrapper : public IndexImplOptionsBaseWrapper {
+  SecondaryIndexOptionsWrapper(IndexBaseOptions&& options)
+    : IndexImplOptionsBaseWrapper{std::move(options)} {}
+  SecondaryIndexOptions impl;
+};
+
 class SecondaryIndex : public Index {
  public:
-  using Options = SecondaryIndexOptions;
-
   SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                 ObjectId relation_id,
-                 IndexOptions<SecondaryIndexOptions> options);
+                 ObjectId relation_id, SecondaryIndexOptionsWrapper options);
 
   void WriteInternalImpl(vpack::Builder& builder) const final;
   bool IsUnique() const noexcept { return _unique; }

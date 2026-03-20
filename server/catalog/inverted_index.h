@@ -21,7 +21,10 @@ struct InvertedIndexOptionsImpl {
 };
 
 struct InvertedIndexOptionsWrapper : public IndexImplOptionsBaseWrapper {
-  InvertedIndexOptionsImpl options;
+  InvertedIndexOptionsWrapper(IndexBaseOptions&& options)
+    : IndexImplOptionsBaseWrapper{std::move(options)} {}
+
+  InvertedIndexOptionsImpl impl;
 };
 
 struct ColumnAnalyzer {
@@ -29,12 +32,10 @@ struct ColumnAnalyzer {
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
 
-using InvertedIndexOptions = IndexOptions<InvertedIndexOptionsImpl>;
-
 class InvertedIndex final : public Index {
  public:
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, InvertedIndexOptions options)
+                ObjectId relation_id, InvertedIndexOptionsWrapper options)
     : Index{database_id, schema_id, id, relation_id, std::move(options.base)},
       _options{std::move(options.impl)} {}
 

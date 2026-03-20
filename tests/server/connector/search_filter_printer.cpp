@@ -17,10 +17,11 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-
 #include "search_filter_printer.hpp"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -39,292 +40,295 @@
 
 namespace irs {
 
-std::ostream& operator<<(std::ostream& os, const Filter& filter);
+std::string ToString(const Filter& f);
 
-std::string ToString(bytes_view term) {
+template<typename Term>
+std::string ToString(Term term) {
   std::string s;
   for (auto c : term) {
     if (absl::ascii_isprint(c)) {
       s += c;
     } else {
-      s += " ";
-      s.append(absl::AlphaNum(int{c}).Piece());
-      s += " ";
+      absl::StrAppend(&s, "\\", absl::Hex(c));
     }
   }
   return s;
 }
 
 std::string ToString(const std::vector<bstring>& terms) {
-  std::string s = "( ";
-  for (auto& term : terms) {
-    s += ToString(term) + " ";
-  }
-  s += ")";
-  return s;
+  return absl::StrCat(
+    "( ",
+    absl::StrJoin(terms, " ",
+                  [](std::string* out, const bstring& t) {
+                    absl::StrAppend(out, ToString(t));
+                  }),
+    " )");
 }
 
 template<typename T>
-std::ostream& operator<<(std::ostream& os, const SearchRange<T>& range) {
+std::string RangeToString(const SearchRange<T>& range) {
+  std::string s;
   if (!range.min.empty()) {
-    os << " " << (range.min_type == irs::BoundType::Inclusive ? ">=" : ">")
-       << ToString(range.min);
+    absl::StrAppend(&s, " ",
+                    range.min_type == irs::BoundType::Inclusive ? ">=" : ">",
+                    ToString(range.min));
   }
   if (!range.max.empty()) {
     if (!range.min.empty()) {
-      os << ", ";
+      absl::StrAppend(&s, ", ");
     } else {
-      os << " ";
+      absl::StrAppend(&s, " ");
     }
-    os << (range.max_type == irs::BoundType::Inclusive ? "<=" : "<")
-       << ToString(range.max);
+    absl::StrAppend(&s,
+                    range.max_type == irs::BoundType::Inclusive ? "<=" : "<",
+                    ToString(range.max));
   }
-  return os;
+  return s;
 }
 
-std::ostream& operator<<(std::ostream& os, const ByRange& range) {
-  return os << "Range(" << range.field() << range.options().range << ")";
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByRange& range) {
+  sink.Append(absl::StrCat("Range(", ToString(range.field()),
+                            RangeToString(range.options().range), ")"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByGranularRange& range) {
-  return os << "GranularRange(" << range.field() << range.options().range
-            << ")";
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByGranularRange& range) {
+  sink.Append(absl::StrCat("GranularRange(", ToString(range.field()),
+                            RangeToString(range.options().range), ")"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByTerm& term) {
-  std::string term_value(ViewCast<char>(irs::bytes_view{term.options().term}));
-  return os << "Term(" << term.field() << "=" << term_value << ")";
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByTerm& term) {
+  sink.Append(absl::StrCat("Term(", ToString(term.field()), "=",
+                            ToString(term.options().term),
+                            ")"));
 }
 
-std::ostream& operator<<(std::ostream& os, const irs::ByNestedFilter& filter) {
+template<typename Sink>
+void AbslStringify(Sink& sink, const irs::ByNestedFilter& filter) {
   auto& [parent, child, match, _] = filter.options();
-  os << "NESTED[MATCH[";
+  std::string match_str;
   if (auto* range = std::get_if<irs::Match>(&match); range) {
-    os << range->min << ", " << range->max;
+    match_str = absl::StrCat(range->min, ", ", range->max);
   } else if (nullptr != std::get_if<irs::DocIteratorProvider>(&match)) {
-    os << "<Predicate>";
+    match_str = "<Predicate>";
   }
-  os << "], CHILD[" << *child << "]]";
-  return os;
+  sink.Append(
+    absl::StrCat("NESTED[MATCH[", match_str, "], CHILD[", ToString(*child), "]]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const And& filter) {
-  os << "AND[";
-  for (auto it = filter.begin(); it != filter.end(); ++it) {
-    if (it != filter.begin()) {
-      os << " && ";
-    }
-    os << **it;
-  }
-  os << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const And& filter) {
+  sink.Append(absl::StrCat(
+    "AND[",
+    absl::StrJoin(filter, " && ",
+                  [](std::string* out, const auto& f) {
+                    absl::StrAppend(out, ToString(*f));
+                  }),
+    "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const Or& filter) {
-  os << "OR";
+template<typename Sink>
+void AbslStringify(Sink& sink, const Or& filter) {
+  std::string header = "OR";
   if (filter.min_match_count() != 1) {
-    os << "(" << filter.min_match_count() << ")";
+    absl::StrAppend(&header, "(", filter.min_match_count(), ")");
   }
-  os << "[";
-  for (auto it = filter.begin(); it != filter.end(); ++it) {
-    if (it != filter.begin()) {
-      os << " || ";
-    }
-    os << **it;
-  }
-  os << "]";
-  return os;
+  sink.Append(absl::StrCat(
+    header, "[",
+    absl::StrJoin(filter, " || ",
+                  [](std::string* out, const auto& f) {
+                    absl::StrAppend(out, ToString(*f));
+                  }),
+    "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const Not& filter) {
-  os << "NOT[" << *filter.filter() << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const Not& filter) {
+  sink.Append(absl::StrCat("NOT[", ToString(*filter.filter()), "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByNGramSimilarity& filter) {
-  os << "NGRAM_SIMILARITY[";
-  os << filter.field() << ", ";
-  for (const auto& ngram : filter.options().ngrams) {
-    os << ngram.c_str();
-  }
-  os << "," << filter.options().threshold << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByNGramSimilarity& filter) {
+  sink.Append(absl::StrCat(
+    "NGRAM_SIMILARITY[", ToString(filter.field()), ", ",
+    absl::StrJoin(filter.options().ngrams, "",
+                  [](std::string* out, const auto& ngram) {
+                    absl::StrAppend(out, ToString(ngram));
+                  }),
+    ",", filter.options().threshold, "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const Empty&) {
-  os << "EMPTY[]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const Empty&) {
+  sink.Append("EMPTY[]");
 }
 
-std::ostream& operator<<(std::ostream& os, const ByColumnExistence& filter) {
-  os << "EXISTS[" << filter.field() << ", " << size_t(filter.options().acceptor)
-     << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByColumnExistence& filter) {
+  sink.Append(absl::StrCat("EXISTS[", ToString(filter.field()), ", ",
+                            size_t(filter.options().acceptor), "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByEditDistance& lev) {
-  os << "LEVENSHTEIN_MATCH[";
-  os << lev.field() << ", '";
-  std::string term_value(ViewCast<char>(irs::bytes_view{lev.options().term}));
-  std::string prefix_value(
-    ViewCast<char>(irs::bytes_view{lev.options().prefix}));
-  os << term_value << "', " << static_cast<int>(lev.options().max_distance)
-     << ", " << lev.options().with_transpositions << ", "
-     << lev.options().max_terms << ", '" << prefix_value << "']";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByEditDistance& lev) {
+  sink.Append(absl::StrCat(
+    "LEVENSHTEIN_MATCH[", lev.field(), ", '",
+    ToString(lev.options().term), "', ",
+    static_cast<int>(lev.options().max_distance), ", ",
+    lev.options().with_transpositions, ", ", lev.options().max_terms, ", '",
+    ToString(lev.options().prefix), "']"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByPrefix& filter) {
-  os << "STARTS_WITH[";
-  os << filter.field() << ", '";
-  std::string term_value(
-    ViewCast<char>(irs::bytes_view{filter.options().term}));
-  os << term_value << "', " << filter.options().scored_terms_limit << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByPrefix& filter) {
+  sink.Append(absl::StrCat(
+    "STARTS_WITH[", ToString(filter.field()), ", '",
+    ToString(filter.options().term), "', ",
+    filter.options().scored_terms_limit, "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByTerms& filter) {
-  os << "TERMS[";
-  os << filter.field() << ", {";
-  for (auto& [term, boost] : filter.options().terms) {
-    os << "['" << ViewCast<char>(irs::bytes_view{term}) << "', " << boost
-       << "],";
-  }
-  os << "}, " << filter.options().min_match << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByTerms& filter) {
+  std::string terms_str = absl::StrJoin(
+    filter.options().terms, "",
+    [](std::string* out, const auto& term_boost) {
+      const auto& [term, boost] = term_boost;
+      absl::StrAppend(out, "['", ToString(term), "', ",
+                      boost, "],");
+    });
+  sink.Append(absl::StrCat("TERMS[", ToString(filter.field()), ", {", terms_str, "}, ",
+                            filter.options().min_match, "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const All& filter) {
-  os << "ALL[";
-  os << filter.Boost();
-  os << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const All& filter) {
+  sink.Append(absl::StrCat("ALL[", filter.Boost(), "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByWildcard& filter) {
-  os << "WILDCARD[";
-  os << filter.field() << ", ";
-  os << irs::ViewCast<char>(irs::bytes_view{filter.options().term});
-  os << "]";
-  return os;
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByWildcard& filter) {
+  sink.Append(absl::StrCat(
+    "WILDCARD[", ToString(filter.field()), ", ",
+    ToString(filter.options().term), "]"));
 }
 
-std::ostream& operator<<(std::ostream& os, const ByPhrase& filter) {
+template<typename Sink>
+void AbslStringify(Sink& sink, const ByPhrase& filter) {
   struct PartVisitor : util::Noncopyable {
     auto operator()(const ByTermOptions& opts) const {
-      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
-      os << "Term:" << term_value;
+      absl::StrAppend(out, "Term:", ToString(opts.term));
     }
 
     auto operator()(const ByTermsOptions& opts) const {
-      os << "Terms:[";
-      for (auto& [term, boost] : opts.terms) {
-        os << "['" << ViewCast<char>(irs::bytes_view{term}) << "', " << boost
-           << "],";
-      }
-      os << "]";
+      absl::StrAppend(out, "Terms:[",
+                      absl::StrJoin(opts.terms, "",
+                                    [](std::string* o, const auto& tb) {
+                                      const auto& [term, boost] = tb;
+                                      absl::StrAppend(
+                                        o, "['",
+                                        ToString(term),
+                                        "', ", boost, "],");
+                                    }),
+                      "]");
     }
 
     auto operator()(const ByPrefixOptions& opts) const {
-      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
-      os << "Prefix:" << term_value;
+      absl::StrAppend(out, "Prefix:", ToString(opts.term));
     }
 
     auto operator()(const ByWildcardOptions& opts) const {
-      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
-      os << "Wildcard:" << term_value;
+      absl::StrAppend(out, "Wildcard:", ToString(opts.term));
     }
 
     auto operator()(const ByEditDistanceOptions& opts) const {
-      std::string term_value(ViewCast<char>(irs::bytes_view{opts.term}));
-      os << "Levenshtein:" << term_value;
+      absl::StrAppend(out, "Levenshtein:",
+                      ToString(opts.term));
     }
+
     auto operator()(const ByRangeOptions& opts) const {
-      os << "Range: ";
+      absl::StrAppend(out, "Range: ");
       if (opts.range.min_type == irs::BoundType::Unbounded) {
-        os << "*";
+        absl::StrAppend(out, "*");
       } else {
-        if (opts.range.min_type == irs::BoundType::Inclusive) {
-          os << "[";
-        } else {
-          os << "(";
-        }
-        os << std::string(reinterpret_cast<const char*>(opts.range.min.data()),
-                          opts.range.min.size());
+        absl::StrAppend(
+          out, opts.range.min_type == irs::BoundType::Inclusive ? "[" : "(",
+          std::string(reinterpret_cast<const char*>(opts.range.min.data()),
+                      opts.range.min.size()));
       }
-      os << "..";
+      absl::StrAppend(out, "..");
       if (opts.range.max_type == irs::BoundType::Unbounded) {
-        os << "*";
+        absl::StrAppend(out, "*");
       } else {
-        os << std::string(reinterpret_cast<const char*>(opts.range.max.data()),
-                          opts.range.max.size());
-        if (opts.range.max_type == irs::BoundType::Inclusive) {
-          os << "]";
-        } else {
-          os << ")";
-        }
+        absl::StrAppend(
+          out,
+          std::string(reinterpret_cast<const char*>(opts.range.max.data()),
+                      opts.range.max.size()),
+          opts.range.max_type == irs::BoundType::Inclusive ? "]" : ")");
       }
     }
 
-    PartVisitor(std::ostream& o) noexcept : os{o} {}
-
-    std::ostream& os;
+    std::string* out;
   };
 
-  os << "PHRASE[";
-  os << filter.field() << " = <";
+  std::string parts_str;
   for (const auto& part : filter.options()) {
-    part.part.visit(PartVisitor{os});
-    os << "(" << part.offs_max << ", " << part.offs_min << ")";
-    os << "; ";
+    std::string part_str;
+    part.part.visit(PartVisitor{.out = &part_str});
+    absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
+                    part.offs_min, ")", "; ");
   }
-  os << ">]";
-  return os;
+  sink.Append(
+    absl::StrCat("PHRASE[", ToString(filter.field()), " = <", parts_str, ">]"));
+}
+
+template<typename Sink>
+void AbslStringify(Sink& sink, const Filter& filter) {
+  const auto& type = filter.type();
+  if (type == irs::Type<All>::id()) {
+    AbslStringify(sink, static_cast<const All&>(filter));
+  } else if (type == irs::Type<And>::id()) {
+    AbslStringify(sink, static_cast<const And&>(filter));
+  } else if (type == irs::Type<Or>::id()) {
+    AbslStringify(sink, static_cast<const Or&>(filter));
+  } else if (type == irs::Type<Not>::id()) {
+    AbslStringify(sink, static_cast<const Not&>(filter));
+  } else if (type == irs::Type<ByTerm>::id()) {
+    AbslStringify(sink, static_cast<const ByTerm&>(filter));
+  } else if (type == irs::Type<ByTerms>::id()) {
+    AbslStringify(sink, static_cast<const ByTerms&>(filter));
+  } else if (type == irs::Type<ByRange>::id()) {
+    AbslStringify(sink, static_cast<const ByRange&>(filter));
+  } else if (type == irs::Type<ByGranularRange>::id()) {
+    AbslStringify(sink, static_cast<const ByGranularRange&>(filter));
+  } else if (type == irs::Type<ByNGramSimilarity>::id()) {
+    AbslStringify(sink, static_cast<const ByNGramSimilarity&>(filter));
+  } else if (type == irs::Type<ByEditDistance>::id()) {
+    AbslStringify(sink, static_cast<const ByEditDistance&>(filter));
+  } else if (type == irs::Type<ByPrefix>::id()) {
+    AbslStringify(sink, static_cast<const ByPrefix&>(filter));
+  } else if (type == irs::Type<ByNestedFilter>::id()) {
+    AbslStringify(sink, static_cast<const ByNestedFilter&>(filter));
+  } else if (type == irs::Type<ByColumnExistence>::id()) {
+    AbslStringify(sink, static_cast<const ByColumnExistence&>(filter));
+  } else if (type == irs::Type<ByWildcard>::id()) {
+    AbslStringify(sink, static_cast<const ByWildcard&>(filter));
+  } else if (type == irs::Type<Empty>::id()) {
+    AbslStringify(sink, static_cast<const Empty&>(filter));
+  } else if (type == irs::Type<ByPhrase>::id()) {
+    AbslStringify(sink, static_cast<const ByPhrase&>(filter));
+  } else {
+    sink.Append(absl::StrCat("[Unknown filter ", type().name(), " ]"));
+  }
 }
 
 std::ostream& operator<<(std::ostream& os, const Filter& filter) {
-  const auto& type = filter.type();
-  if (type == irs::Type<All>::id()) {
-    return os << static_cast<const All&>(filter);
-  } else if (type == irs::Type<And>::id()) {
-    return os << static_cast<const And&>(filter);
-  } else if (type == irs::Type<Or>::id()) {
-    return os << static_cast<const Or&>(filter);
-  } else if (type == irs::Type<Not>::id()) {
-    return os << static_cast<const Not&>(filter);
-  } else if (type == irs::Type<ByTerm>::id()) {
-    return os << static_cast<const ByTerm&>(filter);
-  } else if (type == irs::Type<ByTerms>::id()) {
-    return os << static_cast<const ByTerms&>(filter);
-  } else if (type == irs::Type<ByRange>::id()) {
-    return os << static_cast<const ByRange&>(filter);
-  } else if (type == irs::Type<ByGranularRange>::id()) {
-    return os << static_cast<const ByGranularRange&>(filter);
-  } else if (type == irs::Type<ByNGramSimilarity>::id()) {
-    return os << static_cast<const ByNGramSimilarity&>(filter);
-  } else if (type == irs::Type<ByEditDistance>::id()) {
-    return os << static_cast<const ByEditDistance&>(filter);
-  } else if (type == irs::Type<ByPrefix>::id()) {
-    return os << static_cast<const ByPrefix&>(filter);
-  } else if (type == irs::Type<ByNestedFilter>::id()) {
-    return os << static_cast<const ByNestedFilter&>(filter);
-  } else if (type == irs::Type<ByColumnExistence>::id()) {
-    return os << static_cast<const ByColumnExistence&>(filter);
-  } else if (type == irs::Type<ByWildcard>::id()) {
-    return os << static_cast<const ByWildcard&>(filter);
-  } else if (type == irs::Type<Empty>::id()) {
-    return os << static_cast<const Empty&>(filter);
-  } else if (type == irs::Type<ByPhrase>::id()) {
-    return os << static_cast<const ByPhrase&>(filter);
-  } else {
-    return os << "[Unknown filter " << type().name() << " ]";
-  }
+  return os << absl::StrCat(filter);
 }
 
 std::string ToString(const irs::Filter& f) {
-  std::ostringstream ss;
-  ss << f;
-  return ss.str();
+  return absl::StrCat(f);
 }
 
 }  // namespace irs

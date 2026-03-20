@@ -26,6 +26,7 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/static_strings.h"
+#include "basics/string_utils.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
@@ -58,12 +59,13 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       return list_nth_node(List, stmt.objects, 0);
     }
   }();
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  auto current_schema = conn_ctx.GetCurrentSchema();
   auto [schema, name] =
     ParseObjectName(names, context.GetDatabase(), current_schema);
   Result r;
   const auto db = context.GetDatabaseId();
+
   switch (stmt.removeType) {
     case OBJECT_TABLE:
       r = catalog.DropTable(db, schema, name);
@@ -98,35 +100,59 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
                       ERR_MSG("DROP for this object type is not implemented: ",
                               magic_enum::enum_name(stmt.removeType)));
   }
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    std::string_view object_type;
+  auto get_object_name = [&] -> std::string_view {
     switch (stmt.removeType) {
       case OBJECT_TABLE:
-        object_type = "table";
-        break;
+        return "table";
       case OBJECT_INDEX:
-        object_type = "index";
-        break;
+        return "index";
       case OBJECT_VIEW:
-        object_type = "view";
-        break;
+        return "view";
       case OBJECT_FUNCTION:
-        object_type = "function";
-        break;
+        return "function";
       case OBJECT_SCHEMA:
-        object_type = "schema";
-        break;
+        return "schema";
+      case OBJECT_TSDICTIONARY:
+        return "text search dictionary";
       default:
-        object_type = "object";
-        break;
+        SDB_ASSERT(false);  // it's better to specify the name
+        return "object";
     }
-    if (!stmt.missing_ok) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG(object_type, " \"", name, "\" does not exist"));
+  };
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    // The error message from catalog contains the actual object type name
+    auto actual_type = r.errorMessage();
+    auto actual_name = absl::AsciiStrToLower(actual_type);
+    auto object_name = get_object_name();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", name, "\" is not ",
+              basics::string_utils::GetArticle(object_name), " ", object_name),
+      ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual_type), " to remove ",
+               basics::string_utils::GetArticle(actual_name), " ", actual_name,
+               "."));
+  }
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (stmt.removeType == OBJECT_FUNCTION) {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      }
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        ERR_MSG("function ", name, "() does not exist, skipping")));
+    } else {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+          ERR_MSG(get_object_name(), " \"", name, "\" does not exist"));
+      }
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                       ERR_MSG(get_object_name(), " \"", name,
+                               "\" does not exist, skipping")));
     }
-    basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG(object_type, " \"", name, "\" does not exist, skipping")));
     r = {};
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }

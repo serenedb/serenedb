@@ -347,3 +347,12 @@ DROP TEXT SEARCH DICTIONARY s1.te;
 
 statement ok
 DROP SCHEMA s1;
+
+statement ok
+CREATE TABLE empty_soul();
+
+
+statement error
+CREATE INDEX empty_index ON empty_soul USING inverted(a);
+----
+db error: ERROR: column "a" does not exist

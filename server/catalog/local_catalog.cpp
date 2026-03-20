@@ -1616,8 +1616,13 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     if (!table_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto table = clone->GetObject<Table>(*table_id);
-    SDB_ASSERT(table);
+    auto obj = clone->GetObject(*table_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::Table) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto table = basics::downCast<Table>(std::move(obj));
     auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
@@ -1683,8 +1688,13 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     if (!index_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto index = clone->GetObject<Index>(*index_id);
-    SDB_ASSERT(index);
+    auto obj = clone->GetObject(*index_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::Index) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto index = basics::downCast<Index>(std::move(obj));
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
         !r.ok()) {
       return r;
@@ -1713,8 +1723,13 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     if (!view_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto view = clone->GetObject<View>(*view_id);
-    SDB_ASSERT(view);
+    auto obj = clone->GetObject(*view_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::View) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto view = basics::downCast<View>(std::move(obj));
     auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::View,
                                      view->GetId());
     if (!r.ok()) {

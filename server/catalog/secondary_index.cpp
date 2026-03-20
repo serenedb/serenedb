@@ -30,12 +30,13 @@ SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
   : Index(database_id, schema_id, id, relation_id, std::move(options.base)),
     _unique{options.impl.unique} {}
 
-void SecondaryIndex::WriteInternalImpl(vpack::Builder& builder) const {
-  SecondaryIndexOptions options{
-    .unique = _unique,
-  };
-
-  vpack::WriteTuple(builder, options);
+void SecondaryIndex::WriteInternal(vpack::Builder& builder) const {
+  Index::WriteInternalImpl(builder, [&] {
+    SecondaryIndexOptions options{
+      .unique = _unique,
+    };
+    vpack::WriteTuple(builder, options);
+  });
 }
 
 }  // namespace sdb::catalog

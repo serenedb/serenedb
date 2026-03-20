@@ -183,12 +183,13 @@ Index::IndexOutput Index::MakeIndexOutput() const {
   };
 }
 
-void Index::WriteInternal(vpack::Builder& builder) const {
+void Index::WriteInternalImpl(vpack::Builder& builder,
+                              absl::FunctionRef<void()> impl_write) const {
   vpack::ObjectBuilder scope_object(&builder);
   builder.add(kIndexBaseOptions);
   vpack::WriteTuple(builder, MakeIndexOutput());
   builder.add(kIndexImplOptions);
-  WriteInternalImpl(builder);
+  impl_write();
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

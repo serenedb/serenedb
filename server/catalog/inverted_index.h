@@ -39,7 +39,7 @@ class InvertedIndex final : public Index {
     : Index{database_id, schema_id, id, relation_id, std::move(options.base)},
       _options{std::move(options.impl)} {}
 
-  void WriteInternalImpl(vpack::Builder& builder) const final;
+  void WriteInternal(vpack::Builder& builder) const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 

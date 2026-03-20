@@ -73,8 +73,6 @@ class Index : public SchemaObject {
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
   }
-  // Derived should override WriteInternalImpl
-  void WriteInternal(vpack::Builder& builder) const final;
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
@@ -85,7 +83,8 @@ class Index : public SchemaObject {
   virtual ~Index() = default;
 
  protected:
-  virtual void WriteInternalImpl(vpack::Builder& builder) const = 0;
+  void WriteInternalImpl(vpack::Builder& builder,
+                         absl::FunctionRef<void()> impl_write) const;
 
   struct IndexOutput;
   IndexOutput MakeIndexOutput() const;

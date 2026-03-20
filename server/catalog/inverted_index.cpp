@@ -19,8 +19,9 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   return inverted_index_shard;
 }
 
-void InvertedIndex::WriteInternalImpl(vpack::Builder& builder) const {
-  vpack::WriteTuple(builder, _options);
+void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
+  Index::WriteInternalImpl(builder,
+                           [&] { vpack::WriteTuple(builder, _options); });
 }
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(

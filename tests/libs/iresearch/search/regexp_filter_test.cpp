@@ -24,7 +24,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
-#include "iresearch/search/regexp_filter_re2.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"

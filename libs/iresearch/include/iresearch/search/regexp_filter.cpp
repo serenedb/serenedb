@@ -16,7 +16,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "regexp_filter_re2.hpp"
+#include "regexp_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
@@ -24,7 +24,7 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/regexp_utils_re2.hpp"
+#include "iresearch/utils/regexp_utils.hpp"
 
 namespace irs {
 

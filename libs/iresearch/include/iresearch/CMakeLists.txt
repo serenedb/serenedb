@@ -118,8 +118,7 @@ set(IResearch_core_sources
     ./search/column_existence_filter.cpp
     ./search/same_position_filter.cpp
     ./search/wildcard_filter.cpp
-    # ./search/regexp_filter.cpp
-    ./search/regexp_filter_re2.cpp
+    ./search/regexp_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp
@@ -152,8 +151,7 @@ set(IResearch_core_sources
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
-    # ./utils/regexp_utils.cpp
-    ./utils/regexp_utils_re2.cpp
+    ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
     ./utils/numeric_utils.cpp

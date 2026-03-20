@@ -16,7 +16,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "regexp_utils_re2.hpp"
+#include "regexp_utils.hpp"
 
 #include "automaton_utils.hpp"
 #include "basics/utf8_utils.hpp"

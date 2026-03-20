@@ -21,7 +21,7 @@
 #include <iostream>
 
 #include "filter_test_case_base.hpp"
-#include "iresearch/search/regexp_filter_re2.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "tests_shared.hpp"
 

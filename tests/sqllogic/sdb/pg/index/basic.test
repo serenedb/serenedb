@@ -256,3 +256,13 @@ Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
+
+
+statement ok
+CREATE TABLE empty_soul();
+
+
+statement error
+CREATE INDEX empty_index ON empty_soul USING inverted(a);
+----
+db error: ERROR: column "a" does not exist

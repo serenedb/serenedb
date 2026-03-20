@@ -60,7 +60,7 @@ a
 4
 
 statement error db error: ERROR:  Field 'c' is not indexed by identity analyzer. Use TERM_EQ function.
-SELECT a FROM test_term_ops_idx c = 'd';
+SELECT a FROM test_term_ops_idx WHERE c = 'd';
 
 query
 SELECT a FROM test_term_ops_idx WHERE TERM_GT(c, 'd') ORDER BY a DESC;

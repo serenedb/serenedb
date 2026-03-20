@@ -1016,24 +1016,3 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/velox
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/axiom
 )
-
-################################################################################
-## WAMR (SHOULD BE LAST!)
-################################################################################
-
-if(USE_WASM)
-    sdb_update_module(${GIT_EXECUTABLE} "wasm-micro-runtime" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-    set(WAMR_BUILD_PLATFORM "linux")
-    set(WAMR_BUILD_INTERP 1)
-    set(WAMR_BUILD_FAST_INTERP 1)
-    set(WAMR_BUILD_FAST_JIT 0) # TODO(mbkkt) doesn't work in cmake configure step
-    set(WAMR_BUILD_JIT 0) # needs llvm
-    set(WAMR_BUILD_AOT 0) # compile wasm to their aot format
-    set(WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/wasm-micro-runtime)
-    set(WAMR_ROOT_DIR ${WAMR_ROOT_DIR} PARENT_SCOPE)
-    set(WAMR_DISABLE_HW_BOUND_CHECK 1)
-
-    include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
-    add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
-endif()

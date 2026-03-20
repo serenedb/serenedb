@@ -19,10 +19,7 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   return inverted_index_shard;
 }
 
-void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
-  vpack::ObjectBuilder scope_object(&builder);
-  Index::WriteInternal(builder);
-  builder.add(kIndexImplOptions);
+void InvertedIndex::WriteInternalImpl(vpack::Builder& builder) const {
   vpack::WriteTuple(builder, _options);
 }
 

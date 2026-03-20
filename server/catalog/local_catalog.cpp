@@ -955,9 +955,9 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
 
 ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexBaseOptions options, vpack::Slice impl_options) {
+  IndexBaseOptions options, IndexImplOptionsBaseWrapper&& impl_options) {
   auto index = MakeIndex(database_id, schema_id, id, relation_id,
-                         std::move(options), impl_options);
+                         std::move(options), std::move(impl_options));
   if (!index) {
     return std::unexpected<Result>(std::in_place, std::move(index).error());
   }

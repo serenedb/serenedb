@@ -174,7 +174,7 @@ struct LogicalCatalog {
     std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
   virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexBaseOptions options, vpack::Slice impl_options) = 0;
+    IndexBaseOptions options, IndexImplOptionsBaseWrapper&& impl_options) = 0;
   virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
 
   virtual Result CreateDatabase(

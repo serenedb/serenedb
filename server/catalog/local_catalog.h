@@ -67,7 +67,7 @@ class LocalCatalog final : public LogicalCatalog,
 
   ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexBaseOptions options, vpack::Slice impl_options) final;
+    IndexBaseOptions options, IndexImplOptionsBaseWrapper&& impl_options) final;
   Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;

@@ -55,6 +55,14 @@ struct IndexBaseOptions {
   std::vector<Column::Id> column_ids;
 };
 
+// polymorfic wrapper for concrete index wrappers
+// so we can make generic parsing/creating code.
+struct IndexImplOptionsBaseWrapper {
+  virtual ~IndexImplOptionsBaseWrapper() = default;
+};
+
+using ImplOptsPtr = std::unique_ptr<IndexImplOptionsBaseWrapper>;
+
 template<typename Impl>
 struct IndexOptions {
   IndexBaseOptions base;
@@ -68,7 +76,8 @@ class Index : public SchemaObject {
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
   }
-  void WriteInternal(vpack::Builder& builder) const override;
+  // Derived should override WriteInternalImpl
+  void WriteInternal(vpack::Builder& builder) const final;
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
@@ -79,6 +88,8 @@ class Index : public SchemaObject {
   virtual ~Index() = default;
 
  protected:
+  virtual void WriteInternalImpl(vpack::Builder& builder) const = 0;
+
   struct IndexOutput;
   IndexOutput MakeIndexOutput() const;
 
@@ -90,11 +101,12 @@ class Index : public SchemaObject {
   std::vector<Column::Id> _column_ids;
 };
 
-ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
-                                           ObjectId schema_id, ObjectId id,
-                                           ObjectId relation_id,
-                                           IndexBaseOptions options,
-                                           vpack::Slice impl_options_slice);
+ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions options,
+                                     vpack::Slice impl_options_slice);
+
+ResultOr<std::shared_ptr<Index>> MakeIndex(
+  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  IndexBaseOptions options, IndexImplOptionsBaseWrapper&& impl_options);
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,

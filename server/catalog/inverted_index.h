@@ -20,6 +20,10 @@ struct InvertedIndexOptionsImpl {
   containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo> columns;
 };
 
+struct InvertedIndexOptionsWrapper : public IndexImplOptionsBaseWrapper {
+  InvertedIndexOptionsImpl options;
+};
+
 struct ColumnAnalyzer {
   Tokenizer::AnalyzerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
@@ -34,7 +38,7 @@ class InvertedIndex final : public Index {
     : Index{database_id, schema_id, id, relation_id, std::move(options.base)},
       _options{std::move(options.impl)} {}
 
-  void WriteInternal(vpack::Builder& builder) const final;
+  void WriteInternalImpl(vpack::Builder& builder) const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 

@@ -70,20 +70,34 @@ Result ValidateInvertedIndexColumns(
 
 }  // namespace
 
-ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
-                                           ObjectId schema_id, ObjectId id,
-                                           ObjectId relation_id,
-                                           IndexBaseOptions options,
-                                           vpack::Slice impl_options_slice) {
+ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions options,
+                                     vpack::Slice impl_options_slice) {
+  switch (options.type) {
+    case IndexType::Inverted: {
+      auto res = std::make_unique<InvertedIndexOptionsWrapper>();
+      if (auto r = vpack::ReadTupleNothrow(impl_options_slice, res->options);
+          !r.ok()) {
+        return std::unexpected<Result>{std::move(r)};
+      }
+      return res;
+    }
+    case IndexType::Secondary:
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
+                                     "Secondary index is not implemented"};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
+  }
+}
+
+ResultOr<std::shared_ptr<Index>> MakeIndex(
+  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  IndexBaseOptions options, IndexImplOptionsBaseWrapper&& sub_options) {
   switch (options.type) {
     case IndexType::Inverted: {
       InvertedIndexOptions impl_options;
       impl_options.base = std::move(options);
-      if (auto r =
-            vpack::ReadTupleNothrow(impl_options_slice, impl_options.impl);
-          !r.ok()) {
-        return std::unexpected<Result>{std::move(r)};
-      }
+      impl_options.impl = std::move(
+        basics::downCast<InvertedIndexOptionsWrapper>(sub_options).options);
       return CreateInvertedIndex(database_id, schema_id, id, relation_id,
                                  std::move(impl_options));
     }
@@ -173,9 +187,11 @@ Index::IndexOutput Index::MakeIndexOutput() const {
 }
 
 void Index::WriteInternal(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
+  vpack::ObjectBuilder scope_object(&builder);
   builder.add(kIndexBaseOptions);
   vpack::WriteTuple(builder, MakeIndexOutput());
+  builder.add(kIndexImplOptions);
+  WriteInternalImpl(builder);
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

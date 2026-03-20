@@ -38,7 +38,7 @@ class SecondaryIndex : public Index {
                  ObjectId relation_id,
                  IndexOptions<SecondaryIndexOptions> options);
 
-  void WriteInternal(vpack::Builder& builder) const final;
+  void WriteInternalImpl(vpack::Builder& builder) const final;
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(

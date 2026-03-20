@@ -78,8 +78,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     irs::Tokenizer& GetTokens() const noexcept {
       SDB_ASSERT(analyzer || string_analyzer);
-      SDB_ASSERT((analyzer == nullptr) || !string_analyzer.has_value());
-      return analyzer ? *analyzer : *string_analyzer.value().get();
+      SDB_ASSERT((analyzer == nullptr) || !string_analyzer);
+      return analyzer ? *analyzer : **string_analyzer;
     }
 
     bool Write(irs::DataOutput& out) const {

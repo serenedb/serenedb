@@ -506,9 +506,7 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                               ObjectId table_id, ObjectId index_id,
                               vpack::Slice slice) {
-  if (!slice.isObject()) {
-    return {ERROR_INTERNAL, "Index definition is not an object"};
-  }
+  SDB_ASSERT(slice.isObject(), "Index definition is not an object");
   IndexBaseOptions options;
   if (auto r = vpack::ReadTupleNothrow(slice.get(kIndexBaseOptions), options);
       !r.ok()) {

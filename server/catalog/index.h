@@ -55,12 +55,8 @@ struct IndexBaseOptions {
   std::vector<Column::Id> column_ids;
 };
 
-struct IndexImplOptionsBase {
-  virtual ~IndexImplOptionsBase() = default;
-};
-
 template<typename Impl>
-struct IndexOptions : public IndexImplOptionsBase {
+struct IndexOptions {
   IndexBaseOptions base;
   Impl impl;
 };

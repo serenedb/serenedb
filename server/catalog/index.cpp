@@ -129,14 +129,14 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
           auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
                                              object_name.relation);
           if (!dict) {
+            // clang-format off
+            // TODO(Dronplane) check if newer versions would format it without
+            // putting everything in the single column
             return std::unexpected<Result>{
-              std::in_place,
-              ERROR_BAD_PARAMETER,
-              "Text search dictionary '",
-              c.opclass,
-              "' does not exist. Required by column '",
-              c.name,
-              "'"};
+              std::in_place, ERROR_BAD_PARAMETER,
+              "Text search dictionary '", c.opclass, "' does not exist.",
+              " Required by column '", c.name, "'"};
+            // clang-format on
           }
           index_col.text_dictionary = dict->GetId();
           index_col.features = dict->GetFeatures();

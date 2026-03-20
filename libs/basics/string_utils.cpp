@@ -1161,6 +1161,23 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
   }
 }
 
+std::string_view GetArticle(std::string_view word) noexcept {
+  if (word.empty()) {
+    return "";
+  }
+
+  switch (absl::ascii_tolower(word.front())) {
+    case 'a':
+    case 'e':
+    case 'i':
+    case 'o':
+    case 'u':
+      return "an";
+    default:
+      return "a";
+  }
+}
+
 template void EscapeJsonStr<StrSink>(std::string_view str, StrSink* sink,
                                      EscapeJsonOptions options);
 template void EscapeJsonStr<LenSink>(std::string_view str, LenSink* sink,

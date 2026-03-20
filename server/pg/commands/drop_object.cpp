@@ -26,6 +26,7 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/static_strings.h"
+#include "basics/string_utils.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
@@ -44,6 +45,7 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 
 yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
+  using CatalogObjectType = catalog::ObjectType;
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
@@ -64,6 +66,62 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
     ParseObjectName(names, context.GetDatabase(), current_schema);
   Result r;
   const auto db = context.GetDatabaseId();
+
+  auto object_type_name = [&] -> std::string_view {
+    switch (stmt.removeType) {
+      case OBJECT_TABLE:
+        return "table";
+      case OBJECT_INDEX:
+        return "index";
+      case OBJECT_VIEW:
+        return "view";
+      case OBJECT_FUNCTION:
+        return "function";
+      case OBJECT_SCHEMA:
+        return "schema";
+      case OBJECT_TSDICTIONARY:
+        return "text search dictionary";
+      default:
+        SDB_ASSERT(false);  // it's better to specify the name
+        return "object";
+    }
+  }();
+
+  auto expected_relation = [&] {
+    switch (stmt.removeType) {
+      using enum CatalogObjectType;
+      case OBJECT_TABLE:
+        return Table;
+      case OBJECT_INDEX:
+        return Index;
+      case OBJECT_VIEW:
+        return View;
+      default:
+        return Invalid;
+    }
+  }();
+
+  // For relation types check that we delete the same type (as PG does)
+  if (expected_relation != CatalogObjectType::Invalid) {
+    auto snapshot = catalog.GetSnapshot();
+    if (auto relation = snapshot->GetRelation(db, schema, name)) {
+      auto actual_type = relation->GetType();
+      if (actual_type != expected_relation) {
+        auto actual_name =
+          absl::AsciiStrToLower(magic_enum::enum_name(actual_type));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("\"", name, "\" is not ",
+                  basics::string_utils::GetArticle(object_type_name), " ",
+                  object_type_name),
+          ERR_HINT("Use DROP ",
+                   absl::AsciiStrToUpper(magic_enum::enum_name(actual_type)),
+                   " to remove ", basics::string_utils::GetArticle(actual_name),
+                   " ", actual_name, "."));
+      }
+    }
+  }
+
   switch (stmt.removeType) {
     case OBJECT_TABLE:
       r = catalog.DropTable(db, schema, name);
@@ -99,34 +157,25 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
                               magic_enum::enum_name(stmt.removeType)));
   }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    std::string_view object_type;
-    switch (stmt.removeType) {
-      case OBJECT_TABLE:
-        object_type = "table";
-        break;
-      case OBJECT_INDEX:
-        object_type = "index";
-        break;
-      case OBJECT_VIEW:
-        object_type = "view";
-        break;
-      case OBJECT_FUNCTION:
-        object_type = "function";
-        break;
-      case OBJECT_SCHEMA:
-        object_type = "schema";
-        break;
-      default:
-        object_type = "object";
-        break;
+    if (stmt.removeType == OBJECT_FUNCTION) {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      }
+      basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        ERR_MSG("function ", name, "() does not exist, skipping")));
+    } else {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+          ERR_MSG(object_type_name, " \"", name, "\" does not exist"));
+      }
+      basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG(object_type_name, " \"", name, "\" does not exist, skipping")));
     }
-    if (!stmt.missing_ok) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG(object_type, " \"", name, "\" does not exist"));
-    }
-    basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG(object_type, " \"", name, "\" does not exist, skipping")));
     r = {};
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }

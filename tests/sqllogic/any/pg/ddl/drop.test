@@ -1,0 +1,154 @@
+statement ok
+CREATE TABLE t(a integer);
+
+statement ok
+CREATE INDEX idx ON t USING inverted(a);
+
+statement ok
+CREATE SCHEMA s;
+
+statement ok
+CREATE TABLE s.st(a integer);
+
+statement ok
+CREATE FUNCTION f() RETURNS TABLE(a integer) LANGUAGE SQL
+BEGIN ATOMIC
+  SELECT * FROM t;
+END;
+
+statement error
+DROP TABLE idx;
+----
+db error: ERROR: "idx" is not a table
+HINT: Use DROP INDEX to remove an index.
+
+
+statement error
+DROP TABLE IF EXISTS idx;
+----
+db error: ERROR: "idx" is not a table
+HINT: Use DROP INDEX to remove an index.
+
+
+statement error
+DROP INDEX t;
+----
+db error: ERROR: "t" is not an index
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP INDEX IF EXISTS t;
+----
+db error: ERROR: "t" is not an index
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP VIEW t;
+----
+db error: ERROR: "t" is not a view
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP VIEW IF EXISTS t;
+----
+db error: ERROR: "t" is not a view
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP VIEW idx;
+----
+db error: ERROR: "idx" is not a view
+HINT: Use DROP INDEX to remove an index.
+
+
+statement error
+DROP VIEW IF EXISTS idx;
+----
+db error: ERROR: "idx" is not a view
+HINT: Use DROP INDEX to remove an index.
+
+
+statement error
+DROP FUNCTION t;
+----
+db error: ERROR: could not find a function named "t"
+
+
+statement error
+DROP FUNCTION idx;
+----
+db error: ERROR: could not find a function named "idx"
+
+
+statement error
+DROP TABLE f;
+----
+db error: ERROR: table "f" does not exist
+
+
+statement error
+DROP INDEX f;
+----
+db error: ERROR: index "f" does not exist
+
+
+statement error
+DROP VIEW f;
+----
+db error: ERROR: view "f" does not exist
+
+
+statement error
+DROP TABLE nonexistent;
+----
+db error: ERROR: table "nonexistent" does not exist
+
+
+statement error
+DROP INDEX nonexistent;
+----
+db error: ERROR: index "nonexistent" does not exist
+
+
+statement error
+DROP VIEW nonexistent;
+----
+db error: ERROR: view "nonexistent" does not exist
+
+
+statement error
+DROP FUNCTION nonexistent;
+----
+db error: ERROR: could not find a function named "nonexistent"
+
+
+statement ok
+DROP TABLE IF EXISTS nonexistent;
+
+statement ok
+DROP INDEX IF EXISTS nonexistent;
+
+statement ok
+DROP VIEW IF EXISTS nonexistent;
+
+statement ok
+DROP FUNCTION IF EXISTS nonexistent;
+
+statement ok
+DROP FUNCTION f;
+
+statement ok
+DROP TABLE s.st;
+
+statement ok
+DROP SCHEMA s;
+
+statement ok
+DROP INDEX idx;
+
+statement ok
+DROP TABLE t;

@@ -770,7 +770,7 @@ class SqlAnalyzer {
       column_exprs.emplace_back(std::move(expr));
       column_names.emplace_back(name);
     }
-    if (pk_type.size() == 0) {
+    if (pk_type.size() == 0 && output_type->size() > 0) {
       auto generated_pk_name =
         catalog::Column::GeneratePKName(row_type.names());
       auto column = state.resolver.Resolve(output_type, generated_pk_name);
@@ -2556,16 +2556,13 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
   const auto& input_type = *table_state.root->outputType();
 
+  const auto& pk = *table.PKType();
+  size_t size = pk.size() + list_length(stmt.indexParams);
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
-  FillColumnsInfo(table_state, *table.PKType(), table_type, column_names,
-                  column_exprs);
-
-  containers::FlatHashSet<std::string_view> pk_names;
-  pk_names.reserve(column_names.size());
-  for (const auto& name : column_names) {
-    pk_names.emplace(name);
-  }
+  column_names.reserve(size);
+  column_exprs.reserve(size);
+  FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
     const std::string_view colname = index_elem.name;
@@ -2574,7 +2571,7 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("column \"", colname, "\" does not exist"));
     }
-    if (pk_names.contains(colname)) {
+    if (pk.containsChild(colname)) {
       return;
     }
     size_t col_idx = *maybe_col_idx;

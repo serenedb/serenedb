@@ -262,5 +262,7 @@ statement ok
 CREATE TABLE empty_soul();
 
 
-statement ok
-CREATE INDEX empty_index ON empty_soul USING inverted;
+statement error
+CREATE INDEX empty_index ON empty_soul USING inverted(a);
+----
+db error: ERROR: column "a" does not exist

@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 
@@ -65,5 +66,13 @@ inline int64_t CheckFooter(IndexInput& in, int64_t checksum) {
 
 int64_t Checksum(const IndexInput& in);
 
+void PrepareOutput(std::string& str, IndexOutput::ptr& out,
+                   const FlushState& state, std::string_view ext,
+                   std::string_view format, const int32_t version);
+
 }  // namespace format_utils
+
+template<typename T, typename M>
+std::string FileName(const M& meta);
+
 }  // namespace irs

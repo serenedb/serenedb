@@ -46,6 +46,7 @@
 #include <string_view>
 
 #include "absl/strings/str_cat.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/file_utils_ext.hpp"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
@@ -130,7 +131,8 @@ struct StrHash {
   size_t operator()(hashed_string_view v) const { return v.Hash(); }
 };
 
-absl::node_hash_map<std::string, CachedOptions, StrHash> gCachedStateByKey;
+sdb::containers::NodeHashMap<std::string, CachedOptions, StrHash>
+  gCachedStateByKey;
 constinit absl::Mutex gMutex{absl::kConstInit};
 
 // Retrieves a set of ignored words from FS at the specified custom path

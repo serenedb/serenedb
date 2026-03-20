@@ -34,6 +34,7 @@
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/fixed_buffer.hpp"
 
 namespace irs {
 
@@ -44,8 +45,9 @@ class WandWriterImpl final : public WandWriter {
  public:
   template<typename... Args>
   WandWriterImpl(size_t max_levels, Args&&... args)
-    : _levels{max_levels + 1}, _producer{std::forward<Args>(args)...} {
+    : _producer{std::forward<Args>(args)...} {
     SDB_ASSERT(max_levels != 0);
+    _levels.resize(max_levels + 1);
   }
 
   bool Prepare(const ColumnProvider& reader, const FieldProperties& meta,
@@ -95,9 +97,9 @@ class WandWriterImpl final : public WandWriter {
   }
 
  private:
-  // 5 -- current max skip list levels
+  // doc_limits::kMaxSkipLevels -- current max skip list levels
   // 1 -- for whole skip list level
-  sdb::containers::SmallVector<EntryType, 5 + 1> _levels;
+  utils::FixedBuffer<EntryType, doc_limits::kMaxSkipLevels + 1> _levels;
   [[no_unique_address]] Producer _producer;
 };
 

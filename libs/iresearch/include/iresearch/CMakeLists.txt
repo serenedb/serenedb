@@ -72,14 +72,14 @@ set(IResearch_core_sources
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
     ./error/error.cpp
-    ./formats/columnstore2.cpp
+    ./formats/column/common.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
-    ./formats/skip_list.cpp
-    ./formats/sparse_bitmap.cpp
+    ./formats/posting/skip_list.cpp
+    ./formats/column/sparse_bitmap.cpp
     ./formats/format_block_128.cpp
-    ./formats/formats_burst_trie.cpp
-    ./formats/hnsw_index.cpp
+    ./formats/index/burst_trie.cpp
+    ./formats/column/hnsw_index.cpp
     ./index/buffered_column.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp

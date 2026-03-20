@@ -22,9 +22,9 @@
 
 #include "phrase_query.hpp"
 
+#include "iresearch/formats/posting/iterator_doc.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/make_disjunction.hpp"
-#include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {

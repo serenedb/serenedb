@@ -22,11 +22,12 @@
 
 #include "iresearch/search/boolean_query.hpp"
 
-#include "iresearch/formats/formats_impl.hpp"
+#include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/format_block_128.hpp"
+#include "iresearch/formats/posting/iterator_doc.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/boost_iterator.hpp"
 #include "iresearch/search/conjunction.hpp"
-#include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/scorer.hpp"

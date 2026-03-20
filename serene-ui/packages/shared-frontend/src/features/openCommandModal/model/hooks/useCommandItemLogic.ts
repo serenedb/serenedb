@@ -63,9 +63,9 @@ export const useCommandItemLogic = ({
             };
         }
 
-        // Default - should not normally reach here
+        // Single commands
         return {
-            primary: sectionLabel,
+            primary: title || "",
             showSeparator: false,
         };
     }, [isSection, title, section, sectionLabel, currentSection, inputValue]);

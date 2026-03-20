@@ -473,6 +473,8 @@ class IndexWriter : private util::Noncopyable {
 
     bool Valid() const noexcept { return _writer != nullptr; }
 
+    uint64_t GetQueries() const noexcept { return _queries; }
+
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     // refresh segment if required (guarded by FlushContext::context_mutex_)

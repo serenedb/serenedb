@@ -69,14 +69,15 @@ class ScoreCollector {
     Generic,
   };
 
-  static constexpr size_t kBlockSize = BitsRequired<uint64_t>();
-
   IRS_FORCE_INLINE Tag GetTag() const noexcept { return _tag; }
 
   virtual void Add(score_t score, doc_id_t doc) = 0;
 
   virtual void AddWindow(const score_t* scores, const uint64_t* mask,
-                         doc_id_t min, size_t num_blocks) = 0;
+                         doc_id_t min, size_t num_blocks, bool clear_score) = 0;
+
+  virtual void AddDocs(const doc_id_t* docs, size_t count,
+                       const score_t* scores) = 0;
 
  protected:
   explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}
@@ -124,8 +125,8 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   }
 
   IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
-                                  doc_id_t min,
-                                  size_t num_blocks) noexcept final {
+                                  doc_id_t min, size_t num_blocks,
+                                  bool clear_score) noexcept final {
     auto threshold = _mm256_set1_ps(*_score_threshold);
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
@@ -134,9 +135,10 @@ class NthPartitionScoreCollector final : public ScoreCollector {
       }
 
       _count += std::popcount(word);
-      const score_t* IRS_RESTRICT const score_base = scores + i * kBlockSize;
+      const score_t* IRS_RESTRICT const score_base =
+        scores + i * BitsRequired<uint64_t>();
       word &= GetScoreMask(score_base, threshold);
-      const doc_id_t doc_base = min + i * kBlockSize;
+      const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
 
       while (word != 0) {
         const doc_id_t bit = std::countr_zero(word);
@@ -145,6 +147,43 @@ class NthPartitionScoreCollector final : public ScoreCollector {
           threshold = _mm256_set1_ps(*_score_threshold);
           word &= GetScoreMask(score_base, threshold);
         }
+      }
+
+      if (clear_score) {
+        std::memset(const_cast<score_t*>(score_base), 0,
+                    BitsRequired<uint64_t>() * sizeof(score_t));
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
+                                const score_t* scores) noexcept final {
+    _count += count;
+    auto threshold = _mm256_set1_ps(*_score_threshold);
+    size_t i = 0;
+
+    // Process groups of 8 with AVX2.
+    for (; i + 8 <= count; i += 8) {
+      auto scores_vec = _mm256_loadu_ps(scores + i);
+      auto cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+      auto pass = static_cast<unsigned>(_mm256_movemask_ps(cmp));
+
+      while (pass) {
+        const int bit = std::countr_zero(pass);
+        pass = PopBit(pass);
+        const score_t score = scores[i + bit];
+        if (AddImpl(score, docs[i + bit])) {
+          threshold = _mm256_set1_ps(*_score_threshold);
+          cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+          pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
+        }
+      }
+    }
+
+    // Scalar tail.
+    for (; i < count; ++i) {
+      if (scores[i] > *_score_threshold) {
+        AddImpl(scores[i], docs[i]);
       }
     }
   }
@@ -270,6 +309,11 @@ struct DocIterator : AttributeProvider {
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
+  virtual uint32_t GetFreq() const {
+    SDB_ASSERT(false);
+    return 0;
+  }
+
  protected:
   mutable doc_id_t _doc = doc_limits::invalid();
 
@@ -306,9 +350,7 @@ struct DocIterator : AttributeProvider {
         }
         fetcher.Fetch(docs);
         scorer.ScoreBlock(scores.data());
-        for (size_t j = 0; j != kScoreBlock; ++j) {
-          collector.Add(scores[j], docs[j]);
-        }
+        collector.AddDocs(docs.data(), kScoreBlock, scores.data());
       }
     });
   }

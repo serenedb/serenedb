@@ -20,6 +20,7 @@
 
 #include "pg/sql_statement.h"
 
+#include <absl/strings/string_view.h>
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
@@ -47,6 +48,29 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
+template<typename State>
+auto GetRollback(const std::shared_ptr<ConnectionContext>& connection_ctx,
+                 std::string_view schemaname, std::string_view name,
+                 Result (catalog::LogicalCatalog::*drop)(ObjectId,
+                                                         std::string_view,
+                                                         std::string_view),
+                 State& state) {
+  return [connection_ctx, schemaname, name, drop, &state] noexcept {
+    if (!state.created) {
+      // protection from deleting existing object
+      return;
+    }
+    auto db = connection_ctx->GetDatabaseId();
+    std::string current_schema = connection_ctx->GetCurrentSchema();
+    const std::string_view schema =
+      schemaname.empty() ? std::string_view{current_schema} : schemaname;
+    SDB_ASSERT(!schema.empty());
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    std::ignore = (catalog.*drop)(db, schema, name);
+  };
+}
+
 std::unique_ptr<query::Query> CreateCTASPipeline(
   const VeloxQuery& query_desc, query::QueryContext& query_ctx,
   const std::shared_ptr<ConnectionContext>& connection_ctx) {
@@ -69,21 +93,12 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   auto create_table = std::make_unique<CTASCreateTableExecutor>(
     connection_ctx, *into, if_not_exists);
-  auto rollback = [connection_ctx, into] noexcept {
-    auto db = connection_ctx->GetDatabaseId();
-    const auto& rel = *into->rel;
-    std::string current_schema = connection_ctx->GetCurrentSchema();
-    const std::string_view schema =
-      rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
-    SDB_ASSERT(!schema.empty());
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    std::ignore = catalog.DropTable(db, schema, into->rel->relname);
-  };
-  auto velox_exec =
-    std::make_unique<query::RollbackVeloxExecutor>(std::move(rollback));
+  auto& state = create_table->GetState();
+  auto velox_exec = std::make_unique<query::VeloxExecutor>();
+  const auto schemaname = absl::NullSafeStringView(into->rel->schemaname);
+  const std::string_view name = into->rel->relname;
   auto remove_tombstone =
-    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, *into->rel);
+    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, schemaname, name);
 
   std::vector<std::unique_ptr<query::Executor>> executors;
   executors.reserve(3);
@@ -93,8 +108,46 @@ std::unique_ptr<query::Query> CreateCTASPipeline(
 
   query_ctx.command_type.Add(query::CommandType::Query);
 
-  return query::Query::CreateWithExecutor(query_desc.root, query_ctx,
-                                          std::move(executors));
+  auto rollback = GetRollback(connection_ctx, schemaname, name,
+                              &catalog::LogicalCatalog::DropTable, state);
+  return query::Query::CreatePipeline(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
+}
+
+std::unique_ptr<query::Query> CreateIndexPipeline(
+  const VeloxQuery& query_desc, query::QueryContext& query_ctx,
+  const std::shared_ptr<ConnectionContext>& connection_ctx) {
+  SDB_ASSERT(query_desc.pgsql_node);
+  SDB_ASSERT(query_desc.root);
+  SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+
+  const auto& index_stmt = *castNode(IndexStmt, query_desc.pgsql_node);
+  const auto schemaname =
+    absl::NullSafeStringView(index_stmt.relation->schemaname);
+  const std::string_view name = index_stmt.idxname;
+
+  auto create_index =
+    std::make_unique<CreateIndexExecutor>(connection_ctx, index_stmt);
+  auto& state = create_index->GetState();
+  auto velox_exec = std::make_unique<query::VeloxExecutor>();
+  auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
+    connection_ctx, schemaname, name);
+  auto remove_tombstone =
+    std::make_unique<RemoveTombstoneExecutor>(connection_ctx, schemaname, name);
+
+  std::vector<std::unique_ptr<query::Executor>> executors;
+  executors.reserve(4);
+  executors.emplace_back(std::move(create_index));
+  executors.emplace_back(std::move(velox_exec));
+  executors.emplace_back(std::move(finish_creation));
+  executors.emplace_back(std::move(remove_tombstone));
+
+  query_ctx.command_type.Add(query::CommandType::Query);
+
+  auto rollback = GetRollback(connection_ctx, schemaname, name,
+                              &catalog::LogicalCatalog::DropIndex, state);
+  return query::Query::CreatePipeline(
+    query_desc.root, query_ctx, std::move(executors), std::move(rollback));
 }
 
 }  // namespace
@@ -127,27 +180,41 @@ bool SqlStatement::ProcessNextRoot(
 
   // TODO : split to Parse and Bind steps
   ParamIndex max_bind_param_idx = 0;
-  pg::Collect(connection_ctx->GetDatabase(), *raw_stmt, objects,
-              max_bind_param_idx);
+  Collect(connection_ctx->GetDatabase(), *raw_stmt, objects,
+          max_bind_param_idx);
   params.types.resize(max_bind_param_idx);
   if (!params.types.empty()) {
     // cannot have multiple bind stmts, already checked in pg_commit_task
     SDB_ASSERT(RootCount() == 1);
   }
 
-  pg::Resolve(connection_ctx->GetDatabaseId(), objects, *connection_ctx);
+  Resolve(connection_ctx->GetDatabaseId(), objects, *connection_ctx);
   SDB_ASSERT(memory_context);
 
   query::QueryContext query_ctx{connection_ctx, objects};
 
-  auto query_desc = pg::AnalyzeVelox(
+  auto query_desc = AnalyzeVelox(
     *raw_stmt, *query_string, objects, id_generator, query_ctx, params,
     connection_ctx->GetSendBuffer(), connection_ctx->GetCopyQueue());
+  auto& explain = query_ctx.explain_params;
+  if (explain) {
+    query_ctx.command_type.Add(query::CommandType::Explain);
+  }
+  // needs execute
+  if (!explain || explain.Has(query::ExplainWith::Analyze)) {
+    query_ctx.command_type.Add(query::CommandType::Query);
+  }
 
-  if (query_desc.type == pg::SqlCommandType::Show) {
+  if (query_ctx.command_type.HasOnly(query::CommandType::Explain)) {
+    query = query::Query::CreateExplain(query_desc.root, query_ctx);
+    return true;
+  }
+
+  if (query_desc.type == SqlCommandType::Show) {
     SDB_ASSERT(query_desc.pgsql_node);
     const auto* show_stmt = castNode(VariableShowStmt, query_desc.pgsql_node);
-    if (!strcmp(show_stmt->name, "all")) {
+    std::string_view name = show_stmt->name;
+    if (name == "all") {
       query = query::Query::CreateShowAll(query_ctx);
     } else {
       query = query::Query::CreateShow(show_stmt->name, query_ctx);
@@ -155,65 +222,23 @@ bool SqlStatement::ProcessNextRoot(
     return true;
   }
 
-  if (query_desc.type == pg::SqlCommandType::CTAS) {
+  if (query_desc.type == SqlCommandType::CTAS) {
     query = CreateCTASPipeline(query_desc, query_ctx, connection_ctx);
     return true;
   }
 
+  if (query_desc.type == pg::SqlCommandType::CreateIndex) {
+    query = CreateIndexPipeline(query_desc, query_ctx, connection_ctx);
+    return true;
+  }
+
   if (query_desc.pgsql_node) {
-    SDB_ASSERT(query_desc.pgsql_node);
     auto executor =
       std::make_unique<DDLExecutor>(connection_ctx, *query_desc.pgsql_node);
     query = query::Query::CreateDDL(std::move(executor), query_ctx);
     return true;
   }
 
-  if (query_desc.type == pg::SqlCommandType::Explain) {
-    query_ctx.command_type.Add(query::CommandType::Explain);
-    if (query_desc.options.contains("analyze")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Execution);
-      query_ctx.explain_params.Add(query::ExplainWith::Stats);
-      query_ctx.command_type.Add(query::CommandType::Query);
-    }
-
-    if (query_desc.options.contains("all_plans")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Logical);
-      query_ctx.explain_params.Add(query::ExplainWith::InitialQueryGraph);
-      query_ctx.explain_params.Add(query::ExplainWith::FinalQueryGraph);
-      query_ctx.explain_params.Add(query::ExplainWith::Physical);
-      query_ctx.explain_params.Add(query::ExplainWith::Execution);
-    }
-    if (query_desc.options.contains("logical")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Logical);
-    }
-    if (query_desc.options.contains("initial_query_graph")) {
-      query_ctx.explain_params.Add(query::ExplainWith::InitialQueryGraph);
-    }
-    if (query_desc.options.contains("final_query_graph")) {
-      query_ctx.explain_params.Add(query::ExplainWith::FinalQueryGraph);
-    }
-    if (query_desc.options.contains("physical")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Physical);
-    }
-    if (query_desc.options.contains("execution")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Execution);
-    }
-
-    if (query_desc.options.contains("registers")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Registers);
-    }
-    if (query_desc.options.contains("oneline")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Oneline);
-    }
-    if (query_desc.options.contains("cost")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Cost);
-    }
-    if (query_desc.options.contains("stats")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Stats);
-    }
-  } else {
-    query_ctx.command_type.Add(query::CommandType::Query);
-  }
   query = query::Query::CreateQuery(query_desc.root, query_ctx);
   return true;
 }

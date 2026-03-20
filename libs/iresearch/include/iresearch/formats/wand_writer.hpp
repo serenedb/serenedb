@@ -355,9 +355,6 @@ class FreqNormSource final : public WandSource {
 
  public:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (irs::Type<FreqAttr>::id() == type) {
-      return &_freq;
-    }
     if (irs::Type<FreqBlockAttr>::id() == type) {
       return &_freq_block;
     }
@@ -370,12 +367,12 @@ class FreqNormSource final : public WandSource {
   }
 
   void Read(DataInput& in, size_t size) final {
-    _freq.value = in.ReadV32();
+    _freq = in.ReadV32();
     // TODO(mbkkt) don't compute vsize here
-    const auto read = bytes_io<uint32_t>::vsize(_freq.value);
+    const auto read = bytes_io<uint32_t>::vsize(_freq);
     // We need to always try to read norm, because we have compatibility
     // between BM25 in the index and TFIDF in the query
-    [[maybe_unused]] auto norm = _freq.value;
+    [[maybe_unused]] auto norm = _freq;
     SDB_ASSERT(read <= size);
     if (read != size) {
       // TODO(mbkkt) if (!kNorm) in.skip(read - size);
@@ -387,8 +384,8 @@ class FreqNormSource final : public WandSource {
   }
 
  private:
-  FreqAttr _freq;
-  FreqBlockAttr _freq_block{.value = &_freq.value};
+  uint32_t _freq = 0;
+  FreqBlockAttr _freq_block{.value = &_freq};
   [[no_unique_address]] utils::Need<kNorm, Norm> _norm;
 };
 

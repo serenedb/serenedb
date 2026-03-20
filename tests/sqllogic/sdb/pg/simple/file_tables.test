@@ -1051,40 +1051,38 @@ WITH (
 db error: ERROR: 
 External:
   path (string) - Path to external file (required)
-
-Storage:
-  Common:
-    storage (enum) [default: Local, values: Local, S3] - Storage backend
-  S3:
-    Authentication:
-      s3_access_key (string) - AWS access key ID (used with s3_secret_key)
-      s3_secret_key (string) - AWS secret access key (used with s3_access_key)
-      s3_iam_role (string) - IAM role ARN (instead of access/secret keys)
-      s3_use_instance_credentials (boolean) [default: false] - Use EC2 instance credentials
-    Connection:
-      s3_endpoint (string) - S3-compatible endpoint URL
-      s3_region (string) - AWS region
-      s3_path_style_access (boolean) [default: true] - Use path-style S3 URLs
-      s3_ssl_enabled (boolean) [default: false] - Enable SSL for S3 connections
-  Local:
-    (no additional options)
-
-Format:
-  Common:
-    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
-  Text:
-    delimiter (character) [default: \t] - Column delimiter character
-    escape (character) [default: \\] - Escape character
-    null (string) [default: \N] - String representing NULL
-    header (boolean) [default: false] - First line is a header row
-  CSV:
-    delimiter (character) [default: ,] - Column delimiter character
-    escape (character) [default: "] - Escape character
-    null (string) - String representing NULL
-    header (boolean) [default: false] - First line is a header row
-  Parquet:
-    (no additional options)
-  DWRF:
-    (no additional options)
-  ORC:
-    (no additional options)
+  Storage:
+    Common:
+      storage (enum) [default: Local, values: Local, S3] - Storage backend
+    S3:
+      Authentication:
+        s3_access_key (string) - AWS access key ID (used with s3_secret_key)
+        s3_secret_key (string) - AWS secret access key (used with s3_access_key)
+        s3_iam_role (string) - IAM role ARN (instead of access/secret keys)
+        s3_use_instance_credentials (boolean) [default: false] - Use EC2 instance credentials
+      Connection:
+        s3_endpoint (string) - S3-compatible endpoint URL
+        s3_region (string) - AWS region
+        s3_path_style_access (boolean) [default: true] - Use path-style S3 URLs
+        s3_ssl_enabled (boolean) [default: false] - Enable SSL for S3 connections
+    Local:
+      (no additional options)
+  Format:
+    Common:
+      format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+    Text:
+      delimiter (character) [default: \t] - Column delimiter character
+      escape (character) [default: \\] - Escape character
+      null (string) [default: \N] - String representing NULL
+      header (boolean) [default: false] - First line is a header row
+    CSV:
+      delimiter (character) [default: ,] - Column delimiter character
+      escape (character) [default: "] - Escape character
+      null (string) - String representing NULL
+      header (boolean) [default: false] - First line is a header row
+    Parquet:
+      (no additional options)
+    DWRF:
+      (no additional options)
+    ORC:
+      (no additional options)

@@ -30,6 +30,7 @@ export const ConsoleEditorTabButton: React.FC<ConsoleEditorTabButtonProps> = ({
 
     const [showFailedIndicator, setShowFailedIndicator] = useState(false);
     const [showDoneIndicator, setShowDoneIndicator] = useState(false);
+    const [isHoveringClose, setIsHoveringClose] = useState(false);
 
     const wasSelectedOnLastResult = useRef(tab.id === selectedTabId);
 
@@ -81,8 +82,11 @@ export const ConsoleEditorTabButton: React.FC<ConsoleEditorTabButtonProps> = ({
                     onClick={() => selectTab(tab.id)}
                     className={cn(
                         "pl-3 !pr-0",
-                        tab.id === selectedTabId
-                            ? "hover:bg-primary/30 cursor-default"
+                        tab.id === selectedTabId ? "cursor-default" : "",
+                        isHoveringClose
+                            ? tab.id === selectedTabId
+                                ? "hover:bg-primary"
+                                : "hover:text-secondary-foreground/50 hover:bg-secondary"
                             : "",
                     )}
                     variant={
@@ -95,7 +99,14 @@ export const ConsoleEditorTabButton: React.FC<ConsoleEditorTabButtonProps> = ({
                             removeTab(tab.id);
                             e.stopPropagation();
                         }}
-                        className="ml-2 w-8 h-8 flex items-center justify-center bg-white/3 cursor-pointer hover:bg-white/7 duration-300 rounded-r-md">
+                        onPointerEnter={() => setIsHoveringClose(true)}
+                        onPointerLeave={() => setIsHoveringClose(false)}
+                        className={cn(
+                            tab.id !== selectedTabId
+                                ? "bg-black/3 hover:bg-dark/7 dark:bg-white/3 dark:hover:bg-white/7 text-secondary-foreground/70 hover:text-secondary-foreground"
+                                : "bg-white/7 hover:bg-white/11 dark:bg-white/10 dark:hover:bg-white/15 text-primary-foreground/70 hover:text-primary-foreground",
+                            `ml-2 w-8 h-8 flex items-center justify-center cursor-pointer duration-300 rounded-r-md`,
+                        )}>
                         <CrossIcon className="size-2.5" />
                     </div>
                 </ButtonCardButtonContent>

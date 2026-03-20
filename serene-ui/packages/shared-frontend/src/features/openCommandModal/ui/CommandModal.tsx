@@ -12,8 +12,10 @@ import {
     ConnectionSelectorCommandGroup,
     DatabaseSelectorCommandGroup,
     PageSelectorCommandGroup,
+    UtilitiesCommandGroup,
 } from "./command-groups";
 import { getSearchPlaceholder } from "../model/utils";
+import { ToggleThemeCommand } from "./commands";
 
 export const CommandModal: React.FC = () => {
     const {
@@ -59,6 +61,7 @@ export const CommandModal: React.FC = () => {
                     <PageSelectorCommandGroup />
                     <ConnectionSelectorCommandGroup />
                     <DatabaseSelectorCommandGroup />
+                    <UtilitiesCommandGroup />
                 </CommandList>
             </DialogContent>
         </CommandDialog>

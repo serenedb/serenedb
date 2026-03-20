@@ -33,15 +33,17 @@ export const CommandItemBase = ({
 
         // Home view
         if (!showSeparator) {
-            return <p className="text-primary-foreground">{primary}</p>;
+            return <p className="text-secondary-foreground">{primary}</p>;
         }
 
         // Section view
         return (
-            <p className="text-secondary-foreground">
+            <p className="text-secondary-foreground/50 dark:text-secondary-foreground/70">
                 {secondary}
                 {" > "}
-                <span className="text-primary-foreground">{primary}</span>
+                <span className="text-secondary-foreground dark:text-secondary-foreground">
+                    {primary}
+                </span>
             </p>
         );
     };

@@ -964,12 +964,11 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   });
 }
 
-Result LocalCatalog::CreateIndex(ObjectId database_id,
-                                 std::string_view relation_schema,
-                                 std::string_view relation_name,
-                                 const std::vector<std::string>& column_names,
-                                 IndexBaseOptions options,
-                                 IndexShardOptions& shard_options) {
+Result LocalCatalog::CreateIndex(
+  ObjectId database_id, std::string_view relation_schema,
+  std::string_view relation_name, const std::vector<std::string>& column_names,
+  IndexBaseOptions options, IndexShardOptions& shard_options,
+  CreateIndexOperationOptions operation_options) {
   if (column_names.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
@@ -1037,6 +1036,14 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       r = clone->RegisterObject(*shard, (*index)->GetId(), false);
       SDB_ASSERT(r.ok());
 
+      if (operation_options.create_with_tombstone) {
+        r =
+          _engine->WriteTombstone((*index)->GetRelationId(), (*index)->GetId());
+        if (!r.ok()) {
+          return r;
+        }
+        (*index)->SetTombstoned(true);
+      }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {  // Write index definition
         vpack::Builder b;
@@ -1185,14 +1192,13 @@ Result LocalCatalog::CreateTable(
 
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
-      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-
       if (operation_options.create_with_tombstone) {
         r = _engine->WriteTombstone(*schema_id, table->GetId());
         if (!r.ok()) {
           return r;
         }
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder b;
       b.openObject();
@@ -1590,8 +1596,13 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     if (!table_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto table = clone->GetObject<Table>(*table_id);
-    SDB_ASSERT(table);
+    auto obj = clone->GetObject(*table_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::Table) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto table = basics::downCast<Table>(std::move(obj));
     auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
@@ -1613,21 +1624,32 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto table_id =
+  auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!table_id) {
+  if (!object_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto r =
-    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
+  auto object = _snapshot->GetObject(*object_id);
+  if (!object) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  ObjectId tombstone_parent;
+  if (object->GetType() == ObjectType::Index) {
+    auto& index = basics::downCast<Index>(*object);
+    tombstone_parent = index.GetRelationId();
+  } else {
+    tombstone_parent = *schema_id;
+  }
+
+  auto r = _engine->DropDefinition(tombstone_parent,
+                                   RocksDBEntryType::Tombstone, *object_id);
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
-  auto object = _snapshot->GetObject(*table_id);
-  if (object) {
-    auto& schema_obj = basics::downCast<SchemaObject>(*object);
-    schema_obj.SetTombstoned(false);
-  }
+  auto& schema_obj = basics::downCast<SchemaObject>(*object);
+  schema_obj.SetTombstoned(false);
 
   return r;
 }
@@ -1646,8 +1668,13 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     if (!index_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto index = clone->GetObject<Index>(*index_id);
-    SDB_ASSERT(index);
+    auto obj = clone->GetObject(*index_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::Index) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto index = basics::downCast<Index>(std::move(obj));
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
         !r.ok()) {
       return r;
@@ -1676,8 +1703,13 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     if (!view_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto view = clone->GetObject<View>(*view_id);
-    SDB_ASSERT(view);
+    auto obj = clone->GetObject(*view_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::View) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto view = basics::downCast<View>(std::move(obj));
     auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::View,
                                      view->GetId());
     if (!r.ok()) {

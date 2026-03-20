@@ -55,6 +55,8 @@ class Tokenizer : public SchemaObject {
 
   void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept;
 
+  vpack::Slice Slice() const noexcept;
+
   void WriteInternal(vpack::Builder& b) const final;
 
   Tokenizer(ObjectId id, std::string_view name, search::Features features,

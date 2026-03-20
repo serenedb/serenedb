@@ -98,7 +98,8 @@ class DataSinkTest : public ::testing::Test,
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink(
       "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_oids), WriteConflictPolicy::Replace, rows_affected, {});
+      std::move(column_oids), WriteConflictPolicy::Replace, rows_affected, {},
+      _table_lock);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -856,6 +857,7 @@ class DataSinkTest : public ::testing::Test,
   std::vector<rocksdb::ColumnFamilyDescriptor> _cf_families;
   rocksdb::TransactionDB* _db{nullptr};
   std::vector<rocksdb::ColumnFamilyHandle*> _cf_handles;
+  absl::Mutex _table_lock;
 };
 
 TEST_F(DataSinkTest, test_tableWriteMulticolumnScalar) {
@@ -2490,7 +2492,7 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
                                      {.id = 1, .name = ""},
                                      {.id = 2, .name = ""},
                                      {.id = 3, .name = ""}},
-                                    rows_affected, {});
+                                    rows_affected, {}, _table_lock);
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2557,12 +2559,14 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   ASSERT_NE(transaction2, nullptr);
 
   size_t rows_affected = 0;
-  RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
-                                    row_type, object_key, column_ids,
-                                    rows_affected, {});
+  {
+    RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
+                                      row_type, object_key, column_ids,
+                                      rows_affected, {}, _table_lock);
 
-  delete_sink.appendData(row_data);
-  ASSERT_TRUE(delete_sink.finish());
+    delete_sink.appendData(row_data);
+    ASSERT_TRUE(delete_sink.finish());
+  }
 
   // check for conflict
   {
@@ -2570,7 +2574,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
 
     RocksDBDeleteDataSink delete_sink2(*transaction2, *_cf_handles.front(),
                                        row_type, object_key, column_ids,
-                                       rows_affected2, {});
+                                       rows_affected2, {}, _table_lock);
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     ASSERT_TRUE(transaction2->Commit().ok());
@@ -2623,7 +2627,7 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   size_t rows_affected = 0;
   RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
                                     row_type, kObjectKey, column_ids,
-                                    rows_affected, {});
+                                    rows_affected, {}, _table_lock);
   auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty

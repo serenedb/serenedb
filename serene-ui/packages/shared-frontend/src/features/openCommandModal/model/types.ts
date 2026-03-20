@@ -3,4 +3,5 @@ export enum CommandSection {
     Pages = "pages",
     Connections = "connections",
     Databases = "databases",
+    Utilities = "utilities",
 }

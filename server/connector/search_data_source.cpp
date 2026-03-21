@@ -20,35 +20,25 @@
 
 #include "search_data_source.hpp"
 
+#include "connector/parquet_materializer.hpp"
 #include "connector/primary_key.hpp"
+#include "connector/rocksdb_materializer.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "velox/core/PlanNode.h"
 
 namespace sdb::connector::search {
 
-SearchDataSource::SearchDataSource(
-  velox::memory::MemoryPool& memory_pool,
-  // use just snapshot for now. But maybe we will need to have
-  // this class template (or use some wrapper) to work with
-  // WriteBatchWithindex or plain DB with snapshot
-  const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
-  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-  std::vector<catalog::Column::Id> column_ids,
-  catalog::Column::Id effective_column_id, ObjectId object_key,
+template<typename Materializer>
+SearchDataSource<Materializer>::SearchDataSource(
+  velox::memory::MemoryPool& memory_pool, Materializer materializer,
   const irs::IndexReader& reader, const irs::Filter::Query& query)
-  : Materializer{memory_pool,
-                 snapshot,
-                 &db,
-                 nullptr,
-                 cf,
-                 row_type,
-                 std::move(column_ids),
-                 effective_column_id,
-                 object_key},
+  : _memory_pool{memory_pool},
+    _materializer{std::move(materializer)},
     _reader{reader},
     _query{query} {}
 
-void SearchDataSource::addSplit(
+template<typename Materializer>
+void SearchDataSource<Materializer>::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   SDB_ENSURE(split, ERROR_INTERNAL, "SearchDataSource: split is null");
   if (_current_split) {
@@ -56,13 +46,12 @@ void SearchDataSource::addSplit(
               "SearchDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
-  // let sequential read make new try
-  _is_range = true;
   _current_segment = 0;
   _doc.reset();
 }
 
-std::optional<velox::RowVectorPtr> SearchDataSource::next(
+template<typename Materializer>
+std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
   SDB_ASSERT(_current_split,
@@ -108,30 +97,40 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
   }
 
   // batch ready - materialize it
-  return ReadRows(index_keys);
+  return _materializer.ReadRows(index_keys);
 }
 
-void SearchDataSource::addDynamicFilter(
+template<typename Materializer>
+void SearchDataSource<Materializer>::addDynamicFilter(
   velox::column_index_t output_channel,
   const std::shared_ptr<velox::common::Filter>& filter) {
   VELOX_UNSUPPORTED();
 }
 
-uint64_t SearchDataSource::getCompletedBytes() {
+template<typename Materializer>
+uint64_t SearchDataSource<Materializer>::getCompletedBytes() {
   // TODO: implement completed bytes tracking
   return 0;
 }
 
-uint64_t SearchDataSource::getCompletedRows() { return _produced; }
+template<typename Materializer>
+uint64_t SearchDataSource<Materializer>::getCompletedRows() {
+  return _produced;
+}
 
+template<typename Materializer>
 std::unordered_map<std::string, velox::RuntimeMetric>
-SearchDataSource::getRuntimeStats() {
+SearchDataSource<Materializer>::getRuntimeStats() {
   // TODO: implement runtime stats reporting
   return {};
 }
 
-void SearchDataSource::cancel() {
+template<typename Materializer>
+void SearchDataSource<Materializer>::cancel() {
   // TODO: implement cancellation logic
 }
+
+template class SearchDataSource<RocksDBMaterializer>;
+template class SearchDataSource<ParquetMaterializer>;
 
 }  // namespace sdb::connector::search

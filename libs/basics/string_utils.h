@@ -287,6 +287,13 @@ constexpr bool IsNull(std::basic_string_view<Char> str) noexcept {
 // helper function to strip-non-numeric data from a string
 std::string RemoveWhitespaceAndComments(const std::string& value);
 
+// Returns the English plural form of a word
+// doesn't work for all the cases, cause applies basic rules:
+// -s, -sh, -ch, -x, -z -> +es;
+// consonant + y -> -y +ies;
+// otherwise -> +s.
+std::string GetPluralFormLowerCase(std::string_view word);
+
 struct EscapeJsonOptions {
   // escape forward slashes when serializing VPack values into
   // JSON with a Dumper (requires escapeControl = true)

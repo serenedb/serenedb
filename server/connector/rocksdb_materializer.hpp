@@ -21,6 +21,10 @@
 #pragma once
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
+#include <velox/vector/ComplexVector.h>
+
+#include <span>
+#include <string>
 
 #include "basics/fwd.h"
 #include "catalog/identifiers/object_id.h"
@@ -29,20 +33,22 @@
 
 namespace sdb::connector {
 
-class Materializer {
+class RocksDBMaterializer {
  public:
-  Materializer(velox::memory::MemoryPool& memory_pool,
-               const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
-               rocksdb::Transaction* transaction,
-               rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-               std::vector<catalog::Column::Id> column_oids,
-               catalog::Column::Id effective_column_id, ObjectId object_key);
+  RocksDBMaterializer(velox::memory::MemoryPool& memory_pool,
+                      const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
+                      rocksdb::Transaction* transaction,
+                      rocksdb::ColumnFamilyHandle& cf,
+                      velox::RowTypePtr row_type,
+                      std::vector<catalog::Column::Id> column_oids,
+                      catalog::Column::Id effective_column_id,
+                      ObjectId object_key);
+
+  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys);
 
  protected:
   using ValueReader =
     std::function<const std::string&(std::string_view full_key)>;
-
-  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys);
 
   velox::VectorPtr ReadColumnKeys(std::span<std::string> row_keys,
                                   catalog::Column::Id column_id,

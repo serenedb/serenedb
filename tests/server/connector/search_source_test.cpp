@@ -226,9 +226,12 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
   }
   auto reader = irs::DirectoryReader(_dir, _codec);
   auto query = or_filter->prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchDataSource<RocksDBMaterializer> source(
+    *pool(),
+    RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
+                        velox::ROW(names, types), all_column_oids,
+                        all_column_oids[0], kObjectKey),
+    reader, *query);
   auto expected =
     makeRowVector({makeFlatVector<int32_t>({1, 100}),
                    makeFlatVector<velox::StringView>({"1", "100"}),
@@ -287,9 +290,12 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
   }
   auto reader = irs::DirectoryReader(_dir, _codec);
   auto query = or_filter->prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchDataSource<RocksDBMaterializer> source(
+    *pool(),
+    RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
+                        velox::ROW(names, types), all_column_oids,
+                        all_column_oids[0], kObjectKey),
+    reader, *query);
   const auto expected =
     makeRowVector({makeFlatVector<velox::StringView>({"1", "100"}),
                    makeFlatVector<velox::StringView>({"value1", "value3"})});
@@ -423,9 +429,12 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     auto query = or_filter->prepare({.index = reader});
-    SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                            velox::ROW(names, types), all_column_oids,
-                            all_column_oids[0], kObjectKey, reader, *query);
+    SearchDataSource<RocksDBMaterializer> source(
+      *pool(),
+      RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
+                          velox::ROW(names, types), all_column_oids,
+                          all_column_oids[0], kObjectKey),
+      reader, *query);
     auto expected =
       makeRowVector({makeFlatVector<int32_t>({1, 100}),
                      makeFlatVector<velox::StringView>({"1", "100"}),
@@ -474,9 +483,12 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     auto query = or_filter->prepare({.index = reader});
-    SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                            velox::ROW(names, types), all_column_oids,
-                            all_column_oids[0], kObjectKey, reader, *query);
+    SearchDataSource<RocksDBMaterializer> source(
+      *pool(),
+      RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
+                          velox::ROW(names, types), all_column_oids,
+                          all_column_oids[0], kObjectKey),
+      reader, *query);
     auto expected = makeRowVector(
       {makeFlatVector<int32_t>({1}), makeFlatVector<velox::StringView>({"1"}),
        makeFlatVector<velox::StringView>({"value1"})});

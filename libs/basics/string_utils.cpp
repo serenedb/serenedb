@@ -1168,4 +1168,29 @@ template void EscapeJsonStr<LenSink>(std::string_view str, LenSink* sink,
 template void EscapeJsonStr<CordSink>(std::string_view str, CordSink* sink,
                                       EscapeJsonOptions options);
 
+bool IsVowel(char c) noexcept {
+  return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
+}
+
+std::string GetPluralFormLowerCase(std::string_view word) {
+  if (word.empty()) {
+    return {};
+  }
+
+  auto lower = absl::AsciiStrToLower(word);
+
+  if (lower.ends_with('s') || lower.ends_with('x') || lower.ends_with('z') ||
+      lower.ends_with("sh") || lower.ends_with("ch")) {
+    return lower + "es";
+  }
+
+  if (lower.size() >= 2 && lower.ends_with('y') &&
+      !IsVowel(lower[lower.size() - 2])) {
+    lower.back() = 'i';
+    return lower + "es";
+  }
+
+  return lower + "s";
+}
+
 }  // namespace sdb::basics::string_utils

@@ -33,8 +33,8 @@
 
 namespace {
 
-auto CreateReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
-                  const velox::dwio::common::ReaderOptions& options) {
+auto CreateDwioReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
+                      const velox::dwio::common::ReaderOptions& options) {
   return velox::dwio::common::getReaderFactory(options.fileFormat())
     ->createReader(std::move(input), options);
 }
@@ -107,24 +107,21 @@ std::vector<std::string> FileDataSink::close() {
 
 void FileDataSink::abort() { _writer->abort(); }
 
-FileDataSource::FileDataSource(
-  std::shared_ptr<ReaderOptions> options,
-  const velox::common::SubfieldFilters& subfield_filters,
-  velox::RowTypePtr output_type,
+FileDataSource::ReaderComponents FileDataSource::CreateReader(
+  const ReaderOptions& options, velox::memory::MemoryPool& pool,
+  const velox::RowTypePtr& output_type,
   const velox::connector::ColumnHandleMap& column_handles,
-  velox::memory::MemoryPool& memory_pool,
+  const velox::common::SubfieldFilters& subfield_filters,
   const velox::core::TypedExprPtr& remaining_filter,
-  velox::core::ExpressionEvaluator* evaluator)
-  : _output_type{std::move(output_type)},
-    _source{options->storage_options->CreateFileSource({})},
-    _reader_options{options->Reader()},
-    _row_reader_options{options->RowReader()},
-    _report_callback{options->report_callback} {
-  SDB_ASSERT(_row_reader_options);
-  _reader_options->setMemoryPool(memory_pool);
+  velox::core::ExpressionEvaluator* evaluator) {
+  auto reader_options = options.dwio.reader;
+  reader_options->setMemoryPool(pool);
+
+  auto row_reader_options = options.dwio.row_reader;
+  SDB_ASSERT(row_reader_options);
 
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
-  const auto& names = _output_type->names();
+  const auto& names = output_type->names();
   for (size_t i = 0; i < names.size(); ++i) {
     auto handle_it = column_handles.find(names[i]);
     SDB_ENSURE(handle_it != column_handles.end(), ERROR_INTERNAL,
@@ -137,18 +134,45 @@ FileDataSource::FileDataSource(
     }
   }
 
-  for (auto& [subfield, filter] : subfield_filters) {
+  for (const auto& [subfield, filter] : subfield_filters) {
     spec->getOrCreateChild(subfield)->setFilter(filter);
   }
 
   if (remaining_filter) {
     SDB_ASSERT(evaluator);
-    _row_reader_options->setMetadataFilter(
+    row_reader_options->setMetadataFilter(
       std::make_shared<velox::common::MetadataFilter>(*spec, *remaining_filter,
                                                       evaluator));
   }
 
-  _row_reader_options->setScanSpec(std::move(spec));
+  row_reader_options->setScanSpec(std::move(spec));
+
+  auto source = options.storage_options->CreateFileSource({});
+  auto input =
+    std::make_unique<velox::dwio::common::BufferedInput>(source, pool);
+  auto reader = CreateDwioReader(std::move(input), *reader_options);
+  auto row_reader = reader->createRowReader(*row_reader_options);
+  return {std::move(source), std::move(reader), std::move(row_reader)};
+}
+
+FileDataSource::FileDataSource(
+  std::shared_ptr<ReaderOptions> options,
+  const velox::common::SubfieldFilters& subfield_filters,
+  velox::RowTypePtr output_type,
+  const velox::connector::ColumnHandleMap& column_handles,
+  velox::memory::MemoryPool& memory_pool,
+  const velox::core::TypedExprPtr& remaining_filter,
+  velox::core::ExpressionEvaluator* evaluator)
+  : _output_type{std::move(output_type)},
+    _reader_options{options->Reader()},
+    _row_reader_options{options->RowReader()},
+    _report_callback{options->report_callback} {
+  auto [source, reader, row_reader] =
+    CreateReader(*options, memory_pool, _output_type, column_handles,
+                 subfield_filters, remaining_filter, evaluator);
+  _source = std::move(source);
+  _reader = std::move(reader);
+  _row_reader = std::move(row_reader);
   _pool = &memory_pool;
 }
 
@@ -229,7 +253,7 @@ void FileDataSource::addSplit(
   auto file_split = basics::downCast<const FileConnectorSplit>(split.get());
   auto input =
     std::make_unique<velox::dwio::common::BufferedInput>(_source, *_pool);
-  _reader = CreateReader(std::move(input), *_reader_options);
+  _reader = CreateDwioReader(std::move(input), *_reader_options);
   auto opts = *_row_reader_options;
   opts.range(file_split->start, file_split->length);
   _row_reader = _reader->createRowReader(opts);

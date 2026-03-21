@@ -249,6 +249,12 @@ class FileDataSink final : public velox::connector::DataSink {
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
+  struct ReaderComponents {
+    std::shared_ptr<velox::ReadFile> source;
+    std::unique_ptr<velox::dwio::common::Reader> reader;
+    std::unique_ptr<velox::dwio::common::RowReader> row_reader;
+  };
+
   FileDataSource(std::shared_ptr<ReaderOptions> options,
                  const velox::common::SubfieldFilters& subfield_filters,
                  velox::RowTypePtr output_type,
@@ -256,6 +262,14 @@ class FileDataSource final : public velox::connector::DataSource {
                  velox::memory::MemoryPool& memory_pool,
                  const velox::core::TypedExprPtr& remaining_filter,
                  velox::core::ExpressionEvaluator* evaluator);
+
+  static ReaderComponents CreateReader(
+    const ReaderOptions& options, velox::memory::MemoryPool& pool,
+    const velox::RowTypePtr& output_type,
+    const velox::connector::ColumnHandleMap& column_handles,
+    const velox::common::SubfieldFilters& subfield_filters = {},
+    const velox::core::TypedExprPtr& remaining_filter = nullptr,
+    velox::core::ExpressionEvaluator* evaluator = nullptr);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 

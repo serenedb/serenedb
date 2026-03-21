@@ -67,7 +67,8 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
       SDB_ASSERT(input->childrenSize() != 0);
       const auto pk_idx = input->childrenSize() - 1;
       const auto& cols = input->children();
-      const auto& pk_column = cols[pk_idx]->asUnchecked<velox::SimpleVector<int64_t>>();
+      const auto& pk_column =
+        cols[pk_idx]->asUnchecked<velox::SimpleVector<int64_t>>();
       generated_pk = pk_column->valueAt(row_idx);
     }
     primary_key::AppendSigned(key_buffer, generated_pk);

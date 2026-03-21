@@ -14,6 +14,7 @@ set(iresearch-tests_sources
     ./analysis/stopwords_tokenizer_tests.cpp
     ./analysis/solr_synonyms_tokenizer_tests.cpp
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
+    ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./formats/columnstore2_test.cpp

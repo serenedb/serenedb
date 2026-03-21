@@ -26,6 +26,7 @@
 #include "token_attributes.hpp"
 
 namespace re2 {
+
 class RE2;
 }
 

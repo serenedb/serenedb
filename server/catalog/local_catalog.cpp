@@ -623,7 +623,6 @@ class SnapshotImpl : public Snapshot {
     return {};
   }
 
- private:
   template<typename T>
   std::shared_ptr<T> GetDependency(ObjectId id) const {
     auto it = _object_dependencies.find(id);
@@ -633,6 +632,7 @@ class SnapshotImpl : public Snapshot {
     return basics::downCast<T>(deps);
   }
 
+ private:
   void RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
                               bool root = false,
                               bool maybe_not_found = false) noexcept {
@@ -1696,6 +1696,15 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
                     magic_enum::enum_name(obj->GetType())};
     }
     auto index = basics::downCast<Index>(std::move(obj));
+    if (index->GetIndexType() == IndexType::Inverted) {
+      auto deps = clone->GetDependency<IndexDependency>(*(index_id));
+      SDB_ASSERT(deps);
+      if (deps->shard_id.isSet()) {
+        auto shard = clone->GetObject<IndexShard>(deps->shard_id);
+        SDB_ASSERT(shard);
+        basics::downCast<search::InvertedIndexShard>(*shard).MarkDeleted();
+      }
+    }
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
         !r.ok()) {
       return r;

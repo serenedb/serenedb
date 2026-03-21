@@ -37,7 +37,7 @@ class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
   struct Options {
     // RE2 regular expression used for matching or splitting
     // Must be a valid regex
-    std::string pattern = "";
+    std::string pattern;
 
     // Capture group to extract:
     // -1 means "split mode" (emit text between matches),
@@ -68,9 +68,9 @@ class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
   int _group;              // which group to extract (-1 for split)
 
   // State for pattern matching
-  size_t _current_pos;  // current position in _data
-  bool _exhausted;      // whether we've exhausted the input
-  int _num_groups;      // number of capturing groups in the pattern
+  size_t _current_pos = 0;  // current position in _data
+  bool _exhausted = false;  // whether we've exhausted the input
+  int _num_groups;          // number of capturing groups in the pattern
 
   std::vector<re2::StringPiece> _matches;  // buffer for regex matches
 

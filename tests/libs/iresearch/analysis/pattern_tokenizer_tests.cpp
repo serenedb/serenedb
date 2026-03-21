@@ -274,6 +274,47 @@ TEST_F(PatternTokenizerTests, test_delimiter_at_boundaries) {
                             {1, 1});
 }
 
+TEST_F(PatternTokenizerTests, test_utf8_split_comma_cyrillic) {
+  // "аба" = 6 UTF-8 bytes, comma, "цаба" = 8 bytes → total 15.
+  std::string_view data("аба,цаба");
+  irs::analysis::PatternTokenizer stream(",", -1);
+
+  ASSERT_TRUE(stream.reset(data));
+
+  AssertTokenStreamContents(&stream, {"аба", "цаба"}, {0, 7}, {6, 15}, {1, 1});
+}
+
+TEST_F(PatternTokenizerTests, test_utf8_split_whitespace_mixed_ascii_cjk) {
+  // "a" (1) + space + "汉字" (3+3 bytes) + space + "b" (1) = 10 bytes
+  std::string_view data("a 汉字 b");
+  irs::analysis::PatternTokenizer stream("\\s+", -1);
+
+  ASSERT_TRUE(stream.reset(data));
+
+  AssertTokenStreamContents(&stream, {"a", "汉字", "b"}, {0, 2, 9}, {1, 8, 10},
+                            {1, 1, 1});
+}
+
+TEST_F(PatternTokenizerTests, test_utf8_group_capture_inside_quotes) {
+  std::string_view data("x '汉字' z");
+  irs::analysis::PatternTokenizer stream("'([^']+)'", 1);
+
+  ASSERT_TRUE(stream.reset(data));
+
+  AssertTokenStreamContents(&stream, {"汉字"}, {3}, {9}, {1});
+}
+
+TEST_F(PatternTokenizerTests, test_utf8_split_comma_4byte_emoji) {
+  // U+1F642 = 0xF0 0x9F 0x98 0x8A
+  std::string_view emoji = "\xF0\x9F\x98\x8A";
+  const std::string data(std::string("a,") + emoji);
+  irs::analysis::PatternTokenizer stream(",", -1);
+
+  ASSERT_TRUE(stream.reset(data));
+
+  AssertTokenStreamContents(&stream, {"a", emoji}, {0, 2}, {1, 6}, {1, 1});
+}
+
 TEST_F(PatternTokenizerTests, test_vpack_options) {
   // Valid: pattern only, default group -1 (split mode)
   {

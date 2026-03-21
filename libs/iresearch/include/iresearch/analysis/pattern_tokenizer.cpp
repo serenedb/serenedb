@@ -32,9 +32,6 @@
 namespace irs::analysis {
 namespace {
 
-constexpr std::string_view kPatternParamName = "pattern";
-constexpr std::string_view kGroupParamName = "group";
-
 bool ParseVPackOptions(const vpack::Slice slice,
                        PatternTokenizer::Options& options) {
   if (!slice.isObject()) {
@@ -78,11 +75,9 @@ Analyzer::ptr MakeVPack(std::string_view args) {
   return MakeVPack(slice);
 }
 
-bool MakeVPackConfig(std::string_view pattern, int group,
+bool MakeVPackConfig(const PatternTokenizer::Options& options,
                      vpack::Builder* vpack_builder) {
-  vpack::ObjectBuilder object(vpack_builder);
-  vpack_builder->add(kPatternParamName, pattern);
-  vpack_builder->add(kGroupParamName, group);
+  vpack::WriteObject(*vpack_builder, options);
   return true;
 }
 
@@ -90,7 +85,7 @@ bool NormalizeVPackConfig(const vpack::Slice slice,
                           vpack::Builder* vpack_builder) {
   PatternTokenizer::Options options;
   if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options.pattern, options.group, vpack_builder);
+    return MakeVPackConfig(options, vpack_builder);
   }
   return false;
 }
@@ -116,10 +111,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing pattern_token_stream from JSON"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+              "' while constructing pattern_token_stream from JSON");
   } catch (...) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Caught error while constructing pattern_token_stream from JSON");
@@ -157,8 +150,6 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
 PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
   : _pattern(pattern, re2::RE2::Quiet),
     _group(group),
-    _current_pos(0),
-    _exhausted(false),
     _num_groups(_pattern.NumberOfCapturingGroups()) {
   _matches.resize(std::max(1, _num_groups + 1));
 }

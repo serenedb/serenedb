@@ -809,7 +809,6 @@ static void DumpPem(const std::string& pem, vpack::Builder& builder,
     vpack::ObjectBuilder guard2(&builder, attr_name);
     auto sha256 = func.finalize();
     builder.add("sha256", sha256);
-    builder.add("SHA256", sha256);  // deprecated in 3.7 GA
     {
       vpack::ArrayBuilder guard3(&builder, "certificates");
       for (const auto& c : certs) {
@@ -821,8 +820,6 @@ static void DumpPem(const std::string& pem, vpack::Builder& builder,
       func2(keys[0].c_str(), keys[0].size());
       sha256 = func2.finalize();
       builder.add("privateKeySha256", sha256);
-      builder.add("privateKeySHA256",
-                  sha256);  // deprecated in 3.7 GA
     }
   }
 }

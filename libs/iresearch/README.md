@@ -1,7 +1,16 @@
-# IResearch
+<div>
+
+<picture align=left>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/cf4f0e3b-d515-422a-8047-8375544bb10e">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/cf4f0e3b-d515-422a-8047-8375544bb10e">
+    <img alt="The SereneDB IResearch logo." src="https://github.com/user-attachments/assets/cf4f0e3b-d515-422a-8047-8375544bb10e">
+</picture>
+
 [![Star Us](https://img.shields.io/badge/⭐-Star%20Us-9865e8?style=for-the-badge)](https://github.com/serenedb/serenedb)
 [![Apache License 2.0](https://img.shields.io/badge/License-Apache%202.0-a2b9f4?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Website](https://img.shields.io/website?up_message=VISIT&down_message=FIXING&color=fbe5f5&url=https%3A%2F%2Fwww.serenedb.com&style=for-the-badge)](https://www.serenedb.com/search-benchmark-game)
+
+</div>
 
 IResearch is an open-source (Apache 2.0) C++ information retrieval library designed to be embedded into transactional database systems. It provides a feature set comparable to Lucene — inverted indexes with BM25 scoring, columnar storage, vector search, S2 geospatial indexing and semi-structured filtering — while integrating natively with the host database's write-ahead log and transaction protocol. There is no separate process, no JVM dependency and no consistency gap between the search index and the primary store.
 
@@ -41,14 +50,14 @@ Query trees are constructed directly from API building blocks — terms, phrases
 
 ## Production history
 
-IResearch has been in continuous production use since 2018, first as the search engine behind [ArangoSearch](https://arangodb.com/docs/stable/arangosearch.html) in ArangoDB. Since 2024 it is the search foundation of [SereneDB](https://github.com/serenedb/serenedb), a search-OLAP database. Both deployments have stress-tested the embedding design across architecturally distinct host databases.
+IResearch has been in continuous production use since 2018, first as the search engine behind [ArangoSearch](https://docs.arango.ai/arangodb/stable/indexes-and-search/arangosearch) in ArangoDB. Since 2024 it is the search foundation of [SereneDB](https://github.com/serenedb/serenedb), a search-OLAP database. Both deployments have stress-tested the embedding design across architecturally distinct host databases.
 
 ## License
 
 Apache 2.0. See [LICENSE.md](LICENSE.md).
 
-Copyright (c) 2024–2026 SereneDB
-Copyright (c) 2017–2023 ArangoDB GmbH
-Copyright (c) 2016–2017 EMC Corporation
+Copyright (c) 2024–2026 SereneDB<br>
+Copyright (c) 2017–2023 ArangoDB GmbH<br>
+Copyright (c) 2016–2017 EMC Corporation<br>
 
 Licensing information for third-party components is in [LICENSES.md](../../third_party/LICENSES.md).

@@ -27,19 +27,7 @@ namespace sdb {
 // hard-coded limit for maximum replicationFactor value
 inline constexpr uint32_t kMaxReplicationFactor = 10;
 
-struct DumpLimits {
-  uint64_t docs_per_batch_lower_bound = 10;
-  uint64_t docs_per_batch_upper_bound = 1 * 1000 * 1000;
-  uint64_t batch_size_lower_bound = 4 * 1024;
-  uint64_t batch_size_upper_bound = 1024 * 1024 * 1024;
-  uint64_t parallelism_lower_bound = 1;
-  uint64_t parallelism_upper_bound = 8;
-  uint64_t memory_usage = 512 * 1024 * 1024;
-};
-
 struct ServerOptions {
-  DumpLimits dump_limits;
-
   uint64_t descriptors_minimum = 0;
 
   std::vector<std::string> cluster_agency_endpoints;

@@ -48,11 +48,6 @@
 #include "metrics/metrics_feature.h"
 #include "network/methods.h"
 
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#endif
-
 using namespace sdb;
 using namespace sdb::basics;
 using namespace sdb::options;
@@ -475,13 +470,6 @@ void NetworkFeature::validateOptions(
 
 void NetworkFeature::prepare() {
   ClusterInfo* ci = nullptr;
-#ifdef SDB_CLUSTER
-  if (server().hasFeature<ClusterFeature>() &&
-      server().isEnabled<ClusterFeature>()) {
-    // in unit tests the ClusterInfo may not be enabled.
-    ci = &server().getFeature<ClusterFeature>().clusterInfo();
-  }
-#endif
 
   network::ConnectionPool::Config config(
     server().getFeature<metrics::MetricsFeature>());
@@ -501,19 +489,6 @@ void NetworkFeature::prepare() {
     }
 
     _pool->pruneConnections();
-
-#ifdef SDB_CLUSTER
-    if (ci != nullptr) {
-      auto failed = ci->getFailedServers();
-      for (const ServerID& srv_id : failed) {
-        std::string endpoint = ci->getServerEndpoint(srv_id);
-        size_t n = _pool->cancelConnections(endpoint);
-        SDB_INFO_IF("xxxxx", Logger::COMMUNICATION, n > 0, "canceling ", n,
-                    " connection(s) to failed server '", srv_id,
-                    "' on endpoint '", endpoint, "'");
-      }
-    }
-#endif
 
     if (!server().isStopping() && !canceled) {
       std::chrono::seconds off(12);

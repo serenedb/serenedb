@@ -61,7 +61,7 @@ on:
         description: 'JSON configuration for builds and job settings'
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
 permissions:
   statuses: write
   contents: write

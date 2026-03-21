@@ -37,8 +37,6 @@ option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
 option(SDB_IOURING "allow to use iouring" ON)
 
-option(SDB_CLUSTER "build with cluster support" OFF)
-
 find_package(Git 1.5.3 REQUIRED)
 
 # ------------------------------------------------------------------------------
@@ -783,10 +781,6 @@ include(SereneDBInstall)
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
 set(ERROR_FILES libs/basics/errors.h libs/basics/error-registry.h)
-if(SDB_CLUSTER)
-    list(APPEND ERROR_FILES private/js/common/bootstrap/errors.js)
-endif()
-
 set(ERROR_FILES_GEN)
 set(ERRORS_DAT libs/basics/errors.dat)
 
@@ -865,9 +859,6 @@ list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 add_subdirectory(libs)
 add_subdirectory(server)
 add_subdirectory(tests)
-if(SDB_CLUSTER)
-    add_subdirectory(private)
-endif()
 
 add_custom_target(packages DEPENDS ${PACKAGES_LIST})
 
@@ -883,6 +874,3 @@ add_custom_target(
 message(STATUS "building for git revision: ${SERENEDB_BUILD_REPOSITORY}")
 
 add_custom_target(serenedb DEPENDS serened)
-if(SDB_CLUSTER)
-    add_dependencies(serenedb serene-clients)
-endif()

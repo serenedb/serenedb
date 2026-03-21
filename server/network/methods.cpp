@@ -44,12 +44,6 @@
 #include "rest_server/serened.h"
 #include "utils/coro_helper.h"
 
-#ifdef SDB_CLUSTER
-#include "agency/agency_feature.h"
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#endif
-
 namespace sdb {
 namespace network {
 
@@ -188,19 +182,6 @@ auto PrepareRequest(ConnectionPool* pool, RestVerb type, std::string path,
       StaticStrings::kHlcHeader,
       basics::HybridLogicalClock::encodeTimeStamp(time_stamp));
   }
-
-#ifdef SDB_CLUSTER
-  consensus::Agent* agent = nullptr;
-  if (pool) {
-    auto& server = SerenedServer::Instance();
-    if (server.hasFeature<AgencyFeature>() &&
-        server.isEnabled<AgencyFeature>()) {
-      agent = server.getFeature<AgencyFeature>().agent();
-    }
-  }
-  // note: agent can be a nullptr here
-  network::AddSourceHeader(agent, *req);
-#endif
 
   return req;
 }
@@ -345,20 +326,7 @@ FutureRes SendRequest(ConnectionPool* pool, DestinationId dest, RestVerb type,
       spec.endpoint = dest.substr(5);
       res = ERROR_OK;
     } else {
-#ifdef SDB_CLUSTER
-      if (options.override_destination.empty()) {
-        if (!dest.empty()) {
-          res = co_await ResolveDestination(*pool->config().cluster_info, dest,
-                                            spec);
-        }
-      } else {
-        res = co_await ResolveDestination(
-          *pool->config().cluster_info,
-          "server:" + options.override_destination, spec);
-      }
-#else
       SDB_VERIFY(false, ERROR_INTERNAL);
-#endif
     }
 
     if (res != ERROR_OK) {
@@ -468,16 +436,7 @@ class RequestsState final : public std::enable_shared_from_this<RequestsState>,
       _spec.endpoint = _destination.substr(5);
       future_res = yaclib::MakeFuture<ErrorCode>(ERROR_OK);
     } else {
-#ifdef SDB_CLUSTER
-      future_res = _options.override_destination.empty()
-                     ? ResolveDestination(*_pool->config().cluster_info,
-                                          _destination, _spec)
-                     : ResolveDestination(
-                         *_pool->config().cluster_info,
-                         "server:" + _options.override_destination, _spec);
-#else
       SDB_VERIFY(false, ERROR_INTERNAL);
-#endif
     }
 
     std::move(future_res)
@@ -564,27 +523,7 @@ class RequestsState final : public std::enable_shared_from_this<RequestsState>,
           try_again_after = std::chrono::seconds(3);
         }
 
-        // Now check if the request was directed to an explicit server and see
-        // if that server is failed, if so, we should no longer retry,
-        // regardless of the timeout:
-        bool found = false;
-
-#ifdef SDB_CLUSTER
-        if (_destination.size() > 7 && _destination.starts_with("server:")) {
-          auto failed_servers =
-            _pool->config().cluster_info->getFailedServers();
-          auto server_id = std::string_view{_destination}.substr(7);
-          if (failed_servers.contains(server_id)) {
-            found = true;
-            SDB_DEBUG("xxxxx", Logger::COMMUNICATION, "Found destination ",
-                      _destination,
-                      " to be in failed servers list, will no longer retry, "
-                      "aborting operation");
-          }
-        }
-#endif
-
-        if (found || (now + try_again_after) >= _end_time) {  // cancel out
+        if ((now + try_again_after) >= _end_time) {  // cancel out
           ResolvePromise();
         } else {
           RetryLater(try_again_after);

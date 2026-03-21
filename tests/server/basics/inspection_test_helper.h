@@ -19,6 +19,10 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
+#include <vpack/serializer.h>
+
 #include <list>
 #include <map>
 #include <optional>
@@ -28,8 +32,6 @@
 #include <unordered_set>
 #include <variant>
 #include <vector>
-
-#include "vpack/serializer.h"
 
 namespace {
 
@@ -189,7 +191,6 @@ void VPackWrite(auto ctx, NonDefaultConstructibleIntLike v) {
 }
 
 }  // namespace
-
 namespace {
 
 struct ExplicitIgnore {
@@ -262,8 +263,8 @@ enum class MyStringEnum {
 };
 
 }  // namespace
-
 namespace {
+
 enum class MyIntEnum {
   Value1 = 1,
   Value2,
@@ -306,7 +307,6 @@ void VPackRead(Context ctx, WithContext& v) {
 }
 
 }  // namespace
-
 namespace magic_enum {
 
 template<>

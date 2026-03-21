@@ -27,6 +27,7 @@ export const ConnectionData = () => {
                 <Button
                     variant="secondary"
                     size="iconSmall"
+                    title="Close connection modal"
                     onClick={() => setOpen(false)}>
                     <CrossIcon className="size-3" />
                 </Button>

@@ -35,6 +35,7 @@
 #include "rest_server/serened.h"
 
 namespace sdb {
+
 class AgencyComm;
 class Result;
 

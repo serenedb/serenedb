@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/vector/ComplexVector.h>
 
 #include <iresearch/index/index_writer.hpp>
@@ -26,15 +27,24 @@
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "primary_key.hpp"
+#include "search/inverted_index_shard.h"
 #include "search_remove_filter.hpp"
 #include "sink_writer_base.hpp"
+#include "storage_engine/engine_feature.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 class SearchRemoveFilterBase;
 
 using AnalyzerProvider =
   absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
+
+inline AnalyzerProvider MakeAnalyzerProvider(
+  const catalog::InvertedIndex& index) {
+  return [&index](catalog::Column::Id column_id) {
+    return index.GetColumnAnalyzer(column_id);
+  };
+}
 
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
@@ -69,8 +79,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     irs::Tokenizer& GetTokens() const noexcept {
       SDB_ASSERT(analyzer || string_analyzer);
-      SDB_ASSERT((analyzer == nullptr) || (string_analyzer == nullptr));
-      return analyzer ? *analyzer : *string_analyzer;
+      SDB_ASSERT((analyzer == nullptr) || !string_analyzer);
+      return analyzer ? *analyzer : **string_analyzer;
     }
 
     bool Write(irs::DataOutput& out) const {
@@ -82,7 +92,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     }
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(sdb::catalog::ColumnAnalyzer&& column_analyzer);
+    void PrepareForStringValue(catalog::ColumnAnalyzer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -95,8 +105,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void PrepareForNullValue();
     void SetNullValue();
 
-    sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
-    irs::analysis::Analyzer::ptr string_analyzer;
+    search::AnalyzerImpl::CacheType::ptr analyzer;
+    std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
     std::string_view name;
     irs::bytes_view value;
     irs::IndexFeatures index_features;
@@ -156,7 +166,7 @@ class SearchSinkDeleteBaseImpl {
 
   void AbortImpl() { _remove_filter.reset(); }
 
- private:
+ protected:
   irs::IndexWriter::Transaction& _trx;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
@@ -241,4 +251,60 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
 };
 
-}  // namespace sdb::connector::search
+// SearchSinkInsertBaseImpl stores a reference to the transaction, so the
+// transaction object must exist before it is constructed.
+class SearchSinkBackfillTrxHolder {
+ protected:
+  SearchSinkBackfillTrxHolder(irs::IndexWriter::Transaction trx)
+    : _trx_storage{std::move(trx)} {}
+  irs::IndexWriter::Transaction _trx_storage;
+};
+
+class SearchSinkBackfillWriter final : public SinkIndexWriter,
+                                       SearchSinkBackfillTrxHolder,
+                                       public SearchSinkInsertBaseImpl {
+ public:
+  SearchSinkBackfillWriter(search::InvertedIndexShard& shard,
+                           AnalyzerProvider&& analyzer_provider,
+                           std::span<const catalog::Column::Id> columns)
+    : SearchSinkBackfillTrxHolder{shard.GetTransaction()},
+      SearchSinkInsertBaseImpl{_trx_storage, std::move(analyzer_provider),
+                               columns},
+      _shard{shard} {}
+
+  void Init(size_t batch_size) final { InitImpl(batch_size); }
+
+  bool SwitchColumn(const velox::Type& type, bool have_nulls,
+                    catalog::Column::Id column_id) final {
+    return SearchSinkInsertBaseImpl::SwitchColumnImpl(type, have_nulls,
+                                                      column_id);
+  }
+
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) final {
+    SearchSinkInsertBaseImpl::WriteImpl(cell_slices, full_key);
+    if (_trx.FlushRequired()) {
+      Commit();
+    }
+  }
+
+  void Finish() final {
+    SearchSinkInsertBaseImpl::FinishImpl();
+    Commit();
+  }
+
+  void Abort() final {
+    SearchSinkInsertBaseImpl::AbortImpl();
+    _trx_storage.Abort();
+  }
+
+ private:
+  void Commit() {
+    _trx_storage.Commit();
+    _trx_storage = _shard.GetTransaction();
+  }
+
+  search::InvertedIndexShard& _shard;
+};
+
+}  // namespace sdb::connector

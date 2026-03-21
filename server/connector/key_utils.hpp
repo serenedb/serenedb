@@ -38,11 +38,14 @@ std::string PrepareTableKey(ObjectId id);
 // Same as above but base part is constructed for specific column.
 std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 
+// Appends table key to constructed string
+void AppendTableKey(std::string& key, ObjectId id);
+
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
 // Prepare buffer for column key and call 'row_key_handle' on row_key
-template<typename Func>
+template<bool GenerateNew = true, typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
                    velox::vector_size_t row_idx, std::string_view object_id,
@@ -55,9 +58,17 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   if (!pk_columns.empty()) {
     primary_key::Create(*input, pk_columns, row_idx, key_buffer);
   } else {
-    // TODO: make unsigned when such types will be supported in Velox
-    const auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
-    primary_key::AppendSigned(key_buffer, generated_pk);
+    if constexpr (GenerateNew) {
+      // TODO: make unsigned when such types will be supported in Velox
+      const auto generated_pk =
+        std::bit_cast<int64_t>(RevisionId::create().id());
+      primary_key::AppendSigned(key_buffer, generated_pk);
+    } else {
+      SDB_ASSERT(input->childrenSize() != 0);
+      velox::column_index_t generated_pk_idx = input->childrenSize() - 1;
+      primary_key::Create(*input, std::span{&generated_pk_idx, 1}, row_idx,
+                          key_buffer);
+    }
   }
 
   row_key_handle(std::string_view{

@@ -28,6 +28,7 @@
 #include <map>
 #include <mutex>
 
+#include "basics/containers/node_hash_map.h"
 #include "basics/singleton.hpp"
 
 namespace irs::timer_utils {
@@ -81,7 +82,7 @@ class TimerStates : public Singleton<TimerStates> {
 
  private:
   absl::Mutex _mutex{absl::kConstInit};
-  absl::node_hash_map<std::string, TimerStatT> _state_map;
+  sdb::containers::NodeHashMap<std::string, TimerStatT> _state_map;
   std::atomic_bool _track_all_keys = false;
 };
 

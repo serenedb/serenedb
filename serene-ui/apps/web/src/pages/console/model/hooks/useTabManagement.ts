@@ -7,7 +7,12 @@ export interface UseTabManagementReturn {
     addTab: (type: "query") => void;
     removeTab: (id: number) => void;
     selectTab: (id: number) => void;
-    updateTab: (id: number, tabUpdate: Partial<ConsoleTab>) => void;
+    updateTab: (
+        id: number,
+        tabUpdate:
+            | Partial<ConsoleTab>
+            | ((tab: ConsoleTab) => Partial<ConsoleTab>),
+    ) => void;
 }
 
 export const useTabManagement = (): UseTabManagementReturn => {
@@ -17,6 +22,7 @@ export const useTabManagement = (): UseTabManagementReturn => {
             type: "query",
             value: "",
             bind_vars: [],
+            selectedResultIndex: 0,
             results: [],
         },
     ]);
@@ -30,6 +36,7 @@ export const useTabManagement = (): UseTabManagementReturn => {
                     type: "query",
                     value: "",
                     bind_vars: [],
+                    selectedResultIndex: 0,
                     results: [],
                 };
                 setSelectedTabId(prevTabs.length);
@@ -73,13 +80,20 @@ export const useTabManagement = (): UseTabManagementReturn => {
     }, []);
 
     const updateTab = useCallback(
-        (id: number, tabUpdate: Partial<ConsoleTab>) => {
+        (
+            id: number,
+            tabUpdate:
+                | Partial<ConsoleTab>
+                | ((tab: ConsoleTab) => Partial<ConsoleTab>),
+        ) => {
             setTabs((prevTabs) =>
                 prevTabs.map((tab) =>
                     tab.id === id
                         ? {
                               ...tab,
-                              ...tabUpdate,
+                              ...(typeof tabUpdate === "function"
+                                  ? tabUpdate(tab)
+                                  : tabUpdate),
                               id: tab.id,
                           }
                         : tab,

@@ -31,8 +31,8 @@
 #include "basics/string_utils.h"
 
 namespace sdb {
-
 namespace {
+
 std::pair<std::string, std::string> FindSlpProgramPaths() {
   std::string path = "/tmp";
   SdbGETENV("SERENETEST_ROOT_DIR", path);

@@ -22,12 +22,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
-#include <basics/thread_utils.hpp>
 #include <shared_mutex>
 #include <thread>
 
 #include "basics/misc.hpp"
 #include "basics/object_pool.hpp"
+#include "basics/thread_utils.hpp"
 #include "gtest/gtest.h"
 
 using namespace std::chrono_literals;
@@ -495,8 +495,9 @@ TEST(bounded_object_pool_tests, test_sobject_pool) {
 
       // As declaration for wait_for contains "It may also be unblocked
       // spuriously." for all platforms
-      while (!emplace && result == std::cv_status::no_timeout)
+      while (!emplace && result == std::cv_status::no_timeout) {
         result = cond.wait_for(lock, 1000ms);
+      }
 
       ASSERT_EQ(std::cv_status::timeout, result);
       // ^^^ expecting timeout because pool should block indefinitely
@@ -533,8 +534,9 @@ TEST(bounded_object_pool_tests, test_sobject_pool) {
 
       // As declaration for wait_for contains "It may also be unblocked
       // spuriously." for all platforms
-      while (!emplace && result == std::cv_status::no_timeout)
+      while (!emplace && result == std::cv_status::no_timeout) {
         result = cond.wait_for(lock, 1000ms);
+      }
 
       ASSERT_TRUE(emplace);
 
@@ -580,8 +582,9 @@ TEST(bounded_object_pool_tests, test_sobject_pool) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!visit && result == std::cv_status::no_timeout)
+    while (!visit && result == std::cv_status::no_timeout) {
       result = cond.wait_for(lock, 1000ms);
+    }
 
     obj.reset();
     ASSERT_FALSE(obj);
@@ -621,8 +624,9 @@ TEST(bounded_object_pool_tests, test_uobject_pool) {
 
       // As declaration for wait_for contains "It may also be unblocked
       // spuriously." for all platforms
-      while (!emplace && result == std::cv_status::no_timeout)
+      while (!emplace && result == std::cv_status::no_timeout) {
         result = cond.wait_for(lock, 1000ms);
+      }
 
       ASSERT_EQ(std::cv_status::timeout, result);
       // ^^^ expecting timeout because pool should block indefinitely
@@ -696,8 +700,9 @@ TEST(bounded_object_pool_tests, test_uobject_pool) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!visit && result == std::cv_status::no_timeout)
+    while (!visit && result == std::cv_status::no_timeout) {
       result = cond.wait_for(lock, 1000ms);
+    }
 
     obj.reset();
 

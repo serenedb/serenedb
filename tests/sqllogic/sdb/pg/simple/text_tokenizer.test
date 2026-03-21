@@ -1,0 +1,1497 @@
+control substitution on
+
+
+# ===========================================================================
+# ERROR CASES
+# ===========================================================================
+
+# --- Missing required parameter: template ---
+
+statement error required parameter "template" was not found
+CREATE TEXT SEARCH DICTIONARY t_err1(
+    locale = 'en_US.UTF-8'
+)
+
+
+# --- Invalid template value ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err2(
+    template = 'whaaat',
+    locale = 'en_US.UTF-8'
+)
+----
+db error: ERROR: Invalid type of text search dictionary
+
+
+
+# --- Duplicate option ---
+
+statement error conflicting or redundant options
+CREATE TEXT SEARCH DICTIONARY t_err3(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    locale = 'fr_FR.UTF-8'
+)
+
+
+# --- Invalid case value ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err4(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'invalid'
+)
+----
+db error: ERROR: invalid value in "case" parameter
+HINT: Text case conversion: none, lower, upper
+
+
+
+# --- Option not supported by tokenizer ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err5(
+    template = 'ngram',
+    locale = 'en_US.UTF-8'
+)
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err6(
+    template = 'stem',
+    stopwords = '"a","the"'
+)
+----
+db error: ERROR: option "stopwords" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err7(
+    template = 'segmentation',
+    accent = true
+)
+----
+db error: ERROR: option "accent" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err8(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    numhashes = 5
+)
+----
+db error: ERROR: option "numhashes" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err9(
+    template = 'norm',
+    locale = 'en_US.UTF-8',
+    delimiter = ','
+)
+----
+db error: ERROR: option "delimiter" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err10(
+    template = 'collation',
+    locale = 'en_US.UTF-8',
+    mingram = 2
+)
+----
+db error: ERROR: option "mingram" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+
+# --- Invalid boolean value ---
+
+statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "accent": "maybe"
+CREATE TEXT SEARCH DICTIONARY t_err11(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    accent = 'maybe'
+)
+
+
+statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
+CREATE TEXT SEARCH DICTIONARY t_err12(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    stemming = 'yes'
+)
+
+
+statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "1"
+CREATE TEXT SEARCH DICTIONARY t_err13(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3,
+    preserveoriginal = '1'
+)
+
+
+# --- Invalid integer value ---
+
+statement error db error: ERROR: invalid input syntax for type integer: "abc"
+CREATE TEXT SEARCH DICTIONARY t_err14(
+    template = 'ngram',
+    mingram = 'abc',
+    maxgram = 3
+)
+
+
+statement error db error: ERROR: invalid input syntax for type integer: "three"
+CREATE TEXT SEARCH DICTIONARY t_err15(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 'three'
+)
+
+
+statement error db error: ERROR: invalid input syntax for type integer: "two"
+CREATE TEXT SEARCH DICTIONARY t_err16(
+    template = 'minhash',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = '|',
+    numhashes = 'two'
+)
+
+
+# --- Invalid threshold (out of range 0.0 to 1.0) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err17(
+    template = 'classification',
+    threshold = 1.5
+)
+----
+db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
+HINT: Minimum confidence score [0.0..1.0]
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err18(
+    template = 'classification',
+    threshold = -0.1
+)
+----
+db error: ERROR: invalid value in "threshold" parameter. Should be in [0, 1]
+HINT: Minimum confidence score [0.0..1.0]
+
+
+# --- ts_lexize on non-existent dictionary ---
+
+query error text search dictionary "other_tokenizer" does not exist
+SELECT ts_lexize('other_tokenizer', 'a QUICK Brown Fox');
+
+
+# ===========================================================================
+# TEXT TEMPLATE
+# ===========================================================================
+
+# --- Basics: default case (lower), default stemming (true) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t1(
+    template = 'text', Locale = 'en_US.UTF-8'
+)
+
+
+query
+SELECT ts_lexize('t1', 'a QUICK Brown FoX');
+----
+ts_lexize
+{a,QUICK,Brown,FoX}
+
+
+# --- case = upper ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t2(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'upper'
+)
+
+
+query
+SELECT ts_lexize('t2', 'a QUICK Brown FoX');
+----
+ts_lexize
+{A,QUICK,BROWN,FOX}
+
+
+# --- case = none, stemming = false: preserves original case ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_case_none(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = true
+)
+
+
+query
+SELECT ts_lexize('text_case_none', 'Hello World');
+----
+ts_lexize
+{Hello,World}
+
+
+# --- stemming = false: words are not reduced to their root ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_no_stem(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+)
+
+
+query
+SELECT ts_lexize('text_no_stem', 'running quickly');
+----
+ts_lexize
+{running,quickly}
+
+
+# --- stemming = true (explicit): reduces words to their root ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_with_stem(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true
+)
+
+
+query
+SELECT ts_lexize('text_with_stem', 'running');
+----
+ts_lexize
+{run}
+
+
+# --- accent = false (default): strips diacritics ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_no_accent(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    accent = false,
+    stemming = false
+)
+
+
+query
+SELECT ts_lexize('text_no_accent', 'café résumé');
+----
+ts_lexize
+{cafe,resume}
+
+
+# --- accent = true: preserves diacritics ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_with_accent(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    accent = true,
+    stemming = false
+)
+
+
+query
+SELECT ts_lexize('text_with_accent', 'café résumé');
+----
+ts_lexize
+{café,résumé}
+
+
+# --- Russian locale with case = upper ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t3(
+    template = 'text',
+    locale = 'ru_RU.UTF-16',
+    case = 'upper'
+)
+
+
+query
+SELECT ts_lexize('t3', 'БЫстрая Коричневая лИса');
+----
+ts_lexize
+{БЫСТРАЯ,КОРИЧНЕВАЯ,ЛИСА}
+
+
+# --- Inline stopwords with whitespace trimming ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t4(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    stopwords = '"a","and","of"',
+    case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('t4', 'A thing of some KIND and ANoTher');
+----
+ts_lexize
+{thing,some,kind,anoth}
+
+
+# --- Edge ngrams from text tokenizer (mingram, maxgram) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_edge_ngram(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    mingram = 2,
+    maxgram = 4
+)
+
+
+query
+SELECT ts_lexize('text_edge_ngram', 'hello');
+----
+ts_lexize
+{he,hel,hell}
+
+# --- Edge ngrams from text tokenizer (mingram, maxgram(default)) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_edge_ngram_no_maxgram(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    mingram = 2
+)
+
+
+query
+SELECT ts_lexize('text_edge_ngram_no_maxgram', 'hello');
+----
+ts_lexize
+{he,hel}
+
+
+# --- Edge ngrams interact with stemming: stem first, then ngram ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_stem_ngram(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    mingram = 2,
+    maxgram = 3
+)
+
+
+query
+SELECT ts_lexize('text_stem_ngram', 'running');
+----
+ts_lexize
+{ru,run}
+
+
+# ===========================================================================
+# NGRAM TEMPLATE
+# ===========================================================================
+
+# --- Without preserveoriginal (default false) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngram_no_preserve(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3
+)
+
+
+query
+SELECT ts_lexize('ngram_no_preserve', 'HeLLo');
+----
+ts_lexize
+{He,HeL,eL,eLL,LL,LLo,Lo}
+
+
+# --- Unigram + bigram ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngram_unigram(
+    template = 'ngram',
+    mingram = 1,
+    maxgram = 2
+)
+
+
+query
+SELECT ts_lexize('ngram_unigram', 'abc');
+----
+ts_lexize
+{a,ab,b,bc,c}
+
+
+# --- preserveoriginal = false explicit ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngram_preserve_false(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3,
+    preserveoriginal = false
+)
+
+
+query
+SELECT ts_lexize('ngram_preserve_false', 'QuIcK');
+----
+ts_lexize
+{Qu,QuI,uI,uIc,Ic,IcK,cK}
+
+
+# ===========================================================================
+# STEM TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t6(
+    template = 'stem',
+    locale = 'en'
+)
+
+
+query
+SELECT ts_lexize('t6', 'running');
+----
+ts_lexize
+{run}
+
+
+# ===========================================================================
+# NORM TEMPLATE
+# ===========================================================================
+
+# --- lowercase + strip accents: whole input as single token ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t13(
+    template = 'norm',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    accent = false
+)
+
+
+query
+SELECT ts_lexize('t13', 'Jaime ce café');
+----
+ts_lexize
+{"jaime ce cafe"}
+
+
+# --- uppercase ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_upper(
+    template = 'norm',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    accent = false
+)
+
+
+query
+SELECT ts_lexize('norm_upper', 'Hello World');
+----
+ts_lexize
+{"HELLO WORLD"}
+
+
+# --- accent = true: keeps diacritics ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_with_accent(
+    template = 'norm',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    accent = true
+)
+
+
+query
+SELECT ts_lexize('norm_with_accent', 'café');
+----
+ts_lexize
+{CAFÉ}
+
+
+# --- case = none ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_no_case(
+    template = 'norm',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    accent = false
+)
+
+
+query
+SELECT ts_lexize('norm_no_case', 'Hello World');
+----
+ts_lexize
+{"Hello World"}
+
+
+# ===========================================================================
+# COLLATION TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t10(
+    template = 'collation',
+    locale = 'en_US.UTF-8'
+)
+
+
+# ===========================================================================
+# DELIMITER TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t11(
+    template = 'delimiter',
+    delimiter = '|'
+)
+
+
+query
+SELECT ts_lexize('t11', 'a|b|c');
+----
+ts_lexize
+{a,b,c}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY delim_comma(
+    template = 'delimiter',
+    delimiter = ','
+)
+
+
+query
+SELECT ts_lexize('delim_comma', 'foo,bar,baz');
+----
+ts_lexize
+{foo,bar,baz}
+
+
+# ===========================================================================
+# MULTI-DELIMITER TEMPLATE
+# ===========================================================================
+
+# --- Single character delimiter (test_delimiter) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_single(
+    template = 'multi_delimiter',
+    delimiters = '"a"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_single', 'baccaad');
+----
+ts_lexize
+{b,cc,d}
+
+
+# --- Empty result when input is only delimiters (test_delimiter_empty_match) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_dot(
+    template = 'multi_delimiter',
+    delimiters = '"."'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_dot', '..');
+----
+ts_lexize
+{}
+
+
+# --- Three single-character delimiters (test_delimiter_3) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_3(
+    template = 'multi_delimiter',
+    delimiters = '";", "|", "."'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_3', 'a;b||c.d.ff');
+----
+ts_lexize
+{a,b,c,d,ff}
+
+
+# --- Five single-character delimiters (test_delimiter_5) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_5(
+    template = 'multi_delimiter',
+    delimiters = '":", ";", " ", ".", "|"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_5', 'a:b||c.d ff.');
+----
+ts_lexize
+{a,b,c,d,ff}
+
+
+# --- Long string delimiter (test_delimiter_single_long) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_long(
+    template = 'multi_delimiter',
+    delimiters = '"foo"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_long', 'foobarfoobazbarfoobar');
+----
+ts_lexize
+{bar,bazbar,bar}
+
+
+# --- Multiple word delimiters (multi_words) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_words(
+    template = 'multi_delimiter',
+    delimiters = '"foo", "bar", "baz"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_words', 'fooxyzbarbazz');
+----
+ts_lexize
+{xyz,z}
+
+
+# --- All input consumed by consecutive delimiters (multi_words_2) ---
+
+query
+SELECT ts_lexize('multi_delim_words', 'foobarbaz');
+----
+ts_lexize
+{}
+
+
+# --- Overlapping delimiter prefixes (trick_matching_1) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim_trick(
+    template = 'multi_delimiter',
+    delimiters = '"foo", "ffa"'
+)
+
+
+query
+SELECT ts_lexize('multi_delim_trick', 'abcffoobar');
+----
+ts_lexize
+{abcf,bar}
+
+
+# ===========================================================================
+# MINHASH TEMPLATE
+# ===========================================================================
+
+# --- Inner delimiter analyzer, numhashes=2 ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY t12(
+    template = 'minhash',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ',',
+    numhashes = 2
+)
+
+
+query
+SELECT ts_lexize('t12', 'abaca,aba,caaa');
+----
+ts_lexize
+{ooh9OW4bsnE,gpxnmE69/UA}
+
+
+# --- numhashes=0: CREATE succeeds, ts_lexize fails ---
+statement error
+CREATE TEXT SEARCH DICTIONARY minhash_zero_hashes(
+    template = 'minhash',
+    numhashes = 0
+)
+----
+db error: ERROR: required parameter "template" was not found
+
+
+# --- Custom inner analyzer: segmentation with explicit break and case ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
+    template = 'minhash',
+    numhashes = 3,
+    analyzer_template = 'segmentation',
+    analyzer_break = 'alpha',
+    analyzer_case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('minhash_seg_explicit', 'a Real(!) QuICK, BrowN FOX!');
+----
+ts_lexize
+{3Nw3PlObK0w,9zSo3KwmNhA,U9QEhWO/5Dw}
+
+
+
+# --- Custom inner analyzer: text tokenizer ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_with_text(
+    template = 'minhash',
+    numhashes = 6,
+    analyzer_template = 'text',
+    analyzer_locale = 'en_US.UTF-8',
+    analyzer_case = 'lower',
+    analyzer_stemming = false
+)
+
+
+query
+SELECT ts_lexize('minhash_with_text', 'A QUICK Jumping Brownish FOX');
+----
+ts_lexize
+{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
+
+
+# ===========================================================================
+# SEGMENTATION TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_graphic_lower(
+    template = 'segmentation',
+    case = 'lower',
+    break = 'alpha'
+)
+
+
+# --- break = alpha includes alphanumeric tokens (digits pass through) ---
+
+query
+SELECT ts_lexize('seg_graphic_lower', 'File:Constantinople(1878)-Turkish Goverment information brocure (1950s) - Istanbul coffee house.png');
+----
+ts_lexize
+{file:constantinople,1878,turkish,goverment,information,brocure,1950s,istanbul,coffee,house.png}
+
+
+# --- break = graphic: keeps all non-whitespace tokens, drops spaces ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_graphic_upper(
+    template = 'segmentation',
+    case = 'upper',
+    break = 'graphic'
+)
+
+
+query
+SELECT ts_lexize('seg_graphic_upper', 'Test - ReTeSt');
+----
+ts_lexize
+{TEST,-,RETEST}
+
+
+query
+SELECT ts_lexize('seg_graphic_upper', 'File:Constantinople(1878)-Turkish Goverment information brocure (1950s) - Istanbul coffee house.png');
+----
+ts_lexize
+{FILE:CONSTANTINOPLE,(,1878,),-,TURKISH,GOVERMENT,INFORMATION,BROCURE,(,1950S,),-,ISTANBUL,COFFEE,HOUSE.PNG}
+
+
+# --- break = all: emits every word-break segment including spaces ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_all_upper(
+    template = 'segmentation',
+    case = 'upper',
+    break = 'all'
+)
+
+
+query
+SELECT ts_lexize('seg_all_upper', 'Test - ReTeSt');
+----
+ts_lexize
+{TEST," ",-," ",RETEST}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_graphic_none(
+    template = 'segmentation'
+)
+
+
+query
+SELECT ts_lexize('seg_graphic_none', 'Test - ReTeSt');
+----
+ts_lexize
+{Test,ReTeSt}
+
+
+# ===========================================================================
+# STOPWORDS TOKENIZER TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stopwords_filter(
+    template = 'stopwords',
+    stopwords = '"the","a","an"'
+)
+
+
+query
+SELECT ts_lexize('stopwords_filter', 'the');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_filter', 'a');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_filter', 'hello');
+----
+ts_lexize
+{hello}
+
+
+query
+SELECT ts_lexize('stopwords_filter', 'the cat');
+----
+ts_lexize
+{"the cat"}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stopwords_hex_false(
+    template = 'stopwords',
+    stopwords = '"foo","bar"',
+    hex = false
+)
+
+
+query
+SELECT ts_lexize('stopwords_hex_false', 'foo');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_hex_false', 'bar');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_hex_false', 'baz');
+----
+ts_lexize
+{baz}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stopwords_empty(
+    template = 'stopwords'
+)
+
+
+query
+SELECT ts_lexize('stopwords_empty', 'anything');
+----
+ts_lexize
+{anything}
+
+
+# --- hex = true: stopwords are hex-decoded before matching ---
+# 616263 = 'abc', 6D6e6F = 'mno'
+statement ok
+CREATE TEXT SEARCH DICTIONARY stopwords_hex_true(
+    template = 'stopwords',
+    stopwords = '"616263","6D6e6F"',
+    hex = true
+)
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', 'abc');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', 'mno');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', 'def');
+----
+ts_lexize
+{def}
+
+
+query
+SELECT ts_lexize('stopwords_hex_true', '616263');
+----
+ts_lexize
+{616263}
+
+
+# ===========================================================================
+# FEATURES (norm, frequency, position, offset)
+# ===========================================================================
+
+statement error
+CREATE TEXT SEARCH DICTIONARY text_norm_feature(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    norm = true
+)
+----
+db error: ERROR: missing feature 'frequency' required when 'norm' feature is specified
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_frequency_feature(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    norm = true,
+    frequency = true
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_all_features(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    norm = true,
+    frequency = true,
+    position = true,
+    offset = true
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngram_with_features(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3,
+    norm = true,
+    frequency = true
+)
+
+
+# ===========================================================================
+# NEAREST NEIGHBORS TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk2(
+    template = 'nearest_neighbors',
+    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin',
+    topk = 2
+)
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY nearest_neighbors_no_file(
+    template = 'nearest_neighbors',
+    modellocation = '${RESOURCES}/tests/iresearch/model_cookies.bin',
+    topk = 2
+)
+
+
+query
+SELECT ts_lexize('nearest_neighbors_topk2', 'salt')
+----
+ts_lexize
+{homogenized,teach}
+
+
+# ===========================================================================
+# CLASSIFICATION TEMPLATE
+# ===========================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY classification(
+    template = 'classification',
+    modellocation = '${RESOURCES}/tests/iresearch/model_cooking.bin'
+)
+
+
+query
+SELECT ts_lexize('classification', 'pasta coca-cola');
+----
+ts_lexize
+{__label__pasta}
+
+
+query
+SELECT ts_lexize('classification', 'Why not put knives in the dishwasher?');
+----
+ts_lexize
+{__label__knives}
+
+
+# ===========================================================================
+# PIPELINE TEMPLATE
+# ===========================================================================
+
+# --- Invalid step template ---
+statement error
+CREATE TEXT SEARCH DICTIONARY pipe_err1(
+    template = 'pipeline',
+    step1_template = 'invalid_tokenizer'
+)
+----
+db error: ERROR: Invalid type of text search dictionary
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_pipe(
+    template = 'pipeline',
+    step1_template = 'norm',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step2_template = 'pipeline',
+    step2_step1_template = 'delimiter',
+    step2_step1_delimiter = '|',
+    step2_step2_template = 'norm',
+    step2_step2_locale = 'en_US.UTF-8',
+    step2_step2_case = 'upper',
+    step3_template = 'stopwords',
+    step3_stopwords = '"A"'
+)
+
+
+query
+SELECT ts_lexize('pipe_pipe', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{QUICK,BROWN,FOX!}
+
+
+# --- Three-step: delimiter → text with correct stopwords → norm ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_correct_stopwords(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = 'A',
+    step2_template = 'text',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower',
+    step2_accent = false,
+    step2_stemming = true,
+    step2_stopwords = '"fox"',
+    step3_template = 'norm',
+    step3_locale = 'en_US.UTF-8',
+    step3_case = 'upper'
+)
+
+query
+SELECT ts_lexize('pipe_correct_stopwords', 'QuickABrownAFOXAjUmps');
+----
+ts_lexize
+{QUICK,BROWN,JUMP}
+
+
+# --- Single-step pipeline with text tokenizer ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_single_text(
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step1_stemming = true
+)
+
+query
+SELECT ts_lexize('pipe_single_text', 'QuIck broWn fox jumps');
+----
+ts_lexize
+{quick,brown,fox,jump}
+
+
+# --- Single-step pipeline with norm (non-tokenizer) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_single_norm(
+    template = 'pipeline',
+    step1_template = 'norm',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_single_norm', 'QuIck');
+----
+ts_lexize
+{quick}
+
+
+# --- Two norm steps (no real tokenizer in pipeline) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_two_norms(
+    template = 'pipeline',
+    step1_template = 'norm',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'upper',
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_two_norms', 'QuIck');
+----
+ts_lexize
+{quick}
+
+
+# --- Text then norm (source-modifying tokenizer) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_text_norm(
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'none',
+    step1_stemming = true,
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_text_norm', 'QuIck broWn fox jumps');
+----
+ts_lexize
+{quick,brown,fox,jump}
+
+
+# --- Ngram then norm (lowercasing ngrams) ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_ngram_norm(
+    template = 'pipeline',
+    step1_template = 'ngram',
+    step1_mingram = 2,
+    step1_maxgram = 3,
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+)
+
+query
+SELECT ts_lexize('pipe_ngram_norm', 'QuIck');
+----
+ts_lexize
+{qu,qui,ui,uic,ic,ick,ck}
+
+
+# --- Two-step: delimiter then text ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_delim_text(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = '.',
+    step2_template = 'text',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'upper',
+    step2_stemming = false
+)
+
+query
+SELECT ts_lexize('pipe_delim_text', 'Hello.World.Foo.baR');
+----
+ts_lexize
+{HELLO,WORLD,FOO,BAR}
+
+
+# ===========================================================================
+# COPY FROM TEMPLATE
+# ===========================================================================
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY copy_err(
+    template = 'copy_from',
+    from = 't1',
+    case = 'whaaat?'
+)
+----
+db error: ERROR: invalid value in "case" parameter
+HINT: Text case conversion: none, lower, upper
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY copy_err(
+    template = 'copy_from',
+    from = 't1',
+    numhashes = 2
+)
+----
+db error: ERROR: option "numhashes" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_t1(
+    template = 'copy_from',
+    from = 't1',
+    case = 'upper'
+)
+
+
+query
+SELECT ts_lexize('copy_t1', 'a QUICK Brown FoX');
+----
+ts_lexize
+{A,QUICK,BROWN,FOX}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_pipe(
+    template = 'copy_from',
+    from = 'pipe_delim_text',
+    step1_delimiter = '|',
+    step2_case = 'lower'
+)
+
+
+query
+SELECT ts_lexize('copy_pipe', 'Hello|World|Foo|baR');
+----
+ts_lexize
+{hello,world,foo,bar}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_pipe2(
+    template = 'copy_from',
+    from = 'pipe_delim_text',
+    step1_delimiter = '|',
+    step2_case = 'lower',
+    step3_template = 'stopwords',
+    step3_stopwords = '"bar", "foo"'
+)
+
+
+query
+SELECT ts_lexize('copy_pipe2', 'Hello|World|Foo|baR');
+----
+ts_lexize
+{hello,world}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_minhash(
+    template = 'copy_from',
+    from = 'minhash_with_text',
+    analyzer_stopwords = '"fox"'
+)
+
+
+query
+SELECT ts_lexize('copy_minhash', 'A QUICK Jumping Brownish FOX');
+----
+ts_lexize
+{3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
+    template = 'copy_from',
+    from = 'copy_pipe2',
+    step4_template = 'copy_from',
+    step4_from = 'copy_minhash',
+    step4_analyzer_stopwords = '"quick"'
+)
+
+query
+SELECT ts_lexize('copy_copy_pipe', 'A|QUICK|Jumping|Brownish|FOX');
+----
+ts_lexize
+{3Nw3PlObK0w,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipes(
+    template = 'copy_from',
+    from = 'pipe_pipe',
+    step4_template = 'pipeline',
+    step4_step1_template = 'copy_from',
+    step4_step1_from = 'pipe_pipe'
+)
+
+
+query
+SELECT ts_lexize('pipe_pipe', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{QUICK,BROWN,FOX!}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY too_many_pipes(
+    template = 'copy_from',
+    from = 'pipes',
+    step5_template = 'pipeline',
+    step5_step1_template = 'copy_from',
+    step5_step1_from = 'pipes'
+)
+
+
+query
+SELECT ts_lexize('too_many_pipes', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{QUICK,BROWN,FOX!}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_copy5(
+    template = 'minhash',
+    numHashes = 5,
+    analyzer_template = 'copy_from',
+    analyzer_from = 'too_many_pipes'
+)
+
+
+query
+SELECT ts_lexize('minhash_copy5', 'a|quick|Brown|FOX!');
+----
+ts_lexize
+{CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
+
+
+# ===========================================================================
+# HELP
+# ===========================================================================
+
+statement error
+CREATE TEXT SEARCH DICTIONARY a(help);
+----
+db error: ERROR: 
+Text Search Dictionary:
+  template[required] (string) [default: none] - Tokenizer template type
+  features:
+    norm (boolean) [default: false] - Enables norm feature in index
+    offset (boolean) [default: false] - Enables offset feature in index
+    position (boolean) [default: false] - Enables position feature in index
+    frequency (boolean) [default: false] - Enables frequency feature in index
+  text:
+    locale (string) - ICU locale string (e.g. en_US.UTF-8)
+    accent (boolean) [default: true] - Preserve accent marks
+    stemming (boolean) [default: true] - Apply stemming to tokens
+    stopwords (string) - Comma-separated list of inline stop words
+    stopwordspath (string) - Path to file containing stop words
+    case (string) [default: none] - Text case conversion: none, lower, upper
+    edgengram:
+      mingram (integer) [default: 2] - Minimum n-gram length
+      maxgram (integer) [default: 3] - Maximum n-gram length
+      preserveoriginal (boolean) [default: false] - Emit the original token alongside n-grams
+  ngram:
+    mingram (integer) [default: 2] - Minimum n-gram length
+    maxgram (integer) [default: 3] - Maximum n-gram length
+    preserveoriginal (boolean) [default: false] - Emit the original token alongside n-grams
+    inputtype (string) [default: utf8] - Input stream encoding: binary, utf8
+    startmarker (string) - Prefix marker appended at n-gram boundary
+    endmarker (string) - Suffix marker appended at n-gram boundary
+  nearest_neighbors:
+    modellocation (string) - Path to the ML model file
+    topk (integer) [default: 1] - Number of top results to return
+  stem:
+    locale (string) - ICU locale string (e.g. en_US.UTF-8)
+  stopwords:
+    stopwords (string) - Comma-separated list of inline stop words
+    hex (boolean) [default: false] - Treat stop words as hex-encoded strings
+  classification:
+    modellocation (string) - Path to the ML model file
+    topk (integer) [default: 1] - Number of top results to return
+    threshold (double) [default: 0] - Minimum confidence score [0.0..1.0]
+  collation:
+    locale (string) - ICU locale string (e.g. en_US.UTF-8)
+  delimiter:
+    delimiter[required] (string) [default: none] - Token delimiter character or string
+  multi_delimiter:
+    delimiters[required] (string) [default: none] - The list of delimiters(e.g., '",", "|", "!"'
+  minhash:
+    numhashes (integer) [default: 1] - Number of hash functions to use
+  norm:
+    locale (string) - ICU locale string (e.g. en_US.UTF-8)
+    case (string) [default: none] - Text case conversion: none, lower, upper
+    accent (boolean) [default: true] - Preserve accent marks
+  segmentation:
+    case (string) [default: none] - Text case conversion: none, lower, upper
+    break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha
+  pipeline:
+    (no additional options)
+  copy_from:
+    from[required] (string) [default: none] - the source tokenizer name

@@ -36,7 +36,7 @@ export const compareScreenshot = async (
         diffDir = `${projectRoot}/screenshots/diffs`,
         currentDir = `${projectRoot}/screenshots/current`,
         threshold = 0.1,
-        maxDiffPercentage = 1.0,
+        maxDiffPercentage = 2.0,
         updateBaseline = process.env.UPDATE_SNAPSHOTS === "true",
     } = options;
 

@@ -26,14 +26,18 @@
 #include "catalog/database.h"
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
+#include "connector/serenedb_connector.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "query/query.h"
+#include "query/transaction.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -50,24 +54,19 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   CreateTableUsingExternalOptions(const List* options,
                                   ConnectionContext& conn_ctx)
     : FileOptionsParser{
-        "CREATE TABLE", {}, {}, [&conn_ctx](std::string msg) {
-          conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
-        }} {
-    VisitNodes(options, [&](const DefElem& option) {
-      auto [_, emplaced] =
-        _options.try_emplace(std::string_view{option.defname}, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(&option)),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-
-    Parse();
+        {},
+        options,
+        file_options::kCreateExternalGroup,
+        {.operation = "CREATE TABLE", .notice = [&conn_ctx](std::string msg) {
+           conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
+         }}} {
+    ParseOptions([&] { Parse(); });
   }
 
   void Parse() {
-    if (const auto* path_option = EraseOption("path")) {
+    using namespace file_options;
+
+    if (const auto* path_option = EraseOption(kPath)) {
       auto maybe_path = TryGet<std::string_view>(path_option->arg);
       if (!maybe_path) {
         THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
@@ -83,11 +82,8 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
 
     _storage_options = ParseStorageOptions();
 
-    auto [underlying_format, format_name, _] = ParseFileFormat();
-    _parsed_format = underlying_format;
-    _format_options = ParseFormatOptions(format_name, underlying_format);
-
-    CheckUnrecognizedOptions();
+    auto format = ParseFileFormat();
+    _format_options = ParseFormatOptions(format);
   }
 
   catalog::FileInfo GetFileInfo() && {
@@ -96,7 +92,6 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
   }
 
  private:
-  FileFormat _parsed_format;
   std::shared_ptr<StorageOptions> _storage_options;
   std::shared_ptr<FormatOptions> _format_options;
 };
@@ -120,11 +115,36 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
   return column_expr;
 }
 
+bool CreateTableImpl(catalog::LogicalCatalog& catalog,
+                     const catalog::Database& database, ObjectId db,
+                     std::string_view schema, std::string_view table_name,
+                     catalog::CreateTableRequest request, bool if_not_exists,
+                     catalog::CreateTableOperationOptions operation_options) {
+  catalog::CreateTableOptions options;
+  auto r = MakeTableOptions(std::move(request), database.GetId(), options,
+                            database.GetReplicationFactor(),
+                            database.GetWriteConcern(), {});
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  r = catalog.CreateTable(db, schema, std::move(options), operation_options);
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return false;
+  }
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", table_name, "\" already exists"));
+  }
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return true;
+}
+
 enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
 
 // TODO: use ErrorPosition in ThrowSqlError
-yaclib::Future<Result> CreateTable(ExecContext& context,
-                                   const CreateStmt& stmt) {
+yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -132,8 +152,8 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
   if (schema.empty()) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
   const std::string_view table = stmt.relation->relname;
 
@@ -430,18 +450,75 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     request.type = std::to_underlying(TableType::File);
   }
 
-  catalog::CreateTableOptions options;
-  auto r = MakeTableOptions(std::move(request), database->GetId(), options,
-                            database->GetReplicationFactor(),
-                            database->GetWriteConcern(), {});
-  if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+  if (!CreateTableImpl(catalog, *database, db, schema, table,
+                       std::move(request), stmt.if_not_exists, {})) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table, "\" already exists, skipping")));
   }
-  r = catalog.CreateTable(db, schema, std::move(options), {});
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    r = {};
+  return {};
+}
+
+yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
+                                 const IntoClause& into, bool if_not_exists,
+                                 CTASState& state, velox::RowVectorPtr& batch) {
+  const auto db = context.GetDatabaseId();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
+
+  const auto& rel = *into.rel;
+  const std::string_view schema =
+    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
+  if (schema.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
-  return yaclib::MakeFuture(std::move(r));
+  const std::string_view table_name = rel.relname;
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
+
+  auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
+    basics::downCast<const axiom::logical_plan::TableWriteNode>(
+      *query.GetLogicalPlan()));
+
+  catalog::CreateTableRequest request;
+  request.name = table_name;
+
+  auto& columns = request.columns;
+  columns.resize(write_node.columnNames().size());
+  for (size_t i = 0; i < columns.size(); ++i) {
+    columns[i].id = i;
+    columns[i].name = write_node.columnNames()[i];
+    columns[i].type = write_node.columnExpressions()[i]->type();
+  }
+
+  if (!CreateTableImpl(catalog, *database, db, schema, table_name,
+                       std::move(request), if_not_exists,
+                       {.create_with_tombstone = true})) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_name, "\" already exists, skipping")));
+    query::Executor::SetEarlyExit(batch);
+    return {};
+  }
+
+  state.created = true;
+
+  auto snapshot = catalog.GetSnapshot();
+  auto catalog_table = snapshot->GetTable(db, schema, table_name);
+  SDB_ASSERT(catalog_table);
+  auto& transaction = static_cast<query::Transaction&>(conn_ctx);
+  auto axiom_table =
+    std::make_shared<connector::RocksDBTable>(*catalog_table, transaction);
+  axiom_table->BulkInsert() = true;
+  write_node.setTable(std::move(axiom_table));
+  query.CompileQuery();
+  query.MakeRunner();
+
+  return {};
 }
 
 }  // namespace sdb::pg

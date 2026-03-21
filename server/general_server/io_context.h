@@ -29,6 +29,7 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 namespace rest {

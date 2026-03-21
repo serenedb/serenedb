@@ -38,7 +38,6 @@ bool IsCollection(const velox::TypePtr& type) {
 }
 
 }  // namespace sdb::aql
-
 namespace sdb::pg {
 
 // TODO: make separate PseudoType (inherited from velox::Type)

@@ -20,11 +20,12 @@
 
 #include "catalog/database.h"
 
+#include <vpack/serializer.h>
+
 #include "basics/assert.h"
 #include "basics/static_strings.h"
 #include "catalog/table_options.h"
 #include "general_server/server_options_feature.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 
@@ -32,7 +33,6 @@ DatabaseOptions MakeDatabaseOptions(std::string_view name, ObjectId id) {
   const auto& server_options = GetServerOptions();
   return {
     .name = std::string{name},
-    .id = id,
     .replicationFactor = server_options.cluster_default_replication_factor,
     .writeConcern = server_options.cluster_write_concern,
   };
@@ -45,7 +45,6 @@ DatabaseOptions MakeSystemDatabaseOptions() {
 void Database::WriteInternal(vpack::Builder& b) const {
   const DatabaseOptions options{
     .name = _name,
-    .id = _id,
     .replicationFactor = _replication_factor,
     .writeConcern = _write_concern,
   };

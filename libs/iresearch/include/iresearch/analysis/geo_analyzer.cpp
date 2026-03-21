@@ -77,9 +77,7 @@ customize::enum_name<irs::analysis::GeoJsonAnalyzer::Coding>(
 }
 
 }  // namespace magic_enum
-
 namespace irs::analysis {
-
 namespace {
 
 using namespace sdb;

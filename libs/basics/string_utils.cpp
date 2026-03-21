@@ -64,7 +64,6 @@ int CompareIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept {
 }
 
 }  // namespace sdb
-
 namespace {
 
 static const char* gHexValuesUpper = "0123456789ABCDEF";
@@ -199,7 +198,6 @@ static char constexpr kEscapeTable[256] = {
 };
 
 }  // namespace
-
 namespace sdb::basics::string_utils {
 
 std::string EscapeUnicode(std::string_view value, bool escape_slash) {
@@ -1158,6 +1156,23 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     }
 
     ++p;
+  }
+}
+
+std::string_view GetArticle(std::string_view word) noexcept {
+  if (word.empty()) {
+    return "";
+  }
+
+  switch (absl::ascii_tolower(word.front())) {
+    case 'a':
+    case 'e':
+    case 'i':
+    case 'o':
+    case 'u':
+      return "an";
+    default:
+      return "a";
   }
 }
 

@@ -11,9 +11,11 @@ add_library(
     search_remove_filter.cpp
     file_table.cpp
     data_materializer.cpp
-    search_data_source.cpp
+    search_count_data_source.cpp
+    search_scan_data_source.cpp
     search_filter_builder.cpp
     sst_sink_writer.cpp
+    rocksdb_filter.cpp
 )
 
 target_link_libraries(

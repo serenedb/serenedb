@@ -122,7 +122,7 @@ void ConfigFeature::loadConfigFile(std::shared_ptr<ProgramOptions> options,
     return;
   }
 
-  bool fatal = !_print_version();
+  bool fatal = false;
 
   // always prefer an explicitly given config file
   if (!_file.empty()) {
@@ -278,4 +278,5 @@ void ConfigFeature::prepare() {
   SdbSetCanUseSplice(_use_splice);
 #endif
 }
+
 }  // namespace sdb

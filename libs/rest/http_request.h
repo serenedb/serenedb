@@ -27,10 +27,11 @@
 #include "rest/general_request.h"
 
 namespace vpack {
+
 class Builder;
 struct Options;
-}  // namespace vpack
 
+}  // namespace vpack
 namespace sdb {
 
 class HttpRequest final : public GeneralRequest {
@@ -77,4 +78,5 @@ class HttpRequest final : public GeneralRequest {
   /// was VPack payload validated
   bool _validated_payload = false;
 };
+
 }  // namespace sdb

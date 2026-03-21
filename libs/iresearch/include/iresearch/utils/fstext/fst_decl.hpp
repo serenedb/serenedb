@@ -44,8 +44,8 @@ class ImmutableFst;
 
 }  // namespace fstext
 }  // namespace fst
-
 namespace irs {
+
 using byte_weight = fst::StringLeftWeight<byte_type>;
 using byte_arc = fst::ArcTpl<byte_weight>;
 using vector_byte_fst =

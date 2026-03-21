@@ -61,6 +61,7 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 
@@ -129,9 +130,6 @@ struct Logger {
   static LogTopic IRESEARCH;
   static LogTopic FUERTE;
   // TODO(gnusi) static LogTopic VPACK;
-#ifdef USE_V8
-  static LogTopic V8;
-#endif
   // NOLINTEND
 
   struct FIXED {

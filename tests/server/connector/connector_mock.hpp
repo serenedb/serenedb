@@ -17,6 +17,9 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
 #include "connector/serenedb_connector.hpp"
 
 namespace sdb::connector::test {

@@ -27,6 +27,7 @@
 #include "basics/common.h"
 
 namespace sdb {
+
 class GlobalContext {
  public:
   static GlobalContext* gContext;
@@ -51,4 +52,5 @@ class GlobalContext {
   const std::string _run_root;
   int _ret;
 };
+
 }  // namespace sdb

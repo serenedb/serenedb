@@ -23,16 +23,28 @@
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
+#include "basics/debugging.h"
+#include "basics/errors.h"
 #include "basics/static_strings.h"
+#include "basics/string_utils.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
+yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
@@ -47,18 +59,19 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
       return list_nth_node(List, stmt.objects, 0);
     }
   }();
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  auto current_schema = conn_ctx.GetCurrentSchema();
   auto [schema, name] =
     ParseObjectName(names, context.GetDatabase(), current_schema);
   Result r;
   const auto db = context.GetDatabaseId();
+
   switch (stmt.removeType) {
     case OBJECT_TABLE:
-      r = catalog.DropTable(db, schema, name, nullptr);
+      r = catalog.DropTable(db, schema, name);
       break;
     case OBJECT_INDEX:
-      r = catalog.DropIndex(db, schema, name, nullptr);
+      r = catalog.DropIndex(db, schema, name);
       break;
     case OBJECT_VIEW: {
       r = catalog.DropView(db, schema, name);
@@ -70,22 +83,83 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
       // TODO: ensure that schema is empty
       if (name == StaticStrings::kPgCatalogSchema ||
           name == StaticStrings::kInformationSchema) {
-        r = {ERROR_BAD_PARAMETER, "cannot drop schema ", name,
-             " because it is required by the database system"};
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+          ERR_MSG("cannot drop schema ", name,
+                  " because it is required by the database system"));
       } else {
         const bool cascade = stmt.behavior == DROP_CASCADE;
-        r = catalog.DropSchema(db, name, cascade, nullptr);
+        r = catalog.DropSchema(db, name, cascade);
       }
     } break;
+    case OBJECT_TSDICTIONARY: {
+      r = catalog.DropTokenizer(db, schema, name);
+    } break;
     default:
-      r = {ERROR_NOT_IMPLEMENTED,
-           "DROP for this object type is not implemented: ",
-           magic_enum::enum_name(stmt.removeType)};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("DROP for this object type is not implemented: ",
+                              magic_enum::enum_name(stmt.removeType)));
   }
-  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) && stmt.missing_ok) {
+  auto get_object_name = [&] -> std::string_view {
+    switch (stmt.removeType) {
+      case OBJECT_TABLE:
+        return "table";
+      case OBJECT_INDEX:
+        return "index";
+      case OBJECT_VIEW:
+        return "view";
+      case OBJECT_FUNCTION:
+        return "function";
+      case OBJECT_SCHEMA:
+        return "schema";
+      case OBJECT_TSDICTIONARY:
+        return "text search dictionary";
+      default:
+        SDB_ASSERT(false);  // it's better to specify the name
+        return "object";
+    }
+  };
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    // The error message from catalog contains the actual object type name
+    auto actual_type = r.errorMessage();
+    auto actual_name = absl::AsciiStrToLower(actual_type);
+    auto object_name = get_object_name();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", name, "\" is not ",
+              basics::string_utils::GetArticle(object_name), " ", object_name),
+      ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual_type), " to remove ",
+               basics::string_utils::GetArticle(actual_name), " ", actual_name,
+               "."));
+  }
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (stmt.removeType == OBJECT_FUNCTION) {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      }
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        ERR_MSG("function ", name, "() does not exist, skipping")));
+    } else {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+          ERR_MSG(get_object_name(), " \"", name, "\" does not exist"));
+      }
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                       ERR_MSG(get_object_name(), " \"", name,
+                               "\" does not exist, skipping")));
+    }
     r = {};
   }
-  return yaclib::MakeFuture(std::move(r));
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 }  // namespace sdb::pg

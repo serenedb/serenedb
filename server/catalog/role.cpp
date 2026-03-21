@@ -23,6 +23,7 @@
 
 #include <absl/strings/match.h>
 #include <vpack/iterator.h>
+#include <vpack/vpack_helper.h>
 
 #include <string_view>
 
@@ -40,7 +41,6 @@
 #include "catalog/object.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
 namespace {

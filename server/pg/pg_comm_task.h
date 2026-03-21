@@ -47,6 +47,7 @@
 #include "utils/query_string.h"
 
 namespace sdb::pg {
+
 class PostgresFeature;
 
 // ClientHello -> Idle -> Processing -> Idle -> ErrorRecovery -> Idle....
@@ -83,7 +84,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void ProcessFirstRoot() noexcept;
   void ProcessNextRoot() noexcept;
-  void ProcessWakeup() noexcept;
+  void ProcessWakeup(yaclib::Result<> r) noexcept;
 
   virtual void SendAsync(message::SequenceView data) noexcept = 0;
 
@@ -164,7 +165,8 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   ProcessState ProcessQueryResult();
   void SendBatch(const velox::RowVectorPtr& batch);
-  void SendCommandComplete(const SqlTree& tree, uint64_t rows);
+  void SendCommandComplete(const SqlTree& tree, uint64_t rows,
+                           const query::QueryPtr& query);
 
   template<typename Func>
   void SafeCall(Func&& func) noexcept;

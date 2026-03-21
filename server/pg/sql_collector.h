@@ -32,7 +32,9 @@
 #include "pg/pg_types.h"
 
 namespace sdb::query {
+
 class Transaction;
+
 }  // namespace sdb::query
 
 struct RawStmt;
@@ -148,6 +150,9 @@ void Collect(std::string_view database, const RawStmt& node, Objects& objects,
 
 Objects::ObjectName ParseObjectName(const List* names,
                                     std::string_view database,
+                                    std::string_view default_schema = {});
+
+Objects::ObjectName ParseObjectName(std::string_view name,
                                     std::string_view default_schema = {});
 
 }  // namespace sdb::pg

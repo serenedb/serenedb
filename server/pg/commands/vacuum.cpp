@@ -19,11 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <yaclib/async/future.hpp>
+#include <yaclib/async/join.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/errors.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
@@ -46,34 +48,12 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-yaclib::Future<Result> UpdateIndexes(
-  ExecContext& context, const PgListWrapper<VacuumRelation>& rels) {
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
-  auto current_database = context.GetDatabase();
-  const auto db = context.GetDatabaseId();
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto snapshot = catalog.GetSnapshot();
+yaclib::Future<> UpdateIndexes(
+  ExecContext& context,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
+  const std::vector<std::shared_ptr<catalog::Table>>& tables) {
   std::vector<yaclib::Future<>> index_futures;
-  for (const auto& rel : rels) {
-    std::string_view schema_name = current_schema;
-    std::string_view rel_name;
-    if (rel->relation->catalogname) {
-      return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED,
-                                        "Database name is not supported");
-    }
-    if (rel->relation->schemaname) {
-      schema_name = {rel->relation->schemaname};
-    }
-    SDB_ASSERT(rel->relation->relname);
-    rel_name = {rel->relation->relname};
-    auto table = snapshot->GetTable(db, schema_name, rel_name);
-    if (!table) {
-      return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "Relation '",
-                                        rel_name, "' not found.");
-    }
-    SDB_ASSERT(table);
+  for (const auto& table : tables) {
     for (auto index_shard : snapshot->GetIndexShardsByTable(table->GetId())) {
       SDB_ASSERT(index_shard);
       switch (index_shard->GetType()) {
@@ -84,40 +64,107 @@ yaclib::Future<Result> UpdateIndexes(
           break;
         }
         case IndexType::Secondary:
-          return yaclib::MakeFuture<Result>(
-            ERROR_NOT_IMPLEMENTED, "Secondary index update is not supported");
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_CASE_NOT_FOUND),
+                          ERR_MSG("Secondary index is not supported"));
+          break;
         case IndexType::Unknown:
           SDB_UNREACHABLE();
       }
     }
   }
-  return yaclib::WhenAll(index_futures.begin(), index_futures.size())
-    .ThenInline([] { return Result{}; });
+  if (index_futures.empty()) {
+    return yaclib::MakeFuture<>();
+  }
+  return yaclib::WhenAll(index_futures.begin(), index_futures.size());
 }
+
+void SyncStats(ExecContext& context,
+               const std::shared_ptr<const catalog::Snapshot>& snapshot,
+               const std::vector<std::shared_ptr<catalog::Table>>& tables) {
+  for (const auto& table : tables) {
+    auto shard = snapshot->GetTableShard(table->GetId());
+    if (auto r = GetServerEngine().SyncTableShard(*shard); !r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+  }
+}
+
 }  // namespace
 
 // TODO: use ErrorPosition in ThrowSqlError
-yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
+yaclib::Future<> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
   if (!stmt.is_vacuumcmd) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("ANALYZE is not implemented yet"));
   }
   PgListWrapper<DefElem> options(stmt.options);
-  if (options.size() == 1 &&
-      std::string_view{(*options.begin())->defname} == "update_indexes") {
-    return UpdateIndexes(context, PgListWrapper<VacuumRelation>{stmt.rels});
-  }
-  if (list_length(stmt.options) > 0) {
+  if (options.size() > 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("VACUUM options are not implemented yet"));
+                    ERR_MSG("VACUUM does not support multiple options"));
   }
-  if (list_length(stmt.rels) > 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("VACUUM for specific tables is not implemented yet"));
+  containers::FlatHashSet<std::string_view> names;
+  for (auto elem : options) {
+    names.insert(elem->defname);
+  }
+  std::vector<yaclib::Future<>> res;
+  std::vector<std::shared_ptr<catalog::Table>> tables;
+  PgListWrapper<VacuumRelation> rels{stmt.rels};
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto current_database = context.GetDatabaseId();
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  for (auto rel : rels) {
+    ObjectId db_id = current_database;
+    std::string_view schema_name = current_schema;
+    std::string_view rel_name;
+    if (rel->relation->catalogname) {
+      db_id = snapshot->GetDatabase(rel->relation->catalogname)->GetId();
+    }
+    if (rel->relation->schemaname) {
+      schema_name = rel->relation->schemaname;
+    }
+    SDB_ASSERT(rel->relation->relname);
+    rel_name = rel->relation->relname;
+    auto table = snapshot->GetTable(db_id, schema_name, rel_name);
+    if (!table) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("relation '", rel_name, "' not found."));
+    }
+    SDB_ASSERT(table);
+    tables.push_back(std::move(table));
+  }
+  if (names.contains("update_indexes")) {
+    res.push_back(UpdateIndexes(context, snapshot, tables));
+  }
+  if (names.contains("sync_stats")) {
+    SyncStats(context, snapshot, tables);
   }
 
-  return GetServerEngine().compactAll(true, true);
+  if (names.contains("compact")) {
+    if (list_length(stmt.options) > 0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("VACUUM options are not implemented yet"));
+    }
+    if (list_length(stmt.rels) > 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("VACUUM for specific tables is not implemented yet"));
+    }
+
+    res.push_back(
+      GetServerEngine().compactAll(true, true).ThenInline([](Result&& r) {
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+      }));
+  }
+  if (res.empty()) {
+    return {};
+  }
+  if (res.size() == 1) {
+    return std::move(res[0]);
+  }
+  return yaclib::WhenAll(res.begin(), res.size());
 }
 
 }  // namespace sdb::pg

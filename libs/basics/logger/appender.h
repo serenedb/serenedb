@@ -41,9 +41,11 @@
 #include "basics/result.h"
 
 namespace sdb {
+
 class LogTopic;
 
 namespace log {
+
 struct Message;
 
 class Appender {
@@ -83,5 +85,6 @@ class Appender {
   basics::ReadWriteLock _log_output_mutex;
   std::atomic<std::thread::id> _log_output_mutex_owner;
 };
+
 }  // namespace log
 }  // namespace sdb

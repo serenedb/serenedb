@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         column_expr.cpp
         database.cpp
+        drop_task.cpp
         schema.cpp
         databases.cpp
         local_catalog.cpp
@@ -31,6 +32,7 @@ target_sources(
         inverted_index.cpp
         analyzer.cpp
         mangling.cpp
+        tokenizer.cpp
 )
 
 add_subdirectory(identifiers)

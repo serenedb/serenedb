@@ -81,24 +81,6 @@ However, the session are renewed automatically as long as you regularly interact
 with the web interface in your browser. You are not logged out while actively
 using it.)");
 
-  options
-    ->addOption("--server.authentication-system-only",
-                "Use HTTP authentication only for requests to /_api and "
-                "/_admin endpoints.",
-                new options::BooleanParameter{&_authentication_system_only})
-    .setLongDescription(R"(If you set this option to `true`, then HTTP
-authentication is only required for requests going to URLs starting with `/_`,
-but not for other endpoints.
-
-Note that checking the URL is performed after any database name prefix has been
-removed. That means, if the request URL is `/_db/_system/myapp/myaction`, the
-URL `/myapp/myaction` is checked for the `/_` prefix.
-
-Authentication still needs to be enabled for the server via
-`--server.authentication` in order for HTTP authentication to be forced for the
-SereneDB APIs and the web interface. Only setting
-`--server.authentication-system-only` is not enough.)");
-
 #ifdef SERENEDB_HAVE_DOMAIN_SOCKETS
   options
     ->addOption(

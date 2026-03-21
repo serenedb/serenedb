@@ -28,15 +28,21 @@
 #include "basics/fwd.h"
 
 namespace sdb::search::functions {
-
 namespace {
 
 template<typename T>
 struct SearchStubFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  template<typename TInput>
+  void call(bool& out, const TInput& lhs, const TInput& rhs) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<bool>& result,
-    const arg_type<velox::Variadic<velox::Any>>& func_args) {
+    out_type<bool>& result, const arg_type<velox::Varchar>& field_arg,
+    const arg_type<velox::Variadic<velox::Varchar>>& values_args) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
@@ -49,8 +55,23 @@ struct SearchStubFunction {
 // TODO(Dronplane): maybe add naive implementation to run without index on best
 // effort basis?
 void registerSearchFunctions() {
-  velox::registerFunction<SearchStubFunction, bool,
-                          velox::Variadic<velox::Any>>({std::string{kPhrase}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kPhrase}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kTermEq}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kTermLt}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kTermLe}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kTermGe}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kTermGt}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Variadic<velox::Varchar>>(
+    {std::string{kTermIn}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kTermLike}});
 }
 
 }  // namespace sdb::search::functions

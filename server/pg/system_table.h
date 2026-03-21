@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/buffer/Buffer.h>
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/type/Type.h>

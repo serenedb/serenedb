@@ -89,7 +89,6 @@
 #include "basics/thread.h"
 
 namespace sdb {
-
 namespace {
 
 #ifdef SERENEDB_HAVE_LINUX_PROC

@@ -149,6 +149,19 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
+CommandTag GetCommandTag(Node* node, const query::QueryPtr& query) {
+  if (nodeTag(node) == T_RawStmt) {
+    auto* stmt = castNode(RawStmt, node)->stmt;
+    if (nodeTag(stmt) == T_CreateTableAsStmt && query->IsCompiled()) {
+      // PostgreSQL replace CTAS cmdtag with SELECT when the table is
+      // succesfully created and a filling process has been started.
+      return CMDTAG_SELECT;
+    }
+  }
+  const auto tag = CreateCommandTag(node);
+  return tag;
+}
+
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
@@ -160,6 +173,11 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
 PgSQLCommTaskBase::~PgSQLCommTaskBase() {
+  if (_connection_ctx && _connection_ctx->HasTransactionBegin()) {
+    // if it doesn't have BEGIN - it's supposed to be rollbacked / commited
+    // before, there're checks in ~Transaction to ensure that.
+    std::ignore = _connection_ctx->Rollback();
+  }
   if (_key != 0) {
     _feature.UnregisterTask(_key);
   }
@@ -216,11 +234,15 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
   }
 }
 
-void PgSQLCommTaskBase::ProcessWakeup() noexcept {
+void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   std::lock_guard lock{_execution_mutex};
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
   SafeCall([&] {
+    if (!r) {
+      std::ignore = std::move(r).Ok();
+    }
+
     auto state = ProcessState::DonePacket;
     do {
       state = ProcessQueryResult();
@@ -931,9 +953,8 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal) {
   }
   SDB_ASSERT(portal.stmt->query);
   auto cursor = portal.stmt->query->MakeCursor(
-    [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())] {
-      user_task->ProcessWakeup();
-    });
+    [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())](
+      yaclib::Result<> r) { user_task->ProcessWakeup(std::move(r)); });
   if (RegisterCursor(std::move(cursor), portal)) {
     SDB_ASSERT(&portal == _current_portal);
     // Throws if soft shutdown is ongoing!
@@ -1063,7 +1084,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
     return ProcessState::Wait;
   }
   SDB_ASSERT(state == query::Cursor::Process::Done);
-  SendCommandComplete(portal.stmt->tree, portal.rows);
+  SendCommandComplete(portal.stmt->tree, portal.rows, portal.stmt->query);
 
   ReleaseCursor(portal);
   if (_current_packet_type == PQ_MSG_QUERY &&
@@ -1076,12 +1097,12 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   return ProcessState::DonePacket;
 }
 
-void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree,
-                                            uint64_t rows) {
+void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree, uint64_t rows,
+                                            const query::QueryPtr& query) {
   SDB_ASSERT(tree.root_idx);
   auto* root = castNode(Node, tree.GetRoot());
 
-  const auto command_tag = CreateCommandTag(root);
+  const auto command_tag = GetCommandTag(root, query);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
   {
@@ -1134,7 +1155,10 @@ void PgSQLCommTaskBase::CancelPacket() {
   std::unique_lock lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
   if (_current_portal && _current_portal->cursor) {
-    _current_portal->cursor->RequestCancel();
+    auto f = _current_portal->cursor->RequestCancel();
+    if (f.Valid()) {
+      std::move(f).Detach();
+    }
   }
   _copy_queue.Abort(lock);
 }

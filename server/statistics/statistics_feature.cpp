@@ -314,6 +314,7 @@ DECLARE_GAUGE(serenedb_connection_statistics_memory_usage, uint64_t,
               "Memory used by the internal connection statistics");
 
 namespace {
+
 // local_name: {"prometheus_name", "type", "help"}
 const auto kStatStrings =
   std::map<std::string_view, std::vector<std::string_view>>{
@@ -576,6 +577,7 @@ RequestFigures::RequestFigures()
 
 RequestFigures gSuperuserRequestFigures;
 RequestFigures gUserRequestFigures;
+
 }  // namespace statistics
 }  // namespace sdb
 
@@ -630,7 +632,7 @@ class StatisticsThread final : public ServerThread<SerenedServer> {
 
 StatisticsFeature::StatisticsFeature(Server& server)
   : SerenedFeature{server, name()},
-    _statistics(true),
+    _statistics(false),
     _descriptions(server),
     _request_statistics_memory_usage{
       server.getFeature<metrics::MetricsFeature>().add(

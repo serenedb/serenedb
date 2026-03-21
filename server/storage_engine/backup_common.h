@@ -23,10 +23,10 @@
 
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/result_or.h"
 #include "general_server/state.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb {
 

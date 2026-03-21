@@ -120,11 +120,9 @@ class FormatTestCase : public IndexTestBase {
     TestPostings(std::span<const std::pair<irs::doc_id_t, uint32_t>> docs,
                  irs::IndexFeatures features = irs::IndexFeatures::None)
       : _next(std::begin(docs)), _end(std::end(docs)), _pos(features) {
-      _attrs[irs::Type<irs::DocAttr>::id()] = &_doc;
       _attrs[irs::Type<irs::AttrProviderChangeAttr>::id()] = &_callback;
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
-        _freq.value = 0;
-        _attrs[irs::Type<irs::FreqAttr>::id()] = &_freq;
+        _attrs[irs::Type<irs::FreqBlockAttr>::id()] = &_freq_block;
         if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
           _attrs[irs::Type<irs::PosAttr>::id()] = &_pos;
         }
@@ -132,32 +130,32 @@ class FormatTestCase : public IndexTestBase {
     }
 
     irs::doc_id_t advance() final {
-      if (!irs::doc_limits::valid(_doc.value)) {
+      if (!irs::doc_limits::valid(_doc)) {
         _callback(*this);
       }
 
       if (_next == _end) {
-        return _doc.value = irs::doc_limits::eof();
+        return _doc = irs::doc_limits::eof();
       }
 
-      std::tie(_doc.value, _freq.value) = *_next;
+      std::tie(_doc, _freq) = *_next;
 
-      EXPECT_TRUE(irs::doc_limits::valid(_doc.value));
-      _pos._value = _doc.value;
+      EXPECT_TRUE(irs::doc_limits::valid(_doc));
+      _pos._value = _doc;
       EXPECT_TRUE(irs::pos_limits::valid(_pos._value));
-      _pos._end = _pos._value + _freq.value;
+      _pos._end = _pos._value + _freq;
       _pos.clear();
       ++_next;
 
-      return _doc.value;
+      return _doc;
     }
-
-    irs::doc_id_t value() const noexcept final { return _doc.value; }
 
     irs::doc_id_t seek(irs::doc_id_t target) final {
       irs::seek(*this, target);
       return value();
     }
+
+    uint32_t GetFreq() const final { return _freq; }
 
     irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       const auto it = _attrs.find(type);
@@ -168,10 +166,10 @@ class FormatTestCase : public IndexTestBase {
     std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
     docs_t::iterator _next;
     docs_t::iterator _end;
-    irs::FreqAttr _freq;
+    uint32_t _freq = 0;
+    irs::FreqBlockAttr _freq_block{.value = &_freq};
     irs::AttrProviderChangeAttr _callback;
     FormatTestCase::Position _pos;
-    irs::DocAttr _doc;
   };
 
   irs::ColumnInfo lz4_column_info() const noexcept;
@@ -238,7 +236,6 @@ class FormatTestCase : public IndexTestBase {
 class FormatTestCaseWithEncryption : public FormatTestCase {};
 
 }  // namespace tests
-
 namespace irs {
 
 // use base irs::position type for ancestors

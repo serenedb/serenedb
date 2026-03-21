@@ -29,15 +29,22 @@
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
+#include "connector/serenedb_connector.hpp"
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/create_index_options.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "query/query.h"
 #include "rest_server/serened_single.h"
+#include "search/inverted_index_shard.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -57,7 +64,7 @@ IndexType GetIndexType(char* method) {
 }
 
 Result ParseIndexOptions(const IndexStmt& index,
-                         std::vector<std::string>& column_names,
+                         std::vector<catalog::CreateIndexColumn>& columns,
                          catalog::IndexBaseOptions& options) {
   if (!index.accessMethod) {
     return Result{ERROR_BAD_PARAMETER, "access method is not provided"};
@@ -69,10 +76,21 @@ Result ParseIndexOptions(const IndexStmt& index,
   }
 
   pg::PgListWrapper<IndexElem> index_columns{index.indexParams};
-  options.column_ids.reserve(index_columns.size());
 
   for (auto* index_elem : index_columns) {
-    column_names.push_back(index_elem->name);
+    // can happen if column expression is a func call or similar.
+    if (!index_elem->name) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Index column definition is not supported");
+    }
+
+    if (index_elem->opclassopts) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Index column opclass options are not supported");
+    }
+
+    columns.push_back(
+      {.name = index_elem->name, .opclass = NameToStr(index_elem->opclass)});
   }
 
   options.name = index.idxname;
@@ -80,24 +98,14 @@ Result ParseIndexOptions(const IndexStmt& index,
   return {};
 }
 
-vpack::Slice ParseIndexArgs(pg::PgListWrapper<DefElem> args) {
-  vpack::Builder builder;
-  builder.openObject();
-  for (DefElem* elem : args) {
-    char* val = castNode(BitString, elem->arg)->bsval;
-    builder.add(elem->defname, val);
-  }
-  builder.close();
-  return builder.slice();
-}
-
 }  // namespace
 
 // TODO: use ErrorPosition in ThrowSqlError
-yaclib::Future<Result> CreateIndex(ExecContext& context,
-                                   const IndexStmt& stmt) {
+yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
+                             const IndexStmt& stmt, CreateIndexState& state,
+                             velox::RowVectorPtr& batch) {
   const auto db = context.GetDatabaseId();
-  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
 
   const std::string_view relation_name = stmt.relation->relname;
   const std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -105,34 +113,77 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
   if (schema.empty()) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+                    ERR_MSG("no schema has been selected to create in"));
   }
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
   if (stmt.concurrent) {
-    return yaclib::MakeFuture(Result{ERROR_NOT_IMPLEMENTED});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("CONCURRENTLY is not implemented"));
   }
-  std::vector<std::string> column_names;
+  std::vector<catalog::CreateIndexColumn> columns;
   catalog::IndexBaseOptions options;
 
-  if (auto r = ParseIndexOptions(stmt, column_names, options); !r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+  if (auto r = ParseIndexOptions(stmt, columns, options); !r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  if (options.type == IndexType::Inverted) {
+    explain_options::ExplainOptions dummy;
+    CreateIndexOptionsParser parser{stmt.options, dummy};
+    auto shard_options = std::move(parser).GetOptions();
+    auto r = catalog.CreateIndex(db, schema, relation_name, std::move(columns),
+                                 std::move(options), shard_options,
+                                 {.create_with_tombstone = true});
+
+    if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("relation \"", stmt.idxname, "\" already exists, skipping")));
+      query::Executor::SetEarlyExit(batch);
+      return {};
+    }
+    if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
+    }
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+  } else {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("index type is not supported"));
   }
 
-  pg::PgListWrapper<DefElem> pg_args{stmt.options};
-  auto args = ParseIndexArgs(pg_args);
+  state.created = true;
 
-  Result r =
-    catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
-                        std::move(options), std::move(args));
+  auto snapshot = catalog.GetSnapshot();
+  auto catalog_table = snapshot->GetTable(db, schema, relation_name);
+  SDB_ASSERT(catalog_table);
+  auto catalog_index = snapshot->GetRelation(db, schema, stmt.idxname);
+  SDB_ASSERT(catalog_index);
 
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    r = {};
-  }
-  return yaclib::MakeFuture(std::move(r));
+  auto shard = snapshot->GetIndexShard(catalog_index->GetId());
+  SDB_ASSERT(shard);
+  SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+  auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+  inverted_index.StartTasks();
+
+  const auto& logical_plan = *query.GetLogicalPlan();
+  SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));
+  auto& root =
+    basics::downCast<const axiom::logical_plan::TableWriteNode>(logical_plan);
+  auto& table = basics::downCast<connector::RocksDBTable>(
+    const_cast<axiom::connector::Table&>(*root.table()));
+  table.BackfillIndexId() = catalog_index->GetId();
+
+  query.CompileQuery();
+  query.MakeRunner();
+
+  return {};
 }
 
 }  // namespace sdb::pg

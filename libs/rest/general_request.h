@@ -41,6 +41,7 @@
 #include "rest/common_defines.h"
 
 namespace sdb {
+
 class RequestContext;
 
 using rest::ContentType;
@@ -267,4 +268,5 @@ class GeneralRequest {
   EncodingType _accept_encoding;
   bool _authenticated;
 };
+
 }  // namespace sdb

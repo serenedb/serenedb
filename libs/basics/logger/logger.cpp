@@ -93,9 +93,6 @@ LogTopic Logger::TTL{"ttl", LogLevel::WARN};
 LogTopic Logger::SEARCH{"search", LogLevel::INFO};
 LogTopic Logger::IRESEARCH{"iresearch", LogLevel::INFO};
 LogTopic Logger::FUERTE{"fuerte", LogLevel::INFO};
-#ifdef USE_V8
-LogTopic Logger::V8{"V8", LogLevel::WARN};
-#endif
 
 namespace log {
 namespace {
@@ -154,9 +151,6 @@ const containers::FlatHashSet<LogTopic*, TopicHashEq, TopicHashEq> kTopics{
   &Logger::THREADS,
   &Logger::TRANSACTIONS,
   &Logger::TTL,
-#ifdef USE_V8
-  &Logger::V8,
-#endif
 };
 
 constinit LogGroup gDefaultLogGroupInstance{0};

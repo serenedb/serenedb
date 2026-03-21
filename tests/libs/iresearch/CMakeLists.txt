@@ -76,7 +76,9 @@ set(iresearch-tests_sources
     ./search/geo_analyzer_test.cpp
     ./search/doc_collector_test.cpp
     ./search/block_scoring_test.cpp
+    ./search/boost_query_test.cpp
     ./search/wand_scoring_test.cpp
+    ./search/search_bench_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
@@ -154,8 +156,10 @@ target_link_libraries(
     iresearch-tests
     serene_base
     iresearch-static
+    search-benchmark-common
     gtest
     rapidjson
+    simdjson
 )
 
 # setup CRT

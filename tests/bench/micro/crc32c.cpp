@@ -23,8 +23,9 @@
 #include <absl/crc/crc32c.h>
 #include <benchmark/benchmark.h>
 
-#include <basics/crc.hpp>
 #include <string>
+
+#include "basics/crc.hpp"
 
 #ifdef BENCH_FOLLY
 #include <folly/hash/Checksum.h>

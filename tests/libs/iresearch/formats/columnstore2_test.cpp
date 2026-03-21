@@ -22,7 +22,7 @@
 
 #include <vector>
 
-#include "iresearch/formats/columnstore2.hpp"
+#include "iresearch/formats/column/common.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -284,8 +284,6 @@ TEST_P(Columnstore2TestCase, empty_column) {
       ASSERT_EQ(1, header_payload.size());
       ASSERT_EQ(2, header_payload[0]);
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -363,8 +361,6 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
     // seek stateful
     {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_EQ(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -385,8 +381,6 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
       auto it = column->iterator(Hint());
       auto* prev = irs::get<irs::PrevDocAttr>(*it);
       ASSERT_EQ(HasPrevDoc(), prev && *prev);
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_EQ(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -404,8 +398,6 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 5000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_EQ(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -436,8 +428,6 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_EQ(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -448,7 +438,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
       ASSERT_TRUE(score.IsDefault());
       ASSERT_TRUE(it->next());
       AssertPrevDoc(*it, *prev_it);
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       ASSERT_EQ(118775, it->seek(118774));
       AssertPrevDoc(*it, *prev_it);
       ASSERT_TRUE(irs::doc_limits::eof(it->seek(kMax + 1)));
@@ -629,8 +619,6 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
       {
         auto prev_it = column->iterator(hint);
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         const irs::PayAttr* payload = nullptr;
         if (hint != irs::ColumnHint::Mask) {
           payload = irs::get<irs::PayAttr>(*it);
@@ -660,8 +648,6 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
       for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         const irs::PayAttr* payload = nullptr;
         if (hint != irs::ColumnHint::Mask) {
           payload = irs::get<irs::PayAttr>(*it);
@@ -696,8 +682,6 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
            doc += 5000) {
         auto prev_it = column->iterator(hint);
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         const irs::PayAttr* payload = nullptr;
         if (hint != irs::ColumnHint::Mask) {
           payload = irs::get<irs::PayAttr>(*it);
@@ -755,8 +739,6 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
       {
         auto prev_it = column->iterator(hint);
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         const irs::PayAttr* payload = nullptr;
         if (hint != irs::ColumnHint::Mask) {
           payload = irs::get<irs::PayAttr>(*it);
@@ -771,7 +753,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
         ASSERT_TRUE(score.IsDefault());
         ASSERT_TRUE(it->next());
-        ASSERT_EQ(irs::doc_limits::min(), document->value);
+        ASSERT_EQ(irs::doc_limits::min(), it->value());
         AssertPrevDoc(*it, *prev_it);
         ASSERT_EQ(118775, it->seek(118774));
         const auto str = std::to_string(it->value());
@@ -862,8 +844,6 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -884,8 +864,6 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
 
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -908,8 +886,6 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 5000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -945,8 +921,6 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -956,7 +930,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
 
       ASSERT_TRUE(score.IsDefault());
       ASSERT_TRUE(it->next());
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       AssertPrevDoc(*it, *prev_it);
       ASSERT_EQ(118775, it->seek(118775));
       assert_payload(118775, payload->value);
@@ -1052,8 +1026,6 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1073,8 +1045,6 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
 
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1094,8 +1064,6 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
          doc += 10000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1131,15 +1099,13 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
 
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(column->size(), cost->estimate());
       ASSERT_TRUE(it->next());
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       ASSERT_EQ(kDoc, it->seek(kDoc));
       assert_payload(kDoc, payload->value);
       AssertPrevDoc(*it, *prev_it);
@@ -1233,8 +1199,6 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1254,8 +1218,6 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1275,8 +1237,6 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
          doc += 10000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1312,15 +1272,13 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(column->size(), cost->estimate());
       ASSERT_TRUE(it->next());
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       AssertPrevDoc(*it, *prev_it);
       ASSERT_EQ(kDoc, it->seek(kDoc));
       assert_payload(kDoc, payload->value);
@@ -1418,8 +1376,6 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1439,8 +1395,6 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1460,8 +1414,6 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
          doc += 10000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1497,15 +1449,13 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(column->size(), cost->estimate());
       ASSERT_TRUE(it->next());
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       AssertPrevDoc(*it, *prev_it);
       ASSERT_EQ(kDoc, it->seek(kDoc));
       assert_payload(kDoc, payload->value);
@@ -1603,8 +1553,6 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1624,8 +1572,6 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1645,8 +1591,6 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
          doc += 10000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1682,15 +1626,13 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
       ASSERT_NE(nullptr, cost);
       ASSERT_EQ(column->size(), cost->estimate());
       ASSERT_TRUE(it->next());
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       AssertPrevDoc(*it, *prev_it);
       ASSERT_EQ(kDoc, it->seek(kDoc));
       assert_payload(kDoc, payload->value);
@@ -1753,8 +1695,6 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       ASSERT_TRUE(irs::IsNull(payload->value));
@@ -1779,8 +1719,6 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       const auto hint = doc % 2 ? this->Hint() : irs::ColumnHint::Mask;
       auto it = column->iterator(hint);
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       ASSERT_TRUE(irs::IsNull(payload->value));
@@ -1804,8 +1742,6 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
          doc += 10000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1832,8 +1768,6 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1843,7 +1777,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
       ASSERT_TRUE(score.IsDefault());
       ASSERT_TRUE(it->next());
-      ASSERT_EQ(irs::doc_limits::min(), document->value);
+      ASSERT_EQ(irs::doc_limits::min(), it->value());
       AssertPrevDoc(*it, *prev_it);
       ASSERT_TRUE(irs::IsNull(payload->value));
       ASSERT_EQ(118774, it->seek(118774));
@@ -1912,8 +1846,6 @@ TEST_P(Columnstore2TestCase, dense_column) {
       {
         auto prev_it = column->iterator(hint);
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1938,8 +1870,6 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
       for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -1975,8 +1905,6 @@ TEST_P(Columnstore2TestCase, dense_column) {
            doc += 10000) {
         auto prev_it = column->iterator(hint);
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2027,8 +1955,6 @@ TEST_P(Columnstore2TestCase, dense_column) {
       {
         auto prev_it = column->iterator(hint);
         auto it = column->iterator(hint);
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2038,7 +1964,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
         ASSERT_TRUE(score.IsDefault());
         ASSERT_TRUE(it->next());
-        ASSERT_EQ(irs::doc_limits::min(), document->value);
+        ASSERT_EQ(irs::doc_limits::min(), it->value());
         AssertPrevDoc(*it, *prev_it);
         const auto str = std::to_string(118774);
         ASSERT_EQ(118774, it->seek(118774));
@@ -2121,8 +2047,6 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
     // seek before range
     {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2147,8 +2071,6 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
     {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2173,8 +2095,6 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
 
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2197,8 +2117,6 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
          doc += 10000) {
       auto prev_it = column->iterator(Hint());
       auto it = column->iterator(Hint());
-      auto* document = irs::get<irs::DocAttr>(*it);
-      ASSERT_NE(nullptr, document);
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_NE(nullptr, payload);
       auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2454,8 +2372,6 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
       {
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2474,8 +2390,6 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
       for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2495,8 +2409,6 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
            doc += 10000) {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2531,15 +2443,13 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
       {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(column->size(), cost->estimate());
         ASSERT_TRUE(it->next());
-        ASSERT_EQ(irs::doc_limits::min(), document->value);
+        ASSERT_EQ(irs::doc_limits::min(), it->value());
         AssertPrevDoc(*it, *prev_it);
         ASSERT_EQ(118774, it->seek(118774));
         assert_payload(118774, *payload);
@@ -2584,8 +2494,6 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
       {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2605,8 +2513,6 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
       for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2626,8 +2532,6 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
            doc += 10000) {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2662,15 +2566,13 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
       {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(column->size(), cost->estimate());
         ASSERT_TRUE(it->next());
-        ASSERT_EQ(irs::doc_limits::min(), document->value);
+        ASSERT_EQ(irs::doc_limits::min(), it->value());
         AssertPrevDoc(*it, *prev_it);
         ASSERT_EQ(118774, it->seek(118774));
         assert_payload(static_cast<irs::byte_type>(118774 & 0xFF), *payload);
@@ -2759,8 +2661,6 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
       {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2780,8 +2680,6 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
 
       for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2801,8 +2699,6 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
            doc += 10000) {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
@@ -2837,15 +2733,13 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
       {
         auto prev_it = column->iterator(Hint());
         auto it = column->iterator(Hint());
-        auto* document = irs::get<irs::DocAttr>(*it);
-        ASSERT_NE(nullptr, document);
         auto* payload = irs::get<irs::PayAttr>(*it);
         ASSERT_NE(nullptr, payload);
         auto* cost = irs::get<irs::CostAttr>(*it);
         ASSERT_NE(nullptr, cost);
         ASSERT_EQ(column->size(), cost->estimate());
         ASSERT_TRUE(it->next());
-        ASSERT_EQ(irs::doc_limits::min(), document->value);
+        ASSERT_EQ(irs::doc_limits::min(), it->value());
         AssertPrevDoc(*it, *prev_it);
         ASSERT_EQ(118774, it->seek(118774));
         assert_payload(118774, *payload);

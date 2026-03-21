@@ -28,23 +28,22 @@
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/data_source.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_data_source.hpp"
 #include "connector/search_remove_filter.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
 using namespace sdb;
 using namespace sdb::connector;
-using namespace sdb::connector::search;
 
 namespace {
 
@@ -54,7 +53,13 @@ class DataSinkWithSearchTest : public ::testing::Test,
                                public velox::test::VectorTestBase {
  public:
   static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
-    return {.analyzer = {std::make_unique<irs::StringTokenizer>()},
+    auto make_identity = [] {
+      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
+                         vpack::Slice::emptyObjectSlice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
             .features = irs::IndexFeatures::None};
   }
 
@@ -170,7 +175,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     for (auto& segment : reader) {
       auto docs = segment.mask(prepared->execute({.segment = segment}));
       while (docs->next()) {
-        const auto* pk_column = segment.column(connector::search::kPkFieldName);
+        const auto* pk_column = segment.column(connector::kPkFieldName);
         ASSERT_NE(nullptr, pk_column);
         auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
         ASSERT_NE(nullptr, pk_values_itr);
@@ -190,8 +195,9 @@ class DataSinkWithSearchTest : public ::testing::Test,
   }
 
   void PrepareRocksDBWrite(
-    const velox::RowVectorPtr& data, std::vector<ColumnInfo> all_column_oids,
-    ObjectId object_key, const std::vector<velox::column_index_t>& pk,
+    std::span<const velox::RowVectorPtr> data,
+    std::vector<ColumnInfo> all_column_oids, ObjectId object_key,
+    const std::vector<velox::column_index_t>& pk,
     std::unique_ptr<rocksdb::Transaction>& data_transaction,
     irs::IndexWriter::Transaction& index_transaction,
     primary_key::Keys& written_row_keys,
@@ -213,28 +219,36 @@ class DataSinkWithSearchTest : public ::testing::Test,
                            std::views::transform([](auto& a) { return a.id; }));
     }
     index_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkInsertWriter>(
+      std::make_unique<connector::SearchSinkInsertWriter>(
         index_transaction, AnalyzerProvider, col_idx));
-    primary_key::Create(*data, pk, written_row_keys);
+    for (const auto& row : data) {
+      primary_key::Create(*row, pk, written_row_keys);
+    }
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),
                                *pool_.get(), object_key, pk, all_column_oids,
                                WriteConflictPolicy::Replace, rows_affected,
-                               std::move(index_writers));
-    sink.appendData(data);
+                               std::move(index_writers), _table_lock);
+    for (const auto& row : data) {
+      sink.appendData(row);
+    }
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
   }
 
-  void MakeRocksDBWrite(
-    std::vector<std::string> names, std::vector<velox::VectorPtr> data,
-    std::vector<ColumnInfo> all_column_oids, ObjectId& object_key,
-    primary_key::Keys& written_row_keys,
-    std::optional<std::vector<catalog::Column::Id>> index_col_idx =
-      std::nullopt) {
+  void MakeRocksDBWrite(std::vector<std::string> names,
+                        std::span<std::vector<velox::VectorPtr>> data,
+                        std::vector<ColumnInfo> all_column_oids,
+                        ObjectId& object_key,
+                        primary_key::Keys& written_row_keys,
+                        std::optional<std::vector<catalog::Column::Id>>
+                          index_col_idx = std::nullopt) {
     object_key = kObjectKey;
-    auto row_data = makeRowVector(names, data);
+    std::vector<velox::RowVectorPtr> row_data;
+    for (const auto& d : data) {
+      row_data.emplace_back(makeRowVector(names, d));
+    }
     std::unique_ptr<rocksdb::Transaction> transaction;
     irs::IndexWriter::Transaction index_transaction;
     std::vector<velox::column_index_t> pk = {0};
@@ -246,10 +260,21 @@ class DataSinkWithSearchTest : public ::testing::Test,
     ASSERT_TRUE(_data_writer->Commit());
   }
 
+  void MakeRocksDBWrite(
+    std::vector<std::string> names, std::vector<velox::VectorPtr>& data,
+    std::vector<ColumnInfo> all_column_oids, ObjectId& object_key,
+    primary_key::Keys& written_row_keys,
+    std::optional<std::vector<catalog::Column::Id>> index_col_idx =
+      std::nullopt) {
+    MakeRocksDBWrite(names, std::span<std::vector<velox::VectorPtr>>{&data, 1},
+                     all_column_oids, object_key, written_row_keys,
+                     index_col_idx);
+  }
+
   void PrepareRocksDBUpdate(
-    const velox::RowVectorPtr& data, std::vector<ColumnInfo> data_column_oids,
-    velox::RowTypePtr table_row_type,
-    std::vector<sdb::catalog::Column::Id> all_column_oids, ObjectId object_key,
+    std::span<const velox::RowVectorPtr> data,
+    std::vector<ColumnInfo> data_column_oids, velox::RowTypePtr table_row_type,
+    std::vector<catalog::Column::Id> all_column_oids, ObjectId object_key,
     const std::vector<velox::column_index_t>& pk,
     std::unique_ptr<rocksdb::Transaction>& data_transaction,
     irs::IndexWriter::Transaction& index_transaction, bool update_pk) {
@@ -264,26 +289,32 @@ class DataSinkWithSearchTest : public ::testing::Test,
     ASSERT_NE(data_transaction, nullptr);
     std::vector<std::unique_ptr<SinkIndexWriter>> index_writers;
     index_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkUpdateWriter>(
+      std::make_unique<connector::SearchSinkUpdateWriter>(
         index_transaction, AnalyzerProvider, all_column_oids));
     size_t rows_affected = 0;
 
-    RocksDBUpdateDataSink sink("", *data_transaction, *_cf_handles.front(),
-                               *pool_.get(), object_key, pk, data_column_oids,
-                               all_column_oids, update_pk, table_row_type,
-                               rows_affected, std::move(index_writers));
-    sink.appendData(data);
+    RocksDBUpdateDataSink sink(
+      "", *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      data_column_oids, all_column_oids, update_pk, table_row_type,
+      rows_affected, std::move(index_writers), _table_lock);
+    for (const auto& row : data) {
+      sink.appendData(row);
+    }
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
   }
 
-  void MakeRocksDBUpdate(std::vector<velox::VectorPtr> data,
+  void MakeRocksDBUpdate(std::span<std::vector<velox::VectorPtr>> data,
                          std::vector<ColumnInfo> column_oids,
                          velox::RowTypePtr table_row_type,
-                         std::vector<sdb::catalog::Column::Id> all_column_oids,
+                         std::vector<catalog::Column::Id> all_column_oids,
                          bool update_pk) {
-    auto row_data = makeRowVector(data);
+    std::vector<velox::RowVectorPtr> row_data;
+    for (const auto& d : data) {
+      row_data.emplace_back(makeRowVector(d));
+    }
+
     std::unique_ptr<rocksdb::Transaction> transaction;
     irs::IndexWriter::Transaction index_transaction;
     std::vector<velox::column_index_t> pk = {0};
@@ -296,6 +327,15 @@ class DataSinkWithSearchTest : public ::testing::Test,
     ASSERT_TRUE(_data_writer->Commit());
   }
 
+  void MakeRocksDBUpdate(std::vector<velox::VectorPtr>& data,
+                         std::vector<ColumnInfo> column_oids,
+                         velox::RowTypePtr table_row_type,
+                         std::vector<catalog::Column::Id> all_column_oids,
+                         bool update_pk) {
+    MakeRocksDBUpdate(std::span<std::vector<velox::VectorPtr>>{&data, 1},
+                      column_oids, table_row_type, all_column_oids, update_pk);
+  }
+
  protected:
   std::string _path;
   std::vector<rocksdb::ColumnFamilyDescriptor> _cf_families;
@@ -304,10 +344,11 @@ class DataSinkWithSearchTest : public ::testing::Test,
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
+  absl::Mutex _table_lock;
 };
 
 TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<ColumnInfo> all_columns = {
     {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
   std::vector<std::string> names = {"id", "value", "description"};
@@ -336,9 +377,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
               std::string_view{"9001", 4}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -358,8 +399,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     auto index_transaction = _data_writer->GetBatch();
     std::vector<std::unique_ptr<SinkIndexWriter>> delete_writers;
     delete_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkDeleteWriter>(
-        index_transaction));
+      std::make_unique<connector::SearchSinkDeleteWriter>(index_transaction));
 
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;
@@ -368,9 +408,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     std::unique_ptr<rocksdb::Transaction> transaction_delete{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     size_t rows_affected = 0;
-    RocksDBDeleteDataSink delete_sink(
-      *transaction_delete, *_cf_handles.front(), velox::ROW(names, types),
-      kObjectKey, all_columns, rows_affected, std::move(delete_writers));
+    RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
+                                      velox::ROW(names, types), kObjectKey,
+                                      all_columns, rows_affected,
+                                      std::move(delete_writers), _table_lock);
     auto delete_data = makeRowVector({makeFlatVector<int32_t>({9001, 1})});
     delete_sink.appendData(delete_data);
     ASSERT_TRUE(delete_sink.finish());
@@ -392,9 +433,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
   }
 
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -413,7 +454,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
 }
 
 TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<ColumnInfo> all_columns = {
     {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
   std::vector<std::string> names = {"id", "value", "description"};
@@ -446,9 +487,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
               std::string_view{"9001", 4}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -488,9 +529,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
               std::string_view{"9001_updated", 12}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -516,7 +557,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
 }
 
 TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<ColumnInfo> all_columns = {
     {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
   std::vector<std::string> names = {"id", "value", "description"};
@@ -550,9 +591,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
               std::string_view{"3", 1}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -594,9 +635,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
               std::string_view{"4", 1}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -621,7 +662,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
 }
 
 TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<ColumnInfo> all_columns = {
     {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
   std::vector<std::string> names = {"id", "value", "description"};
@@ -657,9 +698,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
               std::string_view{"3", 1}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -704,9 +745,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
               std::string_view{"4", 1}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -732,7 +773,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
 
 TEST_F(DataSinkWithSearchTest,
        test_InsertAllUpdateFlatStringsUnsortedNewPKNotAll) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<ColumnInfo> all_columns = {
     {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
   std::vector<std::string> names = {"id", "value", "description"};
@@ -766,9 +807,9 @@ TEST_F(DataSinkWithSearchTest,
               std::string_view{"3", 1}, reader);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -807,9 +848,9 @@ TEST_F(DataSinkWithSearchTest,
               std::string_view{"42", 2}, reader, true);
   }
   {
-    RocksDBSnapshotDataSource source(*pool_.get(), *_db, *_cf_handles.front(),
-                                     velox::ROW(names, types), all_column_oids,
-                                     0, kObjectKey);
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
     source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
@@ -836,7 +877,7 @@ TEST_F(DataSinkWithSearchTest,
 }
 
 TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<ColumnInfo> all_columns = {
     {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
   std::vector<std::string> names = {"id", "value", "description"};
@@ -868,8 +909,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
   auto description_terms = reader[0].field(
     std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9});
   ASSERT_EQ(nullptr, description_terms);
-  const auto* pk_column =
-    reader[0].column(sdb::connector::search::kPkFieldName);
+  const auto* pk_column = reader[0].column(kPkFieldName);
   ASSERT_NE(nullptr, pk_column);
   irs::And root;
   auto& term_filter = root.add<irs::ByTerm>();
@@ -879,9 +919,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
     irs::ViewCast<irs::byte_type>(std::string_view("42"));
 
   auto query = root.prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                              velox::ROW(names, types), all_column_oids,
+                              all_column_oids[0], kObjectKey, reader, *query);
 
   source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
   const auto expected = makeRowVector(
@@ -899,6 +939,172 @@ TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
   ASSERT_TRUE(read2.has_value());
   ASSERT_TRUE(future2.isReady());
   ASSERT_EQ(read2.value(), nullptr);
+}
+
+TEST_F(DataSinkWithSearchTest, test_InsertUpdateDeleteMultiBatch) {
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<ColumnInfo> all_columns = {
+    {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
+  std::vector<std::string> names = {"id", "value", "description"};
+  std::vector<velox::TypePtr> types = {velox::INTEGER(), velox::VARCHAR(),
+                                       velox::VARCHAR()};
+
+  std::vector<std::vector<velox::VectorPtr>> data = {
+    {makeFlatVector<int32_t>({1, 42, 100, 9001}),
+     makeFlatVector<velox::StringView>({"1", "42", "100", "9001"}),
+     makeFlatVector<velox::StringView>(
+       {"value1", "value2", "value3", "value4"})},
+    {makeFlatVector<int32_t>({2, 43, 101, 9002}),
+     makeFlatVector<velox::StringView>({"2", "43", "101", "9002"}),
+     makeFlatVector<velox::StringView>(
+       {"value5", "value6", "value7", "value8"})}};
+  std::vector<std::vector<velox::VectorPtr>> update_data = {
+    {makeFlatVector<int32_t>({1, 9001}),
+     makeFlatVector<velox::StringView>({"1_updated", "9001_updated"})},
+    {makeFlatVector<int32_t>({2, 9002}),
+     makeFlatVector<velox::StringView>({"2_updated", "9002_updated"})}};
+  ObjectId object_key;
+  primary_key::Keys written_row_keys{*pool_.get()};
+  MakeRocksDBWrite(names, data, all_columns, object_key, written_row_keys);
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(8, reader.docs_count());
+    ASSERT_EQ(8, reader.live_docs_count());
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"100", 3}, reader);
+    VerifyRow(written_row_keys[3], std::string_view{"value4", 6},
+              std::string_view{"9001", 4}, reader);
+    VerifyRow(written_row_keys[4], std::string_view{"value5", 6},
+              std::string_view{"2", 1}, reader);
+    VerifyRow(written_row_keys[5], std::string_view{"value6", 6},
+              std::string_view{"43", 2}, reader);
+    VerifyRow(written_row_keys[6], std::string_view{"value7", 6},
+              std::string_view{"101", 3}, reader);
+    VerifyRow(written_row_keys[7], std::string_view{"value8", 6},
+              std::string_view{"9002", 4}, reader);
+  }
+  {
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
+
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(8, future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 8);
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
+      {0, 0}, {2, 1}, {4, 2}, {6, 3}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0][0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[0][1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[0][2].get(), idxs);
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs2 = {
+      {1, 0}, {3, 1}, {5, 2}, {7, 3}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[1][0].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1][1].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[1][2].get(), idxs2);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 24);
+  }
+  {
+    MakeRocksDBUpdate(update_data,
+                      {{.id = 0, .name = ""}, {.id = 1, .name = ""}},
+                      velox::ROW(names, types), all_column_oids, false);
+  }
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(2, reader.size());
+    ASSERT_EQ(12, reader.docs_count());
+    ASSERT_EQ(8, reader.live_docs_count());
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"1", 1}, reader, false);
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"1_updated", 9}, reader, true);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader, true);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"100", 3}, reader, true);
+    VerifyRow(written_row_keys[3], std::string_view{"value4", 6},
+              std::string_view{"9001", 4}, reader, false);
+    VerifyRow(written_row_keys[3], std::string_view{"value4", 6},
+              std::string_view{"9001_updated", 12}, reader, true);
+    VerifyRow(written_row_keys[4], std::string_view{"value5", 6},
+              std::string_view{"2_updated", 9}, reader);
+    VerifyRow(written_row_keys[5], std::string_view{"value6", 6},
+              std::string_view{"43", 2}, reader);
+    VerifyRow(written_row_keys[6], std::string_view{"value7", 6},
+              std::string_view{"101", 3}, reader);
+    VerifyRow(written_row_keys[7], std::string_view{"value8", 6},
+              std::string_view{"9002_updated", 12}, reader);
+  }
+  {
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(8, future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 8);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 24);
+  }
+
+  {
+    auto index_transaction = _data_writer->GetBatch();
+    std::vector<std::unique_ptr<SinkIndexWriter>> delete_writers;
+    delete_writers.emplace_back(
+      std::make_unique<connector::SearchSinkDeleteWriter>(index_transaction));
+
+    rocksdb::TransactionOptions trx_opts;
+    trx_opts.skip_concurrency_control = true;
+    trx_opts.lock_timeout = 100;
+    rocksdb::WriteOptions wo;
+    std::unique_ptr<rocksdb::Transaction> transaction_delete{
+      _db->BeginTransaction(wo, trx_opts, nullptr)};
+    size_t rows_affected = 0;
+    RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
+                                      velox::ROW(names, types), kObjectKey,
+                                      all_columns, rows_affected,
+                                      std::move(delete_writers), _table_lock);
+    auto delete_data = makeRowVector({makeFlatVector<int32_t>({9001})});
+    delete_sink.appendData(delete_data);
+    auto delete_data2 = makeRowVector({makeFlatVector<int32_t>({2})});
+    delete_sink.appendData(delete_data2);
+    ASSERT_TRUE(delete_sink.finish());
+    ASSERT_TRUE(transaction_delete->Commit().ok());
+    ASSERT_TRUE(index_transaction.Commit());
+    ASSERT_TRUE(_data_writer->Commit());
+  }
+  {
+    RocksDBSnapshotFullScanDataSource source(
+      *pool_.get(), *_db, *_cf_handles.front(), velox::ROW(names, types),
+      all_column_oids, 0, kObjectKey, names.size());
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(8, future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 6);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 18);
+  }
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(2, reader.size());
+    ASSERT_EQ(12, reader.docs_count());
+    ASSERT_EQ(6, reader.live_docs_count());
+  }
 }
 
 }  // namespace

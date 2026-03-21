@@ -25,8 +25,12 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/schema.h"
+#include "pg/connection_context.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
 
@@ -38,19 +42,19 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-yaclib::Future<Result> CreateSchema(ExecContext& context,
-                                    const CreateSchemaStmt& stmt) {
+yaclib::Future<> CreateSchema(ExecContext& context,
+                              const CreateSchemaStmt& stmt) {
   if (stmt.schemaElts) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_NOT_IMPLEMENTED,
-      "CREATE SCHEMA with schema elements is not implemented");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("CREATE SCHEMA with schema elements is not implemented"));
   }
 
   if (stmt.schemaname == StaticStrings::kPgCatalogSchema ||
       stmt.schemaname == StaticStrings::kInformationSchema) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER,
-                                      "unacceptable schema name \"",
-                                      stmt.schemaname, "\"");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+      ERR_MSG("unacceptable schema name \"", stmt.schemaname, "\""));
   }
 
   SDB_ASSERT(stmt.schemaname);
@@ -66,10 +70,18 @@ yaclib::Future<Result> CreateSchema(ExecContext& context,
   auto r = catalog.CreateSchema(
     db, std::make_shared<catalog::Schema>(db, std::move(options)));
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-    r = {};
+    basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+      ERR_MSG("schema \"", stmt.schemaname, "\" already exists, skipping")));
+    return {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+                    ERR_MSG("schema \"", stmt.schemaname, "\" already exists"));
   }
-
-  return yaclib::MakeFuture(std::move(r));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 }  // namespace sdb::pg

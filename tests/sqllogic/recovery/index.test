@@ -1,12 +1,22 @@
 control substitution on
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
 
 statement ok
 CREATE TABLE t(r text);
 
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r);
+CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 query
@@ -52,4 +62,4 @@ count
 
 connection new2
 statement ok
-CREATE INDEX index_t ON t USING inverted(r);
+CREATE INDEX index_t ON t USING inverted(r test_english);

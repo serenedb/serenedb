@@ -55,6 +55,7 @@ LIBPG_QUERY_INCLUDES_END
 #include "connector_mock.hpp"
 #include "pg/pg_functions_registration.hpp"
 #include "pg/system_catalog.h"
+#include "search_test_utils.hpp"
 
 namespace {
 
@@ -68,6 +69,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     gServerState.SetGTest(true);
     gServerState.SetRole(ServerState::Role::Single);
     sdb::pg::RegisterVeloxFunctionsAndTypes();
+    RegisterSearchEntities();
   }
 
   static void TearDownTestCase() { gServerState.Reset(); }
@@ -76,15 +78,39 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
   void TearDown() final { pg::ResetMemoryContext(*_pg_memory_ctx); }
 
-  static sdb::catalog::ColumnAnalyzer IdentityAnalyzerProvider(
+  static catalog::ColumnAnalyzer IdentityAnalyzerProvider(catalog::Column::Id) {
+    auto make_identity = [] {
+      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
+                         vpack::Slice::emptyObjectSlice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
+            .features = irs::IndexFeatures::None};
+  }
+
+  template<irs::IndexFeatures Features>
+  static sdb::catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(
     catalog::Column::Id) {
-    return {.analyzer = std::make_unique<irs::StringTokenizer>()};
+    auto make_segmentation = [] {
+      auto builder =
+        vpack::Parser::fromJson("{ \"analyzer\": {\"type\":\"segmentation\"}}");
+      return std::string(builder->slice().startAs<char>(),
+                         builder->slice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12346}, "test_segmentation", {}, make_segmentation());
+    auto tokenizer = gStringTokenizer.GetTokenizer();
+    if (!tokenizer) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to crete tokenizer");
+    }
+    return {.analyzer = *std::move(tokenizer), .features = Features};
   }
 
   static sdb::catalog::ColumnAnalyzer SegmentationAnalyzerProvider(
-    catalog::Column::Id) {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
+    catalog::Column::Id id) {
+    return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
+                                            irs::IndexFeatures::Freq>(id);
   }
 
   void AssertFilter(
@@ -636,14 +662,10 @@ TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualString) {
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualStringNotIdentity) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
   columns.emplace_back(
     std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
   AssertFilter(expected, "SELECT * FROM foo WHERE a <= 'test'",
-               std::move(columns), false, provider);
+               std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
 // ============================================================================
@@ -1154,17 +1176,12 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorStrings) {
 TEST_F(SearchFilterBuilderTest, test_InOperatorStringsNotIdentity) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
-
   columns.emplace_back(
     std::make_unique<connector::SereneDBColumn>("status", velox::VARCHAR(), 1));
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE status IN ('active', 'pending', 'completed')",
-    std::move(columns), false, provider);
+    std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorLongStrings) {
@@ -1590,57 +1607,41 @@ TEST_F(SearchFilterBuilderTest, test_FieldCastError) {
 
 TEST_F(SearchFilterBuilderTest, test_LikeWithNotIdentity) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
   irs::And expected;
 
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "required_field", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field LIKE UPPER('!!!%foo_')",
-               std::move(columns), false, provider);
+               std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimplePhrase) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
-
   AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
 
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "category", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox')",
-               std::move(columns), true, provider);
+               std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq};
-  };
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "category", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox')",
-               std::move(columns), false, provider);
+               std::move(columns), false,
+               SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
 
   AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
   AddPhraseFilter(expected, 1, {"quick", "lazy", "fox"});
@@ -1650,16 +1651,12 @@ TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox') "
                "AND PHRASE(category, 'quick lazy fox')",
-               std::move(columns), true, provider);
+               std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
 
   auto& or_filter = expected.add<irs::Or>();
 
@@ -1671,7 +1668,7 @@ TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox') OR "
                "PHRASE(category, 'quick lazy fox')",
-               std::move(columns), true, provider);
+               std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermEq_Segmentation) {

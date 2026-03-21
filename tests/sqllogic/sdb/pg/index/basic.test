@@ -1,14 +1,25 @@
 statement ok
 CREATE TABLE t(r text);
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
 
 statement ok
 VACUUM (UPDATE_INDEXES) t;
 
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r);
+CREATE INDEX index_t ON t USING inverted(r test_english);
 
+statement error db error: ERROR: Can not drop text dictionary used in the indexes index_t
+DROP TEXT SEARCH DICTIONARY test_english;
 
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c')
@@ -47,6 +58,17 @@ index_t
 statement ok
 DROP INDEX index_t;
 
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
 
 query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
@@ -59,7 +81,7 @@ INSERT INTO t VALUES ('a'), ('b'), ('c');
 
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r);
+CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 query
@@ -78,6 +100,8 @@ SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indr
 ----
 indexname
 
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;
 
 statement error db error: ERROR: relation "invalid" does not exist
 CREATE INDEX test_index ON invalid USING inverted (invalid);
@@ -155,10 +179,25 @@ SELECT indexrelid, indrelid FROM pg_index
 indexrelid	indrelid
 
 statement ok
-CREATE TABLE tstest (a INTEGER, b TIMESTAMP);
+CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR);
 
-statement error db error: ERROR: Column b has unsupported kind and can not be indexed.
+statement error db error: ERROR: Column b has unsupported kind and can not be indexed
 CREATE INDEX index_ts on tstest USING inverted(b);
+
+statement error db error: ERROR: Column c is VARCHAR but has no text dictionary defined
+CREATE INDEX index_ts on tstest USING inverted(c);
+
+statement error db error: ERROR: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
+CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
+
+statement error db error: ERROR: Column a has text dictionary defined but is not VARCHAR
+CREATE INDEX index_ts on tstest USING inverted(a test_english);
+
+statement error db error: ERROR: Index column opclass options are not supported
+CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
+
+statement error db error: ERROR: Unsupported index column definition
+CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 
 statement ok
 DROP TABLE tstest;
@@ -256,3 +295,64 @@ Index:
   commit_interval (integer) [default: 1000] - Commit interval in milliseconds
   consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
+
+
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE SCHEMA s2;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s1.te(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s2.te(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE TABLE s1.foo (a INTEGER, b VARCHAR);
+
+statement ok
+CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
+
+statement error db error: ERROR: Accessing text dictionary from different schema is not supported
+CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
+
+statement ok
+CREATE INDEX idx ON s1.foo USING inverted(b s1.te);
+
+statement ok
+CREATE INDEX idx ON s2.foo USING inverted(b s2.te);
+
+statement ok
+DROP SCHEMA s2 CASCADE;
+
+statement ok
+DROP TABLE s1.foo;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY s1.te;
+
+statement ok
+DROP SCHEMA s1;
+
+statement ok
+CREATE TABLE empty_soul();
+
+
+statement error
+CREATE INDEX empty_index ON empty_soul USING inverted(a);
+----
+db error: ERROR: column "a" does not exist

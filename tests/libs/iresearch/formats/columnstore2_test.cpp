@@ -22,7 +22,7 @@
 
 #include <vector>
 
-#include "iresearch/formats/columnstore2.hpp"
+#include "iresearch/formats/column/common.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

@@ -15,7 +15,18 @@ FROM
   generate_series(1, 100) as cutelooked_team(boss);
 
 statement ok
-CREATE INDEX clickclack_facts ON clickclack USING inverted(fact);
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX clickclack_facts ON clickclack USING inverted(fact test_english);
 
 query
 SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'team member');
@@ -62,7 +73,7 @@ FROM
   generate_series(1, 10000) AS s(rn);
 
 statement ok
-CREATE INDEX clickclack_pk_facts ON clickclack_pk USING inverted(fact, detail);
+CREATE INDEX clickclack_pk_facts ON clickclack_pk USING inverted(fact test_english, detail test_english);
 
 query
 SELECT * FROM clickclack_pk_facts WHERE PHRASE(fact, 'team member') ORDER BY fact;

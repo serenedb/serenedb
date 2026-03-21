@@ -25,7 +25,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/formats_attributes.hpp"
-#include "iresearch/formats/wand_writer.hpp"
+#include "iresearch/formats/posting/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/score_function.hpp"

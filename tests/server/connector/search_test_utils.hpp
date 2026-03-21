@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2016 by EMC Corporation, All Rights Reserved
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,33 +15,15 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is EMC Corporation
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include "formats.hpp"
+namespace sdb::connector::test {
 
-namespace irs {
-namespace burst_trie {
+// Registration of search analyzers, formats, scorers etc.
+// Could be called many times will do just one init per test process lifetime
+void RegisterSearchEntities();
 
-enum class Version : int32_t {
-  // * Encryption support
-  // * Term dictionary stored on disk as fst::fstext::ImmutableFst<...>
-  // * Pluggable field features support
-  // * WAND support
-  Min = 0,
-  Max = Min,
-};
-
-FieldWriter::ptr MakeWriter(Version version, PostingsWriter::ptr&& writer,
-                            bool consolidation,
-                            IResourceManager& resource_manager);
-
-FieldReader::ptr MakeReader(PostingsReader::ptr&& reader,
-                            IResourceManager& resource_manager);
-
-}  // namespace burst_trie
-}  // namespace irs
+}  // namespace sdb::connector::test

@@ -19,12 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <iresearch/search/filter.hpp>
+#include <ostream>
 #include <string>
 
-// GTEST requires to us to have operator in the same namespace
 namespace irs {
 
-std::ostream& operator<<(std::ostream& os, const Filter& filter);
+template<typename Sink>
+void AbslStringify(Sink& sink, const Filter& filter);
 
 }  // namespace irs

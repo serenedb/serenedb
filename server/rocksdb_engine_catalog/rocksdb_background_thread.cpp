@@ -36,13 +36,6 @@
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "storage_engine/table_shard.h"
 
-#ifdef SDB_CLUSTER
-#include "replication/replication_clients.h"
-#include "replication/replication_feature.h"
-#include "rocksdb_engine/rocksdb_dump_manager.h"
-#include "rocksdb_engine/rocksdb_replication_manager.h"
-#endif
-
 using namespace sdb;
 
 DECLARE_GAUGE(rocksdb_wal_released_tick_replication, uint64_t,
@@ -166,11 +159,6 @@ void RocksDBBackgroundThread::run() {
         }
       }
 
-#ifdef SDB_CLUSTER
-      _engine.replicationManager()->garbageCollect(force);
-      _engine.dumpManager()->garbageCollect(force);
-#endif
-
       const uint64_t latest_seq_no = _engine.db()->GetLatestSequenceNumber();
       const auto earliest_seq_needed =
         _engine.settingsManager()->earliestSeqNeeded();
@@ -183,14 +171,6 @@ void RocksDBBackgroundThread::run() {
 
       uint64_t min_tick_for_replication = latest_seq_no;
 
-#ifdef SDB_CLUSTER
-      for (auto* clients : GetAllReplicationClients()) {
-        // lowestServedValue will return the lowest of the lastServedTick
-        // values stored, or UINT64_MAX if no clients are registered
-        min_tick_for_replication =
-          std::min(min_tick_for_replication, clients->lowestServedValue());
-      }
-#endif
       min_tick = std::min(min_tick, min_tick_for_replication);
 
       _metrics_wal_released_tick_replication.store(min_tick_for_replication,

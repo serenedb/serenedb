@@ -28,10 +28,6 @@
 #include "basics/static_strings.h"
 #include "general_server/state.h"
 
-#ifdef SDB_CLUSTER
-#include "sharding/sharding_strategy_default.h"
-#endif
-
 namespace sdb {
 namespace {
 
@@ -45,15 +41,6 @@ const containers::FlatHashMap<std::string_view, FactoryFunction> kFactories{
       return std::make_unique<ShardingStrategyNone>();
     },
   },
-#ifdef SDB_CLUSTER
-  {
-    ShardingStrategyHash::kName,
-    [](const ShardingStrategyOptions& options)
-      -> std::unique_ptr<ShardingStrategy> {
-      return std::make_unique<ShardingStrategyHash>(options);
-    },
-  },
-#endif
 };
 
 }  // namespace

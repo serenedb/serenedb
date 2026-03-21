@@ -28,12 +28,6 @@
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 
-#ifdef SDB_CLUSTER
-#include "aql/query_registry_feature.h"
-#include "transaction/manager.h"
-#include "transaction/manager_feature.h"
-#endif
-
 using namespace sdb::options;
 
 namespace {
@@ -153,18 +147,6 @@ void SoftShutdownTracker::toVPack(vpack::Builder& builder,
 
 SoftShutdownTracker::Status SoftShutdownTracker::getStatus() const {
   Status status(_soft_shutdown_ongoing.load(std::memory_order_relaxed));
-
-#ifdef SDB_CLUSTER
-  // Get number of active AQL cursors from each database:
-  status.aql_cursors += GetCursorCount();
-
-  // Get number of active transactions from Manager:
-  auto& manager_feature = _server.getFeature<transaction::ManagerFeature>();
-  auto* manager = manager_feature.manager();
-  if (manager != nullptr) {
-    status.transactions = manager->getActiveTransactionCount();
-  }
-#endif
 
   // Get numbers of pending and done asynchronous jobs:
   auto& general_server_feature = _server.getFeature<GeneralServerFeature>();

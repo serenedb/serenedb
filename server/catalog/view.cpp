@@ -29,10 +29,6 @@
 #include "catalog/sql_query_view.h"
 #include "general_server/state.h"
 
-#ifdef SDB_CLUSTER
-#include "search/search_view.h"
-#endif
-
 namespace sdb::catalog {
 
 ViewMeta ViewMeta::Make(const View& view) {
@@ -77,10 +73,7 @@ Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
       return GraphView::Make(view, database_id, std::move(options),
                              ctx != ViewContext::Internal);
     case ViewType::ViewSearch:
-#ifdef SDB_CLUSTER
-      return SearchView::Make(view, database_id, std::move(options),
-                              ctx != ViewContext::Internal);
-#endif
+      break;
   }
   return {};
 }

@@ -116,13 +116,7 @@ void VPackRead(Context ctx, ForeignId& value) {
   }
 }
 
-static constexpr std::string_view kDefaultSharding =
-#ifdef SDB_CLUSTER
-  "hash"
-#else
-  "none"
-#endif
-  ;
+static constexpr std::string_view kDefaultSharding = "none";
 
 // NOLINTBEGIN
 struct IndexProperties {
@@ -279,14 +273,6 @@ struct TableMeta {
     SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
     return dir == EdgeDirection::Out ? from : to;
   }
-};
-
-struct ModifyCollection {
-  vpack::Slice schema;
-  uint32_t numberOfShards = 1;
-  uint32_t replicationFactor = 1;
-  uint32_t writeConcern = 1;
-  bool waitForSync = false;
 };
 // NOLINTEND
 

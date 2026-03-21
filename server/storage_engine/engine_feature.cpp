@@ -44,14 +44,6 @@ void EngineFeature::start() {
 }
 
 void EngineFeature::stop() {
-#ifdef SDB_CLUSTER
-  if (auto replication = server().TryGetFeature<ReplicationFeature>();
-      replication && !ServerState::instance()->IsCoordinator()) {
-    for (auto [_, applier] : GetAllReplicationAppliers()) {
-      replication->stopApplier(applier);
-    }
-  }
-#endif
   _engine->cleanupReplicationContexts();
   _engine->stop();
 }

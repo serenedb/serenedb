@@ -104,7 +104,8 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
     velox::dwio::common::Mutation mutation;
     mutation.deletedRows = deleted.data();
 
-    velox::VectorPtr result;
+    velox::VectorPtr result =
+      velox::BaseVector::create(_output_type, read_size, &_pool);
     parquet_reader.next(read_size, result, &mutation);
     if (result && result->size() > 0) {
       auto row_batch = basics::downCast<velox::RowVector>(std::move(result));

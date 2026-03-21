@@ -48,30 +48,21 @@ RocksDBMaterializer::RocksDBMaterializer(
              "Only one data source should be specified");
   _read_options.async_io = IsIOUringEnabled();
   _read_options.snapshot = snapshot;
+}
+
+const std::string& RocksDBMaterializer::ReadValue(std::string_view full_key) {
+  rocksdb::Status status;
   if (_db) {
-    _value_reader = [&](std::string_view full_key) -> std::string& {
-      auto status = _db->Get(_read_options, &_cf, full_key, &_value_buffer);
-      if (!status.ok()) {
-        auto res = sdb::rocksutils::ConvertStatus(status);
-        SDB_THROW(
-          res.errorNumber(),
-          "Failed to read value by PK from database: ", res.errorMessage());
-      }
-      return _value_buffer;
-    };
+    status = _db->Get(_read_options, &_cf, full_key, &_value_buffer);
   } else {
-    _value_reader = [&](std::string_view full_key) -> std::string& {
-      auto status =
-        _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
-      if (!status.ok()) {
-        auto res = sdb::rocksutils::ConvertStatus(status);
-        SDB_THROW(
-          res.errorNumber(),
-          "Failed to read value by PK from transaction: ", res.errorMessage());
-      }
-      return _value_buffer;
-    };
+    status = _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
   }
+  if (!status.ok()) {
+    auto res = sdb::rocksutils::ConvertStatus(status);
+    SDB_THROW(res.errorNumber(),
+              "Failed to read value by PK: ", res.errorMessage());
+  }
+  return _value_buffer;
 }
 
 velox::RowVectorPtr RocksDBMaterializer::ReadRows(
@@ -125,8 +116,7 @@ void RocksDBMaterializer::IterateColumnKeys(std::string_view column_key,
   while (cur != row_keys.end()) {
     buffer.resize(column_key.size());
     buffer.append(*cur);
-    SDB_ASSERT(_value_reader);
-    func(buffer, _value_reader(buffer));
+    func(buffer, ReadValue(buffer));
     ++cur;
   }
 }

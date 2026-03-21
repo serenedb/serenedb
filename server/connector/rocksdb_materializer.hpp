@@ -47,8 +47,7 @@ class RocksDBMaterializer {
   velox::RowVectorPtr ReadRows(std::span<std::string> row_keys);
 
  protected:
-  using ValueReader =
-    std::function<const std::string&(std::string_view full_key)>;
+  const std::string& ReadValue(std::string_view full_key);
 
   velox::VectorPtr ReadColumnKeys(std::span<std::string> row_keys,
                                   catalog::Column::Id column_id,
@@ -89,7 +88,6 @@ class RocksDBMaterializer {
   bool _is_range = true;
   size_t _produced = 0;
   std::string _value_buffer;
-  ValueReader _value_reader;
   rocksdb::ReadOptions _read_options;
 };
 

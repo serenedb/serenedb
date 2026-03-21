@@ -34,7 +34,10 @@
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
 
-namespace sdb::connector::search {
+namespace {
+
+using namespace sdb;
+using namespace connector;
 
 class SearchSinkWriterTest : public ::testing::Test,
                              public velox::test::VectorTestBase {
@@ -97,7 +100,7 @@ class SearchSinkWriterTest : public ::testing::Test,
 
 TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto trx = _data_writer->GetBatch();
-  const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3, 4, 5};
+  const std::vector<catalog::Column::Id> col_id{1, 2, 3, 4, 5};
   SearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
 
   const std::vector<std::string_view> pk{
@@ -175,8 +178,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto validate_row = [](const irs::SubReader& segment, std::string_view pk,
                          int32_t col1, std::string_view col2, bool col3,
                          float col4, int64_t col5) {
-    const auto* pk_column =
-      segment.column(sdb::connector::search::kPkFieldName);
+    const auto* pk_column = segment.column(kPkFieldName);
     ASSERT_NE(nullptr, pk_column);
     auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, pk_values_itr);
@@ -293,7 +295,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
 TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
   auto trx = _data_writer->GetBatch();
 
-  const std::vector<sdb::catalog::Column::Id> col_id{1, 2};
+  const std::vector<catalog::Column::Id> col_id{1, 2};
   const std::vector<std::string_view> pk{
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
@@ -325,7 +327,7 @@ TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(4, reader.live_docs_count());
   auto& segment = reader[0];
-  const auto* pk_column = segment.column(sdb::connector::search::kPkFieldName);
+  const auto* pk_column = segment.column(kPkFieldName);
   ASSERT_NE(nullptr, pk_column);
   auto varchar_terms =
     segment.field(std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
@@ -465,7 +467,7 @@ TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
 // corner case for string encoding in values
 TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
   auto trx = _data_writer->GetBatch();
-  const sdb::catalog::Column::Id col_id = 1;
+  const catalog::Column::Id col_id = 1;
   SearchSinkInsertWriter sink{trx, AnalyzerProvider, {col_id}};
   sink.Init(1);
 
@@ -486,7 +488,7 @@ TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_EQ(1, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
   auto& segment = reader[0];
-  const auto* pk_column = segment.column(sdb::connector::search::kPkFieldName);
+  const auto* pk_column = segment.column(kPkFieldName);
   ASSERT_NE(nullptr, pk_column);
   auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
   ASSERT_NE(nullptr, pk_values_itr);
@@ -571,8 +573,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   ASSERT_EQ(2, reader.live_docs_count());
   {
     auto& segment = reader[1];
-    const auto* pk_column =
-      segment.column(sdb::connector::search::kPkFieldName);
+    const auto* pk_column = segment.column(kPkFieldName);
     ASSERT_NE(nullptr, pk_column);
     auto varchar_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
@@ -677,8 +678,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   ASSERT_EQ(1, reader.live_docs_count());
   {
     auto& segment = reader[0];
-    const auto* pk_column =
-      segment.column(sdb::connector::search::kPkFieldName);
+    const auto* pk_column = segment.column(kPkFieldName);
     ASSERT_NE(nullptr, pk_column);
     auto varchar_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
@@ -813,8 +813,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
 
     {
       auto& segment = reader[2];
-      const auto* pk_column =
-        segment.column(sdb::connector::search::kPkFieldName);
+      const auto* pk_column = segment.column(kPkFieldName);
       ASSERT_NE(nullptr, pk_column);
       auto varchar_terms = segment.field(
         std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
@@ -908,8 +907,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
   ASSERT_EQ(2, reader.live_docs_count());
   {
     auto& segment = reader[1];
-    const auto* pk_column =
-      segment.column(sdb::connector::search::kPkFieldName);
+    const auto* pk_column = segment.column(kPkFieldName);
     ASSERT_NE(nullptr, pk_column);
     auto varchar_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
@@ -942,4 +940,4 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
   }
 }
 
-}  // namespace sdb::connector::search
+}  // namespace

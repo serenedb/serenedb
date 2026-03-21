@@ -26,7 +26,7 @@
 #include "basics/memory.hpp"
 #include "common.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 // something that never match user created fields id.
 constexpr inline std::string_view kPkFieldName{"\x00", 1};
@@ -94,4 +94,4 @@ class SearchRemoveFilter final : public SearchRemoveFilterBase {
   irs::doc_id_t advance() final;
 };
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

@@ -93,7 +93,7 @@ class DataSinkTest : public ::testing::Test,
     column_oids.reserve(data->childrenSize());
     for (velox::column_index_t i = 0; i < data->childrenSize(); ++i) {
       column_oids.push_back(
-        {.id = static_cast<sdb::catalog::Column::Id>(i), .name = ""});
+        {.id = static_cast<catalog::Column::Id>(i), .name = ""});
     }
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
@@ -742,7 +742,7 @@ class DataSinkTest : public ::testing::Test,
       rocksdb::ReadOptions read_options;
       std::string value;
       key.resize(base_size);
-      rocksutils::Append(key, static_cast<sdb::catalog::Column::Id>(0),
+      rocksutils::Append(key, static_cast<catalog::Column::Id>(0),
                          std::string_view{row_keys[i]});
       ASSERT_TRUE(
         _db->Get(read_options, _cf_handles.front(), rocksdb::Slice(key), &value)

@@ -58,7 +58,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
-
 namespace {
 
 constexpr std::string_view kZeroLengthVector{"\0", 1};
@@ -66,7 +65,7 @@ constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
 template<typename T>
 std::string VeloxValueToString(T val) {
-  if constexpr (sdb::type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
+  if constexpr (type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
     return static_cast<std::string>(val);
   } else if constexpr (std::is_same_v<T, velox::int128_t>) {
     std::string result;

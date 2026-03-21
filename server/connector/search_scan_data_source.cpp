@@ -24,7 +24,7 @@
 #include "connector/search_remove_filter.hpp"
 #include "velox/core/PlanNode.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 SearchScanDataSource::SearchScanDataSource(
   velox::memory::MemoryPool& memory_pool,
@@ -72,8 +72,7 @@ std::optional<velox::RowVectorPtr> SearchScanDataSource::next(
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
       _doc = segment.mask(_query.execute({.segment = segment}));
-      const auto* pk_column =
-        segment.column(sdb::connector::search::kPkFieldName);
+      const auto* pk_column = segment.column(connector::kPkFieldName);
       _pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);
       SDB_ASSERT(_pk_iterator);
       _pk_value = irs::get<irs::PayAttr>(*_pk_iterator);
@@ -134,4 +133,4 @@ void SearchScanDataSource::cancel() {
   // TODO: implement cancellation logic
 }
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

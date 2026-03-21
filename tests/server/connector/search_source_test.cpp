@@ -41,7 +41,6 @@
 
 using namespace sdb;
 using namespace sdb::connector;
-using namespace sdb::connector::search;
 
 namespace {
 
@@ -148,7 +147,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
                          std::views::transform([](auto& a) { return a.id; }));
 
     index_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkInsertWriter>(
+      std::make_unique<connector::SearchSinkInsertWriter>(
         index_transaction, AnalyzerProvider, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
@@ -192,7 +191,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
 };
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -250,7 +249,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
 }
 
 TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -388,7 +387,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
 }
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -449,8 +448,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
     auto index_transaction = _data_writer->GetBatch();
     std::vector<std::unique_ptr<SinkIndexWriter>> delete_writers;
     delete_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkDeleteWriter>(
-        index_transaction));
+      std::make_unique<connector::SearchSinkDeleteWriter>(index_transaction));
 
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;

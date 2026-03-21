@@ -35,20 +35,17 @@
 #include "connector/key_utils.hpp"
 #include "search_remove_filter.hpp"
 
-namespace sdb::connector::search {
-
+namespace sdb::connector {
 namespace {
 
-using namespace sdb::search;
-
 constexpr size_t kDefaultPoolSize = 8;  // arbitrary value
-irs::UnboundedObjectPool<AnalyzerImpl::Builder> gStringStreamPool(
+irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gStringStreamPool(
   kDefaultPoolSize);
-irs::UnboundedObjectPool<AnalyzerImpl::Builder> gNumberStreamPool(
+irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gNumberStreamPool(
   kDefaultPoolSize);
-irs::UnboundedObjectPool<AnalyzerImpl::Builder> gBoolStreamPool(
+irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gBoolStreamPool(
   kDefaultPoolSize);
-irs::UnboundedObjectPool<AnalyzerImpl::Builder> gNullStreamPool(
+irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gNullStreamPool(
   kDefaultPoolSize);
 
 void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
@@ -113,7 +110,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   if (have_nulls || Kind == velox::TypeKind::UNKNOWN) {
     basics::StrResize(_null_name_buffer, sizeof(column_id));
     SetNameToBuffer(_null_name_buffer, column_id);
-    mangling::MangleNull(_null_name_buffer);
+    search::mangling::MangleNull(_null_name_buffer);
     _null_field.name = _null_name_buffer;
     if (!_null_field.analyzer) {
       _null_field.PrepareForNullValue();
@@ -146,7 +143,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       });
   } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
                        Kind == velox::TypeKind::VARBINARY) {
-    mangling::MangleString(_name_buffer);
+    search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_analyzer_provider(column_id));
     if (have_nulls) {
       _current_writer =
@@ -155,7 +152,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeIndexWriter(&WriteStringValue);
     }
   } else if constexpr (std::is_same_v<T, bool>) {
-    mangling::MangleBool(_name_buffer);
+    search::mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
     if (have_nulls) {
       _current_writer =
@@ -164,7 +161,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeIndexWriter(&WriteBooleanValue);
     }
   } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
-    mangling::MangleNumeric(_name_buffer);
+    search::mangling::MangleNumeric(_name_buffer);
     _field.PrepareForNumericValue();
     if (have_nulls) {
       _current_writer =
@@ -270,11 +267,11 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
 void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
-  analyzer = gStringStreamPool.emplace(AnalyzerImpl::StringStreamTag{});
+  analyzer = gStringStreamPool.emplace(search::AnalyzerImpl::StringStreamTag{});
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  sdb::catalog::ColumnAnalyzer&& column_analyzer) {
+  catalog::ColumnAnalyzer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();
@@ -285,7 +282,7 @@ void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {
   SDB_ASSERT(analyzer || string_analyzer);
   SDB_ASSERT((analyzer == nullptr) || !string_analyzer.has_value());
   if (analyzer) {
-    auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
+    auto& sstream = basics::downCast<irs::StringTokenizer>(*analyzer);
     sstream.reset(value);
   } else {
     string_analyzer.value()->reset(value);
@@ -295,12 +292,12 @@ void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {
 void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
-  analyzer = gNumberStreamPool.emplace(AnalyzerImpl::NumberStreamTag{});
+  analyzer = gNumberStreamPool.emplace(search::AnalyzerImpl::NumberStreamTag{});
 }
 
 template<typename T>
 void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
-  auto& nstream = sdb::basics::downCast<irs::NumericTokenizer>(*analyzer);
+  auto& nstream = basics::downCast<irs::NumericTokenizer>(*analyzer);
   if constexpr (std::is_same_v<
                   T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
     // TODO(Dronplane): Native int128 support
@@ -320,22 +317,22 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
 void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
-  analyzer = gBoolStreamPool.emplace(AnalyzerImpl::BoolStreamTag{});
+  analyzer = gBoolStreamPool.emplace(search::AnalyzerImpl::BoolStreamTag{});
 }
 
 void SearchSinkInsertBaseImpl::Field::SetBooleanValue(bool value) {
-  auto& bstream = sdb::basics::downCast<irs::BooleanTokenizer>(*analyzer);
+  auto& bstream = basics::downCast<irs::BooleanTokenizer>(*analyzer);
   bstream.reset(value);
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForNullValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
-  analyzer = gNullStreamPool.emplace(AnalyzerImpl::NullStreamTag{});
+  analyzer = gNullStreamPool.emplace(search::AnalyzerImpl::NullStreamTag{});
 }
 
 void SearchSinkInsertBaseImpl::Field::SetNullValue() {
-  auto& nstream = sdb::basics::downCast<irs::NullTokenizer>(*analyzer);
+  auto& nstream = basics::downCast<irs::NullTokenizer>(*analyzer);
   nstream.reset();
 }
 
@@ -362,4 +359,4 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

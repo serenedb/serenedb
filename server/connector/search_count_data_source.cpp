@@ -25,7 +25,7 @@
 
 #include "basics/assert.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 SearchCountDataSource::SearchCountDataSource(
   velox::memory::MemoryPool& memory_pool, velox::RowTypePtr row_type,
@@ -45,21 +45,24 @@ void SearchCountDataSource::addSplit(
   _current_split = std::move(split);
 }
 
-// TODO(mbkkt) We probably need to implement preemption?
-// But in what way?
-// 1. We can return RowVectorPtr sometimes, with intermediate results,
-//    in such case Velox will handle this.
-// 2. We can add preemption check in iresearch count
-//    and somehow connect it with Velox
+// TODO(mbkkt) Finer-grained preemption: currently we check cancellation between
+// segments (atomic_bool with relaxed ordering). To improve, adjust iresearch
+// count to accept a cancellation check -- this would allow interruption within
+// a segment.
+// TODO(mbkkt) Add cancellation tests -- right now we don't have good coverage
+// for cancel() behavior.
 std::optional<velox::RowVectorPtr> SearchCountDataSource::next(
   uint64_t /*size*/, velox::ContinueFuture& /*future*/) {
-  SDB_ASSERT(
-    _current_split,
-    "SearchCountDataSource: inconsistent state, addSplit call missing");
+  if (!_current_split) {
+    return nullptr;
+  }
   _current_split.reset();
 
   uint64_t count = 0;
   for (size_t i = 0; i < _reader.size(); ++i) {
+    if (_cancelled.load(std::memory_order_relaxed)) {
+      break;
+    }
     auto& segment = _reader[i];
     auto doc = segment.mask(_query.execute({.segment = segment}));
     count += doc->count();
@@ -85,6 +88,8 @@ SearchCountDataSource::getRuntimeStats() {
   return {};
 }
 
-void SearchCountDataSource::cancel() {}
+void SearchCountDataSource::cancel() {
+  _cancelled.store(true, std::memory_order_relaxed);
+}
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

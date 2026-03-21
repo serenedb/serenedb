@@ -28,7 +28,7 @@
 #include "basics/fwd.h"
 #include "data_materializer.hpp"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 class SearchScanDataSource final : public velox::connector::DataSource,
                                    public Materializer {
@@ -68,4 +68,4 @@ class SearchScanDataSource final : public velox::connector::DataSource,
   uint64_t _produced{0};
 };
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

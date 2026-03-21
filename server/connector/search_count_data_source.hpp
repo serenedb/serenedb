@@ -22,12 +22,13 @@
 
 #include <velox/connectors/Connector.h>
 
+#include <atomic>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filter.hpp>
 
 #include "basics/fwd.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 class SearchCountDataSource final : public velox::connector::DataSource {
  public:
@@ -53,7 +54,8 @@ class SearchCountDataSource final : public velox::connector::DataSource {
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   const irs::IndexReader& _reader;
   const irs::Filter::Query& _query;
-  uint64_t _produced{0};
+  uint64_t _produced = 0;
+  std::atomic_bool _cancelled = false;
 };
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

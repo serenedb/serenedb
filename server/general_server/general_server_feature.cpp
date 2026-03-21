@@ -98,16 +98,6 @@ void GeneralServerFeature::collectOptions(
     new UInt64Parameter(&_num_io_threads, /*base*/ 1, /*minValue*/ 1),
     options::MakeDefaultFlags(options::Flags::Dynamic));
 
-  options->addOption("--server.options-api",
-                     "The policy for exposing the options API.",
-                     new DiscreteValuesParameter<StringParameter>(
-                       &_options_api_policy, {
-                                               "disabled",
-                                               "jwt",
-                                               "admin",
-                                               "public",
-                                             }));
-
   options->addSection("http", "HTTP server features");
 
   options

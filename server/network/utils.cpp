@@ -146,6 +146,7 @@ ErrorCode ToSereneErrorCodeInternal(fuerte::Error err) {
 
   return ERROR_INTERNAL;
 }
+
 }  // namespace
 
 fuerte::RestVerb SereneRestVerbToFuerte(rest::RequestType verb) {

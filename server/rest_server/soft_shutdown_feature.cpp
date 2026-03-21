@@ -49,7 +49,6 @@ void QueueShutdownChecker(absl::Mutex& mutex,
 }
 
 }  // namespace
-
 namespace sdb {
 
 SoftShutdownFeature::SoftShutdownFeature(Server& server)

@@ -32,6 +32,7 @@
 #include <string_view>
 
 namespace sdb {
+
 class ExecContext;
 
 /// Indicates whether we want to observe writes performed within the

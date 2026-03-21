@@ -27,6 +27,7 @@
 
 namespace sdb {
 namespace options {
+
 class ProgramOptions;
 
 class IniFileParser {
@@ -54,5 +55,6 @@ class IniFileParser {
     std::regex include;
   } _matchers;
 };
+
 }  // namespace options
 }  // namespace sdb

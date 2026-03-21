@@ -40,6 +40,7 @@
 #include "vpack/slice.h"
 
 namespace sdb {
+
 class RocksDBEngineCatalog;
 }
 

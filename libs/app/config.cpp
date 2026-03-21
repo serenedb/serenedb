@@ -278,4 +278,5 @@ void ConfigFeature::prepare() {
   SdbSetCanUseSplice(_use_splice);
 #endif
 }
+
 }  // namespace sdb

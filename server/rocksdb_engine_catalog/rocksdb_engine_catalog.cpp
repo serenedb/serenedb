@@ -136,6 +136,7 @@
 
 namespace sdb {
 namespace {
+
 void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
                          bool db_existed) {
   // try to find version, using the version key
@@ -185,6 +186,7 @@ void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
     }
   }
 }
+
 }  // namespace
 
 DECLARE_GAUGE(rocksdb_wal_released_tick_flush, uint64_t,

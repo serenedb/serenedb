@@ -31,6 +31,7 @@
 #include <string_view>
 
 namespace sdb::fuerte {
+
 class Request;
 class Response;
 

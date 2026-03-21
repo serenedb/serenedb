@@ -48,6 +48,7 @@ static_assert(std::atomic<uint64_t>::is_always_lock_free);
 static_assert(std::atomic<void*>::is_always_lock_free);
 
 namespace {
+
 #ifdef __linux__
 std::string_view TrimProcName(std::string_view content) {
   size_t pos = content.find(' ');

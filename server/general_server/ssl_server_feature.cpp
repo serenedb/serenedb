@@ -279,6 +279,7 @@ void SslServerFeature::verifySslOptions() {
 }
 
 namespace {
+
 class BIOGuard {
  public:
   explicit BIOGuard(BIO* bio) : bio(bio) {}
@@ -288,6 +289,7 @@ class BIOGuard {
  public:
   BIO* bio;
 };
+
 }  // namespace
 
 static inline bool SearchForProtocol(const unsigned char** out,

@@ -52,6 +52,7 @@
 
 namespace sdb {
 namespace network {
+
 using namespace sdb::fuerte;
 
 using PromiseRes = yaclib::Promise<network::Response>;

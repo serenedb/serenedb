@@ -34,8 +34,8 @@
 #include "rest_server/environment_feature.h"
 
 namespace sdb {
-
 namespace {
+
 uint64_t GetDefaultMemoryUsage() {
   if (physical_memory::GetValue() >= (static_cast<uint64_t>(4) << 30)) {
     // if we have at least 4GB of RAM, the default size is (RAM - 2GB) * 0.2
@@ -45,6 +45,7 @@ uint64_t GetDefaultMemoryUsage() {
   // if we have at least 2GB of RAM, the default size is 64MB
   return (static_cast<uint64_t>(64) << 20);
 }
+
 }  // namespace
 
 ServerOptionsFeature::ServerOptionsFeature(Server& server)

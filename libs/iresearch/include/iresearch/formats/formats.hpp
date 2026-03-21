@@ -465,6 +465,7 @@ struct ReaderState {
 void FormatBlock128Init();
 
 namespace formats {
+
 // Checks whether a format with the specified name is registered.
 bool Exists(std::string_view name, bool load_library = true);
 

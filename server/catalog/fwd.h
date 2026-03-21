@@ -39,7 +39,6 @@ class VirtualTable;
 class VirtualTableSnapshot;
 
 }  // namespace sdb::catalog
-
 namespace sdb {
 
 class TableShard;

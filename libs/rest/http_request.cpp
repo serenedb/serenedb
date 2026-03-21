@@ -38,6 +38,7 @@ using namespace sdb;
 using namespace sdb::basics;
 
 namespace {
+
 std::string UrlDecode(const char* begin, const char* end) {
   std::string out;
   out.reserve(static_cast<size_t>(end - begin));
@@ -65,6 +66,7 @@ std::string UrlDecode(const char* begin, const char* end) {
 
   return out;
 }
+
 }  // namespace
 
 HttpRequest::HttpRequest(const ConnectionInfo& connection_info, uint64_t mid)

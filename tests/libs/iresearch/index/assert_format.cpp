@@ -69,7 +69,6 @@ bool Visit(const irs::ColumnReader& reader,
 }
 
 }  // namespace
-
 namespace tests {
 
 void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
@@ -1245,7 +1244,6 @@ void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
 }
 
 }  // namespace tests
-
 namespace irs {
 
 // use base irs::position type for ancestors

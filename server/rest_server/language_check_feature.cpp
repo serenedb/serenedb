@@ -155,6 +155,7 @@ std::tuple<std::string, basics::LanguageType> GetOrSetPreviousLanguage(
 
   return {std::string{collator_lang}, curr_lang_type};
 }
+
 }  // namespace
 
 LanguageCheckFeature::LanguageCheckFeature(Server& server)

@@ -191,7 +191,6 @@ void VPackWrite(auto ctx, NonDefaultConstructibleIntLike v) {
 }
 
 }  // namespace
-
 namespace {
 
 struct ExplicitIgnore {
@@ -264,8 +263,8 @@ enum class MyStringEnum {
 };
 
 }  // namespace
-
 namespace {
+
 enum class MyIntEnum {
   Value1 = 1,
   Value2,
@@ -308,7 +307,6 @@ void VPackRead(Context ctx, WithContext& v) {
 }
 
 }  // namespace
-
 namespace magic_enum {
 
 template<>

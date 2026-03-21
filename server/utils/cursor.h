@@ -40,13 +40,14 @@
 #include "function2.hpp"
 
 namespace vpack {
+
 class Builder;
 class Slice;
+
 }  // namespace vpack
-
 namespace sdb {
-
 namespace transaction {
+
 class Context;
 }
 
@@ -197,4 +198,5 @@ class Cursor {
   std::pair<uint64_t, std::shared_ptr<vpack::BufferUInt8>>
     _current_batch_result;
 };
+
 }  // namespace sdb

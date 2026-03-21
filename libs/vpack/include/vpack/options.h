@@ -24,6 +24,7 @@
 #include "basics/string_utils.h"
 
 namespace vpack {
+
 class Slice;
 
 struct Options : sdb::basics::string_utils::EscapeJsonOptions {

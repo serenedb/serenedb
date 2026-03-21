@@ -40,6 +40,7 @@ namespace sdb {
 class Thread;
 
 namespace network {
+
 struct RequestOptions;
 
 struct RetryableRequest {
@@ -48,6 +49,7 @@ struct RetryableRequest {
   virtual void retry() = 0;
   virtual void cancel() = 0;
 };
+
 }  // namespace network
 
 class NetworkFeature final : public SerenedFeature {

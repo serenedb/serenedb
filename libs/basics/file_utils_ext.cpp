@@ -100,7 +100,6 @@ inline int PathStats(FILE_STAT_T& info, const irs::path_char_t* path) {
 }
 
 }  // namespace
-
 namespace irs {
 namespace file_utils {
 
@@ -261,8 +260,10 @@ long Ftell(void* fd) {
 
 #ifdef _WIN32
 namespace {
+
 constexpr DWORD FS_DEFERRED_DELETE_TIMEOUT = 10;
 constexpr int CREATE_FILE_TRIES = 3;
+
 }  // namespace
 
 bool verify_lock_file(const path_char_t* file) {

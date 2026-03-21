@@ -43,7 +43,6 @@ struct TestTermMeta : irs::TermMeta {
 };
 
 }  // namespace
-
 namespace irs {
 
 // use base irs::TermMeta type for ancestors
@@ -51,7 +50,6 @@ template<>
 struct Type<::TestTermMeta> : Type<irs::TermMeta> {};
 
 }  // namespace irs
-
 namespace {
 
 struct Sort : irs::Scorer {

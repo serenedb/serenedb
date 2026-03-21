@@ -41,6 +41,7 @@
 #include "vpack/serializer.h"
 
 namespace {
+
 using namespace sdb;
 
 struct VPackInspectionTest : public ::testing::Test {};
@@ -137,6 +138,7 @@ TEST_F(VPackInspectionTest, StructIncludingVPackBuilder) {
 using namespace vpack;
 
 namespace {
+
 struct ErrorTTest {
   std::string s;
   size_t id;

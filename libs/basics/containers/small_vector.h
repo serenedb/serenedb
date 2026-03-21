@@ -36,6 +36,7 @@ using SmallVector = boost::container::small_vector<T, N, A>;
 
 }  // namespace sdb::containers
 namespace absl::hash_internal {
+
 // boost::container or absl::hash_internal required because this class in
 // boost::container
 

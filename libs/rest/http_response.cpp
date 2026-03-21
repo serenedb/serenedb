@@ -42,6 +42,7 @@ using namespace sdb;
 using namespace sdb::basics;
 
 namespace {
+
 template<typename Func>
 ErrorCode Deflate(Func&& func, basics::StringBuffer& body,
                   bool only_if_smaller) {
@@ -58,6 +59,7 @@ ErrorCode Deflate(Func&& func, basics::StringBuffer& body,
   }
   return code;
 }
+
 }  // namespace
 
 HttpResponse::HttpResponse(ResponseCode code, uint64_t mid,

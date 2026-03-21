@@ -62,7 +62,6 @@ Filter& Append(irs::BooleanFilter& root, const std::string_view& name,
 }
 
 }  // namespace
-
 namespace tests {
 namespace detail {
 
@@ -15117,6 +15116,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       root.add<irs::Not>().filter<irs::All>();
       CheckQuery(root, Docs{}, rdr);
     }
+
   }  // namespace tests
 
   // duplicated=abcd AND NOT name=A

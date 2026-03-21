@@ -138,6 +138,7 @@ std::string BuildUniqueViolationDetail(
 
   return detail;
 }
+
 }  // namespace
 
 WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,

@@ -27,6 +27,7 @@
 #include "vpack/serializer.h"
 
 namespace {
+
 using namespace sdb;
 
 struct VPackLoadInspectorTest : public ::testing::Test {

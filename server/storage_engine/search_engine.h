@@ -42,6 +42,7 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb {
+
 struct IndexFactory;
 
 namespace search {

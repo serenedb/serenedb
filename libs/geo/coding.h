@@ -39,6 +39,7 @@ namespace sdb::geo {
 class ShapeContainer;
 
 namespace coding {
+
 // Numbers persistent to store! Do not change!
 
 enum class Type : uint8_t {

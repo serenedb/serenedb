@@ -29,8 +29,10 @@
 #include "basics/thread.h"
 
 namespace sdb {
+
 class LogGroup;
 namespace app {
+
 class AppServer;
 }
 
@@ -75,5 +77,6 @@ class LogThread final : public Thread {
   std::atomic<size_t> _pending_messages{0};
   uint32_t _max_queued_log_messages{10000};
 };
+
 }  // namespace log
 }  // namespace sdb

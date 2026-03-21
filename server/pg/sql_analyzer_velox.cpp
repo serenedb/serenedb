@@ -109,6 +109,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
+
 namespace lp = axiom::logical_plan;
 namespace ve = velox::exec;
 namespace vc = velox::core;

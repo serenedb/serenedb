@@ -48,4 +48,5 @@ class IndexShard : public catalog::Object {
   ObjectId _index_id;
   IndexType _type;
 };
+
 }  // namespace sdb

@@ -27,7 +27,6 @@
 #include "rest_server/serened.h"
 
 namespace sdb {
-
 namespace rest {
 
 class RestHandlerFactory;

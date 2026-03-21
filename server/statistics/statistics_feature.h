@@ -93,6 +93,7 @@ struct RequestFigures {
 };
 extern RequestFigures gSuperuserRequestFigures;
 extern RequestFigures gUserRequestFigures;
+
 }  // namespace statistics
 
 class CpuUsage final {

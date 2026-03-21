@@ -105,11 +105,12 @@ template<typename... Args>
 ThrowError(Args&&...) -> ThrowError<Args...>;
 
 }  // namespace detail
-
 namespace helper {
+
 // just so we don't have to include logger and application-exit into this
 // central header.
 [[noreturn]] void DieWithLogMessage(const char*);
+
 }  // namespace helper
 
 template<typename F, typename E>
@@ -177,8 +178,10 @@ ResultOr<T> SafeCallT(F&& fn) noexcept {
 Result TryToResult(yaclib::Result<Result>&& try_result) noexcept;
 
 namespace helper {
+
 // just so we don't have to include logger into this header
 [[noreturn]] void LogAndAbort(const char* what);
+
 }  // namespace helper
 
 // Throws the passed exception, but in maintainer mode, logs the error

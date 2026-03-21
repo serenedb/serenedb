@@ -26,6 +26,7 @@
 #include "maskings/parse_result.h"
 
 namespace sdb::maskings {
+
 class RandomStringMask : public MaskingFunction {
  public:
   static ParseResult<AttributeMasking> create(Path, Maskings*,
@@ -36,4 +37,5 @@ class RandomStringMask : public MaskingFunction {
   void mask(std::string_view data, vpack::Builder& out,
             std::string& buffer) const override;
 };
+
 }  // namespace sdb::maskings

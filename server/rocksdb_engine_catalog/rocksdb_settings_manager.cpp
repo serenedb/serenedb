@@ -53,6 +53,7 @@
 
 namespace sdb {
 namespace {
+
 void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
   b.clear();
   b.openObject();
@@ -81,6 +82,7 @@ Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
 
   return {};
 }
+
 }  // namespace
 
 /// Constructor needs to be called synchrunously,

@@ -66,7 +66,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-
 namespace {
 
 inline void ExtractInputFields(const velox::core::TypedExprPtr& expr,

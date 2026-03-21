@@ -36,7 +36,6 @@ namespace sdb::message {
 class Buffer;
 
 }  // namespace sdb::message
-
 namespace sdb::pg {
 
 class Params;

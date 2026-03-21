@@ -30,9 +30,12 @@
 #include "http_client/general_client_connection.h"
 
 namespace sdb {
+
 class Endpoint;
 namespace basics {
+
 class StringBuffer;
+
 }  // namespace basics
 namespace httpclient {
 

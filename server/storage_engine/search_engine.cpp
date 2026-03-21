@@ -344,4 +344,5 @@ void SearchEngine::beginShutdown() {
   _thread_pools->Get(ThreadGroup::Commit).stop(false);
   _thread_pools->Get(ThreadGroup::Consolidation).stop(false);
 }
+
 }  // namespace sdb::search

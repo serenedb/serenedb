@@ -37,6 +37,7 @@
 #include "statistics/request_statistics.h"
 
 namespace sdb {
+
 class AuthenticationFeature;
 class ConnectionStatistics;
 class GeneralRequest;
@@ -44,6 +45,7 @@ class GeneralResponse;
 class RequestStatistics;
 
 namespace rest {
+
 class RestHandler;
 class GeneralServer;
 
@@ -85,5 +87,6 @@ class CommTask : public std::enable_shared_from_this<CommTask> {
   // cluster-internal-only traffic.
   bool _is_user_request{true};
 };
+
 }  // namespace rest
 }  // namespace sdb

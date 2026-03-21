@@ -141,6 +141,7 @@ void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
               velox::TypeKindName::toName(Kind));
   }
 }
+
 }  // namespace
 
 void AppendKeyValue(std::string& key, const velox::BaseVector& column,

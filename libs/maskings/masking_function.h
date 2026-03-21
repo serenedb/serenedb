@@ -31,6 +31,7 @@
 #include "basics/utf8_helper.h"
 
 namespace sdb::maskings {
+
 class Maskings;
 
 class MaskingFunction {
@@ -53,4 +54,5 @@ class MaskingFunction {
  protected:
   Maskings* _maskings;
 };
+
 }  // namespace sdb::maskings

@@ -186,7 +186,6 @@ bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,
                     vpack::Slice properties, Features features);
 
 }  // namespace sdb::search
-
 namespace magic_enum {
 
 template<>

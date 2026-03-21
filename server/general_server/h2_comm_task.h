@@ -33,6 +33,7 @@
 #include "general_server/general_comm_task.h"
 
 namespace sdb {
+
 class HttpRequest;
 class HttpResponse;
 
@@ -40,6 +41,7 @@ class HttpResponse;
 static constexpr uint32_t kH2MaxConcurrentStreams = 32;
 
 namespace rest {
+
 struct H2Response;
 
 template<SocketType T>
@@ -135,5 +137,6 @@ class H2CommTask final : public GeneralCommTask<T> {
 
   std::atomic<bool> _signaled_write{false};
 };
+
 }  // namespace rest
 }  // namespace sdb

@@ -58,6 +58,7 @@ using namespace sdb::basics;
 namespace {
 
 static void ReopenLog(int) { log::Appender::reopen(); }
+
 }  // namespace
 
 GlobalContext* GlobalContext::gContext = nullptr;

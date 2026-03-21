@@ -27,6 +27,7 @@
 #include "http_client/http_result.h"
 
 namespace sdb {
+
 class HttpResponseChecker {
  public:
   HttpResponseChecker() = delete;

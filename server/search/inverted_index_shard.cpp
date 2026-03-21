@@ -54,8 +54,8 @@
 #include "vpack/serializer.h"
 
 namespace sdb::search {
-
 namespace {
+
 uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
   constexpr uint64_t kWindowSize{10};
   const auto old_time_num =

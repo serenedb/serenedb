@@ -35,16 +35,19 @@
 #include "utils/operation_result.h"
 
 namespace vpack {
+
 class Builder;
 }
 namespace sdb {
 namespace consensus {
+
 class Agent;
 }
 class ClusterInfo;
 class NetworkFeature;
 
 namespace network {
+
 struct RequestOptions;
 
 /// resolve 'shard:' or 'server:' url to actual endpoint

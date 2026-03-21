@@ -29,6 +29,7 @@
 #include "maskings/parse_result.h"
 
 namespace sdb::maskings {
+
 class Path {
  public:
   static ParseResult<Path> parse(std::string_view def);
@@ -46,4 +47,5 @@ class Path {
   bool _any;
   std::vector<std::string> _components;
 };
+
 }  // namespace sdb::maskings

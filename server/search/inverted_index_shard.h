@@ -280,4 +280,5 @@ class InvertedIndexShard final
   };
   std::atomic<Error> _error{Error::NoError};
 };
+
 }  // namespace sdb::search

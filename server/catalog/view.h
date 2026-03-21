@@ -91,7 +91,6 @@ Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
                           ViewContext ctx);
 
 }  // namespace sdb::catalog
-
 namespace magic_enum {
 
 template<>

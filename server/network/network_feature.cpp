@@ -58,6 +58,7 @@ using namespace sdb::basics;
 using namespace sdb::options;
 
 namespace {
+
 // executes network request retry operations in a separate thread,
 // so that they do not have be executed via the scheduler.
 // the reason to execute them from a dedicated thread is that a
@@ -271,9 +272,10 @@ void QueueGarbageCollection(absl::Mutex& mutex,
 constexpr double kCongestionRatio = 0.5;
 constexpr uint64_t kMaxAllowedInFlight = 65536;
 constexpr uint64_t kMinAllowedInFlight = 64;
-}  // namespace
 
+}  // namespace
 namespace sdb {
+
 struct NetworkFeatureScale {
   static metrics::FixScale<double> scale() {
     return {0.0, 100.0, {1.0, 5.0, 15.0, 50.0}};

@@ -29,6 +29,7 @@
 #include "vpack/vpack_helper.h"
 
 namespace {
+
 using namespace sdb;
 
 struct VPackSaveInspectorTest : public ::testing::Test {

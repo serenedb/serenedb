@@ -34,11 +34,11 @@
 #include "vpack/slice.h"
 
 namespace sdb {
+
 // Read from storage engine if unknown
 static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
 
 }  // namespace sdb
-
 namespace sdb::catalog {
 
 struct NewOptions {

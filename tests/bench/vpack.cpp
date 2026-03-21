@@ -39,6 +39,7 @@
 #include "simdjson.h"
 
 namespace {
+
 using namespace vpack;
 
 enum ParserType {

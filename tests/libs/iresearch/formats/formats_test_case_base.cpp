@@ -76,7 +76,6 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
 }
 
 }  // namespace
-
 namespace tests {
 
 irs::ColumnFinalizer ColumnFinalizer(
@@ -1002,6 +1001,7 @@ TEST_P(FormatTestCase, fields_read_write) {
         ASSERT_EQ(sorted_terms.end(), expected_sorted_term);
       }
     }
+
   }  // namespace tests
 }
 

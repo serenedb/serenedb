@@ -110,9 +110,7 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
   std::vector<catalog::CreateIndexColumn> columns);
 
 }  // namespace catalog
-
 }  // namespace sdb
-
 namespace magic_enum {
 
 template<>

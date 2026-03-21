@@ -40,7 +40,6 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
-
 namespace {
 
 template<typename Buffer>

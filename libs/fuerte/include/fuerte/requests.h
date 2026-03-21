@@ -43,6 +43,7 @@
 //
 
 namespace sdb::fuerte {
+
 // Helper and Implementation
 
 std::unique_ptr<Request> CreateRequest(RestVerb verb, ContentType content_type);

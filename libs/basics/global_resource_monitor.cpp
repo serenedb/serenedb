@@ -27,8 +27,10 @@
 
 namespace sdb {
 namespace {
+
 // a global shared instance for tracking all resources
 GlobalResourceMonitor gInstance;
+
 }  // namespace
 
 int64_t GlobalResourceMonitor::current() const noexcept {

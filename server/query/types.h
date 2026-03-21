@@ -35,7 +35,6 @@ velox::TypePtr COLLECTION();
 bool IsCollection(const velox::TypePtr& type);
 
 }  // namespace sdb::aql
-
 namespace sdb::pg {
 
 velox::TypePtr VOID();

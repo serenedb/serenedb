@@ -25,8 +25,8 @@
 #include "catalog/identifiers/revision_id.h"
 
 namespace sdb {
-
 namespace transaction {
+
 class Methods;
 }
 

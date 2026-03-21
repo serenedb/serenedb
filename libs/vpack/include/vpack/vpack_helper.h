@@ -47,11 +47,13 @@
 #include "basics/system-compiler.h"
 
 namespace vpack {
-struct AttributeExcludeHandler;
-}  // namespace vpack
 
+struct AttributeExcludeHandler;
+
+}  // namespace vpack
 namespace sdb {
 namespace log {
+
 class Stream;
 }
 

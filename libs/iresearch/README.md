@@ -1,4 +1,7 @@
 # IResearch
+[![Star Us](https://img.shields.io/badge/⭐-Star%20Us-9865e8?style=for-the-badge)](https://github.com/serenedb/serenedb)
+[![Apache License 2.0](https://img.shields.io/badge/License-Apache%202.0-a2b9f4?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Website](https://img.shields.io/website?up_message=VISIT&down_message=FIXING&color=fbe5f5&url=https%3A%2F%2Fwww.serenedb.com&style=for-the-badge)](https://www.serenedb.com/search-benchmark-game)
 
 IResearch is an open-source (Apache 2.0) C++ information retrieval library designed to be embedded into transactional database systems. It provides a feature set comparable to Lucene — inverted indexes with BM25 scoring, columnar storage, vector search, S2 geospatial indexing and semi-structured filtering — while integrating natively with the host database's write-ahead log and transaction protocol. There is no separate process, no JVM dependency and no consistency gap between the search index and the primary store.
 

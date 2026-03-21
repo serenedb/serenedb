@@ -840,8 +840,7 @@ std::string RocksDBEngineCatalog::versionFilename(ObjectId id) const {
   return absl::StrCat(_base_path, SERENEDB_DIR_SEPARATOR_STR, "VERSION-", id);
 }
 
-void RocksDBEngineCatalog::cleanupReplicationContexts() {
-}
+void RocksDBEngineCatalog::cleanupReplicationContexts() {}
 
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
   return SerenedServer::Instance()

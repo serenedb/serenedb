@@ -396,11 +396,9 @@ void GeneralServerFeature::startListening() {
 #endif
 }
 
-void GeneralServerFeature::defineInitialHandlers(rest::RestHandlerFactory& f) {
-}
+void GeneralServerFeature::defineInitialHandlers(rest::RestHandlerFactory& f) {}
 
 void GeneralServerFeature::defineRemainingHandlers(
-  rest::RestHandlerFactory& f) {
-}
+  rest::RestHandlerFactory& f) {}
 
 }  // namespace sdb

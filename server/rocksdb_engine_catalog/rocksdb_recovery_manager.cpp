@@ -485,7 +485,6 @@ void RocksDBRecoveryManager::recoveryDone() {
       SDB_THROW(std::move(r));
     }
   }
-
 }
 
 Result RocksDBRecoveryManager::registerPostRecoveryCallback(

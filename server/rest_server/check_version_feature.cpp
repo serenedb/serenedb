@@ -77,7 +77,6 @@ void CheckVersionFeature::validateOptions(
 
   LoggerFeature& logger = server().getFeature<LoggerFeature>();
   logger.disableThreaded();
-
 }
 
 void CheckVersionFeature::start() {

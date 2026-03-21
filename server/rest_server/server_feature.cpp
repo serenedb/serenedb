@@ -126,7 +126,6 @@ void ServerFeature::waitForHeartbeat() {
     // waiting for the heartbeart thread is necessary on coordinator only
     return;
   }
-
 }
 
 }  // namespace sdb

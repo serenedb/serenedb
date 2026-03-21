@@ -153,7 +153,6 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   auto it = _search_snapshots.find(index_id);
-  EnsureCatalogSnapshot();
   if (it == _search_snapshots.end()) {
     auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
     SDB_ASSERT(index_shard);
@@ -186,7 +185,6 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
   SDB_ASSERT(HasRocksDBWrite() || HasTransactionBegin());
-  EnsureCatalogSnapshot();
   if (!_rocksdb_transaction) [[unlikely]] {
     SDB_ASSERT(!_rocksdb_snapshot);
     auto* db = GetServerEngine().db();
@@ -208,7 +206,6 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
 
 void Transaction::Destroy() noexcept {
   _state = State::None;
-  _catalog_snapshot.reset();
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
@@ -218,7 +215,7 @@ void Transaction::Destroy() noexcept {
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
-  EnsureCatalogSnapshot();
+  // TODO(codeworse): manage catalog snapshot in transaction
   auto table_shard = GetCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,
@@ -231,7 +228,6 @@ void Transaction::ApplyTableStatsDiffs() noexcept {
   if (_table_rows_deltas.empty()) {
     return;
   }
-  EnsureCatalogSnapshot();
   auto snapshot = GetCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
     auto table_shard = snapshot->GetTableShard(table_id);

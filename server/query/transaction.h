@@ -64,15 +64,9 @@ class Transaction : public Config {
 
   Result Rollback();
 
-  std::shared_ptr<const catalog::Snapshot> GetCatalogSnapshot() const {
-    SDB_ASSERT(_catalog_snapshot);
-    return _catalog_snapshot;
-  }
-
-  void EnsureCatalogSnapshot() const {
-    if (!_catalog_snapshot) {
-      _catalog_snapshot = catalog::GetCatalog().GetSnapshot();
-    }
+  auto GetCatalogSnapshot() const {
+    // TODO(codeworse): manage with rocksdb snapshot
+    return catalog::GetCatalog().GetSnapshot();
   }
 
   void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
@@ -145,7 +139,6 @@ class Transaction : public Config {
   void ApplyTableStatsDiffs() noexcept;
 
   State _state = State::None;
-  mutable std::shared_ptr<const catalog::Snapshot> _catalog_snapshot;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;

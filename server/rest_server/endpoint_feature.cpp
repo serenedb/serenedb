@@ -50,8 +50,7 @@ void EndpointFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
   options
     ->addOption("--server.endpoint",
                 "Endpoint for client requests (e.g. "
-                "`http://127.0.0.1:8529`, or "
-                "`https://192.168.1.1:8529`)",
+                "`pgsql+tcp://127.0.0.1:7890`)",
                 new VectorParameter<StringParameter>(&_endpoints))
     .setLongDescription(R"(You can specify this option multiple times to let
 the SereneDB server listen for incoming requests on multiple endpoints.
@@ -60,6 +59,8 @@ The endpoints are normally specified either in SereneDB's configuration file or
 on the command-line with `--server.endpoint`. SereneDB supports different types
 of endpoints:
 
+- `pgsql+tcp://ipv4-address:port` - PostgreSQL wire protocol, using IPv4
+- `pgsql+tcp://[ipv6-address]:port` - PostgreSQL wire protocol, using IPv6
 - `tcp://ipv4-address:port` - TCP/IP endpoint, using IPv4
 - `tcp://[ipv6-address]:port` - TCP/IP endpoint, using IPv6
 - `ssl://ipv4-address:port` - TCP/IP endpoint, using IPv4, SSL encryption
@@ -70,20 +71,13 @@ You can use `http://` as an alias for `tcp://`, and `https://` as an alias for
 `ssl://`.
 
 If a TCP/IP endpoint is specified without a port number, then the default port
-(8529) is used.
+(7890) is used.
 
 If you use SSL-encrypted endpoints, you must also supply the path to a server
 certificate using the `--ssl.keyfile` option.
 
 ```bash
-serened --server.endpoint tcp://127.0.0.1:8529 \
-        --server.endpoint ssl://127.0.0.1:8530 \
-        --ssl.keyfile server.pem /tmp/data-dir
-
-...
-2022-11-07T10:39:30Z [1] INFO [6ea38] {general} using endpoint 'http+ssl://0.0.0.0:8530' for ssl-encrypted requests
-2022-11-07T10:39:30Z [1] INFO [6ea38] {general} using endpoint 'http+tcp://0.0.0.0:8529' for non-encrypted requests
-2022-11-07T10:39:31Z [1] INFO [cf3f4] {general} SereneDB (version 26.3.0 [linux]) is ready for business. Have fun!
+serened --server.endpoint pgsql+tcp://127.0.0.1:7890
 ```
 
 On one specific ethernet interface, each port can only be bound
@@ -99,9 +93,10 @@ To find out which services already use ports (so SereneDB can't bind them
 anymore), you can use the `netstat` command. It behaves a little different on
 each platform; run it with `-lnpt` on Linux for valuable information.
 
-SereneDB can also do a so called *broadcast bind* using `tcp://0.0.0.0:8529`.
-This way, it is reachable on all interfaces of the host. This may be useful on
-development systems that frequently change their network setup, like laptops.
+SereneDB can also do a so called *broadcast bind* using
+`pgsql+tcp://0.0.0.0:7890`. This way, it is reachable on all interfaces of
+the host. This may be useful on development systems that frequently change
+their network setup, like laptops.
 
 SereneDB can also listen to IPv6 link-local addresses via adding the zone ID
 to the IPv6 address in the form `[ipv6-link-local-address%zone-id]`. However,
@@ -116,7 +111,7 @@ command. The command lists all interfaces and assigned IP addresses. The
 link-local address may be `fe80::6257:18ff:fe82:3ec6%eth0` (IPv6 address plus
 interface name). A local IPv6 address may be `fd12:3456::789a`.
 To bind SereneDB to it, start `serened` with
-`--server.endpoint tcp://[fe80::6257:18ff:fe82:3ec6%eth0]:8529`.
+`--server.endpoint pgsql+tcp://[fe80::6257:18ff:fe82:3ec6%eth0]:7890`.
 You can use `telnet` to test the connection.)");
 
   options->addSection("tcp", "TCP features");

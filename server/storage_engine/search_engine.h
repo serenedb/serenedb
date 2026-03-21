@@ -54,8 +54,6 @@ enum class ThreadGroup : uint8_t {
   Consolidation,
 };
 
-void CleanupDatabase(ObjectId database_id);
-
 SearchEngine& GetSearchEngine();
 
 class SearchEngine final : public SerenedFeature {

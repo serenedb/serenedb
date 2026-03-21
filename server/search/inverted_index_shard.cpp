@@ -135,6 +135,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =
     GetPath(db_id, schema_id, index.GetRelationId(), index_id, GetId());
+  // TODO(mbkkt) maybe we should use create_directories result instead of
+  // exists?
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {

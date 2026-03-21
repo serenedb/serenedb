@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 #include "basics/buffer.h"
 #include "basics/sink.h"
 #include "gtest/gtest.h"

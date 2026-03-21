@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 namespace sdb::catalog {
 
 struct Snapshot;

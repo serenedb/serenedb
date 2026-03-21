@@ -18,6 +18,7 @@
 ///
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <boost/container/small_vector.hpp>

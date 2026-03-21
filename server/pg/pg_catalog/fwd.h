@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <boost/pfr.hpp>
 #include <boost/pfr/core_name.hpp>
 #include <initializer_list>

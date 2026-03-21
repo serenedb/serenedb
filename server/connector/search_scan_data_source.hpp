@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/connectors/Connector.h>
 
 #include <iresearch/analysis/token_attributes.hpp>

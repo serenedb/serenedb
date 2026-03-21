@@ -19,6 +19,8 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 #include <list>
 #include <map>
 #include <optional>

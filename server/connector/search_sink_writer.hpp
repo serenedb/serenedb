@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/vector/ComplexVector.h>
 
 #include <iresearch/index/index_writer.hpp>

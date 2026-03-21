@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <vpack/builder.h>
+
 #include "catalog/index.h"
-#include "vpack/builder.h"
 
 namespace sdb {
 

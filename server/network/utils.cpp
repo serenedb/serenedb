@@ -22,6 +22,7 @@
 #include "utils.h"
 
 #include <fuerte/types.h>
+#include <vpack/parser.h>
 
 #include "app/app_server.h"
 #include "auth/token_cache.h"
@@ -34,7 +35,6 @@
 #include "general_server/state.h"
 #include "network/methods.h"
 #include "network/network_feature.h"
-#include "vpack/parser.h"
 
 namespace sdb::network {
 

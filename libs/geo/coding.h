@@ -23,13 +23,12 @@
 
 #include <s2/s2region_term_indexer.h>
 #include <s2/s2shape.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
 #include <cstdint>
 #include <span>
 #include <vector>
-
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 
 class S2Polyline;
 class S2Polygon;

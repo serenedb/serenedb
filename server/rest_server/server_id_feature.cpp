@@ -21,6 +21,8 @@
 
 #include "server_id_feature.h"
 
+#include <vpack/vpack_helper.h>
+
 #include "app/app_server.h"
 #include "app/options/program_options.h"
 #include "basics/file_utils.h"
@@ -31,7 +33,6 @@
 #include "basics/system-functions.h"
 #include "rest_server/check_version_feature.h"
 #include "rest_server/database_path_feature.h"
-#include "vpack/vpack_helper.h"
 
 using namespace sdb::options;
 

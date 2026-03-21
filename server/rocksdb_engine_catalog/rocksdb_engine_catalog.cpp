@@ -41,6 +41,9 @@
 #include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
+#include <vpack/serializer.h>
+#include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <atomic>
 #include <filesystem>
@@ -118,9 +121,6 @@
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
-#include "vpack/serializer.h"
-#include "vpack/slice.h"
-#include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
 #include "catalog/search_common.h"

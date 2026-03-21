@@ -27,6 +27,7 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include "app/app_server.h"
 #include "basics/debugging.h"
@@ -45,7 +46,6 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "utils/exec_context.h"
-#include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
 #include "rocksdb_engine/rocksdb_collection.h"

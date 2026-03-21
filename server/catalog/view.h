@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include <vpack/serializer.h>
+#include <vpack/slice.h>
+
 #include "basics/containers/small_vector.h"
 #include "basics/result.h"
 #include "catalog/fwd.h"
@@ -28,8 +31,6 @@
 #include "catalog/object.h"
 #include "catalog/types.h"
 #include "query/config.h"
-#include "vpack/serializer.h"
-#include "vpack/slice.h"
 
 namespace sdb::catalog {
 

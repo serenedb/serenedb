@@ -24,10 +24,6 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <frozen/unordered_map.h>
-#include <vpack/builder.h>
-#include <vpack/iterator.h>
-#include <vpack/slice.h>
-#include <vpack/string.h>
 
 #include <exception>
 #include <magic_enum/magic_enum.hpp>
@@ -38,6 +34,11 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+
+#include "vpack/builder.h"
+#include "vpack/iterator.h"
+#include "vpack/slice.h"
+#include "vpack/string.h"
 
 #define BOOST_PFR_USE_STD_MAKE_INTEGRAL_SEQUENCE 1
 #include <boost/pfr.hpp>

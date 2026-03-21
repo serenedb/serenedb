@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 #include <vpack/utf8_helper.h>
 
@@ -50,7 +51,6 @@
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/serializer.h"
 
 #ifdef SDB_CLUSTER
 #include "cluster/cluster_feature.h"

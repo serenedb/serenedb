@@ -22,6 +22,7 @@
 #include "key_generator.h"
 
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <array>
 #include <boost/uuid/random_generator.hpp>
@@ -44,7 +45,6 @@
 #include "database/ticks.h"
 #include "frozen/unordered_map.h"
 #include "general_server/state.h"
-#include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
 #include "cluster/cluster_feature.h"

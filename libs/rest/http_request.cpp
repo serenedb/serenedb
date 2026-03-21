@@ -26,13 +26,13 @@
 #include <vpack/options.h>
 #include <vpack/parser.h>
 #include <vpack/validator.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/debugging.h"
 #include "basics/number_utils.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/utf8_helper.h"
-#include "vpack/vpack_helper.h"
 
 using namespace sdb;
 using namespace sdb::basics;

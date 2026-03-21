@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/analyzers.hpp>
@@ -34,8 +36,6 @@
 
 #include "catalog/object.h"
 #include "catalog/search_analyzer_impl.h"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 
 namespace sdb::catalog {
 

@@ -22,6 +22,7 @@
 #pragma once
 
 #include <velox/type/Type.h>
+#include <vpack/slice.h>
 
 #include "basics/fwd.h"
 #include "catalog/identifiers/identifier.h"
@@ -31,7 +32,6 @@
 #include "catalog/types.h"
 #include "catalog/validators.h"
 #include "general_server/state.h"
-#include "vpack/slice.h"
 
 namespace sdb {
 

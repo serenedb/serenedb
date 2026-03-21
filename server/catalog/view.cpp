@@ -21,12 +21,13 @@
 
 #include "view.h"
 
+#include <vpack/serializer.h>
+
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/graph_view.h"
 #include "catalog/sql_query_view.h"
 #include "general_server/state.h"
-#include "vpack/serializer.h"
 
 #ifdef SDB_CLUSTER
 #include "search/search_view.h"

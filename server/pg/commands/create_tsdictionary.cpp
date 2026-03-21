@@ -23,6 +23,8 @@
 #include <frozen/unordered_set.h>
 #include <unicode/locid.h>
 #include <vpack/builder.h>
+#include <vpack/value.h>
+#include <vpack/value_type.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -60,8 +62,6 @@
 #include "pg/tokenizer_options.h"
 #include "utils/elog.h"
 #include "utils/exec_context.h"
-#include "vpack/value.h"
-#include "vpack/value_type.h"
 
 namespace sdb::pg {
 namespace {

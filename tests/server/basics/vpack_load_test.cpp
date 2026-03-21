@@ -21,10 +21,10 @@
 
 #include <gtest/gtest.h>
 #include <vpack/builder.h>
+#include <vpack/serializer.h>
 #include <vpack/string.h>
 
 #include "inspection_test_helper.h"
-#include "vpack/serializer.h"
 
 namespace {
 

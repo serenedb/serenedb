@@ -26,6 +26,7 @@
 #include <vpack/builder.h>
 #include <vpack/literal.h>
 #include <vpack/options.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
 
@@ -38,7 +39,6 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "catalog/identifiers/object_id.h"
-#include "vpack/serializer.h"
 
 namespace {
 

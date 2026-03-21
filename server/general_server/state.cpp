@@ -35,6 +35,8 @@
 #ifdef SDB_CLUSTER
 #include "agency/async_agency_comm.h"
 #endif
+#include <vpack/vpack_helper.h>
+
 #include "app/app_server.h"
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
@@ -54,7 +56,6 @@
 #include "rest_server/database_path_feature.h"
 #include "rest_server/serened.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/vpack_helper.h"
 
 using namespace sdb;
 using namespace sdb::basics;

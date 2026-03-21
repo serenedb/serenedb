@@ -22,13 +22,6 @@
 #pragma once
 
 #include <absl/strings/str_cat.h>
-#include <vpack/builder.h>
-#include <vpack/exception.h>
-#include <vpack/iterator.h>
-#include <vpack/options.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-#include <vpack/value_type.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +38,13 @@
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
+#include "vpack/builder.h"
+#include "vpack/exception.h"
+#include "vpack/iterator.h"
+#include "vpack/options.h"
+#include "vpack/parser.h"
+#include "vpack/slice.h"
+#include "vpack/value_type.h"
 
 namespace vpack {
 

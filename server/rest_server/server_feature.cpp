@@ -21,6 +21,8 @@
 
 #include "server_feature.h"
 
+#include <vpack/vpack_helper.h>
+
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -37,7 +39,6 @@
 #include "general_server/state.h"
 #include "rest_server/upgrade_feature.h"
 #include "statistics/statistics_feature.h"
-#include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
 #include "cluster/cluster_feature.h"

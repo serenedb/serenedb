@@ -21,6 +21,8 @@
 
 #include "language_check_feature.h"
 
+#include <vpack/vpack_helper.h>
+
 #include "app/app_server.h"
 #include "app/language.h"
 #include "basics/application-exit.h"
@@ -31,7 +33,6 @@
 #include "basics/result.h"
 #include "basics/utf8_helper.h"
 #include "rest_server/database_path_feature.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb {
 namespace {

@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <vpack/serializer.h>
+
 #include <list>
 #include <map>
 #include <optional>
@@ -30,8 +32,6 @@
 #include <unordered_set>
 #include <variant>
 #include <vector>
-
-#include "vpack/serializer.h"
 
 namespace {
 

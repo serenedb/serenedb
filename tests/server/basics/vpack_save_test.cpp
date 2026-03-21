@@ -22,11 +22,11 @@
 #include <gtest/gtest.h>
 #include <vpack/builder.h>
 #include <vpack/parser.h>
+#include <vpack/serializer.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/errors.h"
 #include "inspection_test_helper.h"
-#include "vpack/serializer.h"
-#include "vpack/vpack_helper.h"
 
 namespace {
 

@@ -28,6 +28,7 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <atomic>
 
@@ -56,7 +57,6 @@
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
 #include "replication/replication_feature.h"

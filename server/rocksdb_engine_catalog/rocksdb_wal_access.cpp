@@ -24,6 +24,7 @@
 #include <rocksdb/utilities/transaction_db.h>
 #include <vpack/builder.h>
 #include <vpack/collection.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 
 #include <magic_enum/magic_enum.hpp>
@@ -55,7 +56,6 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
-#include "vpack/serializer.h"
 
 namespace sdb {
 namespace {

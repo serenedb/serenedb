@@ -19,13 +19,14 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <vpack/common.h>
+
 #include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/encoding_utils.h"
 #include "basics/errors.h"
 #include "basics/string_buffer.h"
 #include "gtest/gtest.h"
-#include "vpack/common.h"
 
 using namespace sdb;
 

@@ -20,6 +20,8 @@
 
 #include "catalog/search_analyzer_impl.h"
 
+#include <vpack/vpack_helper.h>
+
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
@@ -38,7 +40,6 @@
 #include "catalog/types.h"
 #include "catalog/vpack_helper.h"
 #include "frozen/set.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::search {
 

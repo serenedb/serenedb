@@ -39,12 +39,6 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/types.h>
-#include <vpack/collection.h>
-#include <vpack/common.h>
-#include <vpack/dumper.h>
-#include <vpack/iterator.h>
-#include <vpack/options.h>
-#include <vpack/slice.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -53,6 +47,12 @@
 #include <string_view>
 
 #include "basics/sink.h"
+#include "vpack/collection.h"
+#include "vpack/common.h"
+#include "vpack/dumper.h"
+#include "vpack/iterator.h"
+#include "vpack/options.h"
+#include "vpack/slice.h"
 
 namespace sdb::basics {
 namespace {

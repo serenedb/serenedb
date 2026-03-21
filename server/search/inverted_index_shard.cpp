@@ -23,6 +23,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
+#include <vpack/serializer.h>
 
 #include <chrono>
 #include <filesystem>
@@ -51,7 +52,6 @@
 #include "search/task.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
-#include "vpack/serializer.h"
 
 namespace sdb::search {
 namespace {

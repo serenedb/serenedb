@@ -22,7 +22,7 @@
 /// @author Copyright 2015, ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "vpack/vpack.h"
+#include <vpack/vpack.h>
 
 #include <chrono>
 #include <fstream>

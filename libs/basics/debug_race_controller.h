@@ -32,8 +32,8 @@
 #include <vector>
 
 namespace sdb {
-
 namespace app {
+
 class AppServer;
 }
 

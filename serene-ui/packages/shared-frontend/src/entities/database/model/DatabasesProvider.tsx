@@ -5,6 +5,7 @@ import {
     useExecuteQuery,
     useGetConnections,
 } from "@serene-ui/shared-frontend";
+import type { QueryExecutionResultSchema } from "@serene-ui/shared-core";
 
 type DatabaseRecord = { name: string };
 
@@ -21,12 +22,14 @@ export const DatabasesProvider = ({
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
 
-    const { mutateAsync: executeQuery } = useExecuteQuery<DatabaseRecord[]>();
+    const { mutateAsync: executeQuery } =
+        useExecuteQuery<QueryExecutionResultSchema[]>();
     const { data: connections } = useGetConnections();
     const { currentConnection, setCurrentConnection } = useConnection();
 
     const abortControllerRef = useRef<AbortController | null>(null);
     const hasLoadedRef = useRef(false);
+    const autoSelectedConnectionIdRef = useRef<number | null>(null);
 
     const connectionIdKey = currentConnection.connectionId;
 
@@ -37,21 +40,40 @@ export const DatabasesProvider = ({
     }, [connections, currentConnection.connectionId]);
 
     useEffect(() => {
-        if (
-            activeConnection?.database &&
-            activeConnection.database.trim() !== "" &&
-            activeConnection.database !== currentConnection.database
-        ) {
-            setCurrentConnection((prev) => ({
-                ...prev,
-                database: activeConnection.database,
-            }));
+        if (!connectionIdKey || connectionIdKey === -1) {
+            autoSelectedConnectionIdRef.current = null;
+            return;
         }
-    }, [
-        activeConnection?.database,
-        currentConnection.database,
-        setCurrentConnection,
-    ]);
+
+        if (!activeConnection) {
+            return;
+        }
+
+        if (autoSelectedConnectionIdRef.current === connectionIdKey) {
+            return;
+        }
+
+        autoSelectedConnectionIdRef.current = connectionIdKey;
+
+        const defaultDatabase = activeConnection.database?.trim();
+
+        // Apply the connection's default database only once per connection
+        // switch so it doesn't fight with database validation in the combobox.
+        if (!defaultDatabase) {
+            return;
+        }
+
+        setCurrentConnection((prev) => {
+            if (prev.connectionId !== connectionIdKey || prev.database) {
+                return prev;
+            }
+
+            return {
+                ...prev,
+                database: defaultDatabase,
+            };
+        });
+    }, [activeConnection, connectionIdKey, setCurrentConnection]);
 
     useEffect(() => {
         hasLoadedRef.current = false;
@@ -84,7 +106,11 @@ export const DatabasesProvider = ({
                     return;
                 }
 
-                setDatabases(data.result.map((database) => database.name));
+                setDatabases(
+                    (data.results?.[0]?.rows || []).map(
+                        (database) => (database as DatabaseRecord).name,
+                    ),
+                );
             } catch (err) {
                 if (currentAbortController.signal.aborted) return;
                 console.error("Failed to fetch databases:", err);
@@ -130,7 +156,11 @@ export const DatabasesProvider = ({
                     return;
                 }
 
-                setDatabases(data.result.map((database) => database.name));
+                setDatabases(
+                    (data.results?.[0]?.rows || []).map(
+                        (database) => (database as DatabaseRecord).name,
+                    ),
+                );
                 hasLoadedRef.current = true;
             } catch (err) {
                 if (currentAbortController.signal.aborted) return;

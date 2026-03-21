@@ -38,6 +38,9 @@ class RocksDBSinkWriterBase {
     return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
 
+  void Finish() {}
+  void Abort() {}
+
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
@@ -51,13 +54,22 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
                     rocksdb::ColumnFamilyHandle& cf)
     : RocksDBSinkWriterBase(transaction, cf) {}
 
-  void SetColumnIndex(size_t /*column_idx*/) {}
+  void SetColumnIndex(size_t column_idx) {}
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();
 
   void DeleteCell(std::string_view full_key);
+};
+
+class NoopSinkWriter {
+ public:
+  void SetColumnIndex(size_t column_idx) {}
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) {}
+  void Finish() {}
+  void Abort() {}
 };
 
 }  //  namespace sdb::connector

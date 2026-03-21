@@ -22,6 +22,7 @@
 #include "validators.h"
 
 #include <vpack/validation.h>
+#include <vpack/vpack_helper.h>
 
 #include <array>
 #include <string_view>
@@ -33,7 +34,6 @@
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb {
 

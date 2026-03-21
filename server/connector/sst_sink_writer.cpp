@@ -23,14 +23,15 @@
 #include <absl/base/internal/endian.h>
 
 #include <filesystem>
+#include <iresearch/utils/bytes_utils.hpp>
 #include <string>
 
 #include "basics/assert.h"
-#include "basics/random/random_generator.h"
+#include "basics/debugging.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
+#include "catalog/identifiers/revision_id.h"
 #include "catalog/table_options.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
@@ -39,7 +40,6 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
-
 namespace {
 
 template<typename Buffer>
@@ -224,12 +224,8 @@ template class SSTBlockBuilder<true>;
 template class SSTBlockBuilder<false>;
 
 std::string GenerateSSTDirPath() {
-  auto now = std::chrono::system_clock::now();
-  auto timestamp =
-    std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
-      .count();
-  return absl::StrCat(GetServerEngine().path(), "/", "bulk_insert_", timestamp,
-                      "_", random::RandU64());
+  return absl::StrCat(GetServerEngine().path(), "/", kBulkInsertDirName, "/",
+                      RevisionId::create().id());
 }
 
 template<bool IsGeneratedPK>
@@ -362,6 +358,7 @@ void SSTSinkWriter<IsGeneratedPK>::Finish() {
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));
   }
+  SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
 }
 
 template<bool IsGeneratedPK>

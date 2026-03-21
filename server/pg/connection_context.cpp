@@ -36,17 +36,20 @@ ConnectionContext::ConnectionContext(std::string_view user,
     _send_buffer{send_buffer},
     _copy_queue{copy_queue} {}
 
-std::string ConnectionContext::GetCurrentSchema() const {
+std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
+  std::shared_ptr<const catalog::Snapshot> snapshot) const {
   auto database_id = ExecContext::GetDatabaseId();
   auto search_path = Config::Get<VariableType::PgSearchPath>("search_path");
-  auto catalog = SerenedServer::Instance()
-                   .getFeature<catalog::CatalogFeature>()
-                   .Global()
-                   .GetSnapshot();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return catalog->GetSchema(database_id, schema_name);
+    return snapshot->GetSchema(database_id, schema_name);
   });
 
   return it != search_path.end() ? *it : "";
 }
+
+std::string ConnectionContext::GetCurrentSchema() const {
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  return GetCurrentSchemaFromSnapshot(std::move(snapshot));
+}
+
 }  // namespace sdb

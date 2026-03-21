@@ -14,47 +14,40 @@
 
 </div>
 
-SereneDB unifies **Elasticsearch-like search** and **ClickHouse-like analytics** in a single, powerful, **Postgres-compatible** database.
+SereneDB unifies **Elasticsearch-like search** and **ClickHouse-like analytics** in a single, **Postgres-compatible** database.
 
-We are building the world’s first distributed, real-time search database — bringing search and analytical processing together for blazing-fast performance and eliminating data duplication. We aim at revolutionizing the traditional search space, by providing consistent search experience with frequent updates and a postgres-compatible layer for ease of use. Our mission is to provide an easy-to-use unified search and analytics solution to change the way applications store and retrieve their data.
+Search is a first-class citizen of the query engine. All search functionality is powered by [IResearch](libs/iresearch/README.md), an open-source C++ information retrieval library that core members of the SereneDB team have been developing since 2016.
 
 ## Links
 
 * [Official website](https://www.serenedb.com) for a quick high-level overview of SereneDB.
-* [Blog](https://www.serenedb.com/blog) for technical articles, project announcements, and event updates.
+* [Blog](https://www.serenedb.com/blog) for technical articles, project announcements and event updates.
 * [Slack](https://www.serenedb.com/slack) and [Telegram](https://telegram.me/serenedb) for real-time discussion and support.
 * [Reddit](https://www.reddit.com/r/serenedb) for community discussions and Q&A.
 * [LinkedIn](https://www.linkedin.com/company/serenedb) for official company news and professional updates.
-* [X](https://x.com/serenedata) for quick updates, announcements, and community news.
+* [X](https://x.com/serenedata) for quick updates, announcements and community news.
 
 ## Why Choose SereneDB?
 
 SereneDB is designed to be powerful, convenient and dev-friendly.
 
-Here’s what you can look forward to once we release SereneDB in **February 2026**:
-
-* **Unified Search & Analytics:** Get the search experience of Elasticsearch and the analytical power of ClickHouse in a **single, high-performance solution**.
+* **Unified Search & Analytics:** The search experience of Elasticsearch and the analytical power of ClickHouse in a **single, high-performance solution**.
 * **Postgres-Compatible:** Leverage your existing Postgres ecosystem, tools and knowledge. If you know SQL, you know SereneDB.
-* **Faster Than Elasticsearch:** Achieve superior performance with our own state-of-the-art search engine. (Benchmarks are coming soon!)
-* **Efficient Real-Time Updates:** Benefit from efficient, column-wise updates that keep your data fresh without performance hits.
-* **Vector & Hybrid Search:** Built for the future of AI-powered applications with state-of-the-art vector and hybrid search capabilities.
-* **Cool UI Client:** Manage your data with an intuitive and slick Postgres-compatible user interface.
+* **Faster Than Elasticsearch:** Powered by IResearch, which outperforms Lucene (the engine behind Elasticsearch) across every query type in the [Search Benchmark, the Game](https://serenedb.com/search-benchmark-game).
+* **Efficient Real-Time Updates:** Column-wise updates that keep your data fresh without performance hits.
+* **Vector & Hybrid Search:** Built-in vector search and hybrid ranking for AI-powered applications.
+* **UI Client:** An intuitive Postgres-compatible UI for managing and querying your data.
 
 ## Our Philosophy
 
-We're building SereneDB in the open and our values reflect that.
-
 * **Truly Open Source:** The complete, single-node version is and always will be licensed under **Apache 2.0**.
-* **Built for Scale:** We offer horizontal scalability, high availability and advanced security for our business users.
-* **Transparent Performance:** We are developing an **open benchmark infrastructure** to provide clear, reproducible proof of our speed and efficiency.
+* **Built for Scale:** Horizontal scalability, high availability and advanced security for production deployments.
+* **Transparent Performance:** All benchmarks are open and reproducible. Methodology, hardware and raw results are published alongside numbers.
 * **Giving Back:** We build on, contribute back to and openly collaborate with the open-source community, including projects like Velox, PostgreSQL and RocksDB.
 * **Open Interaction:** Your feedback matters. We are committed to open communication and collaboration with our community.
 
 ## Get Involved
 
-The journey is just beginning and we need your support!
-
-* **⭐ Star this repo** to show your interest and help us spread the word!
+* **⭐ Star this repo** to show your interest and help us grow.
 * **Watch** releases to stay updated on our progress.
-
-**Follow us, star us and join our mission to revolutionize data analytics.**
+* Join the conversation on [Slack](https://www.serenedb.com/slack), [Telegram](https://telegram.me/serenedb) or [Reddit](https://www.reddit.com/r/serenedb).

@@ -57,14 +57,8 @@ Result CreateRootRole(bool skip_if_exists) {
     new_role->grantDatabase("*", Level::RW);
     return new_role;
   };
-
-  auto r =
-    catalog.ChangeRole(kRootUserName,
-                       [&](const catalog::Role& old_role,
-                           std::shared_ptr<catalog::Role>& new_role) -> Result {
-                         new_role = create_root();
-                         return {};
-                       });
+  auto root_role = create_root();
+  auto r = catalog.CreateRole(std::move(root_role));
 
   if (r.ok() || (skip_if_exists && r.errorNumber() == ERROR_USER_DUPLICATE)) {
     return {};

@@ -11,7 +11,7 @@ export const OpenConnectionsModalIcon: React.FC<
     const { setOpen } = useConnectionsModal();
     return (
         <Button
-            variant={"thirdly"}
+            variant={"secondary"}
             onClick={() => setOpen(true)}
             size={"icon"}
             className={className}

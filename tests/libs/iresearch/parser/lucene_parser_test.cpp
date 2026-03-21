@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/parser/parser.h>
 
 #include "basics/down_cast.h"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/parser/parser.h"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
@@ -69,8 +69,9 @@ void AssertWildcard(const irs::Filter& f, std::string_view field,
   const auto& wc = sdb::basics::downCast<irs::ByWildcard>(f);
   EXPECT_EQ(field, wc.field());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{wc.options().term}));
-  if (boost > 0.0f)
+  if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, wc.Boost());
+  }
 }
 
 void AssertFuzzy(const irs::Filter& f, std::string_view field,
@@ -79,8 +80,9 @@ void AssertFuzzy(const irs::Filter& f, std::string_view field,
   EXPECT_EQ(field, fuzzy.field());
   EXPECT_EQ(value, irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(distance, fuzzy.options().max_distance);
-  if (boost > 0.0f)
+  if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, fuzzy.Boost());
+  }
 }
 
 void AssertRange(const irs::Filter& f, std::string_view field,
@@ -1747,6 +1749,36 @@ TEST_F(LuceneParserTest, ComplexMultiFieldNested) {
   ASSERT_EQ(2, g2.GetOptional().size());
   AssertTerm(g2.GetOptional()[0], "author", "foo");
   AssertTerm(g2.GetOptional()[1], "author", "bar");
+}
+
+// Query: "+open source software licenses"
+// Expected: required=[open], optional=[source, software, licenses]
+TEST_F(LuceneParserTest, RequiredWithOptionals) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "+open source software licenses").ok());
+  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_EQ(3, OptionalRoot().size());
+
+  AssertTerm(RequiredRoot()[0], "content", "open");
+  AssertTerm(OptionalRoot()[0], "content", "source");
+  AssertTerm(OptionalRoot()[1], "content", "software");
+  AssertTerm(OptionalRoot()[2], "content", "licenses");
+}
+
+// Query: "+open" — required only, no optional
+TEST_F(LuceneParserTest, RequiredOnly) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "+open").ok());
+  ASSERT_EQ(1, RequiredRoot().size());
+  ASSERT_TRUE(OptionalRoot().empty());
+  AssertTerm(RequiredRoot()[0], "content", "open");
+}
+
+// Query: "open source" — optional only (no + prefix), no required
+TEST_F(LuceneParserTest, OptionalOnly) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "open source").ok());
+  ASSERT_TRUE(RequiredRoot().empty());
+  ASSERT_EQ(2, OptionalRoot().size());
+  AssertTerm(OptionalRoot()[0], "content", "open");
+  AssertTerm(OptionalRoot()[1], "content", "source");
 }
 
 }  // namespace

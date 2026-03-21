@@ -20,29 +20,27 @@
 
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
-#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_data_source.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
+#include "search_test_utils.hpp"
 
 using namespace sdb;
 using namespace sdb::connector;
-using namespace sdb::connector::search;
 
 namespace {
 
@@ -52,18 +50,19 @@ class DataSourceWithSearchTest : public ::testing::Test,
                                  public velox::test::VectorTestBase {
  public:
   static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
-    return {.analyzer = {std::make_unique<irs::StringTokenizer>()},
+    auto make_identity = [] {
+      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
+                         vpack::Slice::emptyObjectSlice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
             .features = irs::IndexFeatures::None};
   }
 
   static void SetUpTestCase() {
     velox::memory::MemoryManager::testingSetInstance({});
-    // TODO(Dronplane): make it to the main function of tests
-    // while running this many times makes no harm but is redundant
-    irs::analysis::analyzers::Init();
-    irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
+    test::RegisterSearchEntities();
   }
 
   void SetUp() final {
@@ -148,14 +147,14 @@ class DataSourceWithSearchTest : public ::testing::Test,
                          std::views::transform([](auto& a) { return a.id; }));
 
     index_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkInsertWriter>(
+      std::make_unique<connector::SearchSinkInsertWriter>(
         index_transaction, AnalyzerProvider, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),
                                *pool_.get(), object_key, pk, all_column_oids,
                                WriteConflictPolicy::Replace, rows_affected,
-                               std::move(index_writers));
+                               std::move(index_writers), _table_lock);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -188,10 +187,11 @@ class DataSourceWithSearchTest : public ::testing::Test,
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
+  absl::Mutex _table_lock;
 };
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -225,9 +225,9 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
   }
   auto reader = irs::DirectoryReader(_dir, _codec);
   auto query = or_filter->prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                              velox::ROW(names, types), all_column_oids,
+                              all_column_oids[0], kObjectKey, reader, *query);
   auto expected =
     makeRowVector({makeFlatVector<int32_t>({1, 100}),
                    makeFlatVector<velox::StringView>({"1", "100"}),
@@ -249,7 +249,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
 }
 
 TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -286,9 +286,9 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
   }
   auto reader = irs::DirectoryReader(_dir, _codec);
   auto query = or_filter->prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                              velox::ROW(names, types), all_column_oids,
+                              all_column_oids[0], kObjectKey, reader, *query);
   const auto expected =
     makeRowVector({makeFlatVector<velox::StringView>({"1", "100"}),
                    makeFlatVector<velox::StringView>({"value1", "value3"})});
@@ -383,6 +383,114 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
     } while (true);
     // two docs per segment
     ASSERT_EQ(total, kSegmentCount * 2);
+  }
+}
+
+TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<std::string> names = {"id", "value", "description"};
+  std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
+                                         {.id = 1, .name = names[1]},
+                                         {.id = 2, .name = names[2]}};
+
+  std::vector<velox::TypePtr> types = {velox::INTEGER(), velox::VARCHAR(),
+                                       velox::VARCHAR()};
+
+  std::vector<velox::VectorPtr> data = {
+    makeFlatVector<int32_t>({1, 42, 100, 9001}),
+    makeFlatVector<velox::StringView>({"1", "42", "100", "9001"}),
+    makeFlatVector<velox::StringView>(
+      {"value1", "value2", "value3", "value4"})};
+  ObjectId object_key;
+  primary_key::Keys written_row_keys{*pool_.get()};
+  MakeRocksDBWrite(names, data, all_columns, object_key, written_row_keys);
+  auto or_filter = std::make_unique<irs::Or>();
+  {
+    auto& term_filter = or_filter->add<irs::ByTerm>();
+    *term_filter.mutable_field() =
+      std::string{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9};
+    term_filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("100"));
+  }
+  {
+    auto& term_filter = or_filter->add<irs::ByTerm>();
+    *term_filter.mutable_field() =
+      std::string{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9};
+    term_filter.mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view("value1"));
+  }
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    auto query = or_filter->prepare({.index = reader});
+    SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                                velox::ROW(names, types), all_column_oids,
+                                all_column_oids[0], kObjectKey, reader, *query);
+    auto expected =
+      makeRowVector({makeFlatVector<int32_t>({1, 100}),
+                     makeFlatVector<velox::StringView>({"1", "100"}),
+                     makeFlatVector<velox::StringView>({"value1", "value3"})});
+
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(10, future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    facebook::velox::test::assertEqualVectors(expected, read.value());
+    const auto final_res = source.next(10, future);
+    ASSERT_TRUE(final_res.has_value());
+    ASSERT_EQ(final_res.value(), nullptr);
+    ASSERT_TRUE(future.isReady());
+  }
+
+  {
+    auto index_transaction = _data_writer->GetBatch();
+    std::vector<std::unique_ptr<SinkIndexWriter>> delete_writers;
+    delete_writers.emplace_back(
+      std::make_unique<connector::SearchSinkDeleteWriter>(index_transaction));
+
+    rocksdb::TransactionOptions trx_opts;
+    trx_opts.skip_concurrency_control = true;
+    trx_opts.lock_timeout = 100;
+    rocksdb::WriteOptions wo;
+    std::unique_ptr<rocksdb::Transaction> transaction_delete{
+      _db->BeginTransaction(wo, trx_opts, nullptr)};
+    size_t rows_affected = 0;
+    RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
+                                      velox::ROW(names, types), kObjectKey,
+                                      all_columns, rows_affected,
+                                      std::move(delete_writers), _table_lock);
+    auto delete_data = makeRowVector({makeFlatVector<int32_t>({100})});
+    delete_sink.appendData(delete_data);
+    ASSERT_TRUE(delete_sink.finish());
+    ASSERT_TRUE(transaction_delete->Commit().ok());
+    ASSERT_TRUE(index_transaction.Commit());
+    ASSERT_TRUE(_data_writer->Commit());
+  }
+
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    auto query = or_filter->prepare({.index = reader});
+    SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                                velox::ROW(names, types), all_column_oids,
+                                all_column_oids[0], kObjectKey, reader, *query);
+    auto expected = makeRowVector(
+      {makeFlatVector<int32_t>({1}), makeFlatVector<velox::StringView>({"1"}),
+       makeFlatVector<velox::StringView>({"value1"})});
+
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(10, future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    facebook::velox::test::assertEqualVectors(expected, read.value());
+    const auto final_res = source.next(10, future);
+    ASSERT_TRUE(final_res.has_value());
+    ASSERT_EQ(final_res.value(), nullptr);
+    ASSERT_TRUE(future.isReady());
   }
 }
 

@@ -46,6 +46,10 @@ constexpr doc_id_t invalid() noexcept { return 0; }
 constexpr doc_id_t(min)() noexcept { return 1; }
 constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
 
+inline constexpr doc_id_t kBlockSize = 128;
+inline constexpr doc_id_t kSkipSize = 32;
+inline constexpr uint32_t kMaxSkipLevels = 5;
+
 }  // namespace doc_limits
 namespace field_limits {
 
@@ -70,6 +74,8 @@ constexpr uint32_t eof() noexcept {
 }
 constexpr bool eof(uint32_t pos) noexcept { return eof() == pos; }
 constexpr uint32_t(min)() noexcept { return 1; }
+
+inline constexpr uint32_t kBlockSize = 128;
 
 }  // namespace pos_limits
 namespace writer_limits {

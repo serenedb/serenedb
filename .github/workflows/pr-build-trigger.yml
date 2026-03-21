@@ -1,0 +1,265 @@
+name: PR-Build-Trigger
+
+on:
+  pull_request:
+    types: [opened]
+  issue_comment:
+    types: [edited]
+
+jobs:
+  post-checkboxes:
+    # Post build trigger form as a bot comment when PR is opened
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/workflows/build-manual.yml
+          sparse-checkout-cone-mode: false
+
+      # TODO: use yq or install js-yaml to parse YAML properly instead of awk/sed
+      - name: Parse build-manual.yml
+        id: parse
+        run: |
+          FILE=".github/workflows/build-manual.yml"
+          extract_options() {
+            awk "/^      $1:/{ found=1; next } found && /options:/{ opts=1; next } opts && /^ *- /{ gsub(/^ *- /,\"\"); print; next } opts && !/^ *- /{ exit }" "$FILE"
+          }
+          extract_default() {
+            awk "/^      $1:/{ found=1; next } found && /default:/{ gsub(/.*default: *'?/,\"\"); gsub(/'$/,\"\"); print; exit }" "$FILE"
+          }
+          for FIELD in PRESET LOCATION; do
+            {
+              echo "${FIELD}_OPTIONS<<EOF"
+              extract_options "$FIELD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=$(extract_default "$FIELD")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Post build triggers comment
+        uses: actions/github-script@v7
+        env:
+          PRESET_OPTIONS: ${{ steps.parse.outputs.PRESET_OPTIONS }}
+          PRESET_DEFAULT: ${{ steps.parse.outputs.PRESET_DEFAULT }}
+          LOCATION_OPTIONS: ${{ steps.parse.outputs.LOCATION_OPTIONS }}
+          LOCATION_DEFAULT: ${{ steps.parse.outputs.LOCATION_DEFAULT }}
+        with:
+          script: |
+            const fields = ['PRESET', 'LOCATION'];
+            const sections = fields.map(key => {
+              const options = process.env[`${key}_OPTIONS`].split('\n').filter(Boolean);
+              const def = process.env[`${key}_DEFAULT`];
+              const checkboxes = options.map(opt =>
+                `- [${opt === def ? 'x' : ' '}] \`${opt}\``
+              ).join('\n');
+              return `#### ${key}\n${checkboxes}`;
+            });
+
+            const body = [
+              '### Build Triggers',
+              '_Tick **Run Build** and wait for the bot to launch jobs and reset the checkbox._',
+              '',
+              sections.join('\n\n'),
+              '',
+              '---',
+              '- [ ] **Run Build**',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: body,
+            });
+
+  trigger-build:
+    # React to "Run Build" checkbox in a bot comment on a PR
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'edited' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '### Build Triggers') &&
+      contains(github.event.comment.body, '- [x] **Run Build**')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/workflows/build-manual.yml
+          sparse-checkout-cone-mode: false
+
+      # TODO: use yq or install js-yaml to parse YAML properly instead of awk/sed
+      - name: Parse build-manual.yml
+        id: parse
+        run: |
+          FILE=".github/workflows/build-manual.yml"
+          extract_options() {
+            awk "/^      $1:/{ found=1; next } found && /options:/{ opts=1; next } opts && /^ *- /{ gsub(/^ *- /,\"\"); print; next } opts && !/^ *- /{ exit }" "$FILE"
+          }
+          extract_default() {
+            awk "/^      $1:/{ found=1; next } found && /default:/{ gsub(/.*default: *'?/,\"\"); gsub(/'$/,\"\"); print; exit }" "$FILE"
+          }
+          for FIELD in PRESET LOCATION; do
+            {
+              echo "${FIELD}_OPTIONS<<EOF"
+              extract_options "$FIELD"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "${FIELD}_DEFAULT=$(extract_default "$FIELD")" >> "$GITHUB_OUTPUT"
+          done
+          # Collect all input keys and their defaults for dispatch
+          {
+            echo "DEFAULTS<<EOF"
+            awk '/^      [A-Z_0-9]+:$/{ key=$1; sub(/:$/,"",key) } /^        default:/{
+              val=$0; sub(/.*default: */,"",val); gsub(/^'"'"'|'"'"'$/,"",val); print key"="val
+            }' "$FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Parse form and trigger build
+        uses: actions/github-script@v7
+        env:
+          PRESET_OPTIONS: ${{ steps.parse.outputs.PRESET_OPTIONS }}
+          LOCATION_OPTIONS: ${{ steps.parse.outputs.LOCATION_OPTIONS }}
+          INPUT_DEFAULTS: ${{ steps.parse.outputs.DEFAULTS }}
+        with:
+          script: |
+            const comment = context.payload.comment;
+            const body = comment.body || '';
+            const prNumber = context.payload.issue.number;
+
+            // Get PR details
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const branch = pr.head.ref;
+            const sha = pr.head.sha;
+
+            // Parse all checked values for a section
+            function parseSelections(sectionName, validOptions) {
+              const re = new RegExp(`#### ${sectionName}\\n([\\s\\S]*?)(?=####|---|$)`);
+              const section = body.match(re)?.[1] || '';
+              const checked = [...section.matchAll(/- \[x\] `([\w-]+)`/g)].map(m => m[1]);
+              return checked.filter(v => validOptions.includes(v));
+            }
+
+            const validPresets = process.env.PRESET_OPTIONS.split('\n').filter(Boolean);
+            const validLocations = process.env.LOCATION_OPTIONS.split('\n').filter(Boolean);
+            const presets = parseSelections('PRESET', validPresets);
+            const locations = parseSelections('LOCATION', validLocations);
+
+            if (presets.length === 0 || locations.length === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `**Error:** Select at least one preset and one location.`,
+              });
+              return;
+            }
+
+            // Build dispatch inputs from defaults
+            const defaults = {};
+            for (const line of process.env.INPUT_DEFAULTS.split('\n')) {
+              const idx = line.indexOf('=');
+              if (idx > 0) defaults[line.slice(0, idx)] = line.slice(idx + 1);
+            }
+
+            // Snapshot run IDs before dispatching so we can find new ones later
+            const before = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build-manual.yml',
+              branch: branch,
+              per_page: 1,
+            });
+            const latestIdBefore = before.data.workflow_runs[0]?.id || 0;
+
+            // Dispatch one job per preset × location combination
+            const jobs = [];
+            for (const preset of presets) {
+              for (const location of locations) {
+                const statusContext = `SereneDB-Build / ${preset} (${location})`;
+                const dispatchInputs = { ...defaults,
+                  PRESET: preset,
+                  LOCATION: location,
+                  BUILD_CONFIG: JSON.stringify({ TRIGGERED_BY: context.actor, PR_SHA: sha, PR_STATUS_CONTEXT: statusContext }),
+                };
+
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'build-manual.yml',
+                  ref: branch,
+                  inputs: dispatchInputs,
+                });
+
+                jobs.push({ preset, location, statusContext });
+              }
+            }
+
+            // Wait for runs to appear (retry up to 30s)
+            let newRuns = [];
+            for (let attempt = 0; attempt < 6; attempt++) {
+              await new Promise(r => setTimeout(r, 5000));
+              const after = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'build-manual.yml',
+                branch: branch,
+                per_page: jobs.length + 5,
+              });
+              newRuns = after.data.workflow_runs.filter(r => r.id > latestIdBefore);
+              if (newRuns.length >= jobs.length) break;
+            }
+
+            // Build table rows — match runs to jobs by order (newest first = last dispatched)
+            const reversedRuns = [...newRuns].reverse();
+            const rows = jobs.map((job, i) => {
+              const run = reversedRuns[i];
+              if (run) {
+                github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: sha,
+                  state: 'pending',
+                  description: `Build ${job.preset} on ${job.location} in progress`,
+                  context: job.statusContext,
+                  target_url: run.html_url,
+                });
+              } else {
+                core.warning(`Could not find workflow run for ${job.preset} (${job.location}) — no commit status created`);
+              }
+              const link = run ? `[View run](${run.html_url})` : '⚠️ not found';
+              return `| \`${job.preset}\` | \`${job.location}\` | ${link} |`;
+            });
+
+            // Uncheck "Run Build" so it can be clicked again
+            const newBody = body.replace('- [x] **Run Build**', '- [ ] **Run Build**');
+            if (newBody !== body) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id,
+                body: newBody,
+              });
+            }
+
+            // Post confirmation reply
+            const table = `| Preset | Location | Link |\n|--------|----------|------|\n${rows.join('\n')}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `**Triggered ${jobs.length} build(s) on \`${branch}\`**\n\n${table}`,
+            });

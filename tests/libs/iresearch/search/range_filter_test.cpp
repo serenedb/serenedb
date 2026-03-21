@@ -137,12 +137,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -174,12 +170,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -204,12 +196,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -233,12 +221,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -267,12 +251,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -301,12 +281,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -331,12 +307,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -360,12 +332,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -394,12 +362,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -428,12 +392,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -457,12 +417,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -487,12 +443,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -520,12 +472,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -553,12 +501,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -582,12 +526,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -612,12 +552,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);

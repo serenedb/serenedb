@@ -29,10 +29,15 @@
 #include <velox/exec/Task.h>
 
 #include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "basics/fwd.h"
 #include "query/context.h"
-#include "query/external_executor.h"
+#include "query/executor.h"
 #include "query/runner.h"
 
 namespace sdb::query {
@@ -45,58 +50,88 @@ class Query {
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx);
 
-  static std::unique_ptr<Query> CreateExternal(
-    std::unique_ptr<ExternalExecutor> executor, const QueryContext& query_ctx);
+  static std::unique_ptr<Query> CreateDDL(std::unique_ptr<Executor> executor,
+                                          const QueryContext& query_ctx);
 
   static std::unique_ptr<Query> CreateShow(std::string_view show_variable,
                                            const QueryContext& query_ctx);
 
   static std::unique_ptr<Query> CreateShowAll(const QueryContext& query_ctx);
 
+  static std::unique_ptr<Query> CreateExplain(
+    const axiom::logical_plan::LogicalPlanNodePtr& root,
+    const QueryContext& query_ctx);
+
+  static std::unique_ptr<Query> CreatePipeline(
+    const axiom::logical_plan::LogicalPlanNodePtr& root,
+    const QueryContext& query_ctx,
+    std::vector<std::unique_ptr<Executor>> executors,
+    absl::AnyInvocable<void()> on_error);
+
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
-  std::string GetLogicalPlan() const;
+  std::string GetLogicalPlanText() const;
+  const auto& GetLogicalPlan() const { return _logical_plan; }
   const auto& GetInitialQueryGraphPlan() const {
     return _initial_query_graph_plan;
   }
   const auto& GetFinalQueryGraphPlan() const { return _final_query_graph_plan; }
   const auto& GetPhysicalPlan() const { return _physical_plan; }
   std::string GetExecutionPlan() const;
-  ExternalExecutor& GetExternalExecutor() const;
-
-  bool HasExternal() const { return _executor != nullptr; }
-
   bool IsDML() const {
     return _logical_plan &&
            _logical_plan->is(axiom::logical_plan::NodeKind::kTableWrite);
   }
 
+  bool IsCompiled() const { return _execution_plan != nullptr; }
+
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
-  std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task) const;
+  void SetExecutor(std::unique_ptr<Executor> executor);
+  void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
-  Runner MakeRunner() const;
+  auto GetExecutors() const { return std::span{_executors}; }
+  auto& GetOnError() { return _on_error; }
+
+  std::unique_ptr<Cursor> MakeCursor(UserTask&& user_task);
+
+  void MakeRunner();
+  Runner& GetRunner() { return _runner; }
+
+  velox::RowVectorPtr BuildBatch(
+    std::span<const std::vector<std::string>> columns) const;
+  velox::RowVectorPtr BuildBatch(
+    std::span<const std::vector<std::string_view>> columns) const;
+
+  void CompileQuery();
 
  private:
+  template<typename StringType>
+  velox::RowVectorPtr BuildBatchImpl(
+    std::span<const std::vector<StringType>> columns) const;
+
   // use for CreateQuery
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
-        const QueryContext& query_ctx);
-
-  // use for CreateExternal
-  Query(std::unique_ptr<ExternalExecutor> executor,
         const QueryContext& query_ctx);
 
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
-  void CompileQuery();
+  // use for CreatePipeline
+  Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
+        const QueryContext& query_ctx,
+        std::vector<std::unique_ptr<Executor>> executors,
+        absl::AnyInvocable<void()> on_error);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;
   axiom::runner::MultiFragmentPlanPtr _execution_plan;
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
-  std::unique_ptr<ExternalExecutor> _executor;
+
+  Runner _runner;  // runner is supposed to be destroyed after executors.
+  std::vector<std::unique_ptr<Executor>> _executors;
+  absl::AnyInvocable<void()> _on_error = [] {};
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;

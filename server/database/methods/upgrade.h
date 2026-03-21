@@ -25,9 +25,11 @@
 #include "database/methods/version.h"
 
 namespace sdb {
+
 class UpgradeFeature;
 
 namespace catalog {
+
 class Database;
 }
 

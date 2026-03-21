@@ -85,6 +85,11 @@ db error: ERROR: column "wrong_column" named in key does not exist
 statement ok
 CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
 
+
+statement error relation "vedernikoff" already exists
+CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
+
+
 statement error
 CREATE TABLE babsky (
     makak INTEGER,

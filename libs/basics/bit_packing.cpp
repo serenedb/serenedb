@@ -1467,7 +1467,6 @@ uint64_t FastpackAt<64>(const uint64_t* in, const size_t i) noexcept {
 }
 
 }  // namespace
-
 namespace irs::packed {
 
 void PackBlock(const uint32_t* IRS_RESTRICT in, uint32_t* IRS_RESTRICT out,

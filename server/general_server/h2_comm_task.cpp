@@ -49,6 +49,7 @@ using namespace sdb::basics;
 using std::string_view;
 
 namespace {
+
 constexpr std::string_view kSwitchingProtocols(
   "HTTP/1.1 101 Switching Protocols\r\nConnection: "
   "Upgrade\r\nUpgrade: h2c\r\n\r\n");
@@ -292,6 +293,7 @@ H2CommTask<T>::~H2CommTask() {
 }
 
 namespace {
+
 int OnErrorCallback(nghttp2_session* session, int lib_error_code,
                     const char* msg, size_t len, void*) try {
   // use INFO log level, its still hidden by default
@@ -346,6 +348,7 @@ ssize_t DataSourceReadLengthCallback(nghttp2_session* session,
             ", remote_max_frame_size: ", remote_max_frame_size);
   return (1 << 16);  // 64kB
 }
+
 }  // namespace
 
 /// init h2 session

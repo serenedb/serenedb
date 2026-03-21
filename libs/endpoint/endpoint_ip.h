@@ -30,6 +30,7 @@
 struct addrinfo;
 
 namespace sdb {
+
 class EndpointIp : public Endpoint {
  protected:
   EndpointIp(DomainType, EndpointType, TransportType, EncryptionType, int, bool,
@@ -59,4 +60,5 @@ class EndpointIp : public Endpoint {
   const uint16_t _port;
   const bool _reuse_address;
 };
+
 }  // namespace sdb

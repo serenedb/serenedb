@@ -104,9 +104,12 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     }
 
     return ResolveMergeType(
-      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+      ctx.scorer ? ScoreMergeType::Sum : ScoreMergeType::Noop,
+      [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
         using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-        return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs));
+        return irs::MakeDisjunction<Disjunction>(
+          ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+          std::move(itrs));
       });
   }
 

@@ -1,0 +1,323 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+INSERT INTO foo values (1, 'quick brown fox jumps over lazy dog', 'value a');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX foo_idx ON foo USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b, c FROM foo_idx WHERE PHRASE(b, 'over lazy dog');
+----
+a	b	c
+1	quick brown fox jumps over lazy dog	value a
+
+statement ok
+INSERT INTO foo values (2, 'quick red fox jumps over lazy dog', 'value a');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over lazy dog') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+statement ok
+UPDATE foo SET c = 'value abc' WHERE a = 1;
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query
+SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value abc') AND PHRASE(b, 'over lazy dog');
+----
+a	b	c
+1	quick brown fox jumps over lazy dog	value abc
+
+statement ok
+INSERT INTO foo values (3, 'quick red fox jumps over big dog', 'value a');
+
+statement ok
+INSERT INTO foo values (4, 'quick brown fox jumps over big dog', 'value b');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR PHRASE(b, 'red fox') ORDER BY a;
+----
+a	b
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR a = 1 ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+query
+SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value b') AND PHRASE(b, 'over big dog');
+----
+a	b	c
+4	quick brown fox jumps over big dog	value b
+
+statement ok
+DROP TABLE foo;
+
+control substitution on
+
+statement ok
+CREATE TABLE vedernikoff (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+INSERT INTO vedernikoff values (1, 'pudge goes mid every game', 'babsky');
+
+statement ok
+INSERT INTO vedernikoff values (2, 'anchin-chan reads manga all day', 'babsky');
+
+statement ok
+INSERT INTO vedernikoff values (3, 'anchin-chan watches anime at night', 'tuetue');
+
+statement ok
+INSERT INTO vedernikoff values (4, 'pudge goes bot every game', 'gayazov');
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(a, b test_english, c test_english);
+
+
+query
+SELECT COUNT(1) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+----
+count
+2
+
+
+query
+EXPLAIN (EXECUTION) SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
+  -- TableScan[0][vedernikoff, scan=search] ->
+
+
+query
+SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'anchin-chan') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+2	anchin-chan reads manga all day
+3	anchin-chan watches anime at night
+4	pudge goes bot every game
+
+query
+SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR a = 2 ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+2	anchin-chan reads manga all day
+4	pudge goes bot every game
+
+query
+SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'gayazov') AND PHRASE(b, 'every game');
+----
+a	b	c
+4	pudge goes bot every game	gayazov
+
+
+statement ok
+UPDATE vedernikoff SET c = 'deadinside' WHERE a = 3;
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff;
+
+query
+SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'deadinside') AND PHRASE(b, 'watches anime');
+----
+a	b	c
+3	anchin-chan watches anime at night	deadinside
+
+statement ok
+DROP TABLE vedernikoff;
+
+statement ok
+CREATE TABLE biksalen_memes (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO biksalen_memes VALUES
+  (1, 'pudge goes mid every game', 'clickclack university'),
+  (2, 'anchin-chan reads manga all day', 'clickclack university'),
+  (3, 'vedernikoff carries team again', 'deadinside academy');
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical');
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    a := a
+    b := b
+    c := c
+  - TableScan: biksalen_memes -> ROW<"a":INTEGER,"b":VARCHAR,"c":VARCHAR>
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'execution');
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
+  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical', EXPLAIN = 'execution');
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    a := a
+    b := b
+    c := c
+  - TableScan: biksalen_memes -> ROW<"a":INTEGER,"b":VARCHAR,"c":VARCHAR>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
+  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english) WITH (EXPLAIN = analyze);
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
+   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+     Input: 3 rows (<slt:ignore>, 1 batches), Output: 3 rows (<slt:ignore>, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+
+# EXPLAIN ANALYZE must actually create the index
+query
+SELECT a, b FROM donsimon_idx WHERE PHRASE(b, 'every game') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT a, b, c FROM donsimon_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+
+query
+SELECT a, b, c FROM donsimon_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+----
+a	b	c
+3	vedernikoff carries team again	deadinside academy
+
+query
+SELECT a, b FROM donsimon_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT * FROM donsimon_idx;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+3	vedernikoff carries team again	deadinside academy
+
+
+
+# TODO: add index backfill from external (file) table (in next PR.)
+
+# statement ok
+# CREATE TABLE babsky_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+#
+# statement ok
+# INSERT INTO babsky_src VALUES
+#   (1, 'pudge goes mid every game', 'clickclack university'),
+#   (2, 'anchin-chan reads manga all day', 'clickclack university'),
+#   (3, 'vedernikoff carries team again', 'deadinside academy'),
+#   (4, 'gayazov plays mass effect', 'deadinside academy'),
+#   (5, 'krivda writes sql at night', 'clickclack university');
+#
+# statement count 5
+# COPY babsky_src TO '/tmp/${__DATABASE__}_babsky_memes.parquet' (FORMAT PARQUET);
+#
+# statement ok
+# CREATE TABLE babsky_ext(
+#   a INT8,
+#   b TEXT,
+#   c TEXT
+# ) USING EXTERNAL
+# WITH (
+#   PATH = '/tmp/${__DATABASE__}_babsky_memes.parquet'
+# );
+#
+# statement ok
+# CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b, c);
+#
+# query
+# SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
+# ----
+# a	b
+# 1	pudge goes mid every game
+#
+# query
+# SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'anchin-chan') ORDER BY a;
+# ----
+# a	b
+# 2	anchin-chan reads manga all day
+#
+# query
+# SELECT a, b, c FROM babsky_ext_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+# ----
+# a	b	c
+# 1	pudge goes mid every game	clickclack university
+# 2	anchin-chan reads manga all day	clickclack university
+# 5	krivda writes sql at night	clickclack university
+#
+# query
+# SELECT a, b, c FROM babsky_ext_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+# ----
+# a	b	c
+# 3	vedernikoff carries team again	deadinside academy
+#
+# query
+# SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+# ----
+# a	b
+# 1	pudge goes mid every game
+# 4	gayazov plays mass effect
+#
+# statement ok
+# DROP TABLE babsky_ext;
+#
+# statement ok
+# DROP TABLE babsky_src;
+#

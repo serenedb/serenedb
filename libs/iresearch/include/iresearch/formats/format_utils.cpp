@@ -22,9 +22,7 @@
 
 #include "format_utils.hpp"
 
-#include "basics/shared.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/store/store_utils.hpp"
 
 namespace irs {
@@ -140,6 +138,21 @@ int64_t Checksum(const IndexInput& in) {
 
   SDB_ASSERT(0 == stream->Position());
   return stream->Checksum(length - sizeof(uint64_t));
+}
+
+void PrepareOutput(std::string& str, IndexOutput::ptr& out,
+                   const FlushState& state, std::string_view ext,
+                   std::string_view format, const int32_t version) {
+  SDB_ASSERT(!out);
+
+  FileName(str, state.name, ext);
+  out = state.dir->create(str);
+
+  if (!out) {
+    throw IoError{absl::StrCat("Failed to create file, path: ", str)};
+  }
+
+  WriteHeader(*out, format, version);
 }
 
 }  // namespace format_utils

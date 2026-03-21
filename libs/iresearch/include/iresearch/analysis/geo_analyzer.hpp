@@ -38,19 +38,17 @@ namespace irs {
 
 struct GeoFilterOptionsBase;
 
-}
-
+}  // namespace irs
 namespace irs::analysis {
 
-class GeoAnalyzer : public irs::analysis::Analyzer,
-                    private irs::util::Noncopyable {
+class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
  public:
   bool next() noexcept final;
-  using irs::analysis::Analyzer::reset;
+  using analysis::Analyzer::reset;
 
   virtual void prepare(GeoFilterOptionsBase& options) const = 0;
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);
   }
 
@@ -70,13 +68,13 @@ class GeoAnalyzer : public irs::analysis::Analyzer,
   S2RegionTermIndexer _indexer;
 
  private:
-  using attributes = std::tuple<irs::IncAttr, irs::TermAttr>;
+  using Attributes = std::tuple<IncAttr, TermAttr>;
 
   std::vector<std::string> _terms;
   const std::string* _begin{_terms.data()};
   const std::string* _end{_begin};
-  irs::OffsAttr _offset;
-  attributes _attrs;
+  OffsAttr _offset;
+  Attributes _attrs;
 };
 
 /// The analyzer capable of breaking up a valid geo point input
@@ -91,14 +89,14 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
 
   static constexpr std::string_view type_name() noexcept { return "geopoint"; }
   static bool normalize(std::string_view args, std::string& out);
-  static irs::analysis::Analyzer::ptr make(std::string_view args);
+  static analysis::Analyzer::ptr make(std::string_view args);
 
   // store point as [lng, lat] array to be GeoJSON compliant
-  static irs::bytes_view store(irs::Tokenizer* ctx, vpack::Slice slice);
+  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
 
   explicit GeoPointAnalyzer(const Options& options);
 
-  irs::TypeInfo::type_id type() const noexcept final {
+  TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoPointAnalyzer>::id();
   }
 
@@ -152,10 +150,10 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
 
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
   static bool normalize(std::string_view args, std::string& out);
-  static irs::analysis::Analyzer::ptr make(std::string_view args);
-  static irs::bytes_view store(irs::Tokenizer* ctx, vpack::Slice slice);
+  static analysis::Analyzer::ptr make(std::string_view args);
+  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
 
-  irs::TypeInfo::type_id type() const noexcept final {
+  TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoJsonAnalyzer>::id();
   }
 
@@ -169,8 +167,7 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   bool ResetImpl(std::string_view value, sdb::geo::coding::Options options,
                  Encoder* encoder);
 
-  virtual irs::bytes_view StoreImpl(irs::Tokenizer* ctx,
-                                    vpack::Slice slice) = 0;
+  virtual bytes_view StoreImpl(Tokenizer* ctx, vpack::Slice slice) = 0;
 
   sdb::geo::ShapeContainer _shape;
   S2Point _centroid;

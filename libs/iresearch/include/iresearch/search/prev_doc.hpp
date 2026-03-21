@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {

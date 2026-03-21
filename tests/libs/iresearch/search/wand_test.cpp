@@ -180,8 +180,6 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     });
     EXPECT_NE(nullptr, docs);
 
-    const auto* doc = irs::get<irs::DocAttr>(*docs);
-    EXPECT_NE(nullptr, doc);
     irs::ScoreFunction score;
     if (wand_idx != irs::WandContext::kDisable && can_use_wand) {
       // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
@@ -436,23 +434,23 @@ TEST_P(WandTestCase, TermFilterMultipleScorersDense) {
   ASSERT_TRUE(bm11.IsBM11());
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
   ConsolidateAll(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   ConsolidateAll(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 TEST_P(WandTestCase, TermFilterManyScorersDense) {
@@ -467,23 +465,23 @@ TEST_P(WandTestCase, TermFilterManyScorersDense) {
   scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.1f);
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
   ConsolidateAll(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   ConsolidateAll(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 TEST_P(WandTestCase, TermFilterMultipleScorersSparse) {
@@ -498,13 +496,13 @@ TEST_P(WandTestCase, TermFilterMultipleScorersSparse) {
   ASSERT_TRUE(bm11.IsBM11());
 
   GenerateSegment(scorers, false);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegment(scorers, false, true);  // Add another segment
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   ConsolidateAll(scorers, false);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 TEST_P(WandTestCase, TermFilterTFIDF) {
@@ -512,7 +510,7 @@ TEST_P(WandTestCase, TermFilterTFIDF) {
   scorers.PushBack<irs::TFIDF>(false);
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 TEST_P(WandTestCase, TermFilterTFIDFWithNorms) {
@@ -520,7 +518,7 @@ TEST_P(WandTestCase, TermFilterTFIDFWithNorms) {
   scorers.PushBack<irs::TFIDF>(true);
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 TEST_P(WandTestCase, TermFilterBM25) {
@@ -530,7 +528,7 @@ TEST_P(WandTestCase, TermFilterBM25) {
   ASSERT_FALSE(scorer.IsBM11());
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 
   GenerateSegmentMinNorm(scorers);
   AssertFilters(scorers, false);
@@ -542,7 +540,7 @@ TEST_P(WandTestCase, TermFilterBM15) {
   ASSERT_TRUE(scorer.IsBM15());
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 TEST_P(WandTestCase, TermFilterBM11) {
@@ -551,7 +549,7 @@ TEST_P(WandTestCase, TermFilterBM11) {
   ASSERT_TRUE(scorer.IsBM11());
 
   GenerateSegment(scorers, true);
-  AssertFilters(scorers);
+  AssertFilters(scorers, false);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

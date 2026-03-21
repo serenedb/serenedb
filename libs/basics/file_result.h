@@ -24,6 +24,7 @@
 #include "basics/result.h"
 
 namespace sdb {
+
 class FileResult {
  public:
   FileResult() : _result(), _sys_error_number(0) {}
@@ -43,4 +44,5 @@ class FileResult {
   Result _result;
   const int _sys_error_number;
 };
+
 }  // namespace sdb

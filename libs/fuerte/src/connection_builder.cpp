@@ -128,12 +128,14 @@ void ParseSchema(std::string_view schema,
 }
 
 namespace {
+
 bool IsInvalid(char c) { return c == ' ' || c == '\r' || c == '\n'; }
 char Lower(char c) { return (unsigned char)(c | 0x20); }
 bool IsAlpha(char c) { return (Lower(c) >= 'a' && Lower(c) <= 'z'); }
 bool IsNum(char c) { return ((c) >= '0' && (c) <= '9'); }
 bool IsAlphanum(char c) { return IsNum(c) || IsAlpha(c); }
 bool IsHostChar(char c) { return (IsAlphanum(c) || (c) == '.' || (c) == '-'); }
+
 }  // namespace
 
 ConnectionBuilder& ConnectionBuilder::endpoint(std::string_view spec) {

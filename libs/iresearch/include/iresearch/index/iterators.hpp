@@ -23,8 +23,12 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <immintrin.h>
+
+#include <bit>
 
 #include "basics/assert.h"
+#include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
@@ -43,18 +47,18 @@ namespace irs {
 struct PrepareScoreContext {
   const Scorer* scorer = nullptr;
   const SubReader* segment = nullptr;
-  ColumnArgsFetcher* fetcher;
+  ColumnArgsFetcher* fetcher = nullptr;
 };
 
 struct FillBlockScoreContext {
   const ScoreFunction* score = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
-  score_t* score_window = nullptr;
+  score_t* IRS_RESTRICT score_window = nullptr;
   ScoreMergeType merge_type = ScoreMergeType::Noop;
 };
 
 struct FillBlockMatchContext {
-  uint32_t* matches = 0;
+  uint32_t* IRS_RESTRICT matches = 0;
   size_t min_match_count = 0;
 };
 
@@ -68,6 +72,12 @@ class ScoreCollector {
   IRS_FORCE_INLINE Tag GetTag() const noexcept { return _tag; }
 
   virtual void Add(score_t score, doc_id_t doc) = 0;
+
+  virtual void AddWindow(const score_t* scores, const uint64_t* mask,
+                         doc_id_t min, size_t num_blocks, bool clear_score) = 0;
+
+  virtual void AddDocs(const doc_id_t* docs, size_t count,
+                       const score_t* scores) = 0;
 
  protected:
   explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}
@@ -99,22 +109,12 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     _score_threshold = &score_threshold;
   }
 
-  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) final {
+  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
     ++_count;
     if (score <= *_score_threshold) {
       return;
     }
-    *_hits_it = {score, doc};
-    ++_hits_it;
-    if (_hits_it != _hits_end) {
-      return;
-    }
-    _hits_it = _hits_pivot;
-    std::nth_element(_hits_begin, _hits_pivot, _hits_end,
-                     [](const auto& l, const auto& r) {
-                       return std::get<score_t>(l) > std::get<score_t>(r);
-                     });
-    *_score_threshold = std::get<score_t>(*_hits_pivot);
+    AddImpl(score, doc);
   }
 
   IRS_FORCE_INLINE uint64_t Finalize() {
@@ -124,7 +124,98 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     return _count;
   }
 
+  IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
+                                  doc_id_t min, size_t num_blocks,
+                                  bool clear_score) noexcept final {
+    auto threshold = _mm256_set1_ps(*_score_threshold);
+    for (size_t i = 0; i < num_blocks; ++i) {
+      auto word = mask[i];
+      if (word == 0) [[likely]] {
+        continue;
+      }
+
+      _count += std::popcount(word);
+      const score_t* IRS_RESTRICT const score_base =
+        scores + i * BitsRequired<uint64_t>();
+      word &= GetScoreMask(score_base, threshold);
+      const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
+
+      while (word != 0) {
+        const doc_id_t bit = std::countr_zero(word);
+        word = PopBit(word);
+        if (AddImpl(score_base[bit], doc_base + bit)) {
+          threshold = _mm256_set1_ps(*_score_threshold);
+          word &= GetScoreMask(score_base, threshold);
+        }
+      }
+
+      if (clear_score) {
+        std::memset(const_cast<score_t*>(score_base), 0,
+                    BitsRequired<uint64_t>() * sizeof(score_t));
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
+                                const score_t* scores) noexcept final {
+    _count += count;
+    auto threshold = _mm256_set1_ps(*_score_threshold);
+    size_t i = 0;
+
+    // Process groups of 8 with AVX2.
+    for (; i + 8 <= count; i += 8) {
+      auto scores_vec = _mm256_loadu_ps(scores + i);
+      auto cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+      auto pass = static_cast<unsigned>(_mm256_movemask_ps(cmp));
+
+      while (pass) {
+        const int bit = std::countr_zero(pass);
+        pass = PopBit(pass);
+        const score_t score = scores[i + bit];
+        if (AddImpl(score, docs[i + bit])) {
+          threshold = _mm256_set1_ps(*_score_threshold);
+          cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+          pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
+        }
+      }
+    }
+
+    // Scalar tail.
+    for (; i < count; ++i) {
+      if (scores[i] > *_score_threshold) {
+        AddImpl(scores[i], docs[i]);
+      }
+    }
+  }
+
  private:
+  IRS_FORCE_INLINE bool AddImpl(score_t score, doc_id_t doc) noexcept {
+    SDB_ASSERT(*_score_threshold < score);
+    *_hits_it = {score, doc};
+    ++_hits_it;
+    if (_hits_it != _hits_end) {
+      return false;
+    }
+    _hits_it = _hits_pivot;
+    std::nth_element(_hits_begin, _hits_pivot, _hits_end,
+                     [](const auto& l, const auto& r) {
+                       return std::get<score_t>(l) > std::get<score_t>(r);
+                     });
+    *_score_threshold = std::get<score_t>(*_hits_pivot);
+    return true;
+  }
+
+  IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,
+                                         __m256 threshold) const noexcept {
+    uint64_t mask = 0;
+    for (int i = 0; i < 64; i += 8) {
+      const uint64_t bits = _mm256_movemask_ps(
+        _mm256_cmp_ps(_mm256_loadu_ps(scores + i), threshold, _CMP_GT_OQ));
+      mask |= bits << i;
+    }
+    return mask;
+  }
+
   uint64_t _count = 0;
   score_t* IRS_RESTRICT _score_threshold = nullptr;
   ScoreDoc* IRS_RESTRICT _hits_it;
@@ -162,7 +253,7 @@ struct DocIterator : AttributeProvider {
 
   [[nodiscard]] static DocIterator::ptr empty() noexcept;
 
-  virtual doc_id_t value() const noexcept = 0;
+  IRS_FORCE_INLINE const doc_id_t& value() const noexcept { return _doc; }
 
   virtual doc_id_t advance() = 0;
 
@@ -198,7 +289,19 @@ struct DocIterator : AttributeProvider {
 
   virtual uint32_t count() { return CountImpl(*this); }
 
-  // TODO(mbkkt) Maybe implement FillBlock for all iterators?
+  // Fill a bitmap window [min, max) with documents from this iterator.
+  // Preconditions:
+  //   - min < max
+  //   - value() >= min (iterator must be positioned at or after window start)
+  // For each doc in [value(), max):
+  //   - Sets bit (doc - min) in mask
+  //   - If TrackMatch: increments match count, sets bit only when threshold met
+  //   - If scoring: accumulates scores into score.score_window
+  // Returns {next_doc, empty}:
+  //   - next_doc: first doc >= max (next unprocessed), or eof() if exhausted
+  //   - empty: true if no documents matched (always false when !TrackMatch)
+  // Postcondition:
+  //   - value() == next_doc
   virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
                                               uint64_t* mask,
                                               FillBlockScoreContext score,
@@ -206,7 +309,14 @@ struct DocIterator : AttributeProvider {
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
+  virtual uint32_t GetFreq() const {
+    SDB_ASSERT(false);
+    return 0;
+  }
+
  protected:
+  mutable doc_id_t _doc = doc_limits::invalid();
+
   IRS_FORCE_INLINE static uint32_t CountImpl(auto& self) {
     uint32_t count = 0;
     while (self.next()) {
@@ -227,7 +337,7 @@ struct DocIterator : AttributeProvider {
           const auto doc = self.advance();
           if (doc_limits::eof(doc)) [[unlikely]] {
             if (i != 0) {
-              fetcher.Fetch({docs.data(), i});
+              fetcher.Fetch(std::span<const doc_id_t>{docs.data(), i});
               scorer.Score(scores.data(), i);
               for (size_t j = 0; j < i; ++j) {
                 collector.Add(scores[j], docs[j]);
@@ -240,9 +350,7 @@ struct DocIterator : AttributeProvider {
         }
         fetcher.Fetch(docs);
         scorer.ScoreBlock(scores.data());
-        for (size_t j = 0; j != kScoreBlock; ++j) {
-          collector.Add(scores[j], docs[j]);
-        }
+        collector.AddDocs(docs.data(), kScoreBlock, scores.data());
       }
     });
   }
@@ -269,6 +377,7 @@ struct DocIterator : AttributeProvider {
     uint64_t* IRS_RESTRICT mask, [[maybe_unused]] FillBlockScoreContext score,
     [[maybe_unused]] FillBlockMatchContext match) {
     SDB_ASSERT(min < max);
+    SDB_ASSERT(self.value() >= min);
 
     [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
     [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
@@ -279,7 +388,7 @@ struct DocIterator : AttributeProvider {
         SDB_ASSERT(score.score);
 
         if (score.fetcher) {
-          score.fetcher->Fetch(std::span{score_hits.data(), n});
+          score.fetcher->Fetch(std::span<const doc_id_t>{score_hits.data(), n});
         }
         if (n == kScoreBlock) [[likely]] {
           score.score->ScoreBlock(score_buf.data());
@@ -292,14 +401,11 @@ struct DocIterator : AttributeProvider {
       }
     };
 
-    auto value = self.value();
-    while (value < min) {
-      value = self.advance();
-    }
     bool empty = true;
-    for (; value < max; value = self.advance()) {
-      SDB_ASSERT(value >= min);
-      const auto offset = value - min;
+    auto doc = self.value();
+    for (; doc < max; doc = self.advance()) {
+      SDB_ASSERT(doc >= min);
+      const auto offset = doc - min;
 
       if constexpr (TrackMatch) {
         SDB_ASSERT(match.matches);
@@ -314,7 +420,7 @@ struct DocIterator : AttributeProvider {
       }
 
       if constexpr (MergeType != ScoreMergeType::Noop) {
-        score_hits[score_index] = value;
+        score_hits[score_index] = doc;
         self.FetchScoreArgs(score_index);
         ++score_index;
 
@@ -330,7 +436,7 @@ struct DocIterator : AttributeProvider {
       }
     }
 
-    return {value, empty};
+    return {doc, empty};
   }
 };
 

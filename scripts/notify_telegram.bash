@@ -13,7 +13,7 @@
 #   JOB_STATUS          - Build status (success/failure/cancelled)
 #   BRANCH              - Git branch name
 #   ACTOR               - User who triggered the build (GitHub username)
-#   WORKFLOW            - Workflow name
+#   RUN_NAME            - Workflow run name
 #   RUN_NUMBER          - Build number
 #   RUN_URL             - URL to the build
 #
@@ -30,29 +30,29 @@ set -euo pipefail
 #------------------------------------------------------------------------------
 
 required_vars=(
-  "TG_TOKEN"
-  "TG_CHAT_ID"
-  "TG_THREAD_ID_MAIN"
-  "TG_THREAD_ID_BUILD"
-  "JOB_STATUS"
-  "BRANCH"
-  "ACTOR"
-  "WORKFLOW"
-  "RUN_NUMBER"
-  "RUN_URL"
+	"TG_TOKEN"
+	"TG_CHAT_ID"
+	"TG_THREAD_ID_MAIN"
+	"TG_THREAD_ID_BUILD"
+	"JOB_STATUS"
+	"BRANCH"
+	"ACTOR"
+	"RUN_NAME"
+	"RUN_NUMBER"
+	"RUN_URL"
 )
 
 missing_vars=()
 for var in "${required_vars[@]}"; do
-  if [[ -z "${!var:-}" ]]; then
-    missing_vars+=("$var")
-  fi
+	if [[ -z "${!var:-}" ]]; then
+		missing_vars+=("$var")
+	fi
 done
 
 if [[ ${#missing_vars[@]} -gt 0 ]]; then
-  echo "ERROR: Missing required environment variables:"
-  printf '  - %s\n' "${missing_vars[@]}"
-  exit 1
+	echo "ERROR: Missing required environment variables:"
+	printf '  - %s\n' "${missing_vars[@]}"
+	exit 1
 fi
 
 #------------------------------------------------------------------------------
@@ -62,18 +62,18 @@ fi
 TG_USERNAME="${ACTOR}"
 
 if [[ -n "${TG_USER_MAP:-}" ]]; then
-  if command -v jq &>/dev/null; then
-    MAPPED_USER=$(echo "${TG_USER_MAP}" | jq -r --arg user "${ACTOR}" '.[$user] // empty' 2>/dev/null || true)
-  else
-    # Fallback: simple pattern matching for JSON like {"user":"tg_user"}
-    MAPPED_USER=$(echo "${TG_USER_MAP}" | grep -o "\"${ACTOR}\":\"[^\"]*\"" | sed 's/.*:"$[^"]*$"/\1/' 2>/dev/null || true)
-  fi
+	if command -v jq &>/dev/null; then
+		MAPPED_USER=$(echo "${TG_USER_MAP}" | jq -r --arg user "${ACTOR}" '.[$user] // empty' 2>/dev/null || true)
+	else
+		# Fallback: simple pattern matching for JSON like {"user":"tg_user"}
+		MAPPED_USER=$(echo "${TG_USER_MAP}" | grep -o "\"${ACTOR}\":\"[^\"]*\"" | sed 's/.*:"$[^"]*$"/\1/' 2>/dev/null || true)
+	fi
 
-  if [[ -n "${MAPPED_USER}" ]]; then
-    TG_USERNAME="${MAPPED_USER}"
-    # Mask the Telegram username so it won't appear in logs
-    echo "::add-mask::${TG_USERNAME}"
-  fi
+	if [[ -n "${MAPPED_USER}" ]]; then
+		TG_USERNAME="${MAPPED_USER}"
+		# Mask the Telegram username so it won't appear in logs
+		echo "::add-mask::${TG_USERNAME}"
+	fi
 fi
 
 #------------------------------------------------------------------------------
@@ -82,17 +82,17 @@ fi
 
 case "${JOB_STATUS}" in
 success)
-  EMOJI="✅"
-  RESULT="SUCCESS"
-  ;;
+	EMOJI="✅"
+	RESULT="SUCCESS"
+	;;
 cancelled)
-  EMOJI="⚠️"
-  RESULT="CANCELLED"
-  ;;
+	EMOJI="⚠️"
+	RESULT="CANCELLED"
+	;;
 *)
-  EMOJI="💥"
-  RESULT="FAILURE"
-  ;;
+	EMOJI="💥"
+	RESULT="FAILURE"
+	;;
 esac
 
 #------------------------------------------------------------------------------
@@ -100,16 +100,16 @@ esac
 #------------------------------------------------------------------------------
 
 if [[ "${BRANCH}" == "main" ]]; then
-  THREAD_ID="${TG_THREAD_ID_MAIN}"
+	THREAD_ID="${TG_THREAD_ID_MAIN}"
 else
-  THREAD_ID="${TG_THREAD_ID_BUILD}"
+	THREAD_ID="${TG_THREAD_ID_BUILD}"
 fi
 
 #------------------------------------------------------------------------------
 # Build Message
 #------------------------------------------------------------------------------
 
-MESSAGE="${EMOJI} @${TG_USERNAME} ${RESULT}: BRANCH=${BRANCH} ${WORKFLOW} #${RUN_NUMBER} ${RUN_URL}"
+MESSAGE="${EMOJI} @${TG_USERNAME} ${RESULT}: BRANCH=${BRANCH} ${RUN_NAME} #${RUN_NUMBER} ${RUN_URL}"
 
 #------------------------------------------------------------------------------
 # Send Notification
@@ -121,16 +121,16 @@ echo "  Branch:  ${BRANCH}"
 echo "  Actor:   ${ACTOR} (GitHub)"
 
 curl \
-  --silent \
-  --show-error \
-  --location \
-  --request POST \
-  --form "text=${MESSAGE}" \
-  --form "chat_id=${TG_CHAT_ID}" \
-  --form "message_thread_id=${THREAD_ID}" \
-  --form 'link_preview_options={"is_disabled":true}' \
-  "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-  >/dev/null ||
-  echo "WARNING: Failed to send Telegram notification"
+	--silent \
+	--show-error \
+	--location \
+	--request POST \
+	--form "text=${MESSAGE}" \
+	--form "chat_id=${TG_CHAT_ID}" \
+	--form "message_thread_id=${THREAD_ID}" \
+	--form 'link_preview_options={"is_disabled":true}' \
+	"https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+	>/dev/null ||
+	echo "WARNING: Failed to send Telegram notification"
 
 echo "Done."

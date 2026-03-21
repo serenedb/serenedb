@@ -37,7 +37,6 @@ struct TermMetaBench : irs::TermMeta {
 };
 
 }  // namespace
-
 namespace irs {
 
 // use base irs::TermMeta type for ancestors
@@ -45,7 +44,6 @@ template<>
 struct Type<TermMetaBench> : Type<TermMeta> {};
 
 }  // namespace irs
-
 namespace {
 
 template<typename T>

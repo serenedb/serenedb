@@ -54,4 +54,5 @@ class RocksDBBackgroundThread final : public Thread {
 
   metrics::Gauge<uint64_t>& _metrics_wal_released_tick_replication;
 };
+
 }  // namespace sdb

@@ -83,5 +83,6 @@ class CleanupFunctions {
    */
   inline static std::vector<std::unique_ptr<CleanupFunction>> gCleanupFunctions;
 };
+
 }  // namespace basics
 }  // namespace sdb

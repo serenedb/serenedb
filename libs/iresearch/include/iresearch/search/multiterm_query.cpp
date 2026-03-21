@@ -99,7 +99,6 @@ bool LazyBitsetIterator::refill(const word_t** begin, const word_t** end) {
 }
 
 }  // namespace
-
 namespace irs {
 
 void MultiTermQuery::visit(const SubReader& segment,
@@ -142,7 +141,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     }
 
     auto docs =
-      reader->Iterator(features, cookies, options, _min_match, _merge_type);
+      reader->Iterator(features, cookies, options, _min_match,
+                       ctx.scorer ? _merge_type : ScoreMergeType::Noop);
     return docs ? std::move(docs) : DocIterator::empty();
   }
 
@@ -180,11 +180,14 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
 
   itrs.erase(it, std::end(itrs));
 
-  return ResolveMergeType(_merge_type, [&]<ScoreMergeType MergeType>() {
-    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
-    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            _min_match, state->estimation());
-  });
+  return ResolveMergeType(
+    ctx.scorer ? _merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType>() {
+      using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
+      return MakeWeakDisjunction<Disjunction>(
+        ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+        std::move(itrs), _min_match, state->estimation());
+    });
 }
 
 }  // namespace irs

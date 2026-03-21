@@ -126,19 +126,25 @@ class BlockDisjunction : public DocIterator {
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  explicit BlockDisjunction(Adapters&& itrs)
-    : BlockDisjunction{std::move(itrs), 1} {}
+  BlockDisjunction(Adapters&& itrs, doc_id_t docs_count)
+    : BlockDisjunction{std::move(itrs), size_t{1}, docs_count} {}
   BlockDisjunction(Adapters&& itrs, size_t min_match_count, CostAttr::Type est)
     : BlockDisjunction{std::move(itrs), min_match_count, est,
                        ResolveOverloadTag{}} {}
-  BlockDisjunction(Adapters&& itrs, size_t min_match_count)
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, doc_id_t docs_count,
+                   CostAttr::Type est)
     : BlockDisjunction{std::move(itrs), min_match_count,
-                       [&] noexcept {
-                         return absl::c_accumulate(
+                       std::min<CostAttr::Type>(est, docs_count),
+                       ResolveOverloadTag{}} {}
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, doc_id_t docs_count)
+    : BlockDisjunction{std::move(itrs), min_match_count,
+                       [this, docs_count] noexcept {
+                         const auto est = absl::c_accumulate(
                            _itrs, CostAttr::Type{0},
                            [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                              return lhs + CostAttr::extract(rhs, 0);
                            });
+                         return std::min<CostAttr::Type>(est, docs_count);
                        },
                        ResolveOverloadTag{}} {}
 
@@ -148,17 +154,43 @@ class BlockDisjunction : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
+  doc_id_t advance() final {
+    while (_cur == 0) {
+      if (_begin >= std::end(_mask)) {
+        if (Refill()) {
+          SDB_ASSERT(_cur);
+          break;
+        }
+
+        _match_count = 0;
+        _doc = doc_limits::eof();
+        return _doc;
+      }
+
+      _cur = *_begin++;
+      _doc_base += BitsRequired<uint64_t>();
+      if constexpr (Traits::kMinMatch || kHasScore) {
+        _buf_offset += BitsRequired<uint64_t>();
+      }
+    }
+
+    const size_t offset = std::countr_zero(_cur);
+    _cur = PopBit(_cur);
+
+    if constexpr (Traits::kMinMatch) {
+      const size_t buf_offset = _buf_offset + offset;
+      _match_count = _match_buf.match_count(buf_offset);
+      SDB_ASSERT(_match_count >= _match_buf.min_match_count());
+    }
+
+    _doc = _doc_base + static_cast<doc_id_t>(offset);
+
+    return _doc;
   }
 
-  doc_id_t advance() final { return AdvanceImpl().doc; }
-
   doc_id_t seek(doc_id_t target) final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    if (target <= doc_value) [[unlikely]] {
-      return doc_value;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
 
     if (target < _max) {
@@ -176,7 +208,7 @@ class BlockDisjunction : public DocIterator {
       return advance();
     }
 
-    doc_value = doc_limits::eof();
+    _doc = doc_limits::eof();
 
     if constexpr (Traits::kMinMatch) {
       _match_count = 0;
@@ -192,8 +224,8 @@ class BlockDisjunction : public DocIterator {
         return false;
       }
 
-      if (value < doc_value) {
-        doc_value = value;
+      if (value < _doc) {
+        _doc = value;
         if constexpr (Traits::kMinMatch) {
           _match_count = 1;
         }
@@ -208,19 +240,19 @@ class BlockDisjunction : public DocIterator {
 
     if (_itrs.empty()) {
       _match_count = 0;
-      return doc_value = doc_limits::eof();
+      return _doc = doc_limits::eof();
     }
 
-    SDB_ASSERT(!doc_limits::eof(doc_value));
+    SDB_ASSERT(!doc_limits::eof(_doc));
     _cur = 0;
     _begin = std::end(_mask);  // enforce "refill()" for upcoming "next()"
-    _max = doc_value;
+    _max = _doc;
 
     if constexpr (Traits::kSeekReadahead) {
-      _min = doc_value;
+      _min = _doc;
       return advance();
     } else {
-      _min = doc_value + 1;
+      _min = _doc + 1;
       _buf_offset = 0;
 
       if constexpr (Traits::kMinMatch) {
@@ -231,10 +263,10 @@ class BlockDisjunction : public DocIterator {
 
       if constexpr (kHasScore) {
         _score_buf.score_window[0] = 0;
-        _doc_base = doc_value;
+        _doc_base = _doc;
 
         for (auto [it, scorer] : std::views::zip(_itrs, _scorers)) {
-          if (scorer.IsDefault() || it.value() != doc_value) {
+          if (scorer.IsDefault() || it.value() != _doc) {
             continue;
           }
 
@@ -244,7 +276,7 @@ class BlockDisjunction : public DocIterator {
         }
       }
 
-      return doc_value;
+      return _doc;
     }
   }
 
@@ -264,7 +296,7 @@ class BlockDisjunction : public DocIterator {
     }
 
     _match_count = 0;
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    _doc = doc_limits::eof();
     return count;
   }
 
@@ -272,10 +304,9 @@ class BlockDisjunction : public DocIterator {
     if constexpr (kHasScore) {
       SDB_ASSERT(doc_limits::valid(value()));
       SDB_ASSERT(!doc_limits::eof(value()));
+      // TODO(gnusi): make better
       _score_buf.FetchScoreArgs(
-        static_cast<uint16_t>(_buf_offset + value() -
-                              _doc_base),  // TODO(gnusi): make better
-        index);
+        static_cast<uint16_t>(_buf_offset + (value() - _doc_base)), index);
     }
   }
 
@@ -320,105 +351,25 @@ class BlockDisjunction : public DocIterator {
 
   static_assert(kBlockSize * kNumBlocks < std::numeric_limits<doc_id_t>::max());
 
-  using Attributes = std::tuple<DocAttr, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
 
   struct ResolveOverloadTag {};
 
-  struct AdvanceResult {
-    doc_id_t doc;
-    uint16_t score_idx;
-  };
-
-  IRS_FORCE_INLINE AdvanceResult AdvanceImpl() {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    while (_cur == 0) {
-      if (_begin >= std::end(_mask)) {
-        if (Refill()) {
-          SDB_ASSERT(_cur);
-          break;
-        }
-
-        _match_count = 0;
-        doc_value = doc_limits::eof();
-        return {doc_value, 0};
-      }
-
-      _cur = *_begin++;
-      _doc_base += BitsRequired<uint64_t>();
-      if constexpr (Traits::kMinMatch || kHasScore) {
-        _buf_offset += BitsRequired<uint64_t>();
-      }
-    }
-
-    const size_t offset = std::countr_zero(_cur);
-    _cur = PopBit(_cur);
-
-    if constexpr (Traits::kMinMatch) {
-      const size_t buf_offset = _buf_offset + offset;
-      _match_count = _match_buf.match_count(buf_offset);
-      SDB_ASSERT(_match_count >= _match_buf.min_match_count());
-    }
-
-    doc_value = _doc_base + static_cast<doc_id_t>(offset);
-
-    return {doc_value, static_cast<uint16_t>(_buf_offset + offset)};
-  }
-
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
-    ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
-      const score_t* IRS_RESTRICT score_window = nullptr;
-      if constexpr (kHasScore) {
-        score_window = _score_buf.score_window.data();
-      }
-
-      auto& doc_value = std::get<DocAttr>(_attrs).value;
-      auto cur = _cur;
-      auto doc_base = _doc_base;
-      [[maybe_unused]] auto buf_offset = _buf_offset;
-      auto* IRS_RESTRICT begin = _begin;
-      const auto* IRS_RESTRICT const end = std::end(_mask);
-
-      while (true) {
-        while (cur == 0) {
-          if (begin >= end) {
-            if (Refill()) {
-              SDB_ASSERT(_cur);
-              cur = _cur;
-              doc_base = _doc_base;
-              begin = _begin;
-              if constexpr (Traits::kMinMatch || kHasScore) {
-                buf_offset = _buf_offset;
-              }
-              break;
-            }
-
-            _match_count = 0;
-            _cur = 0;
-            doc_value = doc_limits::eof();
-            _begin = begin;
-            return;
-          }
-
-          cur = *begin++;
-          doc_base += BitsRequired<uint64_t>();
-          if constexpr (Traits::kMinMatch || kHasScore) {
-            buf_offset += BitsRequired<uint64_t>();
-          }
+    if constexpr (kHasScore) {
+      ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
+        while (RefillImpl()) {
+          const doc_id_t window_base = _max - kWindow;
+          // TODO(gnusi): make true
+          collector.AddWindow(_score_buf.score_window.data(), _mask,
+                              window_base, kNumBlocks, false);
         }
-        const auto bit_offset = std::countr_zero(cur);
-        cur = PopBit(cur);
-
-        if constexpr (Traits::kMinMatch) {
-          _match_count = _match_buf.match_count(buf_offset + bit_offset);
-          SDB_ASSERT(_match_count >= _match_buf.min_match_count());
-        }
-
-        const auto doc = doc_base + static_cast<doc_id_t>(bit_offset);
-        collector.Add(score_window[buf_offset + bit_offset], doc);
-      }
-    });
+      });
+      _doc = doc_limits::eof();
+    } else {
+      SDB_ASSERT(false);
+    }
   }
 
   template<typename Estimation>
@@ -432,7 +383,7 @@ class BlockDisjunction : public DocIterator {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      _doc = doc_limits::eof();
     }
 
     if (Traits::kMinMatch && min_match_count > 1) {
@@ -547,6 +498,20 @@ class BlockDisjunction : public DocIterator {
 
         if constexpr (kHasScore) {
           score_ctx.score = &score;
+        }
+
+        auto value = it.value();
+
+        // disjunction is 1 step next behind, that may happen:
+        // - before the very first next()
+        // - after seek() in case of 'kSeekReadahead == false'
+        if (value < _doc_base) {
+          value = it.advance();
+        }
+
+        if (doc_limits::eof(value)) {
+          // exhausted
+          return false;
         }
 
         const auto [doc, has_hits] =

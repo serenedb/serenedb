@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 
 #include <algorithm>
@@ -41,7 +42,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/view.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 

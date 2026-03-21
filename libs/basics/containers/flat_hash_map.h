@@ -18,6 +18,7 @@
 ///
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
@@ -52,7 +53,7 @@ template<typename K, typename V,
          typename Allocator =
            typename absl::flat_hash_map<K, V, Hash, Eq>::allocator_type
 #if !defined(ABSL_HAVE_ADDRESS_SANITIZER) && \
-  !defined(ABSL_HAVE_MEMORY_SANITIZER) && !defined(USE_V8)
+  !defined(ABSL_HAVE_MEMORY_SANITIZER)
          ,  // TODO(mbkkt) After additional benchmarks change Sizeof
          typename = std::enable_if_t<detail::MapSizeofChecker<32, 80, K, V>()>
 #endif

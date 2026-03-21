@@ -75,6 +75,9 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/create_index_options.h"
+#include "pg/explain_options.h"
+#include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
@@ -87,6 +90,7 @@
 #include "query/transaction.h"
 #include "query/types.h"
 #include "query/utils.h"
+#include "utils/elog.h"
 #include "utils/query_string.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -105,6 +109,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
+
 namespace lp = axiom::logical_plan;
 namespace ve = velox::exec;
 namespace vc = velox::core;
@@ -657,42 +662,6 @@ class TargetList {
   containers::FlatHashMap<std::string_view, lp::ExprPtr> _alias_to_expr;
 };
 
-std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
-  const DefElem* option) {
-  std::string_view name = option->defname;
-  VeloxQuery::OptionValue value;
-  SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
-  if (!option->arg) {
-    return std::pair{name, true};
-  }
-  SDB_ASSERT(option->arg);
-  switch (option->arg->type) {
-    case NodeTag::T_Integer:
-      value = intVal(option->arg);
-    case NodeTag::T_Boolean:
-      value = boolVal(option->arg);
-    case NodeTag::T_String:
-      value = strVal(option->arg);
-    case NodeTag::T_Float:
-      value = floatVal(option->arg);
-    default:
-      SDB_ASSERT(false);
-  }
-  return std::pair{name, std::move(value)};
-}
-
-using NameToOption =
-  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>;
-NameToOption ConvertOptions(const List* options) {
-  const size_t options_size = list_length(options);
-  NameToOption res;
-  res.reserve(options_size);
-  for (size_t i = 0; i < options_size; ++i) {
-    res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));
-  }
-  return res;
-}
-
 class SqlAnalyzer {
  public:
   explicit SqlAnalyzer(const QueryString& query_sting, const Objects& objects,
@@ -703,7 +672,8 @@ class SqlAnalyzer {
     : _objects{objects},
       _query_string{query_sting},
       _id_generator{id_generator},
-      _query_ctx{*query_ctx.velox_query_ctx},
+      _query_ctx{query_ctx},
+      _velox_query_ctx{*query_ctx.velox_query_ctx},
       _memory_pool{*query_ctx.query_memory_pool},
       _params{params},
       _transaction{*query_ctx.transaction},
@@ -713,7 +683,8 @@ class SqlAnalyzer {
   VeloxQuery ProcessRoot(State& state, const Node& node);
 
  private:
-  SqlCommandType ProcessStmt(State& state, const Node& node);
+  SqlCommandType ProcessStmt(State& state, const Node& node,
+                             bool allowed_select_into = false);
 
   void MakeTableWrite(State& state, const Node& stmt,
                       const Objects::ObjectData& object,
@@ -724,7 +695,8 @@ class SqlAnalyzer {
 
   lp::ExprPtr GetDefaultValue(State& state, const catalog::Column& column);
 
-  void ProcessSelectStmt(State& state, const SelectStmt& stmt);
+  void ProcessSelectStmt(State& state, const SelectStmt& stmt,
+                         bool allowed_select_into = false);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
   void ProcessUpdateStmt(State& state, const UpdateStmt& stmt);
   void ProcessDeleteStmt(State& state, const DeleteStmt& stmt);
@@ -732,6 +704,11 @@ class SqlAnalyzer {
   void ProcessCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
+  void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+  void ProcessDefineStmt(State& state, const DefineStmt& stmt);
+
+  void ProcessIntoClause(State& state, const IntoClause& into);
+  void ProcessIndexStmt(State& state, const IndexStmt& stmt);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -794,7 +771,7 @@ class SqlAnalyzer {
       column_exprs.emplace_back(std::move(expr));
       column_names.emplace_back(name);
     }
-    if (pk_type.size() == 0) {
+    if (pk_type.size() == 0 && output_type->size() > 0) {
       auto generated_pk_name =
         catalog::Column::GeneratePKName(row_type.names());
       auto column = state.resolver.Resolve(output_type, generated_pk_name);
@@ -1102,9 +1079,9 @@ class SqlAnalyzer {
   const Objects& _objects;
   const QueryString& _query_string;
   UniqueIdGenerator& _id_generator;
-  vc::QueryCtx& _query_ctx;
+  query::QueryContext& _query_ctx;
+  vc::QueryCtx& _velox_query_ctx;
   velox::memory::MemoryPool& _memory_pool;
-  NameToOption _options;
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
   query::Transaction& _transaction;
@@ -1258,7 +1235,14 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
 }
 
-void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
+void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
+                                    bool allowed_select_into) {
+  if (!allowed_select_into && stmt.intoClause) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
+                    ERR_MSG("SELECT ... INTO is not allowed here"));
+  }
+
   if (stmt.lockingClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "LOCK clause is not implemented yet");
   }
@@ -1268,9 +1252,6 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
     ProcessValuesList(state, stmt.valuesLists);
     ProcessSortClause(state, stmt.sortClause, {});
   } else if (stmt.op == SETOP_NONE) {
-    if (stmt.intoClause) {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "INTO clause is not implemented yet");
-    }
     ProcessPipeline(state, stmt);
   } else {
     ProcessPipelineSet(state, stmt);
@@ -1519,7 +1500,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "RETURNING clause is not implemented yet");
   }
   const auto& config =
-    basics::downCast<Config>(*_query_ctx.queryConfig().config());
+    basics::downCast<Config>(*_velox_query_ctx.queryConfig().config());
   auto conflict_policy = config.Get<VariableType::SdbWriteConflictPolicy>(
     "sdb_write_conflict_policy");
   if (stmt.onConflictClause) {
@@ -1822,7 +1803,7 @@ void WriteNoticeInBuffer(message::Buffer& send, std::string_view message) {
 
 class CopyRowRejector {
  public:
-  enum class LogVerbosity { Silent = 0, Default = 1, Verbose = 2 };
+  using LogVerbosity = file_options::CopyLogVerbosity;
 
   CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
                   std::string_view table_name, uint64_t reject_limit)
@@ -1927,11 +1908,17 @@ class CopyOptionsParser : public FileOptionsParser {
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
-                    NameToOption& explain_options)
-    : FileOptionsParser{"COPY", query_string, file_path,
-                        [&send_buffer](std::string msg) {
-                          WriteNoticeInBuffer(send_buffer, msg);
-                        }},
+                    explain_options::ExplainOptions& explain_options)
+    : FileOptionsParser{file_path,
+                        options,
+                        file_options::kCopyGroup,
+                        {.operation = "COPY",
+                         .query_string = query_string,
+                         .notice =
+                           [&send_buffer](std::string msg) {
+                             WriteNoticeInBuffer(send_buffer, msg);
+                           },
+                         .explain = &explain_options}},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1942,31 +1929,8 @@ class CopyOptionsParser : public FileOptionsParser {
     } else {
       _reader_options = std::make_shared<connector::ReaderOptions>();
     }
-    _options.reserve(list_length(options));
-    VisitNodes(options, [&](const DefElem& option) {
-      std::string_view option_name = option.defname;
-      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
-      if (option_name == "explain") {
-        auto maybe_explain = TryGet<std::string_view>(option.arg);
-        if (!maybe_explain) {
-          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                          ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
-        }
-        explain_options.emplace(*maybe_explain, true);
-        return;
-      }
 
-      auto [_, emplaced] = _options.try_emplace(option_name, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-
-    Parse();
+    ParseOptions([&] { Parse(); });
   }
 
   auto GetWriterOptions() && {
@@ -1981,39 +1945,31 @@ class CopyOptionsParser : public FileOptionsParser {
 
  private:
   void Parse() {
+    using namespace file_options;
+
     ParseDataSource();
 
-    auto [underlying, format, location] = ParseFileFormat();
-    switch (underlying) {
-      case FileFormat::Text:
-        ParseTextFormatOptionsSpecified(format == "csv");
+    auto format = ParseFileFormat();
+    switch (format) {
+      case FormatType::Text:
+        ParseTextFormatOptionsSpecified(false);
         break;
-      case FileFormat::Parquet:
-      case FileFormat::Dwrf:
-      case FileFormat::Orc: {
-        auto options = ParseFormatOptions(format, underlying);
+      case FormatType::Csv:
+        ParseTextFormatOptionsSpecified(true);
+        break;
+      case FormatType::Parquet:
+      case FormatType::Dwrf:
+      case FormatType::Orc: {
+        auto options = ParseFormatOptions(format);
         if (_is_writer) {
           _writer_options->dwio = options->createWriterOptions(_row_type);
         } else {
           _reader_options->dwio = options->createReaderOptions(_row_type);
         }
       } break;
-      case FileFormat::None:
-        SDB_UNREACHABLE();
     }
 
-    bool show_progress = false;
-    if (const auto* option = EraseOption("progress")) {
-      auto maybe_progress = TryGet<bool>(option->arg);
-      if (!maybe_progress) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid value for parameter \"progress\": \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      show_progress = *maybe_progress;
-    }
-
+    auto show_progress = EraseOptionOrDefault<kProgress>();
     if (!_is_writer) {  // TODO: make same for writer
       if (show_progress) {
         _reader_options->report_callback =
@@ -2023,98 +1979,45 @@ class CopyOptionsParser : public FileOptionsParser {
           };
       }
     }
-
-    CheckUnrecognizedOptions();
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {
+    using namespace file_options;
     auto text_format = ParseTextFormatOptions(is_csv);
 
-    uint64_t reject_limit = 0;
-    std::string_view on_error = "stop";
-    if (const auto* option = EraseOption("on_error")) {
-      if (_is_writer) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
-      }
-
-      auto maybe_on_error = TryGet<std::string_view>(option->arg);
-      if (!maybe_on_error) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR \"", DeparseValue(option->arg),
-                                "\" not recognized"));
-      }
-      if (*maybe_on_error == "stop") {
-        reject_limit = 0;
-      } else if (*maybe_on_error == "ignore") {
-        reject_limit = std::numeric_limits<uint64_t>::max();
-      } else {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY ON_ERROR \"", *maybe_on_error, "\" not recognized"));
-      }
-      on_error = *maybe_on_error;
+    if (_is_writer && HasOption(kOnError)) {
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(OptionLocation(kOnError))),
+                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
     }
 
-    if (const auto* option = EraseOption("reject_limit")) {
-      if (on_error != "ignore") {
+    auto log_verbosity = EraseOptionOrDefault<kLogVerbosity>();
+    auto on_error = EraseOptionOrDefault<kOnError>();
+    auto reject_limit = [&] -> uint64_t {
+      switch (on_error) {
+        case CopyOnError::Ignore:
+          return std::numeric_limits<uint64_t>::max();
+        case CopyOnError::Stop:
+          return 0;
+      }
+    }();
+
+    if (auto max_reject_limit = EraseOptionOrDefault<kRejectLimit>()) {
+      if (on_error != CopyOnError::Ignore) {
         THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          CURSOR_POS(ErrorPosition(OptionLocation(kRejectLimit))),
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
       }
-      auto maybe_reject_limit = TryGet<int>(option->arg);
-      if (!maybe_reject_limit) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid input syntax for type bigint: \"",
-                                DeparseValue(option->arg), "\""));
-      }
-      if (*maybe_reject_limit <= 0) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("REJECT_LIMIT (", *maybe_reject_limit,
-                                ") must be greater than zero"));
-      }
-      reject_limit = *maybe_reject_limit;
+      reject_limit = max_reject_limit;
     }
 
-    auto log_verbosity = CopyRowRejector::LogVerbosity::Default;
-    if (const auto* option = EraseOption("log_verbosity")) {
-      auto maybe_verbosity = TryGet<std::string_view>(option->arg);
-      if (!maybe_verbosity) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY LOG_VERBOSITY \"", DeparseValue(option->arg),
-                  "\" not recognized"));
-      }
-
-      if (*maybe_verbosity == "verbose") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Verbose;
-      } else if (*maybe_verbosity == "default") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Default;
-      } else if (*maybe_verbosity == "silent") {
-        log_verbosity = CopyRowRejector::LogVerbosity::Silent;
-      } else {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("COPY LOG_VERBOSITY \"", *maybe_verbosity,
-                                "\" not recognized"));
-      }
-    }
-
-    for (const auto& option_name :
-         {"default", "quote", "force_quote", "force_not_null", "force_null",
-          "encoding"}) {
-      if (const auto* option = EraseOption(option_name)) {
+    for (const auto& info : kUnsupportedTextCsvOptions) {
+      if (const auto* option = EraseOption(info)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("COPY option \"", option_name, "\" is not supported yet for ",
+          ERR_MSG("COPY option \"", info.name, "\" is not supported yet for ",
                   is_csv ? "CSV" : "TEXT", " format"));
       }
     }
@@ -2243,9 +2146,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
     SDB_ASSERT(_send_buffer);
-    return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
-                             file_path,   stmt.options,  *_send_buffer,
-                             _copy_queue, table_name,    _options};
+    return CopyOptionsParser{
+      type,        !stmt.is_from, _query_string.view(),
+      file_path,   stmt.options,  *_send_buffer,
+      _copy_queue, table_name,    _query_ctx.explain_params};
   };
 
   if (stmt.is_from) {
@@ -2542,12 +2446,192 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   });
 }
 
-SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
+void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
+                                           const CreateTableAsStmt& stmt) {
+  if (nodeTag(stmt.query) != T_SelectStmt) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("CREATE TABLE AS only supports SELECT statements"));
+  }
+
+  if (stmt.objtype != OBJECT_TABLE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("CREATE TABLE AS only supports creating tables"));
+  }
+
+  const SelectStmt& select = *castNode(SelectStmt, stmt.query);
+  ProcessSelectStmt(state, select);
+  ProcessIntoClause(state, *stmt.into);
+}
+
+void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
+  SDB_ASSERT(state.root);
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+  const auto& output = *state.root->outputType();
+  column_names.reserve(output.size());
+  column_exprs.reserve(output.size());
+
+  if (output.size() < list_length(into.colNames)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("too many column names were specified"));
+  }
+
+  auto add_column = [&](std::string_view alias, size_t idx) {
+    if (absl::c_contains(column_names, alias)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+        CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+        ERR_MSG("column \"", alias, "\" specified more than once"));
+    }
+    column_names.emplace_back(alias);
+
+    auto expr = std::make_shared<lp::InputReferenceExpr>(output.childAt(idx),
+                                                         output.nameOf(idx));
+    column_exprs.emplace_back(std::move(expr));
+  };
+
+  size_t i = 0;
+  for (; i < list_length(into.colNames); ++i) {
+    auto alias = strVal(list_nth_node(Node, into.colNames, i));
+    add_column(alias, i);
+  }
+  for (; i < output.size(); ++i) {
+    auto alias = ToAlias(output.nameOf(i));
+    add_column(alias, i);
+  }
+
+  if (into.accessMethod) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("access method is not supported"));
+  }
+
+  if (into.options) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("WITH options are not supported"));
+  }
+
+  if (into.onCommit != ONCOMMIT_NOOP) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("ON COMMIT is not supported"));
+  }
+
+  if (into.tableSpaceName) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("TABLESPACE is not supported"));
+  }
+
+  if (into.skipData) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("WITH NO DATA is not supported"));
+  }
+
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(state.root), nullptr,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
+}
+
+void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
+  SDB_ASSERT(stmt.relation);
+  const auto& relation = *stmt.relation;
+  const std::string_view relname = relation.relname;
+  const std::string_view schemaname =
+    absl::NullSafeStringView(relation.schemaname);
+
+  const auto* object = _objects.getRelation(schemaname, relname);
+  SDB_ASSERT(object);
+  SDB_ASSERT(object->object);
+
+  const auto& table = basics::downCast<catalog::Table>(*object->object);
+  const auto& table_type = *table.RowType();
+
+  auto table_state =
+    ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
+  const auto& input_type = *table_state.root->outputType();
+
+  const auto& pk = *table.PKType();
+  size_t size = pk.size() + list_length(stmt.indexParams);
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+  column_names.reserve(size);
+  column_exprs.reserve(size);
+  FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
+
+  VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
+    if (!index_elem.name) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("Unsupported index column definition"));
+    }
+    const std::string_view colname = index_elem.name;
+    auto maybe_col_idx = table_type.getChildIdxIfExists(colname);
+    if (!maybe_col_idx) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", colname, "\" does not exist"));
+    }
+    if (pk.containsChild(colname)) {
+      return;
+    }
+    size_t col_idx = *maybe_col_idx;
+    column_names.emplace_back(colname);
+    auto expr = std::make_shared<lp::InputReferenceExpr>(
+      input_type.childAt(col_idx), input_type.nameOf(col_idx));
+    column_exprs.emplace_back(std::move(expr));
+  });
+
+  // TODO: reuse parsed shard options in CreateIndex to avoid double parsing.
+  // We must parse WITH options here at analysis time because they may contain
+  // EXPLAIN flags that affect query planning (e.g. choosing the explain
+  // executor).
+  CreateIndexOptionsParser{stmt.options, _query_ctx.explain_params};
+
+  object->EnsureTable(_transaction);
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(table_state.root), object->table,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
+}
+
+void SqlAnalyzer::ProcessDefineStmt(State& state, const DefineStmt& stmt) {
+  switch (stmt.kind) {
+    case OBJECT_TSDICTIONARY: {
+      state.pgsql_node = castNode(Node, &stmt);
+    } break;
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                      ERR_MSG("Such define statement is not supported"));
+  }
+}
+
+SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
+                                        bool allowed_select_into) {
   switch (node.type) {
     case T_SelectStmt: {
       const auto& stmt = *castNode(SelectStmt, &node);
-      ProcessSelectStmt(state, stmt);
-      return SqlCommandType::Select;
+      ProcessSelectStmt(state, stmt, allowed_select_into);
+
+      if (!stmt.intoClause) {
+        return SqlCommandType::Select;
+      }
+
+      if (!allowed_select_into) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          CURSOR_POS(ErrorPosition(ExprLocation(stmt.intoClause))),
+          ERR_MSG("SELECT ... INTO is not allowed here"));
+      }
+
+      ProcessIntoClause(state, *stmt.intoClause);
+      state.pgsql_node = &node;
+      return SqlCommandType::CTAS;
     }
     case T_InsertStmt: {
       const auto& stmt = *castNode(InsertStmt, &node);
@@ -2576,9 +2660,13 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     }
     case T_ExplainStmt: {
       const auto& stmt = *castNode(ExplainStmt, &node);
-      _options = ConvertOptions(stmt.options);
-      ProcessStmt(state, *stmt.query);
-      return SqlCommandType::Explain;
+      ExplainStmtOptionsParser parser{stmt.options, _query_string.view()};
+      auto& explain = _query_ctx.explain_params;
+      explain = std::move(parser).GetExplainOptions();
+      if (!explain) {
+        explain.Add(query::ExplainWith::Execution);
+      }
+      return ProcessStmt(state, *stmt.query);
     }
     case T_ViewStmt: {  // CREATE VIEW
       const auto& stmt = *castNode(ViewStmt, &node);
@@ -2598,9 +2686,17 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
+    case T_CreateTableAsStmt: {
+      state.pgsql_node = &node;
+      const auto& stmt = *castNode(CreateTableAsStmt, &node);
+      ProcessCreateTableAsStmt(state, stmt);
+      return SqlCommandType::CTAS;
+    }
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;
-      return SqlCommandType::DDL;
+      const auto& stmt = *castNode(IndexStmt, &node);
+      ProcessIndexStmt(state, stmt);
+      return SqlCommandType::CreateIndex;
     }
     case T_CreateRoleStmt:
     case T_DropRoleStmt:
@@ -2622,7 +2718,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     case T_CopyStmt: {
       const auto& stmt = *castNode(CopyStmt, &node);
       ProcessCopyStmt(state, stmt);
-      return _options.empty() ? SqlCommandType::Copy : SqlCommandType::Explain;
+      return SqlCommandType::Copy;
     }
     case T_VariableShowStmt: {
       state.pgsql_node = &node;
@@ -2630,6 +2726,11 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     }
     case T_VacuumStmt: {
       state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_DefineStmt: {
+      const auto& stmt = *castNode(DefineStmt, &node);
+      ProcessDefineStmt(state, stmt);
       return SqlCommandType::DDL;
     }
     default:
@@ -5753,10 +5854,9 @@ lp::ExprPtr SqlAnalyzer::ProcessAIndirection(State& state,
 }
 
 VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
-  auto command_type = ProcessStmt(state, node);
+  auto command_type = ProcessStmt(state, node, true);
   return {
     .root = std::move(state.root),
-    .options = std::move(_options),
     .pgsql_node = state.pgsql_node,
     .type = command_type,
   };

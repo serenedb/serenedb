@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/iterators.hpp"
 
 namespace irs {
@@ -36,8 +35,6 @@ class Exclusion : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _incl.GetMutable(type);
   }
-
-  doc_id_t value() const noexcept final { return _incl.value(); }
 
   doc_id_t advance() final {
     const auto incl = _incl.advance();
@@ -54,8 +51,32 @@ class Exclusion : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final {
     SDB_ASSERT(target >= value());
-    // TODO: optimize
-    return seek(target);
+    const auto doc = _incl.LazySeek(target);
+    if (doc != target) {
+      return doc;
+    }
+    if constexpr (requires { _excl.begin(); }) {
+      for (auto& it : _excl) {
+        auto excl = it.value();
+        if (excl < doc) {
+          excl = it.LazySeek(doc);
+        }
+        if (excl == doc) {
+          return doc + 1;
+        }
+        SDB_ASSERT(excl > doc);
+      }
+    } else {
+      auto excl = _excl.value();
+      if (excl < doc) {
+        excl = _excl.LazySeek(doc);
+      }
+      if (excl == doc) {
+        return doc + 1;
+      }
+      SDB_ASSERT(excl > doc);
+    }
+    return _doc = doc;
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
@@ -81,14 +102,14 @@ class Exclusion : public DocIterator {
  private:
   doc_id_t converge(doc_id_t incl) {
     if (doc_limits::eof(incl)) [[unlikely]] {
-      return incl;
+      return _doc = incl;
     }
 
     if constexpr (requires { _excl.begin(); }) {
       for (auto& it : _excl) {
         auto excl = it.value();
         if (excl < incl) {
-          excl = it.seek(incl);
+          excl = it.LazySeek(incl);
         }
         if (excl == incl) {
           return advance();
@@ -98,7 +119,7 @@ class Exclusion : public DocIterator {
     } else {
       auto excl = _excl.value();
       if (excl < incl) {
-        excl = _excl.seek(incl);
+        excl = _excl.LazySeek(incl);
       }
       if (excl == incl) {
         return advance();
@@ -106,7 +127,7 @@ class Exclusion : public DocIterator {
       SDB_ASSERT(excl > incl);
     }
 
-    return incl;
+    return _doc = incl;
   }
 
   IncludeAdapter _incl;

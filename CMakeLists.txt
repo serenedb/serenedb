@@ -37,56 +37,37 @@ option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
 option(SDB_IOURING "allow to use iouring" ON)
 
-option(SDB_CLUSTER "build with cluster support" OFF)
-
 find_package(Git 1.5.3 REQUIRED)
 
 # ------------------------------------------------------------------------------
 # VERSION information
 # ------------------------------------------------------------------------------
 
-# stable release:   MAJOR.MINOR.PATCH
-# hot fix:          MAJOR.MINOR.PATCH-FIXNUMBER
-# unstable release: MAJOR.MINOR.PATCH-TYPE.NUMBER
-# devel:            MAJOR.MINOR.0-devel
+# stable release: MAJOR.MINOR.PATCH
+# LTS release:    MAJOR.MINOR.PATCH-lts
+#
+# MAJOR = calendar year (e.g. 26)
+# MINOR = sequential release number, typically the month (e.g. 03)
+# PATCH = growing patch number
 #
 # These are mapped to the following variables:
 #
-# SERENEDB_VERSION_MAJOR = MAJOR
-# SERENEDB_VERSION_MINOR = MINOR
-# SERENEDB_VERSION_PATCH = PATCH
+# SERENEDB_VERSION_MAJOR        = MAJOR
+# SERENEDB_VERSION_MINOR        = MINOR
+# SERENEDB_VERSION_PATCH        = PATCH
+# SERENEDB_VERSION_RELEASE_TYPE = "lts" or empty
 #
-# for pre-releases, otherwise empty:
-#
-# SERENEDB_VERSION_PRELEASE_TYPE   = TYPE
-# SERENEDB_VERSION_PRELEASE_NUMBER = NUMBER
-#
-set(SERENEDB_VERSION_MAJOR "1")
-set(SERENEDB_VERSION_MINOR "0")
+set(SERENEDB_VERSION_MAJOR "26")
+set(SERENEDB_VERSION_MINOR "03")
 
-# when building the nightly SERENEDB_VERSION_PATCH will be set
 if(NOT DEFINED SERENEDB_VERSION_PATCH)
-    set(SERENEDB_VERSION_PATCH "0")
-    set(SERENEDB_VERSION_RELEASE_TYPE "")
-    set(SERENEDB_VERSION_RELEASE_NUMBER "")
-else()
-    unset(SERENEDB_VERSION_RELEASE_TYPE) # do not remove space
-    unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
+    set(SERENEDB_VERSION_PATCH "1")
 endif()
 
-# unset TYPE and NUMBER in case they are empty
+# unset RELEASE_TYPE if empty
 if(DEFINED SERENEDB_VERSION_RELEASE_TYPE)
     if(SERENEDB_VERSION_RELEASE_TYPE STREQUAL "")
         unset(SERENEDB_VERSION_RELEASE_TYPE) # do not remove space
-        unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
-    endif()
-else()
-    unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
-endif()
-
-if(DEFINED SERENEDB_VERSION_RELEASE_NUMBER)
-    if(SERENEDB_VERSION_RELEASE_NUMBER STREQUAL "")
-        unset(SERENEDB_VERSION_RELEASE_NUMBER) # do not remove space
     endif()
 endif()
 
@@ -96,15 +77,9 @@ set(SERENEDB_PLAIN_VERSION
 )
 
 if(DEFINED SERENEDB_VERSION_RELEASE_TYPE)
-    if(DEFINED SERENEDB_VERSION_RELEASE_NUMBER)
-        set(SERENEDB_VERSION
-            "${SERENEDB_PLAIN_VERSION}-${SERENEDB_VERSION_RELEASE_TYPE}.${SERENEDB_VERSION_RELEASE_NUMBER}"
-        )
-    else()
-        set(SERENEDB_VERSION
-            "${SERENEDB_PLAIN_VERSION}-${SERENEDB_VERSION_RELEASE_TYPE}"
-        )
-    endif()
+    set(SERENEDB_VERSION
+        "${SERENEDB_PLAIN_VERSION}-${SERENEDB_VERSION_RELEASE_TYPE}"
+    )
 else()
     set(SERENEDB_VERSION "${SERENEDB_PLAIN_VERSION}")
 endif()
@@ -137,16 +112,26 @@ set(CMAKE_COLOR_DIAGNOSTICS ON)
 add_definitions(-DABSL_MAX_VLOG_VERBOSITY=-1)
 add_definitions(-DABSL_MIN_LOG_LEVEL=3)
 
-# enable V8/JavaScript in executables.
-option(USE_V8 "build with V8/JavaScript support" OFF)
-if(USE_V8)
-    add_definitions("-DUSE_V8=1")
-endif()
-
 # enable dtrace
 option(USE_DTRACE "enable dtrace probes" OFF)
 if(USE_DTRACE)
     add_definitions("-DUSE_DTRACE=1")
+endif()
+
+if(SDB_GEN_PGO)
+    # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
+    add_compile_options(-fprofile-generate)
+    add_link_options(-fprofile-generate)
+elseif(SDB_GEN_CS_PGO)
+    # TODO(mbkkt) seems like cs pgo didn't produce results with LTO :/
+    # https://github.com/llvm/llvm-project/issues/112103
+    add_compile_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
+    add_link_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
+elseif(SDB_USE_PGO)
+    add_compile_options(-fprofile-use=${SDB_USE_PGO})
+    add_link_options(-fprofile-use=${SDB_USE_PGO})
+    # TODO(mbkkt) for -ftemporal-profile
+    #   add_link_options(-Wl,--symbol-ordering-file=path-to-code.orderfile)
 endif()
 
 if(USE_COVERAGE STREQUAL "SourceBased")
@@ -651,10 +636,6 @@ message(STATUS "DEFAULT_LIBS=${DEFAULT_LIBS}")
 set(CMAKE_CXX_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 set(CMAKE_C_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 
-if(USE_V8)
-    set(SDB_SANITIZE "" CACHE STRING "" FORCE)
-endif()
-
 set(SDB_SANITIZE_WAS "${SDB_SANITIZE}")
 if(NOT "${SDB_SANITIZE}" STREQUAL "")
     # TODO(mbkkt) we also can apply sanitize-recover
@@ -800,10 +781,6 @@ include(SereneDBInstall)
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
 set(ERROR_FILES libs/basics/errors.h libs/basics/error-registry.h)
-if(SDB_CLUSTER)
-    list(APPEND ERROR_FILES private/js/common/bootstrap/errors.js)
-endif()
-
 set(ERROR_FILES_GEN)
 set(ERRORS_DAT libs/basics/errors.dat)
 
@@ -882,9 +859,6 @@ list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 add_subdirectory(libs)
 add_subdirectory(server)
 add_subdirectory(tests)
-if(SDB_CLUSTER)
-    add_subdirectory(private)
-endif()
 
 add_custom_target(packages DEPENDS ${PACKAGES_LIST})
 
@@ -900,6 +874,3 @@ add_custom_target(
 message(STATUS "building for git revision: ${SERENEDB_BUILD_REPOSITORY}")
 
 add_custom_target(serenedb DEPENDS serened)
-if(SDB_CLUSTER)
-    add_dependencies(serenedb serene-clients)
-endif()

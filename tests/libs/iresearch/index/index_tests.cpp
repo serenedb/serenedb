@@ -58,17 +58,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
@@ -166,7 +162,6 @@ class SubReaderMock final : public irs::SubReader {
 };
 
 }  // namespace
-
 namespace tests {
 
 void AssertSnapshotEquality(irs::DirectoryReader lhs,
@@ -637,8 +632,8 @@ class IndexTestCase : public tests::IndexTestBase {
               //               ASSERT_EQ(expected_attrs.features(),
               //               actual_attrs.features());
 
-              auto* actual_freq = irs::get<irs::FreqAttr>(*act_docs_itr);
-              auto* expected_freq = irs::get<irs::FreqAttr>(*exp_docs_itr);
+              auto* actual_freq = irs::get<irs::FreqBlockAttr>(*act_docs_itr);
+              auto* expected_freq = irs::get<irs::FreqBlockAttr>(*exp_docs_itr);
               ASSERT_FALSE(!actual_freq);
               ASSERT_FALSE(!expected_freq);
 
@@ -653,7 +648,8 @@ class IndexTestCase : public tests::IndexTestBase {
               while (act_docs_itr->next()) {
                 ASSERT_TRUE(exp_docs_itr->next());
                 ASSERT_EQ(exp_docs_itr->value(), act_docs_itr->value());
-                ASSERT_EQ(expected_freq->value, actual_freq->value);
+                act_docs_itr->FetchScoreArgs(0);
+                ASSERT_EQ(expected_freq->value[0], actual_freq->value[0]);
 
                 auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
                 auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
@@ -3067,8 +3063,9 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       // As declaration for wait_for contains "It may also be unblocked
       // spuriously." for all platforms
-      while (!stop && result == std::cv_status::no_timeout)
+      while (!stop && result == std::cv_status::no_timeout) {
         result = cond.wait_for(cond_lock, 100ms);
+      }
 
       // FIXME TODO add once segment_context will not block flush_all()
       // ASSERT_TRUE(stop);
@@ -3261,8 +3258,9 @@ TEST_P(IndexTestCase, document_context) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field.wait = false;
@@ -3397,8 +3395,9 @@ TEST_P(IndexTestCase, document_context) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field_cond_lock
@@ -3472,8 +3471,9 @@ TEST_P(IndexTestCase, document_context) {
                   // segment_context will not block flush_all()
 
     // override spurious wakeup
-    while (!commit && result == std::cv_status::no_timeout)
+    while (!commit && result == std::cv_status::no_timeout) {
       result = field.cond.wait_for(field_cond_lock, 100ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     field_cond_lock
@@ -12790,8 +12790,9 @@ TEST_P(IndexTestCase, segment_options) {
 
     // As declaration for wait_for contains "It may also be unblocked
     // spuriously." for all platforms
-    while (!stop && result == std::cv_status::no_timeout)
+    while (!stop && result == std::cv_status::no_timeout) {
       result = cond.wait_for(lock, 1000ms);
+    }
 
     ASSERT_EQ(std::cv_status::timeout, result);
     // ^^^ expecting timeout because pool should block indefinitely

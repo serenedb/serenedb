@@ -23,6 +23,7 @@
 #include "http.h"
 
 namespace sdb::fuerte::http {
+
 static inline int Hex2int(char ch, int error_value = 0) {
   if ('0' <= ch && ch <= '9') {
     return ch - '0';

@@ -193,6 +193,7 @@ class DocIteratorImpl : public DocIterator {
   // reset field
   void Reset(const FieldData& field) {
     _field = &field;
+    _freq.value = 0;
     auto& freq = std::get<AttributePtr<FreqAttr>>(_attrs);
     auto& pos = std::get<AttributePtr<PosAttr>>(_attrs);
     freq = nullptr;
@@ -215,7 +216,7 @@ class DocIteratorImpl : public DocIterator {
   void Reset(const irs::Posting& posting,
              const byte_block_pool::sliced_reader& freq,
              const byte_block_pool::sliced_reader* prox) {
-    std::get<DocAttr>(_attrs).value = 0;
+    _doc = doc_limits::invalid();
     _freq.value = 0;
     _cookie = 0;
     _freq_in = freq;
@@ -238,19 +239,13 @@ class DocIteratorImpl : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
     if (_freq_in.eof()) {
       if (!_posting) {
-        return doc_value = doc_limits::eof();
+        return _doc = doc_limits::eof();
       }
 
-      doc_value = _posting->doc;
+      _doc = _posting->doc;
       _freq.value = _posting->freq;
 
       if (_has_cookie) {
@@ -270,31 +265,32 @@ class DocIteratorImpl : public DocIterator {
         }
 
         SDB_ASSERT(delta < doc_limits::eof());
-        doc_value += doc_id_t(delta);
+        _doc += doc_id_t(delta);
 
         if (_has_cookie) {
           _cookie += ReadCookie(_freq_in);
         }
       } else {
-        doc_value += irs::vread<uint32_t>(_freq_in);
+        _doc += irs::vread<uint32_t>(_freq_in);
       }
 
-      SDB_ASSERT(doc_value != _posting->doc);
+      SDB_ASSERT(_doc != _posting->doc);
     }
 
     _pos.Clear();
 
-    return doc_value;
+    return _doc;
   }
 
   doc_id_t seek(doc_id_t doc) final {
     SDB_ASSERT(false);
-    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
+  uint32_t GetFreq() const final { return _freq.value; }
+
  private:
-  using Attributes =
-    std::tuple<DocAttr, AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
+  using Attributes = std::tuple<AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
 
   const FieldData* _field{};
   uint64_t _cookie{};
@@ -310,6 +306,7 @@ class SortingDocIteratorImpl : public DocIterator {
  public:
   // reset field
   void Reset(const FieldData& field) {
+    _freq.value = 0;
     SDB_ASSERT(field.prox_random_access());
     _byte_pool = &field._byte_writer->parent();
 
@@ -332,8 +329,8 @@ class SortingDocIteratorImpl : public DocIterator {
   // reset iterator,
   // docmap == null -> segment is already sorted
   void Reset(DocIteratorImpl& it, const DocMap* docmap) {
-    const FreqAttr no_frequency;
-    const FreqAttr* freq = &no_frequency;
+    static constexpr FreqAttr kNoFreq;
+    const FreqAttr* freq = &kNoFreq;
 
     const auto* freq_attr = irs::get<FreqAttr>(it);
     if (freq_attr) {
@@ -345,14 +342,14 @@ class SortingDocIteratorImpl : public DocIterator {
 
     if (!docmap) {
       ResetAlreadySorted(it, *freq);
-    } else if (irs::UseDenseSort(it.Cost(),
-                                 docmap->size() - 1)) {  // -1 for first element
+    } else if (UseDenseSort(it.Cost(),
+                            docmap->size() - 1)) {  // -1 for first element
       ResetDense(it, *freq, *docmap);
     } else {
       ResetSparse(it, *freq, *docmap);
     }
 
-    std::get<DocAttr>(_attrs).value = irs::doc_limits::invalid();
+    _doc = doc_limits::invalid();
     _freq.value = 0;
     _it = _docs.begin();
   }
@@ -361,13 +358,7 @@ class SortingDocIteratorImpl : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
     while (_it != _docs.end()) {
       if (doc_limits::eof(_it->doc)) {
         // skip invalid docs
@@ -376,7 +367,7 @@ class SortingDocIteratorImpl : public DocIterator {
       }
 
       auto& doc = *_it;
-      doc_value = doc.doc;
+      _doc = doc.doc;
       _freq.value = doc.freq;
 
       if (doc.cookie) {  // we have proximity data
@@ -384,21 +375,22 @@ class SortingDocIteratorImpl : public DocIterator {
       }
 
       ++_it;
-      return doc_value;
+      return _doc;
     }
 
     _freq.value = 0;
-    return doc_value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t doc) final {
     SDB_ASSERT(false);
-    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
+  uint32_t GetFreq() const final { return _freq.value; }
+
  private:
-  using Attributes =
-    std::tuple<DocAttr, AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
+  using Attributes = std::tuple<AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
 
   struct DocEntry {
     DocEntry() = default;

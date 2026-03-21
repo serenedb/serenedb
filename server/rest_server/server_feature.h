@@ -21,11 +21,12 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "app/app_feature.h"
 #include "rest_server/serened.h"
 
 namespace sdb {
-
 namespace rest {
 
 class RestHandlerFactory;
@@ -44,14 +45,16 @@ class ServerFeature final : public SerenedFeature {
   void prepare() final;
   void start() final;
   void beginShutdown() final;
-  bool isStopping() const { return _is_stopping; }
+  bool isStopping() const {
+    return _is_stopping.load(std::memory_order_acquire);
+  }
 
  private:
   void waitForHeartbeat();
 
   bool _rest_server = true;
   bool _validate_utf8_strings = false;
-  bool _is_stopping = false;
+  std::atomic_bool _is_stopping = false;
   int* _result;
 };
 

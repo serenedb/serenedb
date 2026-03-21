@@ -42,7 +42,9 @@ using namespace sdb::basics;
 using namespace sdb::rest;
 
 namespace {
+
 int ClientHelloCallback(SSL* ssl, int* al, void* arg) { return 1; }
+
 }  // namespace
 
 GeneralServer::GeneralServer(GeneralServerFeature& feature,
@@ -138,8 +140,9 @@ void GeneralServer::stopWorking() {
   do {
     {
       std::unique_lock guard(_tasks_lock);
-      if (_comm_tasks.empty())
+      if (_comm_tasks.empty()) {
         break;
+      }
     }
     std::this_thread::yield();
   } while ((std::chrono::steady_clock::now() - started) < kTimeout);

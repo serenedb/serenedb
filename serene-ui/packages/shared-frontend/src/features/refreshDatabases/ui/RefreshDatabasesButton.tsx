@@ -17,7 +17,7 @@ export const RefreshDatabasesButton = () => {
     return (
         <Button
             size="icon"
-            variant="thirdly"
+            variant="secondary"
             onClick={handleRefresh}
             aria-label="Refresh databases">
             <RefreshCwIcon />

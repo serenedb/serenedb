@@ -108,6 +108,8 @@ class SSTBlockBuilder {
 extern template class SSTBlockBuilder<true>;
 extern template class SSTBlockBuilder<false>;
 
+inline constexpr std::string_view kBulkInsertDirName = "bulk_insert";
+
 template<bool IsGeneratedPK>
 class SSTSinkWriter {
  public:

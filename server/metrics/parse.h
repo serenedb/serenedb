@@ -18,12 +18,13 @@
 ///
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
-#pragma once
 
-#include <basics/buffer.h>
+#pragma once
 
 #include <memory>
 #include <vector>
+
+#include "basics/buffer.h"
 
 namespace sdb::metrics {
 

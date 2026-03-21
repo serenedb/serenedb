@@ -122,5 +122,6 @@ struct Distribution {
  private:
   absl::Mutex _mutex;
 };
+
 }  // namespace statistics
 }  // namespace sdb

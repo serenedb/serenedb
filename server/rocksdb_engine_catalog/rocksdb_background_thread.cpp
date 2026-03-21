@@ -36,13 +36,6 @@
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "storage_engine/table_shard.h"
 
-#ifdef SDB_CLUSTER
-#include "replication/replication_clients.h"
-#include "replication/replication_feature.h"
-#include "rocksdb_engine/rocksdb_dump_manager.h"
-#include "rocksdb_engine/rocksdb_replication_manager.h"
-#endif
-
 using namespace sdb;
 
 DECLARE_GAUGE(rocksdb_wal_released_tick_replication, uint64_t,
@@ -73,16 +66,19 @@ void RocksDBBackgroundThread::SyncStats() {
   auto snapshot = catalog::GetCatalog().GetSnapshot();
   for (auto& db : snapshot->GetDatabases()) {
     for (auto& schema : snapshot->GetSchemas(db->GetId())) {
-      catalog::VisitTables(*snapshot, db->GetId(), schema->GetName(),
-                           [&](auto& table, auto& shard) mutable {
-                             auto r = _engine.SyncTableStats(*table, *shard);
-                             if (!r.ok()) {
-                               SDB_WARN("xxxxx", Logger::ENGINES,
-                                        "unable to update settings for table '",
-                                        table->GetName(),
-                                        "': ", r.errorMessage());
-                             }
-                           });
+      catalog::VisitTableShards(
+        *snapshot, db->GetId(), schema->GetName(), [&](auto& shard) mutable {
+          if (!shard) {
+            SDB_WARN("xxxxx", Logger::ENGINES, "table shard is null");
+            return;
+          }
+          auto r = _engine.SyncTableShard(*shard);
+          if (!r.ok()) {
+            SDB_WARN("xxxxx", Logger::ENGINES,
+                     "unable to update settings for table '", shard->GetName(),
+                     "': ", r.errorMessage());
+          }
+        });
     }
   }
 }
@@ -163,23 +159,6 @@ void RocksDBBackgroundThread::run() {
         }
       }
 
-      bool force = isStopping();
-#ifdef SDB_CLUSTER
-      _engine.replicationManager()->garbageCollect(force);
-      _engine.dumpManager()->garbageCollect(force);
-#endif
-
-      if (!force) {
-        try {
-          // this only schedules tree rebuilds, but the actual rebuilds are
-          // performed by async tasks in the scheduler.
-          _engine.processTreeRebuilds();
-        } catch (const std::exception& ex) {
-          SDB_WARN("xxxxx", Logger::ENGINES,
-                   "caught exception during tree rebuilding: ", ex.what());
-        }
-      }
-
       const uint64_t latest_seq_no = _engine.db()->GetLatestSequenceNumber();
       const auto earliest_seq_needed =
         _engine.settingsManager()->earliestSeqNeeded();
@@ -192,14 +171,6 @@ void RocksDBBackgroundThread::run() {
 
       uint64_t min_tick_for_replication = latest_seq_no;
 
-#ifdef SDB_CLUSTER
-      for (auto* clients : GetAllReplicationClients()) {
-        // lowestServedValue will return the lowest of the lastServedTick
-        // values stored, or UINT64_MAX if no clients are registered
-        min_tick_for_replication =
-          std::min(min_tick_for_replication, clients->lowestServedValue());
-      }
-#endif
       min_tick = std::min(min_tick, min_tick_for_replication);
 
       _metrics_wal_released_tick_replication.store(min_tick_for_replication,
@@ -238,9 +209,6 @@ void RocksDBBackgroundThread::run() {
         _engine.determineWalFilesInitial();
       }
 
-      if (!isStopping()) {
-        _engine.processCompactions();
-      }
     } catch (const std::exception& ex) {
       SDB_WARN("xxxxx", Logger::ENGINES,
                "caught exception in rocksdb background thread: ", ex.what());

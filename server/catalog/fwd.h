@@ -18,7 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 namespace sdb::catalog {
+
+struct Snapshot;
 
 class SchemaObject;
 class Function;
@@ -35,7 +39,6 @@ class VirtualTable;
 class VirtualTableSnapshot;
 
 }  // namespace sdb::catalog
-
 namespace sdb {
 
 class TableShard;

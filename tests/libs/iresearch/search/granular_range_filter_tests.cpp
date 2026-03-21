@@ -197,11 +197,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -233,11 +230,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -265,11 +259,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -295,11 +286,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -322,11 +310,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -349,11 +334,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -380,11 +362,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -407,11 +386,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -430,11 +406,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -478,11 +451,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -514,11 +484,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -547,11 +514,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -580,11 +544,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -613,11 +574,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -646,11 +604,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -682,11 +637,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -718,11 +670,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -751,11 +700,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -784,12 +730,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -818,11 +760,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -851,11 +790,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -887,11 +823,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -923,11 +856,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -956,11 +886,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -988,11 +915,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1020,11 +944,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1052,11 +973,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1087,11 +1005,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1122,11 +1037,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1155,11 +1067,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1188,11 +1097,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1220,11 +1126,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -1252,11 +1155,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -2152,8 +2052,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
-    auto* doc = irs::get<irs::DocAttr>(*docs);
-    ASSERT_TRUE(bool(doc));
     while (docs->next()) {
       const auto doc = docs->value();
       ASSERT_EQ(doc, values->seek(doc));
@@ -2204,8 +2102,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
-    auto* doc = irs::get<irs::DocAttr>(*docs);
-    ASSERT_TRUE(bool(doc));
     while (docs->next()) {
       const auto doc = docs->value();
       ASSERT_EQ(doc, values->seek(doc));
@@ -2259,8 +2155,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
-    auto* doc = irs::get<irs::DocAttr>(*docs);
-    ASSERT_TRUE(bool(doc));
     while (docs->next()) {
       const auto doc = docs->value();
       ASSERT_EQ(doc, values->seek(doc));
@@ -2311,8 +2205,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared->execute({.segment = segment});
-    auto* doc = irs::get<irs::DocAttr>(*docs);
-    ASSERT_TRUE(bool(doc));
     while (docs->next()) {
       const auto doc = docs->value();
       ASSERT_EQ(doc, values->seek(doc));

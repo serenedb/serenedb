@@ -31,8 +31,10 @@
 
 namespace sdb {
 namespace {
+
 std::atomic<uint64_t> gCurrentTick = id::kMaxSystem.id();
 basics::HybridLogicalClock gHybridLogicalClock;
+
 }  // namespace
 
 Tick NewTickHybridLogicalClock() { return gHybridLogicalClock.getTimeStamp(); }

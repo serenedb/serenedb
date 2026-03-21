@@ -21,8 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/math_utils.hpp>
-
+#include "basics/math_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace math = irs::math;

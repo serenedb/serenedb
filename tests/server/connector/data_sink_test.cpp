@@ -20,12 +20,13 @@
 
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
+#include <iresearch/utils/bytes_utils.hpp>
+
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
 namespace sdb::connector {

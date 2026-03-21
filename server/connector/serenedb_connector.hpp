@@ -51,7 +51,8 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/rocksdb_filter.hpp"
-#include "connector/search_data_source.hpp"
+#include "connector/search_count_data_source.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
@@ -839,7 +840,12 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (serene_table_handle.GetSearchQuery()) {
       const auto& search_snapshot =
         transaction.EnsureSearchSnapshot(serene_table_handle.GetIndexId());
-      return std::make_unique<search::SearchDataSource>(
+      if (output_type->size() == 0) {
+        return std::make_unique<search::SearchCountDataSource>(
+          *connector_query_ctx->memoryPool(), output_type,
+          search_snapshot.reader, *serene_table_handle.GetSearchQuery());
+      }
+      return std::make_unique<search::SearchScanDataSource>(
         *connector_query_ctx->memoryPool(),
         search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,
         column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,

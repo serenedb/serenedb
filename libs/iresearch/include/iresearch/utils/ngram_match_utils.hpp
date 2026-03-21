@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "basics/shared.hpp"
-#include "basics/utf8_utils.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 

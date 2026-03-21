@@ -22,7 +22,6 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
-#include <basics/buffer.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
 
@@ -33,6 +32,7 @@
 
 #include "aql/execution_state.h"
 #include "basics/assert.h"
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/result.h"
 #include "basics/system-functions.h"

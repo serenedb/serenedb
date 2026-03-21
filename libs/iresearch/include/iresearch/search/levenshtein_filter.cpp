@@ -25,7 +25,6 @@
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
-#include "basics/utf8_utils.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_terms_collector.hpp"
 #include "iresearch/search/filter_visitor.hpp"
@@ -37,6 +36,7 @@
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 namespace {

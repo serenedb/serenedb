@@ -36,13 +36,13 @@
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "basics/exceptions.h"
 #include "catalog/mangling.h"
-#include "iresearch/search/term_filter.hpp"
 #include "search/functions.hpp"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"

@@ -23,6 +23,7 @@
 #include <absl/base/internal/endian.h>
 
 #include <filesystem>
+#include <iresearch/utils/bytes_utils.hpp>
 #include <string>
 
 #include "basics/assert.h"
@@ -31,7 +32,6 @@
 #include "basics/system-compiler.h"
 #include "catalog/identifiers/revision_id.h"
 #include "catalog/table_options.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"

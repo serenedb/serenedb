@@ -22,10 +22,9 @@
 #include <boost/pfr.hpp>
 #include <boost/pfr/core_name.hpp>
 #include <initializer_list>
+#include <iresearch/utils/string.hpp>
 #include <span>
 #include <type_traits>
-
-#include "iresearch/utils/string.hpp"
 
 namespace sdb::pg {
 

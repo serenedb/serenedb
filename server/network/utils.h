@@ -21,12 +21,12 @@
 
 #pragma once
 
-#include <basics/buffer.h>
 #include <fuerte/types.h>
 #include <vpack/slice.h>
 
 #include <string>
 
+#include "basics/buffer.h"
 #include "basics/errors.h"
 #include "basics/result.h"
 #include "network/types.h"

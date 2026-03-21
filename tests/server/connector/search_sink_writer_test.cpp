@@ -25,6 +25,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -32,7 +33,6 @@
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 
 namespace sdb::connector::search {
 

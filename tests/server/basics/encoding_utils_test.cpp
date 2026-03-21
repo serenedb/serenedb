@@ -19,8 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/buffer.h>
-
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/encoding_utils.h"
 #include "basics/errors.h"

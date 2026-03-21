@@ -26,16 +26,16 @@
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_data_source.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 #include "search_test_utils.hpp"
 
@@ -226,9 +226,9 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
   }
   auto reader = irs::DirectoryReader(_dir, _codec);
   auto query = or_filter->prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                              velox::ROW(names, types), all_column_oids,
+                              all_column_oids[0], kObjectKey, reader, *query);
   auto expected =
     makeRowVector({makeFlatVector<int32_t>({1, 100}),
                    makeFlatVector<velox::StringView>({"1", "100"}),
@@ -287,9 +287,9 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
   }
   auto reader = irs::DirectoryReader(_dir, _codec);
   auto query = or_filter->prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                              velox::ROW(names, types), all_column_oids,
+                              all_column_oids[0], kObjectKey, reader, *query);
   const auto expected =
     makeRowVector({makeFlatVector<velox::StringView>({"1", "100"}),
                    makeFlatVector<velox::StringView>({"value1", "value3"})});
@@ -423,9 +423,9 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     auto query = or_filter->prepare({.index = reader});
-    SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                            velox::ROW(names, types), all_column_oids,
-                            all_column_oids[0], kObjectKey, reader, *query);
+    SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                                velox::ROW(names, types), all_column_oids,
+                                all_column_oids[0], kObjectKey, reader, *query);
     auto expected =
       makeRowVector({makeFlatVector<int32_t>({1, 100}),
                      makeFlatVector<velox::StringView>({"1", "100"}),
@@ -474,9 +474,9 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     auto query = or_filter->prepare({.index = reader});
-    SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                            velox::ROW(names, types), all_column_oids,
-                            all_column_oids[0], kObjectKey, reader, *query);
+    SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                                velox::ROW(names, types), all_column_oids,
+                                all_column_oids[0], kObjectKey, reader, *query);
     auto expected = makeRowVector(
       {makeFlatVector<int32_t>({1}), makeFlatVector<velox::StringView>({"1"}),
        makeFlatVector<velox::StringView>({"value1"})});

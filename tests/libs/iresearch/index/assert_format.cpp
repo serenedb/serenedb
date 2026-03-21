@@ -24,10 +24,10 @@
 #include "assert_format.hpp"
 
 #include <algorithm>
-#include <basics/bit_utils.hpp>
 #include <iostream>
 #include <unordered_set>
 
+#include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizers.hpp"

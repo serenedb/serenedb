@@ -20,9 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/memory.hpp>
-
 #include "basics/down_cast.h"
+#include "basics/memory.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"

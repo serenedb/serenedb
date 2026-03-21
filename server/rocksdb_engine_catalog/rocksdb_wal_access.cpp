@@ -21,7 +21,6 @@
 
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
 
-#include <basics/buffer.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <vpack/builder.h>
 #include <vpack/collection.h>
@@ -33,6 +32,7 @@
 #include <variant>
 
 #include "app/app_server.h"
+#include "basics/buffer.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"

@@ -9,12 +9,12 @@
 #include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
 
-#include <basics/empty.hpp>
 #include <ranges>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
 
+#include "basics/empty.hpp"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "catalog/identifiers/object_id.h"

@@ -36,7 +36,6 @@
 #include <unistd.h>
 #endif
 
-#include <basics/sink.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/types.h>
@@ -52,6 +51,8 @@
 #include <memory>
 #include <set>
 #include <string_view>
+
+#include "basics/sink.h"
 
 namespace sdb::basics {
 namespace {

@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <basics/bit_utils.hpp>
 #include <memory>
 
+#include "basics/bit_utils.hpp"
 #include "basics/fwd.h"
 #include "basics/type_traits.h"
 #include "catalog/fwd.h"

@@ -28,6 +28,7 @@
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <iresearch/utils/bytes_utils.hpp>
 #include <memory>
 
 #include "basics/assert.h"
@@ -39,7 +40,6 @@
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
 #include "connector/sink_writer_base.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"

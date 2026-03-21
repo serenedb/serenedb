@@ -28,18 +28,18 @@
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/data_source.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_data_source.hpp"
 #include "connector/search_remove_filter.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
 using namespace sdb;
@@ -922,9 +922,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
     irs::ViewCast<irs::byte_type>(std::string_view("42"));
 
   auto query = root.prepare({.index = reader});
-  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                          velox::ROW(names, types), all_column_oids,
-                          all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                              velox::ROW(names, types), all_column_oids,
+                              all_column_oids[0], kObjectKey, reader, *query);
 
   source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
   const auto expected = makeRowVector(

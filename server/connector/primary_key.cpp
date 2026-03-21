@@ -20,13 +20,14 @@
 
 #include "primary_key.hpp"
 
-#include <basics/errors.h>
-#include <basics/exceptions.h>
 #include <velox/vector/SimpleVector.h>
 
+#include <iresearch/utils/numeric_utils.hpp>
+
 #include "basics/endian.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/string_utils.h"
-#include "iresearch/utils/numeric_utils.hpp"
 
 namespace sdb::connector::primary_key {
 namespace {

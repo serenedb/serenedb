@@ -22,7 +22,6 @@
 #pragma once
 
 #include <absl/strings/str_cat.h>
-#include <basics/buffer.h>
 #include <vpack/builder.h>
 #include <vpack/exception.h>
 #include <vpack/iterator.h>
@@ -39,6 +38,7 @@
 #include <system_error>
 #include <type_traits>
 
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"

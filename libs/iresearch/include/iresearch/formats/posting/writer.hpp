@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <iresearch/formats/format_utils.hpp>
-
 #include "basics/containers/bitset.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/format_utils.hpp" I
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"

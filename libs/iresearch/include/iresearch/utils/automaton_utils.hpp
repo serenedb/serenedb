@@ -23,7 +23,6 @@
 #pragma once
 
 #include "absl/strings/str_cat.h"
-#include "basics/utf8_utils.hpp"
 #include "fst/closure.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -33,6 +32,7 @@
 #include "iresearch/utils/fstext/fst_states_map.hpp"
 #include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 

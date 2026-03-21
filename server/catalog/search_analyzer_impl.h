@@ -3,11 +3,11 @@
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
-#include <basics/bit_utils.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/bit_utils.hpp"
 #include "basics/exceptions.h"
 #include "basics/object_pool.hpp"
 #include "catalog/function.h"

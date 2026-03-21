@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include <basics/memory.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/filter.hpp>
 
+#include "basics/memory.hpp"
 #include "common.h"
 
 namespace sdb::connector::search {

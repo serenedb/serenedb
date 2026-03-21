@@ -24,7 +24,6 @@
 #include <absl/time/time.h>
 
 #include <atomic>
-#include <basics/async_utils.hpp>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -33,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "basics/async_utils.hpp"
 #include "basics/resource_manager.hpp"
 #include "catalog/function.h"
 #include "catalog/identifiers/index_id.h"

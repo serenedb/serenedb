@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include <basics/buffer.h>
-
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -30,6 +28,7 @@
 
 #include "auth/token_cache.h"
 #include "basics/asio_ns.h"
+#include "basics/buffer.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "endpoint/connection_info.h"

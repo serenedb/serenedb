@@ -21,10 +21,10 @@
 
 #include "encoding_utils.h"
 
-#include <basics/buffer.h>
 #include <zconf.h>
 #include <zlib.h>
 
+#include "basics/buffer.h"
 #include "basics/debugging.h"
 #include "basics/endian.h"
 #include "basics/errors.h"

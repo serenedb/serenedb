@@ -27,6 +27,7 @@
 #include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/logger/logger.h"
+#include "endpoint/endpoint.h"
 #include "general_server/scheduler_feature.h"
 
 using namespace sdb::basics;
@@ -82,7 +83,7 @@ serened --server.endpoint tcp://127.0.0.1:8529 \
 ...
 2022-11-07T10:39:30Z [1] INFO [6ea38] {general} using endpoint 'http+ssl://0.0.0.0:8530' for ssl-encrypted requests
 2022-11-07T10:39:30Z [1] INFO [6ea38] {general} using endpoint 'http+tcp://0.0.0.0:8529' for non-encrypted requests
-2022-11-07T10:39:31Z [1] INFO [cf3f4] {general} SereneDB (version 3.10.0 [linux]) is ready for business. Have fun!
+2022-11-07T10:39:31Z [1] INFO [cf3f4] {general} SereneDB (version 26.3.0 [linux]) is ready for business. Have fun!
 ```
 
 On one specific ethernet interface, each port can only be bound
@@ -154,12 +155,13 @@ void EndpointFeature::validateOptions(std::shared_ptr<ProgramOptions>) {
              "header SOMAXCONN value ",
              SOMAXCONN, ". trying to use ", SOMAXCONN, " anyway");
   }
-  buildEndpointLists();
-  if (_endpoint_list.empty()) {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME,
-              "no endpoints have been specified, giving up, please use the "
-              "'--server.endpoint' option");
+  if (_endpoints.empty()) {
+    _endpoints.emplace_back("pgsql+tcp://127.0.0.1:7890");
+    SDB_INFO(
+      "xxxxx", sdb::Logger::FIXME,
+      "no endpoints have been specified, using default: ", _endpoints.back());
   }
+  buildEndpointLists();
 }
 
 std::vector<std::string> EndpointFeature::httpEndpoints() {

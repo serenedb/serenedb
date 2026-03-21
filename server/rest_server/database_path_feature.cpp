@@ -91,9 +91,10 @@ void DatabasePathFeature::validateOptions(
   }
 
   if (_directory.empty()) {
-    SDB_FATAL("xxxxx", sdb::Logger::FIXME,
-              "no database path has been supplied, giving up, please use "
-              "the '--database.directory' option");
+    _directory = "serenedb-data";
+    SDB_INFO("xxxxx", sdb::Logger::FIXME,
+             "no database path has been supplied, using default '",
+             _directory, "'");
   }
 
   // strip trailing separators

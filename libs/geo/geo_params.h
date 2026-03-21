@@ -38,7 +38,6 @@ class Builder;
 class Slice;
 
 }  // namespace vpack
-
 namespace sdb {
 namespace geo {
 

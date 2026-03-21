@@ -64,6 +64,7 @@ using namespace sdb::basics;
 using namespace sdb::options;
 
 namespace {
+
 static bool gDone = false;
 static int gClientPid = false;
 

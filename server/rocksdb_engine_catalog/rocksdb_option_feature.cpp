@@ -91,7 +91,6 @@ bool IsIOUringEnabled() {
 }
 
 }  // namespace sdb
-
 namespace {
 
 const std::string kIoUringEnabled = "enabled";

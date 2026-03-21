@@ -20,12 +20,13 @@
 
 #include "catalog/index.h"
 
+#include <vpack/serializer.h>
+
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 namespace {

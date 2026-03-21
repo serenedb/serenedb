@@ -64,7 +64,6 @@ int CompareIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept {
 }
 
 }  // namespace sdb
-
 namespace {
 
 static const char* gHexValuesUpper = "0123456789ABCDEF";
@@ -199,7 +198,6 @@ static char constexpr kEscapeTable[256] = {
 };
 
 }  // namespace
-
 namespace sdb::basics::string_utils {
 
 std::string EscapeUnicode(std::string_view value, bool escape_slash) {

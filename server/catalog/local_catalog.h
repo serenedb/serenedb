@@ -22,6 +22,7 @@
 
 #include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
+#include <vpack/slice.h>
 
 #include <memory>
 #include <vector>
@@ -37,9 +38,9 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "storage_engine/table_shard.h"
-#include "vpack/slice.h"
 
 namespace sdb {
+
 class RocksDBEngineCatalog;
 }
 

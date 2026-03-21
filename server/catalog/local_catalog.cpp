@@ -23,6 +23,8 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
 #include <algorithm>
 #include <atomic>
@@ -86,8 +88,6 @@
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 #include "yaclib/async/future.hpp"
 #include "yaclib/async/when_all.hpp"
 

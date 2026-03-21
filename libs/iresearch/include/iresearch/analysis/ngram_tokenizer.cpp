@@ -30,8 +30,8 @@
 
 #include <string_view>
 
-#include "basics/utf8_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {

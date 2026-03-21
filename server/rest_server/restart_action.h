@@ -24,7 +24,9 @@
 #include <functional>
 
 namespace sdb {
+
 /// Used to perform one last action upon shutdown.
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 extern std::function<int()>* gRestartAction;
+
 }  // namespace sdb

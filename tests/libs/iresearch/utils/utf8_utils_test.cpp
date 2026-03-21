@@ -20,10 +20,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/std.hpp>
-#include <basics/utf8_utils.hpp>
-
+#include "basics/std.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "tests_shared.hpp"
 
 TEST(utf8_utils_test, test) {

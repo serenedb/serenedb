@@ -25,12 +25,12 @@
 
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <iresearch/utils/vpack_utils.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/logger/logger.h"
-#include "basics/utf8_utils.hpp"
 
 namespace sdb::search::wildcard {
 namespace {

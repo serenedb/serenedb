@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <vpack/builder.h>
+
 #include "catalog/index.h"
-#include "vpack/builder.h"
 
 namespace sdb {
 
@@ -48,4 +49,5 @@ class IndexShard : public catalog::Object {
   ObjectId _index_id;
   IndexType _type;
 };
+
 }  // namespace sdb

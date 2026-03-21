@@ -22,6 +22,7 @@
 #pragma once
 
 namespace sdb {
+
 class RequestContext {
   RequestContext(const RequestContext&) = delete;
   RequestContext& operator=(const RequestContext&) = delete;
@@ -30,4 +31,5 @@ class RequestContext {
   RequestContext() = default;
   virtual ~RequestContext() = default;
 };
+
 }  // namespace sdb

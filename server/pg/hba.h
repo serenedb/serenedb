@@ -108,5 +108,4 @@ hba::AuthMethod Find(const hba::Client& client, const catalog::Database& db,
 */
 
 }  // namespace hba
-
 }  // namespace sdb

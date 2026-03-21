@@ -21,13 +21,13 @@
 
 #include "methods.h"
 
-#include <basics/buffer.h>
 #include <fuerte/connection.h>
 #include <fuerte/requests.h>
 #include <fuerte/types.h>
 #include <vpack/slice.h>
 
 #include "app/app_server.h"
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/exceptions.h"
 #include "basics/hybrid_logical_clock.h"
@@ -52,6 +52,7 @@
 
 namespace sdb {
 namespace network {
+
 using namespace sdb::fuerte;
 
 using PromiseRes = yaclib::Promise<network::Response>;

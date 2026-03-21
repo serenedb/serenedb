@@ -31,6 +31,7 @@
 #include "statistics/statistics_feature.h"
 
 namespace sdb {
+
 class RequestStatistics {
  public:
   static uint64_t memoryUsage() noexcept;
@@ -232,4 +233,5 @@ class RequestStatistics {
   bool _async;
   bool _superuser;
 };
+
 }  // namespace sdb

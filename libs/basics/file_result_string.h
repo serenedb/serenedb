@@ -25,6 +25,7 @@
 #include "basics/result.h"
 
 namespace sdb {
+
 class FileResultString : public FileResult {
  public:
   explicit FileResultString(const std::string& result)
@@ -42,4 +43,5 @@ class FileResultString : public FileResult {
  protected:
   const std::string _message;
 };
+
 }  // namespace sdb

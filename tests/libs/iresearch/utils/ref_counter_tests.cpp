@@ -27,6 +27,7 @@
 #include "iresearch/utils/ref_counter.hpp"
 
 namespace tests {
+
 class RefCounterTests : public ::testing::Test {
   void SetUp() final {
     // Code here will be called immediately after the constructor (right before
@@ -38,6 +39,7 @@ class RefCounterTests : public ::testing::Test {
     // destructor).
   }
 };
+
 }  // namespace tests
 
 using namespace tests;

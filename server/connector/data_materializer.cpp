@@ -54,7 +54,7 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
     _value_reader = [&](std::string_view full_key) -> std::string& {
       auto status = _db->Get(_read_options, &_cf, full_key, &_value_buffer);
       if (!status.ok()) {
-        auto res = sdb::rocksutils::ConvertStatus(status);
+        auto res = rocksutils::ConvertStatus(status);
         SDB_THROW(
           res.errorNumber(),
           "Failed to read value by PK from database: ", res.errorMessage());
@@ -66,7 +66,7 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
       auto status =
         _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
       if (!status.ok()) {
-        auto res = sdb::rocksutils::ConvertStatus(status);
+        auto res = rocksutils::ConvertStatus(status);
         SDB_THROW(
           res.errorNumber(),
           "Failed to read value by PK from transaction: ", res.errorMessage());

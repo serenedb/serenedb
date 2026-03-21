@@ -85,4 +85,5 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgNamespace>::GetTableData(
   }
   return result;
 }
+
 }  // namespace sdb::pg

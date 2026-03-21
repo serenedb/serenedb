@@ -60,7 +60,7 @@ LIBPG_QUERY_INCLUDES_END
 namespace {
 
 using namespace sdb;
-using namespace sdb::connector::test;
+using namespace connector::test;
 
 class SearchFilterBuilderTest : public ::testing::Test {
  public:
@@ -68,7 +68,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     velox::memory::MemoryManager::testingSetInstance({});
     gServerState.SetGTest(true);
     gServerState.SetRole(ServerState::Role::Single);
-    sdb::pg::RegisterVeloxFunctionsAndTypes();
+    pg::RegisterVeloxFunctionsAndTypes();
     RegisterSearchEntities();
   }
 
@@ -90,7 +90,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
   }
 
   template<irs::IndexFeatures Features>
-  static sdb::catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(
+  static catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(
     catalog::Column::Id) {
     auto make_segmentation = [] {
       auto builder =
@@ -107,7 +107,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     return {.analyzer = *std::move(tokenizer), .features = Features};
   }
 
-  static sdb::catalog::ColumnAnalyzer SegmentationAnalyzerProvider(
+  static catalog::ColumnAnalyzer SegmentationAnalyzerProvider(
     catalog::Column::Id id) {
     return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                             irs::IndexFeatures::Freq>(id);
@@ -117,7 +117,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     const irs::And& expected, std::string_view query_string,
     std::vector<std::unique_ptr<const axiom::connector::Column>>&& columns,
     bool must_succeed,
-    absl::AnyInvocable<sdb::catalog::ColumnAnalyzer(catalog::Column::Id) const>
+    absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id) const>
       analyzer_provider = IdentityAnalyzerProvider) {
     SCOPED_TRACE(testing::Message("Parsing: <") << query_string << ">");
     pg::Params params;
@@ -135,10 +135,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
     opts.name = rel.first.relation;
     for (auto& col : columns) {
       auto& serene_column = basics::downCast<connector::SereneDBColumn>(*col);
-      opts.columns.emplace_back(
-        sdb::catalog::Column{.id = serene_column.Id(),
-                             .type = serene_column.type(),
-                             .name = serene_column.name()});
+      opts.columns.emplace_back(catalog::Column{
+        .id = serene_column.Id(),
+        .type = serene_column.type(),
+        .name = serene_column.name(),
+      });
     }
     rel.second.object =
       std::make_shared<catalog::Table>(std::move(opts), ObjectId{1});
@@ -202,19 +203,21 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
       auto plan = opt.toVeloxPlan(opt.bestPlan()->op);
 
-      auto column_getter = [&](std::string_view cn)
-        -> std::optional<sdb::connector::search::ColumnInfo> {
+      auto column_getter =
+        [&](std::string_view cn) -> std::optional<connector::SearchColumnInfo> {
         auto it = table->columnMap().find(cn);
         if (it == table->columnMap().end()) {
           return std::nullopt;
         }
         auto& column =
           basics::downCast<const connector::SereneDBColumn>(*it->second);
-        return sdb::connector::search::ColumnInfo{
-          .info = column, .analyzer = analyzer_provider(column.Id())};
+        return connector::SearchColumnInfo{
+          .info = column,
+          .analyzer = analyzer_provider(column.Id()),
+        };
       };
 
-      auto res = connector::search::MakeSearchFilter(
+      auto res = connector::MakeSearchFilter(
         root, connector._table_handles[rel.first.relation]->AcceptedFilters(),
         column_getter);
       ASSERT_EQ(res.ok(), must_succeed) << res.errorMessage();
@@ -230,11 +233,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
     basics::StrResize(field_name, sizeof(column_id));
     absl::big_endian::Store(field_name.data(), column_id);
     if constexpr (std::is_same_v<T, bool>) {
-      sdb::search::mangling::MangleBool(field_name);
+      search::mangling::MangleBool(field_name);
     } else if constexpr (std::is_same_v<T, velox::StringView>) {
-      sdb::search::mangling::MangleString(field_name);
+      search::mangling::MangleString(field_name);
     } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
-      sdb::search::mangling::MangleNumeric(field_name);
+      search::mangling::MangleNumeric(field_name);
     } else {
       EXPECT_FALSE(true) << "Unexpected conversion";
     }
@@ -370,7 +373,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     std::string field_name;
     basics::StrResize(field_name, sizeof(column));
     absl::big_endian::Store(field_name.data(), column);
-    sdb::search::mangling::MangleNull(field_name);
+    search::mangling::MangleNull(field_name);
     *term.mutable_field() = field_name;
     term.mutable_options()->term.assign(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));

@@ -48,8 +48,10 @@
 
 namespace sdb {
 namespace aql {
+
 class Query;
 }
+
 }  // namespace sdb
 
 using namespace sdb;

@@ -21,10 +21,10 @@
 
 #pragma once
 
-#include <basics/buffer.h>
 #include <vpack/options.h>
 #include <vpack/slice.h>
 
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"

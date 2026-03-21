@@ -29,7 +29,6 @@
 #include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {
-
 namespace {
 
 template<typename T>
@@ -51,6 +50,7 @@ void ReadVector(IndexInput& in, T& vec) {
   in.ReadBytes(reinterpret_cast<byte_type*>(vec.data()),
                sizeof(*vec.data()) * size);
 }
+
 }  // namespace
 
 void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw) {

@@ -453,4 +453,5 @@ struct ObsoleteParameter : public Parameter {
 
   bool required;
 };
+
 }  // namespace sdb::options

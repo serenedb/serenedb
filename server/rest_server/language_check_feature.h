@@ -24,6 +24,7 @@
 #include "rest_server/serened.h"
 
 namespace sdb {
+
 class LanguageCheckFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "LanguageCheck"; }

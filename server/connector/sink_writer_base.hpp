@@ -71,7 +71,7 @@ class ColumnSinkWriterImplBase {
     SDB_ASSERT(!_columns.empty());
   }
 
-  bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept {
+  bool IsIndexed(catalog::Column::Id column_id) const noexcept {
     return _columns.contains(column_id);
   }
 

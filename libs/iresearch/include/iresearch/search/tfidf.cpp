@@ -25,6 +25,7 @@
 #include <absl/container/inlined_vector.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 #include <vpack/vpack.h>
 
@@ -46,7 +47,6 @@
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
-#include "vpack/serializer.h"
 
 namespace irs {
 namespace {

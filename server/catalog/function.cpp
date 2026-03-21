@@ -21,6 +21,8 @@
 #include "catalog/function.h"
 
 #include <velox/type/Type.h>
+#include <vpack/serializer.h>
+#include <vpack/vpack_helper.h>
 
 #include <string_view>
 
@@ -32,8 +34,6 @@
 #include "catalog/sql_function_impl.h"
 #include "query/types.h"
 #include "utils/velox_vpack.h"
-#include "vpack/serializer.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
 

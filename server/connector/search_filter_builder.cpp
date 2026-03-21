@@ -36,26 +36,26 @@
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "basics/exceptions.h"
 #include "catalog/mangling.h"
-#include "iresearch/search/term_filter.hpp"
 #include "search/functions.hpp"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 #include "velox/type/CppToType.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 // Context for filter conversion
 struct VeloxFilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
-  containers::FlatHashMap<std::string, ColumnInfo>& column_cache;
+  containers::FlatHashMap<std::string, SearchColumnInfo>& column_cache;
 };
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -63,8 +63,6 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
                            const velox::core::TypedExprPtr& expr);
 
 namespace {
-
-using namespace sdb::search;
 
 template<typename SearchType>
 void ResetNumericStream(irs::NumericTokenizer& stream,
@@ -98,7 +96,7 @@ std::optional<velox::Variant> EvaluateConstant(
   return const_expr.value();
 }
 
-const search::ColumnInfo& FindColumnInfo(
+const SearchColumnInfo& FindColumnInfo(
   const VeloxFilterContext& ctx,
   const velox::core::FieldAccessTypedExpr& expr) {
   auto cache_it = ctx.column_cache.find(expr.name());
@@ -119,7 +117,7 @@ const search::ColumnInfo& FindColumnInfo(
     .first->second;
 }
 
-void MakeFieldName(const search::ColumnInfo& column, std::string& field_name) {
+void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
   basics::StrResize(field_name, sizeof(column.info.Id()));
   absl::big_endian::Store(field_name.data(), column.info.Id());
 }
@@ -164,18 +162,18 @@ Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
 template<typename T>
 void DoMangle(std::string& field_name) {
   if constexpr (std::is_same_v<T, bool>) {
-    mangling::MangleBool(field_name);
+    search::mangling::MangleBool(field_name);
   } else if constexpr (std::is_same_v<T, velox::StringView>) {
-    mangling::MangleString(field_name);
+    search::mangling::MangleString(field_name);
   } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
-    mangling::MangleNumeric(field_name);
+    search::mangling::MangleNumeric(field_name);
   } else {
     SDB_UNREACHABLE();
   }
 }
 
 Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
-                       const ColumnInfo& column_info,
+                       const SearchColumnInfo& column_info,
                        const velox::Variant& value) {
   SDB_ASSERT(!value.isNull(),
              "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
@@ -604,7 +602,7 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
   const auto& column_info = FindColumnInfo(ctx, *left_field);
   std::string field_name;
   MakeFieldName(column_info, field_name);
-  mangling::MangleNull(field_name);
+  search::mangling::MangleNull(field_name);
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
@@ -661,7 +659,7 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
                "' is not VARCHAR");
   }
 
-  mangling::MangleString(field_name);
+  search::mangling::MangleString(field_name);
   auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
                                       : AddFilter<irs::ByWildcard>(filter);
   wildcard_filter.boost(ctx.boost);
@@ -716,7 +714,7 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
     static_cast<std::string_view>(value.value().value<velox::StringView>()));
   const irs::TermAttr* token =
     irs::get<irs::TermAttr>(*column_info.analyzer.analyzer);
-  mangling::MangleString(field_name);
+  search::mangling::MangleString(field_name);
   *phrase.mutable_field() = field_name;
   phrase.boost(ctx.boost);
   while (column_info.analyzer.analyzer->next()) {
@@ -806,10 +804,12 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 Result ExprToFilter(
   irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
   const ColumnGetter& column_getter,
-  containers::FlatHashMap<std::string, ColumnInfo>& column_cache) {
-  VeloxFilterContext ctx{.negated = false,
-                         .column_getter = column_getter,
-                         .column_cache = column_cache};
+  containers::FlatHashMap<std::string, SearchColumnInfo>& column_cache) {
+  VeloxFilterContext ctx{
+    .negated = false,
+    .column_getter = column_getter,
+    .column_cache = column_cache,
+  };
   try {
     return FromVeloxExpression(filter, ctx, expr);
   } catch (const velox::VeloxException& ex) {
@@ -825,7 +825,7 @@ Result ExprToFilter(
 Result MakeSearchFilter(irs::And& root,
                         std::span<velox::core::TypedExprPtr> conjuncts,
                         const ColumnGetter& column_getter) {
-  containers::FlatHashMap<std::string, ColumnInfo> column_cache;
+  containers::FlatHashMap<std::string, SearchColumnInfo> column_cache;
   for (auto& expr : conjuncts) {
     auto res = ExprToFilter(root, expr, column_getter, column_cache);
     if (res.fail()) {
@@ -835,4 +835,4 @@ Result MakeSearchFilter(irs::And& root,
   return {};
 }
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

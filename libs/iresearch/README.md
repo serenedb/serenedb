@@ -2,7 +2,7 @@
 
 <picture align=left>
     <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/cf4f0e3b-d515-422a-8047-8375544bb10e">
-    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/cf4f0e3b-d515-422a-8047-8375544bb10e">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/8bd10baa-3144-4ae9-84e8-6de783321f47">
     <img alt="The SereneDB IResearch logo." src="https://github.com/user-attachments/assets/cf4f0e3b-d515-422a-8047-8375544bb10e">
 </picture>
 

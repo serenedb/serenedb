@@ -50,7 +50,9 @@ Query trees are constructed directly from API building blocks — terms, phrases
 
 ## Production history
 
-IResearch has been in continuous production use since 2018, first as the search engine behind [ArangoSearch](https://docs.arango.ai/arangodb/stable/indexes-and-search/arangosearch) in ArangoDB. Since 2024 it is the search foundation of [SereneDB](https://github.com/serenedb/serenedb), a search-OLAP database. Both deployments have stress-tested the embedding design across architecturally distinct host databases.
+IResearch has been in continuous production use since 2018, first as the search engine behind [ArangoSearch](https://docs.arango.ai/arangodb/stable/indexes-and-search/arangosearch) in ArangoDB.</br>
+Since 2024 it is the search foundation of [SereneDB](https://github.com/serenedb/serenedb), a search-OLAP database.</br>
+Both deployments have stress-tested the embedding design across architecturally distinct host databases.
 
 ## License
 

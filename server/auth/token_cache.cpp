@@ -27,6 +27,7 @@
 #include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
+#include <vpack/vpack_helper.h>
 
 #include "auth/role_utils.h"
 #include "basics/logger/logger.h"
@@ -36,7 +37,6 @@
 #include "basics/write_locker.h"
 #include "general_server/authentication_feature.h"
 #include "general_server/state.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::auth {
 namespace {

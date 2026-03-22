@@ -204,7 +204,9 @@ bool MakeAnalyzer(vpack::Slice input, Analyzer::ptr& output) {
     return false;
   }
   if (type == StringTokenizer::type_name()) {
-    output = {};
+    // TODO(Dronplane): maybe we want to handle this case outside? But returning
+    // true + nullptr looks not very robust.
+    output = std::make_unique<StringTokenizer>();
     return true;
   }
   input = input.get(kPropertiesParam);

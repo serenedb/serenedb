@@ -51,4 +51,5 @@ std::string ConnectionContext::GetCurrentSchema() const {
   auto snapshot = catalog::GetCatalog().GetSnapshot();
   return GetCurrentSchemaFromSnapshot(std::move(snapshot));
 }
+
 }  // namespace sdb

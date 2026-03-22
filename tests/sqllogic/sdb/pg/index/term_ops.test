@@ -2,7 +2,16 @@ statement ok
 CREATE TABLE test_term_ops (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
 
 statement ok
-CREATE INDEX test_term_ops_idx ON test_term_ops USING inverted(a, b, c);
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE INDEX test_term_ops_idx ON test_term_ops USING inverted(a, b test_english, c test_english);
 
 statement ok
 INSERT INTO test_term_ops values (1, 'percentAnotAcontain and some other', 'a');
@@ -49,6 +58,9 @@ SELECT a FROM test_term_ops_idx WHERE TERM_EQ(c, 'd');
 ----
 a
 4
+
+statement error db error: ERROR:  Field 'c' is not indexed by identity analyzer. Use TERM_EQ function.
+SELECT a FROM test_term_ops_idx WHERE c = 'd';
 
 query
 SELECT a FROM test_term_ops_idx WHERE TERM_GT(c, 'd') ORDER BY a DESC;

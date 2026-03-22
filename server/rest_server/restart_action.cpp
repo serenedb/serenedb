@@ -27,8 +27,10 @@
 // See below in main() for details.
 
 namespace sdb {
+
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 std::function<int()>* gRestartAction = nullptr;
+
 }  // namespace sdb
 
 // Here is a sample of how to use this:

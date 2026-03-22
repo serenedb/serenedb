@@ -22,12 +22,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
-#include <basics/thread_utils.hpp>
 #include <shared_mutex>
 #include <thread>
 
 #include "basics/misc.hpp"
 #include "basics/object_pool.hpp"
+#include "basics/thread_utils.hpp"
 #include "gtest/gtest.h"
 
 using namespace std::chrono_literals;

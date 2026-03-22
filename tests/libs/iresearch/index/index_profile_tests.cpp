@@ -32,6 +32,7 @@
 #include "iresearch/utils/index_utils.hpp"
 
 namespace {
+
 bool Visit(const irs::ColumnReader& reader,
            const std::function<bool(irs::doc_id_t, irs::bytes_view)>& visitor) {
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
@@ -50,6 +51,7 @@ bool Visit(const irs::ColumnReader& reader,
 
   return true;
 }
+
 }  // namespace
 
 class IndexProfileTestCase : public tests::IndexTestBase {

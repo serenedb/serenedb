@@ -32,6 +32,7 @@
 #include "basics/thread.h"
 
 namespace rocksdb {
+
 class DB;
 }
 
@@ -83,4 +84,5 @@ class RocksDBSyncThread final : public Thread {
     absl::Mutex mutex;
   } _condition;
 };
+
 }  // namespace sdb

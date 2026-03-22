@@ -37,7 +37,7 @@
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
-#include "pg/options_parser.h"
+#include "pg/create_index_options.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -64,7 +64,7 @@ IndexType GetIndexType(char* method) {
 }
 
 Result ParseIndexOptions(const IndexStmt& index,
-                         std::vector<std::string>& column_names,
+                         std::vector<catalog::CreateIndexColumn>& columns,
                          catalog::IndexBaseOptions& options) {
   if (!index.accessMethod) {
     return Result{ERROR_BAD_PARAMETER, "access method is not provided"};
@@ -76,53 +76,27 @@ Result ParseIndexOptions(const IndexStmt& index,
   }
 
   pg::PgListWrapper<IndexElem> index_columns{index.indexParams};
-  options.column_ids.reserve(index_columns.size());
 
   for (auto* index_elem : index_columns) {
-    column_names.push_back(index_elem->name);
+    // can happen if column expression is a func call or similar.
+    if (!index_elem->name) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Index column definition is not supported");
+    }
+
+    if (index_elem->opclassopts) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "Index column opclass options are not supported");
+    }
+
+    columns.push_back(
+      {.name = index_elem->name, .opclass = NameToStr(index_elem->opclass)});
   }
 
   options.name = index.idxname;
   options.type = index_type;
   return {};
 }
-
-constexpr OptionInfo kCommitInterval{"commit_interval", 1000,
-                                     "Commit interval in milliseconds"};
-constexpr OptionInfo kConsolidationInterval{
-  "consolidation_interval", 1000, "Consolidation interval in milliseconds"};
-constexpr OptionInfo kCleanupIntervalStep{"cleanup_interval_step", 1,
-                                          "Cleanup interval step"};
-constexpr OptionInfo kIndexOptions[] = {kCommitInterval, kConsolidationInterval,
-                                        kCleanupIntervalStep};
-constexpr OptionGroup kIndexGroup{"Index", kIndexOptions, {}};
-constexpr OptionGroup kIndexOptionGroups[] = {kIndexGroup};
-
-class CreateIndexOptionsParser : public OptionsParser {
- public:
-  CreateIndexOptionsParser(const List* options)
-    : OptionsParser{MakeOptions(options, {}),
-                    kIndexOptionGroups,
-                    {.operation = "CREATE INDEX"}} {
-    ParseOptions([&] { Parse(); });
-  }
-
-  search::InvertedIndexShardOptions GetOptions() && {
-    return std::move(_shard_options);
-  }
-
- private:
-  void Parse() {
-    _shard_options.base.commit_interval_ms =
-      EraseOptionOrDefault<kCommitInterval>();
-    _shard_options.base.consolidation_interval_ms =
-      EraseOptionOrDefault<kConsolidationInterval>();
-    _shard_options.base.cleanup_interval_step =
-      EraseOptionOrDefault<kCleanupIntervalStep>();
-  }
-
-  search::InvertedIndexShardOptions _shard_options;
-};
 
 }  // namespace
 
@@ -150,19 +124,19 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("CONCURRENTLY is not implemented"));
   }
-  std::vector<std::string> column_names;
+  std::vector<catalog::CreateIndexColumn> columns;
   catalog::IndexBaseOptions options;
 
-  if (auto r = ParseIndexOptions(stmt, column_names, options); !r.ok()) {
+  if (auto r = ParseIndexOptions(stmt, columns, options); !r.ok()) {
     SDB_THROW(std::move(r));
   }
-
   if (options.type == IndexType::Inverted) {
-    CreateIndexOptionsParser parser{stmt.options};
+    explain_options::ExplainOptions dummy;
+    CreateIndexOptionsParser parser{stmt.options, dummy};
     auto shard_options = std::move(parser).GetOptions();
-    auto r = catalog.CreateIndex(
-      db, schema, relation_name, std::move(column_names), std::move(options),
-      shard_options, {.create_with_tombstone = true});
+    auto r = catalog.CreateIndex(db, schema, relation_name, std::move(columns),
+                                 std::move(options), shard_options,
+                                 {.create_with_tombstone = true});
 
     if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
       conn_ctx.AddNotice(SQL_ERROR_DATA(

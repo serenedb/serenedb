@@ -18,18 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/hnsw_index.hpp"
+#include "iresearch/formats/column/hnsw_index.hpp"
 
 #include <faiss/utils/distances.h>
 
 #include "basics/system-compiler.h"
-#include "iresearch/formats/columnstore2.hpp"
+#include "iresearch/formats/column/common.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {
-
 namespace {
 
 template<typename T>
@@ -51,6 +50,7 @@ void ReadVector(IndexInput& in, T& vec) {
   in.ReadBytes(reinterpret_cast<byte_type*>(vec.data()),
                sizeof(*vec.data()) * size);
 }
+
 }  // namespace
 
 void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw) {

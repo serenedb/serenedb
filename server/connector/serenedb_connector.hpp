@@ -54,7 +54,7 @@
 #include "connector/parquet_materializer.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/rocksdb_materializer.hpp"
-#include "connector/search_data_source.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
@@ -68,7 +68,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-
 namespace {
 
 inline void ExtractInputFields(const velox::core::TypedExprPtr& expr,
@@ -96,15 +95,15 @@ std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   irs::IndexWriter::Transaction& transaction,
   const catalog::InvertedIndex& index) {
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
-    return std::make_unique<search::SearchSinkInsertWriter>(
-      transaction, search::MakeAnalyzerProvider(index), index.GetColumnIds());
+    return std::make_unique<SearchSinkInsertWriter>(
+      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
-    return std::make_unique<search::SearchSinkUpdateWriter>(
-      transaction, search::MakeAnalyzerProvider(index), index.GetColumnIds());
+    return std::make_unique<SearchSinkUpdateWriter>(
+      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
-    return std::make_unique<search::SearchSinkDeleteWriter>(transaction);
+    return std::make_unique<SearchSinkDeleteWriter>(transaction);
   }
 }
 
@@ -113,12 +112,11 @@ inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
   auto snapshot = transaction.GetCatalogSnapshot();
   auto shard = snapshot->GetIndexShard(backfill_index_id);
   SDB_ASSERT(shard);
-  auto& inverted_shard =
-    basics::downCast<sdb::search::InvertedIndexShard>(*shard);
+  auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
   auto& index = basics::downCast<const catalog::InvertedIndex>(
     *snapshot->template GetObject<catalog::Index>(shard->GetIndexId()));
-  return std::make_unique<search::SearchSinkBackfillWriter>(
-    inverted_shard, search::MakeAnalyzerProvider(index), index.GetColumnIds());
+  return std::make_unique<SearchSinkBackfillWriter>(
+    inverted_shard, MakeAnalyzerProvider(index), index.GetColumnIds());
 }
 
 template<axiom::connector::WriteKind Kind>

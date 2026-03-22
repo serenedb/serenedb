@@ -32,10 +32,9 @@ namespace sdb::pg {
 
 class FileOptionsParser : public OptionsParser {
  public:
-  FileOptionsParser(std::string_view file_path, Options options,
-                    std::span<const OptionGroup> option_groups,
-                    OptionsContext context)
-    : OptionsParser{std::move(options), option_groups, std::move(context)},
+  FileOptionsParser(std::string_view file_path, const List* options,
+                    const OptionGroup& option_group, OptionsContext context)
+    : OptionsParser{options, option_group, std::move(context)},
       _file_path{file_path} {}
 
  protected:

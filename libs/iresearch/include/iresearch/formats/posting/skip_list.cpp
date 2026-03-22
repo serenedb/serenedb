@@ -40,7 +40,8 @@ constexpr size_t CountMaxLevels(uint64_t skip_0, uint64_t skip_n,
   return skip_0 < count ? 1 + math::Log(count / skip_0, skip_n) : 0;
 }
 
-static_assert(CountMaxLevels(128, 32, doc_limits::eof()) == 5);
+static_assert(CountMaxLevels(doc_limits::kBlockSize, doc_limits::kSkipSize,
+                             doc_limits::eof()) == doc_limits::kMaxSkipLevels);
 
 }  // namespace
 

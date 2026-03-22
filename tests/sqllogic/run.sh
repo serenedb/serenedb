@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 export RESOURCES
 
 # Boolean flags configuration
-declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast)
+declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast cancellation)
 
 is_boolean_flag() {
 	local key="$1"
@@ -34,6 +34,8 @@ declare -A defaults=(
 	[skip_failed]=''
 	[database]='serenedb'
 	[host]='localhost'
+	[iterations]=1
+	[cancellation]=false
 )
 
 # Type validators
@@ -138,7 +140,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host)
+		single-port | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -163,7 +165,7 @@ parse_options() {
 
 			# Type validation
 			case "$key" in
-			single-port | cluster-port | jobs)
+			single-port | cluster-port | jobs | iterations)
 				validate_number "$value" "--$key" || return 1
 				;;
 			debug)
@@ -209,6 +211,8 @@ echo "Format: $format"
 echo "Show all errors: $show_all_errors"
 echo "Fast: $fast"
 echo "Skip failed: $skip_failed"
+echo "Iterations: $iterations"
+echo "Cancellation: $cancellation"
 
 if [[ "$fast" == "true" ]]; then
 	test='./tests/sqllogic/sdb/**/*.test'
@@ -298,30 +302,55 @@ else
 fi
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
-# Execute tests based on mode and protocol
-if [[ "$protocol" == "simple" || "$protocol" == "both" ]]; then
-	if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-		run_tests "single" "$single_port" "postgres"
-		test_exit_code=$?
-		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-	fi
-	if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
-		run_tests "cluster" "$cluster_port" "postgres"
-		test_exit_code=$?
-		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-	fi
+cancel_pid=""
+trap 'kill "$cancel_pid" 2>/dev/null || true' EXIT
+if [[ "$cancellation" == "true" ]]; then
+	trap '' INT
+	# One background process that keeps sending SIGINT at random intervals
+	(
+		while true; do
+			sleep "$(awk "BEGIN{srand(); printf \"%.3f\", 0.05 + rand() * 2.0}")"
+			kill -INT 0 2>/dev/null || true
+		done
+	) &
+	cancel_pid=$!
 fi
 
-if [[ "$protocol" == "extended" || "$protocol" == "both" ]]; then
-	if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-		run_tests "single" "$single_port" "postgres-extended"
-		test_exit_code=$?
-		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+for iter in $(seq 1 "$iterations"); do
+	if [[ "$protocol" == "simple" || "$protocol" == "both" ]]; then
+		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
+			run_tests "single" "$single_port" "postgres"
+			test_exit_code=$?
+			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+		fi
+		if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
+			run_tests "cluster" "$cluster_port" "postgres"
+			test_exit_code=$?
+			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+		fi
 	fi
-	if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
-		run_tests "cluster" "$cluster_port" "postgres-extended"
-		test_exit_code=$?
-		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+
+	if [[ "$protocol" == "extended" || "$protocol" == "both" ]]; then
+		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
+			run_tests "single" "$single_port" "postgres-extended"
+			test_exit_code=$?
+			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+		fi
+		if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
+			run_tests "cluster" "$cluster_port" "postgres-extended"
+			test_exit_code=$?
+			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+		fi
+	fi
+done
+
+if [[ "$cancellation" == "true" ]]; then
+	local_port="${single_port:-$cluster_port}"
+	if pg_isready -h "$host" -p "$local_port" -q; then
+		echo "[cancellation] Health check OK"
+	else
+		echo "[cancellation] ERROR: DB is not responsive!"
+		final_exit_code=1
 	fi
 fi
 

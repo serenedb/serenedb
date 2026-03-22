@@ -279,6 +279,9 @@ std::string HeadersToString(
 /// returns the endpoint from a URL
 std::string_view GetEndpointFromUrl(std::string_view url);
 
+/// returns "an" for words starting with a vowel sound, "a" otherwise
+std::string_view GetArticle(std::string_view word) noexcept;
+
 template<typename Char>
 constexpr bool IsNull(std::basic_string_view<Char> str) noexcept {
   return str.data() == nullptr;

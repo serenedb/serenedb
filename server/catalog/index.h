@@ -33,17 +33,38 @@ struct IndexShardOptions;
 
 namespace catalog {
 
+inline constexpr std::string_view kIndexBaseOptions = "base";
+inline constexpr std::string_view kIndexImplOptions = "impl";
+
+// Aggregated info about column for index creation.
+// Filled on different levels during creaton to gather all
+// necessary info for building and validating new index.
+struct CreateIndexColumn {
+  const catalog::Column* catalog_column{nullptr};
+  std::string_view name;
+  std::string opclass;
+  // TODO(Dronplane): parse opclass options. Passing List* down to concrete
+  // index might be an option but that will leak SQL parsing too deep. On the
+  // other hand if we just parse to some generic map of strings it is unclear
+  // how to implement "help".
+};
+
 struct IndexBaseOptions {
   std::string name;
   IndexType type = IndexType::Unknown;
   std::vector<Column::Id> column_ids;
 };
 
-template<typename Impl>
-struct IndexOptions {
+// polymorfic wrapper for concrete index wrappers
+// so we can make generic parsing/creating code.
+struct IndexImplOptionsBaseWrapper {
+  IndexImplOptionsBaseWrapper(IndexBaseOptions&& options) : base{options} {}
+  virtual ~IndexImplOptionsBaseWrapper() = default;
+
   IndexBaseOptions base;
-  Impl impl;
 };
+
+using ImplOptsPtr = std::unique_ptr<IndexImplOptionsBaseWrapper>;
 
 class Index : public SchemaObject {
  public:
@@ -52,7 +73,8 @@ class Index : public SchemaObject {
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
   }
-  void WriteInternal(vpack::Builder& builder) const override;
+
+  virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
   // TODO(codeworse): support arguments for index shards
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
@@ -61,6 +83,9 @@ class Index : public SchemaObject {
   virtual ~Index() = default;
 
  protected:
+  void WriteInternalImpl(vpack::Builder& builder,
+                         absl::FunctionRef<void()> impl_write) const;
+
   struct IndexOutput;
   IndexOutput MakeIndexOutput() const;
 
@@ -72,17 +97,20 @@ class Index : public SchemaObject {
   std::vector<Column::Id> _column_ids;
 };
 
-ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
-                                           ObjectId schema_id, ObjectId id,
-                                           ObjectId relation_id,
-                                           IndexBaseOptions options);
-Result ValidateIndexOptions(const IndexBaseOptions& options,
-                            std::span<const Column*> indexed_columns);
+ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
+                                     vpack::Slice impl_options_slice);
+
+ResultOr<std::shared_ptr<Index>> MakeIndex(
+  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  IndexImplOptionsBaseWrapper&& impl_options);
+
+ResultOr<std::shared_ptr<Index>> MakeIndex(
+  ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
+  ObjectId id, ObjectId relation_id, IndexBaseOptions options,
+  std::vector<catalog::CreateIndexColumn> columns);
 
 }  // namespace catalog
-
 }  // namespace sdb
-
 namespace magic_enum {
 
 template<>

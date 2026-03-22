@@ -20,29 +20,27 @@
 
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
-#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_data_source.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
+#include "search_test_utils.hpp"
 
 using namespace sdb;
 using namespace sdb::connector;
-using namespace sdb::connector::search;
 
 namespace {
 
@@ -52,18 +50,19 @@ class DataSourceWithSearchTest : public ::testing::Test,
                                  public velox::test::VectorTestBase {
  public:
   static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
-    return {.analyzer = {std::make_unique<irs::StringTokenizer>()},
+    auto make_identity = [] {
+      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
+                         vpack::Slice::emptyObjectSlice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
             .features = irs::IndexFeatures::None};
   }
 
   static void SetUpTestCase() {
     velox::memory::MemoryManager::testingSetInstance({});
-    // TODO(Dronplane): make it to the main function of tests
-    // while running this many times makes no harm but is redundant
-    irs::analysis::analyzers::Init();
-    irs::formats::Init();
-    irs::scorers::Init();
-    irs::compression::Init();
+    test::RegisterSearchEntities();
   }
 
   void SetUp() final {
@@ -148,7 +147,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
                          std::views::transform([](auto& a) { return a.id; }));
 
     index_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkInsertWriter>(
+      std::make_unique<connector::SearchSinkInsertWriter>(
         index_transaction, AnalyzerProvider, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
@@ -192,7 +191,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
 };
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -253,7 +252,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
 }
 
 TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -394,7 +393,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
 }
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
-  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<catalog::Column::Id> all_column_oids = {0, 1, 2};
   std::vector<std::string> names = {"id", "value", "description"};
   std::vector<ColumnInfo> all_columns = {{.id = 0, .name = names[0]},
                                          {.id = 1, .name = names[1]},
@@ -458,8 +457,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
     auto index_transaction = _data_writer->GetBatch();
     std::vector<std::unique_ptr<SinkIndexWriter>> delete_writers;
     delete_writers.emplace_back(
-      std::make_unique<connector::search::SearchSinkDeleteWriter>(
-        index_transaction));
+      std::make_unique<connector::SearchSinkDeleteWriter>(index_transaction));
 
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;

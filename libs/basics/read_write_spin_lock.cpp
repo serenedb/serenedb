@@ -25,6 +25,7 @@
 #include "basics/debugging.h"
 
 namespace {
+
 static constexpr uint32_t kWriteLock{1};
 
 static constexpr uint32_t kReaderIncrement{static_cast<uint32_t>(1) << 16};
@@ -48,8 +49,8 @@ static_assert(
   (::kQueuedWriterMask & ::kQueuedWriterIncrement) != 0 &&
     (::kQueuedWriterMask & (::kQueuedWriterIncrement >> 1)) == 0,
   "::QueuedWriterIncrement must be first bit in ::QueuedWriterMask");
-}  // namespace
 
+}  // namespace
 namespace sdb::basics {
 
 ReadWriteSpinLock::ReadWriteSpinLock(ReadWriteSpinLock&& other) noexcept {

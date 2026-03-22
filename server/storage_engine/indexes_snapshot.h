@@ -28,6 +28,7 @@
 #include "basics/recursive_locker.h"
 
 namespace sdb {
+
 class Index;
 
 class IndexesSnapshot {

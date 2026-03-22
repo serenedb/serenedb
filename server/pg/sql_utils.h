@@ -66,6 +66,7 @@ struct TypeName;
 struct CreateFunctionStmt;
 
 namespace sdb {
+
 class QueryString;
 namespace pg {
 

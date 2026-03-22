@@ -20,39 +20,43 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "formats_burst_trie.hpp"
+#include "burst_trie.hpp"
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/strings/internal/resize_uninitialized.h>
+#include <absl/strings/str_cat.h>
 
 #include <variant>
 
 #include "basics/assert.h"
+#include "basics/bit_utils.hpp"
+#include "basics/containers/monotonic_buffer.hpp"
+#include "basics/logger/logger.h"
+#include "basics/memory.hpp"
+#include "basics/noncopyable.hpp"
 #include "basics/string_utils.h"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_features.hpp"
-
-// clang-format off
-
-#include "iresearch/utils/fstext/fst_utils.hpp"
-#include "iresearch/utils/type_limits.hpp"
-
-#include "format_utils.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/formats_attributes.hpp"
-#include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/index/iterators.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/encryption.hpp"
 #include "iresearch/utils/hash_utils.hpp"
-#include "basics/containers/monotonic_buffer.hpp"
-#include "basics/memory.hpp"
-#include "basics/noncopyable.hpp"
-#include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
+
+// fstext includes don't remove them or comment!
+// clang-format off
+
 #include "iresearch/utils/fstext/fst_string_weight.hpp"
 #include "iresearch/utils/fstext/fst_builder.hpp"
 #include "iresearch/utils/fstext/fst_decl.hpp"
@@ -60,15 +64,7 @@
 #include "iresearch/utils/fstext/fst_string_ref_weight.hpp"
 #include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "iresearch/utils/fstext/immutable_fst.hpp"
-#include "basics/bit_utils.hpp"
-#include "basics/containers/bitset.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
-#include "iresearch/utils/string.hpp"
-#include "basics/logger/logger.h"
-
-#include <absl/container/flat_hash_map.h>
-#include <absl/strings/internal/resize_uninitialized.h>
-#include <absl/strings/str_cat.h>
+#include "iresearch/utils/fstext/fst_utils.hpp"
 
 // clang-format on
 
@@ -422,21 +418,6 @@ void ReadFieldFeatures(DataInput& in, FieldMeta& field) {
 
   SDB_ASSERT(!field_limits::valid(field.norm) ||
              IsSubsetOf(IndexFeatures::Norm, field.index_features));
-}
-
-inline void PrepareOutput(std::string& str, IndexOutput::ptr& out,
-                          const FlushState& state, std::string_view ext,
-                          std::string_view format, const int32_t version) {
-  SDB_ASSERT(!out);
-
-  FileName(str, state.name, ext);
-  out = state.dir->create(str);
-
-  if (!out) {
-    throw IoError{absl::StrCat("failed to create file, path: ", str)};
-  }
-
-  format_utils::WriteHeader(*out, format, version);
 }
 
 inline int32_t PrepareInput(std::string& str, IndexInput::ptr& in,
@@ -867,8 +848,8 @@ void FieldWriterImpl::prepare(const FlushState& state) {
   auto* enc = state.dir->attributes().encryption();
 
   // prepare term dictionary
-  PrepareOutput(filename, _terms_out, state, kTermsExt, kFormatTerms,
-                static_cast<int32_t>(_version));
+  format_utils::PrepareOutput(filename, _terms_out, state, kTermsExt,
+                              kFormatTerms, static_cast<int32_t>(_version));
 
   // encrypt term dictionary
   [[maybe_unused]] const auto encrypt =
@@ -877,8 +858,9 @@ void FieldWriterImpl::prepare(const FlushState& state) {
              (_terms_out_cipher && _terms_out_cipher->block_size()));
 
   // prepare term index
-  PrepareOutput(filename, _index_out, state, kTermsIndexExt, kFormatTermsIndex,
-                static_cast<int32_t>(_version));
+  format_utils::PrepareOutput(filename, _index_out, state, kTermsIndexExt,
+                              kFormatTermsIndex,
+                              static_cast<int32_t>(_version));
 
   // encrypt term index
   if (Encrypt(filename, *_index_out, enc, enc_header, _index_out_cipher)) {
@@ -3130,7 +3112,6 @@ class dumper : util::Noncopyable {
 */
 
 }  // namespace
-
 namespace irs {
 namespace burst_trie {
 

@@ -143,6 +143,7 @@ void FileDescriptorsFeature::countOpenFilesIfNeeded() {
     _last_count_stamp = now;
   }
 }
+
 }  // namespace sdb
 
 #endif

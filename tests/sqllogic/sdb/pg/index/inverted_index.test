@@ -7,7 +7,18 @@ statement ok
 INSERT INTO foo values (1, 'quick brown fox jumps over lazy dog', 'value a');
 
 statement ok
-CREATE INDEX foo_idx ON foo USING inverted(a, b, c);
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX foo_idx ON foo USING inverted(a, b test_english, c test_english);
 
 query
 SELECT a, b, c FROM foo_idx WHERE PHRASE(b, 'over lazy dog');
@@ -92,7 +103,25 @@ statement ok
 INSERT INTO vedernikoff values (4, 'pudge goes bot every game', 'gayazov');
 
 statement ok
-CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(a, b, c);
+CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(a, b test_english, c test_english);
+
+
+query
+SELECT COUNT(1) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+----
+count
+2
+
+
+query
+EXPLAIN (EXECUTION) SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
+  -- TableScan[0][vedernikoff, scan=search] ->
+
 
 query
 SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'anchin-chan') ORDER BY a;
@@ -132,6 +161,96 @@ a	b	c
 
 statement ok
 DROP TABLE vedernikoff;
+
+statement ok
+CREATE TABLE biksalen_memes (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO biksalen_memes VALUES
+  (1, 'pudge goes mid every game', 'clickclack university'),
+  (2, 'anchin-chan reads manga all day', 'clickclack university'),
+  (3, 'vedernikoff carries team again', 'deadinside academy');
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical');
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    a := a
+    b := b
+    c := c
+  - TableScan: biksalen_memes -> ROW<"a":INTEGER,"b":VARCHAR,"c":VARCHAR>
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'execution');
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
+  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical', EXPLAIN = 'execution');
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    a := a
+    b := b
+    c := c
+  - TableScan: biksalen_memes -> ROW<"a":INTEGER,"b":VARCHAR,"c":VARCHAR>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
+  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+
+query
+CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english) WITH (EXPLAIN = analyze);
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
+   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+     Input: 3 rows (<slt:ignore>, 1 batches), Output: 3 rows (<slt:ignore>, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+
+# EXPLAIN ANALYZE must actually create the index
+query
+SELECT a, b FROM donsimon_idx WHERE PHRASE(b, 'every game') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT a, b, c FROM donsimon_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+
+query
+SELECT a, b, c FROM donsimon_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+----
+a	b	c
+3	vedernikoff carries team again	deadinside academy
+
+query
+SELECT a, b FROM donsimon_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT * FROM donsimon_idx;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+3	vedernikoff carries team again	deadinside academy
+
 
 
 # index backfill from external (file) table

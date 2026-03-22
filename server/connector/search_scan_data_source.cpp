@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search_data_source.hpp"
+#include "search_scan_data_source.hpp"
 
 #include "connector/parquet_materializer.hpp"
 #include "connector/primary_key.hpp"
@@ -26,7 +26,7 @@
 #include "connector/search_remove_filter.hpp"
 #include "velox/core/PlanNode.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 template<typename Materializer>
 SearchDataSource<Materializer>::SearchDataSource(
@@ -40,10 +40,10 @@ SearchDataSource<Materializer>::SearchDataSource(
 template<typename Materializer>
 void SearchDataSource<Materializer>::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  SDB_ENSURE(split, ERROR_INTERNAL, "SearchDataSource: split is null");
+  SDB_ENSURE(split, ERROR_INTERNAL, "SearchScanDataSource: split is null");
   if (_current_split) {
     SDB_THROW(ERROR_INTERNAL,
-              "SearchDataSource: a split is already being processed");
+              "SearchScanDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
   _current_segment = 0;
@@ -61,8 +61,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
       _doc = segment.mask(_query.execute({.segment = segment}));
-      const auto* pk_column =
-        segment.column(sdb::connector::search::kPkFieldName);
+      const auto* pk_column = segment.column(connector::kPkFieldName);
       _pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);
       SDB_ASSERT(_pk_iterator);
       _pk_value = irs::get<irs::PayAttr>(*_pk_iterator);
@@ -133,4 +132,4 @@ void SearchDataSource<Materializer>::cancel() {
 template class SearchDataSource<RocksDBMaterializer>;
 template class SearchDataSource<ParquetMaterializer>;
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

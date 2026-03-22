@@ -22,6 +22,7 @@
 
 #include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
+#include <vpack/slice.h>
 
 #include <memory>
 #include <vector>
@@ -37,9 +38,9 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "storage_engine/table_shard.h"
-#include "vpack/slice.h"
 
 namespace sdb {
+
 class RocksDBEngineCatalog;
 }
 
@@ -67,7 +68,7 @@ class LocalCatalog final : public LogicalCatalog,
 
   ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexBaseOptions options) final;
+    IndexImplOptionsBaseWrapper&& impl_options) final;
   Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
@@ -84,7 +85,7 @@ class LocalCatalog final : public LogicalCatalog,
 
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
-                     const std::vector<std::string>& column_names,
+                     std::vector<CreateIndexColumn>&& columns,
                      IndexBaseOptions options, IndexShardOptions& shard_options,
                      CreateIndexOperationOptions operation_options = {}) final;
 

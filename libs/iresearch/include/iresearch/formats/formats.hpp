@@ -22,14 +22,9 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
-
-#include <set>
-#include <vector>
-
 #include "basics/memory.hpp"
-#include "iresearch/formats/hnsw_index.hpp"
-#include "iresearch/formats/norm_reader.hpp"
+#include "iresearch/formats/column/hnsw_index.hpp"
+#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_finalizer.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -470,6 +465,7 @@ struct ReaderState {
 void FormatBlock128Init();
 
 namespace formats {
+
 // Checks whether a format with the specified name is registered.
 bool Exists(std::string_view name, bool load_library = true);
 

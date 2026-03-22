@@ -1,5 +1,5 @@
-/// DISCLAIMER
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
 ///
 /// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
@@ -18,10 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
 #include <frozen/unordered_map.h>
 #include <frozen/unordered_set.h>
 #include <unicode/locid.h>
 #include <vpack/builder.h>
+#include <vpack/value.h>
+#include <vpack/value_type.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -44,6 +47,7 @@
 #include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "pg/commands.h"
@@ -51,17 +55,20 @@
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_collector.h"
 #include "pg/sql_error.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 #include "utils/elog.h"
 #include "utils/exec_context.h"
-#include "vpack/value.h"
-#include "vpack/value_type.h"
 
 namespace sdb::pg {
 namespace {
+
+inline constexpr std::string_view kAnalyzerField = "analyzer";
+inline constexpr std::string_view kPropertiesField = "properties";
+inline constexpr std::string_view kTypeField = "type";
 
 using namespace std::string_view_literals;
 
@@ -80,6 +87,13 @@ constexpr auto kNameMappings =
     {tokenizer_options::kNumHashes.name, "numHashes"},
   });
 
+template<const auto& Array>
+void VisitValues(auto&& callback) {
+  [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+    (callback.template operator()<Array[Is]>(), ...);
+  }(std::make_index_sequence<std::size(Array)>{});
+}
+
 void ParseCommaSeparated(std::string_view input,
                          std::invocable<std::string_view> auto&& callback) {
   while (!input.empty()) {
@@ -93,6 +107,13 @@ void ParseCommaSeparated(std::string_view input,
            std::isspace(static_cast<unsigned char>(token.back()))) {
       token.remove_suffix(1);
     }
+    if (token.front() != '\"' || token.back() != '\"') {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Invalid format of list of words(should be "
+                              "comma-separated and quoted)"));
+    }
+    token.remove_suffix(1);
+    token.remove_prefix(1);
     if (!token.empty()) {
       callback(token);
     }
@@ -105,126 +126,307 @@ std::string_view GetVPackName(std::string_view pg_name) {
   return it != kNameMappings.end() ? it->second : pg_name;
 }
 
-void CheckTemplate(std::string_view value) {
-  static constexpr auto kTokenizerTypes = frozen::make_unordered_set({
-    irs::analysis::TextTokenizer::type_name(),
-    irs::analysis::NormalizingTokenizer::type_name(),
-    irs::analysis::NGramTokenizerBase::type_name(),
-    irs::analysis::CollationTokenizer::type_name(),
-    irs::analysis::DelimitedTokenizer::type_name(),
-    irs::analysis::MultiDelimitedTokenizer::type_name(),
-    irs::analysis::SegmentationTokenizer::type_name(),
-    irs::analysis::ClassificationTokenizer::type_name(),
-    irs::analysis::MinHashTokenizer::type_name(),
-    irs::analysis::NearestNeighborsTokenizer::type_name(),
-    irs::analysis::StemmingTokenizer::type_name(),
-    irs::analysis::StopwordsTokenizer::type_name(),
-    // TODO(codeworse): add more tokenizers
-  });
-  if (kTokenizerTypes.count(value) != 1) {
-    THROW_SQL_ERROR(ERR_MSG(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Invalid type of text search dictionary"));
-  }
-}
-
-constexpr OptionInfo kTemplate{"template",
-                               OptionInfo::RequiredTag<std::string_view>{},
-                               "Tokenizer template type", CheckTemplate};
-constexpr OptionInfo kTSDictionaryRootOptions[] = {kTemplate};
+constexpr OptionInfo kTSDictionaryRootOptions[] = {
+  tokenizer_options::kTemplate};
 constexpr OptionGroup kTSDictionaryGroup = {
   "Text Search Dictionary", kTSDictionaryRootOptions,
   tokenizer_options::kTokenizerSubgroups};
-constexpr OptionGroup kTSDictionaryGroups[] = {kTSDictionaryGroup};
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
-  CreateTSDictionaryOptions(const List* ts_dictionary_options)
-    : OptionsParser{MakeOptions(ts_dictionary_options, {}),
-                    kTSDictionaryGroups,
-                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}} {
-    ParseOptions([&] { Parse(); });
+  CreateTSDictionaryOptions(std::shared_ptr<const catalog::Snapshot> snapshot,
+                            ObjectId db_id, std::string_view current_schema,
+                            const List* ts_dictionary_options)
+    : OptionsParser{ts_dictionary_options,
+                    kTSDictionaryGroup,
+                    {.operation = "CREATE TEXT SEARCH DICTIONARY"}},
+      _snapshot{std::move(snapshot)},
+      _db_id{db_id},
+      _current_schema{current_schema} {
+    ParseOptions([&] {
+      _builder.openObject();
+      _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+      std::string_view type =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
+      Parse<true>(type);
+      _builder.close();  // close analyzer
+      _builder.close();  // close object
+    });
   }
 
   auto Result() && { return std::make_pair(std::move(_builder), _features); }
 
  private:
-  void Parse() {
-    const std::string_view type = EraseOptionOrDefault<kTemplate>();
-    _builder.openObject();
-    _builder.add("analyzer", vpack::Value{vpack::ValueType::Object});
-    _builder.add("properties", vpack::Value{vpack::ValueType::Object});
+  void ParseTemplateType(std::string_view type, std::string_view prefix) {
+    bool found = false;
+    VisitValues<kTSDictionaryGroup.subgroups>([&]<const OptionGroup & Group> {
+      if (Group.name == type) {
+        WriteTokenizerOptions<Group>(prefix);
+        found = true;
+        return;
+      }
+    });
+    SDB_ASSERT(found);
+  }
 
-    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-      (
-        [&] {
-          constexpr const auto& kGroup = kTSDictionaryGroup.subgroups[Is];
-          if (kGroup.name == type) {
-            WriteTokenizerOptions<kGroup>();
-          }
-        }(),
-        ...);
-    }(std::make_index_sequence<std::size(kTSDictionaryGroup.subgroups)>{});
+  static vpack::Slice GetFromPath(std::string_view name,
+                                  std::string_view full_prefix,
+                                  std::string_view name_prefix,
+                                  vpack::Slice slice) {
+    SDB_ASSERT(name_prefix == full_prefix.substr(0, name_prefix.size()));
+    auto prefix = full_prefix.substr(name_prefix.size());
+    while (!slice.isNone() && !prefix.empty()) {
+      auto pos = prefix.find('_');
+      auto next = prefix.substr(0, pos);
+      SDB_ASSERT(!next.empty());
+      slice = slice.get(next);
+      prefix = pos == std::string_view::npos ? "" : prefix.substr(pos + 1);
+    }
+    if (slice.isNone()) {
+      return slice;
+    }
+    return slice.get(name);
+  }
 
-    _builder.close();  // close properties
-    _builder.add("type", type);
-    _builder.close();  // close analyzer
-    _builder.close();  // close object
-    ParseFeatures(type);
+  template<typename T>
+  std::optional<T> GetFromCopy(std::string_view name, std::string_view prefix) {
+    SDB_ASSERT(!_copy_from.empty());
+    auto [name_prefix, slice] = _copy_from.back();
+    auto field = GetFromPath(GetVPackName(name), prefix, name_prefix, slice);
+    if (field.isNone()) {
+      return std::nullopt;
+    }
+    if constexpr (std::is_same_v<T, std::string_view>) {
+      return field.stringView();
+    } else if constexpr (std::is_same_v<T, bool>) {
+      return field.getBool();
+    } else if constexpr (std::is_same_v<T, int>) {
+      return field.getNumber<int>();
+    } else if constexpr (std::is_same_v<T, double>) {
+      return field.getNumber<double>();
+    } else if constexpr (std::is_same_v<T, char>) {
+      auto sv = field.stringView();
+      SDB_ASSERT(sv.size() == 1);
+      return sv[0];
+    } else if constexpr (std::is_enum_v<T>) {
+      return magic_enum::enum_cast<T>(field.stringView(),
+                                      magic_enum::case_insensitive);
+    } else {
+      static_assert(false, "Unsupported type T in GetFromCopy");
+    }
+  }
+
+  template<const OptionInfo& Info>
+  auto EraseOptionOrDefault(std::string_view prefix = "") {
+    using R = decltype(OptionsParser::EraseOptionOrDefault<Info>(prefix));
+    if (_copy_from.empty()) {
+      return OptionsParser::EraseOptionOrDefault<Info>(prefix);
+    }
+    if (!OptionsParser::HasOption(Info.name, prefix)) {
+      std::string_view name = Info.name;
+      // tokenizer's properties vpack does not contains its type
+      // tokenizer: {"analyzer": {"type" : "some", "properties": {...}}}
+      SDB_ASSERT(name != tokenizer_options::kTemplate.name);
+      auto value = GetFromCopy<R>(name, prefix);
+      if (value) {
+        return *value;
+      }
+      return Info.GetDefaultValue<R>();
+    } else {
+      return OptionsParser::EraseOptionOrDefault<Info>(prefix);
+    }
+  }
+
+  bool HasOption(const OptionInfo& info, std::string_view prefix) {
+    bool has_option = OptionsParser::HasOption(info.name, prefix);
+    if (has_option || _copy_from.empty()) {
+      return has_option;
+    }
+
+    auto [name_prefix, slice] = _copy_from.back();
+    auto field = GetFromPath(info.name, prefix, name_prefix, slice);
+    return !field.isNone();
+  }
+
+  template<bool IsRoot>
+  void Parse(std::string_view type, std::string_view prefix = "") {
+    if (type == tokenizer_options::kCopyFromGroup.name) {
+      ParseCopyFrom(prefix);
+    } else {
+      _builder.add(kPropertiesField, vpack::Value{vpack::ValueType::Object});
+
+      ParseTemplateType(type, prefix);
+
+      _builder.close();  // close properties
+      _builder.add(kTypeField, type);
+    }
+    if constexpr (IsRoot) {
+      ParseFeatures(type);
+    }
   }
 
   template<const OptionGroup& Group>
-  void WriteTokenizerOptions() {
-    if constexpr (Group.name == tokenizer_options::kTextGroup.name) {
-      bool has_ngram = HasOption(tokenizer_options::kMinGram) ||
-                       HasOption(tokenizer_options::kMaxGram) ||
-                       HasOption(tokenizer_options::kPreserveOriginal);
-      if (has_ngram) {
-        _builder.add(GetVPackName(tokenizer_options::kEdgeNGramGroup.name),
-                     vpack::Value{vpack::ValueType::Object});
-        WriteTokenizerOptions<Group.subgroups[0]>();
-        _builder.close();
-      }
-    }
-    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-      (
-        [&] {
-          constexpr const auto& kOption = Group.options[Is];
-          auto value = EraseOptionOrDefault<kOption>();
-          if constexpr (kOption.name == tokenizer_options::kStopwords.name) {
-            _builder.add(GetVPackName(kOption.name),
-                         vpack::Value{vpack::ValueType::Array});
-            ParseCommaSeparated(
-              value, [&](std::string_view word) { _builder.add(word); });
-            _builder.close();
-          } else {
-            if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
-                                         std::string_view>) {
-              if (value.empty()) {
-                return;
-              }
-            }
-            _builder.add(GetVPackName(kOption.name), value);
+  void ParseTokenizerGroup(std::string_view prefix) {
+    VisitValues<Group.options>([&]<const OptionInfo & Option> {
+      if constexpr (Option.name == tokenizer_options::kStopwords.name ||
+                    Option.name == tokenizer_options::kDelimiters.name) {
+        if (!OptionsParser::HasOption(Option.name, prefix) &&
+            !_copy_from.empty()) {
+          auto slice = GetFromPath(Option.name, prefix, _copy_from.back().first,
+                                   _copy_from.back().second);
+          if (!slice.isNone()) {
+            _builder.add(GetVPackName(Option.name), slice);
+            return;
           }
-        }(),
-        ...);
-    }(std::make_index_sequence<std::size(Group.options)>{});
+        }
+        _builder.add(GetVPackName(Option.name),
+                     vpack::Value{vpack::ValueType::Array});
+        auto value = OptionsParser::EraseOptionOrDefault<Option>(prefix);
+        ParseCommaSeparated(value,
+                            [&](std::string_view word) { _builder.add(word); });
+        _builder.close();
+      } else {
+        auto value = EraseOptionOrDefault<Option>(prefix);
+        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
+                                     std::string_view>) {
+          if (value.empty()) {
+            return;
+          }
+        }
+        _builder.add(GetVPackName(Option.name), value);
+      }
+    });
+  }
+
+  template<const OptionGroup& Group>
+  void WriteTokenizerOptions(std::string_view prefix) {
+    if constexpr (Group.name == tokenizer_options::kMinHashGroup.name) {
+      ParseMinHash(prefix);
+      return;
+    } else if constexpr (Group.name == tokenizer_options::kPipelineGroup.name) {
+      ParsePipeline(prefix);
+      return;
+    } else if constexpr (Group.name == tokenizer_options::kCopyFromGroup.name) {
+      ParseCopyFrom(prefix);
+      return;
+    } else {
+      if constexpr (Group.name == tokenizer_options::kTextGroup.name) {
+        bool has_ngram =
+          HasOption(tokenizer_options::kMinGram, prefix) ||
+          HasOption(tokenizer_options::kMaxGram, prefix) ||
+          HasOption(tokenizer_options::kPreserveOriginal, prefix);
+        if (has_ngram) {
+          _builder.add(GetVPackName(tokenizer_options::kEdgeNGramGroup.name),
+                       vpack::Value{vpack::ValueType::Object});
+          WriteTokenizerOptions<Group.subgroups[0]>(prefix);
+          _builder.close();
+        }
+      }
+      ParseTokenizerGroup<Group>(prefix);
+    }
+  }
+
+  void ParsePipeline(std::string_view prefix) {
+    int step = 1;
+    _builder.add(tokenizer_options::kPipelineGroup.name,
+                 vpack::Value{vpack::ValueType::Array});
+    auto slice = vpack::Slice::noneSlice();
+    if (!_copy_from.empty() && _copy_from.back().first == prefix) {
+      slice = GetFromPath(tokenizer_options::kPipelineGroup.name, prefix,
+                          _copy_from.back().first, _copy_from.back().second);
+      SDB_ASSERT(slice.isArray());
+    }
+    while (true) {
+      auto step_prefix = OptionInfo::AdjustPrefix(prefix, "step", step);
+      std::string_view type;
+      bool type_from_copy = false;
+      if (OptionsParser::HasOption(tokenizer_options::kTemplate, step_prefix)) {
+        type =
+          OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+            step_prefix);
+      } else if (!slice.isNone()) {
+        if (step > slice.length()) {
+          break;
+        }
+        auto elem = slice.at(step - 1);
+        if (elem.isNone()) {
+          break;
+        }
+        type_from_copy = true;
+        type = elem.get(kTypeField).stringView();
+        _copy_from.emplace_back(step_prefix, elem.get(kPropertiesField));
+      }
+      if (type.empty()) {
+        break;
+      }
+      _builder.openObject();
+      Parse<false>(type, step_prefix);
+      _builder.close();
+      if (type_from_copy) {
+        _copy_from.pop_back();
+      }
+
+      step++;
+    }
+    _builder.close();  // close array for pipeline
+  }
+
+  void ParseMinHash(std::string_view prefix) {
+    auto analyzer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
+    std::string_view type;
+    bool type_from_template = false;
+    if (OptionsParser::HasOption(tokenizer_options::kTemplate,
+                                 analyzer_prefix) ||
+        _copy_from.empty()) {
+      type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+        analyzer_prefix);
+    } else {
+      SDB_ASSERT(!_copy_from.empty());
+      auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
+                               _copy_from.back().second);
+      type = slice.get(kTypeField).stringView();
+      _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
+      type_from_template = true;
+    }
+    SDB_ASSERT(!type.empty());
+    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+    Parse<false>(type, analyzer_prefix);
+    _builder.close();  // close analyzer
+    if (type_from_template) {
+      _copy_from.pop_back();
+    }
+    int hashes = EraseOptionOrDefault<tokenizer_options::kNumHashes>(prefix);
+    _builder.add(GetVPackName(tokenizer_options::kNumHashes.name), hashes);
+  }
+
+  void ParseCopyFrom(std::string_view prefix) {
+    std::string_view from =
+      OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
+    auto name = ParseObjectName(from, _current_schema);
+    auto tokenizer =
+      _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
+    if (!tokenizer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("text search dictionary \"", from, "\" does not exist"));
+    }
+    auto slice = tokenizer->Slice().get(kAnalyzerField);
+
+    auto type = slice.get(kTypeField);
+    _copy_from.emplace_back(prefix, slice.get(kPropertiesField));
+    Parse<false>(type.stringView(), prefix);
+    _copy_from.pop_back();
   }
 
   void ParseFeatures(std::string_view type) {
-    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-      (
-        [&] {
-          constexpr const auto& kFeature =
-            tokenizer_options::kFeaturesOptions[Is];
-          bool use_feature = EraseOptionOrDefault<kFeature>();
-          if (use_feature) {
-            bool added = _features.Add(kFeature.name);
-            SDB_ASSERT(added);
-          }
-        }(),
-        ...);
-    }(std::make_index_sequence<std::size(
-        tokenizer_options::kFeaturesOptions)>{});
+    VisitValues<tokenizer_options::kFeaturesOptions>(
+      [&]<const OptionInfo & Feature> {
+        bool use_feature = EraseOptionOrDefault<Feature>();
+        if (use_feature) {
+          bool added = _features.Add(Feature.name);
+          SDB_ASSERT(added);
+        }
+      });
     auto r = _features.Validate(type);
     if (!r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -234,6 +436,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   vpack::Builder _builder;
   search::Features _features;
+  std::vector<std::pair<std::string_view, vpack::Slice>> _copy_from;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  ObjectId _db_id;
+  std::string_view _current_schema;
 };
 
 }  // namespace
@@ -245,21 +451,24 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
   const auto tokenizer_name =
     ParseObjectName(stmt.defnames, ctx.GetDatabase(), current_schema);
 
+  auto& catalogs =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+
   auto [b, features] =
-    std::move(CreateTSDictionaryOptions{stmt.definition}).Result();
+    std::move(CreateTSDictionaryOptions{catalogs.Global().GetSnapshot(), db,
+                                        current_schema, stmt.definition})
+      .Result();
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
     ObjectId{0}, tokenizer_name.relation, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 
-  auto& catalogs =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
   auto r =
     catalog.CreateTokenizer(db, tokenizer_name.schema, std::move(tokenizer));
 
-  if (!r.ok()) {
+  if (!r.ok() && !stmt.if_not_exists) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("text search dictionary \"",
                             tokenizer_name.relation, "\" already exists"));

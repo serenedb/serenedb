@@ -98,17 +98,17 @@ SereneDBTableLayout::createTableHandle(
 
         if (absl::c_find(index_columns, serene_column->Id()) !=
             index.GetColumnIds().end()) {
-          return search::ColumnInfo{
+          return SearchColumnInfo{
             .info = *serene_column,
-            .analyzer = index.GetColumnAnalyzer(serene_column->Id())};
+            .analyzer = index.GetColumnAnalyzer(serene_column->Id()),
+          };
         }
       }
       return std::nullopt;
     };
     irs::And conjunct_root;
 
-    auto result =
-      search::MakeSearchFilter(conjunct_root, filters, column_getter);
+    auto result = MakeSearchFilter(conjunct_root, filters, column_getter);
     if (result.fail()) {
       THROW_SQL_ERROR(ERR_MSG(result.errorMessage()));
     }

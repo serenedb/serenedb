@@ -20,7 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "columnstore2.hpp"
+#include "common.hpp"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/overload.h>

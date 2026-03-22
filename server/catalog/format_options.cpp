@@ -28,7 +28,6 @@
 #include "query/utils.h"
 
 namespace sdb {
-
 namespace {
 
 connector::DwioWriterOptions CreateDefaultWriterOptions(

@@ -28,6 +28,7 @@
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <iresearch/utils/bytes_utils.hpp>
 #include <memory>
 
 #include "basics/assert.h"
@@ -39,7 +40,6 @@
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
 #include "connector/sink_writer_base.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -58,7 +58,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
-
 namespace {
 
 constexpr std::string_view kZeroLengthVector{"\0", 1};
@@ -66,7 +65,7 @@ constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
 template<typename T>
 std::string VeloxValueToString(T val) {
-  if constexpr (sdb::type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
+  if constexpr (type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
     return static_cast<std::string>(val);
   } else if constexpr (std::is_same_v<T, velox::int128_t>) {
     std::string result;
@@ -139,6 +138,7 @@ std::string BuildUniqueViolationDetail(
 
   return detail;
 }
+
 }  // namespace
 
 WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,

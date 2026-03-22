@@ -25,6 +25,7 @@
 #include "basics/assert.h"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::utf8_utils {

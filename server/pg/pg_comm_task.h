@@ -47,6 +47,7 @@
 #include "utils/query_string.h"
 
 namespace sdb::pg {
+
 class PostgresFeature;
 
 // ClientHello -> Idle -> Processing -> Idle -> ErrorRecovery -> Idle....

@@ -21,6 +21,8 @@
 
 #include "server_feature.h"
 
+#include <vpack/vpack_helper.h>
+
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -37,13 +39,6 @@
 #include "general_server/state.h"
 #include "rest_server/upgrade_feature.h"
 #include "statistics/statistics_feature.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/heartbeat_thread.h"
-#include "replication/replication_feature.h"
-#endif
 
 using namespace sdb::app;
 using namespace sdb::options;
@@ -96,15 +91,6 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
       Server::id<StatisticsFeature>(),
     });
     disable_deamon_and_supervisor();
-
-#ifdef SDB_CLUSTER
-    if (!options->processingResult().touched("replication.auto-start")) {
-      // turn off replication applier when we do not have a rest server
-      // but only if the config option is not explicitly set (the recovery
-      // test want the applier to be enabled for testing it)
-      server().getFeature<ReplicationFeature>().disableReplicationApplier();
-    }
-#endif
   }
   server().getFeature<ShutdownFeature>().disable();
 }
@@ -140,22 +126,6 @@ void ServerFeature::waitForHeartbeat() {
     // waiting for the heartbeart thread is necessary on coordinator only
     return;
   }
-
-#ifdef SDB_CLUSTER
-  if (!server().hasFeature<ClusterFeature>()) {
-    return;
-  }
-
-  auto& cf = server().getFeature<ClusterFeature>();
-  while (true) {
-    auto heartbeat_thread = cf.heartbeatThread();
-    SDB_ASSERT(heartbeat_thread != nullptr);
-    if (heartbeat_thread == nullptr || heartbeat_thread->hasRunOnce()) {
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-#endif
 }
 
 }  // namespace sdb

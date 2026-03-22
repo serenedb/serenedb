@@ -53,5 +53,4 @@ inline constexpr ObjectId kPgCatalogSchema{11};
 inline constexpr ObjectId kPgInformationSchema{1000003};
 
 }  // namespace id
-
 }  // namespace sdb

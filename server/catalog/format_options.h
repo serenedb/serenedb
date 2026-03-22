@@ -21,6 +21,8 @@
 #pragma once
 
 #include <velox/type/Type.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
 #include <memory>
 #include <string>
@@ -29,8 +31,6 @@
 #include "basics/fwd.h"
 #include "catalog/types.h"
 #include "connector/file_table.hpp"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 
 namespace sdb {
 

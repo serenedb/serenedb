@@ -32,6 +32,7 @@
 
 namespace sdb {
 namespace transaction {
+
 class Methods;
 }
 

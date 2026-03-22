@@ -28,7 +28,6 @@
 #include "basics/fwd.h"
 
 namespace sdb::search::functions {
-
 namespace {
 
 template<typename T>

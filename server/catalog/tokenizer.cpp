@@ -20,6 +20,9 @@
 
 #include "catalog/tokenizer.h"
 
+#include <vpack/builder.h>
+#include <vpack/slice.h>
+
 #include <expected>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -28,8 +31,6 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "catalog/search_analyzer_impl.h"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 
 namespace sdb::catalog {
 
@@ -41,12 +42,12 @@ ResultOr<Tokenizer::AnalyzerWrapper> Tokenizer::GetTokenizer() {
       return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                      "Failed to create analyzer"};
     }
-    return AnalyzerWrapper{analyzer.release(), Deleter{*this}};
+    return AnalyzerWrapper{analyzer.release(), Deleter{this}};
   }
   auto analyzer = std::move(_pool.back());
   SDB_ASSERT(analyzer);
   _pool.pop_back();
-  return AnalyzerWrapper{analyzer.release(), Deleter{*this}};
+  return AnalyzerWrapper{analyzer.release(), Deleter{this}};
 }
 
 void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
@@ -55,10 +56,13 @@ void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
   _pool.push_back(std::move(analyzer));
 }
 
+vpack::Slice Tokenizer::Slice() const noexcept {
+  return vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
+}
+
 irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
-  vpack::Slice slice{reinterpret_cast<const uint8_t*>(_data.data())};
   irs::analysis::Analyzer::ptr output;
-  irs::analysis::analyzers::MakeAnalyzer(slice, output);
+  irs::analysis::analyzers::MakeAnalyzer(Slice(), output);
   return output;
 }
 

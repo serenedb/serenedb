@@ -78,22 +78,15 @@ std::unique_ptr<Query> Query::CreateQuery(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx) {
   std::unique_ptr<Query> query{new Query{root, query_ctx}};
+  query->SetExecutor(std::make_unique<VeloxExecutor>());
+  return query;
+}
 
-  const bool has_query = query_ctx.command_type.Has(CommandType::Query);
-  const bool has_explain = query_ctx.command_type.Has(CommandType::Explain);
-
-  std::vector<std::unique_ptr<Executor>> executors;
-  executors.reserve(2);
-  if (has_query) {
-    auto velox = std::make_unique<VeloxExecutor>();
-    velox->IgnoreOutput() = has_explain;
-    executors.emplace_back(std::move(velox));
-  }
-  if (has_explain) {
-    executors.emplace_back(std::make_unique<ExplainExecutor>());
-  }
-
-  query->SetExecutors(std::move(executors));
+std::unique_ptr<Query> Query::CreateExplain(
+  const axiom::logical_plan::LogicalPlanNodePtr& root,
+  const QueryContext& query_ctx) {
+  std::unique_ptr<Query> query{new Query{root, query_ctx}};
+  query->SetExecutor(std::make_unique<ExplainExecutor>());
   return query;
 }
 
@@ -125,7 +118,7 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
   return query;
 }
 
-std::unique_ptr<Query> Query::CreateWithExecutor(
+std::unique_ptr<Query> Query::CreatePipeline(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
   const QueryContext& query_ctx,
   std::vector<std::unique_ptr<Executor>> executors,
@@ -146,20 +139,32 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              absl::AnyInvocable<void()> on_error)
   : _query_ctx{query_ctx},
     _logical_plan{root},
-    _output_type{root->outputType()},
+    _output_type{query_ctx.command_type.Has(CommandType::Explain)
+                   ? velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()})
+                   : root->outputType()},
     _on_error{std::move(on_error)} {
   SetExecutors(std::move(executors));
 }
 
 void Query::SetExecutor(std::unique_ptr<Executor> executor) {
-  SDB_ASSERT(_executors.empty());
-  _executors.emplace_back(std::move(executor));
-  _executors.back()->Init(*this);
+  std::vector<std::unique_ptr<Executor>> executors;
+  executors.emplace_back(std::move(executor));
+  SetExecutors(std::move(executors));
 }
 
 void Query::SetExecutors(std::vector<std::unique_ptr<Executor>> executors) {
   SDB_ASSERT(_executors.empty());
   _executors = std::move(executors);
+
+  if (_query_ctx.explain_params.Has(ExplainWith::Analyze)) {
+    for (auto& executor : _executors) {
+      if (auto* velox = dynamic_cast<VeloxExecutor*>(executor.get())) {
+        velox->IgnoreOutput() = true;
+      }
+    }
+    _executors.emplace_back(std::make_unique<ExplainExecutor>());
+  }
+
   for (auto& executor : _executors) {
     executor->Init(*this);
   }
@@ -181,10 +186,8 @@ void Query::CompileQuery() {
   irs::Finally set_explain_output_type = [&] noexcept {
     if (_query_ctx.command_type.Has(CommandType::Explain)) {
       _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
-    } else {
-      // supposed to be set in the end of the func from exec plan
-      SDB_ASSERT(_output_type);
     }
+    // _output_type could be nullptr in case of error.
   };
 
   if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&

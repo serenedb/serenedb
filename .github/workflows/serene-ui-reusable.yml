@@ -3,11 +3,15 @@ name: SereneUI-Build-Base
 on:
     workflow_call:
         inputs:
-            BRANCH:
-                description: "SereneDB Client UI branch to test"
+            VERSION:
+                description: "Version string, e.g. 26.01.1 (used as Docker tag and for GitHub Release)"
                 required: true
                 type: string
-                default: "main"
+            RUN_TESTS:
+                description: "Run SereneUI screenshot tests"
+                required: true
+                type: boolean
+                default: true
             BUILD_IMAGE:
                 description: "Build SereneUI Docker image"
                 required: true
@@ -368,9 +372,9 @@ jobs:
             contents: write
         steps:
             - name: Validate release inputs
-              if: inputs.PUSH_RELEASE && inputs.RELEASE_TAG == ''
+              if: inputs.PUSH_RELEASE && inputs.VERSION == ''
               run: |
-                  echo "RELEASE_TAG is required when PUSH_RELEASE=true"
+                  echo "VERSION is required when PUSH_RELEASE=true"
                   exit 1
 
             - name: Clean release-assets directory

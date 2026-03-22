@@ -3,11 +3,15 @@ name: SereneUI-Build-Manual
 on:
     workflow_dispatch:
         inputs:
-            BRANCH:
-                description: "SereneUI branch to test"
+            VERSION:
+                description: "Version string, e.g. 26.01.1 (used as Docker tag and for GitHub Release)"
                 required: true
                 type: string
-                default: "main"
+            RUN_TESTS:
+                description: "Run SereneUI screenshot tests"
+                required: true
+                type: boolean
+                default: true
             BUILD_IMAGE:
                 description: "Build SereneUI Docker image"
                 required: true
@@ -60,7 +64,8 @@ jobs:
         permissions:
             contents: write
         with:
-            BRANCH: ${{ inputs.BRANCH }}
+            VERSION: ${{ inputs.VERSION }}
+            RUN_TESTS: ${{ inputs.RUN_TESTS }}
             BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
             RUN_TESTS: ${{ inputs.RUN_TESTS }}

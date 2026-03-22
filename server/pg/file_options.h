@@ -48,6 +48,7 @@ enum class FormatType : uint8_t {
   Parquet,
   Dwrf,
   Orc,
+  Json,
 };
 
 // Storage
@@ -149,15 +150,20 @@ inline constexpr OptionGroup kCopyCsvGroup{"CSV", kCopyCsvOptions, {}};
 inline constexpr OptionGroup kParquetGroup{"Parquet", {}, {}};
 inline constexpr OptionGroup kDwrfGroup{"DWRF", {}, {}};
 inline constexpr OptionGroup kOrcGroup{"ORC", {}, {}};
+inline constexpr OptionGroup kJsonGroup{"JSON", {}, {}};
 
 inline constexpr OptionGroup kFormatSubgroups[] = {
-  kCommonFormatGroup, kTextGroup, kCsvGroup,
-  kParquetGroup,      kDwrfGroup, kOrcGroup};
+  kCommonFormatGroup, kTextGroup, kCsvGroup, kParquetGroup,
+  kDwrfGroup,         kOrcGroup,  kJsonGroup};
 inline constexpr OptionGroup kFormatGroup{"Format", {}, kFormatSubgroups};
 
-inline constexpr OptionGroup kCopyFormatSubgroups[] = {
-  kCommonCopyFormatGroup, kCopyTextGroup, kCopyCsvGroup,
-  kParquetGroup,          kDwrfGroup,     kOrcGroup};
+inline constexpr OptionGroup kCopyFormatSubgroups[] = {kCommonCopyFormatGroup,
+                                                       kCopyTextGroup,
+                                                       kCopyCsvGroup,
+                                                       kParquetGroup,
+                                                       kDwrfGroup,
+                                                       kOrcGroup,
+                                                       kJsonGroup};
 inline constexpr OptionGroup kCopyFormatGroup{
   "Format", {}, kCopyFormatSubgroups};
 

@@ -416,7 +416,7 @@ statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
 ----
 db error: ERROR: COPY FORMAT "1" not recognized
-HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC
+HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC, JSON
 
 
 onlyif serenedb
@@ -459,7 +459,7 @@ Storage:
 
 Format:
   Common:
-    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc, Json] - File format
     progress (boolean) [default: false] - Show progress notices during COPY
   Text:
     delimiter (character) [default: \t] - Column delimiter character
@@ -483,3 +483,68 @@ Format:
     (no additional options)
   ORC:
     (no additional options)
+  JSON:
+    (no additional options)
+
+
+# JSON Lines import
+statement ok
+CREATE TABLE json_eater (data TEXT);
+
+
+statement count 3
+COPY (SELECT '{"kostya":666,"vedernikoff":"clickclack"}' UNION ALL SELECT '{"kostya":993,"vedernikoff":"deadinside"}' UNION ALL SELECT '{"kostya":228,"vedernikoff":"babsky"}') TO '/tmp/${__DATABASE__}_kostya.jsonl';
+
+
+# .jsonl extension auto-detected as JSON format
+statement count 3
+COPY json_eater FROM '/tmp/${__DATABASE__}_kostya.jsonl';
+
+
+query
+SELECT * FROM json_eater ORDER BY 1;
+----
+data
+{"kostya":228,"vedernikoff":"babsky"}
+{"kostya":666,"vedernikoff":"clickclack"}
+{"kostya":993,"vedernikoff":"deadinside"}
+
+
+statement count 3
+DELETE FROM json_eater;
+
+
+# explicit FORMAT json
+statement count 3
+COPY json_eater FROM '/tmp/${__DATABASE__}_kostya.jsonl' WITH (FORMAT JSON);
+
+
+query
+SELECT * FROM json_eater ORDER BY 1;
+----
+data
+{"kostya":228,"vedernikoff":"babsky"}
+{"kostya":666,"vedernikoff":"clickclack"}
+{"kostya":993,"vedernikoff":"deadinside"}
+
+
+statement count 3
+DELETE FROM json_eater;
+
+
+# .ndjson extension auto-detection
+statement count 3
+COPY (SELECT '{"iq":322}' UNION ALL SELECT '{"iq":993}' UNION ALL SELECT '{"iq":1337}') TO '/tmp/${__DATABASE__}_vedernikoff.ndjson';
+
+
+statement count 3
+COPY json_eater FROM '/tmp/${__DATABASE__}_vedernikoff.ndjson';
+
+
+query
+SELECT * FROM json_eater ORDER BY 1;
+----
+data
+{"iq":322}
+{"iq":993}
+{"iq":1337}

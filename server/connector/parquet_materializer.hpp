@@ -34,11 +34,11 @@ namespace sdb::connector {
 
 class ParquetMaterializer {
  public:
-  ParquetMaterializer(velox::memory::MemoryPool& pool,
-                      std::shared_ptr<velox::ReadFile> source,
-                      std::unique_ptr<velox::dwio::common::Reader> reader,
-                      std::unique_ptr<velox::dwio::common::RowReader> row_reader,
-                      velox::RowTypePtr output_type);
+  ParquetMaterializer(
+    velox::memory::MemoryPool& pool, std::shared_ptr<velox::ReadFile> source,
+    std::unique_ptr<velox::dwio::common::Reader> reader,
+    std::unique_ptr<velox::dwio::common::RowReader> row_reader,
+    velox::RowTypePtr output_type);
 
   velox::RowVectorPtr ReadRows(std::span<std::string> row_keys);
 

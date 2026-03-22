@@ -2048,7 +2048,8 @@ class CopyOptionsParser : public FileOptionsParser {
         break;
       case FormatType::Parquet:
       case FormatType::Dwrf:
-      case FormatType::Orc: {
+      case FormatType::Orc:
+      case FormatType::Json: {
         auto options = ParseFormatOptions(format);
         if (_is_writer) {
           _writer_options->dwio = options->createWriterOptions(_row_type);

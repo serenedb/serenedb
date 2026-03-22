@@ -292,7 +292,7 @@ std::string RemoveWhitespaceAndComments(const std::string& value);
 // -s, -sh, -ch, -x, -z -> +es;
 // consonant + y -> -y +ies;
 // otherwise -> +s.
-std::string GetPluralFormLowerCase(std::string_view word);
+std::string GetPluralFormLowerCase(std::string word);
 
 struct EscapeJsonOptions {
   // escape forward slashes when serializing VPack values into

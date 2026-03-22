@@ -80,6 +80,7 @@ jobs:
             WORKSPACE: ${{ github.workspace }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
             EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
+            PUSH_RELEASE: ${{ inputs.PUSH_RELEASE }}
             DOCKER_TAG: ${{ inputs.VERSION }}
             DOCKER_REGISTRY: "serenedb"
             IMAGE: serenedb/serene-ui:${{ inputs.VERSION }}
@@ -407,10 +408,10 @@ jobs:
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
               with:
-                  tag_name: ${{ inputs.RELEASE_TAG }}
-                  name: SereneUI ${{ inputs.RELEASE_TAG }}
+                  tag_name: v${{ inputs.VERSION }}-ui
+                  name: SereneUI v${{ inputs.VERSION }}
                   body: |
-                      SereneUI desktop app build from branch `${{ inputs.BRANCH }}`.
+                      SereneUI desktop app build v${{ inputs.VERSION }} from branch `${{ github.ref_name }}`.
 
                       Docker image: https://hub.docker.com/r/serenedb/serene-ui/tags?name=${{ inputs.VERSION }}
                   draft: true

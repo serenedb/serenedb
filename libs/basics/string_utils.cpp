@@ -1198,7 +1198,7 @@ std::string GetPluralFormLowerCase(std::string_view word) {
 
   std::string lower;
   lower.reserve(word.size() + 2);
-  absl::StrAppend(&lower, word);
+  absl::StrAppend(&lower, absl::AsciiStrToLower(word));
 
   if (lower.ends_with('s') || lower.ends_with('x') || lower.ends_with('z') ||
       lower.ends_with("sh") || lower.ends_with("ch")) {

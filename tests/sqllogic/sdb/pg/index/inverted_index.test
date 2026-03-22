@@ -280,7 +280,7 @@ WITH (
 );
 
 statement ok
-CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b, c);
+CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b test_english, c test_english);
 
 query
 SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
@@ -318,7 +318,12 @@ a	b
 query
 SELECT * FROM babsky_ext_idx;
 ----
-
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+3	vedernikoff carries team again	deadinside academy
+4	gayazov plays mass effect	deadinside academy
+5	krivda writes sql at night	clickclack university
 
 statement ok
 DROP TABLE babsky_ext;

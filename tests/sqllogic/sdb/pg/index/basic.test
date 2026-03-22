@@ -275,11 +275,13 @@ CREATE TABLE view_idx_test(a INTEGER PRIMARY KEY, b TEXT);
 statement ok
 CREATE VIEW view_idx_view AS SELECT a, b FROM view_idx_test;
 
+
 statement error
 CREATE INDEX view_idx ON view_idx_view USING inverted(b);
 ----
 db error: ERROR: cannot create index on relation "view_idx_view"
 DETAIL: This operation is not supported for views.
+
 
 statement error
 INSERT INTO view_idx_view VALUES (1, 'hello');
@@ -287,11 +289,13 @@ INSERT INTO view_idx_view VALUES (1, 'hello');
 db error: ERROR: cannot insert into view "view_idx_view"
 HINT: To enable inserting into the view, provide an INSTEAD OF INSERT trigger or an unconditional ON INSERT DO INSTEAD rule.
 
+
 statement error
 UPDATE view_idx_view SET b = 'world' WHERE a = 1;
 ----
 db error: ERROR: cannot update view "view_idx_view"
 HINT: To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+
 
 statement error
 DELETE FROM view_idx_view WHERE a = 1;
@@ -299,24 +303,29 @@ DELETE FROM view_idx_view WHERE a = 1;
 db error: ERROR: cannot delete from view "view_idx_view"
 HINT: To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
 
+
 statement error
 COPY view_idx_view FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
 ----
 db error: ERROR: cannot copy to view "view_idx_view"
 HINT: To enable copying to a view, provide an INSTEAD OF INSERT trigger.
 
+
 statement ok
 DROP VIEW view_idx_view;
+
 
 statement ok
 DROP TABLE view_idx_test;
 
 
 statement ok
-CREATE TABLE idx_dml_test(a INTEGER PRIMARY KEY, b TEXT);
+CREATE TABLE idx_dml_test(a INTEGER PRIMARY KEY, b INTEGER);
+
 
 statement ok
 CREATE INDEX idx_dml_idx ON idx_dml_test USING inverted(b);
+
 
 statement error
 INSERT INTO idx_dml_idx VALUES (1, 'hello');
@@ -324,11 +333,13 @@ INSERT INTO idx_dml_idx VALUES (1, 'hello');
 db error: ERROR: cannot open relation "idx_dml_idx"
 DETAIL: This operation is not supported for indexes.
 
+
 statement error
 UPDATE idx_dml_idx SET b = 'world' WHERE a = 1;
 ----
 db error: ERROR: cannot open relation "idx_dml_idx"
 DETAIL: This operation is not supported for indexes.
+
 
 statement error
 DELETE FROM idx_dml_idx WHERE a = 1;
@@ -336,11 +347,13 @@ DELETE FROM idx_dml_idx WHERE a = 1;
 db error: ERROR: cannot open relation "idx_dml_idx"
 DETAIL: This operation is not supported for indexes.
 
+
 statement error
 COPY idx_dml_idx FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
 ----
 db error: ERROR: cannot open relation "idx_dml_idx"
 DETAIL: This operation is not supported for indexes.
+
 
 statement error
 CREATE INDEX idx_dml_idx2 ON idx_dml_idx USING inverted(b);
@@ -348,8 +361,10 @@ CREATE INDEX idx_dml_idx2 ON idx_dml_idx USING inverted(b);
 db error: ERROR: cannot create index on relation "idx_dml_idx"
 DETAIL: This operation is not supported for indexes.
 
+
 statement ok
 DROP INDEX idx_dml_idx;
+
 
 statement ok
 DROP TABLE idx_dml_test;
@@ -406,6 +421,7 @@ CREATE TEXT SEARCH DICTIONARY s2.te(
     stemming = false,
     accent = false
 );
+
 
 statement ok
 CREATE TABLE s1.foo (a INTEGER, b VARCHAR);

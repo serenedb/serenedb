@@ -30,7 +30,6 @@
 #include <axiom/logical_plan/LogicalPlanNode.h>
 #include <axiom/logical_plan/Utils.h>
 #include <axiom/optimizer/ConstantExprEvaluator.h>
-#include <frozen/unordered_map.h>
 #include <velox/common/file/File.h>
 #include <velox/common/memory/Memory.h>
 #include <velox/core/PlanFragment.h>

@@ -22,7 +22,6 @@
 
 #include "ngram_tokenizer.hpp"
 
-#include <frozen/unordered_map.h>
 #include <vpack/builder.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
@@ -30,6 +29,7 @@
 
 #include <string_view>
 
+#include "basics/containers/trivial_map.h"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
@@ -44,10 +44,12 @@ constexpr std::string_view kStreamTypeParamName = "streamType";
 constexpr std::string_view kStartMarkerParamName = "startMarker";
 constexpr std::string_view kEndMarkerParamName = "endMarker";
 
-constexpr frozen::unordered_map<std::string_view, NGramTokenizerBase::InputType,
-                                2>
-  kStreamTypeConvertMap = {{"binary", NGramTokenizerBase::InputType::Binary},
-                           {"utf8", NGramTokenizerBase::InputType::UTF8}};
+constexpr sdb::containers::TrivialBiMap kStreamTypeConvertMap =
+  [](auto selector) {
+    return selector()
+      .Case("binary", NGramTokenizerBase::InputType::Binary)
+      .Case("utf8", NGramTokenizerBase::InputType::UTF8);
+  };
 
 bool ParseVPackOptions(const vpack::Slice slice,
                        NGramTokenizerBase::Options& options) {
@@ -158,15 +160,14 @@ bool ParseVPackOptions(const vpack::Slice slice,
       return false;
     }
     auto stream_type = stream_type_slice.stringView();
-    const auto* itr = kStreamTypeConvertMap.find(
-      std::string_view(stream_type.data(), stream_type.size()));
-    if (itr == kStreamTypeConvertMap.end()) {
+    auto itr = kStreamTypeConvertMap.TryFindByFirst(stream_type);
+    if (!itr) {
       SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                kStreamTypeParamName,
                "' while constructing ngram_token_stream from VPack arguments");
       return false;
     }
-    stream_bytes_type = itr->second;
+    stream_bytes_type = *itr;
   }
   options.stream_bytes_type = stream_bytes_type;
 
@@ -192,13 +193,11 @@ bool MakeVPackConfig(const NGramTokenizerBase::Options& options,
     builder->add(kPreserveOriginalParamName, options.preserve_original);
 
     // stream type
-    const auto stream_type_value =
-      absl::c_find_if(kStreamTypeConvertMap, [&options](const auto& v) {
-        return v.second == options.stream_bytes_type;
-      });
+    auto stream_type_value =
+      kStreamTypeConvertMap.TryFindBySecond(options.stream_bytes_type);
 
-    if (stream_type_value != kStreamTypeConvertMap.end()) {
-      builder->add(kStreamTypeParamName, stream_type_value->first);
+    if (stream_type_value) {
+      builder->add(kStreamTypeParamName, *stream_type_value);
     } else {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
                 absl::StrCat("Invalid ", kStreamTypeParamName,

@@ -18,9 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
-#include <frozen/unordered_map.h>
-#include <frozen/unordered_set.h>
 #include <unicode/locid.h>
 #include <vpack/builder.h>
 #include <vpack/value.h>
@@ -72,20 +71,20 @@ inline constexpr std::string_view kTypeField = "type";
 
 using namespace std::string_view_literals;
 
-constexpr auto kNameMappings =
-  frozen::make_unordered_map<std::string_view, std::string_view>({
-    {tokenizer_options::kStopwordsPath.name, "stopwordsPath"},
-    {tokenizer_options::kMinGram.name, "min"},
-    {tokenizer_options::kMaxGram.name, "max"},
-    {tokenizer_options::kEdgeNGramGroup.name, "edgeNGram"},
-    {tokenizer_options::kPreserveOriginal.name, "preserveOriginal"},
-    {tokenizer_options::kInputType.name, "streamType"},
-    {tokenizer_options::kStartMarker.name, "startMarker"},
-    {tokenizer_options::kEndMarker.name, "endMarker"},
-    {tokenizer_options::kModelLocation.name, "model_location"},
-    {tokenizer_options::kTopK.name, "top_k"},
-    {tokenizer_options::kNumHashes.name, "numHashes"},
-  });
+// TODO: Remove this mapping
+const absl::flat_hash_map<std::string_view, std::string_view> kNameMappings = {
+  {tokenizer_options::kStopwordsPath.name, "stopwordsPath"},
+  {tokenizer_options::kMinGram.name, "min"},
+  {tokenizer_options::kMaxGram.name, "max"},
+  {tokenizer_options::kEdgeNGramGroup.name, "edgeNGram"},
+  {tokenizer_options::kPreserveOriginal.name, "preserveOriginal"},
+  {tokenizer_options::kInputType.name, "streamType"},
+  {tokenizer_options::kStartMarker.name, "startMarker"},
+  {tokenizer_options::kEndMarker.name, "endMarker"},
+  {tokenizer_options::kModelLocation.name, "model_location"},
+  {tokenizer_options::kTopK.name, "top_k"},
+  {tokenizer_options::kNumHashes.name, "numHashes"},
+};
 
 template<const auto& Array>
 void VisitValues(auto&& callback) {

@@ -20,7 +20,6 @@
 
 #include "pg/system_catalog.h"
 
-#include <frozen/unordered_map.h>
 #include <vpack/serializer.h>
 
 #include <boost/pfr.hpp>
@@ -28,6 +27,7 @@
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/trivial_map.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sql_function_impl.h"
@@ -234,208 +234,209 @@ struct VeloxFunction {
   FunctionKind kind = FunctionKind::Scalar;
 };
 
-constexpr auto kMapping =
-  frozen::make_unordered_map<std::string_view, VeloxFunction>({
-    {"generate_series", {"presto_sequence", true}},
-    {"unnest", {"unnest", true, FunctionLanguage::Decorator}},
+constexpr containers::TrivialBiMap kMapping = [](auto selector) {
+  return selector()
+    .Case("generate_series", VeloxFunction{"presto_sequence", true})
+    .Case("unnest", VeloxFunction{"unnest", true, FunctionLanguage::Decorator})
     // Scalars
     // String functions
-    {"chr", {"presto_chr", false}},
-    {"concat", {"presto_concat", false}},
-    {"length", {"presto_length", false}},
-    {"lower", {"presto_lower", false}},
-    {"upper", {"presto_upper", false}},
-    {"ltrim", {"presto_ltrim", false}},
-    {"rtrim", {"presto_rtrim", false}},
-    {"btrim", {"presto_trim", false}},
-    {"lpad", {"presto_lpad", false}},
-    {"rpad", {"presto_rpad", false}},
-    {"replace", {"presto_replace", false}},
-    {"reverse", {"presto_reverse", false}},
-    {"substring", {"presto_substring", false}},
-    {"substr", {"presto_substr", false}},
-    {"strpos", {"presto_strpos", false}},
-    {"split_part", {"presto_split_part", false}},
-    {"regexp_replace", {"presto_regexp_replace", false}},
-    {"similar_to_escape",
-     {"pg_similar_to_escape", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"like_escape",
-     {"pg_like_escape", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
+    .Case("chr", VeloxFunction{"presto_chr", false})
+    .Case("concat", VeloxFunction{"presto_concat", false})
+    .Case("length", VeloxFunction{"presto_length", false})
+    .Case("lower", VeloxFunction{"presto_lower", false})
+    .Case("upper", VeloxFunction{"presto_upper", false})
+    .Case("ltrim", VeloxFunction{"presto_ltrim", false})
+    .Case("rtrim", VeloxFunction{"presto_rtrim", false})
+    .Case("btrim", VeloxFunction{"presto_trim", false})
+    .Case("lpad", VeloxFunction{"presto_lpad", false})
+    .Case("rpad", VeloxFunction{"presto_rpad", false})
+    .Case("replace", VeloxFunction{"presto_replace", false})
+    .Case("reverse", VeloxFunction{"presto_reverse", false})
+    .Case("substring", VeloxFunction{"presto_substring", false})
+    .Case("substr", VeloxFunction{"presto_substr", false})
+    .Case("strpos", VeloxFunction{"presto_strpos", false})
+    .Case("split_part", VeloxFunction{"presto_split_part", false})
+    .Case("regexp_replace", VeloxFunction{"presto_regexp_replace", false})
+    .Case("similar_to_escape",
+          VeloxFunction{"pg_similar_to_escape", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("like_escape",
+          VeloxFunction{"pg_like_escape", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
     // Math functions
-    {"abs", {"presto_abs", false}},
-    {"acos", {"presto_acos", false}},
-    {"asin", {"presto_asin", false}},
-    {"atan", {"presto_atan", false}},
-    {"atan2", {"presto_atan2", false}},
-    {"cbrt", {"presto_cbrt", false}},
-    {"ceil", {"presto_ceil", false}},
-    {"ceiling", {"presto_ceiling", false}},
-    {"cos", {"presto_cos", false}},
-    {"degrees", {"presto_degrees", false}},
-    {"exp", {"presto_exp", false}},
-    {"floor", {"presto_floor", false}},
-    {"ln", {"presto_ln", false}},
-    {"mod", {"presto_mod", false}},
-    {"pi", {"presto_pi", false}},
-    {"pow", {"presto_pow", false}},
-    {"power", {"presto_power", false}},
-    {"radians", {"presto_radians", false}},
-    {"random", {"presto_random", false}},
-    {"round", {"presto_round", false}},
-    {"sign", {"presto_sign", false}},
-    {"sin", {"presto_sin", false}},
-    {"sqrt", {"presto_sqrt", false}},
-    {"tan", {"presto_tan", false}},
-    {"trunc", {"presto_truncate", false}},
-    {"width_bucket", {"presto_width_bucket", false}},
-    {"fail", {"pg_error", false}},
+    .Case("abs", VeloxFunction{"presto_abs", false})
+    .Case("acos", VeloxFunction{"presto_acos", false})
+    .Case("asin", VeloxFunction{"presto_asin", false})
+    .Case("atan", VeloxFunction{"presto_atan", false})
+    .Case("atan2", VeloxFunction{"presto_atan2", false})
+    .Case("cbrt", VeloxFunction{"presto_cbrt", false})
+    .Case("ceil", VeloxFunction{"presto_ceil", false})
+    .Case("ceiling", VeloxFunction{"presto_ceiling", false})
+    .Case("cos", VeloxFunction{"presto_cos", false})
+    .Case("degrees", VeloxFunction{"presto_degrees", false})
+    .Case("exp", VeloxFunction{"presto_exp", false})
+    .Case("floor", VeloxFunction{"presto_floor", false})
+    .Case("ln", VeloxFunction{"presto_ln", false})
+    .Case("mod", VeloxFunction{"presto_mod", false})
+    .Case("pi", VeloxFunction{"presto_pi", false})
+    .Case("pow", VeloxFunction{"presto_pow", false})
+    .Case("power", VeloxFunction{"presto_power", false})
+    .Case("radians", VeloxFunction{"presto_radians", false})
+    .Case("random", VeloxFunction{"presto_random", false})
+    .Case("round", VeloxFunction{"presto_round", false})
+    .Case("sign", VeloxFunction{"presto_sign", false})
+    .Case("sin", VeloxFunction{"presto_sin", false})
+    .Case("sqrt", VeloxFunction{"presto_sqrt", false})
+    .Case("tan", VeloxFunction{"presto_tan", false})
+    .Case("trunc", VeloxFunction{"presto_truncate", false})
+    .Case("width_bucket", VeloxFunction{"presto_width_bucket", false})
+    .Case("fail", VeloxFunction{"pg_error", false})
     // Date/Time functions
-    {"date_trunc", {"presto_date_trunc", false}},
-    {"extract", {"pg_extract", false}},
+    .Case("date_trunc", VeloxFunction{"presto_date_trunc", false})
+    .Case("extract", VeloxFunction{"pg_extract", false})
     // Array functions
-    {"array_position", {"presto_array_position", false}},
-    {"cardinality", {"presto_cardinality", false}},
-    {"array_to_string",
-     {"presto_array_join", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
+    .Case("array_position", VeloxFunction{"presto_array_position", false})
+    .Case("cardinality", VeloxFunction{"presto_cardinality", false})
+    .Case("array_to_string",
+          VeloxFunction{"presto_array_join", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
     // Aggregates
-    {"avg",
-     {"presto_avg", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"count",
-     {"presto_count", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"max",
-     {"presto_max", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"min",
-     {"presto_min", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"sum",
-     {"presto_sum", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"bool_and",
-     {"presto_bool_and", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"bool_or",
-     {"presto_bool_or", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"every",
-     {"presto_every", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"stddev",
-     {"presto_stddev", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"stddev_pop",
-     {"presto_stddev_pop", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"stddev_samp",
-     {"presto_stddev_samp", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"variance",
-     {"presto_variance", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"var_pop",
-     {"presto_var_pop", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"var_samp",
-     {"presto_var_samp", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"covar_pop",
-     {"presto_covar_pop", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"covar_samp",
-     {"presto_covar_samp", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"array_agg",
-     {"presto_array_agg", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"string_agg",
-     {"presto_array_join", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"bit_and",
-     {"presto_bitwise_and_agg", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"bit_or",
-     {"presto_bitwise_or_agg", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"bit_xor",
-     {"presto_bitwise_xor_agg", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
-    {"any_value",
-     {"presto_any_value", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Aggregate}},
+    .Case("avg",
+          VeloxFunction{"presto_avg", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("count",
+          VeloxFunction{"presto_count", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("max",
+          VeloxFunction{"presto_max", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("min",
+          VeloxFunction{"presto_min", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("sum",
+          VeloxFunction{"presto_sum", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("bool_and",
+          VeloxFunction{"presto_bool_and", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("bool_or",
+          VeloxFunction{"presto_bool_or", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("every",
+          VeloxFunction{"presto_every", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("stddev",
+          VeloxFunction{"presto_stddev", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("stddev_pop",
+          VeloxFunction{"presto_stddev_pop", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("stddev_samp",
+          VeloxFunction{"presto_stddev_samp", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("variance",
+          VeloxFunction{"presto_variance", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("var_pop",
+          VeloxFunction{"presto_var_pop", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("var_samp",
+          VeloxFunction{"presto_var_samp", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Aggregate})
+    .Case("covar_pop",
+          VeloxFunction{"presto_covar_pop", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("covar_samp",
+          VeloxFunction{"presto_covar_samp", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("array_agg",
+          VeloxFunction{"presto_array_agg", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("string_agg",
+          VeloxFunction{"presto_array_join", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("bit_and",
+          VeloxFunction{"presto_bitwise_and_agg", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("bit_or",
+          VeloxFunction{"presto_bitwise_or_agg", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("bit_xor",
+          VeloxFunction{"presto_bitwise_xor_agg", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
+    .Case("any_value",
+          VeloxFunction{"presto_any_value", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Aggregate})
     // Window functions
-    {"row_number",
-     {"presto_row_number", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
-    {"rank",
-     {"presto_rank", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
-    {"dense_rank",
-     {"presto_dense_rank", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
-    {"percent_rank",
-     {"presto_percent_rank", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
-    {"cume_dist",
-     {"presto_cume_dist", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
-    {"ntile",
-     {"presto_ntile", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
-    {"nth_value",
-     {"presto_nth_value", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Window}},
+    .Case("row_number",
+          VeloxFunction{"presto_row_number", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Window})
+    .Case("rank",
+          VeloxFunction{"presto_rank", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Window})
+    .Case("dense_rank",
+          VeloxFunction{"presto_dense_rank", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Window})
+    .Case("percent_rank",
+          VeloxFunction{"presto_percent_rank", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Window})
+    .Case("cume_dist",
+          VeloxFunction{"presto_cume_dist", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Window})
+    .Case("ntile",
+          VeloxFunction{"presto_ntile", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Window})
+    .Case("nth_value",
+          VeloxFunction{"presto_nth_value", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Window})
     // PostgreSQL system functions
-    {"current_schema",
-     {"pg_current_schema", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"current_schemas",
-     {"pg_current_schemas", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_get_userbyid",
-     {"pg_get_userbyid", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_get_viewdef",
-     {"pg_get_viewdef", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_get_ruledef",
-     {"pg_get_ruledef", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_table_is_visible",
-     {"pg_table_is_visible", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"json_extract_path",
-     {"pg_json_extract_path", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"json_extract_path_text",
-     {"pg_json_extract_path_text", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_schema_size",
-     {"pg_schema_size", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_database_size",
-     {"pg_database_size", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"pg_table_size",
-     {"pg_table_size", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
-    {"ts_lexize",
-     {"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
-      FunctionKind::Scalar}},
+    .Case("current_schema",
+          VeloxFunction{"pg_current_schema", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("current_schemas",
+          VeloxFunction{"pg_current_schemas", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("pg_get_userbyid",
+          VeloxFunction{"pg_get_userbyid", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
+    .Case("pg_get_viewdef",
+          VeloxFunction{"pg_get_viewdef", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
+    .Case("pg_get_ruledef",
+          VeloxFunction{"pg_get_ruledef", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
+    .Case("pg_table_is_visible",
+          VeloxFunction{"pg_table_is_visible", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("json_extract_path",
+          VeloxFunction{"pg_json_extract_path", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("json_extract_path_text",
+          VeloxFunction{"pg_json_extract_path_text", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("pg_schema_size",
+          VeloxFunction{"pg_schema_size", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
+    .Case("pg_database_size",
+          VeloxFunction{"pg_database_size", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("pg_table_size",
+          VeloxFunction{"pg_table_size", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
+    .Case("ts_lexize",
+          VeloxFunction{"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
     // Search functions
-    {"phrase", {search::functions::kPhrase, false}},
-    {"term_eq", {search::functions::kTermEq, false}},
-    {"term_lt", {search::functions::kTermLt, false}},
-    {"term_lte", {search::functions::kTermLe, false}},
-    {"term_gte", {search::functions::kTermGe, false}},
-    {"term_gt", {search::functions::kTermGt, false}},
-    {"term_in", {search::functions::kTermIn, false}},
-    {"term_like", {search::functions::kTermLike, false}},
-  });
+    .Case("phrase", VeloxFunction{search::functions::kPhrase, false})
+    .Case("term_eq", VeloxFunction{search::functions::kTermEq, false})
+    .Case("term_lt", VeloxFunction{search::functions::kTermLt, false})
+    .Case("term_lte", VeloxFunction{search::functions::kTermLe, false})
+    .Case("term_gte", VeloxFunction{search::functions::kTermGe, false})
+    .Case("term_gt", VeloxFunction{search::functions::kTermGt, false})
+    .Case("term_in", VeloxFunction{search::functions::kTermIn, false})
+    .Case("term_like", VeloxFunction{search::functions::kTermLike, false});
+};
+
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {
   auto it = schema.find(name);
@@ -493,14 +494,14 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
   FunctionKind kind = FunctionKind::Scalar;
   if (!name.starts_with("serene_") && !name.starts_with("presto_") &&
       !name.starts_with("spark_")) {
-    auto it = kMapping.find(name);
-    if (it == kMapping.end()) {
+    auto it = kMapping.TryFindByFirst(name);
+    if (!it) {
       return nullptr;
     }
-    name = it->second.name;
-    language = it->second.language;
-    table = it->second.table;
-    kind = it->second.kind;
+    name = it->name;
+    language = it->language;
+    table = it->table;
+    kind = it->kind;
   }
   return std::make_shared<catalog::Function>(
     name, FunctionSignature{},

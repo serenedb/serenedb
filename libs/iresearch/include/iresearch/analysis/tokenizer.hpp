@@ -23,8 +23,6 @@
 
 #pragma once
 
-#include <frozen/unordered_map.h>
-
 #include <memory>
 
 #include "iresearch/utils/attribute_provider.hpp"

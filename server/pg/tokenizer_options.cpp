@@ -20,8 +20,6 @@
 
 #include "pg/tokenizer_options.h"
 
-#include <frozen/unordered_set.h>
-
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 

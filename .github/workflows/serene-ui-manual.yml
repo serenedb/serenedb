@@ -1,5 +1,7 @@
 name: SereneUI-Build-Manual
 
+run-name: "SereneUI [${{ inputs.PUSH_RELEASE && 'release' || 'build' }}]"
+
 on:
     workflow_dispatch:
         inputs:

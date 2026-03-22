@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/index.h"
 #include "catalog/native_functions.h"
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
@@ -211,6 +212,15 @@ void ResolveRelation(ObjectId database,
     }
   } else if (data.object->GetType() == catalog::ObjectType::View) {
     resolve_view();
+  } else if (data.object->GetType() == catalog::ObjectType::Index) {
+    auto& index = basics::downCast<catalog::Index>(*data.object);
+    auto& instance = SerenedServer::Instance();
+    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
+    auto snapshot = catalog.GetSnapshot();
+    auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
+    SDB_ASSERT(table);
+    auto& table_data = objects.ensureRelation(name.schema, table->GetName());
+    table_data.object = std::move(table);
   }
 }
 

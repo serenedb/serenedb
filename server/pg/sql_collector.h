@@ -102,6 +102,15 @@ class Objects : public irs::memory::Managed {
     return it != _relations.end() ? &it->second : nullptr;
   }
 
+  const ObjectData* getRelationById(ObjectId id) const noexcept {
+    for (const auto& [name, data] : _relations) {
+      if (data.object && data.object->GetId() == id) {
+        return &data;
+      }
+    }
+    return nullptr;
+  }
+
   template<typename S>
   const ObjectData* getFunction(S s, std::string_view relation) const noexcept {
     auto it = _functions.find(ObjectName{ensureNotNull(s), relation});

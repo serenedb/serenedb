@@ -46,14 +46,13 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path,
                      bool has_pk)
   : Table{std::string{file_path}, [&] {
             std::vector<std::unique_ptr<const axiom::connector::Column>> cols;
-            cols.reserve(table_type->size());
-            // const auto& [type, name] : std::ranges::views::zip(
-            //  table_type->children(), table_type->names()
+            const size_t col_cnt = table_type->size();
+            cols.reserve(col_cnt);
             std::span names = table_type->names();
             std::span types = table_type->children();
-            for (size_t i = 0; i < table_type->size(); ++i) {
+            for (size_t i = 0; i < col_cnt; ++i) {
               catalog::Column::Id id;
-              if (has_pk && i == table_type->size() - 1) {
+              if (has_pk && i == col_cnt - 1) {
                 id = catalog::Column::kGeneratedPKId;
               } else {
                 id = i;
@@ -64,7 +63,7 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path,
               cols.emplace_back(std::move(col));
             }
             if (has_pk) {
-              SDB_ASSERT(table_type->size() > 0);
+              SDB_ASSERT(col_cnt > 0);
             }
             return cols;
           }()} {

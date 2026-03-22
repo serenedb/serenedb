@@ -197,6 +197,19 @@ static char constexpr kEscapeTable[256] = {
   0,   0,   0,   0,   0,   0,   0,   0,   0,
 };
 
+bool IsVowel(char c) noexcept {
+  switch (c) {
+    case 'a':
+    case 'e':
+    case 'i':
+    case 'o':
+    case 'u':
+      return true;
+    default:
+      return false;
+  }
+}
+
 }  // namespace
 namespace sdb::basics::string_utils {
 
@@ -1159,23 +1172,6 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
   }
 }
 
-std::string_view GetArticle(std::string_view word) noexcept {
-  if (word.empty()) {
-    return "";
-  }
-
-  switch (absl::ascii_tolower(word.front())) {
-    case 'a':
-    case 'e':
-    case 'i':
-    case 'o':
-    case 'u':
-      return "an";
-    default:
-      return "a";
-  }
-}
-
 template void EscapeJsonStr<StrSink>(std::string_view str, StrSink* sink,
                                      EscapeJsonOptions options);
 template void EscapeJsonStr<LenSink>(std::string_view str, LenSink* sink,
@@ -1183,8 +1179,16 @@ template void EscapeJsonStr<LenSink>(std::string_view str, LenSink* sink,
 template void EscapeJsonStr<CordSink>(std::string_view str, CordSink* sink,
                                       EscapeJsonOptions options);
 
-bool IsVowel(char c) noexcept {
-  return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
+std::string_view GetArticle(std::string_view word) noexcept {
+  if (word.empty()) {
+    return "";
+  }
+
+  if (IsVowel(absl::ascii_tolower(word.front()))) {
+    return "an";
+  }
+
+  return "a";
 }
 
 std::string GetPluralFormLowerCase(std::string_view word) {

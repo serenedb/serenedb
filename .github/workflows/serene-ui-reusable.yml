@@ -4,9 +4,14 @@ on:
     workflow_call:
         inputs:
             VERSION:
-                description: "Version string, e.g. 26.01.1 (used as Docker tag and for GitHub Release)"
+                description: "Version [xx.xx.x] (used as a tag)"
                 required: true
                 type: string
+            EXTRA_DOCKER_TAGS:
+                description: "Extra Docker tags [IFS= ,] (opt)"
+                required: false
+                type: string
+                default: ""
             RUN_TESTS:
                 description: "Run SereneUI screenshot tests"
                 required: true
@@ -18,15 +23,10 @@ on:
                 type: boolean
                 default: false
             PUSH_IMAGE_TO_REGISTRY:
-                description: "Push SereneUI Docker image to Docker Registry"
+                description: "Push SereneUI image to Registry"
                 required: true
                 type: boolean
                 default: false
-            EXTRA_DOCKER_TAGS:
-                description: "Additional Docker image tags, space- or comma-separated (optional)"
-                required: false
-                type: string
-                default: ""
             BUILD_LINUX_APP:
                 description: "Build SereneUI Linux desktop app"
                 required: true
@@ -43,7 +43,7 @@ on:
                 type: boolean
                 default: false
             PUSH_RELEASE:
-                description: "Publish desktop app builds as GitHub Release"
+                description: "Publish a GitHub Release"
                 required: true
                 type: boolean
                 default: false

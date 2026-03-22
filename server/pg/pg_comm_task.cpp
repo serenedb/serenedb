@@ -255,12 +255,6 @@ void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   }
 }
 
-bool PgSQLCommTaskBase::HandleSSLRequest() {
-  _send.Write(ToBuffer(kNo), true);
-  // return true to keep connection. Client may decide to try GSS or continue plain text
-  return true;
-}
-
 void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
   // We don't send error in case of incorrect format here
   // or direct reply in case of cancel request,
@@ -271,14 +265,13 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
   }
   static_assert(sizeof(ProtocolVersion) == sizeof(uint32_t));
   ProtocolVersion protocol_ver = absl::big_endian::Load32(packet.data() + 4);
-  if (protocol_ver == NEGOTIATE_SSL_CODE) {
-    if (HandleSSLRequest()) {
-      std::move(cleanup).Cancel();
-      _success_packet = true;
+  if (protocol_ver == NEGOTIATE_GSS_CODE ||
+      protocol_ver == NEGOTIATE_SSL_CODE) {
+    if (_ssl_handshake_passed) {
+      // something nasty is happening. Double SSL switch is not expected.
+      // better abort connection
+      return;
     }
-    return;
-  }
-  if (protocol_ver == NEGOTIATE_GSS_CODE) {
     // TODO: Add GSS handling.
     _send.Write(ToBuffer(kNo), true);
     std::move(cleanup).Cancel();
@@ -1373,43 +1366,22 @@ PgSQLCommTask<T>::PgSQLCommTask(rest::GeneralServer& server,
 }
 
 template<rest::SocketType T>
-bool PgSQLCommTask<T>::HandleSSLRequest() {
-  if constexpr (T == rest::SocketType::Ssl) {
-    if (this->_ssl_handshake_passed) {
-      // Another request for ssl handshake - something nasty.
-      // Better to abort connection.
-      SDB_WARN("xxxxx", Logger::REQUESTS,
-               "Duplicate SSL switch request. Connection dropped");
-      return false;
-    }
-    this->_send.Write(ToBuffer(kYes), true);
-    auto cb = [this](const asio_ns::error_code& ec) mutable {
-      if (ec) {
-        SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
-                  "error during TLS handshake: '", ec.message(), "'");
-        this->Stop();
-        return;
-      }
-      // Would be fair to restart keep-alive timeout
-      // to not include what have passed during handshake
-      this->_protocol->timer.cancel();
-      this->SetIOTimeout();
-      this->_ssl_handshake_passed = true;
-    };
-    this->_protocol->handshake(std::move(cb));
-    return true;
-  } else {
-    return PgSQLCommTaskBase::HandleSSLRequest();
-  }
-}
-
-template<rest::SocketType T>
 void PgSQLCommTask<T>::Start() {
   SDB_DEBUG("xxxxx", Logger::REQUESTS, "<pgsql> opened connection ",
             std::bit_cast<size_t>(this));
   asio_ns::post(this->_protocol->context.io_context,
                 [self = this->shared_from_this()] {
-                  basics::downCast<PgSQLCommTask<T>>(*self).AsyncReadSome();
+                  if constexpr (T == rest::SocketType::Ssl) {
+                    // SSL starts as plain text and waits for actual SSL request
+                    // before doing handshake to allow client change connection
+                    // type over same port. We do not support such choices but
+                    // still have to follow the protocol.
+                    basics::downCast<PgSQLCommTask<T>>(*self)
+                      .template AsyncReadSome<true>();
+                  } else {
+                    basics::downCast<PgSQLCommTask<T>>(*self)
+                      .template AsyncReadSome<false>();
+                  }
                 });
 }
 
@@ -1491,8 +1463,8 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
             }
             return ss_str;
           }());
-          if (this->_state.load() != State::ClientHello &&
-              _packet[0] == PQ_MSG_TERMINATE) {
+          const auto hello_passed = this->_state.load() != State::ClientHello;
+          if (hello_passed && _packet[0] == PQ_MSG_TERMINATE) {
             SDB_DEBUG("xxxxx", Logger::REQUESTS, "Termination request for ",
                       std::bit_cast<size_t>(this));
             this->Stop();
@@ -1501,11 +1473,53 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
             return false;
           }
           {
+            if constexpr (T == rest::SocketType::Ssl) {
+              if (!this->_ssl_handshake_passed) {
+                // Wait for SSL request
+                ProtocolVersion protocol_ver =
+                  absl::big_endian::Load32(_packet.data() + 4);
+                if (protocol_ver == NEGOTIATE_SSL_CODE) {
+                  asio_ns::write(this->_protocol->socket.next_layer(),
+                                 asio_ns::buffer(kYes));
+                  auto cb = [this](const asio_ns::error_code& ec) mutable {
+                    if (ec) {
+                      SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
+                                "error during TLS handshake: '", ec.message(),
+                                "'");
+                      this->Stop();
+                      return;
+                    }
+                    // Would be fair to restart keep-alive timeout
+                    // to not include what have passed during handshake
+                    this->SetIOTimeout();
+                    this->_ssl_handshake_passed = true;
+                    _packet.clear();
+                    this->_protocol->buffer.consume(_pending_len);
+                    _pending_len = 0;
+                    // Now switch to reads from SSL stream
+                    asio_ns::post(this->_protocol->context.io_context,
+                                  [self = this->shared_from_this()] {
+                                    basics::downCast<PgSQLCommTask<T>>(*self)
+                                      .template AsyncReadSome<false>();
+                                  });
+                  };
+                  this->SetIOTimeout();
+                  this->_protocol->handshake(std::move(cb));
+                  // stop reading with this mode.
+                  return false;
+                } else if (protocol_ver != CANCEL_REQUEST_CODE) {
+                  this->Stop();
+                  _packet.clear();
+                  _pending_len = 0;
+                  return false;
+                }
+              }
+            }
             std::string packet{_packet.data(), _pending_len};
             // TODO: error if there's no copy in progress
-            if (packet.starts_with(PQ_MSG_COPY_DATA)) {
+            if (hello_passed && packet.starts_with(PQ_MSG_COPY_DATA)) {
               this->_copy_queue.AppendCopyDataMsg(std::move(packet));
-            } else if (packet.starts_with(PQ_MSG_COPY_DONE)) {
+            } else if (hello_passed && packet.starts_with(PQ_MSG_COPY_DONE)) {
               this->_copy_queue.AppendCopyDoneMsg();
             } else {
               std::lock_guard lock{this->_queue_mutex};

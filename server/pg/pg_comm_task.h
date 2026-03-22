@@ -121,7 +121,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void HandleClientPacket(std::string_view packet);
   void HandleClientHello(std::string_view packet);
-  virtual bool HandleSSLRequest();
 
   void SendParameterStatus(std::string_view name, std::string_view value);
 
@@ -204,9 +203,6 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
  public:
   PgSQLCommTask(rest::GeneralServer& server, ConnectionInfo info,
                 std::shared_ptr<rest::AsioSocket<T>> so);
-
- protected:
-  bool HandleSSLRequest() final;
 
  private:
   void Start() final;

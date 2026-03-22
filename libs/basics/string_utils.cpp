@@ -1172,14 +1172,14 @@ bool IsVowel(char c) noexcept {
   return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
 }
 
-std::string GetPluralFormLowerCase(std::string word) {
+std::string GetPluralFormLowerCase(std::string_view word) {
   if (word.empty()) {
     return {};
   }
 
   std::string lower;
   lower.reserve(word.size() + 2);
-  lower.assign(absl::AsciiStrToLower(word));
+  absl::StrAppend(&lower, word);
 
   if (lower.ends_with('s') || lower.ends_with('x') || lower.ends_with('z') ||
       lower.ends_with("sh") || lower.ends_with("ch")) {

@@ -22,16 +22,11 @@ on:
                 required: true
                 type: boolean
                 default: false
-            RUN_TESTS:
-                description: "Run SereneUI screenshot tests"
-                required: true
-                type: boolean
-                default: true
-            DOCKER_TAG:
-                description: "Custom TAG for SereneUI Docker image"
+            EXTRA_DOCKER_TAGS:
+                description: "Additional Docker image tags, space- or comma-separated (optional)"
                 required: false
                 type: string
-                default: "latest"
+                default: ""
             BUILD_LINUX_APP:
                 description: "Build SereneUI Linux desktop app"
                 required: true
@@ -52,11 +47,6 @@ on:
                 required: true
                 type: boolean
                 default: false
-            RELEASE_TAG:
-                description: "GitHub Release tag/name (required when PUSH_RELEASE=true)"
-                required: false
-                type: string
-                default: ""
         secrets:
             PAT_TOKEN:
                 required: true
@@ -87,8 +77,9 @@ jobs:
             WORKSPACE: ${{ github.workspace }}
             BRANCH: ${{ inputs.BRANCH }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
-            DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
             IMAGE: registry.serenedb.com:5000/serene-ui:${{ inputs.DOCKER_TAG }}
+            EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
+            DOCKER_TAG: ${{ inputs.VERSION }}
         steps:
             - name: Checkout SereneUI
               uses: actions/checkout@v4

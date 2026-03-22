@@ -22,16 +22,11 @@ on:
                 required: true
                 type: boolean
                 default: false
-            RUN_TESTS:
-                description: "Run SereneUI screenshot tests"
-                required: true
-                type: boolean
-                default: true
-            DOCKER_TAG:
-                description: "Custom TAG for SereneUI Docker image"
+            EXTRA_DOCKER_TAGS:
+                description: "Additional Docker image tags, space- or comma-separated (optional)"
                 required: false
                 type: string
-                default: "latest"
+                default: ""
             BUILD_LINUX_APP:
                 description: "Build SereneUI Linux desktop app"
                 required: true
@@ -52,11 +47,6 @@ on:
                 required: true
                 type: boolean
                 default: false
-            RELEASE_TAG:
-                description: "GitHub Release tag/name (required when PUSH_RELEASE=true)"
-                required: false
-                type: string
-                default: ""
 
 jobs:
     build:
@@ -68,13 +58,11 @@ jobs:
             RUN_TESTS: ${{ inputs.RUN_TESTS }}
             BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
-            RUN_TESTS: ${{ inputs.RUN_TESTS }}
-            DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
+            EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
             BUILD_LINUX_APP: ${{ inputs.BUILD_LINUX_APP }}
             BUILD_WINDOWS_APP: ${{ inputs.BUILD_WINDOWS_APP }}
             BUILD_MACOS_APP: ${{ inputs.BUILD_MACOS_APP }}
             PUSH_RELEASE: ${{ inputs.PUSH_RELEASE }}
-            RELEASE_TAG: ${{ inputs.RELEASE_TAG }}
         secrets:
             PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
             TG_TOKEN: ${{ secrets.TG_TOKEN }}

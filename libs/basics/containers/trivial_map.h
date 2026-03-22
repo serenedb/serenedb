@@ -1053,10 +1053,8 @@ struct TrivialBiMapMultiCaseDispatch {
 };
 
 template<typename Selector, class Pairs, std::size_t... Indices>
-constexpr auto TrivialBiMapFirstToIndexMultiCase(Selector selector,
-                                                 const Pairs& pairs,
-                                                 std::index_sequence<0,
-                                                                     Indices...>) {
+constexpr auto TrivialBiMapFirstToIndexMultiCase(
+  Selector selector, const Pairs& pairs, std::index_sequence<0, Indices...>) {
   auto s = selector.Case(std::data(pairs)[0].first, static_cast<int>(0));
   ((s = s.Case(std::data(pairs)[Indices].first, static_cast<int>(Indices))),
    ...);

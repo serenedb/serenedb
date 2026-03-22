@@ -81,9 +81,9 @@ jobs:
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
             EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
             PUSH_RELEASE: ${{ inputs.PUSH_RELEASE }}
-            DOCKER_TAG: ${{ inputs.VERSION }}
             DOCKER_REGISTRY: "serenedb"
-            IMAGE: serenedb/serene-ui:${{ inputs.VERSION }}
+            IMAGE: serene-ui
+            DOCKER_TAG: ${{ inputs.VERSION }}
         steps:
             - name: Resolve branch
               working-directory: ${{ github.workspace }}
@@ -365,7 +365,7 @@ jobs:
 
     release:
         name: Publish GitHub Release
-        needs: [build-linux-app, build-windows-app, build-macos-app]
+        needs: [build-linux-app, build-windows-app, build-macos-app, build-docker]
         if: >-
             always()
             && inputs.PUSH_RELEASE
@@ -411,8 +411,6 @@ jobs:
                   tag_name: v${{ inputs.VERSION }}-ui
                   name: SereneUI v${{ inputs.VERSION }}
                   body: |
-                      SereneUI desktop app build v${{ inputs.VERSION }} from branch `${{ github.ref_name }}`.
-
                       Docker image: https://hub.docker.com/r/serenedb/serene-ui/tags?name=${{ inputs.VERSION }}
                   draft: true
                   prerelease: true

@@ -23,7 +23,6 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
-#include <frozen/unordered_map.h>
 #include <velox/functions/prestosql/types/JsonType.h>
 #include <velox/functions/prestosql/types/TimestampWithTimeZoneType.h>
 #include <velox/functions/prestosql/types/UuidType.h>

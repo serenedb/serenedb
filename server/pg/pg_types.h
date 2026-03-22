@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <frozen/unordered_map.h>
 #include <velox/type/Type.h>
 
 #include <expected>

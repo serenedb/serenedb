@@ -100,24 +100,15 @@ def genErrorRegistryHeaderFile(errors):
 #pragma once
 
 #include "basics/errors.h"
-#include <frozen/unordered_map.h>
+#include "absl/container/flat_hash_map.h"
 
 /* clang-format off */
-
-namespace frozen {{
-template<>
-struct elsa<ErrorCode> {{
-  constexpr size_t operator()(ErrorCode value, size_t seed) const {{
-    return elsa<int>{{}}.operator()(static_cast<int>(value), seed);
-  }}
-}};
-}}  // namespace frozen
 
 // for format macro constants, e.g. PRId64
 #include <cinttypes>
 
 namespace sdb::error {{
-static constexpr frozen::unordered_map<ErrorCode, const char*, {numErrorMessages}> ErrorMessages = {{
+inline const absl::flat_hash_map<ErrorCode, const char*> ErrorMessages = {{
 {initializerList}
 }};
 }}

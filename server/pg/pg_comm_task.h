@@ -121,6 +121,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void HandleClientPacket(std::string_view packet);
   void HandleClientHello(std::string_view packet);
+  virtual bool HandleSSLRequest();
 
   void SendParameterStatus(std::string_view name, std::string_view value);
 
@@ -188,6 +189,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   uint64_t _key{0};
   bool _pop_packet{false};
   bool _success_packet{false};
+  bool _ssl_handshake_passed{false};
   char _current_packet_type{0};
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};
@@ -202,6 +204,9 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
  public:
   PgSQLCommTask(rest::GeneralServer& server, ConnectionInfo info,
                 std::shared_ptr<rest::AsioSocket<T>> so);
+
+ protected:
+  bool HandleSSLRequest() final;
 
  private:
   void Start() final;

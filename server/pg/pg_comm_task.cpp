@@ -99,6 +99,7 @@ static_assert(PG_PROTOCOL_EARLIEST == PG_PROTOCOL_LATEST);
 // clang-format off
 // Pre-defined packets
 constexpr std::array<char, 1> kNo{'N'};
+constexpr std::array<char, 1> kYes{'S'};
 
 constexpr std::array<char, 5> kNoData{
   PQ_MSG_NO_DATA, 0x00, 0x00, 0x00, 0x04,
@@ -254,6 +255,12 @@ void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   }
 }
 
+bool PgSQLCommTaskBase::HandleSSLRequest() {
+  _send.Write(ToBuffer(kNo), true);
+  // return true to keep connection. Client may decide to try GSS or continue plain text
+  return true;
+}
+
 void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
   // We don't send error in case of incorrect format here
   // or direct reply in case of cancel request,
@@ -264,9 +271,15 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
   }
   static_assert(sizeof(ProtocolVersion) == sizeof(uint32_t));
   ProtocolVersion protocol_ver = absl::big_endian::Load32(packet.data() + 4);
-  if (protocol_ver == NEGOTIATE_SSL_CODE ||
-      protocol_ver == NEGOTIATE_GSS_CODE) {
-    // TODO: HANDLE SSL / GSS here
+  if (protocol_ver == NEGOTIATE_SSL_CODE) {
+    if (HandleSSLRequest()) {
+      std::move(cleanup).Cancel();
+      _success_packet = true;
+    }
+    return;
+  }
+  if (protocol_ver == NEGOTIATE_GSS_CODE) {
+    // TODO: Add GSS handling.
     _send.Write(ToBuffer(kNo), true);
     std::move(cleanup).Cancel();
     _success_packet = true;
@@ -308,7 +321,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       .host_name = ci.client_address,
       .raddr =
         ci.sas_len ? reinterpret_cast<const sockaddr*>(&ci.sas) : nullptr,
-      .ssl_in_use = false,
+      .ssl_in_use = _ssl_handshake_passed,
     };
 
     // TODO: auth check
@@ -1357,6 +1370,37 @@ PgSQLCommTask<T>::PgSQLCommTask(rest::GeneralServer& server,
                                           std::move(so)} {
   this->_protocol->socket.lowest_layer().set_option(
     asio_ns::ip::tcp::no_delay{true});
+}
+
+template<rest::SocketType T>
+bool PgSQLCommTask<T>::HandleSSLRequest() {
+  if constexpr (T == rest::SocketType::Ssl) {
+    if (this->_ssl_handshake_passed) {
+      // Another request for ssl handshake - something nasty.
+      // Better to abort connection.
+      SDB_WARN("xxxxx", Logger::REQUESTS,
+               "Duplicate SSL switch request. Connection dropped");
+      return false;
+    }
+    this->_send.Write(ToBuffer(kYes), true);
+    auto cb = [this](const asio_ns::error_code& ec) mutable {
+      if (ec) {
+        SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
+                  "error during TLS handshake: '", ec.message(), "'");
+        this->Stop();
+        return;
+      }
+      // Would be fair to restart keep-alive timeout
+      // to not include what have passed during handshake
+      this->_protocol->timer.cancel();
+      this->SetIOTimeout();
+      this->_ssl_handshake_passed = true;
+    };
+    this->_protocol->handshake(std::move(cb));
+    return true;
+  } else {
+    return PgSQLCommTaskBase::HandleSSLRequest();
+  }
 }
 
 template<rest::SocketType T>

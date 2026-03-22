@@ -61,6 +61,9 @@ on:
                 required: true
             TG_CHAT_ID:
                 required: true
+            DOCKER_PASSWORD:
+                required: false
+                description: "Docker registry password / token"
 
 jobs:
     build-docker:
@@ -76,9 +79,10 @@ jobs:
         env:
             WORKSPACE: ${{ github.workspace }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
-            IMAGE: registry.serenedb.com:5000/serene-ui:${{ inputs.DOCKER_TAG }}
             EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
             DOCKER_TAG: ${{ inputs.VERSION }}
+            DOCKER_REGISTRY: "serenedb"
+            IMAGE: serenedb/serene-ui:${{ inputs.VERSION }}
         steps:
             - name: Resolve branch
               working-directory: ${{ github.workspace }}
@@ -120,11 +124,10 @@ jobs:
 
             - name: Build Docker image
               if: inputs.BUILD_IMAGE
-              run: |
-                  docker build --pull --no-cache --tag "$IMAGE" . 2>&1 | tee -a logs/build.log
-                  if [ "${{ inputs.PUSH_IMAGE_TO_REGISTRY }}" = "true" ]; then
-                    docker push "$IMAGE" 2>&1 | tee -a logs/build.log
-                  fi
+              env:
+                  DOCKER_USERNAME: "serenedb"
+                  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+              run: ./scripts/build_docker.sh
 
             - name: Cleanup workspace & Docker
               if: always()
@@ -409,7 +412,7 @@ jobs:
                   body: |
                       SereneUI desktop app build from branch `${{ inputs.BRANCH }}`.
 
-                      Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                      Docker image: https://hub.docker.com/r/serenedb/serene-ui/tags?name=${{ inputs.VERSION }}
                   draft: true
                   prerelease: true
                   token: ${{ secrets.GITHUB_TOKEN }}

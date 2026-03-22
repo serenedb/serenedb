@@ -68,6 +68,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                              ->Id();
   }
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
+  _wal_recovery_range =
+    basics::downCast<RocksDBTable>(layout.table()).WalRecoveryRange();
 
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);

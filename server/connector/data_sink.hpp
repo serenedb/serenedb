@@ -325,15 +325,20 @@ extern template class SSTInsertDataSink<false>;
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {
  public:
+  using ProgressCallback = std::function<void(uint64_t)>;
+
   RocksDBIndexBackfillDataSink(
     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
-    std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock);
+    std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
+    ProgressCallback progress_callback = {});
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::WriterMutexLock _table_lock_guard;
+  ProgressCallback _progress_callback;
+  uint64_t _completed_rows = 0;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

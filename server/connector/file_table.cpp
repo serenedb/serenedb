@@ -67,7 +67,8 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
 
 FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
                            velox::memory::MemoryPool& leaf_pool,
-                           velox::memory::MemoryPool& aggregate_pool) {
+                           velox::memory::MemoryPool& aggregate_pool)
+  : _progress_callback{options->progress_callback} {
   // S3 requiries leaf_pool
   auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
@@ -82,7 +83,13 @@ FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
 
 void FileDataSink::appendData(velox::RowVectorPtr input) {
   _writer->write(input);
-  _stats.numWrittenBytes += input->estimateFlatSize();
+  auto batch_bytes = input->estimateFlatSize();
+  auto batch_rows = static_cast<uint64_t>(input->size());
+  _stats.numWrittenBytes += batch_bytes;
+  _completed_rows += batch_rows;
+  if (_progress_callback) {
+    _progress_callback({.delta_rows = batch_rows, .delta_bytes = batch_bytes});
+  }
 }
 
 bool FileDataSink::finish() { return _writer->finish(); }
@@ -106,7 +113,12 @@ FileDataSource::FileDataSource(
     _source{options->storage_options->CreateFileSource({})},
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
-    _report_callback{options->report_callback} {
+    _report_callback{options->report_callback},
+    _progress_callback{options->progress_callback} {
+  if (options->bytes_total) {
+    options->bytes_total->store(static_cast<int64_t>(_source->size()),
+                                std::memory_order_relaxed);
+  }
   SDB_ASSERT(_row_reader_options);
   _reader_options->setMemoryPool(memory_pool);
 
@@ -227,7 +239,16 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  _completed_rows += batch->size();
+  auto batch_rows = static_cast<uint64_t>(batch->size());
+  auto batch_bytes = batch->estimateFlatSize();
+  auto excluded = rows_read - batch_rows;
+  _completed_rows += batch_rows;
+  _completed_bytes += batch_bytes;
+  if (_progress_callback) {
+    _progress_callback({.delta_rows = batch_rows,
+                        .delta_bytes = batch_bytes,
+                        .delta_excluded = excluded});
+  }
   if (_report_callback) {
     const auto now = std::chrono::high_resolution_clock::now();
     auto seconds_since_last_report =

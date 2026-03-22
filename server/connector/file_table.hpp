@@ -46,6 +46,13 @@
 
 namespace sdb::connector {
 
+struct ProgressInfo {
+  uint64_t delta_rows{0};
+  uint64_t delta_bytes{0};
+  uint64_t delta_excluded{0};
+};
+
+using ProgressCallback = std::function<void(const ProgressInfo&)>;
 using ReportCallback = std::function<void(uint64_t)>;
 
 struct FileConnectorSplit final : public velox::connector::ConnectorSplit {
@@ -69,6 +76,10 @@ struct DwioReaderOptions {
 struct WriterOptions {
   DwioWriterOptions dwio;
   std::shared_ptr<StorageOptions> storage_options;
+  // Called on every batch with delta rows/bytes
+  ProgressCallback progress_callback;
+  // Shared pointer to keep progress tracking state alive during execution
+  std::shared_ptr<void> progress_guard;
 
   const auto& Writer() const { return dwio.writer; }
   auto& Writer() { return dwio.writer; }
@@ -78,6 +89,12 @@ struct ReaderOptions {
   DwioReaderOptions dwio;
   // if set then progress messages are written here
   ReportCallback report_callback;
+  // Called on every batch with delta rows/bytes
+  ProgressCallback progress_callback;
+  // If set, data source writes file size here on construction
+  std::atomic<int64_t>* bytes_total{nullptr};
+  // Shared pointer to keep progress tracking state alive during execution
+  std::shared_ptr<void> progress_guard;
   std::shared_ptr<StorageOptions> storage_options;
 
   const auto& Reader() const { return dwio.reader; }
@@ -244,6 +261,8 @@ class FileDataSink final : public velox::connector::DataSink {
  private:
   std::shared_ptr<velox::dwio::common::Writer> _writer;
   velox::connector::DataSink::Stats _stats;
+  ProgressCallback _progress_callback;
+  uint64_t _completed_rows = 0;
 };
 
 class FileDataSource final : public velox::connector::DataSource {
@@ -265,7 +284,7 @@ class FileDataSource final : public velox::connector::DataSource {
     velox::column_index_t output_channel,
     const std::shared_ptr<velox::common::Filter>& filter) final {}
 
-  uint64_t getCompletedBytes() final { return 0; }
+  uint64_t getCompletedBytes() final { return _completed_bytes; }
 
   uint64_t getCompletedRows() final { return _completed_rows; }
 
@@ -280,8 +299,10 @@ class FileDataSource final : public velox::connector::DataSource {
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
   uint64_t _completed_rows = 0;
+  uint64_t _completed_bytes = 0;
   std::chrono::high_resolution_clock::time_point _last_report_time;
   ReportCallback _report_callback;
+  ProgressCallback _progress_callback;
 };
 
 }  // namespace sdb::connector

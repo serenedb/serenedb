@@ -31,6 +31,8 @@
 #include <axiom/logical_plan/Utils.h>
 #include <axiom/optimizer/ConstantExprEvaluator.h>
 #include <frozen/unordered_map.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <velox/common/file/File.h>
 #include <velox/common/memory/Memory.h>
 #include <velox/core/PlanFragment.h>
@@ -81,6 +83,7 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
+#include "pg/progress_tracker.h"
 #include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
@@ -2151,10 +2154,50 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       _copy_queue, table_name,    _query_ctx.explain_params};
   };
 
+  auto setup_progress_tracking = [&](auto& options, bool is_from,
+                                     ObjectId relid) -> uint64_t {
+    auto& tracker = ProgressTracker::Instance();
+    ProgressEntry entry;
+    entry.pid = static_cast<int64_t>(gettid());
+    entry.relid = relid;
+    entry.command_type = ProgressCommand::Copy;
+    auto entry_id = tracker.StartCommand(std::move(entry));
+    tracker.UpdateParam(
+      entry_id, copy_progress::kCommand,
+      static_cast<int64_t>(is_from ? copy_progress::Command::CopyFrom
+                                   : copy_progress::Command::CopyTo));
+    tracker.UpdateParam(
+      entry_id, copy_progress::kType,
+      static_cast<int64_t>(file_path.empty() ? copy_progress::Type::Pipe
+                                             : copy_progress::Type::File));
+    auto guard =
+      std::make_shared<ProgressTracker::Guard>(tracker.MakeGuard(entry_id));
+    options->progress_guard = guard;
+    auto params = tracker.GetParams(entry_id);
+    SDB_ASSERT(params);
+    options->progress_callback = [params](const connector::ProgressInfo& info) {
+      (*params)[copy_progress::kTuplesProcessed].fetch_add(
+        static_cast<int64_t>(info.delta_rows), std::memory_order_relaxed);
+      (*params)[copy_progress::kBytesProcessed].fetch_add(
+        static_cast<int64_t>(info.delta_bytes), std::memory_order_relaxed);
+      (*params)[copy_progress::kTuplesExcluded].fetch_add(
+        static_cast<int64_t>(info.delta_excluded), std::memory_order_relaxed);
+    };
+    return entry_id;
+  };
+
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto parser = create_options_parser(file_table_type);
     auto options = std::move(parser).GetReaderOptions();
+    auto [object, schemaname, relname] = get_object();
+    {
+      auto& table = basics::downCast<catalog::Table>(*object.object);
+      auto entry_id = setup_progress_tracking(options, true, table.GetId());
+      auto params = ProgressTracker::Instance().GetParams(entry_id);
+      SDB_ASSERT(params);
+      options->bytes_total = &(*params)[copy_progress::kBytesTotal];
+    }
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
       std::move(options));
@@ -2163,8 +2206,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       _id_generator.NextPlanId(), std::move(file_output_type),
       std::move(read_file_table), file_table_type->names());
     ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
-
-    auto [object, schemaname, relname] = get_object();
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
 
@@ -2213,6 +2254,15 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     auto parser = create_options_parser(table_type);
     auto options = std::move(parser).GetWriterOptions();
+    {
+      ObjectId relid{0};
+      if (stmt.relation) {
+        auto [object, schemaname, relname] = get_object();
+        auto& table = basics::downCast<catalog::Table>(*object.object);
+        relid = table.GetId();
+      }
+      setup_progress_tracking(options, false, relid);
+    }
     auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,
       std::move(options));

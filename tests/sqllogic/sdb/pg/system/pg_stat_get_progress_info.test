@@ -1,0 +1,39 @@
+# pg_stat_progress_* views and pg_stat_get_progress_info() function
+
+# When no operations are in progress, views should return empty
+query
+SELECT * FROM pg_stat_progress_copy;
+----
+pid	datid	datname	relid	command	type	bytes_processed	bytes_total	tuples_processed	tuples_excluded
+
+query
+SELECT * FROM pg_stat_progress_create_index;
+----
+pid	datid	datname	relid	index_relid	command	phase	tuples_total	tuples_done
+
+# Setup
+statement ok
+CREATE TABLE t(r text);
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+# Test CREATE INDEX with inverted index
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);
+
+# After CREATE INDEX finishes, no entries should remain
+query
+SELECT * FROM pg_stat_progress_create_index;
+----
+pid	datid	datname	relid	index_relid	command	phase	tuples_total	tuples_done
+
+# Cleanup
+statement ok
+DROP INDEX index_t;
+
+statement ok
+DROP TABLE t;

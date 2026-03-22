@@ -745,6 +745,35 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // pg_get_aios
   // R"(CREATE VIEW pg_aios AS
   //   SELECT * FROM pg_get_aios();)",
+
+  // Progress reporting views — built on top of pg_stat_get_progress_info(),
+  // matching PostgreSQL's architecture exactly.
+  R"(CREATE VIEW pg_stat_progress_copy AS
+  SELECT
+      S.pid AS pid,
+      S.datid AS datid,
+      S.datname AS datname,
+      S.relid AS relid,
+      CASE S.param5 WHEN 1 THEN 'COPY FROM' WHEN 2 THEN 'COPY TO' END AS command,
+      CASE S.param6 WHEN 1 THEN 'FILE' WHEN 2 THEN 'PROGRAM' WHEN 3 THEN 'PIPE' WHEN 4 THEN 'CALLBACK' END AS type,
+      S.param1 AS bytes_processed,
+      S.param2 AS bytes_total,
+      S.param3 AS tuples_processed,
+      S.param4 AS tuples_excluded
+  FROM pg_stat_get_progress_info('COPY') AS S;)",
+
+  R"(CREATE VIEW pg_stat_progress_create_index AS
+  SELECT
+      S.pid AS pid,
+      S.datid AS datid,
+      S.datname AS datname,
+      S.relid AS relid,
+      S.param3 AS index_relid,
+      CASE S.param4 WHEN 1 THEN 'CREATE INDEX' WHEN 2 THEN 'CREATE INDEX CONCURRENTLY' WHEN 3 THEN 'REINDEX' WHEN 4 THEN 'REINDEX CONCURRENTLY' END AS command,
+      CASE S.param5 WHEN 1 THEN 'initializing' WHEN 2 THEN 'building index' WHEN 3 THEN 'waiting for writers before marking dead' WHEN 4 THEN 'index validation: scanning index' END AS phase,
+      S.param1 AS tuples_total,
+      S.param2 AS tuples_done
+  FROM pg_stat_get_progress_info('CREATE INDEX') AS S;)",
 });
 
 }  // namespace sdb::pg

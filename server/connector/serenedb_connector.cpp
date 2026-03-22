@@ -90,7 +90,7 @@ SereneDBTableLayout::createTableHandle(
   if (inv_index && !filters.empty()) {
     const auto& index = inv_index->GetIndex();
     auto column_getter =
-      [&](std::string_view name) -> std::optional<search::ColumnInfo> {
+      [&](std::string_view name) -> std::optional<SearchColumnInfo> {
       const auto* column = inv_index->findColumn(name);
       if (column) {
         const auto* serene_column = basics::downCast<SereneDBColumn>(column);

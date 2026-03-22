@@ -189,6 +189,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   uint64_t _key{0};
   bool _pop_packet{false};
   bool _success_packet{false};
+  bool _ssl_handshake_passed{false};
   char _current_packet_type{0};
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};

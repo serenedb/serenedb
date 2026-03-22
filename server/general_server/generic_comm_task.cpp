@@ -78,6 +78,7 @@ void GenericCommTask<SocketType, Base>::Close(asio_ns::error_code ec) {
 }
 
 template<rest::SocketType SocketType, typename Base>
+template<bool UseRaw>
 void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
   asio_ns::error_code ec;
   // first try a sync read for performance
@@ -86,7 +87,12 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
 
     while (!ec && available > 8) {
       auto mutable_buff = _protocol->buffer.prepare(available);
-      size_t nread = _protocol->socket.read_some(mutable_buff, ec);
+      size_t nread;
+      if constexpr (UseRaw) {
+        nread = _protocol->socket.next_layer().read_some(mutable_buff, ec);
+      } else {
+        nread = _protocol->socket.read_some(mutable_buff, ec);
+      }
       _protocol->buffer.commit(nread);
       if (ec) {
         break;
@@ -111,23 +117,27 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
 
   _reading = true;
   this->SetIOTimeout();
-  _protocol->socket.async_read_some(
-    mutable_buff, [self = this->shared_from_this()](
-                    const asio_ns::error_code& ec, size_t nread) {
-      auto& me = static_cast<GenericCommTask<SocketType, Base>&>(*self);
-      me._reading = false;
-      me._protocol->buffer.commit(nread);
+  auto cb = [self = this->shared_from_this()](const asio_ns::error_code& ec,
+                                              size_t nread) {
+    auto& me = static_cast<GenericCommTask<SocketType, Base>&>(*self);
+    me._reading = false;
+    me._protocol->buffer.commit(nread);
 
-      try {
-        if (me.ReadCallback(ec)) {
-          me.AsyncReadSome();
-        }
-      } catch (...) {
-        SDB_ERROR("xxxxx", Logger::REQUESTS,
-                  "unhandled protocol exception, closing connection");
-        me.Close(ec);
+    try {
+      if (me.ReadCallback(ec)) {
+        me.template AsyncReadSome<UseRaw>();
       }
-    });
+    } catch (...) {
+      SDB_ERROR("xxxxx", Logger::REQUESTS,
+                "unhandled protocol exception, closing connection");
+      me.Close(ec);
+    }
+  };
+  if constexpr (UseRaw) {
+    _protocol->socket.next_layer().async_read_some(mutable_buff, std::move(cb));
+  } else {
+    _protocol->socket.async_read_some(mutable_buff, std::move(cb));
+  }
 } catch (...) {
   SDB_ERROR("xxxxx", Logger::REQUESTS,
             "unhandled protocol exception, closing connection");
@@ -137,9 +147,23 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
 template class GenericCommTask<rest::SocketType::Tcp, rest::CommTask>;
 template class GenericCommTask<rest::SocketType::Ssl, rest::CommTask>;
 template class GenericCommTask<rest::SocketType::Unix, rest::CommTask>;
+template void
+GenericCommTask<rest::SocketType::Tcp, rest::CommTask>::AsyncReadSome<false>();
+template void
+GenericCommTask<rest::SocketType::Ssl, rest::CommTask>::AsyncReadSome<false>();
+template void
+GenericCommTask<rest::SocketType::Unix, rest::CommTask>::AsyncReadSome<false>();
 
 template class GenericCommTask<rest::SocketType::Tcp, pg::PgSQLCommTaskBase>;
 template class GenericCommTask<rest::SocketType::Ssl, pg::PgSQLCommTaskBase>;
 template class GenericCommTask<rest::SocketType::Unix, pg::PgSQLCommTaskBase>;
+template void GenericCommTask<rest::SocketType::Tcp,
+                              pg::PgSQLCommTaskBase>::AsyncReadSome<false>();
+template void GenericCommTask<rest::SocketType::Ssl,
+                              pg::PgSQLCommTaskBase>::AsyncReadSome<false>();
+template void GenericCommTask<rest::SocketType::Ssl,
+                              pg::PgSQLCommTaskBase>::AsyncReadSome<true>();
+template void GenericCommTask<rest::SocketType::Unix,
+                              pg::PgSQLCommTaskBase>::AsyncReadSome<false>();
 
 }  // namespace sdb

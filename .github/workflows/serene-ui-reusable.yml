@@ -75,12 +75,15 @@ jobs:
                 working-directory: ./serene-ui
         env:
             WORKSPACE: ${{ github.workspace }}
-            BRANCH: ${{ inputs.BRANCH }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
             IMAGE: registry.serenedb.com:5000/serene-ui:${{ inputs.DOCKER_TAG }}
             EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
             DOCKER_TAG: ${{ inputs.VERSION }}
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -136,12 +139,14 @@ jobs:
         permissions:
             contents: read
         timeout-minutes: 30
-        env:
-            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -208,13 +213,15 @@ jobs:
         permissions:
             contents: read
         timeout-minutes: 30
-        env:
-            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 shell: bash
                 working-directory: ./serene-ui
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -281,12 +288,14 @@ jobs:
         permissions:
             contents: read
         timeout-minutes: 144000
-        env:
-            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -420,11 +429,14 @@ jobs:
         runs-on: X64
         timeout-minutes: 5
         steps:
+            - name: Resolve branch
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout (for notify script)
               uses: actions/checkout@v4
               with:
                   repository: serenedb/serenedb
-                  ref: ${{ inputs.BRANCH }}
+                  ref: ${{ env.BRANCH }}
                   token: ${{ secrets.PAT_TOKEN }}
                   path: .
                   sparse-checkout: |
@@ -438,7 +450,7 @@ jobs:
                   TG_THREAD_ID_MAIN: "51"
                   TG_THREAD_ID_BUILD: "53"
                   TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
+                  BRANCH: ${{ env.BRANCH }}
                   JOB_STATUS: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
                   ACTOR: ${{ github.actor }}
                   WORKFLOW: ${{ github.workflow }}

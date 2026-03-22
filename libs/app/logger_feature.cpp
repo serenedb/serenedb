@@ -50,6 +50,7 @@
 #include "logger_feature.h"
 
 namespace sdb {
+
 using namespace options;
 
 LoggerFeature::LoggerFeature(app::AppServer& server, bool threaded)

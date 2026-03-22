@@ -61,13 +61,14 @@
 #include "storage_engine/wal_access.h"
 
 namespace rocksdb {
+
 class Env;
 class TransactionDB;
+
 }  // namespace rocksdb
-
 namespace sdb {
-
 namespace search {
+
 class InvertedIndexShard;
 }
 
@@ -88,6 +89,7 @@ class TransactionTable;
 class TransactionState;
 
 namespace rest {
+
 class RestHandlerFactory;
 }
 

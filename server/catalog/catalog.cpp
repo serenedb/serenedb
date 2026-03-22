@@ -22,6 +22,10 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <rocksdb/slice.h>
+#include <vpack/builder.h>
+#include <vpack/iterator.h>
+#include <vpack/serializer.h>
+#include <vpack/slice.h>
 
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
@@ -62,15 +66,6 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/builder.h"
-#include "vpack/iterator.h"
-#include "vpack/serializer.h"
-#include "vpack/slice.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/global_catalog.h"
-#endif
 
 namespace sdb::catalog {
 namespace {

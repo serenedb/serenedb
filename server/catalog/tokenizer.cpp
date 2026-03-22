@@ -20,6 +20,9 @@
 
 #include "catalog/tokenizer.h"
 
+#include <vpack/builder.h>
+#include <vpack/slice.h>
+
 #include <expected>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -28,8 +31,6 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "catalog/search_analyzer_impl.h"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 
 namespace sdb::catalog {
 

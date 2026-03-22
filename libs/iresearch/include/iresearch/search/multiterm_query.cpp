@@ -99,7 +99,6 @@ bool LazyBitsetIterator::refill(const word_t** begin, const word_t** end) {
 }
 
 }  // namespace
-
 namespace irs {
 
 void MultiTermQuery::visit(const SubReader& segment,

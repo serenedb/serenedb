@@ -44,11 +44,12 @@
 #include "pg/sql_utils.h"
 
 namespace sdb::pg {
-
 namespace detail {
+
 template<typename E>
   requires std::is_enum_v<E>
 inline constexpr auto kEnumNames = magic_enum::enum_names<E>();
+
 }  // namespace detail
 
 struct OptionInfo {

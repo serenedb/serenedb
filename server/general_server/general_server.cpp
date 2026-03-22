@@ -42,7 +42,9 @@ using namespace sdb::basics;
 using namespace sdb::rest;
 
 namespace {
+
 int ClientHelloCallback(SSL* ssl, int* al, void* arg) { return 1; }
+
 }  // namespace
 
 GeneralServer::GeneralServer(GeneralServerFeature& feature,

@@ -105,6 +105,24 @@ INSERT INTO vedernikoff values (4, 'pudge goes bot every game', 'gayazov');
 statement ok
 CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(a, b test_english, c test_english);
 
+
+query
+SELECT COUNT(1) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+----
+count
+2
+
+
+query
+EXPLAIN (EXECUTION) SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
+  -- TableScan[0][vedernikoff, scan=search] ->
+
+
 query
 SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'anchin-chan') ORDER BY a;
 ----

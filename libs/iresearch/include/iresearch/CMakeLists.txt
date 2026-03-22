@@ -71,6 +71,7 @@ set(IResearch_core_sources
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
+    ./analysis/pattern_tokenizer.cpp
     ./error/error.cpp
     ./formats/column/common.cpp
     ./formats/formats.cpp

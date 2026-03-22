@@ -31,6 +31,7 @@
 #include "basics/identifier.h"
 
 namespace sdb {
+
 class ClusterInfo;
 
 class RevisionId final : public basics::Identifier {

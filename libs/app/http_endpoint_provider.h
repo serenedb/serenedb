@@ -24,6 +24,7 @@
 #include "app/app_feature.h"
 
 namespace sdb {
+
 class HttpEndpointProvider : public app::AppFeature {
  public:
   ~HttpEndpointProvider() override = default;
@@ -34,4 +35,5 @@ class HttpEndpointProvider : public app::AppFeature {
   HttpEndpointProvider(Server& server, std::string_view name)
     : AppFeature(server, name) {}
 };
+
 }  // namespace sdb

@@ -569,4 +569,5 @@ struct SliceBase {
     return SliceType{};
   }
 };
+
 }  // namespace vpack

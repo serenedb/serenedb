@@ -21,8 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/std.hpp>
-
+#include "basics/std.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 

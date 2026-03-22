@@ -21,6 +21,7 @@
 #include "pg/system_catalog.h"
 
 #include <frozen/unordered_map.h>
+#include <vpack/serializer.h>
 
 #include <boost/pfr.hpp>
 
@@ -109,7 +110,6 @@
 #include "pg/system_table.h"
 #include "pg/system_views.h"
 #include "search/functions.hpp"
-#include "vpack/serializer.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

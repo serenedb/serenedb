@@ -30,6 +30,7 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 namespace stats {
@@ -95,5 +96,6 @@ class Descriptions final {
   std::vector<stats::Group> _groups;
   std::vector<stats::Figure> _figures;
 };
+
 }  // namespace stats
 }  // namespace sdb

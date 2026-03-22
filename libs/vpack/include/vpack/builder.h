@@ -41,6 +41,7 @@
 #include "vpack/value_type.h"
 
 namespace vpack {
+
 class ArrayIterator;
 class ObjectIterator;
 

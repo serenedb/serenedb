@@ -32,6 +32,7 @@
 #include "basics/number_utils.h"
 
 namespace sdb {
+
 class GlobalResourceMonitor;
 
 /// a ResourceMonitor to track and limit memory usage for allocations
@@ -243,6 +244,7 @@ class ResourceUsageAllocatorBase : private Allocator {
 };
 
 namespace detail {
+
 template<typename T>
 struct UsesAllocatorConstructionArgsT;
 

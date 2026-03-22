@@ -61,6 +61,7 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 

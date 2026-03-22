@@ -41,6 +41,9 @@
 #include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/iterator.h>
+#include <vpack/serializer.h>
+#include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <atomic>
 #include <filesystem>
@@ -118,16 +121,6 @@
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
-#include "vpack/serializer.h"
-#include "vpack/slice.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "catalog/search_common.h"
-#include "rocksdb_engine/rocksdb_collection.h"
-#include "rocksdb_engine/rocksdb_dump_manager.h"
-#include "rocksdb_engine/rocksdb_replication_manager.h"
-#endif
 
 // we will not use the multithreaded index creation that uses rocksdb's sst
 // file ingestion until rocksdb external file ingestion is fixed to have
@@ -136,6 +129,7 @@
 
 namespace sdb {
 namespace {
+
 void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
                          bool db_existed) {
   // try to find version, using the version key
@@ -185,6 +179,7 @@ void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
     }
   }
 }
+
 }  // namespace
 
 DECLARE_GAUGE(rocksdb_wal_released_tick_flush, uint64_t,
@@ -710,12 +705,6 @@ void RocksDBEngineCatalog::start() {
 
   SDB_ASSERT(_db != nullptr);
   _settings_manager = std::make_unique<RocksDBSettingsManager>(*this);
-#ifdef SDB_CLUSTER
-  _replication_manager = std::make_shared<RocksDBReplicationManager>();
-  _dump_manager = std::make_shared<RocksDBDumpManager>(
-    *_db, _metrics, GetServerOptions().dump_limits);
-#endif
-
   _settings_manager->retrieveInitialValues();
 
   const double counter_sync_seconds = 2.5;
@@ -740,17 +729,6 @@ void RocksDBEngineCatalog::start() {
 }
 
 void RocksDBEngineCatalog::beginShutdown() {
-#ifdef SDB_CLUSTER
-  // block the creation of new replication contexts
-  if (_replication_manager != nullptr) {
-    _replication_manager->beginShutdown();
-  }
-
-  if (_dump_manager != nullptr) {
-    _dump_manager->garbageCollect(/*force*/ true);
-  }
-#endif
-
   // from now on, all started compactions can be canceled.
   // note that this is only a best-effort hint to RocksDB and
   // may not be followed immediately.
@@ -758,16 +736,6 @@ void RocksDBEngineCatalog::beginShutdown() {
 }
 
 void RocksDBEngineCatalog::stop() {
-#ifdef SDB_CLUSTER
-  // in case we missed the beginShutdown somehow, call it again
-  replicationManager()->beginShutdown();
-  replicationManager()->dropAll();
-
-  if (_dump_manager != nullptr) {
-    _dump_manager->garbageCollect(/*force*/ true);
-  }
-#endif
-
   if (_background_thread) {
     // stop the press
     _background_thread->beginShutdown();
@@ -872,13 +840,7 @@ std::string RocksDBEngineCatalog::versionFilename(ObjectId id) const {
   return absl::StrCat(_base_path, SERENEDB_DIR_SEPARATOR_STR, "VERSION-", id);
 }
 
-void RocksDBEngineCatalog::cleanupReplicationContexts() {
-#ifdef SDB_CLUSTER
-  if (_replication_manager) {
-    _replication_manager->dropAll();
-  }
-#endif
-}
+void RocksDBEngineCatalog::cleanupReplicationContexts() {}
 
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
   return SerenedServer::Instance()

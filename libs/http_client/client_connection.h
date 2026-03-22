@@ -28,6 +28,7 @@
 #include "http_client/general_client_connection.h"
 
 namespace sdb {
+
 class Endpoint;
 namespace httpclient {
 

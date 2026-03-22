@@ -32,11 +32,15 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 class CommunicationFeaturePhase;
+
 }  // namespace app
 namespace basics {
+
 class StringBuffer;
+
 }  // namespace basics
 namespace httpclient {
 

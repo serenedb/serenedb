@@ -39,12 +39,6 @@
 #include "statistics/statistics_feature.h"
 #include "storage_engine/engine_feature.h"
 
-#ifdef SDB_CLUSTER
-#include "agency/node.h"
-#include "aql/query_registry_feature.h"
-#include "cluster/cluster_metrics_feature.h"
-#endif
-
 namespace sdb::metrics {
 
 MetricsFeature::MetricsFeature(Server& server)
@@ -198,16 +192,6 @@ void MetricsFeature::toPrometheus(std::string& result,
   // minimize reallocs
   result.reserve(64 * 1024);
 
-#ifdef SDB_CLUSTER
-  if (metrics_parts.includeStandardMetrics()) {
-    // QueryRegistryFeature only provides standard metrics.
-    // update only necessary if these metrics should be included
-    // in the output
-    auto& q = server().getFeature<QueryRegistryFeature>();
-    q.updateMetrics();
-  }
-#endif
-
   [[maybe_unused]] bool has_globals = false;
   {
     auto lock = initGlobalLabels();
@@ -249,17 +233,6 @@ void MetricsFeature::toPrometheus(std::string& result,
     // Storage engine only provides standard metrics
     auto& es = server().getFeature<EngineFeature>().engine();
     es.toPrometheus(result, _globals, _ensure_whitespace);
-
-#ifdef SDB_CLUSTER
-    // ClusterMetricsFeature only provides standard metrics
-    auto& cm = server().getFeature<ClusterMetricsFeature>();
-    if (has_globals && cm.isEnabled() && mode != CollectMode::Local) {
-      cm.toPrometheus(result, _globals, _ensure_whitespace);
-    }
-
-    // agency node metrics only provide standard metrics
-    consensus::Node::toPrometheus(result, _globals, _ensure_whitespace);
-#endif
   }
 }
 

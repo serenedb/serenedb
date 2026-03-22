@@ -31,12 +31,14 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 class GeneralRequest;
 class GeneralResponse;
 
 namespace rest {
+
 class RestHandler;
 
 class RestHandlerFactory {
@@ -78,5 +80,6 @@ class RestHandlerFactory {
   // whether or not handlers can be added (sealed = false)
   bool _sealed;
 };
+
 }  // namespace rest
 }  // namespace sdb

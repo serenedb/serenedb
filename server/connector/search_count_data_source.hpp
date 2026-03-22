@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -19,29 +19,23 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/connectors/Connector.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
+#include <atomic>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filter.hpp>
 
 #include "basics/fwd.h"
-#include "data_materializer.hpp"
-#include "iresearch/index/index_reader.hpp"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
-class SearchDataSource final : public velox::connector::DataSource,
-                               public Materializer {
+class SearchCountDataSource final : public velox::connector::DataSource {
  public:
-  SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                   // Search source always uses snapshot synced with index state
-                   // to avoid materialization failures
-                   const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
-                   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-                   std::vector<catalog::Column::Id> column_ids,
-                   catalog::Column::Id effective_column_id, ObjectId object_key,
-                   const irs::IndexReader& reader,
-                   const irs::Filter::Query& query);
+  SearchCountDataSource(velox::memory::MemoryPool& memory_pool,
+                        velox::RowTypePtr row_type,
+                        const irs::IndexReader& reader,
+                        const irs::Filter::Query& query);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -55,16 +49,13 @@ class SearchDataSource final : public velox::connector::DataSource,
   void cancel() final;
 
  private:
+  velox::memory::MemoryPool& _memory_pool;
+  velox::RowTypePtr _row_type;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   const irs::IndexReader& _reader;
-  // TODO(Dronplane) when we have sorted indexes we will need Merge reader for
-  // all segments. Only sequential for now.
-  size_t _current_segment{0};
   const irs::Filter::Query& _query;
-  irs::DocIterator::ptr _pk_iterator;
-  const irs::PayAttr* _pk_value;
-  irs::DocIterator::ptr _doc;
-  uint64_t _produced{0};
+  uint64_t _produced = 0;
+  std::atomic_bool _cancelled = false;
 };
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

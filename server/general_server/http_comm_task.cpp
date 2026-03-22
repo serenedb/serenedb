@@ -44,6 +44,7 @@ using namespace sdb::basics;
 using namespace sdb::rest;
 
 namespace {
+
 using namespace sdb;
 using namespace sdb::rest;
 

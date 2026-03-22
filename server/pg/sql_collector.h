@@ -32,7 +32,9 @@
 #include "pg/pg_types.h"
 
 namespace sdb::query {
+
 class Transaction;
+
 }  // namespace sdb::query
 
 struct RawStmt;

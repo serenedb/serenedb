@@ -174,6 +174,7 @@ void AppendVariantValue(std::string& key, const velox::variant& v) {
               velox::TypeKindName::toName(Kind));
   }
 }
+
 }  // namespace
 
 void AppendKeyValue(std::string& key, const velox::BaseVector& column,

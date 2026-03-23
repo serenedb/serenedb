@@ -120,7 +120,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
-  -- TableScan[0][vedernikoff, scan=search] ->
+  -- TableScan[0][vedernikoff, type=search_lookup] ->
 
 
 query
@@ -189,7 +189,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
 
 query
 CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical', EXPLAIN = 'execution');
@@ -204,7 +204,7 @@ LOGICAL PLAN:
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
 
 query
 CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english) WITH (EXPLAIN = analyze);
@@ -214,7 +214,7 @@ EXECUTION PLAN WITH STATS:
 Fragment 0:  numWorkers=0:
 -- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
    Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-  -- TableScan[0][biksalen_memes, scan=full] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
      Input: 3 rows (<slt:ignore>, 1 batches), Output: 3 rows (<slt:ignore>, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
 
 # EXPLAIN ANALYZE must actually create the index

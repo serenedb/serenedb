@@ -10,7 +10,8 @@ add_library(
     search_sink_writer.cpp
     search_remove_filter.cpp
     file_table.cpp
-    data_materializer.cpp
+    rocksdb_materializer.cpp
+    parquet_materializer.cpp
     search_count_data_source.cpp
     search_scan_data_source.cpp
     search_filter_builder.cpp

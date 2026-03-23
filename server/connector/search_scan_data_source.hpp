@@ -27,23 +27,16 @@
 #include <iresearch/search/filter.hpp>
 
 #include "basics/fwd.h"
-#include "data_materializer.hpp"
+#include "iresearch/index/index_reader.hpp"
 
 namespace sdb::connector {
 
-class SearchScanDataSource final : public velox::connector::DataSource,
-                                   public Materializer {
+template<typename Materializer>
+class SearchDataSource final : public velox::connector::DataSource {
  public:
-  SearchScanDataSource(velox::memory::MemoryPool& memory_pool,
-                       // Search source always uses snapshot synced with index
-                       // state to avoid materialization failures
-                       const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
-                       rocksdb::ColumnFamilyHandle& cf,
-                       velox::RowTypePtr row_type,
-                       std::vector<catalog::Column::Id> column_ids,
-                       catalog::Column::Id effective_column_id,
-                       ObjectId object_key, const irs::IndexReader& reader,
-                       const irs::Filter::Query& query);
+  SearchDataSource(velox::memory::MemoryPool& memory_pool,
+                   Materializer materializer, const irs::IndexReader& reader,
+                   const irs::Filter::Query& query);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -57,6 +50,8 @@ class SearchScanDataSource final : public velox::connector::DataSource,
   void cancel() final;
 
  private:
+  velox::memory::MemoryPool& _memory_pool;
+  Materializer _materializer;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   const irs::IndexReader& _reader;
   // TODO(Dronplane) when we have sorted indexes we will need Merge reader for

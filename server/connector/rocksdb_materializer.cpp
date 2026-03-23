@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "data_materializer.hpp"
+#include "rocksdb_materializer.hpp"
 
 #include <velox/vector/FlatVector.h>
 
@@ -30,14 +30,12 @@
 
 namespace sdb::connector {
 
-Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
-                           const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
-                           rocksdb::Transaction* transaction,
-                           rocksdb::ColumnFamilyHandle& cf,
-                           velox::RowTypePtr row_type,
-                           std::vector<catalog::Column::Id> column_oids,
-                           catalog::Column::Id effective_column_id,
-                           ObjectId object_key)
+RocksDBMaterializer::RocksDBMaterializer(
+  velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
+  rocksdb::DB* db, rocksdb::Transaction* transaction,
+  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+  std::vector<catalog::Column::Id> column_oids,
+  catalog::Column::Id effective_column_id, ObjectId object_key)
   : _memory_pool{memory_pool},
     _db{db},
     _transaction{transaction},
@@ -50,33 +48,25 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
              "Only one data source should be specified");
   _read_options.async_io = IsIOUringEnabled();
   _read_options.snapshot = snapshot;
-  if (_db) {
-    _value_reader = [&](std::string_view full_key) -> std::string& {
-      auto status = _db->Get(_read_options, &_cf, full_key, &_value_buffer);
-      if (!status.ok()) {
-        auto res = rocksutils::ConvertStatus(status);
-        SDB_THROW(
-          res.errorNumber(),
-          "Failed to read value by PK from database: ", res.errorMessage());
-      }
-      return _value_buffer;
-    };
-  } else {
-    _value_reader = [&](std::string_view full_key) -> std::string& {
-      auto status =
-        _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
-      if (!status.ok()) {
-        auto res = rocksutils::ConvertStatus(status);
-        SDB_THROW(
-          res.errorNumber(),
-          "Failed to read value by PK from transaction: ", res.errorMessage());
-      }
-      return _value_buffer;
-    };
-  }
 }
 
-velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
+const std::string& RocksDBMaterializer::ReadValue(std::string_view full_key) {
+  rocksdb::Status status;
+  if (_db) {
+    status = _db->Get(_read_options, &_cf, full_key, &_value_buffer);
+  } else {
+    status = _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
+  }
+  if (!status.ok()) {
+    auto res = sdb::rocksutils::ConvertStatus(status);
+    SDB_THROW(res.errorNumber(),
+              "Failed to read value by PK: ", res.errorMessage());
+  }
+  return _value_buffer;
+}
+
+velox::RowVectorPtr RocksDBMaterializer::ReadRows(
+  std::span<std::string> row_keys) {
   std::vector<velox::VectorPtr> columns;
   const auto num_columns = _row_type->size();
   if (!num_columns) {
@@ -117,25 +107,23 @@ velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
 }
 
 template<typename Decoder>
-void Materializer::IterateColumnKeys(std::string_view column_key,
-                                     std::span<std::string> row_keys,
-                                     const Decoder& func) {
+void RocksDBMaterializer::IterateColumnKeys(std::string_view column_key,
+                                            std::span<std::string> row_keys,
+                                            const Decoder& func) {
   // TODO(Dronplane): try use multiget
   std::string buffer(column_key);
   auto cur = row_keys.begin();
   while (cur != row_keys.end()) {
     buffer.resize(column_key.size());
     buffer.append(*cur);
-    SDB_ASSERT(_value_reader);
-    func(buffer, _value_reader(buffer));
+    func(buffer, ReadValue(buffer));
     ++cur;
   }
 }
 
-velox::VectorPtr Materializer::ReadColumnKeys(std::span<std::string> row_keys,
-                                              catalog::Column::Id column_id,
-                                              velox::TypeKind kind,
-                                              std::string_view column_key) {
+velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
+  std::span<std::string> row_keys, catalog::Column::Id column_id,
+  velox::TypeKind kind, std::string_view column_key) {
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadGeneratedColumnKeys(row_keys);
   }
@@ -146,7 +134,7 @@ velox::VectorPtr Materializer::ReadColumnKeys(std::span<std::string> row_keys,
                                             row_keys, column_key);
 }
 
-velox::VectorPtr Materializer::ReadGeneratedColumnKeys(
+velox::VectorPtr RocksDBMaterializer::ReadGeneratedColumnKeys(
   std::span<std::string> row_keys) {
   using T = typename velox::TypeTraits<velox::TypeKind::BIGINT>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
@@ -160,14 +148,14 @@ velox::VectorPtr Materializer::ReadGeneratedColumnKeys(
   return result;
 }
 
-velox::VectorPtr Materializer::ReadUnknownColumnKeys(
+velox::VectorPtr RocksDBMaterializer::ReadUnknownColumnKeys(
   std::span<std::string> row_keys) {
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(),
                                                row_keys.size(), &_memory_pool);
 }
 
 template<velox::TypeKind Kind>
-velox::VectorPtr Materializer::ReadScalarColumnKeys(
+velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
   std::span<std::string> row_keys, std::string_view column_key) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
@@ -182,9 +170,9 @@ velox::VectorPtr Materializer::ReadScalarColumnKeys(
 }
 
 template<typename T>
-void Materializer::ReadScalarType(std::string_view value,
-                                  velox::vector_size_t idx,
-                                  velox::FlatVector<T>& vector) {
+void RocksDBMaterializer::ReadScalarType(std::string_view value,
+                                         velox::vector_size_t idx,
+                                         velox::FlatVector<T>& vector) {
   if (!value.empty()) {
     if constexpr (std::is_same_v<T, velox::StringView>) {
       const size_t offset = value[0] == 0 ? 1 : 0;

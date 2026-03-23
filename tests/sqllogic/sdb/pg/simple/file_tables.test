@@ -1069,7 +1069,7 @@ External:
       (no additional options)
   Format:
     Common:
-      format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+      format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc, Json] - File format
     Text:
       delimiter (character) [default: \t] - Column delimiter character
       escape (character) [default: \\] - Escape character
@@ -1086,3 +1086,51 @@ External:
       (no additional options)
     ORC:
       (no additional options)
+    JSON:
+      (no additional options)
+
+
+# parquet type casting: external table type differs from parquet physical type
+
+statement ok
+CREATE TABLE vedernikoff_src (weight INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_src VALUES (1), (2)
+
+statement ok
+COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.parquet' (FORMAT PARQUET);
+
+
+# vedernikoff: same type (INT4 -> INT4)
+statement ok
+CREATE TABLE vedernikoff(
+  weight INTEGER
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
+);
+
+query
+SELECT * FROM vedernikoff;
+----
+weight
+1
+2
+
+
+# fatter_vedernikoff: wider type (INT4 parquet -> INT8 external)
+statement ok
+CREATE TABLE fatter_vedernikoff(
+  weight INT8
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
+);
+
+query
+SELECT * FROM fatter_vedernikoff;
+----
+weight
+1
+2

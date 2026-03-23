@@ -260,6 +260,9 @@ class OptionsParser {
     VisitNodes(options, [&](const DefElem& option) {
       std::string_view option_name = option.defname;
       if (_explain && option_name == "explain") {
+        if (!option.arg) {
+          HandleHelp();
+        }
         auto name = TryGet<std::string_view>(option.arg);
         if (!name) {
           THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),

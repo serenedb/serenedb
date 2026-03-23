@@ -65,6 +65,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
+#include "basics/string_utils.h"
 #include "catalog/function.h"
 #include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
@@ -203,6 +204,26 @@ NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
              column.name, &column};
          }) |
          std::ranges::to<NameToColumnMap>();
+}
+
+std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
+  return absl::StrCat(
+    "This operation is not supported for ",
+    basics::string_utils::GetPluralFormLowerCase(magic_enum::enum_name(type)),
+    ".");
+}
+
+std::shared_ptr<connector::ReadFileTable> MakeReadFileTable(
+  const catalog::Table& table, const velox::RowTypePtr& type,
+  bool load_implicit_pk) {
+  SDB_ASSERT(table.PKColumns().empty());
+  const auto& file_info = table.GetFileInfo();
+  auto file_options = std::make_shared<connector::ReaderOptions>();
+  file_options->storage_options = file_info.storage_options;
+  file_options->dwio = file_info.format_options->createReaderOptions(type);
+  return std::make_shared<connector::ReadFileTable>(
+    type, file_info.storage_options->Path(), std::move(file_options),
+    load_implicit_pk);
 }
 
 const Node& ToNode(const void* node) {
@@ -742,12 +763,9 @@ class SqlAnalyzer {
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
-                     bool implicit_pk_column = false);
+                     bool load_implicit_pk = false);
   State ProcessInvertedIndex(State* parent, const Objects::ObjectData& object,
                              const RangeVar* node);
-
-  State ProcessFileTable(State* parent, const catalog::Table& table,
-                         std::string_view table_name, const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1545,14 +1563,18 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() != catalog::ObjectType::Table) {
-    // TODO: write more pg-like error message
+  if (logical_object.GetType() == catalog::ObjectType::View) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-      ERR_MSG(
-        "INSERT statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.GetType())));
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot insert into view \"", table_name, "\""),
+      ERR_HINT(
+        "To enable inserting into the view, provide an INSTEAD OF INSERT "
+        "trigger or an unconditional ON INSERT DO INSTEAD rule."));
+  } else if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table_name, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
@@ -1639,17 +1661,19 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() != catalog::ObjectType::Table) {
-    // TODO: write more pg-like error message
-    THROW_SQL_ERROR(
-      ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-      ERR_MSG(
-        "UPDATE statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.GetType())));
-  }
-
   const std::string_view table_name = relation.relname;
+  if (logical_object.GetType() == catalog::ObjectType::View) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot update view \"", table_name, "\""),
+      ERR_HINT("To enable updating the view, provide an INSTEAD OF UPDATE "
+               "trigger or an unconditional ON UPDATE DO INSTEAD rule."));
+  } else if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table_name, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
+  }
 
   auto table_state =
     ProcessTable(&state, schema_name, table_name, *object, &relation, true);
@@ -1747,17 +1771,19 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() != catalog::ObjectType::Table) {
-    // TODO: write more pg-like error message
-    THROW_SQL_ERROR(
-      ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-      ERR_MSG(
-        "DELETE statement is only applicable for tables , but the object is: ",
-        magic_enum::enum_name(logical_object.GetType())));
-  }
-
   const std::string_view table_name = relation.relname;
+  if (logical_object.GetType() == catalog::ObjectType::View) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot delete from view \"", table_name, "\""),
+      ERR_HINT("To enable deleting from the view, provide an INSTEAD OF DELETE "
+               "trigger or an unconditional ON DELETE DO INSTEAD rule."));
+  } else if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table_name, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
+  }
 
   auto table_state =
     ProcessTable(&state, schema_name, table_name, *object, &relation, true);
@@ -1959,7 +1985,8 @@ class CopyOptionsParser : public FileOptionsParser {
         break;
       case FormatType::Parquet:
       case FormatType::Dwrf:
-      case FormatType::Orc: {
+      case FormatType::Orc:
+      case FormatType::Json: {
         auto options = ParseFormatOptions(format);
         if (_is_writer) {
           _writer_options->dwio = options->createWriterOptions(_row_type);
@@ -2099,6 +2126,19 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   velox::RowTypePtr file_table_type;
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
+    SDB_ASSERT(object.object);
+    if (object.object->GetType() == catalog::ObjectType::View) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("cannot copy to view \"", relname, "\""),
+        ERR_HINT("To enable copying to a view, provide an INSTEAD OF INSERT "
+                 "trigger."));
+    } else if (object.object->GetType() != catalog::ObjectType::Table) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("cannot open relation \"", relname, "\""),
+        ERR_DETAIL(GetUnsupportedObjectTypeDetail(object.object->GetType())));
+    }
     const auto& table = basics::downCast<catalog::Table>(*object.object);
     table_name = table.GetName();
 
@@ -2158,7 +2198,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto options = std::move(parser).GetReaderOptions();
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
-      std::move(options));
+      std::move(options), false);
     auto file_output_type = ROW(std::move(names), file_table_type->children());
     state.root = std::make_shared<lp::TableScanNode>(
       _id_generator.NextPlanId(), std::move(file_output_type),
@@ -2549,8 +2589,25 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   const auto* object = _objects.getRelation(schemaname, relname);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
-
-  const auto& table = basics::downCast<catalog::Table>(*object->object);
+  const auto& logical_object = *object->object;
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot create index on relation \"", relname, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
+  }
+  const auto& table = basics::downCast<catalog::Table>(logical_object);
+  if (table.GetTableType() == TableType::File) {
+    const auto& file_info = table.GetFileInfo();
+    if (!file_info.format_options ||
+        file_info.format_options->createReaderOptions(table.RowType())
+            .reader->fileFormat() != velox::dwio::common::FileFormat::PARQUET) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ErrorPosition(ExprLocation(stmt.relation))),
+        ERR_MSG("Inverted index is only supported for parquet file tables"));
+    }
+  }
   const auto& table_type = *table.RowType();
 
   auto table_state =
@@ -3695,15 +3752,27 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   SDB_ASSERT(object.object);
   const auto& inverted_index =
     basics::downCast<const catalog::InvertedIndex>(*object.object);
-  auto& table = *catalog::GetCatalog().GetSnapshot()->GetObject<catalog::Table>(
-    inverted_index.GetRelationId());
+  auto* table_data = _objects.getRelationById(inverted_index.GetRelationId());
+  SDB_ASSERT(table_data && table_data->object);
+  const auto& table =
+    basics::downCast<const catalog::Table>(*table_data->object);
   auto type = table.RowType();
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
+  axiom::connector::TablePtr scan_table;
+  if (table.GetTableType() == TableType::File) {
+    scan_table = MakeReadFileTable(table, type, false);
+  } else {
+    scan_table = std::make_shared<connector::RocksDBTable>(table, _transaction);
+  }
+
   if (!object.table) {
-    object.table = std::make_shared<connector::RocksDBInvertedIndexTable>(
-      table, _transaction, inverted_index);
+    object.table = std::make_shared<connector::InvertedIndexTable>(
+      _transaction, std::move(scan_table), inverted_index);
+  } else {
+    auto table = object.table.get();
+    SDB_ASSERT(dynamic_cast<connector::InvertedIndexTable*>(table));
   }
 
   SDB_ASSERT(
@@ -3725,16 +3794,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 const Objects::ObjectData& object,
                                 const RangeVar* node, bool load_implicit_pk) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
-
-  if (table.GetTableType() == TableType::File) {
-    return ProcessFileTable(parent, table, table_name, node);
-  }
-
   auto type = table.RowType();
-
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
-
-  object.EnsureTable(_transaction);
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();
@@ -3756,47 +3817,26 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     std::vector types = type->children();
     std::vector type_names = type->names();
 
+    //  Important that  if the generated primary key is present, it must be the
+    //  last field in the type — there are data sources that rely on this
     types.push_back(velox::BIGINT());
     type_names.emplace_back(std::move(generated_pk_name));
     type = velox::ROW(std::move(type_names), std::move(types));
   }
 
+  axiom::connector::TablePtr scan_table;
+  if (table.GetTableType() == TableType::File) {
+    scan_table = MakeReadFileTable(table, type, load_implicit_pk);
+  } else {
+    object.EnsureTable(_transaction);
+    scan_table = object.table;
+  }
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type->children()), object.table,
-    type->names());
-
-  state.resolver.CreateTable(table_alias,
-                             MakePtrView(state.root->outputType()));
-  return state;
-}
-
-State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
-                                    std::string_view table_name,
-                                    const RangeVar* node) {
-  const auto& file_info = table.GetFileInfo();
-  SDB_ASSERT(file_info.storage_options);
-  SDB_ASSERT(file_info.format_options);
-
-  auto row_type = table.RowType();
-
-  auto [table_alias, column_names] =
-    ProcessTableColumns(parent, node, row_type);
-  auto file_output_type =
-    velox::ROW(std::move(column_names), row_type->children());
-
-  auto options = std::make_shared<connector::ReaderOptions>();
-  options->storage_options = file_info.storage_options;
-  options->dwio = file_info.format_options->createReaderOptions(row_type);
-  auto read_file_table = std::make_shared<connector::ReadFileTable>(
-    row_type, file_info.storage_options->Path(), std::move(options));
-
-  auto state = parent->MakeChild();
-  state.root = std::make_shared<lp::TableScanNode>(
-    _id_generator.NextPlanId(), std::move(file_output_type),
-    std::move(read_file_table), row_type->names());
-
+    velox::ROW(std::move(column_names), type->children()),
+    std::move(scan_table), type->names());
   state.resolver.CreateTable(table_alias,
                              MakePtrView(state.root->outputType()));
   return state;

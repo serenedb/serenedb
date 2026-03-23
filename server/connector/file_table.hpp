@@ -107,7 +107,7 @@ class FileSplitSource final : public axiom::connector::SplitSource {
 
 class FileTable : public axiom::connector::Table {
  public:
-  explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
+  FileTable(velox::RowTypePtr type, std::string_view file_path, bool has_pk);
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
@@ -129,8 +129,9 @@ class FileTable : public axiom::connector::Table {
 class ReadFileTable final : public FileTable {
  public:
   ReadFileTable(velox::RowTypePtr type, std::string_view file_path,
-                std::shared_ptr<ReaderOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+                std::shared_ptr<ReaderOptions> options, bool has_pk)
+    : FileTable{std::move(type), file_path, has_pk},
+      _options{std::move(options)} {}
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
@@ -142,7 +143,7 @@ class WriteFileTable final : public FileTable {
  public:
   WriteFileTable(velox::RowTypePtr type, std::string_view file_path,
                  std::shared_ptr<WriterOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+    : FileTable{std::move(type), file_path, {}}, _options{std::move(options)} {}
 
   const std::shared_ptr<WriterOptions>& GetOptions() const { return _options; }
 
@@ -248,6 +249,12 @@ class FileDataSink final : public velox::connector::DataSink {
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
+  struct ReaderComponents {
+    std::shared_ptr<velox::ReadFile> source;
+    std::unique_ptr<velox::dwio::common::Reader> reader;
+    std::unique_ptr<velox::dwio::common::RowReader> row_reader;
+  };
+
   FileDataSource(std::shared_ptr<ReaderOptions> options,
                  const velox::common::SubfieldFilters& subfield_filters,
                  velox::RowTypePtr output_type,
@@ -255,6 +262,14 @@ class FileDataSource final : public velox::connector::DataSource {
                  velox::memory::MemoryPool& memory_pool,
                  const velox::core::TypedExprPtr& remaining_filter,
                  velox::core::ExpressionEvaluator* evaluator);
+
+  static ReaderComponents CreateReader(
+    const ReaderOptions& options, velox::memory::MemoryPool& pool,
+    const velox::RowTypePtr& output_type,
+    const velox::connector::ColumnHandleMap& column_handles,
+    const velox::common::SubfieldFilters& subfield_filters = {},
+    const velox::core::TypedExprPtr& remaining_filter = nullptr,
+    velox::core::ExpressionEvaluator* evaluator = nullptr);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 

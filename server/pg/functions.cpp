@@ -39,6 +39,7 @@
 #include "pg/functions/json.h"
 #include "pg/functions/lexize.h"
 #include "pg/functions/size.h"
+#include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -525,6 +526,26 @@ struct ProcessEscapePattern {
 };
 
 template<typename T>
+struct PgTypeofFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig& /*config*/,
+    const arg_type<velox::Any>* /*input*/) {
+    _type_name = ToPgTypeString(inputTypes[0]);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<velox::Any>& /*input*/) {
+    result = _type_name;
+  }
+
+ private:
+  std::string _type_name;
+};
+
+template<typename T>
 struct PgErrorFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -655,6 +676,8 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgTsLexize, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(
     {prefix + "ts_lexize"});
+  velox::registerFunction<PgTypeofFunction, velox::Varchar, velox::Any>(
+    {prefix + "typeof"});
   registerExtractFunctions(prefix);
 }
 

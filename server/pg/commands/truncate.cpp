@@ -131,7 +131,11 @@ yaclib::Future<> TruncateTable(ExecContext& context, const TruncateStmt& stmt) {
 
   TruncateTables(tables, snapshot, GetServerEngine());
 
-  return {};
+  return GetServerEngine().compactAll(true, true).ThenInline([](Result&& r) {
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+  });
 }
 
 }  // namespace sdb::pg

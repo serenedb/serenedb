@@ -300,9 +300,9 @@ void catalog::Role::grantDatabase(std::string_view database,
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase && level != auth::Level::RW) {
-    SDB_THROW(ERROR_FORBIDDEN,
-              "Cannot lower access level of '", StaticStrings::kDefaultUser,
-              "' to ", StaticStrings::kDefaultDatabase);
+    SDB_THROW(ERROR_FORBIDDEN, "Cannot lower access level of '",
+              StaticStrings::kDefaultUser, "' to ",
+              StaticStrings::kDefaultDatabase);
   }
   SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Granting ",
             ConvertFromAuthLevel(level), " on ", database);
@@ -325,9 +325,9 @@ bool catalog::Role::removeDatabase(std::string_view database) {
   }
   if (_name == StaticStrings::kDefaultUser &&
       database == StaticStrings::kDefaultDatabase) {
-    SDB_THROW(ERROR_FORBIDDEN,
-              "Cannot remove access level of '", StaticStrings::kDefaultUser,
-              "' to ", StaticStrings::kDefaultDatabase);
+    SDB_THROW(ERROR_FORBIDDEN, "Cannot remove access level of '",
+              StaticStrings::kDefaultUser, "' to ",
+              StaticStrings::kDefaultDatabase);
   }
   SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Removing grant on ",
             database);

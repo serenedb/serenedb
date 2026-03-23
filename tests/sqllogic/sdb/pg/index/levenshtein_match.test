@@ -1,4 +1,10 @@
 statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS test_english;
+
+statement ok
+DROP TABLE IF EXISTS test_levenshtein;
+
+statement ok
 CREATE TABLE test_levenshtein (a INTEGER PRIMARY KEY, b VARCHAR);
 
 statement ok

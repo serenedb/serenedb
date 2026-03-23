@@ -82,9 +82,8 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
       SDB_ASSERT(it != _row_group_starts.begin(), "row before first row group");
       rg = static_cast<uint32_t>(it - _row_group_starts.begin() - 1);
       rg_start = _row_group_starts[rg];
-      rg_end = (rg + 1 < _row_group_starts.size())
-                 ? _row_group_starts[rg + 1]
-                 : _total_rows;
+      rg_end = (rg + 1 < _row_group_starts.size()) ? _row_group_starts[rg + 1]
+                                                   : _total_rows;
     }
 
     size_t j = i + 1;

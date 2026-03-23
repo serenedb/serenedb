@@ -55,6 +55,7 @@
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "pg/functions/interval.h"
+#include "catalog/catalog.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
 #include "query/types.h"
@@ -610,6 +611,24 @@ void SerializeRegtype(SerializationContext context,
 }
 
 template<VarFormat Format>
+void SerializeRegclass(SerializationContext context,
+                       const velox::DecodedVector& decoded_vector,
+                       velox::vector_size_t row) {
+  const auto oid = decoded_vector.valueAt<int32_t>(row);
+  if constexpr (Format == VarFormat::Text) {
+    auto snapshot = catalog::GetCatalog().GetSnapshot();
+    auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(oid)});
+    if (object) {
+      context.buffer->WriteUncommitted(object->GetName());
+    } else {
+      context.buffer->WriteUncommitted(absl::StrCat(oid));
+    }
+  } else {
+    absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
+  }
+}
+
+template<VarFormat Format>
 void SerializeInterval(SerializationContext context,
                        const velox::DecodedVector& decoded_vector,
                        velox::vector_size_t row) {
@@ -1001,9 +1020,8 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
   }
 
   if (pg::IsRegclass(type)) {
-    // Regclass serializes as its OID; use explicit cast to text for name.
-    SERIALIZE_PRIMITIVE(velox::TypeKind::INTEGER);
-    RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    RETURN_SERIALIZATION(SerializeRegclass<VarFormat::Text>,
+                         SerializeRegclass<VarFormat::Binary>);
   }
 
   switch (type->kind()) {

@@ -134,65 +134,75 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
 }
 
+// clang-format off
+#define REGTYPE_OUT(oid, type_name)                        \
+    case PgTypeOID::oid: return type_name;                 \
+    case PgTypeOID::oid##Array: return type_name "[]";
+
 std::string RegtypeOut(int32_t oid) {
-  static const containers::FlatHashMap<int32_t, std::string_view>
-    kOidToTypeName = {
-      {PgTypeOID::kBool, "boolean"},
-      {PgTypeOID::kBytea, "bytea"},
-      {PgTypeOID::kChar, "character"},
-      {PgTypeOID::kInt8, "bigint"},
-      {PgTypeOID::kInt2, "smallint"},
-      {PgTypeOID::kInt4, "integer"},
-      {PgTypeOID::kText, "text"},
-      {PgTypeOID::kJson, "json"},
-      {PgTypeOID::kFloat4, "real"},
-      {PgTypeOID::kFloat8, "double precision"},
-      {PgTypeOID::kVarchar, "character varying"},
-      {PgTypeOID::kDate, "date"},
-      {PgTypeOID::kTimestamp, "timestamp without time zone"},
-      {PgTypeOID::kTimestampTz, "timestamp with time zone"},
-      {PgTypeOID::kNumeric, "numeric"},
-      {PgTypeOID::kRegtype, "regtype"},
-      {PgTypeOID::kUuid, "uuid"},
-    };
-  auto it = kOidToTypeName.find(oid);
-  if (it != kOidToTypeName.end()) {
-    return std::string{it->second};
+  switch (static_cast<PgTypeOID>(oid)) {
+    REGTYPE_OUT(kBool, "boolean")
+    REGTYPE_OUT(kBytea, "bytea")
+    REGTYPE_OUT(kChar, "character")
+    REGTYPE_OUT(kInt2, "smallint")
+    REGTYPE_OUT(kInt4, "integer")
+    REGTYPE_OUT(kInt8, "bigint")
+    REGTYPE_OUT(kFloat4, "real")
+    REGTYPE_OUT(kFloat8, "double precision")
+    REGTYPE_OUT(kText, "text")
+    REGTYPE_OUT(kVarchar, "character varying")
+    REGTYPE_OUT(kJson, "json")
+    REGTYPE_OUT(kUuid, "uuid")
+    REGTYPE_OUT(kNumeric, "numeric")
+    REGTYPE_OUT(kDate, "date")
+    REGTYPE_OUT(kTimestamp, "timestamp without time zone")
+    REGTYPE_OUT(kTimestampTz, "timestamp with time zone")
+    REGTYPE_OUT(kInterval, "interval")
+    REGTYPE_OUT(kRegclass, "regclass")
+    REGTYPE_OUT(kRegtype, "regtype")
+    case PgTypeOID::kUnknown: return "unknown";
   }
   return absl::StrCat(oid);
 }
+#undef REGTYPE_OUT
+
+#define SDB_REGTYPE_IN(oid, type_name)             \
+    {type_name, PgTypeOID::oid},               \
+    {type_name "[]", PgTypeOID::oid##Array},
 
 int32_t RegtypeIn(std::string_view name) {
   static const containers::FlatHashMap<std::string_view, int32_t>
     kTypeNameToOid = {
-      {"boolean", PgTypeOID::kBool},
-      {"bool", PgTypeOID::kBool},
-      {"smallint", PgTypeOID::kInt2},
-      {"int2", PgTypeOID::kInt2},
-      {"integer", PgTypeOID::kInt4},
-      {"int4", PgTypeOID::kInt4},
-      {"int", PgTypeOID::kInt4},
-      {"bigint", PgTypeOID::kInt8},
-      {"int8", PgTypeOID::kInt8},
-      {"real", PgTypeOID::kFloat4},
-      {"float4", PgTypeOID::kFloat4},
-      {"double precision", PgTypeOID::kFloat8},
-      {"float8", PgTypeOID::kFloat8},
-      {"text", PgTypeOID::kText},
-      {"character varying", PgTypeOID::kVarchar},
-      {"varchar", PgTypeOID::kVarchar},
-      {"character", PgTypeOID::kChar},
-      {"char", PgTypeOID::kChar},
-      {"bytea", PgTypeOID::kBytea},
-      {"json", PgTypeOID::kJson},
-      {"uuid", PgTypeOID::kUuid},
-      {"numeric", PgTypeOID::kNumeric},
-      {"date", PgTypeOID::kDate},
-      {"timestamp without time zone", PgTypeOID::kTimestamp},
-      {"timestamp", PgTypeOID::kTimestamp},
-      {"timestamp with time zone", PgTypeOID::kTimestampTz},
-      {"timestamptz", PgTypeOID::kTimestampTz},
-      {"regtype", PgTypeOID::kRegtype},
+      SDB_REGTYPE_IN(kBool, "boolean")
+      SDB_REGTYPE_IN(kBool, "bool")
+      SDB_REGTYPE_IN(kBytea, "bytea")
+      SDB_REGTYPE_IN(kChar, "character")
+      SDB_REGTYPE_IN(kChar, "char")
+      SDB_REGTYPE_IN(kInt2, "smallint")
+      SDB_REGTYPE_IN(kInt2, "int2")
+      SDB_REGTYPE_IN(kInt4, "integer")
+      SDB_REGTYPE_IN(kInt4, "int4")
+      SDB_REGTYPE_IN(kInt4, "int")
+      SDB_REGTYPE_IN(kInt8, "bigint")
+      SDB_REGTYPE_IN(kInt8, "int8")
+      SDB_REGTYPE_IN(kFloat4, "real")
+      SDB_REGTYPE_IN(kFloat4, "float4")
+      SDB_REGTYPE_IN(kFloat8, "double precision")
+      SDB_REGTYPE_IN(kFloat8, "float8")
+      SDB_REGTYPE_IN(kText, "text")
+      SDB_REGTYPE_IN(kVarchar, "character varying")
+      SDB_REGTYPE_IN(kVarchar, "varchar")
+      SDB_REGTYPE_IN(kJson, "json")
+      SDB_REGTYPE_IN(kUuid, "uuid")
+      SDB_REGTYPE_IN(kNumeric, "numeric")
+      SDB_REGTYPE_IN(kDate, "date")
+      SDB_REGTYPE_IN(kTimestamp, "timestamp without time zone")
+      SDB_REGTYPE_IN(kTimestamp, "timestamp")
+      SDB_REGTYPE_IN(kTimestampTz, "timestamp with time zone")
+      SDB_REGTYPE_IN(kTimestampTz, "timestamptz")
+      SDB_REGTYPE_IN(kInterval, "interval")
+      SDB_REGTYPE_IN(kRegclass, "regclass")
+      SDB_REGTYPE_IN(kRegtype, "regtype")
     };
   auto it = kTypeNameToOid.find(name);
   if (it != kTypeNameToOid.end()) {
@@ -200,6 +210,8 @@ int32_t RegtypeIn(std::string_view name) {
   }
   return kInvalidOid;
 }
+#undef SDB_REGTYPE_IN
+// clang-format on
 
 namespace {
 

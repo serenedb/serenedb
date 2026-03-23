@@ -153,7 +153,7 @@ text[]
 
 
 query
-SELECT pg_typeof(ARRAY['\\xdeadbeef'::bytea]);
+SELECT pg_typeof(ARRAY['\xdeadbeef'::bytea]);
 ----
 pg_typeof
 bytea[]

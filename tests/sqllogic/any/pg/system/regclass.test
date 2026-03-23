@@ -1,7 +1,12 @@
+# regclass returns OID in binary protocol and our test runner can't
+# resolve OIDs back to table names, so we only run with simple protocol
+
+skipif postgres-extended
 statement ok
 CREATE TABLE regclass_test_table (id int, name text);
 
 
+skipif postgres-extended
 query
 SELECT pg_typeof('regclass_test_table'::regclass);
 ----
@@ -9,16 +14,19 @@ pg_typeof
 regclass
 
 
+skipif postgres-extended
 query
-SELECT 'regclass_test_table'::regclass::text;
+SELECT 'regclass_test_table'::regclass;
 ----
-text
+regclass
 regclass_test_table
 
 
+skipif postgres-extended
 statement error
 SELECT 'nonexistent_table'::regclass;
 
 
+skipif postgres-extended
 statement ok
 DROP TABLE regclass_test_table;

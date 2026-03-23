@@ -228,7 +228,13 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
   SDB_ASSERT(_current_portal);
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
-  SafeCall([&] { ExecutePortal(*_current_portal); });
+  SafeCall([&] {
+    auto& portal = *_current_portal;
+    portal.rows = 0;
+    BuildColumnSerializers(portal);
+    DescribeAnalyzedQuery(*portal.stmt, portal.bind_info.output_formats, false);
+    ExecutePortal(portal);
+  });
   if (_pop_packet) {
     FinishPacket();
   }
@@ -986,18 +992,25 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
     SendNotices();
   }
-  SDB_ASSERT(stmt.query);
-  const auto& output_type = stmt.query->GetOutputType();
+  BuildColumnSerializers(portal);
+
+  return portal;
+}
+
+void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
+  SDB_ASSERT(portal.stmt);
+  SDB_ASSERT(portal.stmt->query);
+  portal.columns_serializers.clear();
+  const auto& output_type = portal.stmt->query->GetOutputType();
 
   // DDL does not have output type
   if (!output_type) {
-    return portal;
+    return;
   }
   const auto columns_count = output_type->size();
   if (columns_count == 0) {
-    return portal;
+    return;
   }
-  SDB_ASSERT(columns_count > 0);
   portal.columns_serializers.reserve(columns_count);
 
   const auto& formats = portal.bind_info.output_formats;
@@ -1009,8 +1022,6 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
     portal.columns_serializers.push_back(
       GetSerialization(column_type, format, portal.serialization_context));
   }
-
-  return portal;
 }
 
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {

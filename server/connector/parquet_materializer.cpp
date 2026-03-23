@@ -106,6 +106,7 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
     velox::dwio::common::Mutation mutation;
     mutation.deletedRows = deleted.data();
 
+    // TODO: Make it faster.
     velox::VectorPtr result =
       velox::BaseVector::create(_output_type, read_size, &_pool);
     parquet_reader.next(read_size, result, &mutation);

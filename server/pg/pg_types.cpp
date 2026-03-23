@@ -53,9 +53,9 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
   } else if (IsInterval(type)) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
   } else if (IsRegtype(type)) {
-    return PgTypeOID::kRegtype;
+    return in_array ? PgTypeOID::kRegtypeArray : PgTypeOID::kRegtype;
   } else if (IsRegclass(type)) {
-    return PgTypeOID::kRegclass;
+    return in_array ? PgTypeOID::kRegclassArray : PgTypeOID::kRegclass;
   }
   return -1;
 }
@@ -135,26 +135,26 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
 }
 
 std::string RegtypeOut(int32_t oid) {
-  static constexpr auto kOidToTypeName =
-    frozen::make_unordered_map<int32_t, std::string_view>({
-      {16, "boolean"},
-      {17, "bytea"},
-      {18, "character"},
-      {20, "bigint"},
-      {21, "smallint"},
-      {23, "integer"},
-      {25, "text"},
-      {114, "json"},
-      {700, "real"},
-      {701, "double precision"},
-      {1043, "character varying"},
-      {1082, "date"},
-      {1114, "timestamp without time zone"},
-      {1184, "timestamp with time zone"},
-      {1700, "numeric"},
-      {2206, "regtype"},
-      {2950, "uuid"},
-    });
+  static const containers::FlatHashMap<int32_t, std::string_view>
+    kOidToTypeName = {
+      {PgTypeOID::kBool, "boolean"},
+      {PgTypeOID::kBytea, "bytea"},
+      {PgTypeOID::kChar, "character"},
+      {PgTypeOID::kInt8, "bigint"},
+      {PgTypeOID::kInt2, "smallint"},
+      {PgTypeOID::kInt4, "integer"},
+      {PgTypeOID::kText, "text"},
+      {PgTypeOID::kJson, "json"},
+      {PgTypeOID::kFloat4, "real"},
+      {PgTypeOID::kFloat8, "double precision"},
+      {PgTypeOID::kVarchar, "character varying"},
+      {PgTypeOID::kDate, "date"},
+      {PgTypeOID::kTimestamp, "timestamp without time zone"},
+      {PgTypeOID::kTimestampTz, "timestamp with time zone"},
+      {PgTypeOID::kNumeric, "numeric"},
+      {PgTypeOID::kRegtype, "regtype"},
+      {PgTypeOID::kUuid, "uuid"},
+    };
   auto it = kOidToTypeName.find(oid);
   if (it != kOidToTypeName.end()) {
     return std::string{it->second};
@@ -165,34 +165,34 @@ std::string RegtypeOut(int32_t oid) {
 int32_t RegtypeIn(std::string_view name) {
   static const containers::FlatHashMap<std::string_view, int32_t>
     kTypeNameToOid = {
-      {"boolean", 16},
-      {"bool", 16},
-      {"smallint", 21},
-      {"int2", 21},
-      {"integer", 23},
-      {"int4", 23},
-      {"int", 23},
-      {"bigint", 20},
-      {"int8", 20},
-      {"real", 700},
-      {"float4", 700},
-      {"double precision", 701},
-      {"float8", 701},
-      {"text", 25},
-      {"character varying", 1043},
-      {"varchar", 1043},
-      {"character", 18},
-      {"char", 18},
-      {"bytea", 17},
-      {"json", 114},
-      {"uuid", 2950},
-      {"numeric", 1700},
-      {"date", 1082},
-      {"timestamp without time zone", 1114},
-      {"timestamp", 1114},
-      {"timestamp with time zone", 1184},
-      {"timestamptz", 1184},
-      {"regtype", 2206},
+      {"boolean", PgTypeOID::kBool},
+      {"bool", PgTypeOID::kBool},
+      {"smallint", PgTypeOID::kInt2},
+      {"int2", PgTypeOID::kInt2},
+      {"integer", PgTypeOID::kInt4},
+      {"int4", PgTypeOID::kInt4},
+      {"int", PgTypeOID::kInt4},
+      {"bigint", PgTypeOID::kInt8},
+      {"int8", PgTypeOID::kInt8},
+      {"real", PgTypeOID::kFloat4},
+      {"float4", PgTypeOID::kFloat4},
+      {"double precision", PgTypeOID::kFloat8},
+      {"float8", PgTypeOID::kFloat8},
+      {"text", PgTypeOID::kText},
+      {"character varying", PgTypeOID::kVarchar},
+      {"varchar", PgTypeOID::kVarchar},
+      {"character", PgTypeOID::kChar},
+      {"char", PgTypeOID::kChar},
+      {"bytea", PgTypeOID::kBytea},
+      {"json", PgTypeOID::kJson},
+      {"uuid", PgTypeOID::kUuid},
+      {"numeric", PgTypeOID::kNumeric},
+      {"date", PgTypeOID::kDate},
+      {"timestamp without time zone", PgTypeOID::kTimestamp},
+      {"timestamp", PgTypeOID::kTimestamp},
+      {"timestamp with time zone", PgTypeOID::kTimestampTz},
+      {"timestamptz", PgTypeOID::kTimestampTz},
+      {"regtype", PgTypeOID::kRegtype},
     };
   auto it = kTypeNameToOid.find(name);
   if (it != kTypeNameToOid.end()) {

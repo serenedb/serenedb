@@ -51,6 +51,8 @@ enum PgTypeOID : int32_t {
   kInterval = 1186,
   kRegclass = 2205,
   kRegtype = 2206,
+  kRegclassArray = 2210,
+  kRegtypeArray = 2211,
 
   // Array types
   kBoolArray = 1000,

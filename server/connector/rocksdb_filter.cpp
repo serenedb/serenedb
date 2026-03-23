@@ -22,30 +22,13 @@
 
 #include <absl/container/flat_hash_set.h>
 #include <velox/vector/ConstantVector.h>
-#include <velox/vector/FlatVector.h>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 
 namespace sdb::connector {
 namespace {
-
-template<velox::TypeKind Kind>
-velox::VectorPtr BuildPointColumn(const std::string& col_name,
-                                  const std::vector<Point>& points,
-                                  velox::memory::MemoryPool* pool) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  const auto n = static_cast<velox::vector_size_t>(points.size());
-  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), n, pool);
-  for (velox::vector_size_t row_idx = 0; row_idx < n; ++row_idx) {
-    const auto* eq = points[static_cast<size_t>(row_idx)].FindFilter(col_name);
-    SDB_ASSERT(eq != nullptr, "pk column not found in filter");
-    auto src_vec = eq->toConstantVector(pool);
-    result->copy(src_vec.get(), row_idx, 0, 1);
-  }
-  return result;
-}
 
 std::vector<Point> AnyPoint(const std::span<const std::string> names) {
   return {Point(names)};
@@ -162,7 +145,7 @@ std::vector<Point> ExtractFilterOr(const velox::core::CallTypedExpr* func_call,
 // changed (avoids allocations on the happy path).
 velox::core::TypedExprPtr RewriteExpr(
   const velox::core::TypedExprPtr& expr,
-  const absl::flat_hash_set<const velox::core::ITypedExpr*>& sources) {
+  const containers::FlatHashSet<const velox::core::ITypedExpr*>& sources) {
   if (!expr->isCallKind()) {
     return expr;
   }
@@ -276,20 +259,21 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
   return result;
 }
 
-velox::RowVectorPtr PointsToRowVector(const std::vector<Point>& points,
-                                      velox::RowTypePtr pk_type,
-                                      velox::memory::MemoryPool* pool) {
-  // Build one column vector per PK column, each with one row per point.
-  std::vector<velox::VectorPtr> columns;
-  columns.reserve(pk_type->size());
-  for (size_t col_idx = 0; col_idx < pk_type->size(); ++col_idx) {
-    const auto& col_name = pk_type->nameOf(col_idx);
-    const auto& col_type = pk_type->childAt(col_idx);
-    columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      BuildPointColumn, col_type->kind(), col_name, points, pool));
+std::vector<SpecificPoint> ToSpecificPoints(const std::vector<Point>& points,
+                                            const velox::RowType& pk_type) {
+  std::vector<SpecificPoint> result;
+  result.reserve(points.size());
+  for (const auto& p : points) {
+    SpecificPoint sp;
+    sp.reserve(pk_type.size());
+    for (const auto& name : pk_type.names()) {
+      const auto* filter = p.FindFilter(name);
+      SDB_ASSERT(filter != nullptr, "pk column not found in specific point");
+      sp.push_back(ToVariant(*filter));
+    }
+    result.push_back(std::move(sp));
   }
-  return std::make_shared<velox::RowVector>(pool, pk_type, velox::BufferPtr{},
-                                            points.size(), std::move(columns));
+  return result;
 }
 
 std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
@@ -323,7 +307,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   }
 
   // Collect the unique source sub-expressions to get rid of them.
-  absl::flat_hash_set<const velox::core::ITypedExpr*> sources;
+  containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
   for (const auto& p : pts) {
     sources.insert(p.GetSourceExprs().begin(), p.GetSourceExprs().end());
   }
@@ -331,16 +315,11 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   return {std::move(pts), RewriteExpr(expr, sources)};
 }
 
-void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type) {
-  absl::c_sort(points, [&](const Point& lhs, const Point& rhs) {
-    for (std::string_view col_name : pk_type.names()) {
-      const auto* lhs_filter = lhs.FindFilter(col_name);
-      const auto* rhs_filter = rhs.FindFilter(col_name);
-      SDB_ASSERT(lhs_filter && rhs_filter);
-      const auto lhs_val = ToVariant(*lhs_filter);
-      const auto rhs_val = ToVariant(*rhs_filter);
-      if (lhs_val != rhs_val) {
-        return lhs_val < rhs_val;
+void SortPoints(std::vector<SpecificPoint>& points) {
+  absl::c_sort(points, [](const SpecificPoint& lhs, const SpecificPoint& rhs) {
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i] != rhs[i]) {
+        return lhs[i] < rhs[i];
       }
     }
     return false;

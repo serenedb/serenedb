@@ -33,6 +33,7 @@
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/rocksdb_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -143,10 +144,20 @@ class RocksDBBaseDataSource : public velox::connector::DataSource {
   velox::RowVectorPtr ApplyRemainingFilter(velox::RowVectorPtr batch);
 };
 
+template<typename Source>
 class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
  public:
-  virtual void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) override = 0;
+  RocksDBFullScanDataSource(velox::memory::MemoryPool& memory_pool,
+                            Source& source, rocksdb::ColumnFamilyHandle& cf,
+                            velox::RowTypePtr read_type,
+                            std::vector<catalog::Column::Id> column_ids,
+                            catalog::Column::Id effective_column_id,
+                            ObjectId object_key, size_t output_column_count,
+                            const rocksdb::Snapshot* snapshot,
+                            velox::core::TypedExprPtr remaining_filter,
+                            velox::core::ExpressionEvaluator* evaluator);
+
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
   void addDynamicFilter(
@@ -157,23 +168,10 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats() final;
   void cancel() final;
 
- protected:
-  RocksDBFullScanDataSource(velox::memory::MemoryPool& memory_pool,
-                            rocksdb::ColumnFamilyHandle& cf,
-                            velox::RowTypePtr read_type,
-                            std::vector<catalog::Column::Id> column_ids,
-                            catalog::Column::Id effective_column_id,
-                            ObjectId object_key, size_t output_column_count,
-                            const rocksdb::Snapshot* snapshot,
-                            velox::core::TypedExprPtr remaining_filter,
-                            velox::core::ExpressionEvaluator* evaluator);
-
+ private:
   template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
   void InitIterators(CreateFn&& create);
 
-  const rocksdb::Snapshot* _snapshot;
-
- private:
   velox::VectorPtr ReadColumn(velox::column_index_t col_idx, uint64_t max_size);
 
   template<velox::TypeKind Kind>
@@ -188,6 +186,8 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
                          const Callback& func);
 
+  Source& _source;
+  const rocksdb::Snapshot* _snapshot;
   std::vector<std::string> _column_keys;
   std::string _upper_bound_keys_data;
   std::vector<rocksdb::Slice> _upper_bound_slices;
@@ -200,41 +200,6 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   // this case is handled in SqlAnalyzer code, such scans are replaced with
   // empty Values node.
   catalog::Column::Id _effective_column_id;
-};
-
-// Read Your Own Writes
-class RocksDBRYOWFullScanDataSource : public RocksDBFullScanDataSource {
- public:
-  RocksDBRYOWFullScanDataSource(velox::memory::MemoryPool& memory_pool,
-                                rocksdb::Transaction& transaction,
-                                rocksdb::ColumnFamilyHandle& cf,
-                                velox::RowTypePtr read_type,
-                                std::vector<catalog::Column::Id> column_ids,
-                                catalog::Column::Id effective_column_id,
-                                ObjectId object_key, size_t output_column_count,
-                                velox::core::TypedExprPtr remaining_filter,
-                                velox::core::ExpressionEvaluator* evaluator);
-
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
-
- private:
-  rocksdb::Transaction& _transaction;
-};
-
-class RocksDBSnapshotFullScanDataSource : public RocksDBFullScanDataSource {
- public:
-  RocksDBSnapshotFullScanDataSource(
-    velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
-    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
-    std::vector<catalog::Column::Id> column_ids,
-    catalog::Column::Id effective_column_id, ObjectId object_key,
-    size_t output_column_count, const rocksdb::Snapshot* snapshot = nullptr,
-    velox::core::TypedExprPtr remaining_filter = nullptr,
-    velox::core::ExpressionEvaluator* evaluator = nullptr);
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
-
- private:
-  rocksdb::DB& _db;
 };
 
 template<typename Source>
@@ -265,11 +230,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
 
- protected:
   RocksDBPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
-    ObjectId object_key, velox::RowVectorPtr values, size_t output_column_count,
+    ObjectId object_key, std::vector<SpecificPoint> values,
+    velox::RowTypePtr pk_type, size_t output_column_count,
     velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
     velox::core::ExpressionEvaluator* evaluator, Source& source)
@@ -282,6 +247,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
                             std::move(remaining_filter),
                             evaluator},
       _values{std::move(values)},
+      _pk_type{std::move(pk_type)},
       _ctx{source, [snapshot] {
              rocksdb::ReadOptions ro;
              ro.async_io = IsIOUringEnabled();
@@ -315,7 +281,8 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   void FinalizeOffset(size_t batch_size);
 
   size_t _offset = 0;
-  velox::RowVectorPtr _values;
+  std::vector<SpecificPoint> _values;
+  velox::RowTypePtr _pk_type;
   std::vector<size_t> _sorted_col_indices;
   std::vector<size_t> _col_rank;
   // TODO(mkornaukhov) use std::array, need pass callback into multiget context
@@ -327,50 +294,15 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   MultiGetContext<Source> _ctx;
 };
 
-class RocksDBRYOWPointLookupDataSource final
-  : public RocksDBPointLookupDataSource<rocksdb::Transaction> {
- public:
-  RocksDBRYOWPointLookupDataSource(
-    velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
-    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
-    std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
-    velox::RowVectorPtr values, size_t output_column_count,
-    velox::core::TypedExprPtr remaining_filter,
-    velox::core::ExpressionEvaluator* evaluator)
-    : RocksDBPointLookupDataSource{memory_pool,
-                                   cf,
-                                   std::move(read_type),
-                                   std::move(column_ids),
-                                   object_key,
-                                   std::move(values),
-                                   output_column_count,
-                                   std::move(remaining_filter),
-                                   transaction.GetSnapshot(),
-                                   evaluator,
-                                   transaction} {}
-};
+// Read Your Own Writes
+using RocksDBRYOWFullScanDataSource =
+  RocksDBFullScanDataSource<rocksdb::Transaction>;
+using RocksDBRYOWPointLookupDataSource =
+  RocksDBPointLookupDataSource<rocksdb::Transaction>;
 
-class RocksDBSnapshotPointLookupDataSource final
-  : public RocksDBPointLookupDataSource<rocksdb::DB> {
- public:
-  RocksDBSnapshotPointLookupDataSource(
-    velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
-    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
-    std::vector<catalog::Column::Id> column_ids, ObjectId object_key,
-    const rocksdb::Snapshot* snapshot, velox::RowVectorPtr values,
-    size_t output_column_count, velox::core::TypedExprPtr remaining_filter,
-    velox::core::ExpressionEvaluator* evaluator)
-    : RocksDBPointLookupDataSource{memory_pool,
-                                   cf,
-                                   std::move(read_type),
-                                   std::move(column_ids),
-                                   object_key,
-                                   std::move(values),
-                                   output_column_count,
-                                   std::move(remaining_filter),
-                                   snapshot,
-                                   evaluator,
-                                   db} {}
-};
+using RocksDBSnapshotFullScanDataSource =
+  RocksDBFullScanDataSource<rocksdb::DB>;
+using RocksDBSnapshotPointLookupDataSource =
+  RocksDBPointLookupDataSource<rocksdb::DB>;
 
 }  // namespace sdb::connector

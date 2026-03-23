@@ -122,7 +122,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableWrite[1][filewrite()] -> rows:BIGINT
-  -- TableScan[0][tindex, scan=full] -> "id":INTEGER, "name":VARCHAR
+  -- TableScan[0][tindex, type=rocksdb_full_scan] -> "id":INTEGER, "name":VARCHAR
 
 
 

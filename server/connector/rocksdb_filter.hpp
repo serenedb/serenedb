@@ -24,12 +24,15 @@
 #include <absl/container/flat_hash_set.h>
 #include <velox/core/Expressions.h>
 #include <velox/core/ITypedExpr.h>
+#include <velox/type/Variant.h>
 #include <velox/vector/ComplexVector.h>
 
 #include <span>
 #include <string>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/fwd.h"
 
 namespace sdb::connector {
@@ -68,16 +71,19 @@ class Point {
 
  private:
   std::span<const std::string> _pk_names;
-  absl::flat_hash_map<std::string, velox::core::ConstantTypedExprPtr>
+  containers::FlatHashMap<std::string, velox::core::ConstantTypedExprPtr>
     _column_filters;
-  absl::flat_hash_set<const velox::core::ITypedExpr*> _source_exprs;
+  containers::FlatHashSet<const velox::core::ITypedExpr*> _source_exprs;
 };
 
-// Materialises a point set into a velox RowVector using the supplied memory
-// pool.
-[[nodiscard]] velox::RowVectorPtr PointsToRowVector(
-  const std::vector<Point>& points, velox::RowTypePtr pk_type,
-  velox::memory::MemoryPool* pool);
+// A fully resolved point: one variant per PK column, ordered by pk_type.
+// Used after filter extraction — no expression metadata, no names.
+using SpecificPoint = std::vector<velox::variant>;
+
+// Converts specific (fully constrained) Points to SpecificPoint, ordered by
+// pk_type column order.
+[[nodiscard]] std::vector<SpecificPoint> ToSpecificPoints(
+  const std::vector<Point>& points, const velox::RowType& pk_type);
 
 [[nodiscard]] std::vector<Point> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
@@ -92,9 +98,8 @@ struct ExtractAndRewriteResult {
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
-// Sorts points in-place by serialized PK key order using pk_type for
-// authoritative column ordering. Comparison uses velox::variant::operator<,
-// which matches RocksDB byte ordering for all supported PK types.
-void SortPoints(std::vector<Point>& points, const velox::RowType& pk_type);
+// Sorts points in-place by PK key order. Column order matches the pk_type used
+// during ToSpecificPoints. Comparison uses velox::variant::operator<.
+void SortPoints(std::vector<SpecificPoint>& points);
 
 }  // namespace sdb::connector

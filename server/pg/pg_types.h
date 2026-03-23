@@ -114,6 +114,9 @@ constexpr int32_t GetPrimitiveTypeOID(velox::TypeKind kind, bool in_array) {
 
 int32_t GetTypeOID(const velox::TypePtr& type, bool in_array = false);
 
+std::string ToPgTypeString(const velox::Type& type);
+std::string ToPgTypeString(const velox::TypePtr& type);
+
 enum class VarFormat : int16_t;
 
 enum class DeserializeError {

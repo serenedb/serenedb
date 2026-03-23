@@ -67,6 +67,55 @@ int32_t GetTypeOID(const velox::TypePtr& type, bool in_array) {
   return GetPrimitiveTypeOID(type->kind(), in_array);
 }
 
+std::string ToPgTypeString(const velox::Type& type) {
+  if (type.isArray()) {
+    return ToPgTypeString(*type.asArray().elementType()) + "[]";
+  }
+  if (type.isDecimal()) {
+    return "numeric";
+  }
+  if (type.isDate()) {
+    return "date";
+  }
+  if (IsInterval(type)) {
+    return "interval";
+  }
+  switch (type.kind()) {
+    case velox::TypeKind::BOOLEAN:
+      return "boolean";
+    case velox::TypeKind::TINYINT:
+      return "\"char\"";
+    case velox::TypeKind::SMALLINT:
+      return "smallint";
+    case velox::TypeKind::INTEGER:
+      return "integer";
+    case velox::TypeKind::BIGINT:
+      return "bigint";
+    case velox::TypeKind::REAL:
+      return "real";
+    case velox::TypeKind::DOUBLE:
+      return "double precision";
+    case velox::TypeKind::VARCHAR:
+      return "text";
+    case velox::TypeKind::VARBINARY:
+      return "bytea";
+    case velox::TypeKind::TIMESTAMP:
+      return "timestamp without time zone";
+    case velox::TypeKind::UNKNOWN:
+      return "unknown";
+    default:
+      SDB_ASSERT(false);  // better to specify the name
+      return "unknown";
+  }
+}
+
+std::string ToPgTypeString(const velox::TypePtr& type) {
+  if (!type) [[unlikely]] {
+    return "unknown";
+  }
+  return ToPgTypeString(*type);
+}
+
 namespace {
 
 const velox::Type& GetNestedArrayBaseElementType(const velox::Type& type) {

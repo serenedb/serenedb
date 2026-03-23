@@ -426,6 +426,8 @@ constexpr auto kMapping =
     {"ts_lexize",
      {"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"pg_typeof",
+     {"pg_typeof", false, FunctionLanguage::VeloxNative, FunctionKind::Scalar}},
     // Search functions
     {"phrase", {search::functions::kPhrase, false}},
     {"term_eq", {search::functions::kTermEq, false}},

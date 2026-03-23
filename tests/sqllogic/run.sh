@@ -32,6 +32,7 @@ declare -A defaults=(
 	[show_all_errors]=false
 	[fast]=false
 	[skip_failed]=''
+	[skip]=''
 	[database]='serenedb'
 	[host]='localhost'
 	[iterations]=1
@@ -140,7 +141,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host | iterations | cancellation)
+		single-port | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -211,6 +212,7 @@ echo "Format: $format"
 echo "Show all errors: $show_all_errors"
 echo "Fast: $fast"
 echo "Skip failed: $skip_failed"
+echo "Skip: $skip"
 echo "Iterations: $iterations"
 echo "Cancellation: $cancellation"
 
@@ -256,6 +258,11 @@ run_tests() {
 		skip_failed_opt="--skip-failed"
 	fi
 
+	local skip_opt=""
+	if [[ -n "$skip" ]]; then
+		skip_opt="--skip $skip"
+	fi
+
 	# Execute the command and capture the exit code
 	sqllogictest "$test" \
 		--host "$host" --port "$port" --engine "$engine" \
@@ -263,7 +270,8 @@ run_tests() {
 		--label "$database" --label "$mode" --label "$engine-protocol" \
 		--junit "$junit-$mode-$engine" \
 		$options \
-		$skip_failed_opt ${skip_failed:+"$skip_failed"}
+		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+		$skip_opt
 	return $?
 }
 

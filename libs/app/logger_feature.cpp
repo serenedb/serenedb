@@ -225,16 +225,6 @@ The available log levels are:
 
 Note that the `debug` and `trace` levels are very verbose.
 
-Some relevant log topics available in SereneDB are:
-
-- `agency`: Information about the cluster Agency.
-- `performance`: Performance-related messages.
-- `queries`: Executed AQL queries, slow queries.
-- `replication`: Replication-related information.
-- `requests`: HTTP requests.
-- `startup`: Information about server startup and shutdown.
-- `threads`: Information about threads.
-
 You can adjust the log levels at runtime via the `PUT /_admin/log/level`
 HTTP API endpoint.)");
 

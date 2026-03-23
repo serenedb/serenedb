@@ -20,7 +20,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "metrics/metrics_feature.h"
 
-#include <frozen/unordered_set.h>
 #include <vpack/builder.h>
 
 #include <chrono>
@@ -32,6 +31,7 @@
 #include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "general_server/state.h"
 #include "metrics/metric.h"
@@ -239,20 +239,19 @@ void MetricsFeature::toPrometheus(std::string& result,
 ////////////////////////////////////////////////////////////////////////////////
 /// Sets metrics that can be collected by ClusterMetricsFeature
 ////////////////////////////////////////////////////////////////////////////////
-constexpr auto kCoordinatorBatch =
-  frozen::make_unordered_set<std::string_view>({
-    "serenedb_search_link_stats",
-  });
+constexpr containers::TrivialSet kCoordinatorBatch = [](auto selector) {
+  return selector().Case("serenedb_search_link_stats");
+};
 
-constexpr auto kCoordinatorMetrics =
-  frozen::make_unordered_set<std::string_view>({
-    "serenedb_search_num_failed_commits",
-    "serenedb_search_num_failed_cleanups",
-    "serenedb_search_num_failed_consolidations",
-    "serenedb_search_commit_time",
-    "serenedb_search_cleanup_time",
-    "serenedb_search_consolidation_time",
-  });
+constexpr containers::TrivialSet kCoordinatorMetrics = [](auto selector) {
+  return selector()
+    .Case("serenedb_search_num_failed_commits")
+    .Case("serenedb_search_num_failed_cleanups")
+    .Case("serenedb_search_num_failed_consolidations")
+    .Case("serenedb_search_commit_time")
+    .Case("serenedb_search_cleanup_time")
+    .Case("serenedb_search_consolidation_time");
+};
 
 void MetricsFeature::toVPack(vpack::Builder& builder,
                              MetricsParts metrics_parts) const {
@@ -261,13 +260,13 @@ void MetricsFeature::toVPack(vpack::Builder& builder,
   for (const auto& i : _registry) {
     SDB_ASSERT(i.second);
     const auto name = i.second->name();
-    if (kCoordinatorMetrics.count(name)) {
+    if (kCoordinatorMetrics.Contains(name)) {
       i.second->toVPack(builder, server());
     }
   }
   for (const auto& [name, batch] : _batch) {
     SDB_ASSERT(batch);
-    if (kCoordinatorBatch.count(name)) {
+    if (kCoordinatorBatch.Contains(name)) {
       batch->toVPack(builder, server());
     }
   }

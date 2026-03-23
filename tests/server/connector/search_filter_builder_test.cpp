@@ -24,11 +24,11 @@
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
+#include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 
 #include "app/options/program_options.h"
@@ -1921,20 +1921,19 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_Basic) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "test", 2);
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 2)",
-    std::move(columns), true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 2)",
+               std::move(columns), true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_WithTranspositions) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "test", 2, false);
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 2, false)",
@@ -1945,8 +1944,8 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_WithMaxTerms) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "test", 1, true, 128);
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 1, true, 128)",
@@ -1957,30 +1956,30 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_WithPrefix) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "ing", 1, true, 64, "test");
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'ing', 1, true, 64, 'test')",
-    std::move(columns), true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'ing', 1, "
+               "true, 64, 'test')",
+               std::move(columns), true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_DistanceTooHigh) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 5)",
-    std::move(columns), false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 5)",
+               std::move(columns), false);
 }
 
-TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_TranspositionDistanceTooHigh) {
+TEST_F(SearchFilterBuilderTest,
+       test_LevenshteinMatch_TranspositionDistanceTooHigh) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 4, true)",
@@ -1992,12 +1991,11 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_NotNegation) {
   irs::And expected;
   auto& negated = expected.add<irs::Not>();
   AddEditDistanceFilter(negated, 1, "test", 2);
-  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
-    "name", velox::VARCHAR(), 1));
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE NOT LEVENSHTEIN_MATCH(name, 'test', 2)",
-    std::move(columns), true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT LEVENSHTEIN_MATCH(name, 'test', 2)",
+               std::move(columns), true);
 }
 
 }  // namespace

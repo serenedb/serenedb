@@ -32,13 +32,13 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
+#include <iresearch/search/ngram_similarity_filter.hpp>
+#include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
@@ -742,8 +742,7 @@ Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
   // target (string)
   auto target = EvaluateConstant(call.inputs()[1]);
   if (!target.has_value()) {
-    return {ERROR_BAD_PARAMETER,
-            "Failed to evaluate target value as constant"};
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate target value as constant"};
   }
   if (target->kind() != velox::TypeKind::VARCHAR) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate target as VARCHAR"};
@@ -783,9 +782,8 @@ Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
             "' should have Positions and Frequency features enabled"};
   }
 
-  auto& ngram_filter = ctx.negated
-                          ? Negate<irs::ByNGramSimilarity>(filter)
-                          : AddFilter<irs::ByNGramSimilarity>(filter);
+  auto& ngram_filter = ctx.negated ? Negate<irs::ByNGramSimilarity>(filter)
+                                   : AddFilter<irs::ByNGramSimilarity>(filter);
   column_info.analyzer.analyzer->reset(
     static_cast<std::string_view>(target->value<velox::StringView>()));
   const irs::TermAttr* token =

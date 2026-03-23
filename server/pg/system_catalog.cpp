@@ -435,6 +435,7 @@ constexpr auto kMapping =
     {"term_gt", {search::functions::kTermGt, false}},
     {"term_in", {search::functions::kTermIn, false}},
     {"term_like", {search::functions::kTermLike, false}},
+    {"ngram_match", {search::functions::kNgramMatch, false}},
     {"levenshtein_match", {search::functions::kLevenshteinMatch, false}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,

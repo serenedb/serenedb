@@ -93,11 +93,14 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   if (isJsonType(type)) {
     return "json";
   }
+  if (isTimestampWithTimeZoneType(type)) {
+    return "timestamp with time zone";
+  }
   switch (type->kind()) {
     case velox::TypeKind::BOOLEAN:
       return "boolean";
     case velox::TypeKind::TINYINT:
-      return "\"char\"";
+      return "character";
     case velox::TypeKind::SMALLINT:
       return "smallint";
     case velox::TypeKind::INTEGER:

@@ -24,7 +24,12 @@ import { NoConnectionsBlock } from "../../../shared/NoConnectionsBlock";
 import { type ConsoleTab } from "../../ConsoleEditorTabsSelector";
 
 interface ConsoleMenuProps {
-    updateTab: (id: number, tabUpdate: Partial<ConsoleTab>) => void;
+    updateTab: (
+        id: number,
+        tabUpdate:
+            | Partial<ConsoleTab>
+            | ((tab: ConsoleTab) => Partial<ConsoleTab>),
+    ) => void;
     selectedTabId: number;
     explorerRef?: React.RefObject<HTMLDivElement | null>;
 }

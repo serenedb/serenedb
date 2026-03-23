@@ -22,10 +22,10 @@
 
 #include <axiom/logical_plan/LogicalPlanNode.h>
 #include <axiom/runner/MultiFragmentPlan.h>
-#include <basics/containers/flat_hash_map.h>
 #include <velox/core/PlanNode.h>
 #include <velox/core/QueryCtx.h>
 
+#include "basics/containers/flat_hash_map.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/sql_utils.h"
 #include "query/context.h"
@@ -36,7 +36,6 @@ namespace sdb::message {
 class Buffer;
 
 }  // namespace sdb::message
-
 namespace sdb::pg {
 
 class Params;
@@ -66,10 +65,8 @@ class UniqueIdGenerator {
 };
 
 struct VeloxQuery {
-  using OptionValue = std::variant<bool, int, std::string, double>;
   // logical plan info
   axiom::logical_plan::LogicalPlanNodePtr root;
-  containers::FlatHashMap<std::string_view, OptionValue> options;
 
   const Node* pgsql_node = nullptr;
 

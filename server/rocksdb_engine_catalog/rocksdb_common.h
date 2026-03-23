@@ -36,6 +36,7 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace rocksdb {
+
 class Comparator;
 class ColumnFamilyHandle;
 class DB;
@@ -43,8 +44,8 @@ class Iterator;
 struct ReadOptions;
 class Snapshot;
 class TransactionDB;
-}  // namespace rocksdb
 
+}  // namespace rocksdb
 namespace sdb {
 
 class RocksDBMethods;

@@ -19,18 +19,19 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/buffer.h>
+#include <vpack/common.h>
 
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/encoding_utils.h"
 #include "basics/errors.h"
 #include "basics/string_buffer.h"
 #include "gtest/gtest.h"
-#include "vpack/common.h"
 
 using namespace sdb;
 
 namespace {
+
 constexpr char kShortString[] =
   "this is a text that is going to be compressed in various ways";
 constexpr char kMediumString[] =
@@ -54,6 +55,7 @@ constexpr char kMediumString[] =
   "など独自のスタイルを構築していった。日本では初来日でいきなり武道館での公演"
   "を行うなど、爆発的な人気を誇ったが、英国ではなかなか人気が出ず、初期は典型"
   "的な「ビッグ・イン・ジャパン」状態であった。";
+
 }  // namespace
 
 TEST(EncodingUtilsTest, testVPackBufferZlibInflateDeflate) {

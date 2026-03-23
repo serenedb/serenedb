@@ -25,5 +25,7 @@
 #include "vpack/slice_base.tpp"
 
 namespace vpack {
+
 INSTANTIATE_TYPE(String, Slice);
+
 }  // namespace vpack

@@ -25,8 +25,10 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/schema.h"
+#include "pg/connection_context.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -68,6 +70,9 @@ yaclib::Future<> CreateSchema(ExecContext& context,
   auto r = catalog.CreateSchema(
     db, std::make_shared<catalog::Schema>(db, std::move(options)));
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+    basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+      ERR_MSG("schema \"", stmt.schemaname, "\" already exists, skipping")));
     return {};
   } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),

@@ -36,9 +36,10 @@
 #include "rest/common_defines.h"
 
 namespace vpack {
-class Slice;
-}  // namespace vpack
 
+class Slice;
+
+}  // namespace vpack
 namespace sdb {
 
 using rest::ContentType;
@@ -178,4 +179,5 @@ class GeneralResponse {
   ContentType _content_type_requested;
   bool _generate_body;
 };
+
 }  // namespace sdb

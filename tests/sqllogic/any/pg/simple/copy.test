@@ -114,6 +114,49 @@ Fragment 0:  numWorkers=0:
         -- TableScan[0][File(text)] -> "id":INTEGER, "name":VARCHAR
 
 
+onlyif serenedb
+query
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'execution', FORMAT CSV, HEADER TRUE);
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[1][filewrite()] -> rows:BIGINT
+  -- TableScan[0][tindex, scan=full] -> "id":INTEGER, "name":VARCHAR
+
+
+
+onlyif serenedb
+query
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'physical', FORMAT CSV, HEADER TRUE);
+----
+QUERY PLAN
+PHYSICAL PLAN:
+TableWrite ->
+  Project (redundant) -> dt2.id, dt2.name
+      dt2.id := t3.id
+      dt2.name := t3.name
+    TableScan -> t3.id, t3.name
+      table: tindex
+
+
+
+onlyif serenedb
+statement error
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'blahblah');
+----
+db error: ERROR: option "blahblah" not recognized
+HINT: Use WITH (HELP) to see available options
+
+
+onlyif serenedb
+statement error
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'logikal');
+----
+db error: ERROR: option "logikal" not recognized, did you mean "logical"?
+HINT: Use WITH (HELP) to see available options
+
+
 statement count 3
 COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
@@ -440,46 +483,99 @@ statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
 ----
 db error: ERROR: 
-Storage:
-  Common:
-    storage (enum) [default: Local, values: Local, S3] - Storage backend
-  S3:
-    Authentication:
-      s3_access_key (string) - AWS access key ID (used with s3_secret_key)
-      s3_secret_key (string) - AWS secret access key (used with s3_access_key)
-      s3_iam_role (string) - IAM role ARN (instead of access/secret keys)
-      s3_use_instance_credentials (boolean) [default: false] - Use EC2 instance credentials
-    Connection:
-      s3_endpoint (string) - S3-compatible endpoint URL
-      s3_region (string) - AWS region
-      s3_path_style_access (boolean) [default: true] - Use path-style S3 URLs
-      s3_ssl_enabled (boolean) [default: false] - Enable SSL for S3 connections
-  Local:
-    (no additional options)
+Explain, use WITH (EXPLAIN 'option_name'):
+Explain:
+  Plans:
+    all_plans (boolean) [default: false] - Show all plan stages
+    logical (boolean) [default: false] - Show logical plan
+    physical (boolean) [default: false] - Show physical plan
+    execution (boolean) [default: false] - Show execution plan
+    initial_query_graph (boolean) [default: false] - Show initial query graph
+    final_query_graph (boolean) [default: false] - Show final query graph
+  Parameters:
+    analyze (boolean) [default: false] - Execute the query and show run times
+    registers (boolean) [default: false] - Show internal column register names in all plan outputs
+    oneline (boolean) [default: false] - One-line output format for physical plan
+    cost (boolean) [default: false] - Show estimated costs in physical plan
+Copy:
+  Storage:
+    Common:
+      storage (enum) [default: Local, values: Local, S3] - Storage backend
+    S3:
+      Authentication:
+        s3_access_key (string) - AWS access key ID (used with s3_secret_key)
+        s3_secret_key (string) - AWS secret access key (used with s3_access_key)
+        s3_iam_role (string) - IAM role ARN (instead of access/secret keys)
+        s3_use_instance_credentials (boolean) [default: false] - Use EC2 instance credentials
+      Connection:
+        s3_endpoint (string) - S3-compatible endpoint URL
+        s3_region (string) - AWS region
+        s3_path_style_access (boolean) [default: true] - Use path-style S3 URLs
+        s3_ssl_enabled (boolean) [default: false] - Enable SSL for S3 connections
+    Local:
+      (no additional options)
+  Format:
+    Common:
+      format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+      progress (boolean) [default: false] - Show progress notices during COPY
+    Text:
+      delimiter (character) [default: \t] - Column delimiter character
+      escape (character) [default: \\] - Escape character
+      null (string) [default: \N] - String representing NULL
+      header (boolean) [default: false] - First line is a header row
+      on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
+      reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
+      log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
+    CSV:
+      delimiter (character) [default: ,] - Column delimiter character
+      escape (character) [default: "] - Escape character
+      null (string) - String representing NULL
+      header (boolean) [default: false] - First line is a header row
+      on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
+      reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
+      log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
+    Parquet:
+      (no additional options)
+    DWRF:
+      (no additional options)
+    ORC:
+      (no additional options)
 
-Format:
-  Common:
-    format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
-    progress (boolean) [default: false] - Show progress notices during COPY
-  Text:
-    delimiter (character) [default: \t] - Column delimiter character
-    escape (character) [default: \\] - Escape character
-    null (string) [default: \N] - String representing NULL
-    header (boolean) [default: false] - First line is a header row
-    on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
-    reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
-    log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
-  CSV:
-    delimiter (character) [default: ,] - Column delimiter character
-    escape (character) [default: "] - Escape character
-    null (string) - String representing NULL
-    header (boolean) [default: false] - First line is a header row
-    on_error (enum) [default: Stop, values: Stop, Ignore] - Error handling
-    reject_limit (integer) [default: 0] - Max rows to skip (requires on_error = ignore)
-    log_verbosity (enum) [default: Default, values: Silent, Default, Verbose] - Logging level
-  Parquet:
-    (no additional options)
-  DWRF:
-    (no additional options)
-  ORC:
-    (no additional options)
+
+statement ok
+DELETE FROM arelav_consumer;
+
+query
+SELECT * FROM arelav_consumer;
+----
+eater
+
+onlyif serenedb
+query
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN 'ANALYZE');
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=0:
+-- TableWrite[2][serenedb(table=arelav_consumer, kind=INSERT)] -> rows:BIGINT
+   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- Project[1][expressions: (eater:VARCHAR, "eater"), (dt1.__p8:BIGINT, null)] -> "eater":VARCHAR, "dt1.__p8":BIGINT
+     Output: 10 rows (23.91KB, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 128B, Memory allocations: 1, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+    -- TableScan[0][File(text)] -> "eater":VARCHAR
+       Input: 10 rows (23.91KB, 1 batches), Output: 10 rows (23.91KB, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 24.12KB, Memory allocations: 6, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+
+onlyif serenedb
+query
+SELECT * FROM arelav_consumer;
+----
+eater
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav

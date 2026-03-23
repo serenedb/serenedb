@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/string.hpp"
 

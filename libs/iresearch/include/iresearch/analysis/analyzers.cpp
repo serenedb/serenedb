@@ -36,6 +36,7 @@
 #include "iresearch/analysis/nearest_neighbors_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
+#include "iresearch/analysis/pattern_tokenizer.hpp"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
@@ -204,7 +205,9 @@ bool MakeAnalyzer(vpack::Slice input, Analyzer::ptr& output) {
     return false;
   }
   if (type == StringTokenizer::type_name()) {
-    output = {};
+    // TODO(Dronplane): maybe we want to handle this case outside? But returning
+    // true + nullptr looks not very robust.
+    output = std::make_unique<StringTokenizer>();
     return true;
   }
   input = input.get(kPropertiesParam);
@@ -261,6 +264,7 @@ void Init() {
   NearestNeighborsTokenizer::init();
   StopwordsTokenizer::init();
   NGramTokenizerBase::init();
+  PatternTokenizer::init();
   PipelineTokenizer::init();
   SegmentationTokenizer::init();
   NormalizingTokenizer::init();

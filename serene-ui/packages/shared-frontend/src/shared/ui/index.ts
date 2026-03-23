@@ -22,3 +22,6 @@ export * from "./sonner";
 export * from "./tabs";
 export * from "./textarea";
 export * from "./tooltip";
+export * from "./chart";
+export * from "./table";
+export * from "./separator";

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
+#include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/slice.h>
 
@@ -43,7 +44,6 @@
 #include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-#include "vpack/builder.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

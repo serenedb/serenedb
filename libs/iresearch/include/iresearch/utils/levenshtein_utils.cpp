@@ -30,8 +30,8 @@
 #include "basics/containers/bitset.hpp"
 #include "basics/containers/small_vector.h"
 #include "basics/shared.hpp"
-#include "basics/utf8_utils.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 namespace {

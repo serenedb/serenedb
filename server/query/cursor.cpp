@@ -20,6 +20,8 @@
 
 #include "query/cursor.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "query/query.h"
 
 namespace sdb::query {
@@ -32,25 +34,36 @@ yaclib::Future<> Cursor::RequestCancel() {
 }
 
 Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
+  absl::Cleanup rollback = [&] { _on_error(); };
+  auto result = NextImpl(batch);
+  std::move(rollback).Cancel();
+  return result;
+}
+
+Cursor::Process Cursor::NextImpl(velox::RowVectorPtr& batch) {
   for (; _current < _executors.size(); ++_current) {
     auto& executor = _executors[_current];
     auto f = executor->Execute(batch);
     if (batch) {
       SDB_ASSERT(!f.Valid());
-      return Process::More;
+      return HandleBatch(batch);
     }
 
-    if (f.Valid()) {
-      if (f.Ready()) {
-        std::ignore = std::move(f).Touch().Ok();
-        continue;
-      }
-
-      std::move(f).DetachInline([user_task = _user_task](yaclib::Result<> r) {
-        user_task(std::move(r));
-      });
-      return Process::Wait;
+    if (!f.Valid()) {
+      continue;
     }
+
+    if (f.Ready()) {
+      // for futures completed in this thread DetachInline would call user_task
+      // on this thread and would cause a deadlock - ProcessWakeup locks mtx
+      std::ignore = std::move(f).Touch().Ok();
+      continue;
+    }
+
+    std::move(f).DetachInline([user_task = _user_task](yaclib::Result<> r) {
+      user_task(std::move(r));
+    });
+    return Process::Wait;
   }
 
   return Process::Done;
@@ -59,7 +72,8 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
 Cursor::Cursor(UserTask&& user_task, Query& query)
   : _user_task{std::move(user_task)},
     _query{query},
-    _executors{query.StealExecutors()} {}
+    _executors{query.GetExecutors()},
+    _on_error{query.GetOnError()} {}
 
 Cursor::~Cursor() {
   if (_current < _executors.size()) {
@@ -72,6 +86,14 @@ Cursor::~Cursor() {
   if (!_query.GetContext().transaction->HasTransactionBegin()) {
     _query.GetContext().transaction->Destroy();
   }
+}
+
+Cursor::Process Cursor::HandleBatch(velox::RowVectorPtr& batch) {
+  if (Executor::IsEarlyExit(batch)) {
+    batch = nullptr;
+    return Process::Done;
+  }
+  return Process::More;
 }
 
 }  // namespace sdb::query

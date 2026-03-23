@@ -25,6 +25,7 @@
 #include <absl/container/inlined_vector.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 #include <vpack/vpack.h>
 
@@ -37,7 +38,7 @@
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/wand_writer.hpp"
+#include "iresearch/formats/posting/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
@@ -46,7 +47,6 @@
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
-#include "vpack/serializer.h"
 
 namespace irs {
 namespace {

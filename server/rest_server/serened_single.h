@@ -49,7 +49,6 @@ namespace pg {
 class PostgresFeature;
 
 }  // namespace pg
-
 namespace search {
 
 class SearchEngine;

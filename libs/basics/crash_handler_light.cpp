@@ -31,6 +31,7 @@
 // dependencies on the remainder of SereneDB.
 
 namespace sdb {
+
 void CrashHandler::logBacktrace() {}
 
 [[noreturn]] void CrashHandler::crash(std::string_view context) {

@@ -22,10 +22,10 @@
 #include <vpack/builder.h>
 #include <vpack/literal.h>
 #include <vpack/parser.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/common.h"
 #include "gtest/gtest.h"
-#include "vpack/vpack_helper.h"
 
 #define VPACK_EXPECT_TRUE(expected, func, lValue, rValue) \
   l = vpack::Parser::fromJson(lValue);                    \

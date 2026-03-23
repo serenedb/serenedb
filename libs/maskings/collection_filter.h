@@ -25,6 +25,8 @@
 
 namespace sdb {
 namespace maskings {
+
 class CollectionFilter {};
+
 }  // namespace maskings
 }  // namespace sdb

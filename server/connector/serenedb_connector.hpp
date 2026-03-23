@@ -34,9 +34,11 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
+#include <chrono>
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
 #include <ranges>
+#include <thread>
 #include <type_traits>
 
 #include "basics/assert.h"
@@ -49,7 +51,8 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/rocksdb_filter.hpp"
-#include "connector/search_data_source.hpp"
+#include "connector/search_count_data_source.hpp"
+#include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
@@ -59,10 +62,10 @@
 #include "query/utils.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-
 namespace {
 
 inline void ExtractInputFields(
@@ -90,21 +93,29 @@ template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   irs::IndexWriter::Transaction& transaction,
   const catalog::InvertedIndex& index) {
-  auto analyzer_provider = [&](catalog::Column::Id column_id) {
-    return index.GetColumnAnalyzer(column_id);
-  };
-
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
-    return std::make_unique<search::SearchSinkInsertWriter>(
-      transaction, analyzer_provider, index.GetColumnIds());
+    return std::make_unique<SearchSinkInsertWriter>(
+      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
-    return std::make_unique<search::SearchSinkUpdateWriter>(
-      transaction, analyzer_provider, index.GetColumnIds());
+    return std::make_unique<SearchSinkUpdateWriter>(
+      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
-    return std::make_unique<search::SearchSinkDeleteWriter>(transaction);
+    return std::make_unique<SearchSinkDeleteWriter>(transaction);
   }
+}
+
+inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
+  ObjectId backfill_index_id, query::Transaction& transaction) {
+  auto snapshot = transaction.GetCatalogSnapshot();
+  auto shard = snapshot->GetIndexShard(backfill_index_id);
+  SDB_ASSERT(shard);
+  auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
+  auto& index = basics::downCast<const catalog::InvertedIndex>(
+    *snapshot->template GetObject<catalog::Index>(shard->GetIndexId()));
+  return std::make_unique<SearchSinkBackfillWriter>(
+    inverted_shard, MakeAnalyzerProvider(index), index.GetColumnIds());
 }
 
 template<axiom::connector::WriteKind Kind>
@@ -425,6 +436,10 @@ class RocksDBTable : public axiom::connector::Table {
     return (self._bulk_insert);
   }
 
+  decltype(auto) BackfillIndexId(this auto&& self) noexcept {
+    return (self._backfill_index_id);
+  }
+
  private:
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
@@ -436,6 +451,7 @@ class RocksDBTable : public axiom::connector::Table {
     WriteConflictPolicy::EmitError;
   bool _update_pk = false;
   bool _bulk_insert = false;
+  ObjectId _backfill_index_id;
 };
 
 class RocksDBInvertedIndexTable : public RocksDBTable {
@@ -824,7 +840,12 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (serene_table_handle.GetSearchQuery()) {
       const auto& search_snapshot =
         transaction.EnsureSearchSnapshot(serene_table_handle.GetIndexId());
-      return std::make_unique<search::SearchDataSource>(
+      if (output_type->size() == 0) {
+        return std::make_unique<SearchCountDataSource>(
+          *connector_query_ctx->memoryPool(), output_type,
+          search_snapshot.reader, *serene_table_handle.GetSearchQuery());
+      }
+      return std::make_unique<SearchScanDataSource>(
         *connector_query_ctx->memoryPool(),
         search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,
         column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
@@ -880,6 +901,12 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
+
+    auto table_shard =
+      transaction.GetCatalogSnapshot()->GetTableShard(object_key);
+    SDB_ASSERT(table_shard);
+    auto& table_lock = table_shard->GetTableLock();
+
     std::vector<ColumnInfo> columns;
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
@@ -947,7 +974,13 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::move(update_sinks));
+              std::move(update_sinks), table_lock);
+          } else if (table.BackfillIndexId().isSet()) {
+            auto backfill_writer =
+              CreateBackfillIndexWriter(table.BackfillIndexId(), transaction);
+            return std::make_unique<RocksDBIndexBackfillDataSink>(
+              *connector_query_ctx->memoryPool(), object_key, pk_indices,
+              columns, std::move(backfill_writer), table_lock);
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(
@@ -957,11 +990,11 @@ class SereneDBConnector final : public velox::connector::Connector {
               if (is_generated_pk) {
                 return std::make_unique<SSTInsertDataSink<true>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                  pk_indices, columns, std::move(insert_sinks));
+                  pk_indices, columns, std::move(insert_sinks), table_lock);
               } else {
                 return std::make_unique<SSTInsertDataSink<false>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                  pk_indices, columns, std::move(insert_sinks));
+                  pk_indices, columns, std::move(insert_sinks), table_lock);
               }
             }
 
@@ -970,7 +1003,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, table.WriteConflictPolicy(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::move(insert_sinks));
+              std::move(insert_sinks), table_lock);
           }
         });
     }
@@ -991,7 +1024,8 @@ class SereneDBConnector final : public velox::connector::Connector {
                                                                  transaction);
       return std::make_unique<RocksDBDeleteDataSink>(
         rocksdb_transaction, _cf, table.type(), object_key, columns,
-        serene_insert_handle.NumberOfRowsAffected(), std::move(delete_sinks));
+        serene_insert_handle.NumberOfRowsAffected(), std::move(delete_sinks),
+        table_lock);
     }
 
     VELOX_UNSUPPORTED("Unsupported write kind");

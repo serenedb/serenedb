@@ -1,6 +1,9 @@
 import { type Row, type Table } from "@tanstack/react-table";
 import { useVirtualizer, Virtualizer } from "@tanstack/react-virtual";
 import { VirtualizedTableBodyRow } from "./VirtualizedTableBodyRow";
+import { useHotkeys } from "react-hotkeys-hook";
+import { toast } from "sonner";
+import { useVirtualizedTableContext } from "../model";
 
 interface VirtualizedTableBodyProps {
     columnVirtualizer: Virtualizer<HTMLDivElement, HTMLTableCellElement>;
@@ -17,7 +20,56 @@ export const VirtualizedTableBody = ({
     virtualPaddingLeft,
     virtualPaddingRight,
 }: VirtualizedTableBodyProps) => {
+    const { selection } = useVirtualizedTableContext();
     const { rows } = table.getRowModel();
+
+    const getSelectedCellValue = (): string | null => {
+        if (selection.mode !== "area") return null;
+
+        const { start, end } = selection;
+        if (start.row !== end.row || start.col !== end.col) return null;
+
+        const row = rows[start.row];
+        if (!row) return null;
+
+        const columns = table.getAllColumns();
+        const column = columns[start.col];
+        if (!column) return null;
+
+        const rawValue =
+            column.id === "index"
+                ? start.row + 1
+                : (row.original as Record<string, unknown>)[column.id];
+
+        return rawValue === null
+            ? "null"
+            : rawValue === undefined
+              ? "undefined"
+              : typeof rawValue === "object"
+                ? JSON.stringify(rawValue, null, 2)
+                : String(rawValue);
+    };
+
+    useHotkeys(
+        "ctrl+c, meta+c",
+        async () => {
+            if (!tableContainerRef.current?.contains(document.activeElement)) {
+                return;
+            }
+
+            const selectedCellValue = getSelectedCellValue();
+            if (!selectedCellValue) return;
+
+            try {
+                await navigator.clipboard.writeText(selectedCellValue);
+                toast.success("Value copied to clipboard");
+            } catch {
+                toast.error("Failed to copy value");
+            }
+        },
+        { preventDefault: true, enabled: selection.mode === "area" },
+        [selection, rows, table],
+    );
 
     const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLTableRowElement>({
         count: rows.length,

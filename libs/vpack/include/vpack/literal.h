@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include <vpack/string.h>
+#include "vpack/string.h"
 
 namespace vpack {
 

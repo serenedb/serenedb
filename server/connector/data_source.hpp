@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
 #include <velox/core/ExpressionEvaluator.h>

@@ -23,6 +23,8 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
 #include <algorithm>
 #include <atomic>
@@ -86,17 +88,8 @@
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 #include "yaclib/async/future.hpp"
 #include "yaclib/async/when_all.hpp"
-
-#ifdef SDB_CLUSTER
-#include "aql/query_registry_feature.h"
-#include "replication/replication_feature.h"
-#include "search/search_engine.h"
-#include "transaction/cluster_utils.h"
-#endif
 
 namespace sdb::catalog {
 
@@ -241,7 +234,7 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, object);
+      return AddObjectDefinition<TokenizerDependency>(parent_id, object);
     } else if constexpr (std::is_same_v<T, Table>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -353,6 +346,12 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Index: {
         auto table_deps = GetDependency<TableDependency>(parent_id);
         table_deps->indexes.insert(object->GetId());
+        const auto& index = basics::downCast<Index>(*object);
+        for (auto tokenizer_id : index.GetTokenizers()) {
+          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
+          SDB_ASSERT(dep);
+          dep->indexes.insert(object->GetId());
+        }
       } break;
       case ObjectType::TableShard: {
         auto table_deps = GetDependency<TableDependency>(parent_id);
@@ -551,6 +550,18 @@ class SnapshotImpl : public Snapshot {
     return _resolution_table.ResolveObject<Type>(parent_id, name);
   }
 
+  std::vector<std::shared_ptr<Index>> GetIndexesByTokenizer(
+    ObjectId tokenizer_id) const {
+    auto deps = GetDependency<TokenizerDependency>(tokenizer_id);
+    SDB_ASSERT(deps);
+    std::vector<std::shared_ptr<Index>> result;
+    result.reserve(deps->indexes.size());
+    for (auto id : deps->indexes) {
+      result.push_back(GetObject<Index>(id));
+    }
+    return result;
+  }
+
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto it = _objects.find(id);
@@ -707,6 +718,13 @@ class SnapshotImpl : public Snapshot {
           RemoveObjectDefinition(id, index_deps->shard_id);
           index_deps->shard_id = ObjectId::none();
         }
+        const auto& index = basics::downCast<Index>(*obj);
+        for (auto tokenizer_id : index.GetTokenizers()) {
+          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
+          SDB_ASSERT(dep);
+          dep->indexes.erase(obj->GetId());
+        }
+
       } break;
       case ObjectType::Function:
       case ObjectType::View:
@@ -930,9 +948,9 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
 
 ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexBaseOptions options) {
+  IndexImplOptionsBaseWrapper&& impl_options) {
   auto index =
-    MakeIndex(database_id, schema_id, id, relation_id, std::move(options));
+    MakeIndex(database_id, schema_id, id, relation_id, std::move(impl_options));
   if (!index) {
     return std::unexpected<Result>(std::in_place, std::move(index).error());
   }
@@ -964,13 +982,13 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   });
 }
 
-Result LocalCatalog::CreateIndex(ObjectId database_id,
-                                 std::string_view relation_schema,
-                                 std::string_view relation_name,
-                                 const std::vector<std::string>& column_names,
-                                 IndexBaseOptions options,
-                                 IndexShardOptions& shard_options) {
-  if (column_names.empty()) {
+Result LocalCatalog::CreateIndex(
+  ObjectId database_id, std::string_view relation_schema,
+  std::string_view relation_name,
+  std::vector<CreateIndexColumn>&& create_columns, IndexBaseOptions options,
+  IndexShardOptions& shard_options,
+  CreateIndexOperationOptions operation_options) {
+  if (create_columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
   absl::MutexLock lock{&_mutex};
@@ -992,33 +1010,27 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
   }
 
   auto& table = basics::downCast<Table>(*relation);
-  auto& columns = table.Columns();
+  auto& table_columns = table.Columns();
   auto find_column = [&](std::string_view name) {
     auto it = absl::c_find_if(
-      columns, [&](const catalog::Column& c) { return c.name == name; });
-    return it != columns.end() ? &*it : nullptr;
+      table_columns, [&](const catalog::Column& c) { return c.name == name; });
+    return it != table_columns.end() ? &*it : nullptr;
   };
 
-  std::vector<const catalog::Column*> index_columns;
-  index_columns.reserve(column_names.size());
-  options.column_ids.reserve(column_names.size());
-  for (const auto& name : column_names) {
-    const auto* column = find_column(name);
+  options.column_ids.reserve(create_columns.size());
+  for (auto& c : create_columns) {
+    const auto* column = find_column(c.name);
     if (!column) {
-      return Result{ERROR_BAD_PARAMETER, "column \"", name,
+      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
     }
+    c.catalog_column = column;
     options.column_ids.push_back(column->id);
-    index_columns.push_back(column);
   }
 
-  auto validation_res = ValidateIndexOptions(options, index_columns);
-  if (validation_res.fail()) {
-    return validation_res;
-  }
-
-  auto index = MakeIndex(database_id, *schema_id, ObjectId{0}, table.GetId(),
-                         std::move(options));
+  auto index =
+    MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
+              table.GetId(), std::move(options), std::move(create_columns));
   if (!index) {
     return std::move(index).error();
   }
@@ -1037,6 +1049,14 @@ Result LocalCatalog::CreateIndex(ObjectId database_id,
       r = clone->RegisterObject(*shard, (*index)->GetId(), false);
       SDB_ASSERT(r.ok());
 
+      if (operation_options.create_with_tombstone) {
+        r =
+          _engine->WriteTombstone((*index)->GetRelationId(), (*index)->GetId());
+        if (!r.ok()) {
+          return r;
+        }
+        (*index)->SetTombstoned(true);
+      }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {  // Write index definition
         vpack::Builder b;
@@ -1185,14 +1205,13 @@ Result LocalCatalog::CreateTable(
 
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
-      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-
       if (operation_options.create_with_tombstone) {
         r = _engine->WriteTombstone(*schema_id, table->GetId());
         if (!r.ok()) {
           return r;
         }
       }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder b;
       b.openObject();
@@ -1590,8 +1609,13 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     if (!table_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto table = clone->GetObject<Table>(*table_id);
-    SDB_ASSERT(table);
+    auto obj = clone->GetObject(*table_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::Table) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto table = basics::downCast<Table>(std::move(obj));
     auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
@@ -1613,21 +1637,32 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto table_id =
+  auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!table_id) {
+  if (!object_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto r =
-    _engine->DropDefinition(*schema_id, RocksDBEntryType::Tombstone, *table_id);
+
+  auto object = _snapshot->GetObject(*object_id);
+  if (!object) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  ObjectId tombstone_parent;
+  if (object->GetType() == ObjectType::Index) {
+    auto& index = basics::downCast<Index>(*object);
+    tombstone_parent = index.GetRelationId();
+  } else {
+    tombstone_parent = *schema_id;
+  }
+
+  auto r = _engine->DropDefinition(tombstone_parent,
+                                   RocksDBEntryType::Tombstone, *object_id);
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
-  auto object = _snapshot->GetObject(*table_id);
-  if (object) {
-    auto& schema_obj = basics::downCast<SchemaObject>(*object);
-    schema_obj.SetTombstoned(false);
-  }
+  auto& schema_obj = basics::downCast<SchemaObject>(*object);
+  schema_obj.SetTombstoned(false);
 
   return r;
 }
@@ -1646,8 +1681,13 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     if (!index_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto index = clone->GetObject<Index>(*index_id);
-    SDB_ASSERT(index);
+    auto obj = clone->GetObject(*index_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::Index) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto index = basics::downCast<Index>(std::move(obj));
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
         !r.ok()) {
       return r;
@@ -1676,8 +1716,13 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     if (!view_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    auto view = clone->GetObject<View>(*view_id);
-    SDB_ASSERT(view);
+    auto obj = clone->GetObject(*view_id);
+    SDB_ASSERT(obj);
+    if (obj->GetType() != ObjectType::View) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+    auto view = basics::downCast<View>(std::move(obj));
     auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::View,
                                      view->GetId());
     if (!r.ok()) {
@@ -1727,6 +1772,25 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
   if (!id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  auto deps = _snapshot->GetIndexesByTokenizer(*id);
+  if (!deps.empty()) {
+    constexpr size_t kReportIndexes = 5;
+    std::vector<std::string_view> confliciting_indexes;
+    for (auto index : deps) {
+      SDB_ASSERT(index);
+      confliciting_indexes.push_back(index->GetName());
+      if (confliciting_indexes.size() == kReportIndexes) {
+        break;
+      }
+    }
+    if (confliciting_indexes.size() < deps.size()) {
+      confliciting_indexes.push_back("...");
+    }
+    return Result{ERROR_INTERNAL,
+                  "Can not drop text dictionary used in the indexes ",
+                  absl::StrJoin(confliciting_indexes, ", ")};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
     auto dict = clone->GetObject<Tokenizer>(*id);
     SDB_ASSERT(dict);

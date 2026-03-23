@@ -99,7 +99,6 @@ bool LazyBitsetIterator::refill(const word_t** begin, const word_t** end) {
 }
 
 }  // namespace
-
 namespace irs {
 
 void MultiTermQuery::visit(const SubReader& segment,
@@ -131,8 +130,6 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const bool has_unscored_terms = !state->unscored_states.empty();
 
   IteratorOptions options{ctx.wand};
-  // TODO(mbkkt) enable back?
-  options.index = IteratorOptions::kDisable;
 
   if (!has_unscored_terms) {
     std::vector<PostingCookie> cookies;

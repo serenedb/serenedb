@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2022 ArangoDB GmbH, Cologne, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +27,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/formats_attributes.hpp"
-#include "iresearch/formats/wand_writer.hpp"
+#include "iresearch/formats/posting/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -39,12 +41,12 @@ struct EmptyColumnProvider : irs::ColumnProvider {
 };
 
 struct FreqScorerContext : public irs::ScoreOperator {
-  FreqScorerContext(const auto* freq) : freq_source{freq} {}
+  FreqScorerContext(const irs::FreqBlockAttr* freq) : freq_source{freq} {}
 
   template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
   void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
     ASSERT_EQ(1, n);
-    irs::Merge<MergeType>(*res, freq_source->value);
+    irs::Merge<MergeType>(*res, freq_source->value[0]);
   }
 
   void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
@@ -57,7 +59,7 @@ struct FreqScorerContext : public irs::ScoreOperator {
     ScoreImpl<irs::ScoreMergeType::Max>(res, n);
   }
 
-  const irs::FreqAttr* freq_source;
+  const irs::FreqBlockAttr* freq_source;
 };
 
 struct FreqScorer : irs::ScorerBase<void> {
@@ -66,7 +68,7 @@ struct FreqScorer : irs::ScorerBase<void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
     return irs::ScoreFunction::Make<FreqScorerContext>(freq);
@@ -87,7 +89,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
   FreqThresholdDocIterator(irs::DocIterator& impl, uint32_t threshold,
                            bool is_strict)
     : _impl{&impl},
-      _freq{irs::get<irs::FreqAttr>(impl)},
+      _freq{irs::get<irs::FreqBlockAttr>(impl)},
       _threshold{threshold},
       _is_strict{is_strict} {
     SDB_ASSERT(_impl);
@@ -129,15 +131,16 @@ class FreqThresholdDocIterator : public irs::DocIterator {
 
  private:
   bool Less() {
+    SDB_ASSERT(_freq->value);
     if (_is_strict) {
-      return _freq->value <= _threshold;
+      return _freq->value[0] <= _threshold;
     } else {
-      return _freq->value < _threshold;
+      return _freq->value[0] < _threshold;
     }
   }
 
   irs::DocIterator* _impl;
-  const irs::FreqAttr* _freq;
+  const irs::FreqBlockAttr* _freq;
   uint32_t _threshold;
   bool _is_strict;
 };
@@ -214,11 +217,12 @@ SkipList SkipList::Make(irs::DocIterator& it, irs::doc_id_t skip_0,
     }
   };
 
-  auto* freq = irs::get<irs::FreqAttr>(it);
+  auto* freq = irs::get<irs::FreqBlockAttr>(it);
 
   if (freq) {
     for (irs::doc_id_t i = 1; it.next(); ++i) {
-      add(i, it.value(), freq->value);
+      it.FetchScoreArgs(0);
+      add(i, it.value(), freq->value[0]);
     }
 
     for (auto& [step, level] : skip_list) {
@@ -453,7 +457,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
                                 threshold, strict);
 
     auto score_function =
-      irs::get<irs::FreqAttr>(*actual)
+      irs::get<irs::FreqBlockAttr>(*actual)
         ? actual->PrepareScore(
             {.scorer = &scorer, .segment = &irs::SubReader::empty()})
         : irs::ScoreFunction::Constant(
@@ -462,6 +466,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
 
     auto actual_next = [&] {
       while (actual->next()) {
+        actual->FetchScoreArgs(0);
         irs::score_t actual_score{};
         score_function.Score(&actual_score, 1);
         if (!is_less(actual_score, threshold)) {
@@ -477,6 +482,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
         return doc;
       }
       do {
+        actual->FetchScoreArgs(0);
         irs::score_t actual_score{};
         score_function.Score(&actual_score, 1);
         if (!is_less(actual_score, threshold)) {
@@ -524,7 +530,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
                               threshold, strict);
 
   auto score_function =
-    irs::get<irs::FreqAttr>(*actual)
+    irs::get<irs::FreqBlockAttr>(*actual)
       ? actual->PrepareScore(
           {.scorer = &scorer, .segment = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
@@ -532,6 +538,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
 
   auto actual_next = [&] {
     while (actual->next()) {
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
@@ -547,6 +554,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
       return doc;
     }
     do {
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
@@ -603,7 +611,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
                               threshold, strict);
 
   auto score_function =
-    irs::get<irs::FreqAttr>(*actual)
+    irs::get<irs::FreqBlockAttr>(*actual)
       ? actual->PrepareScore(
           {.scorer = &scorer, .segment = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
@@ -614,6 +622,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
   auto actual_next = [&] {
     while (actual->next()) {
       ++total_next_calls;
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
@@ -629,6 +638,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
       return doc;
     }
     do {
+      actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {

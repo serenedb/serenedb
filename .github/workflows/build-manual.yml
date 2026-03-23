@@ -1,5 +1,7 @@
 name: SereneDB-Build-Manual
 
+run-name: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
+
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +13,9 @@ on:
         options:
           - asan
           - tsan
+          - msan
+          - ubsan
+          - coverage
           - build
           - release
       LOCATION:
@@ -21,32 +26,27 @@ on:
           - X64
           - arm
           - self-hosted
-        default: 'self-hosted'
-      BRANCH:
-        description: 'SereneDB branch to test'
-        type: string
-        required: true
-        default: 'main'
-      JOB_CONFIG:
-        description: 'JSON config for job settings'
-        type: string
-        required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+        default: 'X64'
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true
         type: boolean
         default: false
-      DOCKER_EXTRA_TAGS:
-        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
-        required: false
-        type: string
-        default: ''
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Private Docker Registry'
+        description: 'Push images to Docker Hub/Registry'
         required: true
         type: boolean
         default: false
+      CREATE_GITHUB_RELEASE:
+        description: 'Create a GitHub Release draft'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_EXTRA_TAGS:
+        description: 'Optional Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        required: false
+        type: string
+        default: ''
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
@@ -58,20 +58,19 @@ on:
         type: boolean
         default: false
       BUILD_CONFIG:
-        description: 'Backup JSON configuration for builds'
+        description: 'JSON configuration for builds and job settings'
         type: string
         required: false
-        default: '{}'
-
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
 permissions:
   statuses: write
+  contents: write
 
 jobs:
   call-reusable:
     uses: ./.github/workflows/build-reusable.yml
     with:
       # General environment
-      BRANCH: ${{ inputs.BRANCH }}
       PRESET: ${{ inputs.PRESET }}
       LOCATION: ${{ inputs.LOCATION }}
       DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
@@ -79,9 +78,8 @@ jobs:
       DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
       EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
-      # Job config environment
-      JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+      CREATE_GITHUB_RELEASE: ${{ inputs.CREATE_GITHUB_RELEASE }}
 
     secrets: inherit

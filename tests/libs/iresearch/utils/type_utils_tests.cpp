@@ -21,8 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/type_utils.hpp>
-
+#include "basics/type_utils.hpp"
 #include "tests_shared.hpp"
 
 TEST(type_utils_tests, is_convertible) {

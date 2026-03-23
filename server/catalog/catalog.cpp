@@ -22,6 +22,10 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <rocksdb/slice.h>
+#include <vpack/builder.h>
+#include <vpack/iterator.h>
+#include <vpack/serializer.h>
+#include <vpack/slice.h>
 
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
@@ -62,15 +66,6 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/builder.h"
-#include "vpack/iterator.h"
-#include "vpack/serializer.h"
-#include "vpack/slice.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/global_catalog.h"
-#endif
 
 namespace sdb::catalog {
 namespace {
@@ -102,7 +97,10 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   ObjectId table_id, ObjectId index_id, vpack::Slice definition,
   bool is_root = false) {
   IndexBaseOptions options;
-  if (auto r = vpack::ReadTupleNothrow(definition, options); !r.ok()) {
+  SDB_ASSERT(definition.isObject());
+  if (auto r =
+        vpack::ReadTupleNothrow(definition.get(kIndexBaseOptions), options);
+      !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   auto drop = std::make_shared<IndexDrop>(db_id, schema_id, table_id, index_id,
@@ -503,12 +501,19 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                               ObjectId table_id, ObjectId index_id,
                               vpack::Slice slice) {
+  SDB_ASSERT(slice.isObject(), "Index definition is not an object");
   IndexBaseOptions options;
-  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+  if (auto r = vpack::ReadTupleNothrow(slice.get(kIndexBaseOptions), options);
+      !r.ok()) {
     return r;
   }
+  auto impl_parsed =
+    ParseImplSlice(std::move(options), slice.get(kIndexImplOptions));
+  if (!impl_parsed) {
+    return std::move(impl_parsed.error());
+  }
   auto index = _catalog.RegisterIndex(database_id, schema_id, index_id,
-                                      table_id, std::move(options));
+                                      table_id, std::move(**impl_parsed));
   if (!index) {
     return std::move(index.error());
   }

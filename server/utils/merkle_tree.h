@@ -34,12 +34,12 @@
 #include <vector>
 
 namespace vpack {
+
 class Builder;
 class Slice;
+
 }  // namespace vpack
-
 namespace sdb {
-
 namespace containers {
 
 class HashProvider {

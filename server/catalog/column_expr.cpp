@@ -22,6 +22,7 @@
 
 #include <vpack/builder.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <memory>
 #include <utility>
@@ -35,7 +36,6 @@
 #include "pg/sql_resolver.h"
 #include "pg/sql_utils.h"
 #include "utils/query_string.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb {
 namespace {

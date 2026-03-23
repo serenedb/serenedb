@@ -23,8 +23,7 @@
 
 #include <gtest/gtest.h>
 
-#include <basics/bit_packing.hpp>
-
+#include "basics/bit_packing.hpp"
 #include "basics/down_cast.h"
 #include "formats_test_case_base.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -42,25 +41,10 @@ using tests::FormatTestCase;
 
 class Format10TestCase : public tests::FormatTestCase {
  protected:
-  struct BasicAttributeProvider : irs::AttributeProvider {
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      if (type == irs::Type<irs::FreqAttr>::id()) {
-        return freq;
-      }
-      if (type == irs::Type<irs::TermMeta>::id()) {
-        return meta;
-      }
-      return nullptr;
-    }
-
-    irs::FreqAttr* freq{};
-    irs::TermMeta* meta{};
-  };
-
   void AssertFrequencyAndPositions(irs::DocIterator& expected,
                                    irs::DocIterator& actual) {
-    auto* expected_freq = irs::GetMutable<irs::FreqAttr>(&expected);
-    auto* actual_freq = irs::GetMutable<irs::FreqAttr>(&actual);
+    auto* expected_freq = irs::GetMutable<irs::FreqBlockAttr>(&expected);
+    auto* actual_freq = irs::GetMutable<irs::FreqBlockAttr>(&actual);
     ASSERT_EQ(!expected_freq, !actual_freq);
 
     if (!expected_freq) {
@@ -946,7 +930,7 @@ static const auto kTestValues =
                      ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
-INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,
+INSTANTIATE_TEST_SUITE_P(Format10Test, Format10TestCase, kTestValues,
                          Format10TestCase::to_string);
 
 }  // namespace

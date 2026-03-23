@@ -22,6 +22,7 @@
 #include "key_generator.h"
 
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <array>
 #include <boost/uuid/random_generator.hpp>
@@ -44,12 +45,6 @@
 #include "database/ticks.h"
 #include "frozen/unordered_map.h"
 #include "general_server/state.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#endif
 
 namespace sdb {
 namespace {
@@ -322,33 +317,6 @@ class TraditionalKeyGeneratorSingle final : public TraditionalKeyGenerator {
   std::atomic<uint64_t> _last_value;
 };
 
-#ifdef SDB_CLUSTER
-class TraditionalKeyGeneratorCoordinator final
-  : public TraditionalKeyGenerator {
- public:
-  explicit TraditionalKeyGeneratorCoordinator(ClusterInfo& ci,
-                                              bool allow_user_keys)
-    : TraditionalKeyGenerator{allow_user_keys}, _ci{ci} {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-  }
-
- private:
-  uint64_t GenerateValue() override {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-    SDB_IF_FAILURE("KeyGenerator::generateOnCoordinator") {
-      // for testing purposes only
-      SDB_THROW(ERROR_DEBUG);
-    }
-    return _ci.uniqid();
-  }
-
-  void TrackValue(uint64_t /* value */) noexcept override {}
-
- private:
-  ClusterInfo& _ci;
-};
-#endif
-
 class PaddedKeyGenerator : public KeyGenerator {
  public:
   explicit PaddedKeyGenerator(bool allow_user_keys, uint64_t last_value)
@@ -446,29 +414,6 @@ class PaddedKeyGeneratorSingle final : public PaddedKeyGenerator {
     return NewTickServer();
   }
 };
-
-#ifdef SDB_CLUSTER
-class PaddedKeyGeneratorCoordinator final : public PaddedKeyGenerator {
- public:
-  explicit PaddedKeyGeneratorCoordinator(ClusterInfo& ci, bool allow_user_keys,
-                                         uint64_t last_value)
-    : PaddedKeyGenerator{allow_user_keys, last_value}, _ci{ci} {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-  }
-
- private:
-  uint64_t GenerateValue() override {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-    SDB_IF_FAILURE("KeyGenerator::generateOnCoordinator") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-    return _ci.uniqid();
-  }
-
- private:
-  ClusterInfo& _ci;
-};
-#endif
 
 class AutoIncrementKeyGenerator final : public KeyGenerator {
  public:
@@ -594,14 +539,6 @@ constexpr auto kFactories = frozen::make_unordered_map<
       bool allow_user_keys = basics::VPackHelper::getBool(
         options, StaticStrings::kAllowUserKeys, true);
 
-#ifdef SDB_CLUSTER
-      if (ServerState::instance()->IsCoordinator()) {
-        auto& ci =
-          SerenedServer::Instance().getFeature<ClusterFeature>().clusterInfo();
-        return std::make_shared<TraditionalKeyGeneratorCoordinator>(
-          ci, allow_user_keys);
-      }
-#endif
       return std::make_shared<TraditionalKeyGeneratorSingle>(
         allow_user_keys, ReadLastValue(options));
     }},
@@ -670,14 +607,6 @@ constexpr auto kFactories = frozen::make_unordered_map<
       bool allow_user_keys = basics::VPackHelper::getBool(
         options, StaticStrings::kAllowUserKeys, true);
 
-#ifdef SDB_CLUSTER
-      if (ServerState::instance()->IsCoordinator()) {
-        auto& ci =
-          SerenedServer::Instance().getFeature<ClusterFeature>().clusterInfo();
-        return std::make_unique<PaddedKeyGeneratorCoordinator>(
-          ci, allow_user_keys, ReadLastValue(options));
-      }
-#endif
       return std::make_shared<PaddedKeyGeneratorSingle>(allow_user_keys,
                                                         ReadLastValue(options));
     }}});

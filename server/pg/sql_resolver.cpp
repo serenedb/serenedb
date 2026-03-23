@@ -39,7 +39,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
 namespace {
 
 void ResolveInformationSchema(ObjectId database, std::string_view relation,

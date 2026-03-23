@@ -51,6 +51,7 @@
 #define STR_ERROR() strerror(errno)
 
 namespace sdb::httpclient {
+
 using namespace basics;
 
 GeneralClientConnection::GeneralClientConnection(

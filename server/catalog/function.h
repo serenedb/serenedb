@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <basics/bit_utils.hpp>
 #include <memory>
 
+#include "basics/bit_utils.hpp"
 #include "basics/fwd.h"
 #include "basics/type_traits.h"
 #include "catalog/fwd.h"
@@ -38,8 +38,8 @@ struct AstNode;
 struct Cell;
 using FunctionImpl = Cell (*)(ExpressionContext*, const AstNode&,
                               std::span<const Cell>);
-}  // namespace aql
 
+}  // namespace aql
 namespace search {
 
 class AnalyzerImpl;
@@ -50,7 +50,6 @@ namespace pg {
 class FunctionImpl;
 
 }  // namespace pg
-
 namespace catalog {
 
 enum class FunctionLanguage : uint8_t {
@@ -206,8 +205,8 @@ class Function final : public SchemaObject {
 
 }  // namespace catalog
 }  // namespace sdb
-
 namespace magic_enum {
+
 template<>
 constexpr customize::customize_t
 customize::enum_name<sdb::catalog::FunctionLanguage>(

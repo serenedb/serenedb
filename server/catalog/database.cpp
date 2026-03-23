@@ -20,11 +20,12 @@
 
 #include "catalog/database.h"
 
+#include <vpack/serializer.h>
+
 #include "basics/assert.h"
 #include "basics/static_strings.h"
 #include "catalog/table_options.h"
 #include "general_server/server_options_feature.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 

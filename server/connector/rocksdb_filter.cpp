@@ -29,7 +29,6 @@
 #include "basics/down_cast.h"
 
 namespace sdb::connector {
-
 namespace {
 
 template<velox::TypeKind Kind>

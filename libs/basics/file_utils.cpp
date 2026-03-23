@@ -60,6 +60,7 @@
 
 using namespace sdb;
 namespace {
+
 const std::function<bool(std::string_view)> kPassAllFilter =
   [](std::string_view) { return false; };
 
@@ -131,7 +132,6 @@ void ProcessFiles(const char* directory,
 }
 
 }  // namespace
-
 namespace sdb::basics::file_utils {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -803,4 +803,5 @@ void InitGroups(std::string_view user_name, gid_t group_id) noexcept {
 #endif
 }
 #endif
+
 }  // namespace sdb::basics::file_utils

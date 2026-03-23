@@ -12,6 +12,7 @@ target_sources(
         transaction.cpp
         variable_set.cpp
         remove_tombstone.cpp
+        truncate.cpp
         vacuum.cpp
         create_tsdictionary.cpp
 )

@@ -40,6 +40,7 @@ class IndexShard : public catalog::Object {
   virtual ~IndexShard() = default;
 
   virtual void WriteInternal(vpack::Builder& builder) const = 0;
+  virtual void Clear() = 0;
 
   ObjectId GetId() const { return _id; }
   ObjectId GetIndexId() const { return _index_id; }

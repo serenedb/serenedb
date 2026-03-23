@@ -77,6 +77,7 @@ class ObjectCollector {
   void CollectCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void CollectCreateStmt(State& state, const CreateStmt& stmt);
   void CollectCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+  void CollectTruncateStmt(State& state, const TruncateStmt& stmt);
   void CollectCopyStmt(State& state, const CopyStmt& stmt);
 
   void CollectRangeVar(const State& state, const RangeVar* var);
@@ -536,6 +537,13 @@ void ObjectCollector::CollectCreateTableAsStmt(State& state,
   CollectStmt(&state, stmt.query);
 }
 
+void ObjectCollector::CollectTruncateStmt(State& state,
+                                          const TruncateStmt& stmt) {
+  VisitNodes(stmt.relations, [&](const Node& n) {
+    CollectRangeVar(state, castNode(RangeVar, &n));
+  });
+}
+
 void ObjectCollector::CollectCopyStmt(State& state, const CopyStmt& stmt) {
   CollectRangeVar(state, stmt.relation);
   CollectStmt(&state, stmt.query);
@@ -574,6 +582,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
                                       *castNode(CreateTableAsStmt, node));
     case T_CopyStmt:
       return CollectCopyStmt(state, *castNode(CopyStmt, node));
+    case T_TruncateStmt:
+      return CollectTruncateStmt(state, *castNode(TruncateStmt, node));
     case T_IndexStmt:
       return CollectRangeVar(state, castNode(IndexStmt, node)->relation);
     default:

@@ -161,6 +161,7 @@ class InvertedIndexShard final
     InvertedIndexShardOptions options, bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
+  void Clear() final;
 
   auto GetTransaction() { return _writer->GetBatch(); }
 

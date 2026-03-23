@@ -2724,6 +2724,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
       state.pgsql_node = &node;
       return SqlCommandType::Show;
     }
+    case T_TruncateStmt:
     case T_VacuumStmt: {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;

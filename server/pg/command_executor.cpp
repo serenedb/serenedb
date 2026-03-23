@@ -92,6 +92,10 @@ yaclib::Future<> DDLExecutor::Execute(velox::RowVectorPtr& batch) {
         const auto& stmt = *castNode(CreateSchemaStmt, &_node);
         return CreateSchema(*_context, stmt);
       }
+      case NodeTag::T_TruncateStmt: {
+        const auto& stmt = *castNode(TruncateStmt, &_node);
+        return TruncateTable(*_context, stmt);
+      }
       case NodeTag::T_VacuumStmt: {
         const auto& stmt = *castNode(VacuumStmt, &_node);
         return Vacuum(*_context, stmt);

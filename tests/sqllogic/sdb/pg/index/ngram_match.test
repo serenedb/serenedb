@@ -1,0 +1,76 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS test_ngram_dict;
+
+statement ok
+DROP TABLE IF EXISTS test_ngram;
+
+statement ok
+CREATE TABLE test_ngram (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_ngram_dict(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 2,
+    preserveoriginal = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX test_ngram_idx ON test_ngram USING inverted(a, b test_ngram_dict);
+
+statement ok
+INSERT INTO test_ngram values (1, 'hello');
+
+statement ok
+INSERT INTO test_ngram values (2, 'help');
+
+statement ok
+INSERT INTO test_ngram values (3, 'world');
+
+statement ok
+INSERT INTO test_ngram values (4, 'held');
+
+statement ok
+INSERT INTO test_ngram values (5, 'hero');
+
+statement ok
+VACUUM (UPDATE_INDEXES) test_ngram;
+
+# Default threshold (0.7) - should match strings with high ngram similarity to 'hello'
+query
+SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello') ORDER BY a;
+----
+a
+1
+
+# Lower threshold - should match more strings
+query
+SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello', 0.3) ORDER BY a;
+----
+a
+1
+2
+4
+
+# Threshold 0 - matches everything with at least one common ngram
+query
+SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello', 0.0) ORDER BY a;
+----
+a
+1
+2
+4
+5
+
+# Combined with AND
+query
+SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello', 0.3) AND a < 3 ORDER BY a;
+----
+a
+1
+2
+
+statement ok
+DROP TABLE test_ngram;

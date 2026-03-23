@@ -162,7 +162,10 @@ class InvertedIndexShard final
 
   void WriteInternal(vpack::Builder& builder) const final;
 
-  auto GetTransaction() { return _writer->GetBatch(); }
+  auto GetTransaction() {
+    SDB_ASSERT(_writer);
+    return _writer->GetBatch();
+  }
 
   ResultWithTime ConsolidateUnsafe(
     const irs::ConsolidationPolicy& policy,

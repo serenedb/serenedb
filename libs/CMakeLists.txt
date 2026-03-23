@@ -220,10 +220,6 @@ add_library(
     http_client/ssl_client_connection.cpp
 )
 
-if(SDB_FAULT_INJECTION)
-    target_sources(serene PRIVATE basics/global_serialization.cpp)
-endif()
-
 target_link_libraries(
     serene
     PUBLIC s2 boost_boost vpack fuerte date_interface

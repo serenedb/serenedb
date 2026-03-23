@@ -211,7 +211,6 @@ class ServerState {
 
   void SetState(State state);
 
-  std::string GetPersistedId();
   bool HasPersistedId();
   bool WritePersistedId(std::string_view id);
   std::string GeneratePersistedId(Role role);

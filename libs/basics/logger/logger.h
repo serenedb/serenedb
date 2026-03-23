@@ -74,7 +74,7 @@ class LogTopic final {
 
   explicit LogTopic(std::string_view name,
                     LogLevel level = LogLevel::DEFAULT) noexcept
-    : _name{name}, _level{level} {}
+    : _name{name}, _default_level{level}, _level{level} {}
 
   std::string_view GetName() const { return _name; }
   LogLevel GetLevel() const noexcept {
@@ -83,49 +83,34 @@ class LogTopic final {
   void SetLevel(LogLevel level) noexcept {
     _level.store(level, std::memory_order_relaxed);
   }
+  void ResetLevel() noexcept { _level.store(_default_level); }
 
  private:
   std::string_view _name;
+  LogLevel _default_level;
   std::atomic<LogLevel> _level;
 };
 
 struct Logger {
   // NOLINTBEGIN
-  static LogTopic AGENCY;
-  static LogTopic AGENCYCOMM;
-  static LogTopic AGENCYSTORE;
-  static LogTopic AQL;
   static LogTopic AUTHENTICATION;
   static LogTopic AUTHORIZATION;
-  static LogTopic BACKUP;
-  static LogTopic CLUSTER;
   static LogTopic COMMUNICATION;
   static LogTopic CONFIG;
   static LogTopic CRASH;
-  static LogTopic DEVEL;
-  static LogTopic DUMP;
   static LogTopic ENGINES;
   static LogTopic FIXME;
   static LogTopic FLUSH;
-  static LogTopic GRAPHS;
-  static LogTopic HEARTBEAT;
   static LogTopic HTTPCLIENT;
-  static LogTopic MAINTENANCE;
   static LogTopic MEMORY;
-  static LogTopic QUERIES;
   static LogTopic REPLICATION;
   static LogTopic REQUESTS;
-  static LogTopic RESTORE;
   static LogTopic ROCKSDB;
-  static LogTopic SECURITY;
   static LogTopic SSL;
   static LogTopic STARTUP;
   static LogTopic STATISTICS;
-  static LogTopic SUPERVISION;
   static LogTopic SYSCALL;
   static LogTopic THREADS;
-  static LogTopic TRANSACTIONS;
-  static LogTopic TTL;
   static LogTopic SEARCH;
   static LogTopic IRESEARCH;
   static LogTopic FUERTE;
@@ -244,7 +229,11 @@ void InitializeAsync(app::AppServer&, uint32_t max_queued_log_messages);
 void Shutdown();
 void Flush() noexcept;
 
+inline constexpr std::string_view kLogLevelVariable = "sdb_log_level";
+
 std::vector<LogTopic*> GetTopics();
+std::string LogLevelString();
+void ResetLogLevels() noexcept;
 void SetLogLevel(std::string_view name, LogLevel level) noexcept;
 LogTopic* FindTopic(std::string_view name) noexcept;
 

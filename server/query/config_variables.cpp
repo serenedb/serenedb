@@ -29,6 +29,20 @@ constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
     // serenedb specific variables
     {
+      "sdb_log_level",
+      {
+        VariableType::String,
+        "Sets the server log level. "
+        "Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. "
+        "Valid levels: fatal, error, warning, info, debug, trace. "
+        "Valid topics: all, authentication, authorization, communication, "
+        "config, crash, engines, flush, fuerte, general, httpclient, "
+        "iresearch, memory, replication, requests, rocksdb, search, ssl, "
+        "startup, statistics, syscall, threads.",
+        "info",
+      },
+    },
+    {
       "sdb_write_conflict_policy",
       {
         VariableType::SdbWriteConflictPolicy,

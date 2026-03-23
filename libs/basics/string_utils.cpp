@@ -1202,16 +1202,19 @@ std::string GetPluralFormLowerCase(std::string_view word) {
 
   if (lower.ends_with('s') || lower.ends_with('x') || lower.ends_with('z') ||
       lower.ends_with("sh") || lower.ends_with("ch")) {
-    return lower + "es";
+    absl::StrAppend(&lower, "es");
+    return lower;
   }
 
   if (lower.size() >= 2 && lower.ends_with('y') &&
       !IsVowel(lower[lower.size() - 2])) {
     lower.back() = 'i';
-    return lower + "es";
+    absl::StrAppend(&lower, "es");
+    return lower;
   }
 
-  return lower + "s";
+  lower.push_back('s');
+  return lower;
 }
 
 }  // namespace sdb::basics::string_utils

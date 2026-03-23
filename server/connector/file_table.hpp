@@ -267,9 +267,9 @@ class FileDataSource final : public velox::connector::DataSource {
     const ReaderOptions& options, velox::memory::MemoryPool& pool,
     const velox::RowTypePtr& output_type,
     const velox::connector::ColumnHandleMap& column_handles,
-    const velox::common::SubfieldFilters& subfield_filters = {},
-    const velox::core::TypedExprPtr& remaining_filter = nullptr,
-    velox::core::ExpressionEvaluator* evaluator = nullptr);
+    const velox::common::SubfieldFilters& subfield_filters,
+    const velox::core::TypedExprPtr& remaining_filter,
+    velox::core::ExpressionEvaluator* evaluator);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 

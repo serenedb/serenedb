@@ -60,10 +60,11 @@ uint32_t ParquetMaterializer::RowGroupForRow(int64_t row) const {
 }
 
 velox::RowVectorPtr ParquetMaterializer::ReadRows(
-  std::span<std::string> row_keys, velox::VectorPtr /*scores*/) {
+  std::span<const std::string> row_keys, velox::VectorPtr /*scores*/) {
   if (row_keys.empty()) {
     return nullptr;
   }
+  SDB_ASSERT(std::is_sorted(row_keys.begin(), row_keys.end()));
 
   auto decode = [](std::string_view key) {
     return primary_key::ReadSigned<int64_t>(key);

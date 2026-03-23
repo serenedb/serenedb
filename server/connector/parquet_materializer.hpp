@@ -40,7 +40,7 @@ class ParquetMaterializer {
     std::unique_ptr<velox::dwio::common::RowReader> row_reader,
     velox::RowTypePtr output_type);
 
-  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
+  velox::RowVectorPtr ReadRows(std::span<const std::string> row_keys,
                                velox::VectorPtr scores);
 
  private:

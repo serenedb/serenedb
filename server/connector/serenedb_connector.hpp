@@ -1155,7 +1155,8 @@ class SereneDBConnector final : public velox::connector::Connector {
                    velox::dwio::common::FileFormat::PARQUET,
                  "Only parquet is supported for inverted index search");
       auto [source, reader, row_reader] = FileDataSource::CreateReader(
-        *file_table->GetOptions(), pool, output_type, column_handles);
+        *file_table->GetOptions(), pool, output_type, column_handles, {},
+        nullptr, nullptr);
       return std::make_unique<SearchDataSource<ParquetMaterializer>>(
         pool,
         ParquetMaterializer(pool, std::move(source), std::move(reader),

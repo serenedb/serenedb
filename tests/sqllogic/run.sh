@@ -68,10 +68,9 @@ launch_s3() {
 			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
 			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
 			echo "Stopping MinIO container..."
-			docker rm -f "$MINIO_CONTAINER_NAME" 2>/dev/null || true
+			docker rm -fv "$MINIO_CONTAINER_NAME" 2>/dev/null || true
 		fi
 	}
-	trap cleanup_minio EXIT
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -311,7 +310,7 @@ fi
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
 cancel_pid=""
-trap 'kill "$cancel_pid" 2>/dev/null || true' EXIT
+trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT
 if [[ "$cancellation" == "true" ]]; then
 	trap '' INT
 	# One background process that keeps sending SIGINT at random intervals

@@ -23,7 +23,6 @@
 
 #include "segmentation_tokenizer.hpp"
 
-#include <frozen/unordered_map.h>
 #include <vpack/builder.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
@@ -33,6 +32,7 @@
 #include <boost/text/word_break.hpp>
 #include <string_view>
 
+#include "basics/containers/trivial_map.h"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
@@ -45,18 +45,18 @@ constexpr std::string_view kAcceptName = "break";
 
 using Options = SegmentationTokenizer::Options;
 
-constexpr frozen::unordered_map<std::string_view, Options::Convert, 3>
-  kConvertMap = {
-    {"none", Options::Convert::None},
-    {"lower", Options::Convert::Lower},
-    {"upper", Options::Convert::Upper},
+constexpr sdb::containers::TrivialBiMap kConvertMap = [](auto selector) {
+  return selector()
+    .Case("none", Options::Convert::None)
+    .Case("lower", Options::Convert::Lower)
+    .Case("upper", Options::Convert::Upper);
 };
 
-constexpr frozen::unordered_map<std::string_view, Options::Accept, 3>
-  kAcceptMap = {
-    {"all", Options::Accept::Any},
-    {"graphic", Options::Accept::Graphic},
-    {"alpha", Options::Accept::AlphaNumeric},
+constexpr sdb::containers::TrivialBiMap kAcceptMap = [](auto selector) {
+  return selector()
+    .Case("all", Options::Accept::Any)
+    .Case("graphic", Options::Accept::Graphic)
+    .Case("alpha", Options::Accept::AlphaNumeric);
 };
 
 bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
@@ -73,14 +73,14 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
       return false;
     }
     auto convert = convert_slice.stringView();
-    const auto* it = kConvertMap.find(convert);
-    if (it == kConvertMap.end()) {
+    auto it = kConvertMap.TryFindByFirst(convert);
+    if (!it) {
       SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                kConvertName,
                "' for segmentation analyzer from VPack arguments");
       return false;
     }
-    options.convert = it->second;
+    options.convert = *it;
   }
   if (auto accept_slice = slice.get(kAcceptName); !accept_slice.isNone()) {
     if (!accept_slice.isString()) {
@@ -90,13 +90,13 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
       return false;
     }
     auto accept = accept_slice.stringView();
-    const auto* it = kAcceptMap.find(accept);
-    if (it == kAcceptMap.end()) {
+    auto it = kAcceptMap.TryFindByFirst(accept);
+    if (!it) {
       SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                kAcceptName, "' for segmentation analyzer from VPack arguments");
       return false;
     }
-    options.accept = it->second;
+    options.accept = *it;
   }
   return true;
 }
@@ -104,11 +104,9 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
 bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
   vpack::ObjectBuilder object(builder);
   {
-    const auto it = absl::c_find_if(
-      kConvertMap,
-      [v = options.convert](const auto& m) { return m.second == v; });
-    if (it != kConvertMap.end()) {
-      builder->add(kConvertName, it->first);
+    auto it = kConvertMap.TryFindBySecond(options.convert);
+    if (it) {
+      builder->add(kConvertName, *it);
     } else {
       SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                kConvertName,
@@ -118,11 +116,9 @@ bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
     }
   }
   {
-    const auto it = absl::c_find_if(
-      kAcceptMap,
-      [v = options.accept](const auto& m) { return m.second == v; });
-    if (it != kAcceptMap.end()) {
-      builder->add(kAcceptName, it->first);
+    auto it = kAcceptMap.TryFindBySecond(options.accept);
+    if (it) {
+      builder->add(kAcceptName, *it);
     } else {
       SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                kAcceptName,

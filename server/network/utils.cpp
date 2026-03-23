@@ -87,31 +87,6 @@ Result ResultFromBody(vpack::Slice slice, ErrorCode default_error) {
   return Result(default_error);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-/// Extract all error baby-style error codes and store them in a map
-////////////////////////////////////////////////////////////////////////////////
-
-void ErrorCodesFromHeaders(network::Headers headers, ErrorsCount& error_counter,
-                           bool include_not_found) {
-  const auto& codes = headers.find(StaticStrings::kErrorCodes);
-  if (codes != headers.end()) {
-    auto parsed_codes = vpack::Parser::fromJson(codes->second);
-    vpack::Slice codes_slice = parsed_codes->slice();
-    if (!codes_slice.isObject()) {
-      return;
-    }
-
-    for (auto code : vpack::ObjectIterator(codes_slice)) {
-      auto str = code.key.stringView();
-      auto code_nr = ErrorCode{
-        number_utils::AtoiZero<int>(str.data(), str.data() + str.size())};
-      if (include_not_found || code_nr != ERROR_SERVER_DOCUMENT_NOT_FOUND) {
-        error_counter[code_nr] += code.value().getNumber<size_t>();
-      }
-    }
-  }
-}
-
 namespace {
 
 ErrorCode ToSereneErrorCodeInternal(fuerte::Error err) {
@@ -259,29 +234,6 @@ std::string FuerteStatusToSereneErrorMessage(const fuerte::Response& res) {
 std::string FuerteStatusToSereneErrorMessage(
   const fuerte::StatusCode& status_code) {
   return fuerte::StatusCodeToString(status_code);
-}
-
-void AddSourceHeader(consensus::Agent* agent, fuerte::Request& req) {
-  // note: agent can be a nullptr here
-  auto state = ServerState::instance();
-  if (state->IsCoordinator() || state->IsDBServer()) {
-    req.header.addMeta(StaticStrings::kClusterCommSource, state->GetId());
-#if 0
-  } else if (state->IsAgent() && agent != nullptr) {
-    // note: header intentionally not sent to save cluster-internal
-    // traffic
-    req.header.addMeta(StaticStrings::ClusterCommSource, agent->id());
-#endif
-  }
-}
-
-void AddUserParameter(RequestOptions& req_opts, std::string_view value) {
-  if (!value.empty()) {
-    // if no user name is set, we cannot add it to the request options
-    // as a URL parameter, because they will assert that the provided
-    // value is non-empty
-    req_opts.param(StaticStrings::kUserString, value);
-  }
 }
 
 }  // namespace sdb::network

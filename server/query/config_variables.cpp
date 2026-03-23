@@ -19,14 +19,34 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "basics/assert.h"
+#include "basics/containers/trivial_map.h"
 #include "pg/isolation_level.h"
 #include "query/config.h"
 
 namespace sdb {
 
-constexpr auto kVariableDescription =
-  frozen::make_unordered_map<std::string_view, VariableDescription>({
+constexpr std::pair<std::string_view, VariableDescription>
+  kVariableDescription[] = {
     // serenedb specific variables
+    {
+      "sdb_write_conflict_policy",
+      {
+        VariableType::SdbWriteConflictPolicy,
+        "Sets the write conflict policy. Valid values are "
+        "'emit_error' "
+        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
+        "emit_error",
+      },
+    },
+    {
+      "sdb_read_your_own_writes",
+      {
+        VariableType::Bool,
+        "Controls whether queries can see uncommitted writes from the current "
+        "transaction.",
+        "true",
+      },
+    },
     // axiom specific variables
     {
       "execution_threads",
@@ -161,54 +181,48 @@ constexpr auto kVariableDescription =
         "on",
       },
     },
-    // SereneDB specific
+};
+
+constexpr std::pair<std::string_view,
+                    std::pair<std::string_view, VariableDescription>>
+  kVariableDescriptionCanonical[] = {
     {
       "datestyle",
       {
-        VariableType::String,
-        "Sets the display format for date and time values.",
-        "ISO, MDY",
+        "DateStyle",
+        {
+          VariableType::String,
+          "Sets the display format for date and time values.",
+          "ISO, MDY",
+        },
       },
     },
     {
       "intervalstyle",
       {
-        VariableType::String,
-        "Sets the display format for interval values.",
-        "postgres",
+        "IntervalStyle",
+        {
+          VariableType::String,
+          "Sets the display format for interval values.",
+          "postgres",
+        },
       },
     },
     {
       "timezone",
       {
-        VariableType::String,
-        "Sets the time zone for displaying and interpreting time stamps.",
-        "Etc/UTC",
+        "TimeZone",
+        {
+          VariableType::String,
+          "Sets the time zone for displaying and interpreting time stamps.",
+          "Etc/UTC",
+        },
       },
     },
-    {
-      "sdb_write_conflict_policy",
-      {
-        VariableType::SdbWriteConflictPolicy,
-        "Sets the write conflict policy. Valid values are "
-        "'emit_error' "
-        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
-        "emit_error",
-      },
-    },
-    {
-      "sdb_read_your_own_writes",
-      {
-        VariableType::Bool,
-        "Controls whether queries can see uncommitted writes from the current "
-        "transaction.",
-        "true",
-      },
-    },
-  });
+};
 
-constexpr auto kVeloxVariableDescription =
-  frozen::make_unordered_map<std::string_view, VariableDescription>({
+constexpr std::pair<std::string_view, VariableDescription>
+  kVeloxVariableDescription[] = {
     {
       "query_max_memory_per_node",
       {
@@ -1385,22 +1399,25 @@ constexpr auto kVeloxVariableDescription =
         "",
       },
     },
-  });
+};
+
+constexpr auto kVarIndex =
+  containers::MakeTrivialBiMapFirstToIndex<kVariableDescription>();
+constexpr auto kVarCanonicalIndex =
+  containers::MakeTrivialBiMapFirstToIndex<kVariableDescriptionCanonical>();
+constexpr auto kVeloxIndex =
+  containers::MakeTrivialBiMapFirstToIndex<kVeloxVariableDescription>();
 
 std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
   std::string_view name) {
-  {
-    auto it = kVariableDescription.find(name);
-    if (it != kVariableDescription.end()) {
-      return *it;
-    }
+  if (auto idx = kVarIndex.TryFindICaseByFirst(name)) {
+    return kVariableDescription[*idx];
   }
-
-  {
-    auto it = kVeloxVariableDescription.find(name);
-    if (it != kVeloxVariableDescription.end()) {
-      return *it;
-    }
+  if (auto idx = kVarCanonicalIndex.TryFindICaseByFirst(name)) {
+    return kVariableDescriptionCanonical[*idx].second;
+  }
+  if (auto idx = kVeloxIndex.TryFindICaseByFirst(name)) {
+    return kVeloxVariableDescription[*idx];
   }
   return std::nullopt;
 }
@@ -1431,20 +1448,25 @@ std::unordered_map<std::string, std::string> Config::rawConfigsCopy() const {
   std::unordered_map<std::string, std::string> result;
   // Since .emplace insert only if key doesn't exist in map,
   // the order of insertation is from transaction to default
-  for (const auto& [key, value] : _transaction) {
-    result.emplace(key, value.value);
+  for (const auto& [name, value] : _transaction) {
+    result.emplace(name, value.value);
   }
 
-  for (const auto& [key, value] : _session) {
-    result.emplace(key, value);
+  for (const auto& [name, value] : _session) {
+    result.emplace(name, value);
   }
 
   // there are no default variables from velox query config,
   // because rawConfigsCopy() using only by velox to copy config.
   // So, there is no need to copy default velox variables
 
-  for (const auto& [key, description] : kVariableDescription) {
-    result.emplace(key, description.default_value);
+  for (const auto& [name, description] : kVariableDescription) {
+    result.emplace(name, description.default_value);
+  }
+
+  for (const auto& [_, pair] : kVariableDescriptionCanonical) {
+    const auto& [name, description] = pair;
+    result.emplace(name, description.default_value);
   }
 
   return result;
@@ -1453,20 +1475,24 @@ std::unordered_map<std::string, std::string> Config::rawConfigsCopy() const {
 void Config::VisitFullDescription(
   absl::FunctionRef<void(std::string_view, std::string_view, std::string_view)>
     f) const {
-  for (const auto& [name, description] : kVariableDescription) {
+  auto visit = [&](const auto& name, const auto& description) {
     std::string_view value = GetNonDefault(name);
     if (!value.data()) {
       value = description.default_value;
     }
     f(name, value, description.description);
+  };
+  for (const auto& [name, description] : kVariableDescription) {
+    visit(name, description);
+  }
+
+  for (const auto& [_, pair] : kVariableDescriptionCanonical) {
+    const auto& [name, description] = pair;
+    visit(name, description);
   }
 
   for (const auto& [name, description] : kVeloxVariableDescription) {
-    std::string_view value = GetNonDefault(name);
-    if (!value.data()) {
-      value = description.default_value;
-    }
-    f(name, std::string{value}, description.description);
+    visit(name, description);
   }
 }
 

@@ -28,6 +28,7 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 
 #include "app/options/program_options.h"
@@ -111,6 +112,26 @@ class SearchFilterBuilderTest : public ::testing::Test {
     catalog::Column::Id id) {
     return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                             irs::IndexFeatures::Freq>(id);
+  }
+
+  static catalog::ColumnAnalyzer NgramAnalyzerProvider(
+    catalog::Column::Id) {
+    auto make_ngram = [] {
+      auto builder = vpack::Parser::fromJson(
+        "{ \"analyzer\": {\"type\":\"ngram\","
+        "\"properties\":{\"min\":2,\"max\":2,"
+        "\"preserveOriginal\":false,\"streamType\":\"utf8\"}}}");
+      return std::string(builder->slice().startAs<char>(),
+                         builder->slice().byteSize());
+    };
+    static catalog::Tokenizer gNgramTokenizer(
+      ObjectId{12347}, "test_ngram", {}, make_ngram());
+    auto tokenizer = gNgramTokenizer.GetTokenizer();
+    if (!tokenizer) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to create ngram tokenizer");
+    }
+    return {.analyzer = *std::move(tokenizer),
+            .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
   }
 
   void AssertFilter(
@@ -385,6 +406,19 @@ class SearchFilterBuilderTest : public ::testing::Test {
     auto& wc = AddFilter<irs::ByWildcard>(root);
     *wc.mutable_field() = MakeFieldName<velox::StringView>(column);
     wc.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
+  }
+
+  template<typename Filter>
+  void AddNgramSimilarityFilter(Filter& root, catalog::Column::Id column,
+                                std::vector<std::string_view> ngrams,
+                                float_t threshold = 0.7f) {
+    auto& ngf = AddFilter<irs::ByNGramSimilarity>(root);
+    *ngf.mutable_field() = MakeFieldName<velox::StringView>(column);
+    ngf.mutable_options()->threshold = threshold;
+    for (auto ngram : ngrams) {
+      ngf.mutable_options()->ngrams.emplace_back(
+        irs::ViewCast<irs::byte_type>(ngram));
+    }
   }
 
   template<typename Filter>
@@ -1896,6 +1930,41 @@ TEST_F(SearchFilterBuilderTest, test_TermIn_NotConst) {
     std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
   AssertFilter(expected, "SELECT * FROM foo WHERE TERM_IN(a, 'foo', b, 'bar')",
                std::move(columns), false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NgramMatch_Basic) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "name", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE NGRAM_MATCH(name, 'hello')",
+    std::move(columns), true, NgramAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NgramMatch_WithThreshold) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "name", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE NGRAM_MATCH(name, 'hello', 0.5)",
+    std::move(columns), true, NgramAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NgramMatch_NoFeatures) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "name", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE NGRAM_MATCH(name, 'hello')",
+    std::move(columns), false);
 }
 
 }  // namespace

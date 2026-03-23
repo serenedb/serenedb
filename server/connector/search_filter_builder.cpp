@@ -37,6 +37,8 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/ngram_similarity_filter.hpp>
+#include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
@@ -724,6 +726,80 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
   return {};
 }
 
+Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
+                           const VeloxFilterContext& ctx,
+                           const velox::core::CallTypedExpr& call) {
+  const auto num_inputs = call.inputs().size();
+  if (num_inputs < 2 || num_inputs > 3) {
+    return {ERROR_BAD_PARAMETER, "NGRAM_MATCH has ", num_inputs,
+            " inputs but 2 or 3 expected"};
+  }
+
+  if (!call.inputs()[0]->isFieldAccessKind()) {
+    return {ERROR_BAD_PARAMETER, "Input is not field access"};
+  }
+
+  // target (string)
+  auto target = EvaluateConstant(call.inputs()[1]);
+  if (!target.has_value()) {
+    return {ERROR_BAD_PARAMETER,
+            "Failed to evaluate target value as constant"};
+  }
+  if (target->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate target as VARCHAR"};
+  }
+
+  // threshold (number, optional, default 0.7)
+  float_t threshold = 0.7f;
+  if (num_inputs >= 3) {
+    auto threshold_val = EvaluateConstant(call.inputs()[2]);
+    if (!threshold_val.has_value()) {
+      return {ERROR_BAD_PARAMETER,
+              "Failed to evaluate threshold value as constant"};
+    }
+    threshold = static_cast<float_t>(threshold_val->value<double>());
+    if (threshold < 0.f || threshold > 1.f) {
+      return {ERROR_BAD_PARAMETER,
+              "NGRAM_MATCH threshold must be between 0.0 and 1.0"};
+    }
+  }
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    call.inputs()[0].get());
+
+  const auto& column_info = FindColumnInfo(ctx, *field_typed);
+  // enforced by function prototype
+  SDB_ASSERT(column_info.info.type()->kind() == velox::TypeKind::VARCHAR,
+             ERROR_BAD_PARAMETER, "NGRAM_MATCH field '", field_typed->name(),
+             "' is not VARCHAR");
+
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+
+  if ((column_info.analyzer.features &
+       irs::NGramSimilarityQuery::kRequiredFeatures) !=
+      irs::NGramSimilarityQuery::kRequiredFeatures) {
+    return {ERROR_BAD_PARAMETER, "NGRAM_MATCH field '", field_typed->name(),
+            "' should have Positions and Frequency features enabled"};
+  }
+
+  auto& ngram_filter = ctx.negated
+                          ? Negate<irs::ByNGramSimilarity>(filter)
+                          : AddFilter<irs::ByNGramSimilarity>(filter);
+  column_info.analyzer.analyzer->reset(
+    static_cast<std::string_view>(target->value<velox::StringView>()));
+  const irs::TermAttr* token =
+    irs::get<irs::TermAttr>(*column_info.analyzer.analyzer);
+  search::mangling::MangleString(field_name);
+  *ngram_filter.mutable_field() = field_name;
+  ngram_filter.boost(ctx.boost);
+  ngram_filter.mutable_options()->threshold = threshold;
+  while (column_info.analyzer.analyzer->next()) {
+    ngram_filter.mutable_options()->ngrams.emplace_back(token->value);
+  }
+  return {};
+}
+
 }  // namespace
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -796,6 +872,10 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 
   if (call.name() == search::functions::kPhrase) {
     return FromSearchPhrase(filter, ctx, call);
+  }
+
+  if (call.name() == search::functions::kNgramMatch) {
+    return FromVeloxNgramMatch(filter, ctx, call);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};

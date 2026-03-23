@@ -34,10 +34,11 @@
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
 namespace analysis {
+
 class WildcardAnalyzer;
-}
+
+}  // namespace analysis
 
 class WildcardFilter;
 

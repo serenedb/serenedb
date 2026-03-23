@@ -278,6 +278,16 @@ void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
   vpack::WriteTuple(builder, _options.base);
 }
 
+void InvertedIndexShard::Clear() {
+  absl::MutexLock lock{&_commit_mutex};
+  _writer->Clear(_engine.currentTick());
+  auto reader = _writer->GetSnapshot();
+  SDB_ASSERT(reader);
+  auto rocksdb_snapshot = std::make_shared<StorageSnapshot>(*_engine.db());
+  StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+    std::move(reader), std::move(rocksdb_snapshot)));
+}
+
 Snapshot InvertedIndexShard::GetSnapshot() const {
   return {shared_from_this(), GetInvertedIndexSnapshot()};
 }

@@ -1,0 +1,356 @@
+# Basic TRUNCATE test
+statement ok
+CREATE TABLE doge (id INTEGER PRIMARY KEY, wow TEXT);
+
+statement count 3
+INSERT INTO doge VALUES (1, 'such data'), (2, 'much rows'), (3, 'very full');
+
+query
+SELECT * FROM doge ORDER BY id;
+----
+id	wow
+1	such data
+2	much rows
+3	very full
+
+statement ok
+TRUNCATE doge;
+
+query
+SELECT * FROM doge ORDER BY id;
+----
+id	wow
+
+# Table still exists and can be inserted into after truncate
+statement count 2
+INSERT INTO doge VALUES (10, 'wow'), (20, 'amaze');
+
+query
+SELECT * FROM doge ORDER BY id;
+----
+id	wow
+10	wow
+20	amaze
+
+statement ok
+DROP TABLE doge;
+
+
+# TRUNCATE multiple tables at once
+statement ok
+CREATE TABLE nyan (id INTEGER PRIMARY KEY, meow TEXT);
+
+statement ok
+CREATE TABLE grumpy (id INTEGER PRIMARY KEY, mood TEXT);
+
+statement count 2
+INSERT INTO nyan VALUES (1, 'rainbow'), (2, 'pop tart');
+
+statement count 2
+INSERT INTO grumpy VALUES (1, 'no'), (2, 'still no');
+
+statement ok
+TRUNCATE nyan, grumpy;
+
+query
+SELECT * FROM nyan ORDER BY id;
+----
+id	meow
+
+query
+SELECT * FROM grumpy ORDER BY id;
+----
+id	mood
+
+statement ok
+DROP TABLE nyan;
+
+statement ok
+DROP TABLE grumpy;
+
+
+# TRUNCATE non-existent table
+statement error
+TRUNCATE does_not_exist;
+----
+db error: ERROR: relation "does_not_exist" does not exist
+
+
+# TRUNCATE a view (should fail like PG)
+statement ok
+CREATE TABLE vedernikoff_base (id INTEGER PRIMARY KEY, val TEXT);
+
+statement ok
+CREATE VIEW vedernikoff_view AS SELECT * FROM vedernikoff_base;
+
+statement error
+TRUNCATE vedernikoff_view;
+----
+db error: ERROR: "vedernikoff_view" is not a table
+
+
+statement ok
+DROP VIEW vedernikoff_view;
+
+# TRUNCATE an index (should fail like PG)
+statement ok
+CREATE TEXT SEARCH DICTIONARY trunc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_base USING inverted(val trunc_dict);
+
+statement error
+TRUNCATE vedernikoff_idx;
+----
+db error: ERROR: "vedernikoff_idx" is not a table
+
+
+statement ok
+DROP INDEX vedernikoff_idx;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY trunc_dict;
+
+statement ok
+DROP TABLE vedernikoff_base;
+
+
+# TRUNCATE with schema-qualified name
+statement ok
+CREATE TABLE public.pepe (id INTEGER PRIMARY KEY, feels TEXT);
+
+statement count 1
+INSERT INTO public.pepe VALUES (1, 'good man');
+
+statement ok
+TRUNCATE public.pepe;
+
+query
+SELECT * FROM public.pepe;
+----
+id	feels
+
+statement ok
+DROP TABLE public.pepe;
+
+
+# TRUNCATE preserves table structure across multiple truncates
+statement ok
+CREATE TABLE stonks (id INTEGER PRIMARY KEY, ticker TEXT, price INTEGER);
+
+statement count 3
+INSERT INTO stonks VALUES (1, 'GME', 420), (2, 'AMC', 69), (3, 'DOGE', 1);
+
+statement ok
+TRUNCATE stonks;
+
+statement count 2
+INSERT INTO stonks VALUES (4, 'BTC', 99999), (5, 'ETH', 4000);
+
+statement ok
+TRUNCATE stonks;
+
+query
+SELECT * FROM stonks ORDER BY id;
+----
+id	ticker	price
+
+statement count 1
+INSERT INTO stonks VALUES (100, 'MOON', 1000000);
+
+query
+SELECT * FROM stonks ORDER BY id;
+----
+id	ticker	price
+100	MOON	1000000
+
+statement ok
+DROP TABLE stonks;
+
+
+# TRUNCATE large table (10000 rows)
+statement ok
+CREATE TABLE chonk (id INTEGER PRIMARY KEY, chonk_level INTEGER, vibe TEXT);
+
+statement count 10000
+INSERT INTO chonk
+SELECT x, x % 100, 'chonk_' || (x % 50)::text FROM generate_series(1, 10000) AS t(x);
+
+query
+SELECT count(*) FROM chonk;
+----
+count
+10000
+
+statement ok
+TRUNCATE chonk;
+
+query
+SELECT count(*) FROM chonk;
+----
+count
+0
+
+# Re-insert after truncating large table
+statement count 5000
+INSERT INTO chonk
+SELECT x, x % 10, 'smol_' || (x % 5)::text FROM generate_series(1, 5000) AS t(x);
+
+query
+SELECT count(*) FROM chonk;
+----
+count
+5000
+
+statement ok
+DROP TABLE chonk;
+
+
+# TRUNCATE table with inverted index
+statement ok
+CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY, quote TEXT);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement count 3
+INSERT INTO vedernikoff VALUES
+  (1, 'serenedb is the best database'),
+  (2, 'rocksdb makes serenedb fast'),
+  (3, 'nothing personnel kid');
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(id, quote test_english);
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff;
+
+query
+SELECT id, quote FROM vedernikoff_idx WHERE PHRASE(quote, 'serenedb') ORDER BY id;
+----
+id	quote
+1	serenedb is the best database
+2	rocksdb makes serenedb fast
+
+statement ok
+TRUNCATE vedernikoff;
+
+query
+SELECT count(*) FROM vedernikoff;
+----
+count
+0
+
+# Re-insert and re-index after truncate
+statement count 2
+INSERT INTO vedernikoff VALUES
+  (10, 'truncate is surprisingly easy'),
+  (20, 'vedernikoff approves this feature');
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff;
+
+query
+SELECT id, quote FROM vedernikoff_idx WHERE PHRASE(quote, 'vedernikoff') ORDER BY id;
+----
+id	quote
+20	vedernikoff approves this feature
+
+statement ok
+DROP INDEX vedernikoff_idx;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+# TRUNCATE large table with inverted index (10000 rows)
+statement ok
+CREATE TABLE vedernikoff_log (id INTEGER PRIMARY KEY, entry TEXT);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vedernikoff_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement count 10000
+INSERT INTO vedernikoff_log
+SELECT x, 'commit_' || (x % 200)::text FROM generate_series(1, 10000) AS t(x);
+
+statement ok
+CREATE INDEX vedernikoff_log_idx ON vedernikoff_log USING inverted(id, entry vedernikoff_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff_log;
+
+query
+SELECT count(*) FROM vedernikoff_log;
+----
+count
+10000
+
+query
+SELECT count(*) FROM vedernikoff_log_idx WHERE PHRASE(entry, 'commit_0');
+----
+count
+50
+
+statement ok
+TRUNCATE vedernikoff_log;
+
+query
+SELECT count(*) FROM vedernikoff_log;
+----
+count
+0
+
+query
+SELECT count(*) FROM vedernikoff_log_idx WHERE PHRASE(entry, 'commit_0');
+----
+count
+0
+
+# Re-insert, re-index, and query after truncating large indexed table
+statement count 100
+INSERT INTO vedernikoff_log
+SELECT x, 'deploy_' || (x % 10)::text FROM generate_series(1, 100) AS t(x);
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff_log;
+
+query
+SELECT count(*) FROM vedernikoff_log_idx WHERE PHRASE(entry, 'deploy_0');
+----
+count
+10
+
+statement ok
+DROP INDEX vedernikoff_log_idx;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY vedernikoff_dict;
+
+statement ok
+DROP TABLE vedernikoff_log;

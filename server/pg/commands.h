@@ -78,6 +78,8 @@ yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
 yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
                                  std::string_view name);
 
+yaclib::Future<> TruncateTable(ExecContext& ctx, const TruncateStmt& stmt);
+
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);

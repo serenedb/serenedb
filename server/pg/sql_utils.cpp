@@ -65,9 +65,27 @@ std::optional<T> TryGetImpl(const Node* expr) {
     if (nodeTag(expr) == T_Integer) {
       return intVal(expr);
     }
+    if (nodeTag(expr) == T_String) {
+      const std::string_view str = strVal(expr);
+      if (int i = 0; absl::SimpleAtoi(str, &i)) {
+        return i;
+      }
+    }
   } else if constexpr (std::is_same_v<T, double>) {
     if (nodeTag(expr) == T_Float) {
       return floatVal(expr);
+    }
+    if (nodeTag(expr) == T_Integer) {
+      return intVal(expr);
+    }
+    if (nodeTag(expr) == T_String) {
+      const std::string_view str = strVal(expr);
+      if (int i = 0; absl::SimpleAtoi(str, &i)) {
+        return i;
+      }
+      if (double d = 0; absl::SimpleAtod(str, &d)) {
+        return d;
+      }
     }
   } else if constexpr (std::is_same_v<T, std::string_view> ||
                        std::is_same_v<T, std::string>) {
@@ -76,6 +94,21 @@ std::optional<T> TryGetImpl(const Node* expr) {
     }
     if (nodeTag(expr) == T_TypeName) {
       return DeparseTypeName<T>(castNode(TypeName, expr));
+    }
+    if (nodeTag(expr) == T_Float) {
+      return ((Float*)(expr))->fval;
+    }
+    if constexpr (std::is_same_v<T, std::string>) {
+      if (nodeTag(expr) == T_Integer) {
+        return absl::StrCat(intVal(expr));
+      }
+    }
+    if (nodeTag(expr) == T_Boolean) {
+      if (boolVal(expr)) {
+        return "true";
+      } else {
+        return "false";
+      }
     }
   } else if constexpr (std::is_same_v<T, char>) {
     if (nodeTag(expr) == T_String) {
@@ -86,6 +119,10 @@ std::optional<T> TryGetImpl(const Node* expr) {
       return str[0];
     }
   } else if constexpr (std::is_same_v<T, bool>) {
+    if (nodeTag(expr) == T_Boolean) {
+      return boolVal(expr);
+    }
+
     if (auto val = TryGet<std::string_view>(expr)) {
       if (*val == "true" || *val == "on") {
         return true;

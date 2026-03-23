@@ -26,8 +26,10 @@ public
 statement ok
 CREATE TABLE test.test(i int)
 
-statement error db error: ERROR: cannot drop schema test because other objects depend on it
+statement error
 DROP SCHEMA test
+----
+db error: ERROR: cannot drop schema test because other objects depend on it
 
 
 query
@@ -39,15 +41,20 @@ pg_catalog
 public
 
 
-statement error db error: ERROR: cannot drop schema test because other objects depend on it
+statement error
 DROP SCHEMA test
+----
+db error: ERROR: cannot drop schema test because other objects depend on it
 
 
 statement ok
 DROP SCHEMA test CASCADE
 
-statement error db error: ERROR: schema "test" does not exist
+
+statement error
 DROP SCHEMA test
+----
+db error: ERROR: schema "test" does not exist
 
 
 query

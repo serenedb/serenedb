@@ -96,12 +96,9 @@ Result ResolveId(ObjectId database, const auto& name, ObjectId& id) {
   return {};
 };
 
-}  // namespace
-
-std::string Column::GeneratePKName(std::span<const std::string> column_names) {
-  static constexpr std::string_view kGeneratedPKPrefix = "sdb_generated_pk";
-
-  std::string candidate{kGeneratedPKPrefix};
+std::string GenerateUniqueName(std::string_view prefix,
+                               std::span<const std::string> column_names) {
+  std::string candidate{prefix};
   size_t suffix = 0;
   bool found_unique = false;
 
@@ -110,7 +107,7 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
     for (const auto& str : column_names) {
       if (str == candidate) [[unlikely]] {
         found_unique = false;
-        candidate.erase(kGeneratedPKPrefix.size());
+        candidate.erase(prefix.size());
         absl::StrAppend(&candidate, "_", ++suffix);
         break;
       }
@@ -118,6 +115,17 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
   }
 
   return candidate;
+}
+
+}  // namespace
+
+std::string Column::GeneratePKName(std::span<const std::string> column_names) {
+  return GenerateUniqueName("sdb_generated_pk", column_names);
+}
+
+std::string Column::GenerateScoreName(
+  std::span<const std::string> column_names) {
+  return GenerateUniqueName("sdb_inverted_index_score", column_names);
 }
 
 std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {

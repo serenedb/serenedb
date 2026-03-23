@@ -128,8 +128,10 @@ statement ok
 CREATE TABLE another_schema.t4(r4 text);
 
 
-query error db error: ERROR: relation "t4" does not exist
+query error
 SELECT * FROM t4;
+----
+db error: ERROR: relation "t4" does not exist
 
 
 query
@@ -142,16 +144,23 @@ statement ok
 DROP SCHEMA some_schema CASCADE;
 
 
-query error db error: ERROR: relation "some_schema\.t" does not exist
+query error
 SELECT * from some_schema.t;
+----
+db error: ERROR: relation "some_schema.t" does not exist
 
 
 statement ok
 SET search_path TO '';
 
 
-query error db error: ERROR: relation "t" does not exist
+query error
 SELECT * FROM t;
+----
+db error: ERROR: relation "t" does not exist
 
-query error db error: ERROR: no schema has been selected to create in
+
+statement error
 CREATE TABLE t42(r text);
+----
+db error: ERROR: no schema has been selected to create in

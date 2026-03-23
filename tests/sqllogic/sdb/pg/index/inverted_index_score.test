@@ -1,0 +1,990 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# BM25 scores are non-negative; verify they are returned and > 0
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+
+
+# TFIDF scores are also > 0
+query
+SELECT id, TFIDF() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+
+
+# BM25 with explicit parameters produces non-zero scores
+query
+SELECT id, BM25(1.2, 0.75) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+
+
+# BM25 ordering
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC, id;
+----
+id
+1
+3
+
+
+# Insert a second segment to exercise multi-segment scoring
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Both segments contribute matching documents; all should have score > 0
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+4	t
+5	t
+
+
+# TFIDF also works across multiple segments
+query
+SELECT id, TFIDF() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+4	t
+5	t
+
+
+# Insert enough rows to exceed kScoreBlock (32) matching documents in one batch
+statement ok
+INSERT INTO docs VALUES (10, 'red fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (11, 'blue fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (12, 'green fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (13, 'white fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (14, 'black fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (15, 'grey fox');
+
+statement count 1
+INSERT INTO docs VALUES (16, 'pink fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (17, 'orange fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (18, 'yellow fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (19, 'purple fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (20, 'silver fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (21, 'golden fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (22, 'tiny fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (23, 'big fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (24, 'small fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (25, 'huge fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (26, 'swift fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (27, 'slow fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (28, 'young fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (29, 'old fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (30, 'wild fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (31, 'tame fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (32, 'shy fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (33, 'bold fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (34, 'brave fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (35, 'lazy fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (36, 'clever fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (37, 'sneaky fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (38, 'happy fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (39, 'sad fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (40, 'sly fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (41, 'smart fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# More than kScoreBlock (32) docs match 'fox'; all should exist in result
+query
+SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox');
+----
+count
+36
+
+
+# ORDER BY BM25() with >32 results exercises the full-block ScoreBlock path
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+----
+id	has_score
+1	t
+2	t
+4	t
+
+
+# BM25() can appear multiple times in the same query (SELECT + ORDER BY)
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3;
+----
+id	has_score
+4	t
+2	t
+1	t
+
+
+# BM25() in SELECT, WHERE, and ORDER BY simultaneously
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0 ORDER BY BM25() DESC LIMIT 3;
+----
+id
+4
+2
+1
+
+
+# BM25() with same explicit params used twice is allowed
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(1.2, 0.75) > 0 ORDER BY BM25(1.2, 0.75) DESC LIMIT 3;
+----
+id
+4
+2
+1
+
+
+# Error: BM25() and BM25() with different params conflict
+query error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(1.2, 0.75) DESC, BM25(1.0, 0.5) DESC LIMIT 3;
+----
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for same inverted index
+
+
+# Error: BM25 and TFIDF in the same query conflict
+query error
+SELECT id, BM25() FROM docs_idx WHERE PHRASE(body, 'fox') AND TFIDF() > 0 LIMIT 3;
+----
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for same inverted index
+
+
+# UNION ALL: same scorer in each branch — each branch is an independent scoring scope
+query
+(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 3)
+UNION ALL
+(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 3)
+ORDER BY id;
+----
+id	score
+1	0.05305543
+1	3.1416833
+2	0.05305543
+3	3.1416833
+4	0.05305543
+35	3.1416833
+
+
+# UNION ALL: different scorer types per branch (BM25 vs TFIDF) — each branch is independent
+query
+(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+UNION ALL
+(SELECT id, TFIDF() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+ORDER BY id;
+----
+id	score
+1	0.7065702
+1	2.3513753
+2	0.7065702
+3	2.3513753
+
+
+# Subquery: BM25() inside subquery, outer references the alias
+query
+SELECT id, score FROM (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
+) sub ORDER BY id;
+----
+id	score
+1	0.05305543
+2	0.05305543
+4	0.05305543
+
+query
+EXPLAIN 
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') 
+ORDER BY BM25() DESC LIMIT 3
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id")] -> "id":INTEGER
+  -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+query
+EXPLAIN SELECT * FROM
+(SELECT id FROM docs_idx WHERE PHRASE(body, 'fox'))
+ORDER BY BM25()
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+  -- OrderBy[1][sdb_inverted_index_score ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+query
+EXPLAIN (SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3)
+UNION ALL
+(SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC LIMIT 3)
+ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[7][id ASC NULLS LAST] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+  -- LocalPartition[6][REPARTITION ROUND ROBIN] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+      -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[5][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+      -- TopN[4][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# UNION of two subqueries from same index with outer ORDER BY BM25()
+query
+(SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3)
+UNION ALL
+(SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC LIMIT 3)
+ORDER BY id;
+----
+id	has_score	sdb_inverted_index_score
+1	t	0.05305543
+1	t	3.1416833
+2	t	0.05305543
+3	t	3.1416833
+4	t	0.05305543
+35	t	3.1416833
+
+
+# CTE: BM25() computed in CTE, outer query uses the pre-computed alias
+query
+WITH scored AS (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+)
+SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
+----
+id	has_score
+1	t
+2	t
+4	t
+
+
+# BM25() in outer query references score column from inner subquery
+query
+SELECT id, BM25() > 0 AS has_score FROM (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+) sub ORDER BY id LIMIT 3;
+----
+id	has_score
+1	t
+2	t
+4	t
+
+
+# EXPLAIN (EXECUTION) for TFIDF
+query
+EXPLAIN (EXECUTION) SELECT id, TFIDF() FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (tfidf:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "tfidf":REAL
+  -- OrderBy[1][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# OR filter: match either 'fox' or 'lazy', score comes from the matched docs
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') OR PHRASE(body, 'lazy') ORDER BY id LIMIT 5;
+----
+id	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+
+
+# AND filter: only docs containing both 'fox' and 'lazy' get scored
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') AND PHRASE(body, 'lazy') ORDER BY id;
+----
+id	has_score
+1	t
+35	t
+
+
+# Subquery: wrap scored result, filter by score threshold
+query
+SELECT id FROM (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id) sub WHERE score > 0 ORDER BY id LIMIT 3;
+----
+id
+1
+2
+4
+
+
+# COUNT(*) with scoring filter; score > 0 for all matching docs
+query
+SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0;
+----
+count
+36
+
+
+# TFIDF with normalize=true produces non-zero scores
+query
+SELECT id, TFIDF(true) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+----
+id	has_score
+1	t
+2	t
+4	t
+
+
+# DELETE a doc and VACUUM; it should no longer appear in results
+statement count 1
+DELETE FROM docs WHERE id = 1;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND id = 1;
+----
+id
+
+
+# Deleted doc does not contribute to count
+query
+SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox');
+----
+count
+35
+
+
+# Score ordering still works after deletion
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+----
+id	has_score
+2	f
+4	t
+5	t
+
+
+# Inverted index scan without any filter returns all docs (irs::All)
+query
+SELECT COUNT(*) FROM docs_idx;
+----
+count
+36
+
+
+query
+SELECT id FROM docs_idx WHERE id = 1;
+----
+id
+
+
+query error
+SELECT BM25();
+----
+db error: ERROR: bm25() requires an inverted index scan in the same query
+
+
+query error
+SELECT TFIDF();
+----
+db error: ERROR: tfidf() requires an inverted index scan in the same query
+
+
+# Error: BM25(1) — must be 0 or 2 arguments
+query error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(1.2) > 0;
+----
+db error: ERROR: BM25() accepts 0 or 2 arguments: k1 and b
+
+
+# Error: BM25(k1, b, extra) — too many arguments
+query error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(1.2, 0.75, 0.1) > 0;
+----
+db error: ERROR: BM25() accepts 0 or 2 arguments: k1 and b
+
+
+# Error: BM25() with plain table in FROM (no inverted index scan)
+query error
+SELECT id, BM25() FROM docs WHERE id > 0;
+----
+db error: ERROR: bm25() requires an inverted index scan in the same query
+
+
+# EXPLAIN for BM25 basic scan
+query
+EXPLAIN (EXECUTION) SELECT id, BM25() FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (bm25:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "bm25":REAL
+  -- TopN[1][3 id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# EXPLAIN for BM25 with multiple references (SELECT + WHERE + ORDER BY)
+query
+EXPLAIN (EXECUTION) SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0 ORDER BY BM25() DESC LIMIT 3;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[3][expressions: (id:INTEGER, "id")] -> "id":INTEGER
+  -- TopN[2][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Filter[1][expression: presto_gt("sdb_inverted_index_score",0)] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# EXPLAIN for UNION ALL with BM25 (same scorer per branch)
+query
+EXPLAIN (EXECUTION) (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+UNION ALL
+(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[7][id ASC NULLS LAST] -> "id":INTEGER, "score":REAL
+  -- LocalPartition[6][REPARTITION ROUND ROBIN] -> "id":INTEGER, "score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[5][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# EXPLAIN for subquery: BM25 inside, outer references alias
+query
+EXPLAIN (EXECUTION) SELECT id, score FROM (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
+) sub ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "score":REAL
+  -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+    -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+query
+EXPLAIN (EXECUTION) SELECT id, score, BM25() FROM (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
+) sub ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[4][expressions: (id:INTEGER, "id"), (score:REAL, "score"), (bm25:REAL, "score")] -> "id":INTEGER, "score":REAL, "bm25":REAL
+  -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# Error: outer TFIDF() with inner BM25() — scorer type mismatch
+query error
+EXPLAIN (EXECUTION) SELECT id, score, TFIDF() FROM (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
+) sub ORDER BY id;
+----
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for same inverted index
+
+
+# EXPLAIN for CTE with BM25
+query
+EXPLAIN (EXECUTION) WITH scored AS (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+)
+SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
+  -- TopN[1][3 id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+# EXPLAIN for outer BM25() referencing inner subquery score column
+query
+EXPLAIN (EXECUTION) SELECT id, BM25() > 0 AS has_score FROM (
+  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+) sub ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
+  -- TopN[1][3 id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+query
+EXPLAIN (EXECUTION) SELECT * FROM docs_idx;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableScan[0][docs, scan=search] -> "id":INTEGER, "body":VARCHAR
+
+
+# --- Multi-table join tests ---
+statement ok
+CREATE TABLE docs2 (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs2 VALUES (2, 'the swift fox'), (4, 'a clever fox'), (6, 'the lazy dog');
+
+
+statement ok
+CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs2;
+
+
+statement ok
+CREATE TABLE meta (id INTEGER PRIMARY KEY, tag VARCHAR);
+
+
+statement ok
+INSERT INTO meta VALUES (2, 'interesting'), (4, 'notable'), (5, 'relevant');
+
+
+# Error: JOIN two inverted indexes with BM25() outside — ambiguous which index provides the score
+query error
+SELECT docs_idx.id, BM25() FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_idx.id
+WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
+LIMIT 3;
+----
+db error: ERROR: Only one inverted index scan can produce a score per query
+
+
+# Works: JOIN two inverted indexes, BM25() scoped inside each subquery (only one subquery scores)
+query
+SELECT a.id, a.score > 0 AS has_score FROM
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  JOIN
+  (SELECT id FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  ON a.id = b.id
+ORDER BY a.id;
+----
+id	has_score
+2	f
+4	t
+
+
+# Works: JOIN two inverted indexes, same scorer (BM25) scoped inside each subquery
+query
+SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  JOIN
+  (SELECT id, BM25() AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  ON a.id = b.id
+ORDER BY a.id;
+----
+id	has_score	b_has_score
+2	f	t
+4	t	t
+
+
+
+# Works: JOIN two inverted indexes, different scorers (BM25 vs TFIDF) scoped inside each subquery
+query
+SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  JOIN
+  (SELECT id, TFIDF() AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  ON a.id = b.id
+ORDER BY a.id;
+----
+id	has_score	b_has_score
+2	f	t
+4	t	t
+
+
+# EXPLAIN for join two inverted indexes with scorer scoped inside subquery
+query
+EXPLAIN (EXECUTION) SELECT a.id, a.score > 0 AS has_score FROM
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  JOIN
+  (SELECT id FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  ON a.id = b.id
+ORDER BY a.id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[4][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
+  -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[1][docs2, scan=search] -> "id":INTEGER
+
+
+# Works: JOIN inverted index with plain table, BM25() from inverted scan
+query
+SELECT docs_idx.id, BM25() > 0 AS has_score, meta.tag FROM docs_idx
+JOIN meta ON docs_idx.id = meta.id
+WHERE PHRASE(docs_idx.body, 'fox')
+ORDER BY docs_idx.id;
+----
+id	has_score	tag
+2	f	interesting
+4	t	notable
+5	t	relevant
+
+
+# EXPLAIN for join inverted + plain table with BM25()
+query
+EXPLAIN (EXECUTION) SELECT docs_idx.id, BM25() > 0 AS has_score, meta.tag FROM docs_idx
+JOIN meta ON docs_idx.id = meta.id
+WHERE PHRASE(docs_idx.body, 'fox')
+ORDER BY docs_idx.id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[4][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (tag:VARCHAR, "tag")] -> "id":INTEGER, "has_score":BOOLEAN, "tag":VARCHAR
+  -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
+    -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
+      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[1][meta, scan=full] -> "id":INTEGER, "tag":VARCHAR
+
+
+statement ok
+DROP TABLE docs2;
+
+
+statement ok
+DROP TABLE meta;
+
+
+# Union tree: each branch is itself a UNION (((fox UNION lazy) UNION ALL (fox UNION lazy)))
+query
+(
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  UNION ALL
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+)
+UNION ALL
+(
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  UNION ALL
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+)
+ORDER BY id LIMIT 6;
+----
+id	score
+2	0
+2	0
+3	0
+3	0
+4	0.05305543
+4	0.05305543
+
+
+# EXPLAIN for union tree
+query
+EXPLAIN (EXECUTION) (
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  UNION ALL
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+)
+UNION ALL
+(
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  UNION ALL
+  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+)
+ORDER BY id LIMIT 6;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TopN[13][6 id ASC NULLS LAST] -> "id":INTEGER, "score":REAL
+  -- LocalPartition[12][REPARTITION ROUND ROBIN] -> "id":INTEGER, "score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[5][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[8][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- Limit[7][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[6][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[11][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
+      -- Limit[10][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[9][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+
+query
+EXPLAIN (EXECUTION) (
+  (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  UNION ALL
+  (SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+)
+UNION ALL
+(
+  (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  UNION ALL
+  (SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+)
+ORDER BY BM25()
+LIMIT 6;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TopN[13][6 sdb_inverted_index_score ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+  -- LocalPartition[12][REPARTITION ROUND ROBIN] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[5][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[8][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[7][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[6][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[11][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[10][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[9][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+
+statement ok
+DROP TABLE docs;
+
+
+# Large dataset: more docs than velox batch size (1024) exercise multi-batch path
+statement ok
+CREATE TABLE bigdocs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX bigdocs_idx ON bigdocs USING inverted(id, body en);
+
+
+statement ok
+INSERT INTO bigdocs SELECT i, 'fox' FROM generate_series(1, 1100) AS s(i);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) bigdocs;
+
+
+# All 1100 docs match 'fox'; count exercises multi-batch materializer path
+query
+SELECT COUNT(*) FROM bigdocs_idx WHERE PHRASE(body, 'fox');
+----
+count
+1100
+
+
+# BM25 scores valid across >1024 docs (multiple velox batches)
+query
+SELECT COUNT(*) FROM bigdocs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0;
+----
+count
+1100
+
+
+# Ordering across batches is stable
+query
+SELECT id FROM bigdocs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM bigdocs_idx WHERE PHRASE(body, 'fox') ORDER BY id DESC LIMIT 3;
+----
+id
+1100
+1099
+1098
+
+
+statement ok
+DROP TABLE bigdocs;

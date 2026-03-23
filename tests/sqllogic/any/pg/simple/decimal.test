@@ -59,9 +59,13 @@ array
 # t
 
 
-query error invalid input syntax for type integer
+query error
 SELECT 1::numeric('aboba');
+----
+db error: ERROR: invalid input syntax for type integer
 
 
-query error invalid input syntax for type integer
+query error
 SELECT 1::numeric(10, 'aboba');
+----
+db error: ERROR: invalid input syntax for type integer

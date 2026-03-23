@@ -86,6 +86,10 @@ std::optional<T> TryGetImpl(const Node* expr) {
       return str[0];
     }
   } else if constexpr (std::is_same_v<T, bool>) {
+    if (nodeTag(expr) == T_Boolean) {
+      return boolVal(expr);
+    }
+
     if (auto val = TryGet<std::string_view>(expr)) {
       if (*val == "true" || *val == "on") {
         return true;

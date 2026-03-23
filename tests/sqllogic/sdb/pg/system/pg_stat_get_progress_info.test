@@ -4,12 +4,12 @@
 query
 SELECT * FROM pg_stat_progress_copy;
 ----
-pid	datid	datname	relid	command	type	bytes_processed	bytes_total	tuples_processed	tuples_excluded
+pid	datid	datname	relid	command	type	bytes_processed	bytes_total	tuples_processed	tuples_excluded	tuples_skipped
 
 query
 SELECT * FROM pg_stat_progress_create_index;
 ----
-pid	datid	datname	relid	index_relid	command	phase	tuples_total	tuples_done
+pid	datid	datname	relid	index_relid	command	phase	lockers_total	lockers_done	current_locker_pid	tuples_total	tuples_done	partitions_total	partitions_done
 
 # Setup
 statement ok
@@ -29,7 +29,7 @@ CREATE INDEX index_t ON t USING inverted(r);
 query
 SELECT * FROM pg_stat_progress_create_index;
 ----
-pid	datid	datname	relid	index_relid	command	phase	tuples_total	tuples_done
+pid	datid	datname	relid	index_relid	command	phase	lockers_total	lockers_done	current_locker_pid	tuples_total	tuples_done	partitions_total	partitions_done
 
 # Cleanup
 statement ok

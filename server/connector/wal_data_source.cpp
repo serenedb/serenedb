@@ -116,13 +116,13 @@ void WALDataSource::addSplit(
 
   // Initialize WAL iterator
   std::unique_ptr<rocksdb::TransactionLogIterator> iterator;
-  auto s = _db.GetUpdatesSince(
-    _range.start_sequence, &iterator,
-    rocksdb::TransactionLogIterator::ReadOptions(true));
+  auto s =
+    _db.GetUpdatesSince(_range.start_sequence, &iterator,
+                        rocksdb::TransactionLogIterator::ReadOptions(true));
 
   if (!s.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "WALDataSource: failed to open WAL iterator: ",
-              s.ToString());
+    SDB_THROW(ERROR_INTERNAL,
+              "WALDataSource: failed to open WAL iterator: ", s.ToString());
   }
 
   _wal_iterator = std::move(iterator);
@@ -171,8 +171,7 @@ catalog::Column::Id WALDataSource::ExtractColumnId(
 
 std::string WALDataSource::ExtractPK(const rocksdb::Slice& key) const {
   SDB_ASSERT(key.size() > kKeyPrefixSize);
-  return std::string(key.data() + kKeyPrefixSize,
-                     key.size() - kKeyPrefixSize);
+  return std::string(key.data() + kKeyPrefixSize, key.size() - kKeyPrefixSize);
 }
 
 std::optional<size_t> WALDataSource::FindColumnIndex(
@@ -255,14 +254,12 @@ velox::RowVectorPtr WALDataSource::FlushAccumulator(uint64_t max_rows) {
   for (size_t col = 0; col < num_cols; ++col) {
     auto kind = _read_type->childAt(col)->kind();
     if (kind == velox::TypeKind::UNKNOWN) {
-      columns.push_back(
-        velox::BaseVector::createNullConstant(velox::UNKNOWN(), num_rows,
-                                              &_memory_pool));
+      columns.push_back(velox::BaseVector::createNullConstant(
+        velox::UNKNOWN(), num_rows, &_memory_pool));
       continue;
     }
-    columns.push_back(
-      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(BuildColumnVector, kind, live_rows,
-                                         col, _memory_pool));
+    columns.push_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      BuildColumnVector, kind, live_rows, col, _memory_pool));
   }
 
   return std::make_shared<velox::RowVector>(&_memory_pool, _read_type,
@@ -291,8 +288,8 @@ bool WALDataSource::DrainWAL(uint64_t target_rows) {
   while (_wal_iterator->Valid() && countLiveRows() < target_rows) {
     auto s = _wal_iterator->status();
     if (!s.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "WALDataSource: WAL iterator error: ",
-                s.ToString());
+      SDB_THROW(ERROR_INTERNAL,
+                "WALDataSource: WAL iterator error: ", s.ToString());
     }
 
     auto batch = _wal_iterator->GetBatch();
@@ -305,8 +302,8 @@ bool WALDataSource::DrainWAL(uint64_t target_rows) {
 
     s = batch.writeBatchPtr->Iterate(&handler);
     if (!s.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "WALDataSource: failed to iterate batch: ",
-                s.ToString());
+      SDB_THROW(ERROR_INTERNAL,
+                "WALDataSource: failed to iterate batch: ", s.ToString());
     }
 
     _wal_iterator->Next();

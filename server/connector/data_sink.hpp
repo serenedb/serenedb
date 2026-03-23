@@ -30,6 +30,10 @@
 
 #include <vector>
 
+namespace sdb::pg {
+class IndexProgressReporter;
+}  // namespace sdb::pg
+
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
@@ -325,19 +329,17 @@ extern template class SSTInsertDataSink<false>;
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {
  public:
-  using ProgressCallback = std::function<void(uint64_t)>;
-
   RocksDBIndexBackfillDataSink(
     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
-    ProgressCallback progress_callback = {});
+    std::shared_ptr<pg::IndexProgressReporter> progress = {});
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::WriterMutexLock _table_lock_guard;
-  ProgressCallback _progress_callback;
+  std::shared_ptr<pg::IndexProgressReporter> _progress;
   uint64_t _completed_rows = 0;
 };
 

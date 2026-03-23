@@ -76,10 +76,12 @@ class CTASCreateTableExecutor final : public CommandExecutor {
   CTASState _state;
 };
 
+class IndexProgressReporter;
+
 struct CreateIndexState {
   bool created = false;
-  // Keeps progress tracker entry alive until pipeline finishes
-  std::shared_ptr<void> progress_guard;
+  // Keeps progress reporter alive until pipeline finishes
+  std::shared_ptr<IndexProgressReporter> progress;
 };
 
 class CreateIndexExecutor final : public CommandExecutor {

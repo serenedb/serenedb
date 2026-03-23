@@ -41,6 +41,7 @@
 #include "connector/sink_writer_base.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
+#include "pg/progress_tracker.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
@@ -2583,7 +2584,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
   std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
-  ProgressCallback progress_callback)
+  std::shared_ptr<pg::IndexProgressReporter> progress)
   : RocksDBDataSinkBase<
       NoopSinkWriter>{NoopSinkWriter{},
                       memory_pool,
@@ -2596,7 +2597,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
                         return w;
                       }()},
     _table_lock_guard{table_lock},
-    _progress_callback{std::move(progress_callback)} {}
+    _progress{std::move(progress)} {}
 
 void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
@@ -2633,8 +2634,8 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   _completed_rows += num_rows;
-  if (_progress_callback) {
-    _progress_callback(_completed_rows);
+  if (_progress) {
+    _progress->SetTuplesDone(_completed_rows);
   }
 }
 

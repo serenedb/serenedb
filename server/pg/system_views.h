@@ -752,28 +752,36 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   SELECT
       S.pid AS pid,
       S.datid AS datid,
-      S.datname AS datname,
+      D.datname AS datname,
       S.relid AS relid,
       CASE S.param5 WHEN 1 THEN 'COPY FROM' WHEN 2 THEN 'COPY TO' END AS command,
       CASE S.param6 WHEN 1 THEN 'FILE' WHEN 2 THEN 'PROGRAM' WHEN 3 THEN 'PIPE' WHEN 4 THEN 'CALLBACK' END AS type,
       S.param1 AS bytes_processed,
       S.param2 AS bytes_total,
       S.param3 AS tuples_processed,
-      S.param4 AS tuples_excluded
-  FROM pg_stat_get_progress_info('COPY') AS S;)",
+      S.param4 AS tuples_excluded,
+      S.param7 AS tuples_skipped
+  FROM pg_stat_get_progress_info('COPY') AS S
+      LEFT JOIN pg_database D ON S.datid = D.oid;)",
 
   R"(CREATE VIEW pg_stat_progress_create_index AS
   SELECT
       S.pid AS pid,
       S.datid AS datid,
-      S.datname AS datname,
+      D.datname AS datname,
       S.relid AS relid,
-      S.param3 AS index_relid,
-      CASE S.param4 WHEN 1 THEN 'CREATE INDEX' WHEN 2 THEN 'CREATE INDEX CONCURRENTLY' WHEN 3 THEN 'REINDEX' WHEN 4 THEN 'REINDEX CONCURRENTLY' END AS command,
-      CASE S.param5 WHEN 1 THEN 'initializing' WHEN 2 THEN 'building index' WHEN 3 THEN 'waiting for writers before marking dead' WHEN 4 THEN 'index validation: scanning index' END AS phase,
-      S.param1 AS tuples_total,
-      S.param2 AS tuples_done
-  FROM pg_stat_get_progress_info('CREATE INDEX') AS S;)",
+      CAST(S.param7 AS oid) AS index_relid,
+      CASE S.param1 WHEN 1 THEN 'CREATE INDEX' WHEN 2 THEN 'CREATE INDEX CONCURRENTLY' WHEN 3 THEN 'REINDEX' WHEN 4 THEN 'REINDEX CONCURRENTLY' END AS command,
+      CASE S.param10 WHEN 1 THEN 'initializing' WHEN 2 THEN 'waiting for writers before build' WHEN 3 THEN 'building index' WHEN 4 THEN 'waiting for writers before validation' WHEN 5 THEN 'index validation: scanning index' WHEN 6 THEN 'index validation: sorting tuples' WHEN 7 THEN 'index validation: scanning table' WHEN 8 THEN 'waiting for old snapshots' WHEN 9 THEN 'waiting for readers before marking dead' WHEN 10 THEN 'waiting for readers before dropping' END AS phase,
+      S.param4 AS lockers_total,
+      S.param5 AS lockers_done,
+      S.param6 AS current_locker_pid,
+      S.param12 AS tuples_total,
+      S.param13 AS tuples_done,
+      S.param14 AS partitions_total,
+      S.param15 AS partitions_done
+  FROM pg_stat_get_progress_info('CREATE INDEX') AS S
+      LEFT JOIN pg_database D ON S.datid = D.oid;)",
 });
 
 }  // namespace sdb::pg

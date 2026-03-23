@@ -41,6 +41,10 @@
 #include <thread>
 #include <type_traits>
 
+namespace sdb::pg {
+class IndexProgressReporter;
+}  // namespace sdb::pg
+
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/fwd.h"
@@ -446,14 +450,13 @@ class RocksDBTable : public axiom::connector::Table {
     return (self._backfill_index_id);
   }
 
-  using ProgressCallback = std::function<void(uint64_t)>;
-
-  void SetBackfillProgressCallback(ProgressCallback cb) {
-    _backfill_progress_callback = std::move(cb);
+  void SetIndexProgressReporter(std::shared_ptr<pg::IndexProgressReporter> r) {
+    _index_progress_reporter = std::move(r);
   }
 
-  const ProgressCallback& BackfillProgressCallback() const noexcept {
-    return _backfill_progress_callback;
+  const std::shared_ptr<pg::IndexProgressReporter>& GetIndexProgressReporter()
+    const noexcept {
+    return _index_progress_reporter;
   }
 
   decltype(auto) WalRecoveryRange(this auto&& self) noexcept {
@@ -472,7 +475,7 @@ class RocksDBTable : public axiom::connector::Table {
   bool _update_pk = false;
   bool _bulk_insert = false;
   ObjectId _backfill_index_id;
-  ProgressCallback _backfill_progress_callback;
+  std::shared_ptr<pg::IndexProgressReporter> _index_progress_reporter;
   WALRecoveryRange _wal_recovery_range;
 };
 
@@ -997,7 +1000,7 @@ class SereneDBConnector final : public velox::connector::Connector {
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, std::move(backfill_writer), table_lock,
-              table.BackfillProgressCallback());
+              table.GetIndexProgressReporter());
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

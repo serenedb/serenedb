@@ -29,6 +29,7 @@
 #include <velox/dwio/common/WriterFactory.h>
 
 #include "basics/down_cast.h"
+#include "pg/progress_tracker.h"
 #include "serenedb_connector.hpp"
 
 namespace {
@@ -68,7 +69,7 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
 FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
                            velox::memory::MemoryPool& leaf_pool,
                            velox::memory::MemoryPool& aggregate_pool)
-  : _progress_callback{options->progress_callback} {
+  : _progress{options->progress} {
   // S3 requiries leaf_pool
   auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
@@ -87,8 +88,8 @@ void FileDataSink::appendData(velox::RowVectorPtr input) {
   auto batch_rows = static_cast<uint64_t>(input->size());
   _stats.numWrittenBytes += batch_bytes;
   _completed_rows += batch_rows;
-  if (_progress_callback) {
-    _progress_callback({.delta_rows = batch_rows, .delta_bytes = batch_bytes});
+  if (_progress) {
+    _progress->ReportBatch(batch_rows, batch_bytes);
   }
 }
 
@@ -99,7 +100,12 @@ std::vector<std::string> FileDataSink::close() {
   return {};
 }
 
-void FileDataSink::abort() { _writer->abort(); }
+void FileDataSink::abort() {
+  _writer->abort();
+  if (_progress) {
+    _progress->Cancel();
+  }
+}
 
 FileDataSource::FileDataSource(
   std::shared_ptr<ReaderOptions> options,
@@ -114,10 +120,9 @@ FileDataSource::FileDataSource(
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
     _report_callback{options->report_callback},
-    _progress_callback{options->progress_callback} {
-  if (options->bytes_total) {
-    options->bytes_total->store(static_cast<int64_t>(_source->size()),
-                                std::memory_order_relaxed);
+    _progress{options->progress} {
+  if (_progress) {
+    _progress->SetBytesTotal(static_cast<int64_t>(_source->size()));
   }
   SDB_ASSERT(_row_reader_options);
   _reader_options->setMemoryPool(memory_pool);
@@ -239,15 +244,11 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  auto batch_rows = static_cast<uint64_t>(batch->size());
-  auto batch_bytes = batch->estimateFlatSize();
-  auto excluded = rows_read - batch_rows;
+  const auto batch_rows = batch->size();
   _completed_rows += batch_rows;
-  _completed_bytes += batch_bytes;
-  if (_progress_callback) {
-    _progress_callback({.delta_rows = batch_rows,
-                        .delta_bytes = batch_bytes,
-                        .delta_excluded = excluded});
+  if (_progress) {
+    _progress->ReportBatch(batch_rows, batch->estimateFlatSize(),
+                           rows_read - batch_rows);
   }
   if (_report_callback) {
     const auto now = std::chrono::high_resolution_clock::now();
@@ -260,6 +261,12 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
     }
   }
   return std::dynamic_pointer_cast<velox::RowVector>(batch);
+}
+
+void FileDataSource::cancel() {
+  if (_progress) {
+    _progress->Cancel();
+  }
 }
 
 }  // namespace sdb::connector

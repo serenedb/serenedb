@@ -27,8 +27,10 @@ namespace {
 
 std::string_view CommandToString(ProgressCommand cmd) {
   switch (cmd) {
-    case ProgressCommand::Copy: return "COPY";
-    case ProgressCommand::CreateIndex: return "CREATE INDEX";
+    case ProgressCommand::Copy:
+      return "COPY";
+    case ProgressCommand::CreateIndex:
+      return "CREATE INDEX";
   }
   return "";
 }
@@ -84,30 +86,18 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData(
     });
 
   static constexpr uint64_t kNullMask = MaskFromNonNulls({
-    GetIndex(&SdbStatProgress::pid),
-    GetIndex(&SdbStatProgress::datid),
-    GetIndex(&SdbStatProgress::datname),
-    GetIndex(&SdbStatProgress::relid),
-    GetIndex(&SdbStatProgress::command),
-    GetIndex(&SdbStatProgress::param1),
-    GetIndex(&SdbStatProgress::param2),
-    GetIndex(&SdbStatProgress::param3),
-    GetIndex(&SdbStatProgress::param4),
-    GetIndex(&SdbStatProgress::param5),
-    GetIndex(&SdbStatProgress::param6),
-    GetIndex(&SdbStatProgress::param7),
-    GetIndex(&SdbStatProgress::param8),
-    GetIndex(&SdbStatProgress::param9),
-    GetIndex(&SdbStatProgress::param10),
-    GetIndex(&SdbStatProgress::param11),
-    GetIndex(&SdbStatProgress::param12),
-    GetIndex(&SdbStatProgress::param13),
-    GetIndex(&SdbStatProgress::param14),
-    GetIndex(&SdbStatProgress::param15),
-    GetIndex(&SdbStatProgress::param16),
-    GetIndex(&SdbStatProgress::param17),
-    GetIndex(&SdbStatProgress::param18),
-    GetIndex(&SdbStatProgress::param19),
+    GetIndex(&SdbStatProgress::pid),     GetIndex(&SdbStatProgress::datid),
+    GetIndex(&SdbStatProgress::datname), GetIndex(&SdbStatProgress::relid),
+    GetIndex(&SdbStatProgress::command), GetIndex(&SdbStatProgress::param1),
+    GetIndex(&SdbStatProgress::param2),  GetIndex(&SdbStatProgress::param3),
+    GetIndex(&SdbStatProgress::param4),  GetIndex(&SdbStatProgress::param5),
+    GetIndex(&SdbStatProgress::param6),  GetIndex(&SdbStatProgress::param7),
+    GetIndex(&SdbStatProgress::param8),  GetIndex(&SdbStatProgress::param9),
+    GetIndex(&SdbStatProgress::param10), GetIndex(&SdbStatProgress::param11),
+    GetIndex(&SdbStatProgress::param12), GetIndex(&SdbStatProgress::param13),
+    GetIndex(&SdbStatProgress::param14), GetIndex(&SdbStatProgress::param15),
+    GetIndex(&SdbStatProgress::param16), GetIndex(&SdbStatProgress::param17),
+    GetIndex(&SdbStatProgress::param18), GetIndex(&SdbStatProgress::param19),
     GetIndex(&SdbStatProgress::param20),
   });
 

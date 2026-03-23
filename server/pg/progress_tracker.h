@@ -27,30 +27,17 @@
 #include <string>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb::pg {
-
-// Generic progress tracking for long-running commands, modeled after
-// PostgreSQL's pgstat_progress infrastructure. All pg_stat_progress_*
-// views read from this single tracker — each command type uses
-// its own param indices (all int64, just like PG).
-//
-// The views (GetTableData) do int→string mapping, not the tracker.
-//
-// Usage:
-//   auto& tracker = ProgressTracker::Instance();
-//   auto id = tracker.StartCommand({.pid = ..., .command_type = ...});
-//   tracker.UpdateParam(id, CopyProgress::kTuplesProcessed, rows);
-//   tracker.EndCommand(id);  // or let Guard RAII handle it.
 
 enum class ProgressCommand : int64_t {
   Copy,
   CreateIndex,
 };
 
-// Up to 10 int64 param slots per entry, like PG's PROGRESS_NPARAMS.
 inline constexpr size_t kProgressMaxParams = 20;
 
 struct ProgressEntry {
@@ -64,8 +51,8 @@ struct ProgressEntry {
 class ProgressTracker {
  public:
   static ProgressTracker& Instance() {
-    static ProgressTracker instance;
-    return instance;
+    static ProgressTracker kInstance;
+    return kInstance;
   }
 
   struct Snapshot {
@@ -97,16 +84,13 @@ class ProgressTracker {
     }
   }
 
-  // Returns a direct pointer to the atomic params array for lock-free access.
-  // The pointer is stable for the lifetime of the entry (until EndCommand).
-  using ParamsPtr = std::array<std::atomic<int64_t>, kProgressMaxParams>*;
+  using Params = std::array<std::atomic<int64_t>, kProgressMaxParams>;
 
-  ParamsPtr GetParams(uint64_t id) {
+  Params& GetParams(uint64_t id) {
     absl::ReaderMutexLock lock(&_mutex);
-    if (auto it = _entries.find(id); it != _entries.end()) {
-      return &it->second->params;
-    }
-    return nullptr;
+    auto it = _entries.find(id);
+    SDB_ASSERT(it != _entries.end());
+    return it->second->params;
   }
 
   void EndCommand(uint64_t id) {
@@ -153,7 +137,6 @@ class ProgressTracker {
     return result;
   }
 
-  // RAII guard that calls EndCommand on destruction.
   class Guard {
    public:
     Guard() : _tracker{nullptr}, _id{0} {}
@@ -167,8 +150,7 @@ class ProgressTracker {
 
     Guard(const Guard&) = delete;
     Guard& operator=(const Guard&) = delete;
-    Guard(Guard&& other) noexcept
-      : _tracker{other._tracker}, _id{other._id} {
+    Guard(Guard&& other) noexcept : _tracker{other._tracker}, _id{other._id} {
       other._tracker = nullptr;
     }
     Guard& operator=(Guard&& other) noexcept {
@@ -184,6 +166,13 @@ class ProgressTracker {
     }
 
     uint64_t Id() const { return _id; }
+
+    void Cancel() {
+      if (_tracker) {
+        _tracker->EndCommand(_id);
+        _tracker = nullptr;
+      }
+    }
 
    private:
     ProgressTracker* _tracker;
@@ -209,29 +198,76 @@ class ProgressTracker {
   uint64_t _next_id = 1;
 };
 
-// ---- Per-command param index constants ----
-// All values are int64, views do int→string mapping.
+namespace copy_progress {
+enum class Command : int64_t;
+enum class Type : int64_t;
+}  // namespace copy_progress
+
+namespace create_index_progress {
+enum class Command : int64_t;
+enum class Phase : int64_t;
+}  // namespace create_index_progress
+
+class CopyProgressReporter {
+ public:
+  CopyProgressReporter(ObjectId relid, copy_progress::Command command,
+                       copy_progress::Type type);
+
+  void ReportBatch(uint64_t delta_rows, uint64_t delta_bytes,
+                   uint64_t delta_excluded = 0);
+  void ReportSkipped(uint64_t count = 1);
+  void SetBytesTotal(int64_t bytes);
+  void Cancel() { _guard.Cancel(); }
+
+ private:
+  ProgressTracker::Guard _guard;
+  ProgressTracker::Params& _params;
+};
+
+class IndexProgressReporter {
+ public:
+  IndexProgressReporter(ObjectId datid, std::string datname, ObjectId relid,
+                        create_index_progress::Command command,
+                        create_index_progress::Phase phase,
+                        ObjectId index_relid);
+
+  void SetPhase(create_index_progress::Phase phase);
+  void SetTuplesDone(uint64_t rows);
+  void SetTuplesTotal(uint64_t rows);
+  void Cancel() { _guard.Cancel(); }
+
+ private:
+  ProgressTracker::Guard _guard;
+  ProgressTracker::Params& _params;
+};
 
 namespace copy_progress {
-// Matches PG's PROGRESS_COPY_* layout
 inline constexpr size_t kBytesProcessed = 0;
 inline constexpr size_t kBytesTotal = 1;
 inline constexpr size_t kTuplesProcessed = 2;
 inline constexpr size_t kTuplesExcluded = 3;
-inline constexpr size_t kCommand = 4;  // CopyCommand enum
-inline constexpr size_t kType = 5;     // CopyType enum
+inline constexpr size_t kCommand = 4;
+inline constexpr size_t kType = 5;
+inline constexpr size_t kTuplesSkipped = 6;
 
 enum class Command : int64_t { CopyFrom = 1, CopyTo = 2 };
 enum class Type : int64_t { File = 1, Program = 2, Pipe = 3, Callback = 4 };
 }  // namespace copy_progress
 
 namespace create_index_progress {
-// Matches PG's PROGRESS_CREATEIDX_* layout
-inline constexpr size_t kTuplesTotal = 0;
-inline constexpr size_t kTuplesDone = 1;
-inline constexpr size_t kIndexRelid = 2;
-inline constexpr size_t kCommand = 3;  // CreateIndexCommand enum
-inline constexpr size_t kPhase = 4;    // CreateIndexPhase enum
+// we have a gap between kCommand and kLockersTotal because pg has the same
+inline constexpr size_t kCommand = 0;
+inline constexpr size_t kLockersTotal = 3;
+inline constexpr size_t kLockersDone = 4;
+inline constexpr size_t kCurrentLockerPid = 5;
+inline constexpr size_t kIndexRelid = 6;
+inline constexpr size_t kAccessMethodOid = 7;
+inline constexpr size_t kPhase = 9;
+inline constexpr size_t kSubphase = 10;
+inline constexpr size_t kTuplesTotal = 11;
+inline constexpr size_t kTuplesDone = 12;
+inline constexpr size_t kPartitionsTotal = 13;
+inline constexpr size_t kPartitionsDone = 14;
 
 enum class Command : int64_t {
   CreateIndex = 1,
@@ -242,9 +278,15 @@ enum class Command : int64_t {
 
 enum class Phase : int64_t {
   Initializing = 1,
-  BuildingIndex = 2,
-  WaitingForWriters = 3,
-  Validating = 4,
+  WaitingForWritersBeforeBuild = 2,
+  BuildingIndex = 3,
+  WaitingForWritersBeforeValidation = 4,
+  ValidatingScanningIndex = 5,
+  ValidatingSortingTuples = 6,
+  ValidatingScanningTable = 7,
+  WaitingForOldSnapshots = 8,
+  WaitingForReadersBeforeMarkingDead = 9,
+  WaitingForReadersBeforeDropping = 10,
 };
 }  // namespace create_index_progress
 

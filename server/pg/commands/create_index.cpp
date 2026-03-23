@@ -175,31 +175,12 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
 
   // Register progress tracking
   {
-    auto& tracker = ProgressTracker::Instance();
-    ProgressEntry entry;
-    entry.pid = static_cast<int64_t>(gettid());
-    entry.datid = db;
-    entry.datname = std::string{context.GetDatabase()};
-    entry.relid = catalog_table->GetId();
-    entry.command_type = ProgressCommand::CreateIndex;
-    auto entry_id = tracker.StartCommand(std::move(entry));
-    tracker.UpdateParam(
-      entry_id, create_index_progress::kCommand,
-      static_cast<int64_t>(create_index_progress::Command::CreateIndex));
-    tracker.UpdateParam(
-      entry_id, create_index_progress::kPhase,
-      static_cast<int64_t>(create_index_progress::Phase::BuildingIndex));
-    tracker.UpdateParam(entry_id, create_index_progress::kIndexRelid,
-                        static_cast<int64_t>(catalog_index->GetId().id()));
-
-    auto guard =
-      std::make_shared<ProgressTracker::Guard>(tracker.MakeGuard(entry_id));
-    state.progress_guard = guard;
-
-    table.SetBackfillProgressCallback([&tracker, entry_id](uint64_t rows) {
-      tracker.UpdateParam(entry_id, create_index_progress::kTuplesDone,
-                          static_cast<int64_t>(rows));
-    });
+    auto reporter = std::make_shared<IndexProgressReporter>(
+      db, std::string{context.GetDatabase()}, catalog_table->GetId(),
+      create_index_progress::Command::CreateIndex,
+      create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
+    state.progress = reporter;
+    table.SetIndexProgressReporter(std::move(reporter));
   }
 
   query.CompileQuery();

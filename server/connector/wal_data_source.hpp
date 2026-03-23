@@ -53,9 +53,8 @@ struct WALRecoveryRange {
 class WALDataSource final : public velox::connector::DataSource {
  public:
   WALDataSource(velox::memory::MemoryPool& memory_pool,
-                rocksdb::TransactionDB& db,
-                rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
-                ObjectId object_key,
+                rocksdb::TransactionDB& db, rocksdb::ColumnFamilyHandle& cf,
+                velox::RowTypePtr read_type, ObjectId object_key,
                 std::vector<catalog::Column::Id> column_ids,
                 WALRecoveryRange range);
 
@@ -83,8 +82,7 @@ class WALDataSource final : public velox::connector::DataSource {
    public:
     WALBatchHandler(WALDataSource& source) : _source{source} {}
 
-    rocksdb::Status PutCF(uint32_t column_family_id,
-                          const rocksdb::Slice& key,
+    rocksdb::Status PutCF(uint32_t column_family_id, const rocksdb::Slice& key,
                           const rocksdb::Slice& value) override;
 
     rocksdb::Status DeleteCF(uint32_t column_family_id,
@@ -100,9 +98,7 @@ class WALDataSource final : public velox::connector::DataSource {
 
     void LogData(const rocksdb::Slice&) override {}
 
-    rocksdb::Status MarkNoop(bool) override {
-      return rocksdb::Status::OK();
-    }
+    rocksdb::Status MarkNoop(bool) override { return rocksdb::Status::OK(); }
 
     rocksdb::Status MarkBeginPrepare(bool = false) override {
       return rocksdb::Status::OK();
@@ -131,8 +127,7 @@ class WALDataSource final : public velox::connector::DataSource {
   };
 
   // Check if key belongs to our table and default CF
-  bool IsOurKey(uint32_t column_family_id,
-                const rocksdb::Slice& key) const;
+  bool IsOurKey(uint32_t column_family_id, const rocksdb::Slice& key) const;
 
   // Extract Column::Id from a full RocksDB key
   catalog::Column::Id ExtractColumnId(const rocksdb::Slice& key) const;

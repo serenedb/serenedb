@@ -36,8 +36,7 @@ namespace {
 
 // Convert a SQL LIKE pattern to an ICU regex pattern.
 // '%' → '.*', '_' → '.', backslash escapes, all other regex chars escaped.
-std::shared_ptr<icu::RegexMatcher> BuildLikeMatcher(
-  std::string_view pattern) {
+std::shared_ptr<icu::RegexMatcher> BuildLikeMatcher(std::string_view pattern) {
   std::string regex;
   regex.reserve(pattern.size() * 2);
   regex += "\\A";  // anchor start
@@ -67,8 +66,8 @@ std::shared_ptr<icu::RegexMatcher> BuildLikeMatcher(
   regex += "\\z";  // anchor end
   auto unicode = icu::UnicodeString::fromUTF8(regex);
   UErrorCode status = U_ZERO_ERROR;
-  auto matcher = std::make_shared<icu::RegexMatcher>(
-    unicode, UREGEX_DOTALL, status);
+  auto matcher =
+    std::make_shared<icu::RegexMatcher>(unicode, UREGEX_DOTALL, status);
   if (U_FAILURE(status)) {
     return nullptr;
   }
@@ -153,9 +152,7 @@ class WildcardQuery : public Filter::Query {
  public:
   WildcardQuery(std::shared_ptr<icu::RegexMatcher> matcher,
                 std::string_view field, Query::ptr&& approx)
-    : _matcher{std::move(matcher)},
-      _field{field},
-      _approx{std::move(approx)} {
+    : _matcher{std::move(matcher)}, _field{field}, _approx{std::move(approx)} {
     SDB_ASSERT(_approx);
   }
 
@@ -212,8 +209,8 @@ Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
     if (p == Filter::Query::empty()) {
       return p;
     }
-    return memory::make_tracked<WildcardQuery>(ctx.memory, opts.matcher, std::string_view{field},
-                                               std::move(p));
+    return memory::make_tracked<WildcardQuery>(
+      ctx.memory, opts.matcher, std::string_view{field}, std::move(p));
   }
 
   AndQuery::queries_t queries{{ctx.memory}};
@@ -229,8 +226,8 @@ Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
   } else {
     for (auto& part : parts) {
       for (const auto& info : part) {
-        p = ByTerm::prepare(ctx, field,
-                            std::get<ByTermOptions>(info.part).term);
+        p =
+          ByTerm::prepare(ctx, field, std::get<ByTermOptions>(info.part).term);
         if (p == Filter::Query::empty()) {
           return p;
         }
@@ -241,8 +238,8 @@ Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
   }
   auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
   conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries), size);
-  return memory::make_tracked<WildcardQuery>(ctx.memory, opts.matcher, std::string_view{field},
-                                             std::move(conjunction));
+  return memory::make_tracked<WildcardQuery>(
+    ctx.memory, opts.matcher, std::string_view{field}, std::move(conjunction));
 }
 
 WildcardFilterOptions::WildcardFilterOptions(
@@ -292,8 +289,7 @@ WildcardFilterOptions::WildcardFilterOptions(
       escaped = true;
     } else if (*pattern_curr == '_' || *pattern_curr == '%') {
       if (*pattern_curr == '_' ||
-          (pattern_curr != pattern.data() &&
-           pattern_curr != pattern_end - 1)) {
+          (pattern_curr != pattern.data() && pattern_curr != pattern_end - 1)) {
         needs_matcher = true;
       }
       make_parts(pattern_first, pattern_last);

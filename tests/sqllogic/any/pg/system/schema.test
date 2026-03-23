@@ -1,13 +1,19 @@
-statement error db error: ERROR: cannot drop schema pg_catalog because it is required by the database system
+statement error
 DROP SCHEMA pg_catalog;
+----
+db error: ERROR: cannot drop schema pg_catalog because it is required by the database system
 
 
-statement error db error: ERROR: unacceptable schema name "pg_catalog"
+statement error
 CREATE SCHEMA pg_catalog;
+----
+db error: ERROR: unacceptable schema name "pg_catalog"
 
 
-query error db error: ERROR: relation "sql_parts" does not exist
+query error
 SELECT * FROM sql_parts LIMIT 0;
+----
+db error: ERROR: relation "sql_parts" does not exist
 
 
 query

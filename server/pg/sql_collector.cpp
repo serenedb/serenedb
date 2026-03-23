@@ -22,14 +22,16 @@
 
 #include <absl/functional/overload.h>
 
+#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/tfidf.hpp>
 #include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 #include "query/transaction.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -57,20 +59,24 @@ class ObjectCollector {
       _objects{objects},
       _max_bind_param_idx{max_bind_param_idx} {}
 
-  void CollectStmt(const State* parent, const Node* node);
+  void CollectStmt(const State* parent, const Node* node,
+                   bool inherit_scorer = false);
 
   void CollectExprNode(const State& state, const Node* expr);
 
  private:
-  void CollectFromClause(const State& state, const List* from_clause);
+  void CollectFromClause(const State& state, const List* from_clause,
+                         bool inherit_scorer);
   void CollectWithClause(State& state, const WithClause* with_clause);
-  void CollectFromNode(const State& state, const Node* node);
+  void CollectFromNode(const State& state, const Node* node,
+                       bool inherit_scorer);
 
   void CollectInsertStmt(State& state, const InsertStmt& stmt);
   void CollectDeleteStmt(State& state, const DeleteStmt& stmt);
   void CollectUpdateStmt(State& state, const UpdateStmt& stmt);
   void CollectMergeStmt(State& state, const MergeStmt& stmt);
-  void CollectSelectStmt(State& state, const SelectStmt* stmt);
+  void CollectSelectStmt(State& state, const SelectStmt* stmt,
+                         bool inherit_scorer);
   void CollectExplainStmt(const State* parent, const ExplainStmt& stmt);
   void CollectCallStmt(State& state, const CallStmt& stmt);
   void CollectViewStmt(State& state, const ViewStmt& stmt);
@@ -81,7 +87,8 @@ class ObjectCollector {
 
   void CollectRangeVar(const State& state, const RangeVar* var);
   void CollectRangeSubSelect(const State& state,
-                             const RangeSubselect& subselect);
+                             const RangeSubselect& subselect,
+                             bool inherit_scorer);
   void CollectJoinExpr(const State& state, const JoinExpr& expr);
   void CollectRangeFunction(const State& state, const RangeFunction& function);
 
@@ -155,13 +162,94 @@ void ObjectCollector::CollectAExpr(const State& state, const A_Expr& expr) {
   }
 }
 
+// Extract a numeric value from a positional function argument list.
+// Tries double first, falls back to int (promotable to double).
+std::optional<double> GetNumericArg(const List* args, size_t i) {
+  if (auto v = TryGet<double>(args, i)) {
+    return v;
+  }
+  if (auto v = TryGet<int>(args, i)) {
+    return static_cast<double>(*v);
+  }
+  return std::nullopt;
+}
+
+std::shared_ptr<const irs::Scorer> CreateScorer(const Objects::ObjectName& name,
+                                                const FuncCall& expr) {
+  if (!name.schema.empty()) {
+    return nullptr;
+  }
+
+  const int nargs = list_length(expr.args);
+
+  if (name.relation == irs::BM25::type_name()) {
+    if (nargs != 0 && nargs != 2) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("BM25() accepts 0 or 2 arguments: k1 and b"));
+    }
+    float k1 = irs::BM25::K();
+    float b = irs::BM25::B();
+    if (nargs == 2) {
+      const auto v0 = GetNumericArg(expr.args, 0);
+      if (!v0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("BM25() k1 argument must be a numeric literal"));
+      }
+      const auto v1 = GetNumericArg(expr.args, 1);
+      if (!v1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("BM25() b argument must be a numeric literal"));
+      }
+      k1 = static_cast<float>(*v0);
+      b = static_cast<float>(*v1);
+    }
+    return std::make_shared<irs::BM25>(k1, b);
+  }
+
+  if (name.relation == irs::TFIDF::type_name()) {
+    if (nargs > 1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("TFIDF() accepts at most 1 argument: normalize"));
+    }
+    bool normalize = false;
+    if (nargs == 1) {
+      const auto v = TryGet<bool>(expr.args, 0);
+      if (!v) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("TFIDF() normalize argument must be a boolean literal"));
+      }
+      normalize = *v;
+    }
+    return std::make_shared<irs::TFIDF>(normalize);
+  }
+
+  return nullptr;
+}
+
 void ObjectCollector::CollectFuncCall(const State& state,
                                       const FuncCall& expr) {
   auto name = ParseObjectName(expr.funcname, _database);
   if (expr.agg_within_group || expr.func_variadic) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "unsupported function call with aggregate options");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Unsupported function call with aggregate options"));
   }
+
+  // BM25() / TFIDF() produce a score column in the output --
+  // they are not catalog functions and must not be registered as such.
+  if (auto scorer = CreateScorer(name, expr)) {
+    if (!_objects.SetScorer(std::move(scorer))) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Only one scorer function is allowed per inverted index"),
+        ERR_HINT("Use UNION to combine different score functions for same "
+                 "inverted index"));
+    }
+    return;
+  }
+
   CollectExprList(state, expr.args);
   CollectExprNode(state, expr.agg_filter);
   CollectSortClause(state, expr.agg_order);
@@ -204,8 +292,9 @@ void ObjectCollector::CollectAIndirection(const State& state,
     } else if (IsA(&n, A_Star)) {
       // nothing to collect
     } else {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "only array subscripts are supported in indirection");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("only array subscripts are supported in indirection"));
     }
   });
 }
@@ -225,23 +314,25 @@ void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var) {
   }
 
   if (_database.data() && var->catalogname && var->catalogname != _database) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "Cross database queries are not allowed: ", var->catalogname,
-              " accessed instead of ", _database);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Cross database queries are not allowed: ", var->catalogname,
+              " accessed instead of ", _database));
   }
 
   _objects.ensureRelation(var->schemaname, relation);
 }
 
 void ObjectCollector::CollectRangeSubSelect(const State& state,
-                                            const RangeSubselect& subselect) {
-  CollectStmt(&state, subselect.subquery);
+                                            const RangeSubselect& subselect,
+                                            bool inherit_scorer) {
+  CollectStmt(&state, subselect.subquery, inherit_scorer);
 }
 
 void ObjectCollector::CollectJoinExpr(const State& state,
                                       const JoinExpr& expr) {
-  CollectFromNode(state, expr.larg);
-  CollectFromNode(state, expr.rarg);
+  CollectFromNode(state, expr.larg, false);
+  CollectFromNode(state, expr.rarg, false);
   CollectExprNode(state, expr.quals);
 }
 
@@ -257,8 +348,9 @@ void ObjectCollector::CollectRangeFunction(const State& state,
         auto* n = castNode(FuncCall, function);
         auto name = ParseObjectName(n->funcname, _database);
         if (n->agg_within_group || n->func_variadic) {
-          SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                    "unsupported function call with aggregate options");
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("unsupported function call with aggregate options"));
         }
         CollectExprList(state, n->args);
         _objects.ensureFunction(name.schema, name.relation);
@@ -267,12 +359,14 @@ void ObjectCollector::CollectRangeFunction(const State& state,
       default:
         break;
     }
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "unsupported function type: ", magic_enum::enum_name(tag));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("unsupported function type: ", magic_enum::enum_name(tag)));
   });
 }
 
-void ObjectCollector::CollectFromNode(const State& state, const Node* node) {
+void ObjectCollector::CollectFromNode(const State& state, const Node* node,
+                                      bool inherit_scorer) {
   if (!node) {
     return;
   }
@@ -281,7 +375,8 @@ void ObjectCollector::CollectFromNode(const State& state, const Node* node) {
       CollectRangeVar(state, castNode(RangeVar, node));
       break;
     case T_RangeSubselect:
-      CollectRangeSubSelect(state, *castNode(RangeSubselect, node));
+      CollectRangeSubSelect(state, *castNode(RangeSubselect, node),
+                            inherit_scorer);
       break;
     case T_JoinExpr:
       CollectJoinExpr(state, *castNode(JoinExpr, node));
@@ -295,9 +390,12 @@ void ObjectCollector::CollectFromNode(const State& state, const Node* node) {
 }
 
 void ObjectCollector::CollectFromClause(const State& state,
-                                        const List* from_clause) {
-  VisitNodes(from_clause,
-             [&](const Node& node) { CollectFromNode(state, &node); });
+                                        const List* from_clause,
+                                        bool inherit_scorer) {
+  inherit_scorer &= list_length(from_clause) <= 1;
+  VisitNodes(from_clause, [&](const Node& node) {
+    CollectFromNode(state, &node, inherit_scorer);
+  });
 }
 
 void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
@@ -346,9 +444,9 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
       const auto& param_ref = castNode(ParamRef, expr);
       SDB_ASSERT(param_ref->number > 0);
       if (param_ref->number >= std::numeric_limits<ParamIndex>::max()) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "number of parameters must be between 0 and ",
-                  std::numeric_limits<ParamIndex>::max());
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("number of parameters must be between 0 and ",
+                                std::numeric_limits<ParamIndex>::max()));
       }
       _max_bind_param_idx =
         std::max<ParamIndex>(_max_bind_param_idx, param_ref->number);
@@ -365,7 +463,8 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
       // TODO(mbkkt) but validate names, etc should be here
       return;
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported node type: ", expr->type);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("unsupported node type: ", expr->type));
   }
 }
 
@@ -402,8 +501,9 @@ void ObjectCollector::CollectValuesLists(const State& state,
     if (tuple_length < 0) {
       tuple_length = list_length(&tuple);
     } else if (tuple_length != list_length(&tuple)) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "VALUES lists must have the same number of columns");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("VALUES lists must have the same number of columns"));
     }
     VisitNodes(&tuple,
                [&](const Node& expr) { CollectExprNode(state, &expr); });
@@ -434,41 +534,53 @@ void ObjectCollector::CollectInsertStmt(State& state, const InsertStmt& stmt) {
 void ObjectCollector::CollectDeleteStmt(State& state, const DeleteStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
   // postgres for DeleteStmt named fromClause as usingClause
-  CollectFromClause(state, stmt.usingClause);
+  CollectFromClause(state, stmt.usingClause, false);
   CollectRangeVar(state, stmt.relation);
 }
 
 void ObjectCollector::CollectUpdateStmt(State& state, const UpdateStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
-  CollectFromClause(state, stmt.fromClause);
+  CollectFromClause(state, stmt.fromClause, false);
   CollectRangeVar(state, stmt.relation);
 }
 
 void ObjectCollector::CollectMergeStmt(State& state, const MergeStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
-  CollectFromNode(state, stmt.sourceRelation);
+  CollectFromNode(state, stmt.sourceRelation, false);
   CollectRangeVar(state, stmt.relation);
 }
 
-void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
+void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt,
+                                        bool inherit_scorer) {
   if (!stmt) {
     return;
   }
+  auto outer = _objects.BeginNode(inherit_scorer);
+  irs::Finally end = [&] noexcept {
+    _objects.EndNode(stmt, std::move(outer));
+  };
 
   CollectWithClause(state, stmt->withClause);
+  // TODO(Pasha): Collect query in stmt->intoClause?
 
-  CollectValuesLists(state, stmt->valuesLists);
-  CollectFromClause(state, stmt->fromClause);
-  CollectSelectStmt(state, stmt->larg);
-  CollectSelectStmt(state, stmt->rarg);
+  if (stmt->valuesLists) {
+    CollectValuesLists(state, stmt->valuesLists);
+    CollectSortClause(state, stmt->sortClause);
+  } else if (stmt->op == SETOP_NONE) {
+    CollectExprNode(state, stmt->whereClause);
+    CollectExprList(state, stmt->groupClause);
+    CollectExprNode(state, stmt->havingClause);
+    CollectDistinctClause(state, stmt->distinctClause);
+    CollectExprList(state, stmt->targetList);
+    CollectSortClause(state, stmt->sortClause);
 
-  CollectDistinctClause(state, stmt->distinctClause);
-  CollectExprList(state, stmt->targetList);
+    CollectFromClause(state, stmt->fromClause, true);
+  } else {
+    CollectSortClause(state, stmt->sortClause);
 
-  CollectExprNode(state, stmt->whereClause);
-  CollectSortClause(state, stmt->sortClause);
-  CollectExprNode(state, stmt->havingClause);
-  CollectExprList(state, stmt->groupClause);
+    CollectSelectStmt(state, stmt->larg, true);
+    CollectSelectStmt(state, stmt->rarg, true);
+  }
   CollectExprNode(state, stmt->limitOffset);
   CollectExprNode(state, stmt->limitCount);
 }
@@ -484,7 +596,7 @@ void ObjectCollector::CollectCallStmt(State& state, const CallStmt& stmt) {
 
 void ObjectCollector::CollectViewStmt(State& state, const ViewStmt& stmt) {
   SDB_ASSERT(stmt.query->type == T_SelectStmt);
-  CollectSelectStmt(state, castNode(SelectStmt, stmt.query));
+  CollectSelectStmt(state, castNode(SelectStmt, stmt.query), false);
 
   if (_max_bind_param_idx > 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_PARAMETER),
@@ -542,7 +654,8 @@ void ObjectCollector::CollectCopyStmt(State& state, const CopyStmt& stmt) {
   CollectExprNode(state, stmt.whereClause);
 }
 
-void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
+void ObjectCollector::CollectStmt(const State* parent, const Node* node,
+                                  bool inherit_scorer) {
   if (!node) {
     return;
   }
@@ -557,7 +670,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
     case T_MergeStmt:
       return CollectMergeStmt(state, *castNode(MergeStmt, node));
     case T_SelectStmt:
-      return CollectSelectStmt(state, castNode(SelectStmt, node));
+      return CollectSelectStmt(state, castNode(SelectStmt, node),
+                               inherit_scorer);
     case T_CallStmt:
       return CollectCallStmt(state, *castNode(CallStmt, node));
     case T_ExplainStmt:
@@ -615,28 +729,29 @@ Objects::ObjectName ParseObjectName(const List* names,
                                     std::string_view database,
                                     std::string_view default_schema) {
   return VisitName(
-    names, absl::Overload{
-             [&](std::string_view relation) {
-               return Objects::ObjectName{default_schema, relation};
-             },
-             [](std::string_view schema, std::string_view relation) {
-               return Objects::ObjectName{schema, relation};
-             },
-             [&](std::string_view db, std::string_view schema,
-                 std::string_view relation) {
-               if (database.data() && db != database) {
-                 SDB_THROW(ERROR_BAD_PARAMETER,
-                           "Cross database queries are not allowed: ", db,
-                           " accessed instead of ", database);
-               }
-               return Objects::ObjectName{schema, relation};
-             },
-             [&](...) -> Objects::ObjectName {
-               SDB_THROW(
-                 ERROR_NOT_IMPLEMENTED,
-                 "unsupported function call with too many dotted names");
-             },
-           });
+    names,
+    absl::Overload{
+      [&](std::string_view relation) {
+        return Objects::ObjectName{default_schema, relation};
+      },
+      [](std::string_view schema, std::string_view relation) {
+        return Objects::ObjectName{schema, relation};
+      },
+      [&](std::string_view db, std::string_view schema,
+          std::string_view relation) {
+        if (database.data() && db != database) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("Cross database queries are not allowed: ",
+                                  db, " accessed instead of ", database));
+        }
+        return Objects::ObjectName{schema, relation};
+      },
+      [&](...) -> Objects::ObjectName {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("unsupported function call with too many dotted names"));
+      },
+    });
 }
 
 Objects::ObjectName ParseObjectName(std::string_view name,

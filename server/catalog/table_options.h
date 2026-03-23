@@ -146,6 +146,7 @@ struct Column {
   static constexpr Id kMaxRealId =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
+  static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
     static constexpr std::string_view kUpdatePrefix = "upd$";
@@ -167,6 +168,9 @@ struct Column {
   bool IsGeneratedPK() const { return id == kGeneratedPKId; }
 
   static std::string GeneratePKName(std::span<const std::string> column_names);
+
+  static std::string GenerateScoreName(
+    std::span<const std::string> column_names);
 
   Id id;
   velox::TypePtr type;

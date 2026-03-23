@@ -919,9 +919,9 @@ TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
     irs::ViewCast<irs::byte_type>(std::string_view("42"));
 
   auto query = root.prepare({.index = reader});
-  SearchScanDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
-                              velox::ROW(names, types), all_column_oids,
-                              all_column_oids[0], kObjectKey, reader, *query);
+  SearchScanDataSource source(
+    *pool(), nullptr, *_db, *_cf_handles.front(), velox::ROW(names, types),
+    all_column_oids, all_column_oids[0], kObjectKey, reader, *query, nullptr);
 
   source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
   const auto expected = makeRowVector(

@@ -76,7 +76,8 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
   }
 }
 
-velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
+velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys,
+                                           velox::VectorPtr scores) {
   std::vector<velox::VectorPtr> columns;
   const auto num_columns = _row_type->size();
   if (!num_columns) {
@@ -90,6 +91,12 @@ velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
     basics::StrResize(key, table_prefix_size);
     const auto column_id = _column_ids[col_idx];
 
+    if (column_id == catalog::Column::kInvertedIndexScoreId) {
+      SDB_ASSERT(scores);
+      SDB_ASSERT(scores->size() == row_keys.size());
+      columns.push_back(std::move(scores));
+      continue;
+    }
     auto read_column_id = _column_ids[col_idx];
     if (column_id == catalog::Column::kGeneratedPKId) {
       // TODO(Dronplane): optimize this case - if there is at least one

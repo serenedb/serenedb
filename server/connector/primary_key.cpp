@@ -57,29 +57,19 @@ constexpr std::string_view kDblPosNaN{"\xFF\xF8\x00\x00\x00\x00\x00\x00", 8};
 // TODO(Dronplane) support complex types
 // TODO(Dronplane) make code vector specific, e.g. FlatVector will work faster
 // clang-format on
+
+// Core serialization: appends a single typed native value to key.
 template<velox::TypeKind Kind>
-void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
-                        velox::vector_size_t idx) {
-  // PKs parts are default sorted - so we can not accept type that has custom
-  // comparison or we will break expectations that data is read in PK order.
-  SDB_ASSERT(!column.typeUsesCustomComparison());
-  using T = velox::TypeTraits<Kind>::NativeType;
-  if (column.isNullAt(idx)) {
-    // Postgresql requires PK columns to be non NULL so do we
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "RocksDB Sink does not support NULL keys. Null found at row ",
-              idx);
-  }
+void AppendTypedValue(std::string& key,
+                      typename velox::TypeTraits<Kind>::NativeType value) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
   const auto base_size = key.size();
   if constexpr (std::is_same_v<T, bool>) {
-    key.append(column.as<velox::SimpleVector<T>>()->valueAt(idx) ? kTrueValue
-                                                                 : kFalseValue);
+    key.append(value ? kTrueValue : kFalseValue);
   } else if constexpr (std::is_integral_v<T>) {
-    auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);
     AppendSigned(key, value);
   } else if constexpr (std::is_floating_point_v<T>) {
     basics::StrAppend(key, sizeof(T));
-    auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);
     const auto is_zero = value == 0;
     if (!is_zero && !std::isnan(value)) {
       if constexpr (std::is_same_v<T, float>) {
@@ -110,7 +100,6 @@ void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
       memcpy(key.data() + base_size, kDblPosNaN.data(), sizeof(T));
     }
   } else if constexpr (std::is_same_v<T, velox::StringView>) {
-    auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);
     // TODO(Dronplane) make helper method in basics for string capacity growth
     // and use it here and in other places
     auto curr = value.begin();
@@ -130,7 +119,6 @@ void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
     key += kStringEnd;
   } else if constexpr (std::is_same_v<T, velox::Timestamp>) {
     basics::StrAppend(key, sizeof(int64_t) + sizeof(uint64_t));
-    const auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);
     absl::big_endian::Store(key.data() + base_size, value.getSeconds());
     absl::big_endian::Store(key.data() + base_size + sizeof(int64_t),
                             value.getNanos());
@@ -142,6 +130,50 @@ void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
   }
 }
 
+template<velox::TypeKind Kind>
+void AppendKeyValueImpl(std::string& key, const velox::BaseVector& column,
+                        velox::vector_size_t idx) {
+  // PKs parts are default sorted - so we can not accept type that has custom
+  // comparison or we will break expectations that data is read in PK order.
+  SDB_ASSERT(!column.typeUsesCustomComparison());
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  // Guard against complex types (ARRAY, MAP, ROW) where T = void.
+  if constexpr (std::is_same_v<T, bool> || std::is_integral_v<T> ||
+                std::is_floating_point_v<T> ||
+                std::is_same_v<T, velox::StringView> ||
+                std::is_same_v<T, velox::Timestamp>) {
+    if (column.isNullAt(idx)) {
+      // Postgresql requires PK columns to be non NULL so do we
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "RocksDB Sink does not support NULL keys. Null found at row ",
+                idx);
+    }
+    AppendTypedValue<Kind>(key,
+                           column.as<velox::SimpleVector<T>>()->valueAt(idx));
+  } else {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "RocksDB Sink does not support key value kind ",
+              velox::TypeKindName::toName(Kind));
+  }
+}
+
+// Appends a single column from a variant value. Dispatches on Kind; for
+// VARCHAR the variant stores std::string which is converted to StringView.
+template<velox::TypeKind Kind>
+void AppendVariantValue(std::string& key, const velox::variant& v) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  if constexpr (std::is_same_v<T, velox::StringView>) {
+    AppendTypedValue<Kind>(key, velox::StringView(v.value<std::string>()));
+  } else if constexpr (std::is_same_v<T, bool> || std::is_integral_v<T> ||
+                       std::is_floating_point_v<T> ||
+                       std::is_same_v<T, velox::Timestamp>) {
+    AppendTypedValue<Kind>(key, v.value<T>());
+  } else {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "RocksDB point lookup does not support PK type kind ",
+              velox::TypeKindName::toName(Kind));
+  }
+}
 }  // namespace
 
 void AppendKeyValue(std::string& key, const velox::BaseVector& column,
@@ -187,6 +219,15 @@ void Create(const velox::RowVector& data, velox::vector_size_t idx,
   for (const auto& column : data.children()) {
     VELOX_DYNAMIC_TYPE_DISPATCH(AppendKeyValueImpl, column->typeKind(), key,
                                 *column, idx);
+  }
+}
+
+void Create(std::span<const velox::variant> point,
+            const velox::RowType& pk_type, std::string& key) {
+  SDB_ASSERT(point.size() == pk_type.size());
+  for (size_t i = 0; i < point.size(); ++i) {
+    VELOX_DYNAMIC_TYPE_DISPATCH(AppendVariantValue, pk_type.childAt(i)->kind(),
+                                key, point[i]);
   }
 }
 

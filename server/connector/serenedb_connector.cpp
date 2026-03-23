@@ -42,8 +42,8 @@ constexpr bool kExecuteFiltersInTableScan = false;
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout, std::vector<Point> points,
-  velox::core::TypedExprPtr remaining_filter)
+  const axiom::connector::TableLayout& layout,
+  std::vector<SpecificPoint> points, velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
@@ -116,7 +116,7 @@ SereneDBTableLayout::createTableHandle(
 
     SDB_ASSERT(!conjunct_root.empty());
     auto handle = std::make_shared<SereneDBConnectorTableHandle>(
-      session, *this, std::vector<Point>{}, nullptr);
+      session, *this, std::vector<SpecificPoint>{}, nullptr);
     const auto& snapshot =
       inverted_index_table->GetTransaction().EnsureSearchSnapshot(
         inverted_index_table->GetIndex().GetId());
@@ -165,13 +165,13 @@ SereneDBTableLayout::createTableHandle(
       velox::BOOLEAN(), filters, velox::expression::kAnd);
   }
 
-  std::vector<Point> points;
+  std::vector<SpecificPoint> points;
   if (remaining_filter) {
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
 
     if (!res.points.empty()) {
-      points = std::move(res.points);
-      SortPoints(points, *pk_type);
+      points = ToSpecificPoints(res.points, *pk_type);
+      SortPoints(points);
       remaining_filter = std::move(res.remaining_filter);
     }
   }

@@ -390,7 +390,7 @@ void RocksDBPointLookupDataSource<Source>::BuildKeys(size_t batch_size,
         auto& key = _keys[rank * batch_size + point_idx];
         SDB_ASSERT(key.size() >= kKeyPrefixSize);
         key.resize(kKeyPrefixSize);
-        primary_key::Create(*_values, _offset + point_idx, key);
+        primary_key::Create(_values[_offset + point_idx], *_pk_type, key);
       }
     }
   } else {
@@ -401,7 +401,7 @@ void RocksDBPointLookupDataSource<Source>::BuildKeys(size_t batch_size,
         key.clear();
         key_utils::AppendTableKey(key, _object_key);
         key_utils::AppendColumnKey(key, _column_ids[col_idx]);
-        primary_key::Create(*_values, _offset + point_idx, key);
+        primary_key::Create(_values[_offset + point_idx], *_pk_type, key);
       }
     }
   }
@@ -501,7 +501,7 @@ size_t RocksDBPointLookupDataSource<Source>::CheckAndCountFound(
 template<typename Source>
 void RocksDBPointLookupDataSource<Source>::FinalizeOffset(size_t batch_size) {
   _offset += batch_size;
-  if (_offset >= _values->size()) {
+  if (_offset >= _values.size()) {
     _current_split.reset();
     _offset = 0;
   }
@@ -515,12 +515,11 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     return nullptr;
   }
 
-  SDB_ASSERT(_values);
-  SDB_ASSERT(_values->size() > 0,
+  SDB_ASSERT(!_values.empty(),
              "Case of empty filters should be processed in connector");
 
   const auto num_columns = _read_type->size();
-  const auto total_points = static_cast<size_t>(_values->size());
+  const auto total_points = _values.size();
   const auto batch_size =
     std::min(static_cast<size_t>(size), total_points - _offset);
   SDB_ASSERT(batch_size > 0);

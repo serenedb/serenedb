@@ -211,7 +211,8 @@ class SereneDBConnectorTableHandle final
 
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout, std::vector<Point> points,
+    const axiom::connector::TableLayout& layout,
+    std::vector<SpecificPoint> points,
     velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
@@ -247,7 +248,9 @@ class SereneDBConnectorTableHandle final
 
   auto& GetRemainingFilter() const noexcept { return _remaining_filter; }
 
-  const std::vector<Point>& GetPoints() const noexcept { return _points; }
+  const std::vector<SpecificPoint>& GetPoints() const noexcept {
+    return _points;
+  }
 
   const containers::FlatHashMap<std::string, FilterColumn>& GetTableColumnMap()
     const noexcept {
@@ -268,7 +271,7 @@ class SereneDBConnectorTableHandle final
   irs::Filter::Query::ptr _search_query;
   ObjectId _index_id = ObjectId::none();
   velox::RowTypePtr _pk_type;
-  std::vector<Point> _points;
+  std::vector<SpecificPoint> _points;
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
@@ -822,9 +825,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       if (!points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
-          object_key,
-          PointsToRowVector(points, serene_table_handle.GetPKType(),
-                            connector_query_ctx->memoryPool()),
+          object_key, points, serene_table_handle.GetPKType(),
           output_column_count, compiled_filter,
           rocksdb_transaction.GetSnapshot(),
           connector_query_ctx->expressionEvaluator(), rocksdb_transaction);
@@ -856,9 +857,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
         *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
-        object_key,
-        PointsToRowVector(points, serene_table_handle.GetPKType(),
-                          connector_query_ctx->memoryPool()),
+        object_key, points, serene_table_handle.GetPKType(),
         output_column_count, compiled_filter, snapshot,
         connector_query_ctx->expressionEvaluator(), _db);
     }

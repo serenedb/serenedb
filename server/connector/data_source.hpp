@@ -33,6 +33,7 @@
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/rocksdb_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -232,7 +233,8 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   RocksDBPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
-    ObjectId object_key, velox::RowVectorPtr values, size_t output_column_count,
+    ObjectId object_key, std::vector<SpecificPoint> values,
+    velox::RowTypePtr pk_type, size_t output_column_count,
     velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
     velox::core::ExpressionEvaluator* evaluator, Source& source)
@@ -245,6 +247,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
                             std::move(remaining_filter),
                             evaluator},
       _values{std::move(values)},
+      _pk_type{std::move(pk_type)},
       _ctx{source, [snapshot] {
              rocksdb::ReadOptions ro;
              ro.async_io = IsIOUringEnabled();
@@ -278,7 +281,8 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   void FinalizeOffset(size_t batch_size);
 
   size_t _offset = 0;
-  velox::RowVectorPtr _values;
+  std::vector<SpecificPoint> _values;
+  velox::RowTypePtr _pk_type;
   std::vector<size_t> _sorted_col_indices;
   std::vector<size_t> _col_rank;
   // TODO(mkornaukhov) use std::array, need pass callback into multiget context

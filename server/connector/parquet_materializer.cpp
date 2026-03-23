@@ -52,13 +52,6 @@ ParquetMaterializer::ParquetMaterializer(
   _total_rows = offset;
 }
 
-uint32_t ParquetMaterializer::RowGroupForRow(int64_t row) const {
-  auto it =
-    std::upper_bound(_row_group_starts.begin(), _row_group_starts.end(), row);
-  SDB_ASSERT(it != _row_group_starts.begin(), "row before first row group");
-  return static_cast<uint32_t>(it - _row_group_starts.begin() - 1);
-}
-
 velox::RowVectorPtr ParquetMaterializer::ReadRows(
   std::span<const std::string> row_keys, velox::VectorPtr /*scores*/) {
   if (row_keys.empty()) {
@@ -76,14 +69,24 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
 
   velox::vector_size_t written = 0;
   size_t i = 0;
+  uint32_t rg = 0;
+  int64_t rg_start = 0;
+  int64_t rg_end = 0;
 
   while (i < row_keys.size()) {
     auto first_row = decode(row_keys[i]);
-    auto rg = RowGroupForRow(first_row);
-    auto rg_start = _row_group_starts[rg];
-    auto rg_end = (rg + 1 < _row_group_starts.size())
-                    ? _row_group_starts[rg + 1]
-                    : _total_rows;
+
+    if (i == 0 || first_row >= rg_end) {
+      // Search only in the remaining row groups.
+      auto begin = _row_group_starts.begin() + rg;
+      auto it = std::upper_bound(begin, _row_group_starts.end(), first_row);
+      SDB_ASSERT(it != _row_group_starts.begin(), "row before first row group");
+      rg = static_cast<uint32_t>(it - _row_group_starts.begin() - 1);
+      rg_start = _row_group_starts[rg];
+      rg_end = (rg + 1 < _row_group_starts.size())
+                 ? _row_group_starts[rg + 1]
+                 : _total_rows;
+    }
 
     size_t j = i + 1;
     while (j < row_keys.size() && decode(row_keys[j]) < rg_end) {

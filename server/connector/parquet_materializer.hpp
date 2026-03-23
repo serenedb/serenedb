@@ -44,8 +44,6 @@ class ParquetMaterializer {
                                velox::VectorPtr scores);
 
  private:
-  uint32_t RowGroupForRow(int64_t row) const;
-
   velox::memory::MemoryPool& _pool;
   std::shared_ptr<velox::ReadFile> _source;
   std::unique_ptr<velox::dwio::common::Reader> _reader;

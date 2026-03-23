@@ -470,8 +470,7 @@ class InvertedIndexTable : public axiom::connector::Table {
     auto* source = _table->layouts().front();
     auto layout = std::make_unique<SereneDBTableLayout>(
       name(), *this, *source->connector(), allColumns(),
-      std::vector<const axiom::connector::Column*>{},
-      std::vector<axiom::connector::SortOrder>{});
+      source->orderColumns(), source->sortOrder());
     _layouts.push_back(layout.get());
     _layout_handles.push_back(std::move(layout));
   }

@@ -77,7 +77,6 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
     auto first_row = decode(row_keys[i]);
 
     if (i == 0 || first_row >= rg_end) {
-      // Search only in the remaining row groups.
       auto begin = _row_group_starts.begin() + rg;
       auto it = std::upper_bound(begin, _row_group_starts.end(), first_row);
       SDB_ASSERT(it != _row_group_starts.begin(), "row before first row group");

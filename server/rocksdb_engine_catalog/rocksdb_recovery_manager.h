@@ -32,8 +32,8 @@
 namespace rocksdb {
 
 class TransactionDB;
-}  // namespace rocksdb
 
+}  // namespace rocksdb
 namespace sdb {
 
 enum class RecoveryState : uint32_t {

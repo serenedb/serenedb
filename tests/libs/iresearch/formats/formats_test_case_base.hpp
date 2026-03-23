@@ -236,7 +236,6 @@ class FormatTestCase : public IndexTestBase {
 class FormatTestCaseWithEncryption : public FormatTestCase {};
 
 }  // namespace tests
-
 namespace irs {
 
 // use base irs::position type for ancestors

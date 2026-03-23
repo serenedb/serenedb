@@ -32,6 +32,7 @@
 #include "basics/containers/flat_hash_set.h"
 
 namespace sdb::options {
+
 struct Option;
 struct Parameter;
 

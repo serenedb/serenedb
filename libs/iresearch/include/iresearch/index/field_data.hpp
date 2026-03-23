@@ -49,7 +49,9 @@ class Comparer;
 struct FlushState;
 
 namespace analysis {
+
 class Analyzer;
+
 }  // namespace analysis
 
 using int_block_pool = BlockPool<size_t, 8192, ManagedTypedAllocator<size_t>>;

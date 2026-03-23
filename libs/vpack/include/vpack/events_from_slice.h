@@ -13,6 +13,7 @@
 #include "vpack/validation_types.h"
 
 namespace tao::json::events {
+
 // Events producer to generate events from a vpack::Slice Value.
 
 template<auto Recurse, template<typename...> typename Traits, typename Consumer>

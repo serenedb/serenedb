@@ -28,8 +28,10 @@
 
 namespace sdb {
 namespace fuerte {
+
 class Connection;
 class ConnectionBuilder;
+
 }  // namespace fuerte
 class ClusterInfo;
 

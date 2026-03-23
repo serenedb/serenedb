@@ -37,9 +37,10 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::query {
-class Query;
-}  // namespace sdb::query
 
+class Query;
+
+}  // namespace sdb::query
 namespace sdb::pg {
 
 yaclib::Future<> CreateDatabase(ExecContext& ctx, const CreatedbStmt& stmt);

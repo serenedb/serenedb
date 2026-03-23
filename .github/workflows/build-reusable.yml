@@ -47,7 +47,7 @@ on:
         description: "JSON configuration for builds and job settings"
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
       CREATE_GITHUB_RELEASE:
         description: 'Create a GitHub Release with packages'
         required: true
@@ -77,7 +77,6 @@ env:
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
   CLUSTER_BRANCH: main
   BUILD_IMAGE: registry.serenedb.com:5000/serenedb-build-ubuntu:latest
-  SDB_CLUSTER: "Off"
   DEBUG_PRINT_ENV: "false"
 
 jobs:

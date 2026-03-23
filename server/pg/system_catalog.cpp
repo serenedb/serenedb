@@ -21,6 +21,7 @@
 #include "pg/system_catalog.h"
 
 #include <frozen/unordered_map.h>
+#include <vpack/serializer.h>
 
 #include <boost/pfr.hpp>
 
@@ -109,7 +110,6 @@
 #include "pg/system_table.h"
 #include "pg/system_views.h"
 #include "search/functions.hpp"
-#include "vpack/serializer.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -435,6 +435,7 @@ constexpr auto kMapping =
     {"term_gt", {search::functions::kTermGt, false}},
     {"term_in", {search::functions::kTermIn, false}},
     {"term_like", {search::functions::kTermLike, false}},
+    {"ngram_match", {search::functions::kNgramMatch, false}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {

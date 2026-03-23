@@ -20,6 +20,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 #include <rocksdb/types.h>
@@ -282,4 +283,5 @@ class InvertedIndexShard final
   };
   std::atomic<Error> _error{Error::NoError};
 };
+
 }  // namespace sdb::search

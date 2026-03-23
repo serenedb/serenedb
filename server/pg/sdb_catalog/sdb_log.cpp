@@ -29,6 +29,7 @@
 
 namespace sdb::pg {
 namespace {
+
 constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&SdbLog::id),
   GetIndex(&SdbLog::timestamp),

@@ -72,7 +72,3 @@
 #include "statistics/statistics_feature.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_includes.h"
-#endif

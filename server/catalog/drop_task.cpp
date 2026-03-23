@@ -43,7 +43,6 @@
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
-
 namespace {
 
 Result RemoveIndexShards(ObjectId db_id, ObjectId schema_id = ObjectId{0},

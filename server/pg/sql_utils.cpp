@@ -24,8 +24,9 @@
 #include <absl/strings/str_cat.h>
 #include <velox/type/Type.h>
 
+#include <iresearch/utils/utf8_utils.hpp>
+
 #include "basics/containers/flat_hash_set.h"
-#include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
 #include "catalog/sql_function_impl.h"
 #include "pg/pg_list_utils.h"

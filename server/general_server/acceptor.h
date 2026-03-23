@@ -58,4 +58,5 @@ class Acceptor {
   bool _open;
   size_t _accept_failures;
 };
+
 }  // namespace sdb::rest

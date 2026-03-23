@@ -30,13 +30,15 @@
 #include "rest_server/serened.h"
 
 namespace rocksdb {
+
 struct CompactionJobInfo;
 class DB;
 struct FlushJobInfo;
-}  // namespace rocksdb
 
+}  // namespace rocksdb
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 

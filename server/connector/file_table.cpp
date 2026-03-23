@@ -40,7 +40,6 @@ auto CreateReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
 }
 
 }  // namespace
-
 namespace sdb::connector {
 
 FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)

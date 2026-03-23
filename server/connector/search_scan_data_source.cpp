@@ -18,15 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search_data_source.hpp"
+#include "search_scan_data_source.hpp"
 
 #include "connector/primary_key.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "velox/core/PlanNode.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
-SearchDataSource::SearchDataSource(
+SearchScanDataSource::SearchScanDataSource(
   velox::memory::MemoryPool& memory_pool,
   // use just snapshot for now. But maybe we will need to have
   // this class template (or use some wrapper) to work with
@@ -48,12 +48,12 @@ SearchDataSource::SearchDataSource(
     _reader{reader},
     _query{query} {}
 
-void SearchDataSource::addSplit(
+void SearchScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  SDB_ENSURE(split, ERROR_INTERNAL, "SearchDataSource: split is null");
+  SDB_ENSURE(split, ERROR_INTERNAL, "SearchScanDataSource: split is null");
   if (_current_split) {
     SDB_THROW(ERROR_INTERNAL,
-              "SearchDataSource: a split is already being processed");
+              "SearchScanDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
   // let sequential read make new try
@@ -62,7 +62,7 @@ void SearchDataSource::addSplit(
   _doc.reset();
 }
 
-std::optional<velox::RowVectorPtr> SearchDataSource::next(
+std::optional<velox::RowVectorPtr> SearchScanDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
   SDB_ASSERT(_current_split,
@@ -72,8 +72,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
       _doc = segment.mask(_query.execute({.segment = segment}));
-      const auto* pk_column =
-        segment.column(sdb::connector::search::kPkFieldName);
+      const auto* pk_column = segment.column(connector::kPkFieldName);
       _pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);
       SDB_ASSERT(_pk_iterator);
       _pk_value = irs::get<irs::PayAttr>(*_pk_iterator);
@@ -111,27 +110,27 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
   return ReadRows(index_keys);
 }
 
-void SearchDataSource::addDynamicFilter(
+void SearchScanDataSource::addDynamicFilter(
   velox::column_index_t output_channel,
   const std::shared_ptr<velox::common::Filter>& filter) {
   VELOX_UNSUPPORTED();
 }
 
-uint64_t SearchDataSource::getCompletedBytes() {
+uint64_t SearchScanDataSource::getCompletedBytes() {
   // TODO: implement completed bytes tracking
   return 0;
 }
 
-uint64_t SearchDataSource::getCompletedRows() { return _produced; }
+uint64_t SearchScanDataSource::getCompletedRows() { return _produced; }
 
 std::unordered_map<std::string, velox::RuntimeMetric>
-SearchDataSource::getRuntimeStats() {
+SearchScanDataSource::getRuntimeStats() {
   // TODO: implement runtime stats reporting
   return {};
 }
 
-void SearchDataSource::cancel() {
+void SearchScanDataSource::cancel() {
   // TODO: implement cancellation logic
 }
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

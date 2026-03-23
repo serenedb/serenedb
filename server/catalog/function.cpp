@@ -21,6 +21,8 @@
 #include "catalog/function.h"
 
 #include <velox/type/Type.h>
+#include <vpack/serializer.h>
+#include <vpack/vpack_helper.h>
 
 #include <string_view>
 
@@ -32,8 +34,6 @@
 #include "catalog/sql_function_impl.h"
 #include "query/types.h"
 #include "utils/velox_vpack.h"
-#include "vpack/serializer.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
 
@@ -125,10 +125,6 @@ Result catalog::Function::Instantiate(
     if constexpr (std::is_same_v<T, pg::FunctionImpl>) {
       r = T::FromVPack(ObjectId{database}, properties.implementation, impl,
                        properties.signature.IsProcedure());
-    } else {
-#ifdef SDB_CLUSTER
-      r = T::FromVPack(ObjectId{database}, properties.implementation, impl);
-#endif
     }
 
     if (!r.ok()) {
@@ -197,11 +193,6 @@ void catalog::Function::WriteProperties(vpack::Builder& builder) const {
     case FunctionLanguage::SQL:
       _sql_impl->ToVPack(builder);
       break;
-#ifdef SDB_CLUSTER
-    case FunctionLanguage::AnalyzerJson:
-      _analyzer_impl->ToVPack(builder);
-      break;
-#endif
     default:
       SDB_ENSURE(false, ERROR_BAD_PARAMETER,
                  "Unsupported function language: ", _options.language);
@@ -223,11 +214,6 @@ void catalog::Function::WriteInternal(vpack::Builder& builder) const {
     case FunctionLanguage::SQL:
       _sql_impl->ToVPack(builder);
       break;
-#ifdef SDB_CLUSTER
-    case FunctionLanguage::AnalyzerJson:
-      _analyzer_impl->ToVPack(builder);
-      break;
-#endif
     default:
       SDB_ENSURE(false, ERROR_BAD_PARAMETER,
                  "Unsupported function language: ", _options.language);

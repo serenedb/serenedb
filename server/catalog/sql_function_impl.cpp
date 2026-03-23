@@ -20,11 +20,12 @@
 
 #include "catalog/sql_function_impl.h"
 
+#include <vpack/vpack_helper.h>
+
 #include "catalog/catalog.h"
 #include "pg/sql_parser.h"
 #include "pg/sql_resolver.h"
 #include "utils/query_string.h"
-#include "vpack/vpack_helper.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

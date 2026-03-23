@@ -91,7 +91,6 @@ bool IsIOUringEnabled() {
 }
 
 }  // namespace sdb
-
 namespace {
 
 const std::string kIoUringEnabled = "enabled";
@@ -1475,27 +1474,6 @@ void RocksDBOptionFeature::validateOptions(
   _min_write_buffer_number_to_merge_touched =
     options->processingResult().touched(
       "--rocksdb.min-write-buffer-number-to-merge");
-
-#ifdef SDB_CLUSTER
-  // limit memory usage of agent instances, if not otherwise configured
-  if (server().hasFeature<AgencyFeature>()) {
-    AgencyFeature& feature = server().getFeature<AgencyFeature>();
-    if (feature.activated()) {
-      // if we are an agency instance...
-      if (!options->processingResult().touched("--rocksdb.block-cache-size")) {
-        // restrict block cache size to 1 GB if not set explicitly
-        _block_cache_size =
-          std::min<uint64_t>(_block_cache_size, uint64_t(1) << 30);
-      }
-      if (!options->processingResult().touched(
-            "--rocksdb.total-write-buffer-size")) {
-        // restrict total write buffer size to 512 MB if not set explicitly
-        _total_write_buffer_size =
-          std::min<uint64_t>(_total_write_buffer_size, uint64_t(512) << 20);
-      }
-    }
-  }
-#endif
 
   if (_block_cache_type == ::kBlockCacheTypeLRU &&
       options->processingResult().touched(

@@ -25,6 +25,7 @@
 #include <iosfwd>
 
 namespace sdb {
+
 enum class RequestLane {
   // For requests that do not block or wait for something.
   // This ignores blocks that can occur when delivering

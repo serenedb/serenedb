@@ -42,6 +42,7 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::catalog {
+
 using AsyncResult = yaclib::Future<Result>;
 
 inline constexpr uint32_t kInitialDelay = 125;

@@ -3112,7 +3112,6 @@ class dumper : util::Noncopyable {
 */
 
 }  // namespace
-
 namespace irs {
 namespace burst_trie {
 

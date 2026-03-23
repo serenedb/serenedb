@@ -32,6 +32,7 @@
 #include <string>
 
 namespace sdb {
+
 class EndpointUnixDomain final : public Endpoint {
  public:
   //////////////////////////////////////////////////////////////////////////////
@@ -68,6 +69,7 @@ class EndpointUnixDomain final : public Endpoint {
  private:
   const std::string _path;
 };
+
 }  // namespace sdb
 
 #endif

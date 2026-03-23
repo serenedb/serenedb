@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <velox/vector/ComplexVector.h>
 
 #include <iresearch/index/index_writer.hpp>
@@ -31,7 +32,7 @@
 #include "sink_writer_base.hpp"
 #include "storage_engine/engine_feature.h"
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 class SearchRemoveFilterBase;
 
@@ -91,7 +92,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     }
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(sdb::catalog::ColumnAnalyzer&& column_analyzer);
+    void PrepareForStringValue(catalog::ColumnAnalyzer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -104,7 +105,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void PrepareForNullValue();
     void SetNullValue();
 
-    sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
+    search::AnalyzerImpl::CacheType::ptr analyzer;
     std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
     std::string_view name;
     irs::bytes_view value;
@@ -263,7 +264,7 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
                                        SearchSinkBackfillTrxHolder,
                                        public SearchSinkInsertBaseImpl {
  public:
-  SearchSinkBackfillWriter(sdb::search::InvertedIndexShard& shard,
+  SearchSinkBackfillWriter(search::InvertedIndexShard& shard,
                            AnalyzerProvider&& analyzer_provider,
                            std::span<const catalog::Column::Id> columns)
     : SearchSinkBackfillTrxHolder{shard.GetTransaction()},
@@ -303,7 +304,7 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
     _trx_storage = _shard.GetTransaction();
   }
 
-  sdb::search::InvertedIndexShard& _shard;
+  search::InvertedIndexShard& _shard;
 };
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

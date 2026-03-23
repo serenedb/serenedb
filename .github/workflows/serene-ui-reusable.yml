@@ -3,31 +3,30 @@ name: SereneUI-Build-Base
 on:
     workflow_call:
         inputs:
-            BRANCH:
-                description: "SereneDB Client UI branch to test"
+            VERSION:
+                description: "Version [xx.xx.x] (used as a tag)"
                 required: true
                 type: string
-                default: "main"
+            EXTRA_DOCKER_TAGS:
+                description: "Extra Docker tags [IFS= ,] (opt)"
+                required: false
+                type: string
+                default: ""
+            RUN_TESTS:
+                description: "Run SereneUI screenshot tests"
+                required: true
+                type: boolean
+                default: true
             BUILD_IMAGE:
                 description: "Build SereneUI Docker image"
                 required: true
                 type: boolean
                 default: false
             PUSH_IMAGE_TO_REGISTRY:
-                description: "Push SereneUI Docker image to Docker Registry"
+                description: "Push SereneUI image to Registry"
                 required: true
                 type: boolean
                 default: false
-            RUN_TESTS:
-                description: "Run SereneUI screenshot tests"
-                required: true
-                type: boolean
-                default: true
-            DOCKER_TAG:
-                description: "Custom TAG for SereneUI Docker image"
-                required: false
-                type: string
-                default: "latest"
             BUILD_LINUX_APP:
                 description: "Build SereneUI Linux desktop app"
                 required: true
@@ -44,15 +43,10 @@ on:
                 type: boolean
                 default: false
             PUSH_RELEASE:
-                description: "Publish desktop app builds as GitHub Release"
+                description: "Publish a GitHub Release"
                 required: true
                 type: boolean
                 default: false
-            RELEASE_TAG:
-                description: "GitHub Release tag/name (required when PUSH_RELEASE=true)"
-                required: false
-                type: string
-                default: ""
         secrets:
             PAT_TOKEN:
                 required: true
@@ -67,6 +61,9 @@ on:
                 required: true
             TG_CHAT_ID:
                 required: true
+            DOCKER_PASSWORD:
+                required: false
+                description: "Docker registry password / token"
 
 jobs:
     build-docker:
@@ -81,11 +78,17 @@ jobs:
                 working-directory: ./serene-ui
         env:
             WORKSPACE: ${{ github.workspace }}
-            BRANCH: ${{ inputs.BRANCH }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
-            DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
-            IMAGE: registry.serenedb.com:5000/serene-ui:${{ inputs.DOCKER_TAG }}
+            EXTRA_DOCKER_TAGS: ${{ inputs.EXTRA_DOCKER_TAGS }}
+            PUSH_RELEASE: ${{ inputs.PUSH_RELEASE }}
+            DOCKER_REGISTRY: "serenedb"
+            IMAGE: serene-ui
+            DOCKER_TAG: ${{ inputs.VERSION }}
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -122,11 +125,10 @@ jobs:
 
             - name: Build Docker image
               if: inputs.BUILD_IMAGE
-              run: |
-                  docker build --pull --no-cache --tag "$IMAGE" . 2>&1 | tee -a logs/build.log
-                  if [ "${{ inputs.PUSH_IMAGE_TO_REGISTRY }}" = "true" ]; then
-                    docker push "$IMAGE" 2>&1 | tee -a logs/build.log
-                  fi
+              env:
+                  DOCKER_USERNAME: "serenedb"
+                  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+              run: ./scripts/build_docker.sh
 
             - name: Cleanup workspace & Docker
               if: always()
@@ -141,12 +143,14 @@ jobs:
         permissions:
             contents: read
         timeout-minutes: 30
-        env:
-            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -213,13 +217,15 @@ jobs:
         permissions:
             contents: read
         timeout-minutes: 30
-        env:
-            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 shell: bash
                 working-directory: ./serene-ui
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -286,12 +292,14 @@ jobs:
         permissions:
             contents: read
         timeout-minutes: 144000
-        env:
-            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
         steps:
+            - name: Resolve branch
+              working-directory: ${{ github.workspace }}
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout SereneUI
               uses: actions/checkout@v4
               with:
@@ -357,7 +365,7 @@ jobs:
 
     release:
         name: Publish GitHub Release
-        needs: [build-linux-app, build-windows-app, build-macos-app]
+        needs: [build-linux-app, build-windows-app, build-macos-app, build-docker]
         if: >-
             always()
             && inputs.PUSH_RELEASE
@@ -368,9 +376,9 @@ jobs:
             contents: write
         steps:
             - name: Validate release inputs
-              if: inputs.PUSH_RELEASE && inputs.RELEASE_TAG == ''
+              if: inputs.PUSH_RELEASE && inputs.VERSION == ''
               run: |
-                  echo "RELEASE_TAG is required when PUSH_RELEASE=true"
+                  echo "VERSION is required when PUSH_RELEASE=true"
                   exit 1
 
             - name: Clean release-assets directory
@@ -400,12 +408,10 @@ jobs:
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
               with:
-                  tag_name: ${{ inputs.RELEASE_TAG }}
-                  name: SereneUI ${{ inputs.RELEASE_TAG }}
+                  tag_name: v${{ inputs.VERSION }}-ui
+                  name: SereneUI v${{ inputs.VERSION }}
                   body: |
-                      SereneUI desktop app build from branch `${{ inputs.BRANCH }}`.
-
-                      Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                      Docker image: https://hub.docker.com/r/serenedb/serene-ui/tags?name=${{ inputs.VERSION }}
                   draft: true
                   prerelease: true
                   token: ${{ secrets.GITHUB_TOKEN }}
@@ -425,11 +431,14 @@ jobs:
         runs-on: X64
         timeout-minutes: 5
         steps:
+            - name: Resolve branch
+              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
+
             - name: Checkout (for notify script)
               uses: actions/checkout@v4
               with:
                   repository: serenedb/serenedb
-                  ref: ${{ inputs.BRANCH }}
+                  ref: ${{ env.BRANCH }}
                   token: ${{ secrets.PAT_TOKEN }}
                   path: .
                   sparse-checkout: |
@@ -443,7 +452,7 @@ jobs:
                   TG_THREAD_ID_MAIN: "51"
                   TG_THREAD_ID_BUILD: "53"
                   TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
+                  BRANCH: ${{ env.BRANCH }}
                   JOB_STATUS: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
                   ACTOR: ${{ github.actor }}
                   WORKFLOW: ${{ github.workflow }}

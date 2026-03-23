@@ -32,10 +32,6 @@ using namespace sdb::app;
 static_assert(SerenedServer::id<LoggerFeature>() == 0);
 
 constexpr auto kNonServerFeatures = std::array{
-#ifdef SDB_CLUSTER
-  SerenedServer::id<AgencyFeature>(),
-  SerenedServer::id<ClusterFeature>(),
-#endif
 #ifdef SERENEDB_HAVE_FORK
   SerenedServer::id<SupervisorFeature>(),
   SerenedServer::id<DaemonFeature>(),

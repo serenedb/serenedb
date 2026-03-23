@@ -26,6 +26,7 @@
 #include "iresearch/store/memory_directory.hpp"
 
 namespace irs {
+
 // Writer for storing skip-list in a directory
 // Example (skip_0 = skip_n = 3):
 // clang-format off

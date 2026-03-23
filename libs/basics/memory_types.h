@@ -30,6 +30,7 @@
 #include "catalog/identifiers/shard_id.h"
 
 namespace sdb {
+
 using MonitoredString =
   std::basic_string<char, std::char_traits<char>,
                     ResourceUsageAllocator<char, ResourceMonitor>>;
@@ -45,4 +46,5 @@ using MonitoredCollectionToShardMap = containers::FlatHashMap<
   ObjectId, MonitoredShardIDVector, absl::Hash<ObjectId>, std::equal_to<>,
   ResourceUsageAllocator<std::pair<const ObjectId, MonitoredShardIDVector>,
                          ResourceMonitor>>;
+
 }  // namespace sdb

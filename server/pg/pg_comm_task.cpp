@@ -228,7 +228,13 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
   SDB_ASSERT(_current_portal);
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
-  SafeCall([&] { ExecutePortal(*_current_portal); });
+  SafeCall([&] {
+    auto& portal = *_current_portal;
+    portal.rows = 0;
+    BuildColumnSerializers(portal);
+    DescribeAnalyzedQuery(*portal.stmt, portal.bind_info.output_formats, false);
+    ExecutePortal(portal);
+  });
   if (_pop_packet) {
     FinishPacket();
   }
@@ -967,6 +973,33 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal) {
   }
 }
 
+void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
+  SDB_ASSERT(portal.stmt);
+  SDB_ASSERT(portal.stmt->query);
+  portal.columns_serializers.clear();
+  const auto& output_type = portal.stmt->query->GetOutputType();
+
+  // DDL does not have output type
+  if (!output_type) {
+    return;
+  }
+  const auto columns_count = output_type->size();
+  if (columns_count == 0) {
+    return;
+  }
+  portal.columns_serializers.reserve(columns_count);
+
+  const auto& formats = portal.bind_info.output_formats;
+  const auto default_format = formats.empty() ? VarFormat::Text : formats[0];
+
+  for (uint16_t i = 0; i < columns_count; ++i) {
+    const auto& column_type = output_type->childAt(i);
+    const auto format = i < formats.size() ? formats[i] : default_format;
+    portal.columns_serializers.push_back(
+      GetSerialization(column_type, format, portal.serialization_context));
+  }
+}
+
 auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   -> SqlPortal {
   SqlPortal portal{.serialization_context{.buffer = &_send}};
@@ -986,29 +1019,7 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
     SendNotices();
   }
-  SDB_ASSERT(stmt.query);
-  const auto& output_type = stmt.query->GetOutputType();
-
-  // DDL does not have output type
-  if (!output_type) {
-    return portal;
-  }
-  const auto columns_count = output_type->size();
-  if (columns_count == 0) {
-    return portal;
-  }
-  SDB_ASSERT(columns_count > 0);
-  portal.columns_serializers.reserve(columns_count);
-
-  const auto& formats = portal.bind_info.output_formats;
-  const auto default_format = formats.empty() ? VarFormat::Text : formats[0];
-
-  for (uint16_t i = 0; i < columns_count; ++i) {
-    const auto& column_type = output_type->childAt(i);
-    const auto format = i < formats.size() ? formats[i] : default_format;
-    portal.columns_serializers.push_back(
-      GetSerialization(column_type, format, portal.serialization_context));
-  }
+  BuildColumnSerializers(portal);
 
   return portal;
 }

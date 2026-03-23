@@ -152,6 +152,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
     const std::vector<velox::TypePtr>& param_types);
   std::optional<std::vector<VarFormat>> ParseBindFormats(
     std::string_view& packet);
+  void BuildColumnSerializers(SqlPortal& portal);
   void ExecutePortal(SqlPortal& portal);
   bool RegisterCursor(std::unique_ptr<query::Cursor> cursor, SqlPortal& portal);
   void ReleaseCursor(SqlPortal& portal);

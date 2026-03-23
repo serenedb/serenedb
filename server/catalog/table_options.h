@@ -200,7 +200,7 @@ inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {
 }
 
 struct CreateTableRequest {
-  std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
+  std::vector<std::string> shardKeys;
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
   std::vector<CheckConstraint> checkConstraints;
@@ -231,7 +231,7 @@ struct TableStats {
 };
 
 struct TableOptions {
-  std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
+  std::vector<std::string> shardKeys;
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
   std::vector<CheckConstraint> checkConstraints;

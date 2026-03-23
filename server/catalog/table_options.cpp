@@ -308,19 +308,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   SDB_ASSERT(request.writeConcern);
   SDB_ASSERT(request.numberOfShards);
 
-  if (const auto& keys = request.shardKeys; keys.empty() || keys.size() > 8) {
-    return {ERROR_BAD_PARAMETER, "Invalid number of shard keys for collection"};
-  } else if (auto it = absl::c_find_if(
-               keys,
-               [](auto name) {
-                 return name.empty() || name == StaticStrings::kRevString;
-               });
-             it != keys.end()) {
-    return {ERROR_BAD_PARAMETER,
-            it->empty() ? "Empty string" : StaticStrings::kRevString,
-            " cannot be used as a shard key"};
-  }
-
   const auto& server_options = GetServerOptions();
 
   if (enforce_replication_factor) {
@@ -362,11 +349,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     if (*request.numberOfShards != 1) {
       return {ERROR_BAD_PARAMETER,
               "A satellite collection can only have 1 shard"};
-    }
-
-    if (request.shardKeys.size() != 1 ||
-        request.shardKeys.front() != StaticStrings::kKeyString) {
-      return {ERROR_BAD_PARAMETER, "'satellite' cannot use shardKeys"};
     }
 
     // TODO(gnusi): check and error?

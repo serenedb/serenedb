@@ -563,13 +563,12 @@ struct PgTypeofFunction {
 
   FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
     const std::vector<velox::TypePtr>& inputTypes,
-    const velox::core::QueryConfig& /*config*/,
-    const arg_type<velox::Any>* /*input*/) {
+    const velox::core::QueryConfig& config, const arg_type<velox::Any>* input) {
     _type_oid = GetTypeOID(inputTypes[0]);
   }
 
   FOLLY_ALWAYS_INLINE bool callNullable(  // NOLINT
-    out_type<int32_t>& result, const arg_type<velox::Any>* /*input*/) {
+    out_type<int32_t>& result, const arg_type<velox::Any>* input) {
     result = _type_oid;
     return true;
   }

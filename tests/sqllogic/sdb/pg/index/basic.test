@@ -18,8 +18,12 @@ VACUUM (UPDATE_INDEXES) t;
 statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
-statement error db error: ERROR: Can not drop text dictionary used in the indexes index_t
+
+statement error
 DROP TEXT SEARCH DICTIONARY test_english;
+----
+db error: ERROR: Can not drop text dictionary used in the indexes index_t
+
 
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c')
@@ -103,28 +107,36 @@ indexname
 statement ok
 DROP TEXT SEARCH DICTIONARY test_english;
 
-statement error db error: ERROR: relation "invalid" does not exist
+statement error
 CREATE INDEX test_index ON invalid USING inverted (invalid);
+----
+db error: ERROR: relation "invalid" does not exist
 
 
-statement error db error: ERROR: relation "invalid" does not exist
+statement error
 CREATE INDEX test_index ON invalid USING inverted (invalid);
+----
+db error: ERROR: relation "invalid" does not exist
 
 
 statement ok
 CREATE TABLE test(i int);
 
 
-statement error db error: ERROR: column "invalid" does not exist
+statement error
 CREATE INDEX test_index ON test USING inverted (invalid);
+----
+db error: ERROR: column "invalid" does not exist
 
 
 statement ok
 CREATE INDEX test_index ON test USING inverted (i);
 
 
-statement error db error: ERROR: relation "test_index" already exists
+statement error
 CREATE INDEX test_index ON test USING inverted (i);
+----
+db error: ERROR: relation "test_index" already exists
 
 
 statement ok
@@ -155,8 +167,10 @@ SELECT indexrelid, indrelid FROM pg_index
 indexrelid	indrelid
 
 
-statement error db error: ERROR: index "test_index" does not exist
+statement error
 DROP INDEX test_index;
+----
+db error: ERROR: index "test_index" does not exist
 
 
 statement ok
@@ -181,23 +195,41 @@ indexrelid	indrelid
 statement ok
 CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR);
 
-statement error db error: ERROR: Column b has unsupported kind and can not be indexed
+statement error
 CREATE INDEX index_ts on tstest USING inverted(b);
+----
+db error: ERROR: Column b has unsupported kind and can not be indexed
 
-statement error db error: ERROR: Column c is VARCHAR but has no text dictionary defined
+
+statement error
 CREATE INDEX index_ts on tstest USING inverted(c);
+----
+db error: ERROR: Column c is VARCHAR but has no text dictionary defined
 
-statement error db error: ERROR: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
+
+statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
+----
+db error: ERROR: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
 
-statement error db error: ERROR: Column a has text dictionary defined but is not VARCHAR
+
+statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
+----
+db error: ERROR: Column a has text dictionary defined but is not VARCHAR
 
-statement error db error: ERROR: Index column opclass options are not supported
+
+statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
+----
+db error: ERROR: Index column opclass options are not supported
 
-statement error db error: ERROR: Unsupported index column definition
+
+statement error
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
+----
+db error: ERROR: Unsupported index column definition
+
 
 statement ok
 DROP TABLE tstest;
@@ -327,26 +359,36 @@ CREATE TABLE s1.foo (a INTEGER, b VARCHAR);
 statement ok
 CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
 
-statement error db error: ERROR: Accessing text dictionary from different schema is not supported
+
+statement error
 CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
+----
+db error: ERROR: Accessing text dictionary from different schema is not supported
+
 
 statement ok
 CREATE INDEX idx ON s1.foo USING inverted(b s1.te);
 
+
 statement ok
 CREATE INDEX idx ON s2.foo USING inverted(b s2.te);
+
 
 statement ok
 DROP SCHEMA s2 CASCADE;
 
+
 statement ok
 DROP TABLE s1.foo;
+
 
 statement ok
 DROP TEXT SEARCH DICTIONARY s1.te;
 
+
 statement ok
 DROP SCHEMA s1;
+
 
 statement ok
 CREATE TABLE empty_soul();

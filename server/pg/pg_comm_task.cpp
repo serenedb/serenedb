@@ -37,7 +37,6 @@
 #include <string_view>
 
 #include "app/app_server.h"
-#include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/endian.h"
@@ -1196,25 +1195,18 @@ bool PgSQLCommTaskBase::RegisterCursor(std::unique_ptr<query::Cursor> cursor,
 
 std::string_view PgSQLCommTaskBase::DatabaseName() const noexcept {
   auto db_name = _client_parameters.find(kDatabaseParameter);
-
   if (db_name != _client_parameters.end()) {
-    if (db_name->second == StaticStrings::kPgDefaultDatabase) {
-      return StaticStrings::kSystemDatabase;
-    }
     return db_name->second;
   }
-  return StaticStrings::kSystemDatabase;
+  return StaticStrings::kDefaultDatabase;
 }
 
 std::string_view PgSQLCommTaskBase::UserName() const noexcept {
   auto user_name = _client_parameters.find(kUserParameter);
   if (user_name != _client_parameters.end()) {
-    if (user_name->second == StaticStrings::kPgDefaultUser) {
-      return auth::kRootUserName;
-    }
     return user_name->second;
   }
-  return {};
+  return StaticStrings::kDefaultUser;
 }
 
 void PgSQLCommTaskBase::SendNotices() {

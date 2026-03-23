@@ -46,6 +46,13 @@ kek
 
 
 query
+SELECT coalesce(null, 'fallback')
+----
+coalesce
+fallback
+
+
+query
 select cos(0.5) as value
 ----
 value

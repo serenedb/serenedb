@@ -20,13 +20,4 @@
 
 #pragma once
 
-#include <iresearch/search/filter.hpp>
-#include <ostream>
-#include <string>
-
-namespace irs {
-
-template<typename Sink>
-void AbslStringify(Sink& sink, const Filter& filter);
-
-}  // namespace irs
+#include "connector/search_filter_printer.hpp"

@@ -219,16 +219,7 @@ class SereneDBConnectorTableHandle final
 
   const std::string& name() const final { return _name; }
 
-  std::string toString() const final {
-    // TODO(mkornaukhov) implement filter printing
-    if (_search_query) {
-      return absl::StrCat(_name, ", type=search_lookup");
-    }
-    if (!_points.empty()) {
-      return absl::StrCat(_name, ", type=rocksdb_point_lookup");
-    }
-    return absl::StrCat(_name, ", type=rocksdb_full_scan");
-  }
+  std::string toString() const final;
 
   ObjectId TableId() const noexcept { return _table_id; }
 
@@ -236,11 +227,8 @@ class SereneDBConnectorTableHandle final
     return _effective_column_id;
   }
 
-  void AddSearchQuery(ObjectId index_id, irs::Filter::Query::ptr&& query) {
-    SDB_ASSERT(!_search_query);
-    _search_query = std::move(query);
-    _index_id = index_id;
-  }
+  void AddSearchQuery(ObjectId index_id, irs::Filter::Query::ptr&& query,
+                      const irs::Filter& filter);
 
   auto& GetTransaction() const noexcept { return _transaction; }
 
@@ -269,6 +257,7 @@ class SereneDBConnectorTableHandle final
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
   irs::Filter::Query::ptr _search_query;
+  std::string _search_filter_str;
   ObjectId _index_id = ObjectId::none();
   velox::RowTypePtr _pk_type;
   std::vector<SpecificPoint> _points;

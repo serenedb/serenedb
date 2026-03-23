@@ -24,6 +24,7 @@
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
 #include "search_filter_builder.hpp"
+#include "search_filter_printer.hpp"
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
@@ -122,7 +123,8 @@ SereneDBTableLayout::createTableHandle(
         inverted_index_table->GetIndex().GetId());
     // TODO(Dronplane) link irs memory manager to velox pool
     handle->AddSearchQuery(index.GetId(),
-                           conjunct_root.prepare({.index = snapshot.reader}));
+                           conjunct_root.prepare({.index = snapshot.reader}),
+                           conjunct_root);
     return handle;
   }
 
@@ -185,6 +187,46 @@ SereneDBTableLayout::createTableHandle(
              "SereneDBFullScanTableHandle: need a column for count field");
   return std::make_shared<SereneDBConnectorTableHandle>(
     session, *this, std::move(points), std::move(remaining_filter));
+}
+
+std::string SereneDBConnectorTableHandle::toString() const {
+  const std::string filter_str =
+    _remaining_filter ? absl::StrCat(", filter=", _remaining_filter->toString())
+                      : "";
+  if (_search_query) {
+    return absl::StrCat(_name, ", type=search_lookup",
+                        _search_filter_str.empty()
+                          ? ""
+                          : absl::StrCat(", filter=", _search_filter_str));
+  }
+  if (!_points.empty()) {
+    const auto& names = _pk_type->names();
+    const auto& types = _pk_type->children();
+    std::string points_str = absl::StrJoin(
+      _points, ", ", [&](std::string* out, const SpecificPoint& point) {
+        SDB_ASSERT(types.size() == point.size());
+        absl::StrAppend(out, "(");
+        for (size_t i = 0; i < point.size(); ++i) {
+          if (i > 0) {
+            absl::StrAppend(out, ", ");
+          }
+          absl::StrAppend(out, names[i], "=", point[i].toString(types[i]));
+        }
+        absl::StrAppend(out, ")");
+      });
+    return absl::StrCat(_name, ", type=rocksdb_point_lookup, points=[",
+                        points_str, "]", filter_str);
+  }
+  return absl::StrCat(_name, ", type=rocksdb_full_scan", filter_str);
+}
+
+void SereneDBConnectorTableHandle::AddSearchQuery(
+  ObjectId index_id, irs::Filter::Query::ptr&& query,
+  const irs::Filter& filter) {
+  SDB_ASSERT(!_search_query);
+  _search_query = std::move(query);
+  _search_filter_str = irs::ToString(filter);
+  _index_id = index_id;
 }
 
 }  // namespace sdb::connector

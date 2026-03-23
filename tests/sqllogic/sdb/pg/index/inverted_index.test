@@ -120,7 +120,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
-  -- TableScan[0][vedernikoff, type=search_lookup] ->
+  -- TableScan[0][vedernikoff, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:pudge(0, 0); >] && PHRASE[col(string) = <Term:game(0, 0); >]]] ->
 
 
 query

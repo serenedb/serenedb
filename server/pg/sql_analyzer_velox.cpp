@@ -5517,6 +5517,9 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   }
 
+  for (auto& coercion : coercions) {
+    coercion = FixupReturnType(coercion);
+  }
   ApplyCoercions(args, coercions);
   auto it = kSpecialForms.find(name);
   if (it == kSpecialForms.end()) {

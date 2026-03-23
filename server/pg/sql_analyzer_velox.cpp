@@ -5161,6 +5161,7 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"cidr", velox::IPPREFIX()},
   {"void", pg::VOID()},
   {"regtype", pg::REGTYPE()},
+  {"regclass", pg::REGCLASS()},
 };
 
 lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,
@@ -5782,12 +5783,24 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
   }
 
   if (arg->type() == velox::VARCHAR() && pg::IsRegtype(type)) {
-    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypein",
-                                          std::move(arg));
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regtypein", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
   }
 
   if (pg::IsRegtype(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypeout",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::VARCHAR() && pg::IsRegclass(type)) {
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regclassin", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
+  }
+
+  if (pg::IsRegclass(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regclassout",
                                           std::move(arg));
   }
 

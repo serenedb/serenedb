@@ -530,7 +530,8 @@ struct RegtypeInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<int32_t>& result, const arg_type<velox::Varchar>& input) {
+    out_type<int32_t>& result, const arg_type<velox::Varchar>& input,
+    const arg_type<int32_t>& location) {
     std::string_view name{input};
     auto oid = RegtypeIn(name);
     if (oid != kInvalidOid) {
@@ -538,6 +539,7 @@ struct RegtypeInFunction {
       return;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    CURSOR_POS(location),
                     ERR_MSG("type \"", name, "\" does not exist"));
   }
 };
@@ -550,6 +552,66 @@ struct RegtypeOutFunction {
     out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
     result = RegtypeOut(input);
   }
+};
+
+template<typename T>
+struct RegclassInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config,
+    const arg_type<velox::Varchar>* /*input*/,
+    const arg_type<int32_t>* /*location*/) {
+    auto conn = basics::downCast<const ConnectionContext>(config.config());
+    _db_id = conn->GetDatabaseId();
+    _current_schema = conn->GetCurrentSchema();
+  }
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<int32_t>& result, const arg_type<velox::Varchar>& input,
+    const arg_type<int32_t>& location) {
+    auto object_name = ParseObjectName(input, _current_schema);
+    auto snapshot = catalog::GetCatalog().GetSnapshot();
+    auto relation = snapshot->GetRelation(_db_id, object_name.schema,
+                                          object_name.relation);
+    if (!relation) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      CURSOR_POS(location),
+                      ERR_MSG("relation \"", std::string_view{input},
+                              "\" does not exist"));
+    }
+    result = static_cast<int32_t>(relation->GetId().id());
+  }
+
+  ObjectId _db_id;
+  std::string _current_schema;
+};
+
+template<typename T>
+struct RegclassOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config,
+    const arg_type<int32_t>* /*input*/) {
+    auto conn = basics::downCast<const ConnectionContext>(config.config());
+    _db_id = conn->GetDatabaseId();
+  }
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
+    auto snapshot = catalog::GetCatalog().GetSnapshot();
+    auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(input)});
+    if (object) {
+      result = object->GetName();
+    } else {
+      result = absl::StrCat(input);
+    }
+  }
+
+  ObjectId _db_id;
 };
 
 template<typename T>
@@ -703,10 +765,14 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgTsLexize, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(
     {prefix + "ts_lexize"});
-  velox::registerFunction<RegtypeInFunction, RegtypeCustomType, velox::Varchar>(
-    {prefix + "regtypein"});
+  velox::registerFunction<RegtypeInFunction, RegtypeCustomType, velox::Varchar,
+                          int32_t>({prefix + "regtypein"});
   velox::registerFunction<RegtypeOutFunction, velox::Varchar,
                           RegtypeCustomType>({prefix + "regtypeout"});
+  velox::registerFunction<RegclassInFunction, RegclassCustomType,
+                          velox::Varchar, int32_t>({prefix + "regclassin"});
+  velox::registerFunction<RegclassOutFunction, velox::Varchar,
+                          RegclassCustomType>({prefix + "regclassout"});
   velox::registerFunction<PgTypeofFunction, RegtypeCustomType, velox::Any>(
     {prefix + "typeof"});
   registerExtractFunctions(prefix);

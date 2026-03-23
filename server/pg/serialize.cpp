@@ -1000,6 +1000,12 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
                          SerializeRegtype<VarFormat::Binary>);
   }
 
+  if (pg::IsRegclass(type)) {
+    // Regclass serializes as its OID; use explicit cast to text for name.
+    SERIALIZE_PRIMITIVE(velox::TypeKind::INTEGER);
+    RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+  }
+
   switch (type->kind()) {
     CASE_SERIALIZATION(velox::TypeKind::UNKNOWN)
     CASE_SERIALIZATION(velox::TypeKind::TINYINT)

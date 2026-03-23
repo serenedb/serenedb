@@ -55,6 +55,8 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
   } else if (IsRegtype(type)) {
     return PgTypeOID::kRegtype;
+  } else if (IsRegclass(type)) {
+    return PgTypeOID::kRegclass;
   }
   return -1;
 }
@@ -91,6 +93,9 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
   if (IsRegtype(type)) {
     return "regtype";
+  }
+  if (IsRegclass(type)) {
+    return "regclass";
   }
   if (isUuidType(type)) {
     return "uuid";

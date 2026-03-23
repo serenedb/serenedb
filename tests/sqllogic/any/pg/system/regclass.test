@@ -1,0 +1,24 @@
+statement ok
+CREATE TABLE regclass_test_table (id int, name text);
+
+
+query
+SELECT pg_typeof('regclass_test_table'::regclass);
+----
+pg_typeof
+regtype
+
+
+query
+SELECT 'regclass_test_table'::regclass::text;
+----
+text
+regclass_test_table
+
+
+statement error
+SELECT 'nonexistent_table'::regclass;
+
+
+statement ok
+DROP TABLE regclass_test_table;

@@ -621,6 +621,41 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
+  // regclass (OID 2205)
+  {
+    .oid = 2205,
+    .typname = "regclass",
+    .typnamespace = 11,
+    .typowner = 10,
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 2210,     // _regclass
+    .typinput = 2218,     // regclassin
+    .typoutput = 2219,    // regclassout
+    .typreceive = 2452,   // regclassrecv
+    .typsend = 2453,      // regclasssend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
 });
 
 constexpr uint64_t kNullMask = MaskFromNulls({

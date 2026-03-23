@@ -50,6 +50,7 @@ enum PgTypeOID : int32_t {
   kTimestamp = 1114,
   kTimestampTz = 1184,
   kInterval = 1186,
+  kRegclass = 2205,
   kRegtype = 2206,
 
   // Array types

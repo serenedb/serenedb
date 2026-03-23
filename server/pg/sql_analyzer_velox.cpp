@@ -1282,6 +1282,27 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
 
   ProcessLimitNodes(state, stmt.limitOffset, stmt.limitCount, stmt.limitOption);
   // TODO: ProcessFinalProject
+
+  // if (_expr_for_scorer && !state.parent) {
+  //   SDB_ASSERT(_expr_for_scorer->isInputReference());
+  //   const auto& score_column =
+  //     _expr_for_scorer->as<lp::InputReferenceExpr>()->name();
+  //   const auto& output_type = *state.root->outputType();
+  //   std::vector<std::string> names;
+  //   std::vector<lp::ExprPtr> exprs;
+  //   names.reserve(output_type.size());
+  //   exprs.reserve(output_type.size());
+  //   for (size_t i = 0; i < output_type.size(); ++i) {
+  //     if (output_type.nameOf(i) == score_column) {
+  //       continue;
+  //     }
+  //     names.emplace_back(output_type.nameOf(i));
+  //     exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+  //       output_type.childAt(i), output_type.nameOf(i)));
+  //   }
+  //   state.Project(_id_generator, std::move(names), std::move(exprs));
+  //   _expr_for_scorer = nullptr;
+  // }
 }
 
 void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,

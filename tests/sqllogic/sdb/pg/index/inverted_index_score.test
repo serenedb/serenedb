@@ -366,6 +366,36 @@ Fragment 0:  numWorkers=0:
     -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+query
+EXPLAIN SELECT * FROM
+(SELECT id FROM docs_idx WHERE PHRASE(body, 'fox'))
+ORDER BY BM25()
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+  -- OrderBy[1][sdb_inverted_index_score ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
+query
+EXPLAIN (SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3)
+UNION ALL
+(SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC LIMIT 3)
+ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[7][id ASC NULLS LAST] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+  -- LocalPartition[6][REPARTITION ROUND ROBIN] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+      -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[5][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "has_score":BOOLEAN, "sdb_inverted_index_score":REAL
+      -- TopN[4][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # UNION of two subqueries from same index with outer ORDER BY BM25()
@@ -375,13 +405,13 @@ UNION ALL
 (SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC LIMIT 3)
 ORDER BY id;
 ----
-id	has_score
-1	t
-1	t
-2	t
-3	t
-4	t
-35	t
+id	has_score	sdb_inverted_index_score
+1	t	0.05305543
+1	t	3.1416833
+2	t	0.05305543
+3	t	3.1416833
+4	t	0.05305543
+35	t	3.1416833
 
 
 # CTE: BM25() computed in CTE, outer query uses the pre-computed alias

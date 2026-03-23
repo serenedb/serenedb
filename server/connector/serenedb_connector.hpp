@@ -67,7 +67,6 @@ class IndexProgressReporter;
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
-#include "wal_data_source.hpp"
 
 namespace sdb::connector {
 
@@ -265,10 +264,6 @@ class SereneDBConnectorTableHandle final
 
   ObjectId GetIndexId() const noexcept { return _index_id; }
 
-  const WALRecoveryRange& GetWalRecoveryRange() const noexcept {
-    return _wal_recovery_range;
-  }
-
  private:
   std::string _name;
   ObjectId _table_id;
@@ -280,7 +275,6 @@ class SereneDBConnectorTableHandle final
   std::vector<Point> _points;
   velox::core::TypedExprPtr _remaining_filter;
   absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
-  WALRecoveryRange _wal_recovery_range;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -459,10 +453,6 @@ class RocksDBTable : public axiom::connector::Table {
     return _index_progress_reporter;
   }
 
-  decltype(auto) WalRecoveryRange(this auto&& self) noexcept {
-    return (self._wal_recovery_range);
-  }
-
  private:
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
@@ -476,7 +466,6 @@ class RocksDBTable : public axiom::connector::Table {
   bool _bulk_insert = false;
   ObjectId _backfill_index_id;
   std::shared_ptr<pg::IndexProgressReporter> _index_progress_reporter;
-  WALRecoveryRange _wal_recovery_range;
 };
 
 class RocksDBInvertedIndexTable : public RocksDBTable {

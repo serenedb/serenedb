@@ -131,7 +131,7 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
   auto& state = create_index->GetState();
   auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
-    connection_ctx, schemaname, name);
+    connection_ctx, schemaname, name, state);
   auto remove_tombstone =
     std::make_unique<RemoveTombstoneExecutor>(connection_ctx, schemaname, name);
 

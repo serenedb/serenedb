@@ -101,13 +101,15 @@ class FinishCreateIndexExecutor final : public CommandExecutor {
  public:
   FinishCreateIndexExecutor(std::shared_ptr<ExecContext> context,
                             std::string_view schemaname,
-                            std::string_view index_name);
+                            std::string_view index_name,
+                            CreateIndexState& state);
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   std::string_view _schemaname;
   std::string_view _index_name;
+  CreateIndexState& _state;
 };
 
 class RemoveTombstoneExecutor final : public CommandExecutor {

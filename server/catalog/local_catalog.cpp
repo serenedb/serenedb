@@ -124,10 +124,7 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
-    result->_object_dependencies.reserve(_object_dependencies.size());
-    for (auto& [id, dep] : _object_dependencies) {
-      result->_object_dependencies.emplace(id, dep->Clone());
-    }
+    result->_object_dependencies = _object_dependencies;
     return result;
   }
 
@@ -314,8 +311,8 @@ class SnapshotImpl : public Snapshot {
   Result AddObjectDefinition(ObjectId parent_id,
                              std::shared_ptr<Object> object) {
     if constexpr (!std::is_void_v<DependencyType>) {
-      auto [_, inserted] = _object_dependencies.try_emplace(
-        object->GetId(), std::make_shared<DependencyType>());
+      bool inserted =
+        _object_dependencies.AddDependency<DependencyType>(object->GetId());
       SDB_ASSERT(inserted);
     }
     SDB_ASSERT(object->GetId().isSet());
@@ -324,41 +321,41 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Role:
         break;
       case ObjectType::Schema: {
-        auto db_deps = GetDependency<DatabaseDependency>(parent_id);
+        auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
         db_deps->schemas.insert(object->GetId());
       } break;
       case ObjectType::Table: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tables.insert(object->GetId());
       } break;
       case ObjectType::Function: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
       } break;
       case ObjectType::Tokenizer: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tokenizers.insert(object->GetId());
       } break;
       case ObjectType::View: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->views.insert(object->GetId());
       } break;
       case ObjectType::Index: {
-        auto table_deps = GetDependency<TableDependency>(parent_id);
+        auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
         table_deps->indexes.insert(object->GetId());
         const auto& index = basics::downCast<Index>(*object);
         for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
+          auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
           SDB_ASSERT(dep);
           dep->indexes.insert(object->GetId());
         }
       } break;
       case ObjectType::TableShard: {
-        auto table_deps = GetDependency<TableDependency>(parent_id);
+        auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
         table_deps->shard_id = object->GetId();
       } break;
       case ObjectType::IndexShard: {
-        auto index_deps = GetDependency<IndexDependency>(parent_id);
+        auto index_deps = GetDependencyForWrite<IndexDependency>(parent_id);
         index_deps->shard_id = object->GetId();
       } break;
       default:
@@ -452,10 +449,7 @@ class SnapshotImpl : public Snapshot {
   }
 
   bool CheckSchemaEmptyDependency(ObjectId schema_id) {
-    auto it = _object_dependencies.find(schema_id);
-    SDB_ASSERT(it != _object_dependencies.end());
-    auto& deps = basics::downCast<SchemaDependency>(*it->second);
-    return deps.Empty();
+    return GetDependency<SchemaDependency>(schema_id)->Empty();
   }
 
   std::shared_ptr<SchemaObject> GetRelation(
@@ -617,12 +611,18 @@ class SnapshotImpl : public Snapshot {
   }
 
   template<typename T>
-  std::shared_ptr<T> GetDependency(ObjectId id) const {
-    auto it = _object_dependencies.find(id);
-    SDB_ASSERT(it != _object_dependencies.end());
-    auto deps = it->second;
-    SDB_ASSERT(deps);
-    return basics::downCast<T>(deps);
+  std::shared_ptr<const T> GetDependency(ObjectId id) const {
+    return basics::downCast<const T>(_object_dependencies.GetDependency(id));
+  }
+
+  template<typename T>
+  std::shared_ptr<T> GetDependencyForWrite(ObjectId id) {
+    auto dep =
+      basics::downCast<T>(_object_dependencies.GetDependency(id)->Clone());
+
+    auto inserted = _object_dependencies.AddDependency<T>(id, dep);
+    SDB_ASSERT(!inserted);
+    return dep;
   }
 
  private:
@@ -648,32 +648,38 @@ class SnapshotImpl : public Snapshot {
         case ObjectType::Role:
           break;
         case ObjectType::Schema: {
-          auto db_deps = GetDependency<DatabaseDependency>(parent_id);
+          auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
           SDB_ASSERT(db_deps);
           db_deps->schemas.erase(id);
         } break;
         case ObjectType::Index: {
-          auto table_deps = GetDependency<TableDependency>(parent_id);
+          auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->indexes.erase(id);
+          const auto& index = basics::downCast<Index>(*obj);
+          for (auto tokenizer_id : index.GetTokenizers()) {
+            auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
+            SDB_ASSERT(dep);
+            dep->indexes.erase(obj->GetId());
+          }
         } break;
         case ObjectType::Function: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
         } break;
         case ObjectType::Tokenizer: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->tokenizers.erase(id);
         } break;
         case ObjectType::Table: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->tables.erase(id);
         } break;
         case ObjectType::View: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->views.erase(id);
         } break;
@@ -699,7 +705,6 @@ class SnapshotImpl : public Snapshot {
         auto table_deps = GetDependency<TableDependency>(id);
         if (table_deps->shard_id.isSet()) {
           RemoveObjectDefinition(id, table_deps->shard_id);
-          table_deps->shard_id = ObjectId::none();
         }
         auto index_ids = table_deps->indexes;
         if (root) {
@@ -716,13 +721,6 @@ class SnapshotImpl : public Snapshot {
         auto index_deps = GetDependency<IndexDependency>(id);
         if (index_deps->shard_id.isSet()) {
           RemoveObjectDefinition(id, index_deps->shard_id);
-          index_deps->shard_id = ObjectId::none();
-        }
-        const auto& index = basics::downCast<Index>(*obj);
-        for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
-          SDB_ASSERT(dep);
-          dep->indexes.erase(obj->GetId());
         }
 
       } break;
@@ -737,7 +735,7 @@ class SnapshotImpl : public Snapshot {
       default:
         SDB_UNREACHABLE();
     }
-    _object_dependencies.erase(id);
+    _object_dependencies.RemoveDependency(id);
   }
 
   template<typename W>
@@ -785,8 +783,7 @@ class SnapshotImpl : public Snapshot {
   };
 
   ResolutionTable _resolution_table;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<ObjectDependencyBase>>
-    _object_dependencies;
+  ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
 };
 

@@ -867,9 +867,10 @@ Result FromVeloxLevenshteinMatch(irs::BooleanFilter& filter,
   }
 
   // prefix (string, optional, default "")
+  std::optional<velox::variant> prefix_val;
   std::string_view prefix;
   if (num_inputs >= 6) {
-    auto prefix_val = EvaluateConstant(call.inputs()[5]);
+    prefix_val = EvaluateConstant(call.inputs()[5]);
     if (!prefix_val.has_value()) {
       return {ERROR_BAD_PARAMETER,
               "Failed to evaluate prefix value as constant"};

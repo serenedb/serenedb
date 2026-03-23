@@ -16,6 +16,7 @@
 
 /perf.*
 
+/serenedb-data/
 /logs/
 *.pyc
 docker.env

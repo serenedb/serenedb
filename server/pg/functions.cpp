@@ -538,8 +538,7 @@ struct RegtypeInFunction {
       result = oid;
       return;
     }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    CURSOR_POS(location),
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT), CURSOR_POS(location),
                     ERR_MSG("type \"", name, "\" does not exist"));
   }
 };
@@ -573,13 +572,12 @@ struct RegclassInFunction {
     const arg_type<int32_t>& location) {
     auto object_name = ParseObjectName(input, _current_schema);
     auto snapshot = catalog::GetCatalog().GetSnapshot();
-    auto relation = snapshot->GetRelation(_db_id, object_name.schema,
-                                          object_name.relation);
+    auto relation =
+      snapshot->GetRelation(_db_id, object_name.schema, object_name.relation);
     if (!relation) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      CURSOR_POS(location),
-                      ERR_MSG("relation \"", std::string_view{input},
-                              "\" does not exist"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_TABLE), CURSOR_POS(location),
+        ERR_MSG("relation \"", std::string_view{input}, "\" does not exist"));
     }
     result = static_cast<int32_t>(relation->GetId().id());
   }

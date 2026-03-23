@@ -78,7 +78,7 @@ bool IsRegclass(const velox::TypePtr& type);
 bool IsRegclass(const velox::Type& type);
 
 struct RegclassTrait {
-  using type = int32_t;                                    // NOLINT
+  using type = int32_t;                                   // NOLINT
   static constexpr const char* typeName = "PG_REGCLASS";  // NOLINT
 };
 using RegclassCustomType = velox::CustomType<RegclassTrait>;

@@ -80,7 +80,6 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       r = catalog.DropFunction(db, schema, name);
     } break;
     case OBJECT_SCHEMA: {
-      // TODO: ensure that schema is empty
       if (name == StaticStrings::kPgCatalogSchema ||
           name == StaticStrings::kInformationSchema) {
         THROW_SQL_ERROR(
@@ -90,6 +89,15 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       } else {
         const bool cascade = stmt.behavior == DROP_CASCADE;
         r = catalog.DropSchema(db, name, cascade);
+        // TODO(mbkkt) better error handling
+        if (!cascade && r.is(ERROR_BAD_PARAMETER)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+            ERR_MSG("cannot drop schema ", name,
+                    " because other objects depend on it"),
+            ERR_HINT(
+              "Use DROP ... CASCADE to drop the dependent objects too."));
+        }
       }
     } break;
     case OBJECT_TSDICTIONARY: {

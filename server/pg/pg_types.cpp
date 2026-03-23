@@ -53,6 +53,8 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
     return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
   } else if (IsInterval(type)) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
+  } else if (IsRegtype(type)) {
+    return PgTypeOID::kRegtype;
   }
   return -1;
 }
@@ -86,6 +88,9 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
   if (IsInterval(type)) {
     return "interval";
+  }
+  if (IsRegtype(type)) {
+    return "regtype";
   }
   if (isUuidType(type)) {
     return "uuid";
@@ -123,6 +128,73 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
       SDB_ASSERT(false);  // better to specify the name
       return "unknown";
   }
+}
+
+std::string_view OidToTypeName(int32_t oid) {
+  static constexpr auto kOidToTypeName =
+    frozen::make_unordered_map<int32_t, std::string_view>({
+      {16, "boolean"},
+      {17, "bytea"},
+      {18, "character"},
+      {20, "bigint"},
+      {21, "smallint"},
+      {23, "integer"},
+      {25, "text"},
+      {114, "json"},
+      {700, "real"},
+      {701, "double precision"},
+      {1043, "character varying"},
+      {1082, "date"},
+      {1114, "timestamp without time zone"},
+      {1184, "timestamp with time zone"},
+      {1700, "numeric"},
+      {2206, "regtype"},
+      {2950, "uuid"},
+    });
+  auto it = kOidToTypeName.find(oid);
+  if (it != kOidToTypeName.end()) {
+    return it->second;
+  }
+  return {};
+}
+
+int32_t TypeNameToOid(std::string_view name) {
+  static const containers::FlatHashMap<std::string_view, int32_t>
+    kTypeNameToOid = {
+      {"boolean", 16},
+      {"bool", 16},
+      {"smallint", 21},
+      {"int2", 21},
+      {"integer", 23},
+      {"int4", 23},
+      {"int", 23},
+      {"bigint", 20},
+      {"int8", 20},
+      {"real", 700},
+      {"float4", 700},
+      {"double precision", 701},
+      {"float8", 701},
+      {"text", 25},
+      {"character varying", 1043},
+      {"varchar", 1043},
+      {"character", 18},
+      {"char", 18},
+      {"bytea", 17},
+      {"json", 114},
+      {"uuid", 2950},
+      {"numeric", 1700},
+      {"date", 1082},
+      {"timestamp without time zone", 1114},
+      {"timestamp", 1114},
+      {"timestamp with time zone", 1184},
+      {"timestamptz", 1184},
+      {"regtype", 2206},
+    };
+  auto it = kTypeNameToOid.find(name);
+  if (it != kTypeNameToOid.end()) {
+    return it->second;
+  }
+  return kInvalidOid;
 }
 
 namespace {

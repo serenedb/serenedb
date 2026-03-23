@@ -598,6 +598,24 @@ void SerializeDate(SerializationContext context,
 }
 
 template<VarFormat Format>
+void SerializeRegtype(SerializationContext context,
+                      const velox::DecodedVector& decoded_vector,
+                      velox::vector_size_t row) {
+  const auto oid = decoded_vector.valueAt<int32_t>(row);
+  if constexpr (Format == VarFormat::Text) {
+    auto name = OidToTypeName(oid);
+    if (!name.empty()) {
+      context.buffer->WriteUncommitted(name);
+    } else {
+      auto str = absl::StrCat(oid);
+      context.buffer->WriteUncommitted(str);
+    }
+  } else {
+    absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
+  }
+}
+
+template<VarFormat Format>
 void SerializeInterval(SerializationContext context,
                        const velox::DecodedVector& decoded_vector,
                        velox::vector_size_t row) {
@@ -981,6 +999,11 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
   if (pg::IsInterval(type)) {
     RETURN_SERIALIZATION(SerializeInterval<VarFormat::Text>,
                          SerializeInterval<VarFormat::Binary>);
+  }
+
+  if (pg::IsRegtype(type)) {
+    RETURN_SERIALIZATION(SerializeRegtype<VarFormat::Text>,
+                         SerializeRegtype<VarFormat::Binary>);
   }
 
   switch (type->kind()) {

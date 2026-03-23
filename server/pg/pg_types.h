@@ -50,6 +50,7 @@ enum PgTypeOID : int32_t {
   kTimestamp = 1114,
   kTimestampTz = 1184,
   kInterval = 1186,
+  kRegtype = 2206,
 
   // Array types
   kBoolArray = 1000,
@@ -116,6 +117,9 @@ int32_t GetTypeOID(const velox::TypePtr& type, bool in_array = false);
 
 std::string ToPgTypeString(const velox::Type& type);
 std::string ToPgTypeString(const velox::TypePtr& type);
+std::string_view OidToTypeName(int32_t oid);
+constexpr int32_t kInvalidOid = 0;
+int32_t TypeNameToOid(std::string_view name);
 
 enum class VarFormat : int16_t;
 

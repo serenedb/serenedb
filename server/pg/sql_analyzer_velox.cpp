@@ -5160,6 +5160,7 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"uuid", velox::UUID()},
   {"cidr", velox::IPPREFIX()},
   {"void", pg::VOID()},
+  {"regtype", pg::REGTYPE()},
 };
 
 lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,
@@ -5777,6 +5778,16 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   if (arg->type() == velox::JSON() && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_jsonout",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::VARCHAR() && pg::IsRegtype(type)) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypein",
+                                          std::move(arg));
+  }
+
+  if (pg::IsRegtype(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypeout",
                                           std::move(arg));
   }
 

@@ -526,6 +526,38 @@ struct ProcessEscapePattern {
 };
 
 template<typename T>
+struct RegtypeInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<int32_t>& result, const arg_type<velox::Varchar>& input) {
+    std::string_view name{input};
+    auto oid = TypeNameToOid(name);
+    if (oid != kInvalidOid) {
+      result = oid;
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("type \"", name, "\" does not exist"));
+  }
+};
+
+template<typename T>
+struct RegtypeOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
+    auto name = OidToTypeName(input);
+    if (!name.empty()) {
+      result = name;
+      return;
+    }
+    result = absl::StrCat(input);
+  }
+};
+
+template<typename T>
 struct PgTypeofFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -533,17 +565,17 @@ struct PgTypeofFunction {
     const std::vector<velox::TypePtr>& inputTypes,
     const velox::core::QueryConfig& /*config*/,
     const arg_type<velox::Any>* /*input*/) {
-    _type_name = ToPgTypeString(inputTypes[0]);
+    _type_oid = GetTypeOID(inputTypes[0]);
   }
 
   FOLLY_ALWAYS_INLINE bool callNullable(  // NOLINT
-    out_type<velox::Varchar>& result, const arg_type<velox::Any>* /*input*/) {
-    result = _type_name;
+    out_type<int32_t>& result, const arg_type<velox::Any>* /*input*/) {
+    result = _type_oid;
     return true;
   }
 
  private:
-  std::string _type_name;
+  int32_t _type_oid;
 };
 
 template<typename T>
@@ -677,7 +709,11 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgTsLexize, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(
     {prefix + "ts_lexize"});
-  velox::registerFunction<PgTypeofFunction, velox::Varchar, velox::Any>(
+  velox::registerFunction<RegtypeInFunction, RegtypeCustomType, velox::Varchar>(
+    {prefix + "regtypein"});
+  velox::registerFunction<RegtypeOutFunction, velox::Varchar,
+                          RegtypeCustomType>({prefix + "regtypeout"});
+  velox::registerFunction<PgTypeofFunction, RegtypeCustomType, velox::Any>(
     {prefix + "typeof"});
   registerExtractFunctions(prefix);
 }

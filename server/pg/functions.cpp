@@ -536,9 +536,10 @@ struct PgTypeofFunction {
     _type_name = ToPgTypeString(inputTypes[0]);
   }
 
-  FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<velox::Varchar>& result, const arg_type<velox::Any>& /*input*/) {
+  FOLLY_ALWAYS_INLINE bool callNullable(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<velox::Any>* /*input*/) {
     result = _type_name;
+    return true;
   }
 
  private:

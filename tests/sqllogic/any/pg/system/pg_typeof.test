@@ -1,0 +1,96 @@
+query
+SELECT pg_typeof(true);
+----
+pg_typeof
+boolean
+
+
+query
+SELECT pg_typeof(42::smallint);
+----
+pg_typeof
+smallint
+
+
+query
+SELECT pg_typeof(69::integer);
+----
+pg_typeof
+integer
+
+
+query
+SELECT pg_typeof(420::bigint);
+----
+pg_typeof
+bigint
+
+
+query
+SELECT pg_typeof(3.14::real);
+----
+pg_typeof
+real
+
+
+query
+SELECT pg_typeof(6.9::double precision);
+----
+pg_typeof
+double precision
+
+
+query
+SELECT pg_typeof('uwu'::text);
+----
+pg_typeof
+text
+
+
+query
+SELECT pg_typeof('deadbeef'::bytea);
+----
+pg_typeof
+bytea
+
+
+query
+SELECT pg_typeof('1337-01-01'::date);
+----
+pg_typeof
+date
+
+
+query
+SELECT pg_typeof('2012-12-21 00:00:00'::timestamp);
+----
+pg_typeof
+timestamp without time zone
+
+
+query
+SELECT pg_typeof(13.37::numeric);
+----
+pg_typeof
+numeric
+
+
+query
+SELECT pg_typeof(ARRAY[42, 69, 420]);
+----
+pg_typeof
+integer[]
+
+
+query
+SELECT pg_typeof(ARRAY['lol', 'kek']);
+----
+pg_typeof
+text[]
+
+
+query
+SELECT pg_typeof(NULL);
+----
+pg_typeof
+unknown

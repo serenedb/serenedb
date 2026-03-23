@@ -973,6 +973,30 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal) {
   }
 }
 
+auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
+  -> SqlPortal {
+  SqlPortal portal{.serialization_context{.buffer = &_send}};
+  FillContext(*_connection_ctx, portal.serialization_context);
+
+  portal.bind_info = std::move(bind_info);
+  auto& param_values = portal.bind_info.param_values;
+  // TODO: Check if bind was already and reparse AST
+  if (!param_values.empty()) {
+    auto types = std::move(stmt.params.types);
+    stmt = MakeStatement(stmt.query_string->view());
+    stmt.params.values = std::move(param_values);
+    stmt.params.types = std::move(types);
+  }
+  portal.stmt = &stmt;
+
+  if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
+    SendNotices();
+  }
+  BuildColumnSerializers(portal);
+
+  return portal;
+}
+
 void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
   SDB_ASSERT(portal.stmt);
   SDB_ASSERT(portal.stmt->query);
@@ -998,30 +1022,6 @@ void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
     portal.columns_serializers.push_back(
       GetSerialization(column_type, format, portal.serialization_context));
   }
-}
-
-auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
-  -> SqlPortal {
-  SqlPortal portal{.serialization_context{.buffer = &_send}};
-  FillContext(*_connection_ctx, portal.serialization_context);
-
-  portal.bind_info = std::move(bind_info);
-  auto& param_values = portal.bind_info.param_values;
-  // TODO: Check if bind was already and reparse AST
-  if (!param_values.empty()) {
-    auto types = std::move(stmt.params.types);
-    stmt = MakeStatement(stmt.query_string->view());
-    stmt.params.values = std::move(param_values);
-    stmt.params.types = std::move(types);
-  }
-  portal.stmt = &stmt;
-
-  if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
-    SendNotices();
-  }
-  BuildColumnSerializers(portal);
-
-  return portal;
 }
 
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {

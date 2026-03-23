@@ -108,11 +108,18 @@ yaclib::Future<> TruncateTable(ExecContext& context, const TruncateStmt& stmt) {
     SDB_ASSERT(rel->relname);
     rel_name = rel->relname;
 
-    auto table = snapshot->GetTable(db_id, schema_name, rel_name);
-    if (!table) {
+    auto relation = snapshot->GetRelation(db_id, schema_name, rel_name);
+    if (!relation) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                       ERR_MSG("relation \"", rel_name, "\" does not exist"));
     }
+
+    if (relation->GetType() != catalog::ObjectType::Table) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                      ERR_MSG("\"", rel_name, "\" is not a table"));
+    }
+
+    auto table = basics::downCast<catalog::Table>(std::move(relation));
 
     if (table->GetTableType() == TableType::File) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

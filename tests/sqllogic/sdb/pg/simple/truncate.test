@@ -76,6 +76,49 @@ TRUNCATE does_not_exist;
 db error: ERROR: relation "does_not_exist" does not exist
 
 
+# TRUNCATE a view (should fail like PG)
+statement ok
+CREATE TABLE vedernikoff_base (id INTEGER PRIMARY KEY, val TEXT);
+
+statement ok
+CREATE VIEW vedernikoff_view AS SELECT * FROM vedernikoff_base;
+
+statement error
+TRUNCATE vedernikoff_view;
+----
+db error: ERROR: "vedernikoff_view" is not a table
+
+statement ok
+DROP VIEW vedernikoff_view;
+
+# TRUNCATE an index (should fail like PG)
+statement ok
+CREATE TEXT SEARCH DICTIONARY trunc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_base USING inverted(val trunc_dict);
+
+statement error
+TRUNCATE vedernikoff_idx;
+----
+db error: ERROR: "vedernikoff_idx" is not a table
+
+statement ok
+DROP INDEX vedernikoff_idx;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY trunc_dict;
+
+statement ok
+DROP TABLE vedernikoff_base;
+
+
 # TRUNCATE with schema-qualified name
 statement ok
 CREATE TABLE public.pepe (id INTEGER PRIMARY KEY, feels TEXT);

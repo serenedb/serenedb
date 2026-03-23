@@ -55,7 +55,7 @@ void BootstrapFeature::start() {
       // slaves
       if (auto r = auth::CreateRootRole(true); !r.ok()) {
         SDB_ERROR("xxxxx", Logger::AUTHENTICATION, "unable to create user \"",
-                  auth::kRootUserName, "\": ", r.errorMessage());
+                  StaticStrings::kDefaultUser, "\": ", r.errorMessage());
       }
     }
   }

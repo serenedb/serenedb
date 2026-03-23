@@ -603,13 +603,7 @@ void SerializeRegtype(SerializationContext context,
                       velox::vector_size_t row) {
   const auto oid = decoded_vector.valueAt<int32_t>(row);
   if constexpr (Format == VarFormat::Text) {
-    auto name = OidToTypeName(oid);
-    if (!name.empty()) {
-      context.buffer->WriteUncommitted(name);
-    } else {
-      auto str = absl::StrCat(oid);
-      context.buffer->WriteUncommitted(str);
-    }
+    context.buffer->WriteUncommitted(RegtypeOut(oid));
   } else {
     absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
   }

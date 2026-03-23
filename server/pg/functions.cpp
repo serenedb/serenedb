@@ -532,7 +532,7 @@ struct RegtypeInFunction {
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<int32_t>& result, const arg_type<velox::Varchar>& input) {
     std::string_view name{input};
-    auto oid = TypeNameToOid(name);
+    auto oid = RegtypeIn(name);
     if (oid != kInvalidOid) {
       result = oid;
       return;
@@ -548,12 +548,7 @@ struct RegtypeOutFunction {
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
-    auto name = OidToTypeName(input);
-    if (!name.empty()) {
-      result = name;
-      return;
-    }
-    result = absl::StrCat(input);
+    result = RegtypeOut(input);
   }
 };
 

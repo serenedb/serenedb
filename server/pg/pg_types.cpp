@@ -130,7 +130,7 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
 }
 
-std::string_view OidToTypeName(int32_t oid) {
+std::string RegtypeOut(int32_t oid) {
   static constexpr auto kOidToTypeName =
     frozen::make_unordered_map<int32_t, std::string_view>({
       {16, "boolean"},
@@ -153,12 +153,12 @@ std::string_view OidToTypeName(int32_t oid) {
     });
   auto it = kOidToTypeName.find(oid);
   if (it != kOidToTypeName.end()) {
-    return it->second;
+    return std::string{it->second};
   }
-  return {};
+  return absl::StrCat(oid);
 }
 
-int32_t TypeNameToOid(std::string_view name) {
+int32_t RegtypeIn(std::string_view name) {
   static const containers::FlatHashMap<std::string_view, int32_t>
     kTypeNameToOid = {
       {"boolean", 16},

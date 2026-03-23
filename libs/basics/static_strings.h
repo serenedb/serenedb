@@ -90,16 +90,13 @@ class StaticStrings {
   static const std::string kReplicationHeaderFromPresent;
 
   // database names
-  static constexpr std::string_view kSystemDatabase = "_system";
-  static constexpr std::string_view kPublic = "public";
-  static constexpr std::string_view kCalculationDatabase = "Z";
-  static constexpr std::string_view kPgDefaultDatabase = "postgres";
+  static constexpr std::string_view kDefaultDatabase = "postgres";
+  // user names
+  static constexpr std::string_view kDefaultUser = "postgres";
   // system schema names
+  static constexpr std::string_view kPublic = "public";
   static constexpr std::string_view kPgCatalogSchema = "pg_catalog";
   static constexpr std::string_view kInformationSchema = "information_schema";
-
-  // user names
-  static constexpr std::string_view kPgDefaultUser = "postgres";
 
   // database definition fields
   static const std::string kDatabaseId;

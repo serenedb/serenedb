@@ -204,11 +204,11 @@ void DatabasePathFeature::start() {
       SdbCreateRecursiveDirectory(_directory, error_no, system_error_str);
 
     if (res == ERROR_OK) {
-      SDB_INFO("xxxxx", sdb::Logger::FIXME, "created database directory '",
-               _directory, "'");
+      SDB_INFO("xxxxx", sdb::Logger::FIXME,
+               "Created database directory: ", _directory);
     } else {
       SDB_FATAL("xxxxx", sdb::Logger::FIXME,
-                "unable to create database directory '", _directory,
+                "Unable to create database directory '", _directory,
                 "': ", system_error_str);
     }
   }

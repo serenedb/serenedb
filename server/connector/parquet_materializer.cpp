@@ -60,7 +60,7 @@ uint32_t ParquetMaterializer::RowGroupForRow(int64_t row) const {
 }
 
 velox::RowVectorPtr ParquetMaterializer::ReadRows(
-  std::span<std::string> row_keys) {
+  std::span<std::string> row_keys, velox::VectorPtr /*scores*/) {
   if (row_keys.empty()) {
     return nullptr;
   }

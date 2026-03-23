@@ -1,3 +1,19 @@
+skipif postgres-extended
+query
+BEGIN; 
+SELECT 'chinchopa'; 
+SELECT 2281337 as salary, 'vedernikoff' as clickclack; 
+SELECT 'android hates me' as hewantsmetowritetests;
+COMMIT;
+----
+?column?
+chinchopa
+salary	clickclack
+2281337	vedernikoff
+hewantsmetowritetests
+android hates me
+
+
 statement ok
 CREATE TABLE t(key INT PRIMARY KEY, value INT);
 

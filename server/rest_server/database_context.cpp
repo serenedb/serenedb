@@ -99,16 +99,16 @@ std::shared_ptr<DatabaseContext> DatabaseContext::create(
 
   auto db_lvl = auth::DatabaseAuthLevel(req.user(), req.databaseName(), false);
   auto sys_lvl = db_lvl;
-  if (req.databaseName() != StaticStrings::kSystemDatabase) {
+  if (req.databaseName() != StaticStrings::kDefaultDatabase) {
     sys_lvl = auth::DatabaseAuthLevel(req.user(),
-                                      StaticStrings::kSystemDatabase, false);
+                                      StaticStrings::kDefaultDatabase, false);
   }
   bool is_admin_user = (sys_lvl == auth::Level::RW);
   if (!is_admin_user && ServerState::instance()->ReadOnly()) {
     // in case we are in read-only mode, we need to re-check the original
     // permissions
     is_admin_user =
-      auth::DatabaseAuthLevel(req.user(), StaticStrings::kSystemDatabase,
+      auth::DatabaseAuthLevel(req.user(), StaticStrings::kDefaultDatabase,
                               true) == auth::Level::RW;
   }
 

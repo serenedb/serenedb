@@ -37,6 +37,7 @@
 
 #include <chrono>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <memory>
 #include <ranges>
 #include <thread>
@@ -255,6 +256,7 @@ class SereneDBConnectorTableHandle final
   std::vector<Point> _points;
   velox::core::TypedExprPtr _remaining_filter;
   absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
+  std::shared_ptr<const irs::Scorer> _scorer;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -314,6 +316,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 };
 
 class RocksDBTable : public axiom::connector::Table {
+ protected:
   struct Init {
     const catalog::Table& collection;
     velox::RowTypePtr pk_type;
@@ -443,12 +446,17 @@ class InvertedIndexTable : public axiom::connector::Table {
   static std::vector<std::unique_ptr<const axiom::connector::Column>>
   CopyColumns(const axiom::connector::Table& table) {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
-    columns.reserve(table.allColumns().size());
+    columns.reserve(table.allColumns().size() + 1);
     for (const auto* col : table.allColumns()) {
       auto* sdb_col = basics::downCast<const SereneDBColumn>(col);
       columns.push_back(std::make_unique<SereneDBColumn>(
         col->name(), col->type(), sdb_col->Id()));
     }
+    // Always add the score column so createColumnHandle can resolve it.
+    // It is only included in the output type when a scorer is active.
+    auto score_name = catalog::Column::GenerateScoreName(table.type()->names());
+    columns.push_back(std::make_unique<SereneDBColumn>(
+      score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
     return columns;
   }
 
@@ -484,12 +492,21 @@ class InvertedIndexTable : public axiom::connector::Table {
     return _table->rowIdHandles(kind);
   }
 
+  void SetScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
+    _scorer = std::move(scorer);
+  }
+
+  const std::shared_ptr<const irs::Scorer>& GetScorerPtr() const noexcept {
+    return _scorer;
+  }
+
  private:
   query::Transaction& _transaction;
   axiom::connector::TablePtr _table;
   const catalog::InvertedIndex& _index;
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
+  std::shared_ptr<const irs::Scorer> _scorer;
 };
 
 class InvertedIndexTableHandle final
@@ -498,13 +515,15 @@ class InvertedIndexTableHandle final
   using FilterColumn = SereneDBConnectorTableHandle::FilterColumn;
 
   InvertedIndexTableHandle(const InvertedIndexTable& table, ObjectId index_id,
-                           irs::Filter::Query::ptr search_query)
+                           irs::Filter::Query::ptr search_query,
+                           std::shared_ptr<const irs::Scorer> scorer)
     : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
       _name{table.name()},
       _table_id{table.GetIndex().GetRelationId()},
       _transaction{table.GetTransaction()},
       _index_id{index_id},
       _search_query{std::move(search_query)},
+      _scorer{std::move(scorer)},
       _underlying_table{table.GetTable()} {
     const auto& column_map = table.columnMap();
     SDB_ASSERT(!column_map.empty());
@@ -537,6 +556,8 @@ class InvertedIndexTableHandle final
 
   const auto& GetSearchQuery() const noexcept { return *_search_query; }
 
+  const irs::Scorer* GetScorer() const noexcept { return _scorer.get(); }
+
   const auto& GetTableColumnMap() const noexcept { return _table_column_map; }
 
   const axiom::connector::Table& GetUnderlyingTable() const noexcept {
@@ -550,6 +571,7 @@ class InvertedIndexTableHandle final
   query::Transaction& _transaction;
   ObjectId _index_id;
   irs::Filter::Query::ptr _search_query;
+  std::shared_ptr<const irs::Scorer> _scorer;
   axiom::connector::TablePtr _underlying_table;
   absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
 };
@@ -1138,7 +1160,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         pool,
         ParquetMaterializer(pool, std::move(source), std::move(reader),
                             std::move(row_reader), output_type),
-        search_snapshot.reader, handle.GetSearchQuery());
+        search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
     }
 
     return std::make_unique<SearchDataSource<RocksDBMaterializer>>(
@@ -1146,7 +1168,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       RocksDBMaterializer(pool, search_snapshot.snapshot->GetSnapshot(), &_db,
                           nullptr, _cf, output_type, column_oids,
                           handle.GetEffectiveColumnId(), handle.TableId()),
-      search_snapshot.reader, handle.GetSearchQuery());
+      search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
   }
 
  private:

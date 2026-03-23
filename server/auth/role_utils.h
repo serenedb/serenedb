@@ -26,8 +26,6 @@
 
 namespace sdb::auth {
 
-inline constexpr std::string_view kRootUserName = "root";
-
 Result CreateRootRole(bool skip_if_exists);
 
 Result StoreRole(bool replace, std::string_view name, std::string_view password,

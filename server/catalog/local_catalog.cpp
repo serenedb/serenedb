@@ -919,7 +919,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
-  SDB_INFO("xxxxx", Logger::FIXME, "Creating role ", role->GetName());
+  SDB_INFO("xxxxx", Logger::FIXME, "Creating role: ", role->GetName());
   absl::MutexLock lock{&_mutex};
   auto r = Apply(
     _snapshot,

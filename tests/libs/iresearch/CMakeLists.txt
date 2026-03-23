@@ -16,6 +16,7 @@ set(iresearch-tests_sources
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
+    ./analysis/pattern_tokenizer_tests.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_tests.cpp

@@ -68,19 +68,32 @@ int32_t GetTypeOID(const velox::TypePtr& type, bool in_array) {
 }
 
 std::string ToPgTypeString(const velox::Type& type) {
-  if (type.isArray()) {
-    return ToPgTypeString(*type.asArray().elementType()) + "[]";
+  return ToPgTypeString(velox::TypePtr{velox::TypePtr{}, &type});
+}
+
+std::string ToPgTypeString(const velox::TypePtr& type) {
+  if (!type) [[unlikely]] {
+    return "unknown";
   }
-  if (type.isDecimal()) {
+  if (type->isArray()) {
+    return ToPgTypeString(type->asArray().elementType()) + "[]";
+  }
+  if (type->isDecimal()) {
     return "numeric";
   }
-  if (type.isDate()) {
+  if (type->isDate()) {
     return "date";
   }
   if (IsInterval(type)) {
     return "interval";
   }
-  switch (type.kind()) {
+  if (isUuidType(type)) {
+    return "uuid";
+  }
+  if (isJsonType(type)) {
+    return "json";
+  }
+  switch (type->kind()) {
     case velox::TypeKind::BOOLEAN:
       return "boolean";
     case velox::TypeKind::TINYINT:
@@ -107,13 +120,6 @@ std::string ToPgTypeString(const velox::Type& type) {
       SDB_ASSERT(false);  // better to specify the name
       return "unknown";
   }
-}
-
-std::string ToPgTypeString(const velox::TypePtr& type) {
-  if (!type) [[unlikely]] {
-    return "unknown";
-  }
-  return ToPgTypeString(*type);
 }
 
 namespace {

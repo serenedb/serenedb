@@ -81,6 +81,7 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
+#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
@@ -302,18 +303,6 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
 }
 
 using query::ToAlias;
-
-std::string ToPgTypeString(const velox::Type& type) {
-  return absl::AsciiStrToLower(type.toString());
-}
-
-// TODO: temporary solution, this works wrong for some types
-std::string ToPgTypeString(const velox::TypePtr& type) {
-  if (!type) {
-    return "unknown";
-  }
-  return ToPgTypeString(*type);
-}
 
 std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
                                 std::string_view sep) {

@@ -58,6 +58,8 @@
 
 #include <algorithm>
 #include <expected>
+#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/tfidf.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <vector>
@@ -686,6 +688,13 @@ class SqlAnalyzer {
   SqlCommandType ProcessStmt(State& state, const Node& node,
                              bool allowed_select_into = false);
 
+  SqlCommandType ProcessStmtNoScore(State& state, const Node& node) {
+    auto expr_for_scorer = std::move(_expr_for_scorer);
+    const auto type = ProcessStmt(state, node, false);
+    _expr_for_scorer = std::move(expr_for_scorer);
+    return type;
+  }
+
   void MakeTableWrite(State& state, const Node& stmt,
                       const Objects::ObjectData& object,
                       std::vector<std::string> column_names,
@@ -734,6 +743,8 @@ class SqlAnalyzer {
                                          const UsingList& using_list);
   State ProcessRangeSubselect(State* parent, const RangeSubselect* node);
   State ProcessRangeFunction(State* parent, const RangeFunction* node);
+  void RefreshExprForScorer(bool root, std::vector<std::string>& names,
+                            std::vector<lp::ExprPtr>& exprs);
 
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
@@ -1087,6 +1098,8 @@ class SqlAnalyzer {
   query::Transaction& _transaction;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
+  std::shared_ptr<const irs::Scorer> _scorer_for_select;
+  lp::ExprPtr _expr_for_scorer;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1229,6 +1242,8 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
     add_expr(alias);
   }
 
+  RefreshExprForScorer(false, names, exprs);
+
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
@@ -1246,6 +1261,13 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
   if (stmt.lockingClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "LOCK clause is not implemented yet");
   }
+  auto scorer_for_select =
+    std::exchange(_scorer_for_select, _objects.GetScorer(&stmt));
+  _expr_for_scorer = nullptr;
+  irs::Finally end = [&] noexcept {
+    _scorer_for_select = std::move(scorer_for_select);
+  };
+
   ProcessWithClause(state, stmt.withClause);
 
   if (stmt.valuesLists) {
@@ -1531,7 +1553,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     // SELECT sub-statement can have their own CTEs
     auto child_state = state.MakeChild();
     child_state.expr_kind = ExprKind::InsertSelect;
-    ProcessStmt(child_state, *stmt.selectStmt);
+    ProcessStmtNoScore(child_state, *stmt.selectStmt);
     state.root = std::move(child_state.root);
   } else {
     // INSERT ... DEFAULT VALUES
@@ -2316,7 +2338,7 @@ void SqlAnalyzer::ProcessCreateViewStmt(State& state, const ViewStmt& stmt) {
   }
 
   State dummy{};
-  auto type = ProcessStmt(dummy, *stmt.query);
+  auto type = ProcessStmtNoScore(dummy, *stmt.query);
   SDB_ASSERT(type == SqlCommandType::Select);
   SDB_ASSERT(dummy.root);
   SDB_ASSERT(dummy.root->outputType());
@@ -2755,7 +2777,7 @@ void SqlAnalyzer::ProcessWithClause(State& state, const WithClause* clause) {
     SDB_ASSERT(ctequery);
 
     auto child_state = state.MakeChild();
-    ProcessStmt(child_state, *ctequery);
+    ProcessStmtNoScore(child_state, *ctequery);
 
     if (cte.aliascolnames) {
       const uint32_t cte_aliases_size = list_length(cte.aliascolnames);
@@ -2792,10 +2814,12 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
   exprs.reserve(entries.size());
 
   for (auto&& [expr, alias] : entries) {
-    std::string name = _id_generator.NextColumnName(alias);
+    auto name = _id_generator.NextColumnName(alias);
     names.emplace_back(std::move(name));
     exprs.emplace_back(std::move(expr));
   }
+
+  RefreshExprForScorer(!state.parent, names, exprs);
 
   ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
@@ -3539,9 +3563,13 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
   auto l_state = state.MakeChild();
   auto l_query_type = ProcessStmt(l_state, *castNode(Node, stmt.larg));
   SDB_ASSERT(l_query_type == SqlCommandType::Select);
+  auto l_expr_for_scorer = std::move(_expr_for_scorer);
+
   auto r_state = state.MakeChild();
   auto r_query_type = ProcessStmt(r_state, *castNode(Node, stmt.rarg));
   SDB_ASSERT(r_query_type == SqlCommandType::Select);
+
+  _expr_for_scorer = std::move(l_expr_for_scorer);
 
   const auto set_operation_type = [&] {
     switch (stmt.op) {
@@ -3625,7 +3653,7 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 
   SDB_ASSERT(cte->node);
   auto state = parent->MakeChild();
-  ProcessStmt(state, *cte->node->ctequery);
+  ProcessStmtNoScore(state, *cte->node->ctequery);
   if (node->alias) {
     ProcessAlias(state, node->alias->colnames, cte->node->aliascolnames,
                  node->alias->aliasname);
@@ -3645,7 +3673,7 @@ State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
   SDB_ASSERT(view_state->stmt->stmt);
 
   auto state = parent->MakeChild();
-  auto subquery_type = ProcessStmt(state, *view_state->stmt->stmt);
+  auto subquery_type = ProcessStmtNoScore(state, *view_state->stmt->stmt);
   SDB_ASSERT(subquery_type == SqlCommandType::Select);
   SDB_ASSERT(!state.resolver.HasTables());
   // ^ is supposed to be cleared in the project target list
@@ -3709,6 +3737,31 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   SDB_ASSERT(
     !table.Columns().empty(),
     "Column with inverted index should have at least one column to index");
+
+  if (_expr_for_scorer) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Only one inverted index scan can produce a score per query"));
+  }
+
+  if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
+    basics::downCast<connector::RocksDBInvertedIndexTable>(*object.table)
+      .SetScorer(scorer);
+
+    auto score_name = catalog::Column::GenerateScoreName(type->names());
+    auto unique_score_name = _id_generator.NextColumnName(score_name);
+
+    std::vector types = type->children();
+    std::vector type_names = type->names();
+    types.push_back(velox::REAL());
+    type_names.emplace_back(score_name);
+    type = velox::ROW(std::move(type_names), std::move(types));
+
+    column_names.emplace_back(std::move(unique_score_name));
+    _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
+      velox::REAL(), column_names.back());
+  }
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
@@ -4058,6 +4111,35 @@ State SqlAnalyzer::ProcessJoinExpr(State* parent, const JoinExpr* node) {
   ProcessAlias(l_state, node->alias);
 
   return l_state;
+}
+
+void SqlAnalyzer::RefreshExprForScorer(bool root,
+                                       std::vector<std::string>& names,
+                                       std::vector<lp::ExprPtr>& exprs) {
+  if (!_expr_for_scorer) {
+    return;
+  }
+  auto expr_for_scorer = std::move(_expr_for_scorer);
+  SDB_ASSERT(expr_for_scorer->isInputReference());
+  const auto& score_column =
+    expr_for_scorer->as<lp::InputReferenceExpr>()->name();
+  for (size_t i = 0; i < exprs.size(); ++i) {
+    SDB_ASSERT(exprs[i]);
+    if (!exprs[i]->isInputReference()) {
+      continue;
+    }
+    if (exprs[i]->as<lp::InputReferenceExpr>()->name() == score_column) {
+      _expr_for_scorer =
+        std::make_shared<lp::InputReferenceExpr>(velox::REAL(), names[i]);
+      break;
+    }
+  }
+  if (!_expr_for_scorer && !root) {
+    names.emplace_back(score_column);
+    _expr_for_scorer =
+      std::make_shared<lp::InputReferenceExpr>(velox::REAL(), score_column);
+    exprs.emplace_back(_expr_for_scorer);
+  }
 }
 
 State SqlAnalyzer::ProcessRangeSubselect(State* parent,
@@ -4843,6 +4925,21 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   auto [_, schema, name] = GetDbSchemaRelation(expr.funcname);
+
+  // bm25()/tfidf() are not registered catalog functions -- they are
+  // scorer directives resolved during collection. Return the injected
+  // score column reference that was set up in ProcessInvertedIndex.
+  if (schema.empty() &&
+      (name == irs::BM25::type_name() || name == irs::TFIDF::type_name())) {
+    if (!_expr_for_scorer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG(name, "() requires an inverted index scan in the same query"));
+    }
+    return _expr_for_scorer;
+  }
+
   auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
@@ -5197,7 +5294,7 @@ void SqlAnalyzer::ProcessFunctionBody(
   State& state, const State::FuncParamToExpr& func_params,
   const Node& func_body, const catalog::FunctionSignature& signature) {
   state.func_params = &func_params;
-  auto cmd_type = ProcessStmt(state, func_body);
+  auto cmd_type = ProcessStmtNoScore(state, func_body);
   state.func_params = nullptr;
 
   // maybe ddl statement
@@ -5685,7 +5782,7 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
 
   auto child_state = state.MakeChild();
   child_state.is_sublink = true;
-  auto type = ProcessStmt(child_state, *expr.subselect);
+  auto type = ProcessStmtNoScore(child_state, *expr.subselect);
   SDB_ASSERT(type == SqlCommandType::Select);
   SDB_ASSERT(child_state.root);
 

@@ -300,14 +300,16 @@ id
 query error
 SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(1.2, 0.75) DESC, BM25(1.0, 0.5) DESC LIMIT 3;
 ----
-db error: ERROR: Only one scorer function (BM25/TFIDF) is allowed per query; use UNION to combine scores from multiple inverted indexes
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for same inverted index
 
 
 # Error: BM25 and TFIDF in the same query conflict
 query error
 SELECT id, BM25() FROM docs_idx WHERE PHRASE(body, 'fox') AND TFIDF() > 0 LIMIT 3;
 ----
-db error: ERROR: Only one scorer function (BM25/TFIDF) is allowed per query; use UNION to combine scores from multiple inverted indexes
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for same inverted index
 
 
 # UNION ALL: same scorer in each branch — each branch is an independent scoring scope
@@ -350,6 +352,20 @@ id	score
 1	0.05305543
 2	0.05305543
 4	0.05305543
+
+query
+EXPLAIN 
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') 
+ORDER BY BM25() DESC LIMIT 3
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id")] -> "id":INTEGER
+  -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+
+
 
 
 # UNION of two subqueries from same index with outer ORDER BY BM25()
@@ -614,7 +630,8 @@ EXPLAIN (EXECUTION) SELECT id, score, TFIDF() FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
 ) sub ORDER BY id;
 ----
-db error: ERROR: scorer function mismatch: outer scorer differs from the scorer used inside the subquery
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for same inverted index
 
 
 # EXPLAIN for CTE with BM25
@@ -863,7 +880,23 @@ UNION ALL
 ORDER BY BM25()
 LIMIT 6;
 ----
-TODO
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TopN[13][6 sdb_inverted_index_score ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+  -- LocalPartition[12][REPARTITION ROUND ROBIN] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[2][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[5][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[8][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[7][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[6][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- Project[11][expressions: (id:INTEGER, "id"), (sdb_inverted_index_score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- Limit[10][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[9][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 

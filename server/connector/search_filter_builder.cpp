@@ -792,14 +792,16 @@ Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
 
   const auto& column_info = FindColumnInfo(ctx, *field_typed);
   // enforced by function prototype
-  SDB_ASSERT(column_info.info.type()->kind() == velox::TypeKind::VARCHAR,
-             ERROR_BAD_PARAMETER, "NGRAM_MATCH field '", field_typed->name(),
-             "' is not VARCHAR");
+  if (!column_info ||
+      column_info->info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "NGRAM_MATCH field '", field_typed->name(),
+            "' is not VARCHAR"};
+  }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(*column_info, field_name);
 
-  if ((column_info.analyzer.features &
+  if ((column_info->analyzer.features &
        irs::NGramSimilarityQuery::kRequiredFeatures) !=
       irs::NGramSimilarityQuery::kRequiredFeatures) {
     return {ERROR_BAD_PARAMETER, "NGRAM_MATCH field '", field_typed->name(),
@@ -808,15 +810,15 @@ Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
 
   auto& ngram_filter = ctx.negated ? Negate<irs::ByNGramSimilarity>(filter)
                                    : AddFilter<irs::ByNGramSimilarity>(filter);
-  column_info.analyzer.analyzer->reset(
+  column_info->analyzer.analyzer->reset(
     static_cast<std::string_view>(target->value<velox::StringView>()));
   const irs::TermAttr* token =
-    irs::get<irs::TermAttr>(*column_info.analyzer.analyzer);
+    irs::get<irs::TermAttr>(*column_info->analyzer.analyzer);
   search::mangling::MangleString(field_name);
   *ngram_filter.mutable_field() = field_name;
   ngram_filter.boost(ctx.boost);
   ngram_filter.mutable_options()->threshold = threshold;
-  while (column_info.analyzer.analyzer->next()) {
+  while (column_info->analyzer.analyzer->next()) {
     ngram_filter.mutable_options()->ngrams.emplace_back(token->value);
   }
   return {};

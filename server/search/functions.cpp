@@ -46,6 +46,33 @@ struct SearchStubFunction {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
+
+  // LEVENSHTEIN_MATCH overloads (3-6 args)
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const int64_t&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const int64_t&, const bool&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const int64_t&, const bool&,
+            const int64_t&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const int64_t&, const bool&,
+            const int64_t&, const arg_type<velox::Varchar>&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
 };
 
 }  // namespace
@@ -72,6 +99,21 @@ void registerSearchFunctions() {
     {std::string{kTermIn}});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar>({std::string{kTermLike}});
+
+  // LEVENSHTEIN_MATCH(path, target, distance[, transpositions[, maxTerms[,
+  // prefix]]])
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, int64_t>(
+    {std::string{kLevenshteinMatch}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, int64_t, bool>(
+    {std::string{kLevenshteinMatch}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, int64_t, bool, int64_t>(
+    {std::string{kLevenshteinMatch}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, int64_t, bool, int64_t,
+                          velox::Varchar>({std::string{kLevenshteinMatch}});
 }
 
 }  // namespace sdb::search::functions

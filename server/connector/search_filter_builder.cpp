@@ -32,6 +32,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
+#include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
@@ -183,7 +184,6 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
              "necessary casts.");
   auto process = [&]<typename T>(irs::ByTerm& filter, std::string& field_name,
                                  const velox::Variant& value) -> Result {
-    irs::bstring term_value;
     DoMangle<T>(field_name);
     if constexpr (std::is_same_v<T, velox::StringView>) {
       const auto sv = value.value<velox::StringView>();
@@ -724,6 +724,118 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
   return {};
 }
 
+Result FromVeloxLevenshteinMatch(irs::BooleanFilter& filter,
+                                 const VeloxFilterContext& ctx,
+                                 const velox::core::CallTypedExpr& call) {
+  const auto num_inputs = call.inputs().size();
+  if (num_inputs < 3 || num_inputs > 6) {
+    return {ERROR_BAD_PARAMETER, "LEVENSHTEIN_MATCH has ", num_inputs,
+            " inputs but 3 to 6 expected"};
+  }
+
+  if (!call.inputs()[0]->isFieldAccessKind()) {
+    return {ERROR_BAD_PARAMETER, "Input is not field access"};
+  }
+
+  // target (string)
+  auto target = EvaluateConstant(call.inputs()[1]);
+  if (!target.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate target value as constant"};
+  }
+  if (target->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate target as VARCHAR"};
+  }
+
+  // distance (number, 0-4 without transpositions, 0-3 with)
+  auto distance_val = EvaluateConstant(call.inputs()[2]);
+  if (!distance_val.has_value()) {
+    return {ERROR_BAD_PARAMETER,
+            "Failed to evaluate distance value as constant"};
+  }
+  auto distance = distance_val->value<int64_t>();
+  if (distance < 0 || distance > 4) {
+    return {ERROR_BAD_PARAMETER,
+            "LEVENSHTEIN_MATCH distance must be between 0 and 4, got ",
+            distance};
+  }
+
+  // transpositions (bool, optional, default true = Damerau-Levenshtein)
+  bool with_transpositions = true;
+  if (num_inputs >= 4) {
+    auto transpositions_val = EvaluateConstant(call.inputs()[3]);
+    if (!transpositions_val.has_value()) {
+      return {ERROR_BAD_PARAMETER,
+              "Failed to evaluate transpositions value as constant"};
+    }
+    with_transpositions = transpositions_val->value<bool>();
+  }
+
+  if (with_transpositions && distance > 3) {
+    return {ERROR_BAD_PARAMETER,
+            "LEVENSHTEIN_MATCH distance must be between 0 and 3 when "
+            "transpositions is true, got ",
+            distance};
+  }
+
+  // maxTerms (number, optional, default 64)
+  size_t max_terms = 64;
+  if (num_inputs >= 5) {
+    auto max_terms_val = EvaluateConstant(call.inputs()[4]);
+    if (!max_terms_val.has_value()) {
+      return {ERROR_BAD_PARAMETER,
+              "Failed to evaluate maxTerms value as constant"};
+    }
+    auto mt = max_terms_val->value<int64_t>();
+    if (mt < 0) {
+      return {ERROR_BAD_PARAMETER, "LEVENSHTEIN_MATCH maxTerms must be >= 0"};
+    }
+    max_terms = static_cast<size_t>(mt);
+  }
+
+  // prefix (string, optional, default "")
+  std::string_view prefix;
+  if (num_inputs >= 6) {
+    auto prefix_val = EvaluateConstant(call.inputs()[5]);
+    if (!prefix_val.has_value()) {
+      return {ERROR_BAD_PARAMETER,
+              "Failed to evaluate prefix value as constant"};
+    }
+    if (prefix_val->kind() != velox::TypeKind::VARCHAR) {
+      return {ERROR_BAD_PARAMETER, "Failed to evaluate prefix as VARCHAR"};
+    }
+    prefix =
+      static_cast<std::string_view>(prefix_val->value<velox::StringView>());
+  }
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    call.inputs()[0].get());
+
+  const auto& column_info = FindColumnInfo(ctx, *field_typed);
+  if (column_info.info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "LEVENSHTEIN_MATCH field '",
+            field_typed->name(), "' is not VARCHAR"};
+  }
+
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+  search::mangling::MangleString(field_name);
+
+  auto& edit_filter = ctx.negated ? Negate<irs::ByEditDistance>(filter)
+                                  : AddFilter<irs::ByEditDistance>(filter);
+  edit_filter.boost(ctx.boost);
+  *edit_filter.mutable_field() = field_name;
+  auto* opts = edit_filter.mutable_options();
+  opts->term.assign(irs::ViewCast<irs::byte_type>(
+    static_cast<std::string_view>(target->value<velox::StringView>())));
+  opts->max_distance = static_cast<uint8_t>(distance);
+  opts->with_transpositions = with_transpositions;
+  opts->max_terms = max_terms;
+  if (!prefix.empty()) {
+    opts->prefix.assign(irs::ViewCast<irs::byte_type>(prefix));
+  }
+  return {};
+}
+
 }  // namespace
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -796,6 +908,10 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 
   if (call.name() == search::functions::kPhrase) {
     return FromSearchPhrase(filter, ctx, call);
+  }
+
+  if (call.name() == search::functions::kLevenshteinMatch) {
+    return FromVeloxLevenshteinMatch(filter, ctx, call);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};

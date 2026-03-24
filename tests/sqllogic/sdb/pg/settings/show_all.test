@@ -2,6 +2,7 @@ query
 SHOW ALL;
 ----
 name	value	description
+sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
 sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
 execution_threads	0	Sets the number of threads used for query execution. If set to 0, serial execution (execution in connection thread) is used. Otherwise the execution is separated from connection thread and desired number of threads will be tried to be used.
@@ -153,6 +154,7 @@ query
 SHOW ALL;
 ----
 name	value	description
+sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
 sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
 execution_threads	0	Sets the number of threads used for query execution. If set to 0, serial execution (execution in connection thread) is used. Otherwise the execution is separated from connection thread and desired number of threads will be tried to be used.

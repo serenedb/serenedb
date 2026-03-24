@@ -2,7 +2,7 @@ query
 SHOW sdb_log_level;
 ----
 sdb_log_level
-authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,fuerte=info,general=info,httpclient=warning,iresearch=info,memory=info,replication=info,requests=fatal,rocksdb=warning,search=info,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning
+authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning
 
 
 statement ok
@@ -13,7 +13,7 @@ query
 SHOW sdb_log_level;
 ----
 sdb_log_level
-authentication=trace,authorization=trace,communication=trace,config=trace,crash=trace,engines=trace,flush=trace,fuerte=trace,general=trace,httpclient=trace,iresearch=trace,memory=trace,replication=trace,requests=trace,rocksdb=trace,search=trace,ssl=trace,startup=trace,statistics=trace,syscall=trace,threads=trace
+authentication=trace,authorization=trace,communication=trace,config=trace,crash=trace,engines=trace,flush=trace,general=trace,httpclient=trace,memory=trace,replication=trace,requests=trace,rocksdb=trace,ssl=trace,startup=trace,statistics=trace,syscall=trace,threads=trace
 
 
 statement ok
@@ -24,7 +24,7 @@ query
 SHOW sdb_log_level;
 ----
 sdb_log_level
-authentication=trace,authorization=trace,communication=trace,config=trace,crash=trace,engines=trace,flush=trace,fuerte=trace,general=trace,httpclient=trace,iresearch=trace,memory=trace,replication=trace,requests=debug,rocksdb=trace,search=trace,ssl=trace,startup=trace,statistics=trace,syscall=trace,threads=trace
+authentication=trace,authorization=trace,communication=trace,config=trace,crash=trace,engines=trace,flush=trace,general=trace,httpclient=trace,memory=trace,replication=trace,requests=debug,rocksdb=trace,ssl=trace,startup=trace,statistics=trace,syscall=trace,threads=trace
 
 
 statement ok
@@ -35,13 +35,13 @@ query
 SHOW sdb_log_level;
 ----
 sdb_log_level
-authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,fuerte=info,general=info,httpclient=warning,iresearch=info,memory=info,replication=info,requests=fatal,rocksdb=warning,search=info,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning
+authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning
 
 
 query error
 SET LOCAL sdb_log_level TO 'all=debug';
 ----
-db error: ERROR: parameter "sdb_log_level" is global and cannot be set inside a transaction
+db error: ERROR: SET LOCAL can only be used in transaction blocks
 
 
 statement ok

@@ -856,7 +856,6 @@ std::string LogLevelString() {
 }
 
 void ResetLogLevels() noexcept {
-  SetLogLevel(LogLevel::INFO);
   for (auto* topic : GetTopics()) {
     topic->ResetLevel();
   }

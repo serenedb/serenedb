@@ -261,7 +261,7 @@ void ProcessLogLevel(const VariableSetStmt& stmt,
     case VAR_SET_DEFAULT:
       [[fallthrough]];
     case VAR_RESET:
-      log::SetLogLevel("info");
+      log::ResetLogLevels();
       break;
     default:
       SDB_UNREACHABLE();

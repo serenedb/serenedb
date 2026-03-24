@@ -84,6 +84,7 @@ class LogTopic final {
     _level.store(level, std::memory_order_relaxed);
   }
   void ResetLevel() noexcept { _level.store(_default_level); }
+  void SaveDefaultLevel() noexcept { _default_level = GetLevel(); }
 
  private:
   std::string_view _name;
@@ -175,13 +176,18 @@ LogGroup& GetDefaultLogGroup() noexcept;
 LogLevel GetLogLevel() noexcept;
 void SetLogLevel(LogLevel) noexcept;
 void SetLogLevel(std::string_view);
+std::vector<LogTopic*> GetTopics();
 
 template<typename C>
 void SetLogLevels(const C& levels) {
   for (const auto& level : levels) {
     SetLogLevel(level);
   }
+  for (auto* topic : GetTopics()) {
+    topic->SaveDefaultLevel();
+  }
 }
+
 void SetRole(char role);
 void SetOutputPrefix(std::string_view);
 void SetHostname(std::string_view);

@@ -38,6 +38,12 @@ class Transaction;
 
 }  // namespace sdb::query
 
+namespace sdb::catalog {
+
+class Table;
+
+}  // namespace sdb::catalog
+
 struct RawStmt;
 struct List;
 struct Node;
@@ -75,8 +81,9 @@ class Objects : public irs::memory::Managed {
   };
 
   struct ObjectData {
-    AccessType type = AccessType::None;
     std::shared_ptr<catalog::SchemaObject> object;
+    // TODO(mbkkt): remove it
+    std::shared_ptr<catalog::Table> catalog_table;
 
     // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
     // to implement connector::Table without allocation.
@@ -101,15 +108,6 @@ class Objects : public irs::memory::Managed {
   const ObjectData* getRelation(S s, std::string_view relation) const noexcept {
     auto it = _relations.find(ObjectName{ensureNotNull(s), relation});
     return it != _relations.end() ? &it->second : nullptr;
-  }
-
-  const ObjectData* getRelationById(ObjectId id) const noexcept {
-    for (const auto& [name, data] : _relations) {
-      if (data.object && data.object->GetId() == id) {
-        return &data;
-      }
-    }
-    return nullptr;
   }
 
   template<typename S>

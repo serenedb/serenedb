@@ -311,8 +311,10 @@ template<typename T>
 struct VersionFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  // TODO(mbkkt) Don't use hard-coded version
+  // PG version should be from libpg_query, SereneDB version should be from build.hu
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {
-    out = "PostgreSQL 18.0 (SereneDB 26.03.1)";
+    out = "PostgreSQL 18.1 (SereneDB 26.03.1)";
   }
 };
 

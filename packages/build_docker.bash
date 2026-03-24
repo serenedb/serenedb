@@ -135,7 +135,7 @@ if [ "${PUSH_IMAGES_2_REGISTRY:=false}" = true ]; then
 	docker push "${FULL_IMAGE_NAME}:${VERSION}"
 
 	# Push extra tags
-	for tag in "${DOCKER_EXTRA_TAGS_ARRAY[@]}"; do
+	for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
 		if [ -n "$tag" ]; then
 			log "Pushing ${FULL_IMAGE_NAME}:${tag}..."
 			docker push "${FULL_IMAGE_NAME}:${tag}"

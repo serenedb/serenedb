@@ -53,6 +53,11 @@ on:
         required: true
         type: boolean
         default: false
+      SERENEDB_VERSION_PATCH:
+        description: "Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release."
+        required: false
+        type: string
+        default: ""
     secrets:
       PAT_TOKEN:
         required: true
@@ -164,6 +169,25 @@ jobs:
           fi
 
           git config --global --add safe.directory '*'
+
+      - name: Resolve version patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
+          if [[ "${{ inputs.PRESET }}" == "release" ]]; then
+            if [[ -z "$PATCH" ]]; then
+              MAJOR=$(date -u +%y)
+              MINOR=$(date -u +%m)
+              LAST=$(gh release list --limit 100 --json tagName \
+                --jq "[.[] | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
+                2>/dev/null || echo "0")
+              PATCH=$(( LAST + 1 ))
+            fi
+          else
+            PATCH="0"
+          fi
+          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
 
       - name: Checkout SereneDB
         uses: actions/checkout@v6

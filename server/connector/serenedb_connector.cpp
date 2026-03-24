@@ -87,13 +87,13 @@ SereneDBTableLayout::createTableHandle(
   velox::core::ExpressionEvaluator& evaluator,
   std::vector<velox::core::TypedExprPtr> filters,
   std::vector<velox::core::TypedExprPtr>& rejected_filters) const {
-  const RocksDBInvertedIndexTable* inverted_index_table;
-  if ((inverted_index_table =
-         dynamic_cast<const RocksDBInvertedIndexTable*>(&this->table()))) {
-    const auto& index = inverted_index_table->GetIndex();
+  const auto* table = &this->table();
+  const auto* inv_index = dynamic_cast<const InvertedIndexTable*>(table);
+  if (inv_index) {
+    const auto& index = inv_index->GetIndex();
     auto column_getter =
       [&](std::string_view name) -> std::optional<SearchColumnInfo> {
-      const auto* column = inverted_index_table->findColumn(name);
+      const auto* column = inv_index->findColumn(name);
       if (column) {
         const auto* serene_column = basics::downCast<SereneDBColumn>(column);
         auto index_columns = index.GetColumnIds();
@@ -111,13 +111,10 @@ SereneDBTableLayout::createTableHandle(
       return std::nullopt;
     };
 
-    auto handle = std::make_shared<SereneDBConnectorTableHandle>(
-      session, *this, std::vector<Point>{}, nullptr);
-    const auto& snapshot =
-      inverted_index_table->GetTransaction().EnsureSearchSnapshot(
-        inverted_index_table->GetIndex().GetId());
+    const auto& snapshot = inv_index->GetTransaction().EnsureSearchSnapshot(
+      inv_index->GetIndex().GetId());
     // TODO(Dronplane) link irs memory manager to velox pool
-    const auto& scorer = inverted_index_table->GetScorerPtr();
+    const auto& scorer = inv_index->GetScorerPtr();
 
     irs::And conjunct_root;
     for (auto& filter : filters) {
@@ -140,15 +137,11 @@ SereneDBTableLayout::createTableHandle(
         {.index = snapshot.reader, .scorer = scorer.get()});
     }
 
-    handle->AddSearchQuery(index.GetId(), std::move(prepared));
-    if (scorer) {
-      handle->AddScorer(scorer);
-    }
-    return handle;
+    return std::make_shared<InvertedIndexTableHandle>(
+      *inv_index, index.GetId(), std::move(prepared), scorer);
   }
 
-  if (const auto* read_file_table =
-        dynamic_cast<const ReadFileTable*>(&this->table())) {
+  if (const auto* read_file_table = dynamic_cast<const ReadFileTable*>(table)) {
     double sample_rate = 1.0;
     velox::common::SubfieldFilters subfield_filters;
     std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
@@ -176,7 +169,7 @@ SereneDBTableLayout::createTableHandle(
                                              std::move(remaining_filter));
   }
 
-  const auto& pk_type = basics::downCast<RocksDBTable>(table()).PKType();
+  const auto& pk_type = basics::downCast<RocksDBTable>(*table).PKType();
 
   velox::core::TypedExprPtr remaining_filter;
   if (filters.size() == 1) {
@@ -202,10 +195,11 @@ SereneDBTableLayout::createTableHandle(
     remaining_filter.reset();
   }
 
-  SDB_ASSERT(!table().columnMap().empty(),
+  SDB_ASSERT(!table->columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");
   return std::make_shared<SereneDBConnectorTableHandle>(
-    session, *this, std::move(points), std::move(remaining_filter));
+    session, *table->layouts().front(), std::move(points),
+    std::move(remaining_filter));
 }
 
 }  // namespace sdb::connector

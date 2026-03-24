@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/match.h>
+
 #include "catalog/format_options.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
@@ -91,8 +93,12 @@ class FileOptionsParser : public OptionsParser {
     if (pos == std::string_view::npos) {
       return std::nullopt;
     }
-    return magic_enum::enum_cast<FormatType>(_file_path.substr(pos + 1),
-                                             magic_enum::case_insensitive);
+    auto ext = _file_path.substr(pos + 1);
+    if (absl::EqualsIgnoreCase(ext, "jsonl") ||
+        absl::EqualsIgnoreCase(ext, "ndjson")) {
+      return FormatType::Json;
+    }
+    return magic_enum::enum_cast<FormatType>(ext, magic_enum::case_insensitive);
   }
 
   static bool IsS3Path(std::string_view path) {
@@ -190,6 +196,13 @@ class FileOptionsParser : public OptionsParser {
     return std::make_shared<OrcFormatOptions>();
   }
 
+  // Use TextReader with \x01 as delimiter so the entire line is read as a
+  // single field. Valid JSON encodes control characters as \uXXXX, so \x01
+  // will never appear in well-formed JSON Lines data.
+  std::shared_ptr<TextFormatOptions> ParseJsonFormatOptions() {
+    return std::make_shared<TextFormatOptions>('\x01', '\x01', "", false);
+  }
+
   std::shared_ptr<FormatOptions> ParseFormatOptions(
     file_options::FormatType format) {
     using namespace file_options;
@@ -204,6 +217,8 @@ class FileOptionsParser : public OptionsParser {
         return ParseDwrfFormatOptions();
       case FormatType::Orc:
         return ParseOrcFormatOptions();
+      case FormatType::Json:
+        return ParseJsonFormatOptions();
     }
   }
 

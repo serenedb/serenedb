@@ -8,6 +8,7 @@ echo "Running tests against SereneDB"
 ./run.sh \
 	--host serenedb-single \
 	--single-port 7777 \
+	--single-port-ssl 7778 \
 	--test "sdb/**/*.test*" \
 	--junit "tests-serenedb" \
 	--protocol both \

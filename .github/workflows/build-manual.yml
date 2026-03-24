@@ -61,7 +61,12 @@ on:
         description: 'JSON configuration for builds and job settings'
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+      SERENEDB_VERSION_PATCH:
+        description: 'Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release.'
+        required: false
+        type: string
+        default: ''
 permissions:
   statuses: write
   contents: write
@@ -81,5 +86,6 @@ jobs:
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
       CREATE_GITHUB_RELEASE: ${{ inputs.CREATE_GITHUB_RELEASE }}
+      SERENEDB_VERSION_PATCH: ${{ inputs.SERENEDB_VERSION_PATCH }}
 
     secrets: inherit

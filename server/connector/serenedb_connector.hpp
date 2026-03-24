@@ -28,6 +28,7 @@
 #include <velox/connectors/Connector.h>
 #include <velox/connectors/hive/HiveConnectorUtil.h>
 #include <velox/core/Expressions.h>
+#include <velox/dwio/common/BufferedInput.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/ReaderFactory.h>
 #include <velox/expression/ExprConstants.h>
@@ -51,8 +52,9 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/parquet_materializer.hpp"
 #include "connector/rocksdb_filter.hpp"
-#include "connector/search_count_data_source.hpp"
+#include "connector/rocksdb_materializer.hpp"
 #include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
@@ -226,9 +228,6 @@ class SereneDBConnectorTableHandle final
 
   std::string toString() const final {
     // TODO(mkornaukhov) implement filter printing
-    if (_search_query) {
-      return absl::StrCat(_name, ", scan=search");
-    }
     if (!_points.empty()) {
       return absl::StrCat(_name, ", scan=point");
     }
@@ -239,12 +238,6 @@ class SereneDBConnectorTableHandle final
 
   const catalog::Column::Id& GetEffectiveColumnId() const noexcept {
     return _effective_column_id;
-  }
-
-  void AddSearchQuery(ObjectId index_id, irs::Filter::Query::ptr&& query) {
-    SDB_ASSERT(!_search_query);
-    _search_query = std::move(query);
-    _index_id = index_id;
   }
 
   auto& GetTransaction() const noexcept { return _transaction; }
@@ -260,29 +253,15 @@ class SereneDBConnectorTableHandle final
     return _table_column_map;
   }
 
-  const irs::Filter::Query* GetSearchQuery() const noexcept {
-    return _search_query.get();
-  }
-
-  ObjectId GetIndexId() const noexcept { return _index_id; }
-
-  void AddScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
-    _scorer = std::move(scorer);
-  }
-
-  const irs::Scorer* GetScorer() const noexcept { return _scorer.get(); }
-
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
-  irs::Filter::Query::ptr _search_query;
-  ObjectId _index_id = ObjectId::none();
   velox::RowTypePtr _pk_type;
   std::vector<Point> _points;
   velox::core::TypedExprPtr _remaining_filter;
-  absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
+  containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
   std::shared_ptr<const irs::Scorer> _scorer;
 };
 
@@ -468,25 +447,55 @@ class RocksDBTable : public axiom::connector::Table {
   ObjectId _backfill_index_id;
 };
 
-class RocksDBInvertedIndexTable : public RocksDBTable {
-  static Init MakeInit(const catalog::Table& collection) {
-    Init init{collection};
+class InvertedIndexTable : public axiom::connector::Table {
+ public:
+  static std::vector<std::unique_ptr<const axiom::connector::Column>>
+  CopyColumns(const axiom::connector::Table& table) {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    columns.reserve(table.allColumns().size() + 1);
+    for (const auto* col : table.allColumns()) {
+      auto* sdb_col = basics::downCast<const SereneDBColumn>(col);
+      columns.push_back(std::make_unique<SereneDBColumn>(
+        col->name(), col->type(), sdb_col->Id()));
+    }
     // Always add the score column so createColumnHandle can resolve it.
     // It is only included in the output type when a scorer is active.
-    auto score_name =
-      catalog::Column::GenerateScoreName(collection.RowType()->names());
-    init.column_handles.push_back(std::make_unique<SereneDBColumn>(
+    auto score_name = catalog::Column::GenerateScoreName(table.type()->names());
+    columns.push_back(std::make_unique<SereneDBColumn>(
       score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
-    return init;
+    return columns;
   }
 
- public:
-  explicit RocksDBInvertedIndexTable(const catalog::Table& collection,
-                                     query::Transaction& transaction,
-                                     const catalog::InvertedIndex& index)
-    : RocksDBTable{MakeInit(collection), transaction}, _index{index} {}
+  InvertedIndexTable(query::Transaction& transaction,
+                     axiom::connector::TablePtr table,
+                     const catalog::InvertedIndex& index)
+    : Table(table->name(), CopyColumns(*table)),
+      _transaction{transaction},
+      _table{std::move(table)},
+      _index{index} {
+    auto* source = _table->layouts().front();
+    auto layout = std::make_unique<SereneDBTableLayout>(
+      name(), *this, *source->connector(), allColumns(), source->orderColumns(),
+      source->sortOrder());
+    _layouts.push_back(layout.get());
+    _layout_handles.push_back(std::move(layout));
+  }
 
   const auto& GetIndex() const noexcept { return _index; }
+  const auto& GetTable() const noexcept { return _table; }
+  auto& GetTransaction() const noexcept { return _transaction; }
+
+  const std::vector<const axiom::connector::TableLayout*>& layouts()
+    const final {
+    return _layouts;
+  }
+
+  uint64_t numRows() const final { return _table->numRows(); }
+
+  std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
+    axiom::connector::WriteKind kind) const final {
+    return _table->rowIdHandles(kind);
+  }
 
   void SetScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
     _scorer = std::move(scorer);
@@ -497,8 +506,79 @@ class RocksDBInvertedIndexTable : public RocksDBTable {
   }
 
  private:
+  query::Transaction& _transaction;
+  axiom::connector::TablePtr _table;
   const catalog::InvertedIndex& _index;
+  std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
+  std::vector<const axiom::connector::TableLayout*> _layouts;
   std::shared_ptr<const irs::Scorer> _scorer;
+};
+
+class InvertedIndexTableHandle final
+  : public velox::connector::ConnectorTableHandle {
+ public:
+  using FilterColumn = SereneDBConnectorTableHandle::FilterColumn;
+
+  InvertedIndexTableHandle(const InvertedIndexTable& table, ObjectId index_id,
+                           irs::Filter::Query::ptr search_query,
+                           std::shared_ptr<const irs::Scorer> scorer)
+    : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
+      _name{table.name()},
+      _table_id{table.GetIndex().GetRelationId()},
+      _transaction{table.GetTransaction()},
+      _index_id{index_id},
+      _search_query{std::move(search_query)},
+      _scorer{std::move(scorer)},
+      _underlying_table{table.GetTable()} {
+    const auto& column_map = table.columnMap();
+    SDB_ASSERT(!column_map.empty());
+    _effective_column_id =
+      basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
+    for (const auto& [orig_name, col_ptr] : column_map) {
+      const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
+      _table_column_map.emplace(orig_name,
+                                FilterColumn{scol->Id(), scol->type()});
+    }
+  }
+
+  bool supportsIndexLookup() const final { return false; }
+
+  const std::string& name() const final { return _name; }
+
+  std::string toString() const final {
+    return absl::StrCat(_name, ", scan=search");
+  }
+
+  ObjectId TableId() const noexcept { return _table_id; }
+
+  catalog::Column::Id GetEffectiveColumnId() const noexcept {
+    return _effective_column_id;
+  }
+
+  auto& GetTransaction() const noexcept { return _transaction; }
+
+  ObjectId GetIndexId() const noexcept { return _index_id; }
+
+  const auto& GetSearchQuery() const noexcept { return *_search_query; }
+
+  const irs::Scorer* GetScorer() const noexcept { return _scorer.get(); }
+
+  const auto& GetTableColumnMap() const noexcept { return _table_column_map; }
+
+  const axiom::connector::Table& GetUnderlyingTable() const noexcept {
+    return *_underlying_table;
+  }
+
+ private:
+  std::string _name;
+  ObjectId _table_id;
+  catalog::Column::Id _effective_column_id;
+  query::Transaction& _transaction;
+  ObjectId _index_id;
+  irs::Filter::Query::ptr _search_query;
+  std::shared_ptr<const irs::Scorer> _scorer;
+  axiom::connector::TablePtr _underlying_table;
+  containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
@@ -740,22 +820,28 @@ class SereneDBConnector final : public velox::connector::Connector {
         connector_query_ctx->expressionEvaluator());
     }
 
-    const auto& serene_table_handle =
-      basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
-    const auto& object_key = serene_table_handle.TableId();
-
-    // need to remap names to oids
     std::vector<catalog::Column::Id> column_oids;
     if (output_type->size() > 0) {
       column_oids.reserve(output_type->size());
       for (const auto& name : output_type->names()) {
         auto handle = column_handles.find(name);
         SDB_ENSURE(handle != column_handles.end(), ERROR_INTERNAL,
-                   "RocksDBDataSource: can't find column handle for ", name);
+                   "DataSource: can't find column handle for ", name);
         column_oids.push_back(
           basics::downCast<const SereneDBColumnHandle>(handle->second)->Id());
       }
     }
+
+    if (const auto* inv_handle =
+          dynamic_cast<const InvertedIndexTableHandle*>(table_handle.get())) {
+      return createSearchDataSource(output_type, *inv_handle,
+                                    std::move(column_oids), column_handles,
+                                    connector_query_ctx);
+    }
+
+    const auto& serene_table_handle =
+      basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
+    const auto& object_key = serene_table_handle.TableId();
 
     velox::RowTypePtr read_type = output_type;
     const size_t output_column_count = output_type->size();
@@ -822,10 +908,6 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
     auto& transaction = serene_table_handle.GetTransaction();
 
-    // We cannot have precalculated points for search query
-    SDB_ASSERT(serene_table_handle.GetPoints().empty() ||
-               !serene_table_handle.GetSearchQuery());
-
     const bool needs_read_your_own_writes =
       transaction.HasRocksDBWrite() &&
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
@@ -834,11 +916,6 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (needs_read_your_own_writes) {
       auto& rocksdb_transaction = transaction.GetRocksDBTransaction();
       SDB_ASSERT(snapshot == rocksdb_transaction.GetSnapshot());
-      if (serene_table_handle.GetSearchQuery()) {
-        SDB_THROW(
-          ERROR_NOT_IMPLEMENTED,
-          "sdb_read_your_own_writes is not supported for inverted index");
-      }
 
 #ifdef SDB_FAULT_INJECTION
       // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
@@ -868,22 +945,6 @@ class SereneDBConnector final : public velox::connector::Connector {
         column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
         output_column_count, compiled_filter,
         connector_query_ctx->expressionEvaluator());
-    }
-
-    if (serene_table_handle.GetSearchQuery()) {
-      const auto& search_snapshot =
-        transaction.EnsureSearchSnapshot(serene_table_handle.GetIndexId());
-      if (output_type->size() == 0) {
-        return std::make_unique<SearchCountDataSource>(
-          *connector_query_ctx->memoryPool(), output_type,
-          search_snapshot.reader, *serene_table_handle.GetSearchQuery());
-      }
-      return std::make_unique<SearchScanDataSource>(
-        *connector_query_ctx->memoryPool(),
-        search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,
-        std::move(column_oids), serene_table_handle.GetEffectiveColumnId(),
-        object_key, search_snapshot.reader,
-        *serene_table_handle.GetSearchQuery(), serene_table_handle.GetScorer());
     }
 
     const auto& points = serene_table_handle.GetPoints();
@@ -1067,6 +1128,55 @@ class SereneDBConnector final : public velox::connector::Connector {
   }
 
   folly::Executor* ioExecutor() const final { return nullptr; }
+
+  std::unique_ptr<velox::connector::DataSource> createSearchDataSource(
+    const velox::RowTypePtr& output_type,
+    const InvertedIndexTableHandle& handle,
+    std::vector<catalog::Column::Id> column_oids,
+    const velox::connector::ColumnHandleMap& column_handles,
+    velox::connector::ConnectorQueryCtx* connector_query_ctx) {
+    if (column_oids.empty()) {
+      SDB_ASSERT(output_type->size() == 0);
+      column_oids.push_back(handle.GetEffectiveColumnId());
+    }
+
+    auto& transaction = handle.GetTransaction();
+
+    const bool needs_read_your_own_writes =
+      transaction.HasRocksDBWrite() &&
+      transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
+    if (needs_read_your_own_writes) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "sdb_read_your_own_writes is not supported for inverted index");
+    }
+
+    auto& pool = *connector_query_ctx->memoryPool();
+    const auto& search_snapshot =
+      transaction.EnsureSearchSnapshot(handle.GetIndexId());
+    const auto& underlying_table = handle.GetUnderlyingTable();
+
+    if (const auto* file_table =
+          dynamic_cast<const ReadFileTable*>(&underlying_table)) {
+      SDB_ASSERT(file_table->GetOptions()->Reader()->fileFormat() ==
+                   velox::dwio::common::FileFormat::PARQUET,
+                 "Only parquet is supported for inverted index search");
+      auto [source, reader, row_reader] = FileDataSource::CreateReader(
+        *file_table->GetOptions(), pool, output_type, column_handles, {},
+        nullptr, nullptr);
+      return std::make_unique<SearchDataSource<ParquetMaterializer>>(
+        pool,
+        ParquetMaterializer(pool, std::move(source), std::move(reader),
+                            std::move(row_reader), output_type),
+        search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+    }
+
+    return std::make_unique<SearchDataSource<RocksDBMaterializer>>(
+      pool,
+      RocksDBMaterializer(pool, search_snapshot.snapshot->GetSnapshot(), &_db,
+                          nullptr, _cf, output_type, column_oids,
+                          handle.GetEffectiveColumnId(), handle.TableId()),
+      search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+  }
 
  private:
   rocksdb::TransactionDB& _db;

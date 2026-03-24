@@ -626,25 +626,17 @@ DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Int, out_type<int32_t>&,
                           const arg_type<int64_t>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Text, out_type<int32_t>&,
                           const arg_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported2TextInt, out_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&,
-                          const arg_type<int64_t>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupported2CharInt, out_type<velox::Varchar>&,
                           const arg_type<int8_t>&, const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt2TextText, out_type<int32_t>&,
+DEFINE_NOT_SUPPORTED_FUNC(NotSupported1TextArray, out_type<velox::Varchar>&,
+                          const arg_type<velox::Array<velox::Varchar>>&)
+DEFINE_NOT_SUPPORTED_FUNC(NotSupported1IntArray, out_type<velox::Varchar>&,
+                          const arg_type<velox::Array<int64_t>>&)
+DEFINE_NOT_SUPPORTED_FUNC(NotSupported3TextTextArrayTextArray,
+                          out_type<velox::Varchar>&,
                           const arg_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(
-  NotSupported1TextArray, out_type<velox::Varchar>&,
-  const arg_type<velox::Array<velox::Varchar>>&)
-DEFINE_NOT_SUPPORTED_FUNC(
-  NotSupported1IntArray, out_type<velox::Varchar>&,
-  const arg_type<velox::Array<int64_t>>&)
-DEFINE_NOT_SUPPORTED_FUNC(
-  NotSupported3TextTextArrayTextArray, out_type<velox::Varchar>&,
-  const arg_type<velox::Varchar>&,
-  const arg_type<velox::Array<velox::Varchar>>&,
-  const arg_type<velox::Array<velox::Varchar>>&)
+                          const arg_type<velox::Array<velox::Varchar>>&,
+                          const arg_type<velox::Array<velox::Varchar>>&)
 
 #undef DEFINE_NOT_SUPPORTED_FUNC
 
@@ -807,7 +799,6 @@ struct FormatTypeFunction {
     result = RegtypeOut(static_cast<int32_t>(type_oid));
   }
 };
-
 
 template<typename T>
 struct NullVarcharFunction {
@@ -1537,8 +1528,7 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<NotSupported2CharInt, velox::Varchar, int8_t,
                           int64_t>({prefix + "acldefault"});
   velox::registerFunction<NotSupported1IntArray, velox::Varchar,
-                          velox::Array<int64_t>>(
-    {prefix + "aclexplode"});
+                          velox::Array<int64_t>>({prefix + "aclexplode"});
   velox::registerFunction<NotSupported4OidOidTextBool, velox::Varchar, int64_t,
                           int64_t, velox::Varchar, bool>(
     {prefix + "makeaclitem"});

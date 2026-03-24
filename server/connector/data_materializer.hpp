@@ -43,7 +43,8 @@ class Materializer {
   using ValueReader =
     std::function<const std::string&(std::string_view full_key)>;
 
-  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys);
+  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
+                               velox::VectorPtr scores = {});
 
   velox::VectorPtr ReadColumnKeys(std::span<std::string> row_keys,
                                   catalog::Column::Id column_id,

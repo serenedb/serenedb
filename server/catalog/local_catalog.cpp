@@ -87,7 +87,6 @@
 #include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
-#include "utils/operation_options.h"
 #include "yaclib/async/future.hpp"
 #include "yaclib/async/when_all.hpp"
 
@@ -919,7 +918,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
-  SDB_INFO("xxxxx", Logger::FIXME, "Creating role ", role->GetName());
+  SDB_INFO("xxxxx", Logger::FIXME, "Creating role: ", role->GetName());
   absl::MutexLock lock{&_mutex};
   auto r = Apply(
     _snapshot,

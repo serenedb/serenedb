@@ -63,6 +63,26 @@ struct PgUnknownTrait {
 };
 using PgUnknown = velox::CustomType<PgUnknownTrait>;
 
+velox::TypePtr REGTYPE();
+bool IsRegtype(const velox::TypePtr& type);
+bool IsRegtype(const velox::Type& type);
+
+struct RegtypeTrait {
+  using type = int32_t;                                  // NOLINT
+  static constexpr const char* typeName = "PG_REGTYPE";  // NOLINT
+};
+using RegtypeCustomType = velox::CustomType<RegtypeTrait>;
+
+velox::TypePtr REGCLASS();
+bool IsRegclass(const velox::TypePtr& type);
+bool IsRegclass(const velox::Type& type);
+
+struct RegclassTrait {
+  using type = int32_t;                                   // NOLINT
+  static constexpr const char* typeName = "PG_REGCLASS";  // NOLINT
+};
+using RegclassCustomType = velox::CustomType<RegclassTrait>;
+
 void RegisterTypes();
 
 }  // namespace sdb::pg

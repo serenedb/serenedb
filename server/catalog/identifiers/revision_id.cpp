@@ -52,13 +52,6 @@ RevisionId RevisionId::create() {
   return RevisionId{NewTickHybridLogicalClock()};
 }
 
-RevisionId RevisionId::fromObject(vpack::Slice slice) {
-  if (slice.isObject()) {
-    return fromString(slice.get(StaticStrings::kRevString));
-  }
-  return {};
-}
-
 RevisionId RevisionId::fromString(vpack::Slice slice) {
   if (slice.isString()) {
     return fromHLC(slice.stringView());

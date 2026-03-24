@@ -93,7 +93,7 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
   if (ServerState::instance()->IsDBServer() || req.databaseName().empty()) {
     // if no database name was specified in the request, use system database
     // name as a fallback
-    req.setDatabaseName(StaticStrings::kSystemDatabase);
+    req.setDatabaseName(StaticStrings::kDefaultDatabase);
   }
 
   return server.getFeature<catalog::CatalogFeature>()

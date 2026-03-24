@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <frozen/unordered_map.h>
 
 #include <exception>
 #include <magic_enum/magic_enum.hpp>
@@ -495,10 +494,10 @@ constexpr auto MakeField(F&& f) noexcept {
   return f(offsets, count);
 }
 
-template<typename T, typename Arg>
-constexpr auto kFieldMap = makeField<T, Arg>([](auto& offsets, auto count) {
-  return std::pair{frozen::make_unordered_map(offsets), count};
-});
+// template<typename T, typename Arg>
+// constexpr auto kFieldMap = makeField<T, Arg>([](auto& offsets, auto count) {
+//   return std::pair{frozen::make_unordered_map(offsets), count};
+// });
 
 template<typename T, typename Arg>
 const auto& MakeFieldMap() {
@@ -507,20 +506,20 @@ const auto& MakeFieldMap() {
   // ddl from user
   // Secondly and more important I think frozen is works slower than abseil
   // Maybe it can make sense in future if we will use this serialization
-  // somewhere there it's matter: replication, metadata storage, etc
-  if constexpr (false && kIsConstexprConstructible<T>) {
-    return kFieldMap<T, Arg>;
-  } else {
-    static const auto kFields =
-      MakeField<T, Arg>([](auto& offsets, auto count) {
-        return std::pair{
-          sdb::containers::FlatHashMap<std::string_view,
-                                       std::pair<size_t, const ILoader*>>{
-            offsets.begin(), offsets.end()},
-          count};
-      });
-    return kFields;
-  }
+  // somewhere there it's matter: replication, metadata storage, etc.
+  // Maybe we can use TrivialBiMap?
+  // if constexpr (kIsConstexprConstructible<T>) {
+  //   return kFieldMap<T, Arg>;
+  // } else {
+  static const auto kFields = MakeField<T, Arg>([](auto& offsets, auto count) {
+    return std::pair{
+      sdb::containers::FlatHashMap<std::string_view,
+                                   std::pair<size_t, const ILoader*>>{
+        offsets.begin(), offsets.end()},
+      count};
+  });
+  return kFields;
+  // }
 }
 
 template<typename T>

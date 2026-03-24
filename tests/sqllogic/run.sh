@@ -33,6 +33,7 @@ declare -A defaults=(
 	[show_all_errors]=false
 	[fast]=false
 	[skip_failed]=''
+	[skip]=''
 	[database]='serenedb'
 	[host]='localhost'
 	[iterations]=1
@@ -68,10 +69,9 @@ launch_s3() {
 			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
 			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
 			echo "Stopping MinIO container..."
-			docker rm -f "$MINIO_CONTAINER_NAME" 2>/dev/null || true
+			docker rm -fv "$MINIO_CONTAINER_NAME" 2>/dev/null || true
 		fi
 	}
-	trap cleanup_minio EXIT
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -141,7 +141,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | single-port-ssl | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host | iterations | cancellation)
+		single-port | single-port-ssl | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -213,6 +213,7 @@ echo "Format: $format"
 echo "Show all errors: $show_all_errors"
 echo "Fast: $fast"
 echo "Skip failed: $skip_failed"
+echo "Skip: $skip"
 echo "Iterations: $iterations"
 echo "Cancellation: $cancellation"
 
@@ -265,6 +266,11 @@ run_tests() {
 		skip_failed_opt="--skip-failed"
 	fi
 
+	local skip_opt=""
+	if [[ -n "$skip" ]]; then
+		skip_opt="--skip $skip"
+	fi
+
 	# Execute the command and capture the exit code
 	sqllogictest "$test" \
 		--host "$host" --port "$port" --engine "$engine" \
@@ -273,6 +279,7 @@ run_tests() {
 		--junit "$junit-$mode-$engine" \
 		$options \
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+		$skip_opt \
 		$ssl_port_opt
 	return $?
 }
@@ -313,7 +320,7 @@ fi
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
 cancel_pid=""
-trap 'kill "$cancel_pid" 2>/dev/null || true' EXIT
+trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT
 if [[ "$cancellation" == "true" ]]; then
 	trap '' INT
 	# One background process that keeps sending SIGINT at random intervals

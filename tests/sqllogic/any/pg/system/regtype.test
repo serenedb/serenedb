@@ -1,0 +1,303 @@
+query
+SELECT 'integer'::regtype;
+----
+regtype
+integer
+
+
+query
+SELECT 'boolean'::regtype;
+----
+regtype
+boolean
+
+
+query
+SELECT 'text'::regtype;
+----
+regtype
+text
+
+
+query
+SELECT 'bigint'::regtype;
+----
+regtype
+bigint
+
+
+query
+SELECT 'smallint'::regtype;
+----
+regtype
+smallint
+
+
+query
+SELECT 'real'::regtype;
+----
+regtype
+real
+
+
+query
+SELECT 'double precision'::regtype;
+----
+regtype
+double precision
+
+
+query
+SELECT 'numeric'::regtype;
+----
+regtype
+numeric
+
+
+query
+SELECT 'date'::regtype;
+----
+regtype
+date
+
+
+query
+SELECT 'timestamp without time zone'::regtype;
+----
+regtype
+timestamp without time zone
+
+
+query
+SELECT 'timestamp with time zone'::regtype;
+----
+regtype
+timestamp with time zone
+
+
+query
+SELECT 'bytea'::regtype;
+----
+regtype
+bytea
+
+
+query
+SELECT 'json'::regtype;
+----
+regtype
+json
+
+
+query
+SELECT 'uuid'::regtype;
+----
+regtype
+uuid
+
+
+query
+SELECT 'varchar'::regtype;
+----
+regtype
+character varying
+
+
+query
+SELECT 'int4'::regtype;
+----
+regtype
+integer
+
+
+query
+SELECT 'float8'::regtype;
+----
+regtype
+double precision
+
+
+query
+SELECT 'timestamptz'::regtype;
+----
+regtype
+timestamp with time zone
+
+
+query
+SELECT 'regtype'::regtype;
+----
+regtype
+regtype
+
+
+query
+SELECT 23::regtype;
+----
+regtype
+integer
+
+
+query
+SELECT 16::regtype;
+----
+regtype
+boolean
+
+
+query
+SELECT 701::regtype;
+----
+regtype
+double precision
+
+
+query
+SELECT pg_typeof('integer'::regtype);
+----
+pg_typeof
+regtype
+
+
+query
+SELECT 'integer[]'::regtype;
+----
+regtype
+integer[]
+
+
+query
+SELECT 'boolean[]'::regtype;
+----
+regtype
+boolean[]
+
+
+query
+SELECT 'text[]'::regtype;
+----
+regtype
+text[]
+
+
+query
+SELECT 'bigint[]'::regtype;
+----
+regtype
+bigint[]
+
+
+query
+SELECT 'smallint[]'::regtype;
+----
+regtype
+smallint[]
+
+
+query
+SELECT 'real[]'::regtype;
+----
+regtype
+real[]
+
+
+query
+SELECT 'double precision[]'::regtype;
+----
+regtype
+double precision[]
+
+
+query
+SELECT 'numeric[]'::regtype;
+----
+regtype
+numeric[]
+
+
+query
+SELECT 'date[]'::regtype;
+----
+regtype
+date[]
+
+
+query
+SELECT 'timestamp without time zone[]'::regtype;
+----
+regtype
+timestamp without time zone[]
+
+
+query
+SELECT 'timestamp with time zone[]'::regtype;
+----
+regtype
+timestamp with time zone[]
+
+
+query
+SELECT 'interval[]'::regtype;
+----
+regtype
+interval[]
+
+
+query
+SELECT 'bytea[]'::regtype;
+----
+regtype
+bytea[]
+
+
+query
+SELECT 'json[]'::regtype;
+----
+regtype
+json[]
+
+
+query
+SELECT 'uuid[]'::regtype;
+----
+regtype
+uuid[]
+
+
+query
+SELECT 'int[]'::regtype;
+----
+regtype
+integer[]
+
+
+query
+SELECT 'int4[]'::regtype;
+----
+regtype
+integer[]
+
+
+query
+SELECT 'float8[]'::regtype;
+----
+regtype
+double precision[]
+
+
+query
+SELECT 'varchar[]'::regtype;
+----
+regtype
+character varying[]
+
+
+query
+SELECT 'timestamptz[]'::regtype;
+----
+regtype
+timestamp with time zone[]
+
+
+statement error
+SELECT 'nonexistent_type'::regtype;

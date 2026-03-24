@@ -24,6 +24,7 @@
 
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
+#include "basics/logger/logger.h"
 #include "query/config.h"
 #include "query/query.h"
 
@@ -62,13 +63,19 @@ velox::RowVectorPtr ShowExecutor::BuildShowBatch() {
     return _query->BuildBatch({std::move(column)});
   }
 #endif
+  auto column = [&] {
+    if (name == log::kLogLevelVariable) {
+      return std::vector<std::string>{log::LogLevelString()};
+    } else {
+      auto value = config.get<std::string>(name);
+      if (!value) {
+        SDB_THROW(ERROR_FAILED, "unrecognized configuration parameter \"", name,
+                  "\"");
+      }
+      return std::vector<std::string>{*value};
+    }
+  }();
 
-  auto value = config.get<std::string>(name);
-  if (!value) {
-    SDB_THROW(ERROR_FAILED, "unrecognized configuration parameter \"", name,
-              "\"");
-  }
-  std::vector<std::string> column{*value};
   return _query->BuildBatch({std::move(column)});
 }
 
@@ -92,7 +99,11 @@ velox::RowVectorPtr ShowAllExecutor::BuildShowAllBatch() {
   config.VisitFullDescription([&](std::string_view name, std::string_view value,
                                   std::string_view description) {
     names.emplace_back(name);
-    values.push_back(std::string{value});
+    if (name == log::kLogLevelVariable) {
+      values.push_back(log::LogLevelString());
+    } else {
+      values.push_back(std::string{value});
+    }
     descriptions.emplace_back(description);
   });
 

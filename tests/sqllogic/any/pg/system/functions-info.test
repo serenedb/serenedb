@@ -446,6 +446,8 @@ SELECT acldefault(114::character, 0);
 db error: ERROR: Function is not supported in SereneDB
 
 
+# TODO(Pasha): add aclitem type
+onlyif serenedb
 query error
 SELECT aclexplode(ARRAY[]::bigint[]);
 ----

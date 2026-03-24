@@ -6091,7 +6091,10 @@ velox::TypePtr NameToType(const TypeName& type_name) {
     return wrap_in_array(std::move(decimal));
   }
 
-  // a particular case because mods_size can be != 0
+  // particular cases because mods_size can be != 0
+  if (name == "bpchar") {
+    return wrap_in_array(velox::TINYINT());
+  }
   if (name == "interval") {
     return wrap_in_array(pg::INTERVAL());
   }

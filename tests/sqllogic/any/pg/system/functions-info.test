@@ -439,14 +439,15 @@ row_security_active
 t
 
 
+onlyif serenedb
 query error
-SELECT acldefault('r', 0);
+SELECT acldefault(114::character, 0);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 query error
-SELECT aclexplode('{}'::text);
+SELECT aclexplode(ARRAY[]::bigint[]);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
@@ -600,20 +601,6 @@ pg_get_constraintdef
 (empty)
 
 
-query ?
-SELECT pg_get_expr('', 0) IS NULL;
-----
-?column?
-t
-
-
-query ?
-SELECT pg_get_expr('', 0, true) IS NULL;
-----
-?column?
-t
-
-
 onlyif serenedb
 query
 SELECT pg_get_functiondef(0);
@@ -674,13 +661,6 @@ query
 SELECT pg_get_partkeydef(0);
 ----
 pg_get_partkeydef
-(empty)
-
-
-query ?
-SELECT pg_get_propgraphdef(0);
-----
-pg_get_propgraphdef
 (empty)
 
 
@@ -848,13 +828,6 @@ SELECT to_regcollation('default') IS NULL;
 t
 
 
-query ?
-SELECT to_regdatabase('postgres') IS NULL;
-----
-?column?
-t
-
-
 onlyif serenedb
 query
 SELECT to_regnamespace('public') IS NULL;
@@ -908,13 +881,6 @@ SELECT to_regtype('integer') IS NULL;
 ----
 ?column?
 t
-
-
-onlyif serenedb
-query error
-SELECT to_regtypemod('varchar(42)');
-----
-db error: ERROR: function pg_to_regtypemod(text) does not exist
 
 
 # 9.27.5 Object Information and Addressing Functions

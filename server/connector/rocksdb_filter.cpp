@@ -21,6 +21,7 @@
 #include "rocksdb_filter.hpp"
 
 #include <absl/container/flat_hash_set.h>
+#include <velox/expression/ExprConstants.h>
 #include <velox/vector/ConstantVector.h>
 
 #include "basics/assert.h"
@@ -205,6 +206,12 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
+bool IsCallOf(const velox::core::CallTypedExpr* call, std::string_view suffix) {
+  SDB_ASSERT(suffix[0] == '_');
+  auto name = suffix.substr(1);
+  return call->name() == name || call->name().ends_with(suffix);
+}
+
 }  // namespace
 
 bool Point::IsSpecific() const {
@@ -283,13 +290,13 @@ std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
     pts = AnyPoint(pk_names);
   } else {
     const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
-    if (func_call->name() == "presto_eq") {
+    if (IsCallOf(func_call, "_eq")) {
       pts = ExtractFilterEq(func_call, pk_names);
-    } else if (func_call->name() == "in") {
+    } else if (IsCallOf(func_call, "_in")) {
       pts = ExtractFilterIn(func_call, pk_names);
-    } else if (func_call->name() == "and") {
+    } else if (func_call->name() == velox::expression::kAnd) {
       pts = ExtractFilterAnd(func_call, pk_names);
-    } else if (func_call->name() == "or") {
+    } else if (func_call->name() == velox::expression::kOr) {
       pts = ExtractFilterOr(func_call, pk_names);
     } else {
       pts = AnyPoint(pk_names);

@@ -20,11 +20,10 @@
 
 #pragma once
 
+#include <iresearch/search/filter.hpp>
 #include <ostream>
 #include <string>
 #include <string_view>
-
-#include <iresearch/search/filter.hpp>
 
 namespace irs {
 

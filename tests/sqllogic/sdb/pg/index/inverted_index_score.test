@@ -363,7 +363,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[2][expressions: (id:INTEGER, "id")] -> "id":INTEGER
   -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 query
 EXPLAIN SELECT id FROM
@@ -375,7 +375,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[2][expressions: (id:INTEGER, "id")] -> "id":INTEGER
   -- OrderBy[1][sdb_inverted_index_score ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 query error
@@ -399,10 +399,10 @@ Fragment 0:  numWorkers=0:
   -- LocalPartition[6][REPARTITION ROUND ROBIN] -> "id":INTEGER, "has_score":BOOLEAN
     -- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
       -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[5][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
       -- TopN[4][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # UNION of two subqueries from same index with outer ORDER BY BM25()
@@ -464,7 +464,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[2][expressions: (id:INTEGER, "id"), (tfidf:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "tfidf":REAL
   -- OrderBy[1][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # OR filter: match either 'fox' or 'lazy', score comes from the matched docs
@@ -604,7 +604,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[2][expressions: (id:INTEGER, "id"), (bm25:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "bm25":REAL
   -- TopN[1][3 id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # EXPLAIN for BM25 with multiple references (SELECT + WHERE + ORDER BY)
@@ -617,7 +617,7 @@ Fragment 0:  numWorkers=0:
 -- Project[3][expressions: (id:INTEGER, "id")] -> "id":INTEGER
   -- TopN[2][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Filter[1][expression: presto_gt("sdb_inverted_index_score",0)] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # EXPLAIN for UNION ALL with BM25 (same scorer per branch)
@@ -634,10 +634,10 @@ Fragment 0:  numWorkers=0:
   -- LocalPartition[6][REPARTITION ROUND ROBIN] -> "id":INTEGER, "score":REAL
     -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[5][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # EXPLAIN for subquery: BM25 inside, outer references alias
@@ -652,7 +652,7 @@ Fragment 0:  numWorkers=0:
 -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "score":REAL
   -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
     -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 query
@@ -667,7 +667,7 @@ Fragment 0:  numWorkers=0:
   -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "score":REAL
     -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 query error
@@ -699,7 +699,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
   -- TopN[1][3 id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 query
@@ -712,7 +712,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[2][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
   -- TopN[1][3 id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 # EXPLAIN for outer BM25() referencing inner subquery score column
@@ -730,7 +730,7 @@ EXPLAIN (EXECUTION) SELECT * FROM docs_idx;
 QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
--- TableScan[0][docs, scan=search] -> "id":INTEGER, "body":VARCHAR
+-- TableScan[0][docs, type=search_lookup, filter=AND[]] -> "id":INTEGER, "body":VARCHAR
 
 
 # --- Multi-table join tests ---
@@ -825,8 +825,8 @@ Fragment 0:  numWorkers=0:
 -- Project[4][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
   -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-      -- TableScan[1][docs2, scan=search] -> "id":INTEGER
+      -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[1][docs2, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER
 
 
 # Works: JOIN inverted index with plain table, BM25() from inverted scan
@@ -855,8 +855,8 @@ Fragment 0:  numWorkers=0:
 -- Project[4][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (tag:VARCHAR, "tag")] -> "id":INTEGER, "has_score":BOOLEAN, "tag":VARCHAR
   -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
     -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
-      -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-      -- TableScan[1][meta, scan=full] -> "id":INTEGER, "tag":VARCHAR
+      -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+      -- TableScan[1][meta, type=rocksdb_full_scan] -> "id":INTEGER, "tag":VARCHAR
 
 
 statement ok
@@ -913,16 +913,16 @@ Fragment 0:  numWorkers=0:
   -- LocalPartition[12][REPARTITION ROUND ROBIN] -> "id":INTEGER, "score":REAL
     -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[5][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[8][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[7][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[6][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[6][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[11][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[10][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[9][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[9][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 query error
@@ -955,16 +955,16 @@ Fragment 0:  numWorkers=0:
   -- LocalPartition[12][REPARTITION ROUND ROBIN] -> "id":INTEGER, "score":REAL
     -- Project[2][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[1][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[0][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[5][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[4][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[3][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[3][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[8][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[7][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[6][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[6][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- Project[11][expressions: (id:INTEGER, "id"), (score:REAL, "sdb_inverted_index_score")] -> "id":INTEGER, "score":REAL
       -- Limit[10][2] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-        -- TableScan[9][docs, scan=search] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+        -- TableScan[9][docs, type=search_lookup, filter=AND[PHRASE[col(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
 query error

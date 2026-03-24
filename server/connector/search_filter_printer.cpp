@@ -82,8 +82,7 @@ std::string RangeToString(const SearchRange<T>& range) {
     } else {
       absl::StrAppend(&s, " ");
     }
-    absl::StrAppend(&s,
-                    range.max_type == BoundType::Inclusive ? "<=" : "<",
+    absl::StrAppend(&s, range.max_type == BoundType::Inclusive ? "<=" : "<",
                     TermToString(range.max));
   }
   return s;
@@ -217,8 +216,9 @@ void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
                       absl::StrJoin(opts.terms, "",
                                     [](std::string* o, const auto& tb) {
                                       const auto& [term, boost] = tb;
-                                      absl::StrAppend(o, "['", TermToString(term),
-                                                      "', ", boost, "],");
+                                      absl::StrAppend(o, "['",
+                                                      TermToString(term), "', ",
+                                                      boost, "],");
                                     }),
                       "]");
     }
@@ -323,12 +323,24 @@ std::string FieldToString(std::string_view field) {
   std::string_view mangle_name = "unknown";
   if (!mangle_suffix.empty()) {
     switch (mangle_suffix[0]) {
-      case sdb::search::mangling::kNull:     mangle_name = "null";     break;
-      case sdb::search::mangling::kBool:     mangle_name = "bool";     break;
-      case sdb::search::mangling::kNumeric:  mangle_name = "numeric";  break;
-      case sdb::search::mangling::kString:   mangle_name = "string";   break;
-      case sdb::search::mangling::kAnalyzer: mangle_name = "analyzer"; break;
-      case sdb::search::mangling::kNested:   mangle_name = "nested";   break;
+      case sdb::search::mangling::kNull:
+        mangle_name = "null";
+        break;
+      case sdb::search::mangling::kBool:
+        mangle_name = "bool";
+        break;
+      case sdb::search::mangling::kNumeric:
+        mangle_name = "numeric";
+        break;
+      case sdb::search::mangling::kString:
+        mangle_name = "string";
+        break;
+      case sdb::search::mangling::kAnalyzer:
+        mangle_name = "analyzer";
+        break;
+      case sdb::search::mangling::kNested:
+        mangle_name = "nested";
+        break;
     }
   }
   return absl::StrCat("col:", col_id, "(", mangle_name, ")");

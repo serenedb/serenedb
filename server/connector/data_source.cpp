@@ -252,33 +252,25 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource<Source>::next(
                                                      &_memory_pool);
 }
 
-template<typename Source>
-void RocksDBFullScanDataSource<Source>::addDynamicFilter(
-  velox::column_index_t output_channel,
-  const std::shared_ptr<velox::common::Filter>& filter) {
+void RocksDBBaseDataSource::addDynamicFilter(
+  velox::column_index_t, const std::shared_ptr<velox::common::Filter>&) {
   VELOX_UNSUPPORTED();
 }
 
-template<typename Source>
-uint64_t RocksDBFullScanDataSource<Source>::getCompletedBytes() {
+uint64_t RocksDBBaseDataSource::getCompletedBytes() {
   // TODO: implement completed bytes tracking
   return 0;
 }
 
-template<typename Source>
-uint64_t RocksDBFullScanDataSource<Source>::getCompletedRows() {
-  return _produced;
-}
+uint64_t RocksDBBaseDataSource::getCompletedRows() { return _produced; }
 
-template<typename Source>
 std::unordered_map<std::string, velox::RuntimeMetric>
-RocksDBFullScanDataSource<Source>::getRuntimeStats() {
+RocksDBBaseDataSource::getRuntimeStats() {
   // TODO: implement runtime stats reporting
   return {};
 }
 
-template<typename Source>
-void RocksDBFullScanDataSource<Source>::cancel() {
+void RocksDBBaseDataSource::cancel() {
   // TODO: implement cancellation logic
 }
 
@@ -376,6 +368,18 @@ uint64_t RocksDBFullScanDataSource<Source>::IterateColumn(
   rocksutils::CheckIteratorStatus(it);
 
   return vector_size;
+}
+
+template<typename Source>
+void RocksDBPointLookupDataSource<Source>::addSplit(
+  std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
+  if (_current_split) {
+    SDB_THROW(ERROR_INTERNAL,
+              "RocksDBDataSource: a split is already being processed");
+  }
+  _current_split = std::move(split);
+  _offset = 0;
 }
 
 template<typename Source>

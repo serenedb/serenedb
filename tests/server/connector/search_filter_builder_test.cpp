@@ -40,11 +40,11 @@
 #include "catalog/mangling.h"
 #include "catalog/table.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/search_filter_printer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "general_server/state.h"
 #include "pg/sql_parser.h"
 #include "pg/sql_utils.h"
-#include "connector/search_filter_printer.hpp"
 #include "utils/query_string.h"
 #include "velox/expression/Expr.h"
 

@@ -139,7 +139,7 @@ SereneDBTableLayout::createTableHandle(
         {.index = snapshot.reader, .scorer = scorer.get()});
     }
 
-    handle->AddSearchQuery(index.GetId(), std::move(prepared));
+    handle->AddSearchQuery(index.GetId(), std::move(prepared), conjunct_root);
     if (scorer) {
       handle->AddScorer(scorer);
     }
@@ -197,7 +197,13 @@ SereneDBTableLayout::createTableHandle(
   }
 
   if (!kExecuteFiltersInTableScan && remaining_filter) {
-    rejected_filters = {std::move(remaining_filter)};
+    if (const auto* call = dynamic_cast<const velox::core::CallTypedExpr*>(
+          remaining_filter.get());
+        call && call->name() == velox::expression::kAnd) {
+      rejected_filters.assign(call->inputs().begin(), call->inputs().end());
+    } else {
+      rejected_filters = {std::move(remaining_filter)};
+    }
     remaining_filter.reset();
   }
 

@@ -231,9 +231,6 @@ class SereneDBConnectorTableHandle final
     return _effective_column_id;
   }
 
-  void AddSearchQuery(ObjectId index_id, irs::Filter::Query::ptr&& query,
-                      const irs::Filter& filter);
-
   auto& GetTransaction() const noexcept { return _transaction; }
 
   auto& GetPKType() const noexcept { return _pk_type; }
@@ -254,14 +251,10 @@ class SereneDBConnectorTableHandle final
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
-  irs::Filter::Query::ptr _search_query;
-  std::string _search_filter_str;
-  ObjectId _index_id = ObjectId::none();
   velox::RowTypePtr _pk_type;
   std::vector<SpecificPoint> _points;
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
-  std::shared_ptr<const irs::Scorer> _scorer;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {

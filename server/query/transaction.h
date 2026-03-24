@@ -24,6 +24,7 @@
 #include <rocksdb/utilities/transaction.h>
 
 #include <iresearch/index/index_writer.hpp>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "basics/bit_utils.hpp"
@@ -31,6 +32,7 @@
 #include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
+#include "pg/progress_tracker.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
@@ -71,6 +73,10 @@ class Transaction : public Config {
 
   void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
     _table_rows_deltas[table_id] += delta;
+  }
+
+  void AddProgressReporter(std::unique_ptr<pg::ProgressReporterBase> reporter) {
+    _progress_reporters.push_back(std::move(reporter));
   }
 
   void AddRocksDBRead() noexcept;
@@ -148,6 +154,7 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 ENABLE_BITMASK_ENUM(Transaction::State);

@@ -111,12 +111,7 @@ std::vector<std::string> FileDataSink::close() {
   return {};
 }
 
-void FileDataSink::abort() {
-  _writer->abort();
-  if (_progress) {
-    _progress->Cancel();
-  }
-}
+void FileDataSink::abort() { _writer->abort(); }
 
 FileDataSource::ReaderComponents FileDataSource::CreateReader(
   const ReaderOptions& options, velox::memory::MemoryPool& pool,
@@ -302,12 +297,6 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
     }
   }
   return std::dynamic_pointer_cast<velox::RowVector>(batch);
-}
-
-void FileDataSource::cancel() {
-  if (_progress) {
-    _progress->Cancel();
-  }
 }
 
 }  // namespace sdb::connector

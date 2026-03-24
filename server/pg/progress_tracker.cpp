@@ -37,8 +37,6 @@ ProgressReporterBase::ProgressReporterBase(ObjectId relid,
 
 ProgressReporterBase::~ProgressReporterBase() { _tracker.EndCommand(_id); }
 
-void ProgressReporterBase::Cancel() { _tracker.EndCommand(_id); }
-
 CopyProgressReporter::CopyProgressReporter(ObjectId relid,
                                            copy_progress::Command command,
                                            copy_progress::Type type)

@@ -84,11 +84,7 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
-<<<<<<< HEAD
 #include "pg/progress_tracker.h"
-=======
-#include "pg/pg_types.h"
->>>>>>> origin/main
 #include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"

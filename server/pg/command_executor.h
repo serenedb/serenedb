@@ -80,7 +80,7 @@ class CTASCreateTableExecutor final : public CommandExecutor {
 struct CreateIndexState {
   bool created = false;
   ObjectId index_id;
-  std::unique_ptr<IndexProgressReporter> progress;
+  IndexProgressReporter* progress = nullptr;
 };
 
 class CreateIndexExecutor final : public CommandExecutor {

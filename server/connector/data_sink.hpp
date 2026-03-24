@@ -31,7 +31,9 @@
 #include <vector>
 
 namespace sdb::pg {
+
 class IndexProgressReporter;
+
 }  // namespace sdb::pg
 
 #include "basics/containers/flat_hash_set.h"

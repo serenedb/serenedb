@@ -45,9 +45,10 @@
 #include "catalog/storage_options.h"
 
 namespace sdb::pg {
-class CopyProgressReporter;
-}  // namespace sdb::pg
 
+class CopyProgressReporter;
+
+}  // namespace sdb::pg
 namespace sdb::connector {
 
 using ReportCallback = std::function<void(uint64_t)>;
@@ -289,7 +290,7 @@ class FileDataSource final : public velox::connector::DataSource {
     velox::column_index_t output_channel,
     const std::shared_ptr<velox::common::Filter>& filter) final {}
 
-  void cancel() final;
+  void cancel() final {}
 
   uint64_t getCompletedBytes() final { return _completed_bytes; }
 

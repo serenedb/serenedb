@@ -165,7 +165,7 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
 
     return inverted_index.CommitWait().ThenInline(
       [shard = std::move(shard),
-       progress = _state.progress.get()](yaclib::Result<> r) {
+       progress = _state.progress](yaclib::Result<> r) {
         std::ignore = std::move(r).Ok();
         if (progress) {
           progress->SetPhase(create_index_progress::Phase::Finalizing);

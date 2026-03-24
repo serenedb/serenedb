@@ -118,6 +118,7 @@ class ProgressTracker {
 };
 
 namespace copy_progress {
+
 inline constexpr size_t kBytesProcessed = 0;
 inline constexpr size_t kBytesTotal = 1;
 inline constexpr size_t kTuplesProcessed = 2;
@@ -128,8 +129,8 @@ inline constexpr size_t kTuplesSkipped = 6;
 
 enum class Command : int64_t { CopyFrom = 1, CopyTo = 2 };
 enum class Type : int64_t { File = 1, Program = 2, Pipe = 3, Callback = 4 };
-}  // namespace copy_progress
 
+}  // namespace copy_progress
 namespace create_index_progress {
 
 inline constexpr size_t kCommand = 0;
@@ -161,19 +162,18 @@ enum class Phase : int64_t {
   Committing = 3,
   Finalizing = 4,
 };
+
 }  // namespace create_index_progress
 
 class ProgressReporterBase {
  public:
   ProgressReporterBase(const ProgressReporterBase&) = delete;
   ProgressReporterBase& operator=(const ProgressReporterBase&) = delete;
-
-  void Cancel();
+  ~ProgressReporterBase();
 
  protected:
   ProgressReporterBase(ObjectId relid, ProgressCommand command_type,
                        ObjectId datid = {});
-  ~ProgressReporterBase();
 
   ProgressTracker& _tracker;
   uint64_t _id;

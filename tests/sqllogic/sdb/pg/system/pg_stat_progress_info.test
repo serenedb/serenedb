@@ -1,0 +1,29 @@
+statement ok
+CREATE TABLE vedernikoff(r text);
+
+statement ok
+INSERT INTO vedernikoff VALUES ('a'), ('b'), ('c');
+
+query
+SELECT * FROM pg_stat_progress_copy WHERE relid = 'vedernikoff'::regclass;
+----
+pid	datid	datname	relid	command	type	bytes_processed	bytes_total	tuples_processed	tuples_excluded	tuples_skipped
+
+query
+SELECT * FROM pg_stat_progress_create_index WHERE relid = 'vedernikoff'::regclass;
+----
+pid	datid	datname	relid	index_relid	command	phase	lockers_total	lockers_done	current_locker_pid	tuples_total	tuples_done	partitions_total	partitions_done
+
+statement error db error: ERROR: Column r is VARCHAR but has no text dictionary defined
+CREATE INDEX index_vedernikoff ON vedernikoff USING inverted(r);
+
+query
+SELECT * FROM pg_stat_progress_create_index WHERE relid = 'vedernikoff'::regclass;
+----
+pid	datid	datname	relid	index_relid	command	phase	lockers_total	lockers_done	current_locker_pid	tuples_total	tuples_done	partitions_total	partitions_done
+
+statement error db error: ERROR: index "index_vedernikoff" does not exist
+DROP INDEX index_vedernikoff;
+
+statement ok
+DROP TABLE vedernikoff;

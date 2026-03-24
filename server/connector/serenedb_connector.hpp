@@ -1068,8 +1068,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               CreateBackfillIndexWriter(cis->index_id, transaction);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              columns, std::move(backfill_writer), table_lock,
-              cis->progress.get());
+              columns, std::move(backfill_writer), table_lock, cis->progress);
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

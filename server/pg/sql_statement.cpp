@@ -162,6 +162,7 @@ void* SqlTree::GetNextRoot() {
 }
 
 void SqlStatement::Reset() noexcept {
+  query.reset();
   memory_context.reset();
   objects.clear();
   query_string.reset();

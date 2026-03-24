@@ -24,7 +24,6 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
 #include <axiom/optimizer/OptimizerOptions.h>
-#include <frozen/unordered_map.h>
 #include <velox/common/config/IConfig.h>
 #include <velox/type/Type.h>
 

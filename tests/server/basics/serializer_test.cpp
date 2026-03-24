@@ -21,7 +21,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <frozen/unordered_map.h>
 #include <gtest/gtest.h>
 #include <vpack/builder.h>
 #include <vpack/literal.h>

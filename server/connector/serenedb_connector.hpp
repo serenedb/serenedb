@@ -36,6 +36,7 @@
 
 #include <chrono>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <memory>
 #include <ranges>
 #include <thread>
@@ -251,6 +252,12 @@ class SereneDBConnectorTableHandle final
 
   ObjectId GetIndexId() const noexcept { return _index_id; }
 
+  void AddScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
+    _scorer = std::move(scorer);
+  }
+
+  const irs::Scorer* GetScorer() const noexcept { return _scorer.get(); }
+
  private:
   std::string _name;
   ObjectId _table_id;
@@ -262,7 +269,8 @@ class SereneDBConnectorTableHandle final
   velox::RowTypePtr _pk_type;
   std::vector<SpecificPoint> _points;
   velox::core::TypedExprPtr _remaining_filter;
-  containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
+  absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
+  std::shared_ptr<const irs::Scorer> _scorer;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -322,6 +330,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 };
 
 class RocksDBTable : public axiom::connector::Table {
+ protected:
   struct Init {
     const catalog::Table& collection;
     velox::RowTypePtr pk_type;
@@ -447,16 +456,36 @@ class RocksDBTable : public axiom::connector::Table {
 };
 
 class RocksDBInvertedIndexTable : public RocksDBTable {
+  static Init MakeInit(const catalog::Table& collection) {
+    Init init{collection};
+    // Always add the score column so createColumnHandle can resolve it.
+    // It is only included in the output type when a scorer is active.
+    auto score_name =
+      catalog::Column::GenerateScoreName(collection.RowType()->names());
+    init.column_handles.push_back(std::make_unique<SereneDBColumn>(
+      score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
+    return init;
+  }
+
  public:
   explicit RocksDBInvertedIndexTable(const catalog::Table& collection,
                                      query::Transaction& transaction,
                                      const catalog::InvertedIndex& index)
-    : RocksDBTable{collection, transaction}, _index{index} {}
+    : RocksDBTable{MakeInit(collection), transaction}, _index{index} {}
 
   const auto& GetIndex() const noexcept { return _index; }
 
+  void SetScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
+    _scorer = std::move(scorer);
+  }
+
+  const std::shared_ptr<const irs::Scorer>& GetScorerPtr() const noexcept {
+    return _scorer;
+  }
+
  private:
   const catalog::InvertedIndex& _index;
+  std::shared_ptr<const irs::Scorer> _scorer;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
@@ -838,8 +867,9 @@ class SereneDBConnector final : public velox::connector::Connector {
       return std::make_unique<SearchScanDataSource>(
         *connector_query_ctx->memoryPool(),
         search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,
-        column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
-        search_snapshot.reader, *serene_table_handle.GetSearchQuery());
+        std::move(column_oids), serene_table_handle.GetEffectiveColumnId(),
+        object_key, search_snapshot.reader,
+        *serene_table_handle.GetSearchQuery(), serene_table_handle.GetScorer());
     }
 
     const auto& points = serene_table_handle.GetPoints();

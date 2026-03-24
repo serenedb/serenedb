@@ -48,7 +48,6 @@ class RevisionId final : public basics::Identifier {
 
   static RevisionId create();
 
-  static RevisionId fromObject(vpack::Slice slice);
   static RevisionId fromString(vpack::Slice slice);
   static RevisionId fromHLC(std::string_view rid);
   static RevisionId fromNumber(vpack::Slice slice);

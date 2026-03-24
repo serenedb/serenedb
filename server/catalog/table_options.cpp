@@ -96,12 +96,9 @@ Result ResolveId(ObjectId database, const auto& name, ObjectId& id) {
   return {};
 };
 
-}  // namespace
-
-std::string Column::GeneratePKName(std::span<const std::string> column_names) {
-  static constexpr std::string_view kGeneratedPKPrefix = "sdb_generated_pk";
-
-  std::string candidate{kGeneratedPKPrefix};
+std::string GenerateUniqueName(std::string_view prefix,
+                               std::span<const std::string> column_names) {
+  std::string candidate{prefix};
   size_t suffix = 0;
   bool found_unique = false;
 
@@ -110,7 +107,7 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
     for (const auto& str : column_names) {
       if (str == candidate) [[unlikely]] {
         found_unique = false;
-        candidate.erase(kGeneratedPKPrefix.size());
+        candidate.erase(prefix.size());
         absl::StrAppend(&candidate, "_", ++suffix);
         break;
       }
@@ -118,6 +115,17 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
   }
 
   return candidate;
+}
+
+}  // namespace
+
+std::string Column::GeneratePKName(std::span<const std::string> column_names) {
+  return GenerateUniqueName("sdb_generated_pk", column_names);
+}
+
+std::string Column::GenerateScoreName(
+  std::span<const std::string> column_names) {
+  return GenerateUniqueName("sdb_inverted_index_score", column_names);
 }
 
 std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
@@ -300,19 +308,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   SDB_ASSERT(request.writeConcern);
   SDB_ASSERT(request.numberOfShards);
 
-  if (const auto& keys = request.shardKeys; keys.empty() || keys.size() > 8) {
-    return {ERROR_BAD_PARAMETER, "Invalid number of shard keys for collection"};
-  } else if (auto it = absl::c_find_if(
-               keys,
-               [](auto name) {
-                 return name.empty() || name == StaticStrings::kRevString;
-               });
-             it != keys.end()) {
-    return {ERROR_BAD_PARAMETER,
-            it->empty() ? "Empty string" : StaticStrings::kRevString,
-            " cannot be used as a shard key"};
-  }
-
   const auto& server_options = GetServerOptions();
 
   if (enforce_replication_factor) {
@@ -354,11 +349,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     if (*request.numberOfShards != 1) {
       return {ERROR_BAD_PARAMETER,
               "A satellite collection can only have 1 shard"};
-    }
-
-    if (request.shardKeys.size() != 1 ||
-        request.shardKeys.front() != StaticStrings::kKeyString) {
-      return {ERROR_BAD_PARAMETER, "'satellite' cannot use shardKeys"};
     }
 
     // TODO(gnusi): check and error?

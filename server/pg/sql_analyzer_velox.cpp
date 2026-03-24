@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/functional/overload.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
@@ -30,7 +31,6 @@
 #include <axiom/logical_plan/LogicalPlanNode.h>
 #include <axiom/logical_plan/Utils.h>
 #include <axiom/optimizer/ConstantExprEvaluator.h>
-#include <frozen/unordered_map.h>
 #include <velox/common/file/File.h>
 #include <velox/common/memory/Memory.h>
 #include <velox/core/PlanFragment.h>
@@ -58,6 +58,8 @@
 
 #include <algorithm>
 #include <expected>
+#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/tfidf.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <vector>
@@ -81,6 +83,7 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
+#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
@@ -302,18 +305,6 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
 }
 
 using query::ToAlias;
-
-std::string ToPgTypeString(const velox::Type& type) {
-  return absl::AsciiStrToLower(type.toString());
-}
-
-// TODO: temporary solution, this works wrong for some types
-std::string ToPgTypeString(const velox::TypePtr& type) {
-  if (!type) {
-    return "unknown";
-  }
-  return ToPgTypeString(*type);
-}
 
 std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
                                 std::string_view sep) {
@@ -734,6 +725,8 @@ class SqlAnalyzer {
                                          const UsingList& using_list);
   State ProcessRangeSubselect(State* parent, const RangeSubselect* node);
   State ProcessRangeFunction(State* parent, const RangeFunction* node);
+  void RefreshExprForScorer(std::vector<std::string>& names,
+                            std::vector<lp::ExprPtr>& exprs);
 
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
@@ -1087,6 +1080,8 @@ class SqlAnalyzer {
   query::Transaction& _transaction;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
+  std::shared_ptr<const irs::Scorer> _scorer_for_select;
+  lp::ExprPtr _expr_for_scorer;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1229,6 +1224,8 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
     add_expr(alias);
   }
 
+  RefreshExprForScorer(names, exprs);
+
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
@@ -1246,6 +1243,14 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
   if (stmt.lockingClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "LOCK clause is not implemented yet");
   }
+  auto scorer_for_select =
+    std::exchange(_scorer_for_select, _objects.GetScorer(&stmt));
+  auto expr_for_scorer = std::exchange(_expr_for_scorer, nullptr);
+  irs::Finally end = [&] noexcept {
+    _scorer_for_select = std::move(scorer_for_select);
+    _expr_for_scorer = std::move(expr_for_scorer);
+  };
+
   ProcessWithClause(state, stmt.withClause);
 
   if (stmt.valuesLists) {
@@ -2792,10 +2797,12 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
   exprs.reserve(entries.size());
 
   for (auto&& [expr, alias] : entries) {
-    std::string name = _id_generator.NextColumnName(alias);
+    auto name = _id_generator.NextColumnName(alias);
     names.emplace_back(std::move(name));
     exprs.emplace_back(std::move(expr));
   }
+
+  RefreshExprForScorer(names, exprs);
 
   ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
@@ -3539,9 +3546,13 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
   auto l_state = state.MakeChild();
   auto l_query_type = ProcessStmt(l_state, *castNode(Node, stmt.larg));
   SDB_ASSERT(l_query_type == SqlCommandType::Select);
+  auto l_expr_for_scorer = std::move(_expr_for_scorer);
+
   auto r_state = state.MakeChild();
   auto r_query_type = ProcessStmt(r_state, *castNode(Node, stmt.rarg));
   SDB_ASSERT(r_query_type == SqlCommandType::Select);
+
+  _expr_for_scorer = std::move(l_expr_for_scorer);
 
   const auto set_operation_type = [&] {
     switch (stmt.op) {
@@ -3709,6 +3720,31 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   SDB_ASSERT(
     !table.Columns().empty(),
     "Column with inverted index should have at least one column to index");
+
+  if (_expr_for_scorer) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Only one inverted index scan can produce a score per query"));
+  }
+
+  if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
+    basics::downCast<connector::RocksDBInvertedIndexTable>(*object.table)
+      .SetScorer(scorer);
+
+    auto score_name = catalog::Column::GenerateScoreName(type->names());
+    auto unique_score_name = _id_generator.NextColumnName(score_name);
+
+    std::vector types = type->children();
+    std::vector type_names = type->names();
+    types.push_back(velox::REAL());
+    type_names.emplace_back(score_name);
+    type = velox::ROW(std::move(type_names), std::move(types));
+
+    column_names.emplace_back(std::move(unique_score_name));
+    _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
+      velox::REAL(), column_names.back());
+  }
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
@@ -4058,6 +4094,28 @@ State SqlAnalyzer::ProcessJoinExpr(State* parent, const JoinExpr* node) {
   ProcessAlias(l_state, node->alias);
 
   return l_state;
+}
+
+void SqlAnalyzer::RefreshExprForScorer(std::vector<std::string>& names,
+                                       std::vector<lp::ExprPtr>& exprs) {
+  if (!_expr_for_scorer) {
+    return;
+  }
+  auto expr_for_scorer = std::move(_expr_for_scorer);
+  SDB_ASSERT(expr_for_scorer->isInputReference());
+  const auto& score_column =
+    expr_for_scorer->as<lp::InputReferenceExpr>()->name();
+  for (size_t i = 0; i < exprs.size(); ++i) {
+    SDB_ASSERT(exprs[i]);
+    if (!exprs[i]->isInputReference()) {
+      continue;
+    }
+    if (exprs[i]->as<lp::InputReferenceExpr>()->name() == score_column) {
+      _expr_for_scorer =
+        std::make_shared<lp::InputReferenceExpr>(velox::REAL(), names[i]);
+      ;
+    }
+  }
 }
 
 State SqlAnalyzer::ProcessRangeSubselect(State* parent,
@@ -4843,6 +4901,21 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   auto [_, schema, name] = GetDbSchemaRelation(expr.funcname);
+
+  // bm25()/tfidf() are not registered catalog functions -- they are
+  // scorer directives resolved during collection. Return the injected
+  // score column reference that was set up in ProcessInvertedIndex.
+  if (schema.empty() &&
+      (name == irs::BM25::type_name() || name == irs::TFIDF::type_name())) {
+    if (!_expr_for_scorer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG(name, "() requires an inverted index scan in the same query"));
+    }
+    return _expr_for_scorer;
+  }
+
   auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
@@ -5171,6 +5244,8 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"uuid", velox::UUID()},
   {"cidr", velox::IPPREFIX()},
   {"void", pg::VOID()},
+  {"regtype", pg::REGTYPE()},
+  {"regclass", pg::REGCLASS()},
 };
 
 lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,
@@ -5517,6 +5592,9 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   }
 
+  for (auto& coercion : coercions) {
+    coercion = FixupReturnType(coercion);
+  }
   ApplyCoercions(args, coercions);
   auto it = kSpecialForms.find(name);
   if (it == kSpecialForms.end()) {
@@ -5791,6 +5869,28 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           std::move(arg));
   }
 
+  if (arg->type() == velox::VARCHAR() && pg::IsRegtype(type)) {
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regtypein", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
+  }
+
+  if (pg::IsRegtype(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypeout",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::VARCHAR() && pg::IsRegclass(type)) {
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regclassin", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
+  }
+
+  if (pg::IsRegclass(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regclassout",
+                                          std::move(arg));
+  }
+
   return MakeCast(std::move(type), std::move(arg));
 }
 
@@ -5913,20 +6013,24 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   // TODO(mbkkt) more types and validation
   if (name == "numeric") {
     SDB_ASSERT(mods_size >= 1);
-    const auto precision = TryGet<int>(type_name.typmods, 0);
-    std::optional<int> scale = std::nullopt;
-    if (mods_size > 1) {
-      if (scale = TryGet<int>(type_name.typmods, 1); !scale) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                        ERR_MSG("invalid input syntax for type integer"));
+    auto get_typemod = [&](size_t idx) {
+      if (auto i = TryGet<int>(type_name.typmods, idx)) {
+        return *i;
       }
-    }
+      if (auto str = TryGet<std::string_view>(type_name.typmods, idx)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+          ERR_MSG("invalid input syntax for type integer: \"", *str, "\""));
+      }
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("type modifiers must be simple constants or identifiers"));
+    };
 
-    if (!precision) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type integer"));
-    }
-    auto decimal = velox::DECIMAL(*precision, scale.value_or(0));
+    const auto precision = get_typemod(0);
+    const auto scale =
+      mods_size > 1 ? std::optional{get_typemod(1)} : std::nullopt;
+    auto decimal = velox::DECIMAL(precision, scale.value_or(0));
     return wrap_in_array(std::move(decimal));
   }
 

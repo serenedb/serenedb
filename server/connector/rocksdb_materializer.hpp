@@ -46,26 +46,28 @@ class RocksDBMaterializer {
                       ObjectId object_key);
 
   velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
-                               velox::VectorPtr scores = {});
+                               velox::VectorPtr scores);
 
  protected:
   const std::string& ReadValue(std::string_view full_key);
 
-  velox::VectorPtr ReadColumnKeys(std::span<std::string> row_keys,
+  velox::VectorPtr ReadColumnKeys(std::span<const std::string> row_keys,
                                   catalog::Column::Id column_id,
                                   velox::TypeKind kind,
                                   std::string_view column_key);
 
   template<typename Decoder>
   void IterateColumnKeys(std::string_view column_key,
-                         std::span<std::string> row_keys, const Decoder& func);
+                         std::span<const std::string> row_keys,
+                         const Decoder& func);
 
-  velox::VectorPtr ReadGeneratedColumnKeys(std::span<std::string> row_keys);
+  velox::VectorPtr ReadGeneratedColumnKeys(
+    std::span<const std::string> row_keys);
 
-  velox::VectorPtr ReadUnknownColumnKeys(std::span<std::string> row_keys);
+  velox::VectorPtr ReadUnknownColumnKeys(std::span<const std::string> row_keys);
 
   template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumnKeys(std::span<std::string> row_keys,
+  velox::VectorPtr ReadScalarColumnKeys(std::span<const std::string> row_keys,
                                         std::string_view column_key);
 
   template<typename T>

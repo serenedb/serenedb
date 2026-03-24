@@ -113,9 +113,9 @@ velox::RowVectorPtr RocksDBMaterializer::ReadRows(
 }
 
 template<typename Decoder>
-void RocksDBMaterializer::IterateColumnKeys(std::string_view column_key,
-                                            std::span<std::string> row_keys,
-                                            const Decoder& func) {
+void RocksDBMaterializer::IterateColumnKeys(
+  std::string_view column_key, std::span<const std::string> row_keys,
+  const Decoder& func) {
   // TODO(Dronplane): try use multiget
   std::string buffer(column_key);
   auto cur = row_keys.begin();
@@ -128,7 +128,7 @@ void RocksDBMaterializer::IterateColumnKeys(std::string_view column_key,
 }
 
 velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
-  std::span<std::string> row_keys, catalog::Column::Id column_id,
+  std::span<const std::string> row_keys, catalog::Column::Id column_id,
   velox::TypeKind kind, std::string_view column_key) {
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadGeneratedColumnKeys(row_keys);
@@ -141,7 +141,7 @@ velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
 }
 
 velox::VectorPtr RocksDBMaterializer::ReadGeneratedColumnKeys(
-  std::span<std::string> row_keys) {
+  std::span<const std::string> row_keys) {
   using T = typename velox::TypeTraits<velox::TypeKind::BIGINT>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::BIGINT(), row_keys.size(), &_memory_pool);
@@ -155,14 +155,14 @@ velox::VectorPtr RocksDBMaterializer::ReadGeneratedColumnKeys(
 }
 
 velox::VectorPtr RocksDBMaterializer::ReadUnknownColumnKeys(
-  std::span<std::string> row_keys) {
+  std::span<const std::string> row_keys) {
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(),
                                                row_keys.size(), &_memory_pool);
 }
 
 template<velox::TypeKind Kind>
 velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
-  std::span<std::string> row_keys, std::string_view column_key) {
+  std::span<const std::string> row_keys, std::string_view column_key) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);

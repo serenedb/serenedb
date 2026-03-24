@@ -22,4 +22,4 @@
 docker.env
 
 # Macos
-/.DS_Store
+.DS_Store

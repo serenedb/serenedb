@@ -54,7 +54,6 @@ enum PgTypeOID : int32_t {
   kTimestamp = 1114,
   kTimestampTz = 1184,
   kInterval = 1186,
-  kUnknown = 705,
   kRegclass = 2205,
   kRegtype = 2206,
 
@@ -83,7 +82,7 @@ enum PgTypeOID : int32_t {
 constexpr int32_t GetPrimitiveTypeOID(velox::TypeKind kind, bool in_array) {
   switch (kind) {
     case velox::TypeKind::UNKNOWN: {
-      return PgTypeOID::kUnknown;
+      return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
     }
     case velox::TypeKind::BOOLEAN: {
       return in_array ? PgTypeOID::kBoolArray : PgTypeOID::kBool;

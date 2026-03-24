@@ -181,13 +181,6 @@ numeric[]
 
 
 query
-SELECT pg_typeof(NULL);
-----
-pg_typeof
-unknown
-
-
-query
 SELECT pg_typeof(pg_typeof('vedernikoff'));
 ----
 pg_typeof

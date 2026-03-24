@@ -87,7 +87,6 @@
 #include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
-#include "utils/operation_options.h"
 #include "yaclib/async/future.hpp"
 #include "yaclib/async/when_all.hpp"
 

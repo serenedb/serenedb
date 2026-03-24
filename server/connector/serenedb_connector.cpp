@@ -225,7 +225,7 @@ void SereneDBConnectorTableHandle::AddSearchQuery(
   const irs::Filter& filter) {
   SDB_ASSERT(!_search_query);
   _search_query = std::move(query);
-  _search_filter_str = irs::ToString(filter);
+  _search_filter_str = irs::ToStringDemangled(filter);
   _index_id = index_id;
 }
 

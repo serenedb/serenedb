@@ -44,7 +44,7 @@
 #include "general_server/state.h"
 #include "pg/sql_parser.h"
 #include "pg/sql_utils.h"
-#include "search_filter_printer.hpp"
+#include "connector/search_filter_printer.hpp"
 #include "utils/query_string.h"
 #include "velox/expression/Expr.h"
 

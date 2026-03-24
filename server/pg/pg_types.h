@@ -29,6 +29,12 @@
 
 namespace sdb {
 
+namespace catalog {
+
+struct Snapshot;
+
+}
+
 class ConnectionContext;
 
 }  // namespace sdb
@@ -128,7 +134,8 @@ std::string RegtypeOut(int32_t oid);
 constexpr int32_t kInvalidOid = 0;
 int32_t RegtypeIn(std::string_view name);
 
-std::string RegclassOut(int32_t oid);
+std::string RegclassOut(const std::shared_ptr<const catalog::Snapshot>& snapshot,
+                        int32_t oid);
 int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;

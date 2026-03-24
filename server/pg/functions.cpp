@@ -588,15 +588,17 @@ struct RegclassOutFunction {
     const velox::core::QueryConfig& config,
     const arg_type<int32_t>* /*input*/) {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
+    _snapshot = conn->GetCatalogSnapshot();
     _db_id = conn->GetDatabaseId();
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
-    result = RegclassOut(input);
+    result = RegclassOut(_snapshot, input);
   }
 
   ObjectId _db_id;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
 };
 
 template<typename T>

@@ -195,6 +195,7 @@ class Config : public velox::config::IConfig {
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
   std::shared_ptr<const catalog::Snapshot> GetCatalogSnapshot() const {
+    SDB_ASSERT(_snapshot);
     return _snapshot;
   }
 

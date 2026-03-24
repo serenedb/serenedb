@@ -174,7 +174,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   auto& table = basics::downCast<connector::RocksDBTable>(
     const_cast<axiom::connector::Table&>(*root.table()));
 
-  state.progress = std::make_shared<IndexProgressReporter>(
+  state.progress = std::make_unique<IndexProgressReporter>(
     db, catalog_table->GetId(), create_index_progress::Command::CreateIndex,
     create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
   table.CreateIndexState() = &state;

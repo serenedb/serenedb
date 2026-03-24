@@ -2584,7 +2584,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
   std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
-  std::shared_ptr<pg::IndexProgressReporter> progress)
+  pg::IndexProgressReporter* progress)
   : RocksDBDataSinkBase<
       NoopSinkWriter>{NoopSinkWriter{},
                       memory_pool,
@@ -2597,7 +2597,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
                         return w;
                       }()},
     _table_lock_guard{table_lock},
-    _progress{std::move(progress)} {}
+    _progress{progress} {}
 
 void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());

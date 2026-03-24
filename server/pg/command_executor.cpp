@@ -160,17 +160,15 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
     if (_state.progress) {
-      _state.progress->SetPhase(
-        create_index_progress::Phase::WaitingForWritersBeforeValidation);
+      _state.progress->SetPhase(create_index_progress::Phase::Committing);
     }
 
     return inverted_index.CommitWait().ThenInline(
       [shard = std::move(shard),
-       progress = _state.progress](yaclib::Result<> r) {
+       progress = _state.progress.get()](yaclib::Result<> r) {
         std::ignore = std::move(r).Ok();
         if (progress) {
-          progress->SetPhase(
-            create_index_progress::Phase::ValidatingScanningIndex);
+          progress->SetPhase(create_index_progress::Phase::Finalizing);
         }
         auto& inverted_index =
           basics::downCast<search::InvertedIndexShard>(*shard);

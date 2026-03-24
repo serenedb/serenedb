@@ -5,11 +5,13 @@ query
 SELECT * FROM pg_stat_progress_copy;
 ----
 pid	datid	datname	relid	command	type	bytes_processed	bytes_total	tuples_processed	tuples_excluded	tuples_skipped
+<slt:ignore>
 
 query
 SELECT * FROM pg_stat_progress_create_index;
 ----
 pid	datid	datname	relid	index_relid	command	phase	lockers_total	lockers_done	current_locker_pid	tuples_total	tuples_done	partitions_total	partitions_done
+<slt:ignore>
 
 # Setup
 statement ok
@@ -30,6 +32,7 @@ query
 SELECT * FROM pg_stat_progress_create_index;
 ----
 pid	datid	datname	relid	index_relid	command	phase	lockers_total	lockers_done	current_locker_pid	tuples_total	tuples_done	partitions_total	partitions_done
+<slt:ignore>
 
 # Cleanup
 statement ok

@@ -154,17 +154,12 @@ enum class Command : int64_t {
   ReindexConcurrently = 4,
 };
 
+// SereneDB-specific phases (differs from PostgreSQL)
 enum class Phase : int64_t {
   Initializing = 1,
-  WaitingForWritersBeforeBuild = 2,
-  BuildingIndex = 3,
-  WaitingForWritersBeforeValidation = 4,
-  ValidatingScanningIndex = 5,
-  ValidatingSortingTuples = 6,
-  ValidatingScanningTable = 7,
-  WaitingForOldSnapshots = 8,
-  WaitingForReadersBeforeMarkingDead = 9,
-  WaitingForReadersBeforeDropping = 10,
+  BuildingIndex = 2,
+  Committing = 3,
+  Finalizing = 4,
 };
 }  // namespace create_index_progress
 

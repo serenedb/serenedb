@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 
+#include "pg/progress_tracker.h"
 #include "query/executor.h"
 #include "utils/exec_context.h"
 
@@ -76,12 +77,10 @@ class CTASCreateTableExecutor final : public CommandExecutor {
   CTASState _state;
 };
 
-class IndexProgressReporter;
-
 struct CreateIndexState {
   bool created = false;
   ObjectId index_id;
-  std::shared_ptr<IndexProgressReporter> progress;
+  std::unique_ptr<IndexProgressReporter> progress;
 };
 
 class CreateIndexExecutor final : public CommandExecutor {

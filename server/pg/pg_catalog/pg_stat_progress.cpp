@@ -49,7 +49,7 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData(
   values.reserve(snapshots.size());
 
   for (auto& s : snapshots) {
-    values.push_back(SdbStatProgress{
+    values.emplace_back(SdbStatProgress{
       .pid = s.pid,
       .datid = s.datid.id(),
       .relid = s.relid.id(),

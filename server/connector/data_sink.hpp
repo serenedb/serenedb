@@ -334,12 +334,12 @@ class RocksDBIndexBackfillDataSink final
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
-    std::shared_ptr<pg::IndexProgressReporter> progress);
+    pg::IndexProgressReporter* progress);
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::WriterMutexLock _table_lock_guard;
-  std::shared_ptr<pg::IndexProgressReporter> _progress;
+  pg::IndexProgressReporter* _progress;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

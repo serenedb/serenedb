@@ -499,18 +499,6 @@ struct NullVarcharText {
 };
 
 template<typename T>
-struct PgGetExprFunction3 {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<bool>&) {
-    return false;  // NULL
-  }
-};
-
-template<typename T>
 struct PgCharToEncodingFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -636,15 +624,22 @@ DEFINE_NOT_SUPPORTED_FUNC(NotSupported4OidOidTextBool,
                           const arg_type<bool>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Int, out_type<int32_t>&,
                           const arg_type<int64_t>&)
+DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Text, out_type<int32_t>&,
+                          const arg_type<velox::Varchar>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupported2TextInt, out_type<velox::Varchar>&,
                           const arg_type<velox::Varchar>&,
                           const arg_type<int64_t>&)
+DEFINE_NOT_SUPPORTED_FUNC(NotSupported2CharInt, out_type<velox::Varchar>&,
+                          const arg_type<int8_t>&, const arg_type<int64_t>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt2TextText, out_type<int32_t>&,
                           const arg_type<velox::Varchar>&,
                           const arg_type<velox::Varchar>&)
 DEFINE_NOT_SUPPORTED_FUNC(
   NotSupported1TextArray, out_type<velox::Varchar>&,
   const arg_type<velox::Array<velox::Varchar>>&)
+DEFINE_NOT_SUPPORTED_FUNC(
+  NotSupported1IntArray, out_type<velox::Varchar>&,
+  const arg_type<velox::Array<int64_t>>&)
 DEFINE_NOT_SUPPORTED_FUNC(
   NotSupported3TextTextArrayTextArray, out_type<velox::Varchar>&,
   const arg_type<velox::Varchar>&,
@@ -813,16 +808,6 @@ struct FormatTypeFunction {
   }
 };
 
-template<typename T>
-struct PgGetExprFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
 
 template<typename T>
 struct NullVarcharFunction {
@@ -1549,9 +1534,10 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
     {prefix + "row_security_active"});
 
-  velox::registerFunction<NotSupported2TextInt, velox::Varchar, velox::Varchar,
+  velox::registerFunction<NotSupported2CharInt, velox::Varchar, int8_t,
                           int64_t>({prefix + "acldefault"});
-  velox::registerFunction<NotSupported1Text, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NotSupported1IntArray, velox::Varchar,
+                          velox::Array<int64_t>>(
     {prefix + "aclexplode"});
   velox::registerFunction<NotSupported4OidOidTextBool, velox::Varchar, int64_t,
                           int64_t, velox::Varchar, bool>(
@@ -1602,10 +1588,6 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "get_constraintdef"});
   velox::registerFunction<EmptyStringOidBool, velox::Varchar, int64_t, bool>(
     {prefix + "get_constraintdef"});
-  velox::registerFunction<PgGetExprFunction, velox::Varchar, velox::Varchar,
-                          int64_t>({prefix + "get_expr"});
-  velox::registerFunction<PgGetExprFunction3, velox::Varchar, velox::Varchar,
-                          int64_t, bool>({prefix + "get_expr"});
   velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
     {prefix + "get_functiondef"});
   velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
@@ -1624,8 +1606,6 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "get_partition_constraintdef"});
   velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
     {prefix + "get_partkeydef"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
-    {prefix + "get_propgraphdef"});
   velox::registerFunction<GetRuleDef, velox::Varchar, int64_t>(
     {prefix + "get_ruledef"});
   velox::registerFunction<EmptyStringOidBool, velox::Varchar, int64_t, bool>(
@@ -1673,8 +1653,6 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
     {prefix + "to_regcollation"});
   velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
-    {prefix + "to_regdatabase"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
     {prefix + "to_regnamespace"});
   velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
     {prefix + "to_regoper"});
@@ -1688,8 +1666,8 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "to_regrole"});
   velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
     {prefix + "to_regtype"});
-  velox::registerFunction<NotSupportedInt2TextText, int32_t, velox::Varchar,
-                          velox::Varchar>({prefix + "to_regtypemod"});
+  velox::registerFunction<NotSupportedInt1Text, int32_t, velox::Varchar>(
+    {prefix + "to_regtypemod"});
 
   // 9.27.5 Object Information and Addressing Functions
 

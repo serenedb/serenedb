@@ -598,9 +598,6 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("format_type",
           VeloxFunction{"pg_format_type", false, FunctionLanguage::VeloxNative,
                         FunctionKind::Scalar})
-    .Case("pg_get_expr",
-          VeloxFunction{"pg_get_expr", false, FunctionLanguage::VeloxNative,
-                        FunctionKind::Scalar})
     // 9.27.4 System Catalog Information Functions (additional)
     .Case("pg_char_to_encoding",
           VeloxFunction{"pg_char_to_encoding", false,
@@ -632,9 +629,6 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("pg_get_partition_constraintdef",
           VeloxFunction{"pg_get_partition_constraintdef", false,
                         FunctionLanguage::VeloxNative, FunctionKind::Scalar})
-    .Case("pg_get_propgraphdef",
-          VeloxFunction{"pg_get_propgraphdef", false,
-                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
     .Case("pg_get_serial_sequence",
           VeloxFunction{"pg_get_serial_sequence", false,
                         FunctionLanguage::VeloxNative, FunctionKind::Scalar})
@@ -664,9 +658,6 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
                         FunctionKind::Scalar})
     .Case("to_regcollation",
           VeloxFunction{"pg_to_regcollation", false,
-                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
-    .Case("to_regdatabase",
-          VeloxFunction{"pg_to_regdatabase", false,
                         FunctionLanguage::VeloxNative, FunctionKind::Scalar})
     .Case("to_regnamespace",
           VeloxFunction{"pg_to_regnamespace", false,

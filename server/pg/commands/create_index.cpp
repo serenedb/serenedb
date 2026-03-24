@@ -158,6 +158,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   SDB_ASSERT(catalog_table);
   auto catalog_index = snapshot->GetRelation(db, schema, stmt.idxname);
   SDB_ASSERT(catalog_index);
+  state.index_id = catalog_index->GetId();
 
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);
@@ -169,18 +170,14 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));
   auto& root =
     basics::downCast<const axiom::logical_plan::TableWriteNode>(logical_plan);
+
   auto& table = basics::downCast<connector::RocksDBTable>(
     const_cast<axiom::connector::Table&>(*root.table()));
-  table.BackfillIndexId() = catalog_index->GetId();
 
-  // Register progress tracking
-  {
-    auto reporter = std::make_shared<IndexProgressReporter>(
-      db, catalog_table->GetId(), create_index_progress::Command::CreateIndex,
-      create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
-    state.progress = reporter;
-    table.SetIndexProgressReporter(std::move(reporter));
-  }
+  state.progress = std::make_shared<IndexProgressReporter>(
+    db, catalog_table->GetId(), create_index_progress::Command::CreateIndex,
+    create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
+  table.CreateIndexState() = &state;
 
   query.CompileQuery();
   query.MakeRunner();

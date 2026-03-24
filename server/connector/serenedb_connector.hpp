@@ -41,10 +41,6 @@
 #include <thread>
 #include <type_traits>
 
-namespace sdb::pg {
-class IndexProgressReporter;
-}  // namespace sdb::pg
-
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/fwd.h"
@@ -61,6 +57,7 @@ class IndexProgressReporter;
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
+#include "pg/command_executor.h"
 #include "query/transaction.h"
 #include "query/utils.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -440,17 +437,8 @@ class RocksDBTable : public axiom::connector::Table {
     return (self._bulk_insert);
   }
 
-  decltype(auto) BackfillIndexId(this auto&& self) noexcept {
-    return (self._backfill_index_id);
-  }
-
-  void SetIndexProgressReporter(std::shared_ptr<pg::IndexProgressReporter> r) {
-    _index_progress_reporter = std::move(r);
-  }
-
-  const std::shared_ptr<pg::IndexProgressReporter>& GetIndexProgressReporter()
-    const noexcept {
-    return _index_progress_reporter;
+  decltype(auto) CreateIndexState(this auto&& self) noexcept {
+    return (self._create_index_state);
   }
 
  private:
@@ -464,8 +452,7 @@ class RocksDBTable : public axiom::connector::Table {
     WriteConflictPolicy::EmitError;
   bool _update_pk = false;
   bool _bulk_insert = false;
-  ObjectId _backfill_index_id;
-  std::shared_ptr<pg::IndexProgressReporter> _index_progress_reporter;
+  pg::CreateIndexState* _create_index_state = nullptr;
 };
 
 class RocksDBInvertedIndexTable : public RocksDBTable {
@@ -983,13 +970,12 @@ class SereneDBConnector final : public velox::connector::Connector {
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
               std::move(update_sinks), table_lock);
-          } else if (table.BackfillIndexId().isSet()) {
+          } else if (auto* cis = table.CreateIndexState()) {
             auto backfill_writer =
-              CreateBackfillIndexWriter(table.BackfillIndexId(), transaction);
+              CreateBackfillIndexWriter(cis->index_id, transaction);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              columns, std::move(backfill_writer), table_lock,
-              table.GetIndexProgressReporter());
+              columns, std::move(backfill_writer), table_lock, cis->progress);
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

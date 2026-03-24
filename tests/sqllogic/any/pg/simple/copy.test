@@ -459,7 +459,7 @@ statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
 ----
 db error: ERROR: COPY FORMAT "1" not recognized
-HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC
+HINT: Allowed values: TEXT, CSV, PARQUET, DWRF, ORC, JSON
 
 
 onlyif serenedb
@@ -476,6 +476,118 @@ COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.parquet' WITH (FO
 ----
 db error: ERROR: option "delimiter" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
+
+
+# JSON Lines import
+onlyif serenedb
+statement ok
+CREATE TABLE json_eater (data TEXT);
+
+
+onlyif serenedb
+statement count 3
+COPY (SELECT '{"kostya":666,"vedernikoff":"clickclack"}' UNION ALL SELECT '{"kostya":993,"vedernikoff":"deadinside"}' UNION ALL SELECT '{"kostya":228,"vedernikoff":"babsky"}') TO '/tmp/${__DATABASE__}_kostya.jsonl';
+
+
+# .jsonl extension auto-detected as JSON format
+onlyif serenedb
+statement count 3
+COPY json_eater FROM '/tmp/${__DATABASE__}_kostya.jsonl';
+
+
+onlyif serenedb
+query
+SELECT * FROM json_eater ORDER BY 1;
+----
+data
+{"kostya":228,"vedernikoff":"babsky"}
+{"kostya":666,"vedernikoff":"clickclack"}
+{"kostya":993,"vedernikoff":"deadinside"}
+
+
+onlyif serenedb
+statement count 3
+DELETE FROM json_eater;
+
+
+# explicit FORMAT json
+onlyif serenedb
+statement count 3
+COPY json_eater FROM '/tmp/${__DATABASE__}_kostya.jsonl' WITH (FORMAT 'JSON');
+
+
+onlyif serenedb
+query
+SELECT * FROM json_eater ORDER BY 1;
+----
+data
+{"kostya":228,"vedernikoff":"babsky"}
+{"kostya":666,"vedernikoff":"clickclack"}
+{"kostya":993,"vedernikoff":"deadinside"}
+
+
+onlyif serenedb
+statement count 3
+DELETE FROM json_eater;
+
+
+# .ndjson extension auto-detection
+onlyif serenedb
+statement count 3
+COPY (SELECT '{"iq":322}' UNION ALL SELECT '{"iq":993}' UNION ALL SELECT '{"iq":1337}') TO '/tmp/${__DATABASE__}_vedernikoff.ndjson';
+
+
+onlyif serenedb
+statement count 3
+COPY json_eater FROM '/tmp/${__DATABASE__}_vedernikoff.ndjson';
+
+
+onlyif serenedb
+query
+SELECT * FROM json_eater ORDER BY 1;
+----
+data
+{"iq":1337}
+{"iq":322}
+{"iq":993}
+
+statement ok
+DELETE FROM arelav_consumer;
+
+query
+SELECT * FROM arelav_consumer;
+----
+eater
+
+onlyif serenedb
+query
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN 'ANALYZE');
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=0:
+-- TableWrite[2][serenedb(table=arelav_consumer, kind=INSERT)] -> rows:BIGINT
+   <slt:ignore>
+  -- Project[1][expressions: (eater:VARCHAR, "eater"), (dt1.__p8:BIGINT, null)] -> "eater":VARCHAR, "dt1.__p8":BIGINT
+     <slt:ignore>
+    -- TableScan[0][File(text)] -> "eater":VARCHAR
+       <slt:ignore>
+
+onlyif serenedb
+query
+SELECT * FROM arelav_consumer;
+----
+eater
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
+imarelav
 
 
 onlyif serenedb
@@ -516,7 +628,7 @@ Copy:
       (no additional options)
   Format:
     Common:
-      format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc] - File format
+      format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc, Json] - File format
       progress (boolean) [default: false] - Show progress notices during COPY
     Text:
       delimiter (character) [default: \t] - Column delimiter character
@@ -540,42 +652,5 @@ Copy:
       (no additional options)
     ORC:
       (no additional options)
-
-
-statement ok
-DELETE FROM arelav_consumer;
-
-query
-SELECT * FROM arelav_consumer;
-----
-eater
-
-onlyif serenedb
-query
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN 'ANALYZE');
-----
-QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=0:
--- TableWrite[2][serenedb(table=arelav_consumer, kind=INSERT)] -> rows:BIGINT
-   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-  -- Project[1][expressions: (eater:VARCHAR, "eater"), (dt1.__p8:BIGINT, null)] -> "eater":VARCHAR, "dt1.__p8":BIGINT
-     Output: 10 rows (23.91KB, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 128B, Memory allocations: 1, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-    -- TableScan[0][File(text)] -> "eater":VARCHAR
-       Input: 10 rows (23.91KB, 1 batches), Output: 10 rows (23.91KB, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 24.12KB, Memory allocations: 6, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-
-onlyif serenedb
-query
-SELECT * FROM arelav_consumer;
-----
-eater
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
+    JSON:
+      (no additional options)

@@ -22,6 +22,10 @@
 
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
+#include <velox/vector/ComplexVector.h>
+
+#include <span>
+#include <string>
 
 #include "basics/fwd.h"
 #include "catalog/identifiers/object_id.h"
@@ -30,37 +34,40 @@
 
 namespace sdb::connector {
 
-class Materializer {
+class RocksDBMaterializer {
  public:
-  Materializer(velox::memory::MemoryPool& memory_pool,
-               const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
-               rocksdb::Transaction* transaction,
-               rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-               std::vector<catalog::Column::Id> column_oids,
-               catalog::Column::Id effective_column_id, ObjectId object_key);
+  RocksDBMaterializer(velox::memory::MemoryPool& memory_pool,
+                      const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
+                      rocksdb::Transaction* transaction,
+                      rocksdb::ColumnFamilyHandle& cf,
+                      velox::RowTypePtr row_type,
+                      std::vector<catalog::Column::Id> column_oids,
+                      catalog::Column::Id effective_column_id,
+                      ObjectId object_key);
+
+  velox::RowVectorPtr ReadRows(std::span<const std::string> row_keys,
+                               velox::VectorPtr scores);
 
  protected:
-  using ValueReader =
-    std::function<const std::string&(std::string_view full_key)>;
+  const std::string& ReadValue(std::string_view full_key);
 
-  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
-                               velox::VectorPtr scores = {});
-
-  velox::VectorPtr ReadColumnKeys(std::span<std::string> row_keys,
+  velox::VectorPtr ReadColumnKeys(std::span<const std::string> row_keys,
                                   catalog::Column::Id column_id,
                                   velox::TypeKind kind,
                                   std::string_view column_key);
 
   template<typename Decoder>
   void IterateColumnKeys(std::string_view column_key,
-                         std::span<std::string> row_keys, const Decoder& func);
+                         std::span<const std::string> row_keys,
+                         const Decoder& func);
 
-  velox::VectorPtr ReadGeneratedColumnKeys(std::span<std::string> row_keys);
+  velox::VectorPtr ReadGeneratedColumnKeys(
+    std::span<const std::string> row_keys);
 
-  velox::VectorPtr ReadUnknownColumnKeys(std::span<std::string> row_keys);
+  velox::VectorPtr ReadUnknownColumnKeys(std::span<const std::string> row_keys);
 
   template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumnKeys(std::span<std::string> row_keys,
+  velox::VectorPtr ReadScalarColumnKeys(std::span<const std::string> row_keys,
                                         std::string_view column_key);
 
   template<typename T>
@@ -85,7 +92,6 @@ class Materializer {
   bool _is_range = true;
   size_t _produced = 0;
   std::string _value_buffer;
-  ValueReader _value_reader;
   rocksdb::ReadOptions _read_options;
 };
 

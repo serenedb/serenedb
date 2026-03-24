@@ -233,16 +233,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
              ro.snapshot = snapshot;
              return ro;
            }()} {
-    const size_t num_cols = _column_ids.size();
-    _sorted_col_indices.resize(num_cols);
+    _sorted_col_indices.resize(_column_ids.size());
     std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
     std::sort(
       _sorted_col_indices.begin(), _sorted_col_indices.end(),
       [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
-    _col_rank.resize(num_cols);
-    for (size_t rank = 0; rank < num_cols; ++rank) {
-      _col_rank[_sorted_col_indices[rank]] = rank;
-    }
   }
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
@@ -250,7 +245,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
                                           velox::ContinueFuture& future) final;
 
  private:
-  static constexpr size_t kMultiGetBatchSize =
+  static constexpr size_t kMultiGetChunkSize =
     MultiGetContext<Source>::kBatchSize;
 
   // Build _batch_keys[0..count) for col_id at consecutive
@@ -258,9 +253,9 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   void BuildBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
 
   // Build _batch_keys for col_id by iterating set bits of _present from
-  // _cursor. Fills at most batch_size keys; advances _cursor past each visited
-  // bit. Returns the number of keys built (may be < batch_size at end of
-  // bitset).
+  // _in_batch_offset. Fills at most batch_size keys; advances _in_batch_offset
+  // past each visited bit. Returns the number of keys built (may be <
+  // batch_size at end of bitset).
   size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
 
   // Populate _batch_slices from _batch_keys, then call MultiGetContext.
@@ -270,15 +265,16 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   const std::vector<SpecificPoint>& _values;
   velox::RowTypePtr _pk_type;
   std::vector<size_t> _sorted_col_indices;
-  std::vector<size_t> _col_rank;
-  irs::bitset
-    _present_rows_batch;  // presence mask for the current batch window
-  size_t _cursor = 0;     // current position within _present
-  size_t _offset = 0;  // index into _values for the start of the current batch
-  std::array<std::string, kMultiGetBatchSize> _batch_keys;
-  std::array<rocksdb::Slice, kMultiGetBatchSize> _batch_slices;
-  std::array<std::string, kMultiGetBatchSize> _batch_raw_values;
-  std::array<rocksdb::Status, kMultiGetBatchSize> _batch_statuses;
+  // presence mask for the current batch window
+  irs::bitset _present_rows_batch;
+  // current position within batch, offset of multiget chunks
+  size_t _in_batch_offset = 0;
+  // index into _values for the start of the current batch
+  size_t _values_offset = 0;
+  std::array<std::string, kMultiGetChunkSize> _batch_keys;
+  std::array<rocksdb::Slice, kMultiGetChunkSize> _batch_slices;
+  std::array<std::string, kMultiGetChunkSize> _batch_raw_values;
+  std::array<rocksdb::Status, kMultiGetChunkSize> _batch_statuses;
   MultiGetContext<Source> _ctx;
 };
 

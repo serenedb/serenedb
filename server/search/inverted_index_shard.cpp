@@ -291,7 +291,7 @@ TruncateGuard InvertedIndexShard::TruncateBegin()
     [](absl::Mutex* m) ABSL_NO_THREAD_SAFETY_ANALYSIS { m->Unlock(); }}};
 }
 
-void InvertedIndexShard::TruncateCommit(TruncateGuard /*guard*/)
+void InvertedIndexShard::TruncateCommit(TruncateGuard guard)
   ABSL_NO_THREAD_SAFETY_ANALYSIS {
   _writer->Clear(_engine.currentTick());
   auto reader = _writer->GetSnapshot();

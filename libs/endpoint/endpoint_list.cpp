@@ -87,7 +87,7 @@ void EndpointList::apply(
 
 bool EndpointList::hasSsl() const {
   for (auto& it : _endpoints) {
-    if (it.first.starts_with("http+ssl://")) {
+    if (it.second->encryption() == Endpoint::EncryptionType::SSL) {
       return true;
     }
   }

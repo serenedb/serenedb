@@ -30,7 +30,9 @@
 
 #include <algorithm>
 #include <numeric>
+#include <span>
 
+#include "basics/containers/bitset.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/rocksdb_filter.hpp"
@@ -53,12 +55,11 @@ class MultiGetContext {
     : _source{source}, _ro{std::move(ro)} {}
 
   void MultiGet(rocksdb::ColumnFamilyHandle& cf,
-                const std::vector<rocksdb::Slice>& keys,
-                std::vector<std::string>& values,
-                std::vector<rocksdb::Status>& statuses) {
+                std::span<const rocksdb::Slice> keys,
+                std::span<std::string> values,
+                std::span<rocksdb::Status> statuses) {
     const size_t n = keys.size();
-    values.resize(n);
-    statuses.resize(n);
+    SDB_ASSERT(values.size() >= n && statuses.size() >= n);
 
     if (n <= kThreshold) {
       for (size_t i = 0; i < n; ++i) {
@@ -83,7 +84,7 @@ class MultiGetContext {
 
  private:
   void ExtractValues(size_t count, size_t dest_start,
-                     std::vector<std::string>& values) {
+                     std::span<std::string> values) {
     for (size_t i = 0; i < count; ++i) {
       if (_pinnable[i].IsPinned()) {
         values[dest_start + i] = _pinnable[i].ToStringView();
@@ -249,30 +250,35 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
                                           velox::ContinueFuture& future) final;
 
  private:
-  // Build _keys[rank * batch_size + point_idx] for key_cols column slots.
-  void BuildKeys(size_t batch_size, size_t key_cols);
+  static constexpr size_t kMultiGetBatchSize =
+    MultiGetContext<Source>::kBatchSize;
 
-  // Copy _keys[0..total_keys) into _key_slices, then call MultiGetContext.
+  // Build _batch_keys[0..count) for col_id at consecutive
+  // _values[start..start+count).
+  void BuildBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
+
+  // Build _batch_keys for col_id by iterating set bits of _present from
+  // _cursor. Fills at most batch_size keys; advances _cursor past each visited
+  // bit. Returns the number of keys built (may be < batch_size at end of
+  // bitset).
+  size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
+
+  // Populate _batch_slices from _batch_keys, then call MultiGetContext.
+  // Results go into _batch_raw_values / _batch_statuses.
   void PerformMultiGet(size_t total_keys);
 
-  // Count entries in _statuses[0..batch_size) that are not NotFound and throw
-  // if any error happens.
-  size_t CheckAndCountFound(size_t batch_size) const;
-
-  // Advance _offset by batch_size; reset _current_split when all points done.
-  void FinalizeOffset(size_t batch_size);
-
-  size_t _offset = 0;
   const std::vector<SpecificPoint>& _values;
   velox::RowTypePtr _pk_type;
   std::vector<size_t> _sorted_col_indices;
   std::vector<size_t> _col_rank;
-  // TODO(mkornaukhov) use std::array, need pass callback into multiget context
-  // for custom processing of window-by-window logics.
-  std::vector<std::string> _keys;
-  std::vector<rocksdb::Slice> _key_slices;
-  std::vector<std::string> _raw_values;
-  std::vector<rocksdb::Status> _statuses;
+  irs::bitset
+    _present_rows_batch;  // presence mask for the current batch window
+  size_t _cursor = 0;     // current position within _present
+  size_t _offset = 0;  // index into _values for the start of the current batch
+  std::array<std::string, kMultiGetBatchSize> _batch_keys;
+  std::array<rocksdb::Slice, kMultiGetBatchSize> _batch_slices;
+  std::array<std::string, kMultiGetBatchSize> _batch_raw_values;
+  std::array<rocksdb::Status, kMultiGetBatchSize> _batch_statuses;
   MultiGetContext<Source> _ctx;
 };
 

@@ -19,6 +19,7 @@ is_boolean_flag() {
 # Default values
 declare -A defaults=(
 	[single_port]=''
+	[single_port_ssl]=''
 	[cluster_port]=''
 	[protocol]='simple' # simple|extended|both TODO(mbkkt) make both
 	[test]='./tests/sqllogic/sdb/**/*.test*'
@@ -140,7 +141,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host | iterations | cancellation)
+		single-port | single-port-ssl | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -165,7 +166,7 @@ parse_options() {
 
 			# Type validation
 			case "$key" in
-			single-port | cluster-port | jobs | iterations)
+			single-port | single-port-ssl | cluster-port | jobs | iterations)
 				validate_number "$value" "--$key" || return 1
 				;;
 			debug)
@@ -198,6 +199,7 @@ done
 echo "Database: $database"
 echo "Host: $host"
 echo "Single Port: $single_port"
+echo "Single Port SSL: $single_port_ssl"
 echo "Cluster Port: $cluster_port"
 echo "Protocol: $protocol"
 echo "Test Path: $test"
@@ -228,6 +230,13 @@ run_tests() {
 
 	echo
 	echo "Running tests for $database database in $mode mode on port $port with $engine engine"
+
+	local ssl_port_opt=""
+	if [[ -n "$4" ]]; then
+		ssl_port_opt="--ssl-port $4"
+		echo "Using SSL port: $4"
+	fi
+
 	echo
 
 	# Build options dynamically
@@ -263,7 +272,8 @@ run_tests() {
 		--label "$database" --label "$mode" --label "$engine-protocol" \
 		--junit "$junit-$mode-$engine" \
 		$options \
-		$skip_failed_opt ${skip_failed:+"$skip_failed"}
+		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+		$ssl_port_opt
 	return $?
 }
 
@@ -319,7 +329,7 @@ fi
 for iter in $(seq 1 "$iterations"); do
 	if [[ "$protocol" == "simple" || "$protocol" == "both" ]]; then
 		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres"
+			run_tests "single" "$single_port" "postgres" "$single_port_ssl"
 			test_exit_code=$?
 			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 		fi
@@ -332,7 +342,7 @@ for iter in $(seq 1 "$iterations"); do
 
 	if [[ "$protocol" == "extended" || "$protocol" == "both" ]]; then
 		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres-extended"
+			run_tests "single" "$single_port" "postgres-extended" "$single_port_ssl"
 			test_exit_code=$?
 			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 		fi

@@ -223,11 +223,13 @@ jobs:
         run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 
       # ==================== GTEST PARALLEL CACHE ====================
       - name: Restore gtest-parallel timing cache
         id: gtest-cache
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         uses: actions/cache@v4
         with:
           path: .gtest-parallel-cache
@@ -238,6 +240,7 @@ jobs:
             gtest-times-${{ inputs.PRESET }}-
 
       - name: Prepare gtest-parallel cache directory
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: |
           mkdir -p .gtest-parallel-cache
           echo "GTEST_PARALLEL_CACHE_DIR=${WORKSPACE}/.gtest-parallel-cache" >> $GITHUB_ENV

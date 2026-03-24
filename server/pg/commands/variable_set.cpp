@@ -252,9 +252,9 @@ void ProcessLogLevel(const VariableSetStmt& stmt,
     case VAR_SET_VALUE: {
       SDB_ASSERT(list_length(stmt.args) == 1);
       if (list_length(stmt.args) != 1) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("SET ", log::kLogLevelVariable,
-                " takes only one argument"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("SET ", log::kLogLevelVariable, " takes only one argument"));
       }
       log::SetLogLevel(ProcessValue(*list_nth_node(A_Const, stmt.args, 0)));
     } break;

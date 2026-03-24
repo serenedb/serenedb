@@ -20,6 +20,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
+#include "basics/logger/logger.h"
 #include "pg/isolation_level.h"
 #include "query/config.h"
 
@@ -29,7 +30,7 @@ constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
     // serenedb specific variables
     {
-      "sdb_log_level",
+      log::kLogLevelVariable,
       {
         VariableType::String,
         "Sets the server log level. "

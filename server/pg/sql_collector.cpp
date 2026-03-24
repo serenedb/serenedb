@@ -22,14 +22,16 @@
 
 #include <absl/functional/overload.h>
 
+#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/tfidf.hpp>
 #include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 #include "query/transaction.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -156,13 +158,94 @@ void ObjectCollector::CollectAExpr(const State& state, const A_Expr& expr) {
   }
 }
 
+// Extract a numeric value from a positional function argument list.
+// Tries double first, falls back to int (promotable to double).
+std::optional<double> GetNumericArg(const List* args, size_t i) {
+  if (auto v = TryGet<double>(args, i)) {
+    return v;
+  }
+  if (auto v = TryGet<int>(args, i)) {
+    return static_cast<double>(*v);
+  }
+  return std::nullopt;
+}
+
+std::shared_ptr<const irs::Scorer> CreateScorer(const Objects::ObjectName& name,
+                                                const FuncCall& expr) {
+  if (!name.schema.empty()) {
+    return nullptr;
+  }
+
+  const int nargs = list_length(expr.args);
+
+  if (name.relation == irs::BM25::type_name()) {
+    if (nargs != 0 && nargs != 2) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("BM25() accepts 0 or 2 arguments: k1 and b"));
+    }
+    float k1 = irs::BM25::K();
+    float b = irs::BM25::B();
+    if (nargs == 2) {
+      const auto v0 = GetNumericArg(expr.args, 0);
+      if (!v0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("BM25() k1 argument must be a numeric literal"));
+      }
+      const auto v1 = GetNumericArg(expr.args, 1);
+      if (!v1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("BM25() b argument must be a numeric literal"));
+      }
+      k1 = static_cast<float>(*v0);
+      b = static_cast<float>(*v1);
+    }
+    return std::make_shared<irs::BM25>(k1, b);
+  }
+
+  if (name.relation == irs::TFIDF::type_name()) {
+    if (nargs > 1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("TFIDF() accepts at most 1 argument: normalize"));
+    }
+    bool normalize = false;
+    if (nargs == 1) {
+      const auto v = TryGet<bool>(expr.args, 0);
+      if (!v) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("TFIDF() normalize argument must be a boolean literal"));
+      }
+      normalize = *v;
+    }
+    return std::make_shared<irs::TFIDF>(normalize);
+  }
+
+  return nullptr;
+}
+
 void ObjectCollector::CollectFuncCall(const State& state,
                                       const FuncCall& expr) {
   auto name = ParseObjectName(expr.funcname, _database);
   if (expr.agg_within_group || expr.func_variadic) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "unsupported function call with aggregate options");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Unsupported function call with aggregate options"));
   }
+
+  // BM25() / TFIDF() produce a score column in the output --
+  // they are not catalog functions and must not be registered as such.
+  if (auto scorer = CreateScorer(name, expr)) {
+    if (!_objects.SetScorer(std::move(scorer))) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Only one scorer function is allowed per inverted index"),
+        ERR_HINT("Use UNION to combine different score functions for same "
+                 "inverted index"));
+    }
+    return;
+  }
+
   CollectExprList(state, expr.args);
   CollectExprNode(state, expr.agg_filter);
   CollectSortClause(state, expr.agg_order);
@@ -205,8 +288,9 @@ void ObjectCollector::CollectAIndirection(const State& state,
     } else if (IsA(&n, A_Star)) {
       // nothing to collect
     } else {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "only array subscripts are supported in indirection");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("only array subscripts are supported in indirection"));
     }
   });
 }
@@ -226,9 +310,10 @@ void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var) {
   }
 
   if (_database.data() && var->catalogname && var->catalogname != _database) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "Cross database queries are not allowed: ", var->catalogname,
-              " accessed instead of ", _database);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Cross database queries are not allowed: ", var->catalogname,
+              " accessed instead of ", _database));
   }
 
   _objects.ensureRelation(var->schemaname, relation);
@@ -258,8 +343,9 @@ void ObjectCollector::CollectRangeFunction(const State& state,
         auto* n = castNode(FuncCall, function);
         auto name = ParseObjectName(n->funcname, _database);
         if (n->agg_within_group || n->func_variadic) {
-          SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                    "unsupported function call with aggregate options");
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("unsupported function call with aggregate options"));
         }
         CollectExprList(state, n->args);
         _objects.ensureFunction(name.schema, name.relation);
@@ -268,8 +354,9 @@ void ObjectCollector::CollectRangeFunction(const State& state,
       default:
         break;
     }
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "unsupported function type: ", magic_enum::enum_name(tag));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("unsupported function type: ", magic_enum::enum_name(tag)));
   });
 }
 
@@ -347,9 +434,9 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
       const auto& param_ref = castNode(ParamRef, expr);
       SDB_ASSERT(param_ref->number > 0);
       if (param_ref->number >= std::numeric_limits<ParamIndex>::max()) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "number of parameters must be between 0 and ",
-                  std::numeric_limits<ParamIndex>::max());
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("number of parameters must be between 0 and ",
+                                std::numeric_limits<ParamIndex>::max()));
       }
       _max_bind_param_idx =
         std::max<ParamIndex>(_max_bind_param_idx, param_ref->number);
@@ -366,7 +453,8 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
       // TODO(mbkkt) but validate names, etc should be here
       return;
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported node type: ", expr->type);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("unsupported node type: ", expr->type));
   }
 }
 
@@ -403,8 +491,9 @@ void ObjectCollector::CollectValuesLists(const State& state,
     if (tuple_length < 0) {
       tuple_length = list_length(&tuple);
     } else if (tuple_length != list_length(&tuple)) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "VALUES lists must have the same number of columns");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("VALUES lists must have the same number of columns"));
     }
     VisitNodes(&tuple,
                [&](const Node& expr) { CollectExprNode(state, &expr); });
@@ -455,21 +544,30 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
   if (!stmt) {
     return;
   }
+  auto outer = _objects.BeginNode();
+  irs::Finally end = [&] noexcept { _objects.EndNode(stmt, std::move(outer)); };
 
   CollectWithClause(state, stmt->withClause);
+  // TODO(Pasha): Collect query in stmt->intoClause?
 
-  CollectValuesLists(state, stmt->valuesLists);
-  CollectFromClause(state, stmt->fromClause);
-  CollectSelectStmt(state, stmt->larg);
-  CollectSelectStmt(state, stmt->rarg);
+  if (stmt->valuesLists) {
+    CollectValuesLists(state, stmt->valuesLists);
+    CollectSortClause(state, stmt->sortClause);
+  } else if (stmt->op == SETOP_NONE) {
+    CollectFromClause(state, stmt->fromClause);
 
-  CollectDistinctClause(state, stmt->distinctClause);
-  CollectExprList(state, stmt->targetList);
+    CollectExprNode(state, stmt->whereClause);
+    CollectExprList(state, stmt->groupClause);
+    CollectExprNode(state, stmt->havingClause);
+    CollectDistinctClause(state, stmt->distinctClause);
+    CollectExprList(state, stmt->targetList);
+    CollectSortClause(state, stmt->sortClause);
+  } else {
+    CollectSelectStmt(state, stmt->larg);
+    CollectSelectStmt(state, stmt->rarg);
 
-  CollectExprNode(state, stmt->whereClause);
-  CollectSortClause(state, stmt->sortClause);
-  CollectExprNode(state, stmt->havingClause);
-  CollectExprList(state, stmt->groupClause);
+    CollectSortClause(state, stmt->sortClause);
+  }
   CollectExprNode(state, stmt->limitOffset);
   CollectExprNode(state, stmt->limitCount);
 }
@@ -625,28 +723,29 @@ Objects::ObjectName ParseObjectName(const List* names,
                                     std::string_view database,
                                     std::string_view default_schema) {
   return VisitName(
-    names, absl::Overload{
-             [&](std::string_view relation) {
-               return Objects::ObjectName{default_schema, relation};
-             },
-             [](std::string_view schema, std::string_view relation) {
-               return Objects::ObjectName{schema, relation};
-             },
-             [&](std::string_view db, std::string_view schema,
-                 std::string_view relation) {
-               if (database.data() && db != database) {
-                 SDB_THROW(ERROR_BAD_PARAMETER,
-                           "Cross database queries are not allowed: ", db,
-                           " accessed instead of ", database);
-               }
-               return Objects::ObjectName{schema, relation};
-             },
-             [&](...) -> Objects::ObjectName {
-               SDB_THROW(
-                 ERROR_NOT_IMPLEMENTED,
-                 "unsupported function call with too many dotted names");
-             },
-           });
+    names,
+    absl::Overload{
+      [&](std::string_view relation) {
+        return Objects::ObjectName{default_schema, relation};
+      },
+      [](std::string_view schema, std::string_view relation) {
+        return Objects::ObjectName{schema, relation};
+      },
+      [&](std::string_view db, std::string_view schema,
+          std::string_view relation) {
+        if (database.data() && db != database) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("Cross database queries are not allowed: ",
+                                  db, " accessed instead of ", database));
+        }
+        return Objects::ObjectName{schema, relation};
+      },
+      [&](...) -> Objects::ObjectName {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("unsupported function call with too many dotted names"));
+      },
+    });
 }
 
 Objects::ObjectName ParseObjectName(std::string_view name,

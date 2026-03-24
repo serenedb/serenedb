@@ -21,6 +21,9 @@
 
 #include "logger.h"
 
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -55,41 +58,24 @@
 
 namespace sdb {
 
-LogTopic Logger::AGENCY{"agency", LogLevel::INFO};
-LogTopic Logger::AGENCYCOMM{"agencycomm", LogLevel::INFO};
-LogTopic Logger::AGENCYSTORE{"agencystore", LogLevel::WARN};
-LogTopic Logger::AQL{"aql", LogLevel::INFO};
 LogTopic Logger::AUTHENTICATION{"authentication", LogLevel::WARN};
 LogTopic Logger::AUTHORIZATION{"authorization"};
-LogTopic Logger::BACKUP{"backup"};
-LogTopic Logger::CLUSTER{"cluster", LogLevel::INFO};
 LogTopic Logger::COMMUNICATION{"communication", LogLevel::INFO};
 LogTopic Logger::CONFIG{"config"};
 LogTopic Logger::CRASH{"crash"};
-LogTopic Logger::DEVEL{"development", LogLevel::FATAL};
-LogTopic Logger::DUMP{"dump", LogLevel::INFO};
 LogTopic Logger::ENGINES{"engines", LogLevel::INFO};
 LogTopic Logger::FIXME{"general", LogLevel::INFO};
 LogTopic Logger::FLUSH{"flush", LogLevel::INFO};
-LogTopic Logger::GRAPHS{"graphs", LogLevel::INFO};
-LogTopic Logger::HEARTBEAT{"heartbeat", LogLevel::INFO};
 LogTopic Logger::HTTPCLIENT{"httpclient", LogLevel::WARN};
-LogTopic Logger::MAINTENANCE{"maintenance", LogLevel::INFO};
 LogTopic Logger::MEMORY{"memory", LogLevel::INFO};
-LogTopic Logger::QUERIES{"queries", LogLevel::INFO};
 LogTopic Logger::REPLICATION{"replication", LogLevel::INFO};
 LogTopic Logger::REQUESTS{"requests", LogLevel::FATAL};
-LogTopic Logger::RESTORE{"restore", LogLevel::INFO};
 LogTopic Logger::ROCKSDB{"rocksdb", LogLevel::WARN};
-LogTopic Logger::SECURITY{"security", LogLevel::INFO};
 LogTopic Logger::SSL{"ssl", LogLevel::WARN};
 LogTopic Logger::STARTUP{"startup", LogLevel::INFO};
 LogTopic Logger::STATISTICS{"statistics", LogLevel::INFO};
-LogTopic Logger::SUPERVISION{"supervision", LogLevel::INFO};
 LogTopic Logger::SYSCALL{"syscall", LogLevel::INFO};
 LogTopic Logger::THREADS{"threads", LogLevel::WARN};
-LogTopic Logger::TRANSACTIONS{"trx", LogLevel::WARN};
-LogTopic Logger::TTL{"ttl", LogLevel::WARN};
 LogTopic Logger::SEARCH{"search", LogLevel::INFO};
 LogTopic Logger::IRESEARCH{"iresearch", LogLevel::INFO};
 LogTopic Logger::FUERTE{"fuerte", LogLevel::INFO};
@@ -116,41 +102,12 @@ struct TopicHashEq {
 };
 
 const containers::FlatHashSet<LogTopic*, TopicHashEq, TopicHashEq> kTopics{
-  &Logger::AGENCY,
-  &Logger::AGENCYCOMM,
-  &Logger::AGENCYSTORE,
-  &Logger::AQL,
-  &Logger::AUTHENTICATION,
-  &Logger::AUTHORIZATION,
-  &Logger::BACKUP,
-  &Logger::CLUSTER,
-  &Logger::COMMUNICATION,
-  &Logger::CONFIG,
-  &Logger::CRASH,
-  &Logger::DEVEL,
-  &Logger::DUMP,
-  &Logger::ENGINES,
-  &Logger::FIXME,
-  &Logger::FLUSH,
-  &Logger::GRAPHS,
-  &Logger::HEARTBEAT,
-  &Logger::HTTPCLIENT,
-  &Logger::MAINTENANCE,
-  &Logger::MEMORY,
-  &Logger::QUERIES,
-  &Logger::REPLICATION,
-  &Logger::REQUESTS,
-  &Logger::RESTORE,
-  &Logger::ROCKSDB,
-  &Logger::SECURITY,
-  &Logger::SSL,
-  &Logger::STARTUP,
-  &Logger::STATISTICS,
-  &Logger::SUPERVISION,
-  &Logger::SYSCALL,
-  &Logger::THREADS,
-  &Logger::TRANSACTIONS,
-  &Logger::TTL,
+  &Logger::AUTHENTICATION, &Logger::AUTHORIZATION, &Logger::COMMUNICATION,
+  &Logger::CONFIG,         &Logger::CRASH,         &Logger::ENGINES,
+  &Logger::FIXME,          &Logger::FLUSH,         &Logger::HTTPCLIENT,
+  &Logger::MEMORY,         &Logger::REPLICATION,   &Logger::REQUESTS,
+  &Logger::ROCKSDB,        &Logger::SSL,           &Logger::STARTUP,
+  &Logger::STATISTICS,     &Logger::SYSCALL,       &Logger::THREADS,
 };
 
 constinit LogGroup gDefaultLogGroupInstance{0};
@@ -877,6 +834,32 @@ void Flush() noexcept {
 }
 
 std::vector<LogTopic*> GetTopics() { return {kTopics.begin(), kTopics.end()}; }
+
+std::string LogLevelString() {
+  auto topics = GetTopics();
+  std::ranges::sort(topics, {}, &LogTopic::GetName);
+
+  std::string result;
+  auto global_level = GetLogLevel();
+  for (auto* topic : topics) {
+    auto level = topic->GetLevel();
+    if (level == LogLevel::DEFAULT) {
+      level = global_level;
+    }
+    if (!result.empty()) {
+      absl::StrAppend(&result, ",");
+    }
+    absl::StrAppend(&result, topic->GetName(), "=",
+                    absl::AsciiStrToLower(TranslateLogLevel(level)));
+  }
+  return result;
+}
+
+void ResetLogLevels() noexcept {
+  for (auto* topic : GetTopics()) {
+    topic->ResetLevel();
+  }
+}
 
 void SetLogLevel(std::string_view name, LogLevel level) noexcept {
   auto* topic = FindTopic(name);

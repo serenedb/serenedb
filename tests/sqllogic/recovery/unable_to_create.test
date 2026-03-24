@@ -2,16 +2,22 @@ statement ok
 SET sdb_fault_unable_to_create TO DEFAULT;
 
 
-statement error db error: ERROR: internal error
+statement error
 CREATE TABLE t(id INTEGER);
+----
+db error: ERROR: internal error
 
 
-statement error db error: ERROR: internal error
+statement error
 CREATE SCHEMA s;
+----
+db error: ERROR: internal error
 
 
-statement error db error: ERROR: internal error
+statement error
 CREATE DATABASE db;
+----
+db error: ERROR: internal error
 
 
 statement ok

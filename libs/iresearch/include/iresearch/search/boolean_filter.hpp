@@ -70,6 +70,11 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     return result;
   }
 
+  void Erase(size_t to) {
+    SDB_ASSERT(to <= _filters.size());
+    _filters.erase(_filters.begin() + to, _filters.end());
+  }
+
   Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
 
  protected:

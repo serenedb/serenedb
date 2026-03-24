@@ -219,6 +219,7 @@ void ResolveRelation(ObjectId database,
     auto snapshot = catalog.GetSnapshot();
     auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
     SDB_ASSERT(table);
+    SDB_ASSERT(!data.catalog_table);
     data.catalog_table = std::move(table);
   }
 }

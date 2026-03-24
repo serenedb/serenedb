@@ -81,7 +81,6 @@ class IndexProgressReporter;
 struct CreateIndexState {
   bool created = false;
   ObjectId index_id;
-  // Keeps progress reporter alive until pipeline finishes
   std::shared_ptr<IndexProgressReporter> progress;
 };
 

@@ -340,7 +340,6 @@ class RocksDBIndexBackfillDataSink final
  private:
   absl::WriterMutexLock _table_lock_guard;
   std::shared_ptr<pg::IndexProgressReporter> _progress;
-  uint64_t _completed_rows = 0;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

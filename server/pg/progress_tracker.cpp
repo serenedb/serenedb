@@ -86,9 +86,9 @@ void IndexProgressReporter::SetTuplesTotal(uint64_t rows) {
                                                      std::memory_order_relaxed);
 }
 
-void IndexProgressReporter::SetTuplesDone(uint64_t rows) {
-  _params[create_index_progress::kTuplesDone].store(rows,
-                                                    std::memory_order_relaxed);
+void IndexProgressReporter::ReportBatch(uint64_t delta_rows) {
+  _params[create_index_progress::kTuplesDone].fetch_add(
+    delta_rows, std::memory_order_relaxed);
 }
 
 }  // namespace sdb::pg

@@ -291,6 +291,7 @@ class FileDataSource final : public velox::connector::DataSource {
 
   uint64_t _completed_rows = 0;
   uint64_t _completed_bytes = 0;
+  uint64_t _prev_bytes_read = 0;
   std::chrono::high_resolution_clock::time_point _last_report_time;
   ReportCallback _report_callback;
   std::shared_ptr<pg::CopyProgressReporter> _progress;

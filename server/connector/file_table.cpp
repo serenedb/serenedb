@@ -122,7 +122,7 @@ FileDataSource::FileDataSource(
     _report_callback{options->report_callback},
     _progress{options->progress} {
   if (_progress) {
-    _progress->SetBytesTotal(static_cast<int64_t>(_source->size()));
+    _progress->SetBytesTotal(_source->size());
   }
   SDB_ASSERT(_row_reader_options);
   _reader_options->setMemoryPool(memory_pool);
@@ -244,11 +244,13 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  const auto batch_rows = batch->size();
-  _completed_rows += batch_rows;
   if (_progress) {
-    _progress->ReportBatch(batch_rows, batch->estimateFlatSize(),
-                           rows_read - batch_rows);
+    const auto batch_rows = batch->size();
+    _completed_rows += batch_rows;
+    auto bytes_read = _source->bytesRead();
+    auto delta_bytes = bytes_read - _prev_bytes_read;
+    _prev_bytes_read = bytes_read;
+    _progress->ReportBatch(batch_rows, delta_bytes, rows_read - batch_rows);
   }
   if (_report_callback) {
     const auto now = std::chrono::high_resolution_clock::now();

@@ -618,16 +618,14 @@ class SereneDBConnectorMetadata final
                "Wrong type of insert table handle");
     auto& rocksdb_table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle->Table());
-    if (rocksdb_table.BulkInsert()) {
-      return yaclib::MakeFuture(get_total_rows_from_write_results());
-    }
     auto& transaction = serene_insert_handle->GetTransaction();
+    const auto kind = serene_insert_handle->Kind();
 
     const int64_t number_of_rows_affected =
-      serene_insert_handle->NumberOfRowsAffected();
-    const auto kind = serene_insert_handle->Kind();
-    if (number_of_rows_affected != 0 &&
-        kind != axiom::connector::WriteKind::kUpdate) {
+      rocksdb_table.BulkInsert() ? get_total_rows_from_write_results()
+                                 : serene_insert_handle->NumberOfRowsAffected();
+
+    if (kind != axiom::connector::WriteKind::kUpdate) {
       transaction.UpdateNumRows(rocksdb_table.TableId(),
                                 kind == axiom::connector::WriteKind::kDelete
                                   ? -number_of_rows_affected

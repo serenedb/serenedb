@@ -2634,8 +2634,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   if (_progress) {
-    _completed_rows += num_rows;
-    _progress->SetTuplesDone(_completed_rows);
+    _progress->ReportBatch(num_rows);
   }
 }
 

@@ -203,7 +203,7 @@ class IndexProgressReporter : public ProgressReporterBase {
                         ObjectId index_relid);
 
   void SetPhase(create_index_progress::Phase phase);
-  void SetTuplesDone(uint64_t rows);
+  void ReportBatch(uint64_t delta_rows);
   void SetTuplesTotal(uint64_t rows);
 };
 

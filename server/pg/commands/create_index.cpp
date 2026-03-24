@@ -179,6 +179,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
   table.CreateIndexState() = &state;
 
+  state.progress->SetTuplesTotal(table.numRows());
   query.CompileQuery();
   query.MakeRunner();
 

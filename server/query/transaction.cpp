@@ -99,8 +99,8 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
-    ApplyTableStatsDiffs();
   }
+  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
 

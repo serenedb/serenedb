@@ -18,7 +18,7 @@ DOCKER_DIR="${SCRIPT_DIR}/docker"
 TARBALL_DIR="${SCRIPT_DIR}/tarball"
 IMAGE_NAME="serenedb"
 
-: "${DOCKER_REGISTRY:=registry.serenedb.com:5000}"
+: "${DOCKER_REGISTRY:=serenedb}"
 : "${DOCKER_PLATFORM:=linux/amd64}"
 : "${PUSH_IMAGES_2_REGISTRY:=false}"
 

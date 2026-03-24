@@ -29,7 +29,7 @@ on:
         type: string
         default: ""
       PUSH_IMAGES_2_REGISTRY:
-        description: "Push images to Private Docker Registry"
+        description: "Push images to Docker Hub"
         required: true
         type: boolean
         default: false
@@ -47,7 +47,7 @@ on:
         description: "JSON configuration for builds and job settings"
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
       CREATE_GITHUB_RELEASE:
         description: 'Create a GitHub Release with packages'
         required: true
@@ -76,7 +76,7 @@ env:
   PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
   CLUSTER_BRANCH: main
-  BUILD_IMAGE: registry.serenedb.com:5000/serenedb-build-ubuntu:latest
+  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   DEBUG_PRINT_ENV: "false"
 
 jobs:
@@ -272,6 +272,10 @@ jobs:
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
+        env:
+          DOCKER_REGISTRY: serenedb
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: ./build_images.sh
 
       # ==================== UPDATE FILE OWNERSHIP ====================

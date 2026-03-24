@@ -72,7 +72,6 @@ inline constexpr auto kSystemFunctionsQueries =
     R"(CREATE FUNCTION pg_stat_get_progress_info(cmd TEXT)
         RETURNS TABLE( pid BIGINT,
                        datid BIGINT,
-                       datname TEXT,
                        relid BIGINT,
                        param1 BIGINT,
                        param2 BIGINT,
@@ -97,7 +96,7 @@ inline constexpr auto kSystemFunctionsQueries =
         LANGUAGE SQL
         BEGIN ATOMIC
             SELECT
-              pid, datid, datname, relid,
+              pid, datid, relid,
               param1, param2, param3, param4, param5,
               param6, param7, param8, param9, param10,
               param11, param12, param13, param14, param15,

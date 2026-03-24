@@ -32,7 +32,6 @@ std::string_view CommandToString(ProgressCommand cmd) {
     case ProgressCommand::CreateIndex:
       return "CREATE INDEX";
   }
-  return "";
 }
 
 }  // namespace
@@ -53,9 +52,8 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData(
     values.push_back(SdbStatProgress{
       .pid = s.pid,
       .datid = s.datid.id(),
-      .datname = std::move(s.datname),
       .relid = s.relid.id(),
-      .command = std::string{CommandToString(s.command_type)},
+      .command = CommandToString(s.command_type),
       .param1 = s.params[0],
       .param2 = s.params[1],
       .param3 = s.params[2],
@@ -82,23 +80,22 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData(
   boost::pfr::for_each_field(
     SdbStatProgress{}, [&]<typename Field>(const Field& field) {
       auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
+      result.emplace_back(std::move(column));
     });
 
   static constexpr uint64_t kNullMask = MaskFromNonNulls({
     GetIndex(&SdbStatProgress::pid),     GetIndex(&SdbStatProgress::datid),
-    GetIndex(&SdbStatProgress::datname), GetIndex(&SdbStatProgress::relid),
-    GetIndex(&SdbStatProgress::command), GetIndex(&SdbStatProgress::param1),
-    GetIndex(&SdbStatProgress::param2),  GetIndex(&SdbStatProgress::param3),
-    GetIndex(&SdbStatProgress::param4),  GetIndex(&SdbStatProgress::param5),
-    GetIndex(&SdbStatProgress::param6),  GetIndex(&SdbStatProgress::param7),
-    GetIndex(&SdbStatProgress::param8),  GetIndex(&SdbStatProgress::param9),
-    GetIndex(&SdbStatProgress::param10), GetIndex(&SdbStatProgress::param11),
-    GetIndex(&SdbStatProgress::param12), GetIndex(&SdbStatProgress::param13),
-    GetIndex(&SdbStatProgress::param14), GetIndex(&SdbStatProgress::param15),
-    GetIndex(&SdbStatProgress::param16), GetIndex(&SdbStatProgress::param17),
-    GetIndex(&SdbStatProgress::param18), GetIndex(&SdbStatProgress::param19),
-    GetIndex(&SdbStatProgress::param20),
+    GetIndex(&SdbStatProgress::relid),   GetIndex(&SdbStatProgress::command),
+    GetIndex(&SdbStatProgress::param1),  GetIndex(&SdbStatProgress::param2),
+    GetIndex(&SdbStatProgress::param3),  GetIndex(&SdbStatProgress::param4),
+    GetIndex(&SdbStatProgress::param5),  GetIndex(&SdbStatProgress::param6),
+    GetIndex(&SdbStatProgress::param7),  GetIndex(&SdbStatProgress::param8),
+    GetIndex(&SdbStatProgress::param9),  GetIndex(&SdbStatProgress::param10),
+    GetIndex(&SdbStatProgress::param11), GetIndex(&SdbStatProgress::param12),
+    GetIndex(&SdbStatProgress::param13), GetIndex(&SdbStatProgress::param14),
+    GetIndex(&SdbStatProgress::param15), GetIndex(&SdbStatProgress::param16),
+    GetIndex(&SdbStatProgress::param17), GetIndex(&SdbStatProgress::param18),
+    GetIndex(&SdbStatProgress::param19), GetIndex(&SdbStatProgress::param20),
   });
 
   for (size_t row = 0; row < values.size(); ++row) {

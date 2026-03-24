@@ -34,9 +34,8 @@ struct SdbStatProgress {
 
   int64_t pid;
   Oid datid;
-  std::string datname;
   Oid relid;
-  std::string command;
+  std::string_view command;
   int64_t param1;
   int64_t param2;
   int64_t param3;

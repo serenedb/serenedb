@@ -176,8 +176,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   // Register progress tracking
   {
     auto reporter = std::make_shared<IndexProgressReporter>(
-      db, std::string{context.GetDatabase()}, catalog_table->GetId(),
-      create_index_progress::Command::CreateIndex,
+      db, catalog_table->GetId(), create_index_progress::Command::CreateIndex,
       create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
     state.progress = reporter;
     table.SetIndexProgressReporter(std::move(reporter));

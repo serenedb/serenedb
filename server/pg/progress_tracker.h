@@ -24,7 +24,7 @@
 
 #include <array>
 #include <atomic>
-#include <string>
+#include <ranges>
 #include <vector>
 
 #include "basics/assert.h"
@@ -43,38 +43,30 @@ inline constexpr size_t kProgressMaxParams = 20;
 struct ProgressEntry {
   int64_t pid{0};
   ObjectId datid;
-  std::string datname;
   ObjectId relid;
   ProgressCommand command_type;
+
+  ProgressEntry& Base() { return *this; }
+  const ProgressEntry& Base() const { return *this; }
+};
+
+struct ProgressSnapshot : ProgressEntry {
+  std::array<int64_t, kProgressMaxParams> params{};
 };
 
 class ProgressTracker {
  public:
   static ProgressTracker& Instance() {
-    static ProgressTracker kInstance;
-    return kInstance;
+    static ProgressTracker gInstance;
+    return gInstance;
   }
-
-  struct Snapshot {
-    int64_t pid;
-    ObjectId datid;
-    std::string datname;
-    ObjectId relid;
-    ProgressCommand command_type;
-    std::array<int64_t, kProgressMaxParams> params;
-  };
 
   uint64_t StartCommand(ProgressEntry entry) {
     absl::MutexLock lock(&_mutex);
-    auto id = _next_id++;
     auto e = std::make_unique<InternalEntry>();
-    e->pid = entry.pid;
-    e->datid = entry.datid;
-    e->datname = std::move(entry.datname);
-    e->relid = entry.relid;
-    e->command_type = entry.command_type;
-    _entries.emplace(id, std::move(e));
-    return id;
+    e->Base() = std::move(entry);
+    _entries.emplace(_next_id++, std::move(e));
+    return _next_id;
   }
 
   void UpdateParam(uint64_t id, size_t param_idx, int64_t value) {
@@ -98,147 +90,30 @@ class ProgressTracker {
     _entries.erase(id);
   }
 
-  std::vector<Snapshot> GetSnapshots() const {
-    absl::ReaderMutexLock lock(&_mutex);
-    std::vector<Snapshot> result;
-    for (const auto& [_, e] : _entries) {
-      Snapshot s;
-      s.pid = e->pid;
-      s.datid = e->datid;
-      s.datname = e->datname;
-      s.relid = e->relid;
-      s.command_type = e->command_type;
-      for (size_t i = 0; i < kProgressMaxParams; ++i) {
-        s.params[i] = e->params[i].load(std::memory_order_relaxed);
-      }
-      result.push_back(std::move(s));
-    }
-    return result;
+  std::vector<ProgressSnapshot> GetSnapshots() const {
+    absl::ReaderMutexLock lock{&_mutex};
+    auto view =
+      _entries | std::views::values |
+      std::views::transform([](const auto& e) { return e->Snapshot(); });
+    return {view.begin(), view.end()};
   }
-
-  std::vector<Snapshot> GetSnapshots(ProgressCommand filter) const {
-    absl::ReaderMutexLock lock(&_mutex);
-    std::vector<Snapshot> result;
-    for (const auto& [_, e] : _entries) {
-      if (e->command_type != filter) {
-        continue;
-      }
-      Snapshot s;
-      s.pid = e->pid;
-      s.datid = e->datid;
-      s.datname = e->datname;
-      s.relid = e->relid;
-      s.command_type = e->command_type;
-      for (size_t i = 0; i < kProgressMaxParams; ++i) {
-        s.params[i] = e->params[i].load(std::memory_order_relaxed);
-      }
-      result.push_back(std::move(s));
-    }
-    return result;
-  }
-
-  class Guard {
-   public:
-    Guard() : _tracker{nullptr}, _id{0} {}
-    Guard(ProgressTracker& tracker, uint64_t id)
-      : _tracker{&tracker}, _id{id} {}
-    ~Guard() {
-      if (_tracker) {
-        _tracker->EndCommand(_id);
-      }
-    }
-
-    Guard(const Guard&) = delete;
-    Guard& operator=(const Guard&) = delete;
-    Guard(Guard&& other) noexcept : _tracker{other._tracker}, _id{other._id} {
-      other._tracker = nullptr;
-    }
-    Guard& operator=(Guard&& other) noexcept {
-      if (this != &other) {
-        if (_tracker) {
-          _tracker->EndCommand(_id);
-        }
-        _tracker = other._tracker;
-        _id = other._id;
-        other._tracker = nullptr;
-      }
-      return *this;
-    }
-
-    uint64_t Id() const { return _id; }
-
-    void Cancel() {
-      if (_tracker) {
-        _tracker->EndCommand(_id);
-        _tracker = nullptr;
-      }
-    }
-
-   private:
-    ProgressTracker* _tracker;
-    uint64_t _id;
-  };
-
-  Guard MakeGuard(uint64_t id) { return Guard{*this, id}; }
 
  private:
-  ProgressTracker() = default;
-
-  struct InternalEntry {
-    int64_t pid{0};
-    ObjectId datid;
-    std::string datname;
-    ObjectId relid;
-    ProgressCommand command_type;
+  struct InternalEntry : ProgressEntry {
     std::array<std::atomic<int64_t>, kProgressMaxParams> params{};
+
+    ProgressSnapshot Snapshot() const {
+      ProgressSnapshot s{Base()};
+      for (size_t i = 0; i < kProgressMaxParams; ++i) {
+        s.params[i] = params[i].load(std::memory_order_relaxed);
+      }
+      return s;
+    }
   };
 
   mutable absl::Mutex _mutex;
   containers::FlatHashMap<uint64_t, std::unique_ptr<InternalEntry>> _entries;
   uint64_t _next_id = 1;
-};
-
-namespace copy_progress {
-enum class Command : int64_t;
-enum class Type : int64_t;
-}  // namespace copy_progress
-
-namespace create_index_progress {
-enum class Command : int64_t;
-enum class Phase : int64_t;
-}  // namespace create_index_progress
-
-class CopyProgressReporter {
- public:
-  CopyProgressReporter(ObjectId relid, copy_progress::Command command,
-                       copy_progress::Type type);
-
-  void ReportBatch(uint64_t delta_rows, uint64_t delta_bytes,
-                   uint64_t delta_excluded = 0);
-  void ReportSkipped(uint64_t count = 1);
-  void SetBytesTotal(int64_t bytes);
-  void Cancel() { _guard.Cancel(); }
-
- private:
-  ProgressTracker::Guard _guard;
-  ProgressTracker::Params& _params;
-};
-
-class IndexProgressReporter {
- public:
-  IndexProgressReporter(ObjectId datid, std::string datname, ObjectId relid,
-                        create_index_progress::Command command,
-                        create_index_progress::Phase phase,
-                        ObjectId index_relid);
-
-  void SetPhase(create_index_progress::Phase phase);
-  void SetTuplesDone(uint64_t rows);
-  void SetTuplesTotal(uint64_t rows);
-  void Cancel() { _guard.Cancel(); }
-
- private:
-  ProgressTracker::Guard _guard;
-  ProgressTracker::Params& _params;
 };
 
 namespace copy_progress {
@@ -255,8 +130,10 @@ enum class Type : int64_t { File = 1, Program = 2, Pipe = 3, Callback = 4 };
 }  // namespace copy_progress
 
 namespace create_index_progress {
-// we have a gap between kCommand and kLockersTotal because pg has the same
+
 inline constexpr size_t kCommand = 0;
+inline constexpr size_t kReservedInPG1 = 1;
+inline constexpr size_t kReservedInPG2 = 2;
 inline constexpr size_t kLockersTotal = 3;
 inline constexpr size_t kLockersDone = 4;
 inline constexpr size_t kCurrentLockerPid = 5;
@@ -289,5 +166,44 @@ enum class Phase : int64_t {
   WaitingForReadersBeforeDropping = 10,
 };
 }  // namespace create_index_progress
+
+class ProgressReporterBase {
+ public:
+  ProgressReporterBase(const ProgressReporterBase&) = delete;
+  ProgressReporterBase& operator=(const ProgressReporterBase&) = delete;
+
+  void Cancel();
+
+ protected:
+  ProgressReporterBase(ObjectId relid, ProgressCommand command_type,
+                       ObjectId datid = {});
+  ~ProgressReporterBase();
+
+  ProgressTracker& _tracker;
+  uint64_t _id;
+  ProgressTracker::Params& _params;
+};
+
+class CopyProgressReporter : public ProgressReporterBase {
+ public:
+  CopyProgressReporter(ObjectId relid, copy_progress::Command command,
+                       copy_progress::Type type);
+
+  void ReportBatch(uint64_t delta_rows, uint64_t delta_bytes,
+                   uint64_t delta_excluded = 0);
+  void SetBytesTotal(int64_t bytes);
+};
+
+class IndexProgressReporter : public ProgressReporterBase {
+ public:
+  IndexProgressReporter(ObjectId datid, ObjectId relid,
+                        create_index_progress::Command command,
+                        create_index_progress::Phase phase,
+                        ObjectId index_relid);
+
+  void SetPhase(create_index_progress::Phase phase);
+  void SetTuplesDone(uint64_t rows);
+  void SetTuplesTotal(uint64_t rows);
+};
 
 }  // namespace sdb::pg

@@ -2633,8 +2633,8 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
 
-  _completed_rows += num_rows;
   if (_progress) {
+    _completed_rows += num_rows;
     _progress->SetTuplesDone(_completed_rows);
   }
 }

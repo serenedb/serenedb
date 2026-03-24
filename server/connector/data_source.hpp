@@ -156,15 +156,14 @@ class RocksDBBaseDataSource : public velox::connector::DataSource {
 template<typename Source>
 class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
  public:
-  RocksDBFullScanDataSource(velox::memory::MemoryPool& memory_pool,
-                            Source& source, rocksdb::ColumnFamilyHandle& cf,
-                            velox::RowTypePtr read_type,
-                            std::vector<catalog::Column::Id> column_ids,
-                            catalog::Column::Id effective_column_id,
-                            ObjectId object_key, size_t output_column_count,
-                            const rocksdb::Snapshot* snapshot,
-                            velox::core::TypedExprPtr remaining_filter,
-                            velox::core::ExpressionEvaluator* evaluator);
+  RocksDBFullScanDataSource(
+    velox::memory::MemoryPool& memory_pool, Source& source,
+    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
+    std::vector<catalog::Column::Id> column_ids,
+    catalog::Column::Id effective_column_id, ObjectId object_key,
+    size_t output_column_count, const rocksdb::Snapshot* snapshot,
+    velox::core::TypedExprPtr remaining_filter = nullptr,
+    velox::core::ExpressionEvaluator* evaluator = nullptr);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,

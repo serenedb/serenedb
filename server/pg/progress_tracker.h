@@ -62,11 +62,12 @@ class ProgressTracker {
   }
 
   uint64_t StartCommand(ProgressEntry entry) {
-    absl::MutexLock lock(&_mutex);
+    absl::MutexLock lock{&_mutex};
     auto e = std::make_unique<InternalEntry>();
     e->Base() = std::move(entry);
-    _entries.emplace(_next_id++, std::move(e));
-    return _next_id;
+    auto id = _next_id++;
+    _entries.emplace(id, std::move(e));
+    return id;
   }
 
   void UpdateParam(uint64_t id, size_t param_idx, int64_t value) {

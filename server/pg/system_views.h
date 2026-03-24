@@ -770,7 +770,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       S.datid AS datid,
       D.datname AS datname,
       S.relid AS relid,
-      CAST(S.param7 AS oid) AS index_relid,
+      S.param7 AS index_relid,
       CASE S.param1 WHEN 1 THEN 'CREATE INDEX' WHEN 2 THEN 'CREATE INDEX CONCURRENTLY' WHEN 3 THEN 'REINDEX' WHEN 4 THEN 'REINDEX CONCURRENTLY' END AS command,
       CASE S.param10 WHEN 1 THEN 'initializing' WHEN 2 THEN 'waiting for writers before build' WHEN 3 THEN 'building index' WHEN 4 THEN 'waiting for writers before validation' WHEN 5 THEN 'index validation: scanning index' WHEN 6 THEN 'index validation: sorting tuples' WHEN 7 THEN 'index validation: scanning table' WHEN 8 THEN 'waiting for old snapshots' WHEN 9 THEN 'waiting for readers before marking dead' WHEN 10 THEN 'waiting for readers before dropping' END AS phase,
       S.param4 AS lockers_total,

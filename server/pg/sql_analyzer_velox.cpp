@@ -2199,12 +2199,14 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
   auto setup_progress_tracking = [&](auto& options, bool is_from,
                                      ObjectId relid) {
-    options->progress = std::make_shared<CopyProgressReporter>(
+    auto reporter = std::make_unique<CopyProgressReporter>(
       relid,
       is_from ? copy_progress::Command::CopyFrom
               : copy_progress::Command::CopyTo,
       file_path.empty() ? copy_progress::Type::Pipe
                         : copy_progress::Type::File);
+    options->progress = reporter.get();
+    _transaction.AddProgressReporter(std::move(reporter));
   };
 
   if (stmt.is_from) {

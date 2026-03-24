@@ -186,7 +186,7 @@ class CopyProgressReporter : public ProgressReporterBase {
                        copy_progress::Type type);
 
   void ReportBatch(uint64_t delta_rows, uint64_t delta_bytes,
-                   uint64_t delta_excluded = 0);
+                   uint64_t delta_excluded);
   void SetBytesTotal(int64_t bytes);
 };
 

@@ -85,6 +85,7 @@ FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
   auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
     std::move(sink), "serenedb_sink");
+  _sink = write_sink.get();
   const auto& writer_factory =
     velox::dwio::common::getWriterFactory(options->Writer()->fileFormat);
   options->Writer()->memoryPool = &aggregate_pool;
@@ -94,13 +95,10 @@ FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
 }
 
 void FileDataSink::appendData(velox::RowVectorPtr input) {
+  const auto bytes_before = _sink->size();
   _writer->write(input);
-  auto batch_bytes = input->estimateFlatSize();
-  auto batch_rows = static_cast<uint64_t>(input->size());
-  _stats.numWrittenBytes += batch_bytes;
-  _completed_rows += batch_rows;
   if (_progress) {
-    _progress->ReportBatch(batch_rows, batch_bytes);
+    _progress->ReportBatch(input->size(), _sink->size() - bytes_before, 0);
   }
 }
 

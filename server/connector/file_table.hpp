@@ -74,7 +74,7 @@ struct DwioReaderOptions {
 struct WriterOptions {
   DwioWriterOptions dwio;
   std::shared_ptr<StorageOptions> storage_options;
-  std::shared_ptr<pg::CopyProgressReporter> progress;
+  pg::CopyProgressReporter* progress = nullptr;
 
   const auto& Writer() const { return dwio.writer; }
   auto& Writer() { return dwio.writer; }
@@ -84,7 +84,7 @@ struct ReaderOptions {
   DwioReaderOptions dwio;
   // if set then progress messages are written here
   ReportCallback report_callback;
-  std::shared_ptr<pg::CopyProgressReporter> progress;
+  pg::CopyProgressReporter* progress = nullptr;
   std::shared_ptr<StorageOptions> storage_options;
 
   const auto& Reader() const { return dwio.reader; }
@@ -252,9 +252,9 @@ class FileDataSink final : public velox::connector::DataSink {
 
  private:
   std::shared_ptr<velox::dwio::common::Writer> _writer;
+  velox::dwio::common::FileSink* _sink = nullptr;
   velox::connector::DataSink::Stats _stats;
-  std::shared_ptr<pg::CopyProgressReporter> _progress;
-  uint64_t _completed_rows = 0;
+  pg::CopyProgressReporter* _progress = nullptr;
 };
 
 class FileDataSource final : public velox::connector::DataSource {
@@ -311,7 +311,7 @@ class FileDataSource final : public velox::connector::DataSource {
   uint64_t _prev_bytes_read = 0;
   std::chrono::high_resolution_clock::time_point _last_report_time;
   ReportCallback _report_callback;
-  std::shared_ptr<pg::CopyProgressReporter> _progress;
+  pg::CopyProgressReporter* _progress = nullptr;
 };
 
 }  // namespace sdb::connector

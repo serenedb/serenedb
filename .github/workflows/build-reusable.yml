@@ -307,7 +307,7 @@ jobs:
 
       # ==================== UPDATE FILE OWNERSHIP ====================
       - name: Update file ownership
-        if: always()
+        if: always() && env.DOCKER_BUILD_IMAGES != 'true'
         run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
 
       # ==================== DETERMINE FINAL STATUS ====================

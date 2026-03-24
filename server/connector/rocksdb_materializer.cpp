@@ -66,7 +66,7 @@ const std::string& RocksDBMaterializer::ReadValue(std::string_view full_key) {
 }
 
 velox::RowVectorPtr RocksDBMaterializer::ReadRows(
-  std::span<std::string> row_keys, velox::VectorPtr scores) {
+  std::span<const std::string> row_keys, velox::VectorPtr scores) {
   std::vector<velox::VectorPtr> columns;
   const auto num_columns = _row_type->size();
   if (!num_columns) {

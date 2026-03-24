@@ -255,7 +255,7 @@ class SereneDBConnectorTableHandle final
   velox::RowTypePtr _pk_type;
   std::vector<Point> _points;
   velox::core::TypedExprPtr _remaining_filter;
-  absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
+  containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
   std::shared_ptr<const irs::Scorer> _scorer;
 };
 
@@ -572,7 +572,7 @@ class InvertedIndexTableHandle final
   irs::Filter::Query::ptr _search_query;
   std::shared_ptr<const irs::Scorer> _scorer;
   axiom::connector::TablePtr _underlying_table;
-  absl::flat_hash_map<std::string, FilterColumn> _table_column_map;
+  containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {

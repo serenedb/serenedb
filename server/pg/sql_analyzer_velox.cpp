@@ -3774,10 +3774,8 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   SDB_ASSERT(object.object);
   const auto& inverted_index =
     basics::downCast<const catalog::InvertedIndex>(*object.object);
-  auto* table_data = _objects.getRelationById(inverted_index.GetRelationId());
-  SDB_ASSERT(table_data && table_data->object);
-  const auto& table =
-    basics::downCast<const catalog::Table>(*table_data->object);
+  SDB_ASSERT(object.catalog_table);
+  const auto& table = *object.catalog_table;
   auto type = table.RowType();
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);

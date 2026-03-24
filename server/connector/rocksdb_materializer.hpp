@@ -45,7 +45,7 @@ class RocksDBMaterializer {
                       catalog::Column::Id effective_column_id,
                       ObjectId object_key);
 
-  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
+  velox::RowVectorPtr ReadRows(std::span<const std::string> row_keys,
                                velox::VectorPtr scores);
 
  protected:

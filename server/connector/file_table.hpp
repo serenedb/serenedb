@@ -143,7 +143,8 @@ class WriteFileTable final : public FileTable {
  public:
   WriteFileTable(velox::RowTypePtr type, std::string_view file_path,
                  std::shared_ptr<WriterOptions> options)
-    : FileTable{std::move(type), file_path, {}}, _options{std::move(options)} {}
+    : FileTable{std::move(type), file_path, false},
+      _options{std::move(options)} {}
 
   const std::shared_ptr<WriterOptions>& GetOptions() const { return _options; }
 

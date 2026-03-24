@@ -1,0 +1,1065 @@
+# 9.27. System Information Functions and Operators
+
+# 9.27.1 Session Information Functions
+
+query
+SELECT current_schema;
+----
+current_schema
+
+
+query
+SELECT current_schema();
+----
+current_schema
+
+
+query
+SELECT current_schemas(false);
+----
+current_schemas
+
+
+query
+SELECT current_schemas(true);
+----
+current_schemas
+
+
+query
+SELECT current_user;
+----
+current_user
+
+
+query
+SELECT current_role;
+----
+current_role
+
+
+query
+SELECT session_user;
+----
+session_user
+
+
+query
+SELECT user;
+----
+current_user
+
+
+query
+SELECT current_catalog;
+----
+current_catalog
+
+
+query
+SELECT current_database();
+----
+current_database
+
+
+query
+SELECT current_query();
+----
+current_query
+
+
+query
+SELECT pg_backend_pid() > 0;
+----
+?column?
+
+
+query
+SELECT pg_blocking_pids(0);
+----
+pg_blocking_pids
+
+
+query
+SELECT pg_conf_load_time() IS NOT NULL;
+----
+?column?
+
+
+query
+SELECT pg_current_logfile() IS NULL;
+----
+?column?
+
+
+query
+SELECT pg_current_logfile('stderr') IS NULL;
+----
+?column?
+
+
+
+
+query error
+SELECT pg_get_loaded_modules();
+----
+
+
+query
+SELECT pg_my_temp_schema();
+----
+pg_my_temp_schema
+
+
+query
+SELECT pg_is_other_temp_schema(0);
+----
+pg_is_other_temp_schema
+
+
+query
+SELECT pg_jit_available();
+----
+pg_jit_available
+
+
+
+
+query error
+SELECT pg_listening_channels();
+----
+
+
+query
+SELECT pg_notification_queue_usage();
+----
+pg_notification_queue_usage
+
+
+query
+SELECT pg_numa_available();
+----
+pg_numa_available
+
+
+query
+SELECT pg_postmaster_start_time() IS NOT NULL;
+----
+?column?
+
+
+query
+SELECT pg_safe_snapshot_blocking_pids(0);
+----
+pg_safe_snapshot_blocking_pids
+
+
+query
+SELECT pg_trigger_depth();
+----
+pg_trigger_depth
+
+
+query
+SELECT inet_client_addr() IS NULL;
+----
+?column?
+
+
+query
+SELECT inet_client_port() IS NULL;
+----
+?column?
+
+
+query
+SELECT inet_server_addr() IS NULL;
+----
+?column?
+
+
+query
+SELECT inet_server_port() IS NULL;
+----
+?column?
+
+
+# 9.27.2 Access Privilege Inquiry Functions
+
+query
+SELECT has_schema_privilege('public', 'USAGE');
+----
+has_schema_privilege
+
+
+query
+SELECT has_schema_privilege(current_user, 'public', 'USAGE');
+----
+has_schema_privilege
+
+
+query
+SELECT has_table_privilege('pg_class', 'SELECT');
+----
+has_table_privilege
+
+
+query
+SELECT has_table_privilege(current_user, 'pg_class', 'SELECT');
+----
+has_table_privilege
+
+
+query
+SELECT has_database_privilege('postgres', 'CONNECT');
+----
+has_database_privilege
+
+
+query
+SELECT has_database_privilege(current_user, 'postgres', 'CONNECT');
+----
+has_database_privilege
+
+
+query
+SELECT has_function_privilege('version()', 'EXECUTE');
+----
+has_function_privilege
+
+
+query
+SELECT has_function_privilege(current_user, 'version()', 'EXECUTE');
+----
+has_function_privilege
+
+
+query
+SELECT has_language_privilege('sql', 'USAGE');
+----
+has_language_privilege
+
+
+query
+SELECT has_language_privilege(current_user, 'sql', 'USAGE');
+----
+has_language_privilege
+
+
+query
+SELECT has_type_privilege('integer', 'USAGE');
+----
+has_type_privilege
+
+
+query
+SELECT has_type_privilege(current_user, 'integer', 'USAGE');
+----
+has_type_privilege
+
+
+query
+SELECT pg_has_role('postgres', 'USAGE');
+----
+pg_has_role
+
+
+query
+SELECT pg_has_role(current_user, 'postgres', 'USAGE');
+----
+pg_has_role
+
+
+query
+SELECT has_sequence_privilege('seq_name', 'USAGE');
+----
+has_sequence_privilege
+
+
+query
+SELECT has_sequence_privilege(current_user, 'seq_name', 'USAGE');
+----
+has_sequence_privilege
+
+
+query
+SELECT has_server_privilege('server_name', 'USAGE');
+----
+has_server_privilege
+
+
+query
+SELECT has_server_privilege(current_user, 'server_name', 'USAGE');
+----
+has_server_privilege
+
+
+query
+SELECT has_tablespace_privilege('pg_default', 'CREATE');
+----
+has_tablespace_privilege
+
+
+query
+SELECT has_tablespace_privilege(current_user, 'pg_default', 'CREATE');
+----
+has_tablespace_privilege
+
+
+query
+SELECT has_foreign_data_wrapper_privilege('fdw_name', 'USAGE');
+----
+has_foreign_data_wrapper_privilege
+
+
+query
+SELECT has_foreign_data_wrapper_privilege(current_user, 'fdw_name', 'USAGE');
+----
+has_foreign_data_wrapper_privilege
+
+
+query
+SELECT has_parameter_privilege('work_mem', 'SET');
+----
+has_parameter_privilege
+
+
+query
+SELECT has_parameter_privilege(current_user, 'work_mem', 'SET');
+----
+has_parameter_privilege
+
+
+query
+SELECT has_largeobject_privilege(0, 'SELECT');
+----
+has_largeobject_privilege
+
+
+query
+SELECT has_largeobject_privilege(current_user, 0, 'SELECT');
+----
+has_largeobject_privilege
+
+
+query
+SELECT has_any_column_privilege('pg_class', 'SELECT');
+----
+has_any_column_privilege
+
+
+query
+SELECT has_any_column_privilege(current_user, 'pg_class', 'SELECT');
+----
+has_any_column_privilege
+
+
+query
+SELECT has_column_privilege('pg_class', 'relname', 'SELECT');
+----
+has_column_privilege
+
+
+query
+SELECT has_column_privilege(current_user, 'pg_class', 'relname', 'SELECT');
+----
+has_column_privilege
+
+
+query
+SELECT row_security_active('pg_class');
+----
+row_security_active
+
+
+
+
+query error
+SELECT acldefault('r'::text, 0);
+----
+
+
+query error
+SELECT aclexplode('{}'::text);
+----
+
+
+query error
+SELECT makeaclitem(0, 0, 'SELECT', false);
+----
+
+
+
+# 9.27.3 Schema Visibility Inquiry Functions
+
+query
+SELECT pg_table_is_visible(0);
+----
+pg_table_is_visible
+
+
+query
+SELECT pg_function_is_visible(0);
+----
+pg_function_is_visible
+
+
+query
+SELECT pg_type_is_visible(0);
+----
+pg_type_is_visible
+
+
+query
+SELECT pg_operator_is_visible(0);
+----
+pg_operator_is_visible
+
+
+query
+SELECT pg_opclass_is_visible(0);
+----
+pg_opclass_is_visible
+
+
+query
+SELECT pg_opfamily_is_visible(0);
+----
+pg_opfamily_is_visible
+
+
+query
+SELECT pg_collation_is_visible(0);
+----
+pg_collation_is_visible
+
+
+query
+SELECT pg_conversion_is_visible(0);
+----
+pg_conversion_is_visible
+
+
+query
+SELECT pg_statistics_obj_is_visible(0);
+----
+pg_statistics_obj_is_visible
+
+
+query
+SELECT pg_ts_config_is_visible(0);
+----
+pg_ts_config_is_visible
+
+
+query
+SELECT pg_ts_dict_is_visible(0);
+----
+pg_ts_dict_is_visible
+
+
+query
+SELECT pg_ts_parser_is_visible(0);
+----
+pg_ts_parser_is_visible
+
+
+query
+SELECT pg_ts_template_is_visible(0);
+----
+pg_ts_template_is_visible
+
+
+# 9.27.4 System Catalog Information Functions
+
+query
+SELECT format_type(23, -1);
+----
+format_type
+
+
+
+
+query error
+SELECT pg_basetype(0);
+----
+
+
+query
+SELECT pg_char_to_encoding('UTF8');
+----
+pg_char_to_encoding
+
+
+query
+SELECT pg_encoding_to_char(6);
+----
+pg_encoding_to_char
+
+
+
+
+query error
+SELECT pg_get_catalog_foreign_keys();
+----
+
+
+query
+SELECT pg_get_constraintdef(0);
+----
+pg_get_constraintdef
+
+
+query
+SELECT pg_get_constraintdef(0, true);
+----
+pg_get_constraintdef
+
+
+query
+SELECT pg_get_expr('', 0) IS NULL;
+----
+?column?
+
+
+query
+SELECT pg_get_expr('', 0, true) IS NULL;
+----
+?column?
+
+
+query
+SELECT pg_get_functiondef(0);
+----
+pg_get_functiondef
+
+
+query
+SELECT pg_get_function_arguments(0);
+----
+pg_get_function_arguments
+
+
+query
+SELECT pg_get_function_identity_arguments(0);
+----
+pg_get_function_identity_arguments
+
+
+query
+SELECT pg_get_function_result(0);
+----
+pg_get_function_result
+
+
+query
+SELECT pg_get_indexdef(0);
+----
+pg_get_indexdef
+
+
+query
+SELECT pg_get_indexdef(0, 0, true);
+----
+pg_get_indexdef
+
+
+
+
+query error
+SELECT pg_get_keywords();
+----
+
+
+query
+SELECT pg_get_partition_constraintdef(0);
+----
+pg_get_partition_constraintdef
+
+
+query
+SELECT pg_get_partkeydef(0);
+----
+pg_get_partkeydef
+
+
+query
+SELECT pg_get_propgraphdef(0);
+----
+pg_get_propgraphdef
+
+
+query
+SELECT pg_get_ruledef(0);
+----
+pg_get_ruledef
+
+
+query
+SELECT pg_get_ruledef(0, true);
+----
+pg_get_ruledef
+
+
+query
+SELECT pg_get_serial_sequence('table', 'col') IS NULL;
+----
+?column?
+
+
+query
+SELECT pg_get_statisticsobjdef(0);
+----
+pg_get_statisticsobjdef
+
+
+query
+SELECT pg_get_triggerdef(0);
+----
+pg_get_triggerdef
+
+
+query
+SELECT pg_get_triggerdef(0, true);
+----
+pg_get_triggerdef
+
+
+query
+SELECT pg_get_userbyid(0);
+----
+pg_get_userbyid
+
+
+query
+SELECT pg_get_viewdef(0);
+----
+pg_get_viewdef
+
+
+query
+SELECT pg_get_viewdef(0, true);
+----
+pg_get_viewdef
+
+
+query
+SELECT pg_get_viewdef(0, 0);
+----
+pg_get_viewdef
+
+
+query
+SELECT pg_get_viewdef('pg_class');
+----
+pg_get_viewdef
+
+
+query
+SELECT pg_get_viewdef('pg_class', true);
+----
+pg_get_viewdef
+
+
+query
+SELECT pg_index_column_has_property(0, 0, 'asc');
+----
+pg_index_column_has_property
+
+
+query
+SELECT pg_index_has_property(0, 'clusterable');
+----
+pg_index_has_property
+
+
+query
+SELECT pg_indexam_has_property(0, 'can_order');
+----
+pg_indexam_has_property
+
+
+
+
+query error
+SELECT pg_options_to_table('{}'::text[]);
+----
+
+
+query
+SELECT pg_settings_get_flags('work_mem');
+----
+pg_settings_get_flags
+
+
+
+
+query error
+SELECT pg_tablespace_databases(0);
+----
+
+
+query
+SELECT pg_tablespace_location(0);
+----
+pg_tablespace_location
+
+
+query
+SELECT pg_typeof(1);
+----
+pg_typeof
+
+
+query
+SELECT to_regclass('pg_class') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regcollation('default') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regdatabase('postgres') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regnamespace('public') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regoper('+') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regoperator('+(integer,integer)') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regproc('now') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regprocedure('now()') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regrole('postgres') IS NULL;
+----
+?column?
+
+
+query
+SELECT to_regtype('integer') IS NULL;
+----
+?column?
+
+
+
+
+query error
+SELECT to_regtypemod('varchar', '42');
+----
+
+
+
+# 9.27.5 Object Information and Addressing Functions
+
+
+
+query error
+SELECT pg_get_acl(0, 0, 0);
+----
+
+
+query
+SELECT pg_describe_object(0, 0, 0);
+----
+pg_describe_object
+
+
+
+
+query error
+SELECT pg_identify_object(0, 0, 0);
+----
+
+
+query error
+SELECT pg_identify_object_as_address(0, 0, 0);
+----
+
+
+query error
+SELECT pg_get_object_address('table', '{}', '{}');
+----
+
+
+
+# 9.27.6 Comment Information Functions
+
+query
+SELECT col_description(0, 1) IS NULL;
+----
+?column?
+
+
+query
+SELECT obj_description(0) IS NULL;
+----
+?column?
+
+
+query
+SELECT obj_description(0, 'pg_class') IS NULL;
+----
+?column?
+
+
+query
+SELECT shobj_description(0, 'pg_database') IS NULL;
+----
+?column?
+
+
+# 9.27.7 Data Validity Checking Functions
+
+query
+SELECT pg_input_is_valid('42', 'integer');
+----
+pg_input_is_valid
+
+
+
+
+query error
+SELECT pg_input_error_info('bad', 'integer');
+----
+
+
+query error
+SELECT pg_column_compression(1);
+----
+
+
+query error
+SELECT pg_column_size(1);
+----
+
+
+
+# 9.27.8 Transaction ID and Snapshot Information Functions
+
+
+
+query error
+SELECT mxid_age(0);
+----
+
+
+query error
+SELECT pg_current_xact_id();
+----
+
+
+query error
+SELECT pg_current_xact_id_if_assigned();
+----
+
+
+query error
+SELECT pg_xact_status(1);
+----
+
+
+query error
+SELECT pg_current_snapshot();
+----
+
+
+query error
+SELECT pg_snapshot_xip(1);
+----
+
+
+query error
+SELECT pg_snapshot_xmax(1);
+----
+
+
+query error
+SELECT pg_snapshot_xmin(1);
+----
+
+
+query error
+SELECT pg_visible_in_snapshot(1, 1);
+----
+
+
+query error
+SELECT pg_get_multixact_members(0);
+----
+
+
+query error
+SELECT pg_get_multixact_stats();
+----
+
+
+query error
+SELECT txid_current();
+----
+
+
+query error
+SELECT txid_current_if_assigned();
+----
+
+
+query error
+SELECT txid_current_snapshot();
+----
+
+
+query error
+SELECT txid_snapshot_xip(1);
+----
+
+
+query error
+SELECT txid_snapshot_xmax(1);
+----
+
+
+query error
+SELECT txid_snapshot_xmin(1);
+----
+
+
+query error
+SELECT txid_visible_in_snapshot(1, 1);
+----
+
+
+query error
+SELECT txid_status(1);
+----
+
+
+
+# 9.27.9 Committed Transaction Information Functions
+
+
+
+query error
+SELECT pg_xact_commit_timestamp(0);
+----
+
+
+query error
+SELECT pg_xact_commit_timestamp_origin(0);
+----
+
+
+query error
+SELECT pg_last_committed_xact();
+----
+
+
+
+# 9.27.10 Control Data Functions
+
+
+
+query error
+SELECT pg_control_checkpoint();
+----
+
+
+query error
+SELECT pg_control_system();
+----
+
+
+query error
+SELECT pg_control_init();
+----
+
+
+query error
+SELECT pg_control_recovery();
+----
+
+
+
+# 9.27.11 Version Information Functions
+
+query
+SELECT version();
+----
+version
+
+
+query
+SELECT unicode_version();
+----
+unicode_version
+
+
+query
+SELECT icu_unicode_version() IS NULL;
+----
+?column?
+
+
+# 9.27.12 WAL Summarization Information Functions
+
+
+
+query error
+SELECT pg_available_wal_summaries();
+----
+
+
+query error
+SELECT pg_wal_summary_contents(0, 0, 0, 0, 0);
+----
+
+
+query error
+SELECT pg_get_wal_summarizer_state();
+----
+
+
+
+# Composite queries mimicking SereneUI usage
+
+query
+SELECT
+    s.schema_name as name
+FROM information_schema.schemata s
+JOIN pg_namespace n
+    ON n.nspname = s.schema_name
+WHERE s.schema_name NOT IN ('information_schema')
+  AND s.schema_name NOT LIKE 'pg_%'
+  AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+ORDER BY s.schema_name;
+----
+name

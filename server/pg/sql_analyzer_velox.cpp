@@ -5938,6 +5938,25 @@ lp::ExprPtr SqlAnalyzer::ProcessSQLValueFunction(State& state,
     case SVFOP_CURRENT_SCHEMA:
       return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
                                             "pg_current_schema");
+    case SVFOP_CURRENT_USER:
+    case SVFOP_CURRENT_ROLE:
+    case SVFOP_USER:
+    case SVFOP_SESSION_USER:
+      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
+                                            "pg_current_user");
+    case SVFOP_CURRENT_CATALOG:
+      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
+                                            "pg_current_database");
+    case SVFOP_CURRENT_DATE:
+    case SVFOP_CURRENT_TIME:
+    case SVFOP_CURRENT_TIME_N:
+    case SVFOP_CURRENT_TIMESTAMP:
+    case SVFOP_CURRENT_TIMESTAMP_N:
+    case SVFOP_LOCALTIME:
+    case SVFOP_LOCALTIME_N:
+    case SVFOP_LOCALTIMESTAMP:
+    case SVFOP_LOCALTIMESTAMP_N:
+      // TODO(mbkkt) implement these
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       CURSOR_POS(ErrorPosition(ExprLocation(&expr))),

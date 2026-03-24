@@ -107,7 +107,7 @@ AsyncResult TableShardDrop::Execute() {
                                         rocksdb::Slice{end}, cf, true,
                                         (_size >= 1000));
   if (!r.ok()) {
-    return Schedule(shared_from_this());
+    return yaclib::MakeFuture<Result>(ERROR_LOCKED);
   }
   return yaclib::MakeFuture<Result>();
 }
@@ -135,7 +135,7 @@ AsyncResult IndexDrop::Execute() {
     r = RemoveIndexShards(_db_id, _schema_id, _parent_id, _id);
   }
   if (!r.ok() || !Finalize().ok()) {
-    return Schedule(shared_from_this());
+    return yaclib::MakeFuture<Result>(ERROR_LOCKED);
   }
   return yaclib::MakeFuture<Result>();
 }
@@ -166,7 +166,7 @@ AsyncResult TableDrop::Execute() {
     ObjectId schema_id = _parent_id;
     auto r = RemoveIndexShards(db_id, schema_id, _id);
     if (!r.ok()) {
-      co_return co_await Schedule(shared_from_this());
+      co_return Result{ERROR_LOCKED};
     }
   }
   for (auto& index : _indexes) {
@@ -179,7 +179,7 @@ AsyncResult TableDrop::Execute() {
   if (_type == TableType::Document) {
     auto r = co_await Schedule(_shard_drop);
     if (!r.ok() || !Finalize().ok()) {
-      co_return co_await Schedule(shared_from_this());
+      co_return Result{ERROR_LOCKED};
     }
   }
   co_return {};
@@ -210,7 +210,7 @@ AsyncResult SchemaDrop::Execute() {
   if (_is_root) {
     auto r = RemoveIndexShards(_parent_id, _id);
     if (!r.ok()) {
-      co_return co_await Schedule(shared_from_this());
+      co_return Result{ERROR_LOCKED};
     }
   }
   async_results.reserve(_tables.size());
@@ -221,7 +221,7 @@ AsyncResult SchemaDrop::Execute() {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
   if (!Finalize().ok()) {
-    co_return co_await Schedule(shared_from_this());
+    co_return Result{ERROR_LOCKED};
   }
   co_return {};
 }
@@ -243,7 +243,7 @@ AsyncResult DatabaseDrop::Execute() {
   SDB_ASSERT(_is_root);
   auto r = RemoveIndexShards(_id);
   if (!r.ok()) {
-    co_return co_await Schedule(shared_from_this());
+    co_return Result{ERROR_LOCKED};
   }
   std::vector<AsyncResult> async_results;
   async_results.reserve(_schemas.size());
@@ -254,7 +254,7 @@ AsyncResult DatabaseDrop::Execute() {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
   if (!Finalize().ok()) {
-    co_return co_await Schedule(shared_from_this());
+    co_return Result{ERROR_LOCKED};
   }
   co_return {};
 }

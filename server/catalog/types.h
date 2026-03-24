@@ -39,7 +39,6 @@ enum class EdgeDirection : uint8_t {
 enum class TableType : uint8_t {
   Unknown = 0,
   Document = 2,
-  Edge = 3,
   File = 4,
 };
 
@@ -108,8 +107,6 @@ customize::enum_name<sdb::TableType>(sdb::TableType value) noexcept {
   switch (value) {
     case sdb::TableType::Document:
       return "document";
-    case sdb::TableType::Edge:
-      return "edge";
     case sdb::TableType::File:
       return "file";
     default:

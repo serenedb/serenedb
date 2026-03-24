@@ -91,18 +91,21 @@ inline bool HasColumnOverlap(
 
 template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
-  irs::IndexWriter::Transaction& transaction,
+  irs::IndexWriter::Transaction& index_transaction,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<SearchSinkInsertWriter>(
-      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
+      index_transaction, MakeAnalyzerProvider(snapshot, index),
+      index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<SearchSinkUpdateWriter>(
-      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
+      index_transaction, MakeAnalyzerProvider(snapshot, index),
+      index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
-    return std::make_unique<SearchSinkDeleteWriter>(transaction);
+    return std::make_unique<SearchSinkDeleteWriter>(index_transaction);
   }
 }
 
@@ -115,7 +118,9 @@ inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
   auto& index = basics::downCast<const catalog::InvertedIndex>(
     *snapshot->template GetObject<catalog::Index>(shard->GetIndexId()));
   return std::make_unique<SearchSinkBackfillWriter>(
-    inverted_shard, MakeAnalyzerProvider(index), index.GetColumnIds());
+    inverted_shard,
+    MakeAnalyzerProvider(transaction.GetCatalogSnapshot(), index),
+    index.GetColumnIds());
 }
 
 template<axiom::connector::WriteKind Kind>
@@ -124,14 +129,15 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
-  auto resolve_index_writer = [&](auto& transaction,
+  auto resolve_index_writer = [&](auto& index_transaction,
                                   const catalog::Index& index) {
-    if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
+    if constexpr (std::is_same_v<std::decay_t<decltype(index_transaction)>,
                                  irs::IndexWriter::Transaction>) {
       const auto& inverted_index =
         basics::downCast<catalog::InvertedIndex>(index);
-      writers.push_back(
-        MakeInvertedIndexWriter<Kind>(transaction, inverted_index));
+      auto snapshot = transaction.GetCatalogSnapshot();
+      writers.push_back(MakeInvertedIndexWriter<Kind>(
+        index_transaction, snapshot, inverted_index));
     } else {
       SDB_UNREACHABLE();
     }
@@ -926,6 +932,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       basics::downCast<SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
     auto& transaction = serene_insert_handle.GetTransaction();
+    transaction.EnsureCatalogSnapshot();
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();

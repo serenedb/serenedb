@@ -464,6 +464,8 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
                                  CTASState& state, velox::RowVectorPtr& batch) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.GetCatalogSnapshot();
   std::string current_schema = conn_ctx.GetCurrentSchema();
 
   const auto& rel = *into.rel;
@@ -477,7 +479,7 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  auto database = snapshot->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
   auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
@@ -507,7 +509,10 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
 
   state.created = true;
 
-  auto snapshot = catalog.GetSnapshot();
+  // Update snapshot
+  conn_ctx.DropCatalogSnapshot();
+  conn_ctx.EnsureCatalogSnapshot();
+  snapshot = conn_ctx.GetCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, table_name);
   SDB_ASSERT(catalog_table);
   auto& transaction = static_cast<query::Transaction&>(conn_ctx);

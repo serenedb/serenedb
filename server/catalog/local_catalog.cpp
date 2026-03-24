@@ -706,13 +706,15 @@ class SnapshotImpl : public Snapshot {
           RemoveObjectDefinition(id, table_deps->shard_id);
         }
         auto index_ids = table_deps->indexes;
-        if (root) {
-          for (auto index_id : index_ids) {
+        for (auto index_id : index_ids) {
+          if (root) {
             // While `DROP TABLE` statement indexes were not deleted from
             // resolution table, because they were nested in schema scope.
             // Therefore, we have to explicitly erase them here.
             auto index = GetObject<Index>(index_id);
             UnregisterObject(index, id, false);
+          } else {
+            RemoveObjectDefinition(id, index_id);
           }
         }
       } break;
@@ -1024,9 +1026,9 @@ Result LocalCatalog::CreateIndex(
     options.column_ids.push_back(column->id);
   }
 
-  auto index =
-    MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
-              table.GetId(), std::move(options), std::move(create_columns));
+  auto index = MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
+                         table.GetId(), std::move(options),
+                         std::move(create_columns), _snapshot);
   if (!index) {
     return std::move(index).error();
   }

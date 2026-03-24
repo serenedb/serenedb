@@ -179,7 +179,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
   mutable absl::Mutex _queue_mutex;
   absl::Mutex _execution_mutex;
   containers::FlatHashMap<std::string, std::string> _client_parameters;
-  std::shared_ptr<catalog::Database> _database;
   SqlPortal* _current_portal{nullptr};
   std::string_view _current_query;
   containers::NodeHashMap<std::string, SqlStatement> _statements;

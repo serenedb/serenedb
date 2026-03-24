@@ -160,7 +160,10 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
 
   state.created = true;
 
-  auto snapshot = catalog.GetSnapshot();
+  // Update snapshot to the newer version
+  conn_ctx.DropCatalogSnapshot();
+  conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.GetCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, relation_name);
   SDB_ASSERT(catalog_table);
   auto catalog_index = snapshot->GetRelation(db, schema, stmt.idxname);

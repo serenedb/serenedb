@@ -32,6 +32,7 @@ namespace sdb::query {
 void Transaction::OnNewStatement() {
   if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
     _rocksdb_snapshot = nullptr;
+    Config::DropCatalogSnapshot();
   }
 }
 
@@ -169,6 +170,7 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
 
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT(HasRocksDBRead());
+  Config::EnsureCatalogSnapshot();
   if (!_rocksdb_snapshot) {
     if (HasRocksDBWrite() || HasTransactionBegin()) {
       EnsureRocksDBTransaction();
@@ -205,6 +207,7 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
 }
 
 void Transaction::Destroy() noexcept {
+  Config::DropCatalogSnapshot();
   _state = State::None;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();

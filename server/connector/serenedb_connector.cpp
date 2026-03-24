@@ -102,7 +102,9 @@ SereneDBTableLayout::createTableHandle(
             index.GetColumnIds().end()) {
           return SearchColumnInfo{
             .info = *serene_column,
-            .analyzer = index.GetColumnAnalyzer(serene_column->Id()),
+            .analyzer = index.GetColumnAnalyzer(
+              inverted_index_table->GetTransaction().GetCatalogSnapshot(),
+              serene_column->Id()),
           };
         }
       }

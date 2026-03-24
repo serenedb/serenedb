@@ -73,9 +73,7 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
       return;
     }
 
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = config.GetCatalogSnapshot();
     data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
       switch (type) {
         case ObjectType::Function:
@@ -240,10 +238,11 @@ void ResolveFunctions(ObjectId database,
 
 }  // namespace
 
-void Resolve(ObjectId database, Objects& objects, const Config& config) {
+void Resolve(ObjectId database, Objects& objects, Config& config) {
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
+  config.EnsureCatalogSnapshot();
 
   auto functions = std::move(objects.getFunctions());
   for (auto& [name, old_data] : functions) {

@@ -64,11 +64,6 @@ class Transaction : public Config {
 
   Result Rollback();
 
-  auto GetCatalogSnapshot() const {
-    // TODO(codeworse): manage with rocksdb snapshot
-    return catalog::GetCatalog().GetSnapshot();
-  }
-
   void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
     _table_rows_deltas[table_id] += delta;
   }
@@ -104,6 +99,7 @@ class Transaction : public Config {
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
+    Config::EnsureCatalogSnapshot();
     auto snapshot = GetCatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);

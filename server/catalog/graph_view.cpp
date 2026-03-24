@@ -83,11 +83,6 @@ auto MakeCollectionChecker(ObjectId database) {
       return {ERROR_BAD_PARAMETER, "Cannot find collection '", edge, "'"};
     }
 
-    if (collection->GetTableType() != TableType::Edge) {
-      return {ERROR_BAD_PARAMETER, "Collection '", edge,
-              "' is not an edge collection."};
-    }
-
     return {};
   };
 }

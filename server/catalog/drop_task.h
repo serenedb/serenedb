@@ -30,6 +30,7 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/errors.h"
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -40,6 +41,7 @@
 #include "general_server/scheduler.h"
 #include "rest_server/serened_single.h"
 #include "storage_engine/table_shard.h"
+#include "yaclib/async/make.hpp"
 
 namespace sdb::catalog {
 
@@ -66,9 +68,10 @@ class DropTask {
   static AsyncResult ExecuteTask(std::shared_ptr<DropTask> task) {
     SDB_ASSERT(task);
     if (!task->_object.expired()) {
-      SDB_INFO("xxxxx", Logger::ROCKSDB,
-               "Waiting till the snapshots will free the object");
-      return Schedule(std::move(task));
+      SDB_TRACE("xxxxx", Logger::ROCKSDB,
+                "Waiting till the snapshots will free the object ",
+                task->GetContext());
+      return yaclib::MakeFuture<Result>(ERROR_LOCKED);
     }
     return task->Execute();
   }

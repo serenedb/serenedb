@@ -28,7 +28,6 @@
 #include <string_view>
 
 #include "app/app_server.h"
-#include "auth/role_utils.h"
 #include "basics/logger/logger.h"
 #include "basics/random/uniform_character.h"
 #include "basics/read_locker.h"
@@ -266,8 +265,8 @@ Result catalog::Role::Instantiate(std::shared_ptr<catalog::Role>& role,
   }
   // TODO(mbkkt) remove it, probably only gtest needed it
   // ensure the root user always has the right to change permissions
-  if (tmp->_name == auth::kRootUserName) {
-    tmp->grantDatabase(StaticStrings::kSystemDatabase, auth::Level::RW);
+  if (tmp->_name == StaticStrings::kDefaultUser) {
+    tmp->grantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
   }
 
   role = std::move(tmp);
@@ -299,10 +298,11 @@ void catalog::Role::grantDatabase(std::string_view database,
   if (database.empty() || level == auth::Level::Undefined) {
     SDB_THROW(ERROR_BAD_PARAMETER, "Cannot set rights for empty db name");
   }
-  if (_name == auth::kRootUserName &&
-      database == StaticStrings::kSystemDatabase && level != auth::Level::RW) {
-    SDB_THROW(ERROR_FORBIDDEN,
-              "Cannot lower access level of 'root' to _system");
+  if (_name == StaticStrings::kDefaultUser &&
+      database == StaticStrings::kDefaultDatabase && level != auth::Level::RW) {
+    SDB_THROW(ERROR_FORBIDDEN, "Cannot lower access level of '",
+              StaticStrings::kDefaultUser, "' to ",
+              StaticStrings::kDefaultDatabase);
   }
   SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Granting ",
             ConvertFromAuthLevel(level), " on ", database);
@@ -323,10 +323,11 @@ bool catalog::Role::removeDatabase(std::string_view database) {
   if (database.empty()) {
     SDB_THROW(ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
   }
-  if (_name == auth::kRootUserName &&
-      database == StaticStrings::kSystemDatabase) {
-    SDB_THROW(ERROR_FORBIDDEN,
-              "Cannot remove access level of 'root' to _system");
+  if (_name == StaticStrings::kDefaultUser &&
+      database == StaticStrings::kDefaultDatabase) {
+    SDB_THROW(ERROR_FORBIDDEN, "Cannot remove access level of '",
+              StaticStrings::kDefaultUser, "' to ",
+              StaticStrings::kDefaultDatabase);
   }
   SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Removing grant on ",
             database);
@@ -351,8 +352,8 @@ auth::Level catalog::Role::databaseAuthLevel(std::string_view database) const {
     if (it != _db_access.end()) {
       lvl = std::max(it->second.database_auth_level, lvl);
     }
-    if (database != StaticStrings::kSystemDatabase) {
-      it = _db_access.find(StaticStrings::kSystemDatabase);
+    if (database != StaticStrings::kDefaultDatabase) {
+      it = _db_access.find(StaticStrings::kDefaultDatabase);
       if (it != _db_access.end()) {
         lvl = std::max(it->second.database_auth_level, lvl);
       }

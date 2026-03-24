@@ -20,6 +20,8 @@
 
 #include "serenedb_connector.hpp"
 
+#include <iresearch/search/all_filter.hpp>
+
 #include "basics/static_strings.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
@@ -87,8 +89,7 @@ SereneDBTableLayout::createTableHandle(
   std::vector<velox::core::TypedExprPtr>& rejected_filters) const {
   const RocksDBInvertedIndexTable* inverted_index_table;
   if ((inverted_index_table =
-         dynamic_cast<const RocksDBInvertedIndexTable*>(&this->table())) &&
-      !filters.empty()) {
+         dynamic_cast<const RocksDBInvertedIndexTable*>(&this->table()))) {
     const auto& index = inverted_index_table->GetIndex();
     auto column_getter =
       [&](std::string_view name) -> std::optional<SearchColumnInfo> {
@@ -107,22 +108,40 @@ SereneDBTableLayout::createTableHandle(
       }
       return std::nullopt;
     };
-    irs::And conjunct_root;
 
-    auto result = MakeSearchFilter(conjunct_root, filters, column_getter);
-    if (result.fail()) {
-      THROW_SQL_ERROR(ERR_MSG(result.errorMessage()));
-    }
-
-    SDB_ASSERT(!conjunct_root.empty());
     auto handle = std::make_shared<SereneDBConnectorTableHandle>(
       session, *this, std::vector<Point>{}, nullptr);
     const auto& snapshot =
       inverted_index_table->GetTransaction().EnsureSearchSnapshot(
         inverted_index_table->GetIndex().GetId());
     // TODO(Dronplane) link irs memory manager to velox pool
-    handle->AddSearchQuery(index.GetId(),
-                           conjunct_root.prepare({.index = snapshot.reader}));
+    const auto& scorer = inverted_index_table->GetScorerPtr();
+
+    irs::And conjunct_root;
+    for (auto& filter : filters) {
+      const auto old_size = conjunct_root.size();
+      if (MakeSearchFilter(conjunct_root, {&filter, 1}, column_getter).ok()) {
+        SDB_ASSERT(conjunct_root.size() > old_size);
+      } else {
+        conjunct_root.Erase(old_size);
+        rejected_filters.push_back(std::move(filter));
+      }
+    }
+
+    irs::Filter::Query::ptr prepared;
+    if (conjunct_root.empty()) {
+      irs::All all_filter;
+      prepared =
+        all_filter.prepare({.index = snapshot.reader, .scorer = scorer.get()});
+    } else {
+      prepared = conjunct_root.prepare(
+        {.index = snapshot.reader, .scorer = scorer.get()});
+    }
+
+    handle->AddSearchQuery(index.GetId(), std::move(prepared));
+    if (scorer) {
+      handle->AddScorer(scorer);
+    }
     return handle;
   }
 

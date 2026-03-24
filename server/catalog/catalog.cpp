@@ -636,8 +636,8 @@ Result CatalogFeature::Open() {
               r.errorMessage());
   }
 
-  if (!catalog::GetDatabase(StaticStrings::kSystemDatabase)) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kSystemDatabase,
+  if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
+    SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
   }
 

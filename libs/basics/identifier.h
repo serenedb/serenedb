@@ -38,6 +38,7 @@ class Identifier {
 
   constexpr BaseType id() const noexcept { return _id; }
   const BaseType* data() const noexcept { return &_id; }
+  operator BaseType() const { return _id; }
 
   bool operator==(const Identifier& other) const noexcept = default;
   auto operator<=>(const Identifier& other) const noexcept = default;

@@ -20,7 +20,7 @@ is_boolean_flag() {
 declare -A defaults=(
 	[single_port]=''
 	[cluster_port]=''
-	[protocol]='simple' # simple|extended|both TODO(mbkkt) make both
+	[protocol]='both' # simple|extended|both TODO(mbkkt) make both
 	[test]='./tests/sqllogic/sdb/**/*.test*'
 	[junit]='./out/sqllogic-tests'
 	[runner]='./third_party/sqllogictest-rs'

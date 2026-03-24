@@ -54,7 +54,6 @@
 #include "basics/dtoa.h"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
-#include "catalog/catalog.h"
 #include "pg/functions/interval.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
@@ -616,13 +615,7 @@ void SerializeRegclass(SerializationContext context,
                        velox::vector_size_t row) {
   const auto oid = decoded_vector.valueAt<int32_t>(row);
   if constexpr (Format == VarFormat::Text) {
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
-    auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(oid)});
-    if (object) {
-      context.buffer->WriteUncommitted(object->GetName());
-    } else {
-      context.buffer->WriteUncommitted(absl::StrCat(oid));
-    }
+    context.buffer->WriteUncommitted(RegclassOut(oid));
   } else {
     absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
   }

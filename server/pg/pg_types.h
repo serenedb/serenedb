@@ -27,6 +27,11 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 
+namespace sdb {
+
+class ConnectionContext;
+
+}  // namespace sdb
 namespace sdb::pg {
 
 using ParamIndex = int16_t;
@@ -123,6 +128,9 @@ std::string ToPgTypeString(const velox::TypePtr& type);
 std::string RegtypeOut(int32_t oid);
 constexpr int32_t kInvalidOid = 0;
 int32_t RegtypeIn(std::string_view name);
+
+std::string RegclassOut(int32_t oid);
+int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;
 

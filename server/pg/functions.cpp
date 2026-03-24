@@ -562,28 +562,21 @@ struct RegclassInFunction {
     const velox::core::QueryConfig& config,
     const arg_type<velox::Varchar>* /*input*/,
     const arg_type<int32_t>* /*location*/) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    _db_id = conn->GetDatabaseId();
-    _current_schema = conn->GetCurrentSchema();
+    _conn = basics::downCast<const ConnectionContext>(config.config()).get();
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<int32_t>& result, const arg_type<velox::Varchar>& input,
     const arg_type<int32_t>& location) {
-    auto object_name = ParseObjectName(input, _current_schema);
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
-    auto relation =
-      snapshot->GetRelation(_db_id, object_name.schema, object_name.relation);
-    if (!relation) {
+    result = RegclassIn(*_conn, input);
+    if (result == kInvalidOid) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_TABLE), CURSOR_POS(location),
         ERR_MSG("relation \"", std::string_view{input}, "\" does not exist"));
     }
-    result = static_cast<int32_t>(relation->GetId().id());
   }
 
-  ObjectId _db_id;
-  std::string _current_schema;
+  const ConnectionContext* _conn;
 };
 
 template<typename T>
@@ -600,13 +593,7 @@ struct RegclassOutFunction {
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
-    auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(input)});
-    if (object) {
-      result = object->GetName();
-    } else {
-      result = absl::StrCat(input);
-    }
+    result = RegclassOut(input);
   }
 
   ObjectId _db_id;

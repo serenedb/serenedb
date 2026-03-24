@@ -28,8 +28,13 @@
 #include <velox/functions/prestosql/types/UuidType.h>
 #include <velox/type/Timestamp.h>
 
+#include "catalog/catalog.h"
+#include "catalog/virtual_table.h"
+#include "pg/connection_context.h"
 #include "pg/functions/interval.h"
 #include "pg/serialize.h"
+#include "pg/sql_collector.h"
+#include "pg/system_catalog.h"
 #include "query/types.h"
 
 namespace sdb::pg {
@@ -160,7 +165,6 @@ std::string RegtypeOut(int32_t oid) {
     REGTYPE_OUT(kInterval, "interval")
     REGTYPE_OUT(kRegclass, "regclass")
     REGTYPE_OUT(kRegtype, "regtype")
-    case PgTypeOID::kUnknown: return "unknown";
   }
   return absl::StrCat(oid);
 }
@@ -481,6 +485,41 @@ std::expected<velox::Variant, DeserializeError> DeserializeParameter(
   }
 
   SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported parameter format");
+}
+
+// TODO(codeworse): use snapshot from query
+std::string RegclassOut(int32_t oid) {
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(oid)});
+  if (object) {
+    return std::string{object->GetName()};
+  }
+  std::string result;
+  VisitSystemTables([&](const catalog::VirtualTable& table, Oid) {
+    if (table.Id() == oid) {
+      result = table.Name();
+    }
+  });
+  if (!result.empty()) {
+    return result;
+  }
+  return absl::StrCat(oid);
+}
+
+// TODO(codeworse): use snapshot from query
+int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto object_name = ParseObjectName(name, ctx.GetCurrentSchema());
+  auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
+                                        object_name.relation);
+  if (relation) {
+    return relation->GetId();
+  }
+  auto* system_table = GetTable(object_name.relation);
+  if (system_table) {
+    return system_table->Id();
+  }
+  return kInvalidOid;
 }
 
 }  // namespace sdb::pg

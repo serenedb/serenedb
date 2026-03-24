@@ -6,8 +6,8 @@ cd "$WORKDIR"
 BUILD_H="${WORKDIR}/build/libs/basics/build.h"
 
 if [[ ! -f "$BUILD_H" ]]; then
-    echo "Error: $BUILD_H not found. Run cmake build first." >&2
-    exit 1
+	echo "Error: $BUILD_H not found. Run cmake build first." >&2
+	exit 1
 fi
 
 _get() { grep -m1 "^#define $1 " "$BUILD_H" | sed 's/.*"\(.*\)".*/\1/'; }
@@ -26,7 +26,7 @@ export DOCKER_TAG="$SERENEDB_VERSION"
 export SERENEDB_DEBIAN_REVISION="1"
 
 if [[ -n "${DOCKER_DISTRO:-}" ]] && [[ "${DOCKER_DISTRO:-}" != "alpine" ]]; then
-    export DOCKER_TAG="${DOCKER_TAG}-${DOCKER_DISTRO}"
+	export DOCKER_TAG="${DOCKER_TAG}-${DOCKER_DISTRO}"
 fi
 
 echo '------------------------------------------------------------------------------'

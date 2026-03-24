@@ -488,8 +488,8 @@ std::expected<velox::Variant, DeserializeError> DeserializeParameter(
 }
 
 // TODO(codeworse): use snapshot from query
-std::string RegclassOut(const std::shared_ptr<const catalog::Snapshot>& snapshot,
-                        int32_t oid) {
+std::string RegclassOut(
+  const std::shared_ptr<const catalog::Snapshot>& snapshot, int32_t oid) {
   auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(oid)});
   if (object) {
     return std::string{object->GetName()};

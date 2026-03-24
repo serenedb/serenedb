@@ -20,6 +20,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
+#include "basics/logger/logger.h"
 #include "pg/isolation_level.h"
 #include "query/config.h"
 
@@ -28,6 +29,20 @@ namespace sdb {
 constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
     // serenedb specific variables
+    {
+      log::kLogLevelVariable,
+      {
+        VariableType::String,
+        "Sets the server log level. "
+        "Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. "
+        "Valid levels: fatal, error, warning, info, debug, trace. "
+        "Valid topics: all, authentication, authorization, communication, "
+        "config, crash, engines, flush, fuerte, general, httpclient, "
+        "iresearch, memory, replication, requests, rocksdb, search, ssl, "
+        "startup, statistics, syscall, threads.",
+        "info",
+      },
+    },
     {
       "sdb_write_conflict_policy",
       {

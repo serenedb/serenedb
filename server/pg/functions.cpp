@@ -39,6 +39,7 @@
 #include "pg/functions/json.h"
 #include "pg/functions/lexize.h"
 #include "pg/functions/size.h"
+#include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -525,6 +526,100 @@ struct ProcessEscapePattern {
 };
 
 template<typename T>
+struct RegtypeInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<int32_t>& result, const arg_type<velox::Varchar>& input,
+    const arg_type<int32_t>& location) {
+    std::string_view name{input};
+    auto oid = RegtypeIn(name);
+    if (oid != kInvalidOid) {
+      result = oid;
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT), CURSOR_POS(location),
+                    ERR_MSG("type \"", name, "\" does not exist"));
+  }
+};
+
+template<typename T>
+struct RegtypeOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
+    result = RegtypeOut(input);
+  }
+};
+
+template<typename T>
+struct RegclassInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config,
+    const arg_type<velox::Varchar>* /*input*/,
+    const arg_type<int32_t>* /*location*/) {
+    _conn = basics::downCast<const ConnectionContext>(config.config()).get();
+  }
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<int32_t>& result, const arg_type<velox::Varchar>& input,
+    const arg_type<int32_t>& location) {
+    result = RegclassIn(*_conn, input);
+    if (result == kInvalidOid) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_TABLE), CURSOR_POS(location),
+        ERR_MSG("relation \"", std::string_view{input}, "\" does not exist"));
+    }
+  }
+
+  const ConnectionContext* _conn;
+};
+
+template<typename T>
+struct RegclassOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config,
+    const arg_type<int32_t>* /*input*/) {
+    auto conn = basics::downCast<const ConnectionContext>(config.config());
+    _db_id = conn->GetDatabaseId();
+  }
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
+    result = RegclassOut(input);
+  }
+
+  ObjectId _db_id;
+};
+
+template<typename T>
+struct PgTypeofFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig& config, const arg_type<velox::Any>* input) {
+    _type_oid = GetTypeOID(inputTypes[0]);
+  }
+
+  FOLLY_ALWAYS_INLINE bool callNullable(  // NOLINT
+    out_type<int32_t>& result, const arg_type<velox::Any>* input) {
+    result = _type_oid;
+    return true;
+  }
+
+ private:
+  int32_t _type_oid;
+};
+
+template<typename T>
 struct PgErrorFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -655,6 +750,16 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgTsLexize, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(
     {prefix + "ts_lexize"});
+  velox::registerFunction<RegtypeInFunction, RegtypeCustomType, velox::Varchar,
+                          int32_t>({prefix + "regtypein"});
+  velox::registerFunction<RegtypeOutFunction, velox::Varchar,
+                          RegtypeCustomType>({prefix + "regtypeout"});
+  velox::registerFunction<RegclassInFunction, RegclassCustomType,
+                          velox::Varchar, int32_t>({prefix + "regclassin"});
+  velox::registerFunction<RegclassOutFunction, velox::Varchar,
+                          RegclassCustomType>({prefix + "regclassout"});
+  velox::registerFunction<PgTypeofFunction, RegtypeCustomType, velox::Any>(
+    {prefix + "typeof"});
   registerExtractFunctions(prefix);
 }
 

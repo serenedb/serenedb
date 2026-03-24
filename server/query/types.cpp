@@ -109,6 +109,35 @@ class IntervalTypeFactory : public velox::CustomTypeFactory {
   }
 };
 
+class RegtypeType final : public velox::IntegerType {
+  RegtypeType() = default;
+
+ public:
+  static constexpr std::shared_ptr<const RegtypeType> get() {
+    static constexpr RegtypeType kInstance;
+    return {std::shared_ptr<const RegtypeType>{}, &kInstance};
+  }
+
+  bool equivalent(const Type& other) const override { return this == &other; }
+
+  static constexpr std::string_view kRegtypeTypeName = "PG_REGTYPE";
+
+  const char* name() const final { return kRegtypeTypeName.data(); }
+
+  std::string toString() const final { return name(); }
+
+  folly::dynamic serialize() const final {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "RegtypeType";
+    obj["type"] = name();
+    return obj;
+  }
+
+  static velox::TypePtr deserialize(const folly::dynamic& /*obj*/) {
+    return RegtypeType::get();
+  }
+};
+
 class PgUnknownType final : public velox::VarcharType {
   PgUnknownType() = default;
 
@@ -138,6 +167,83 @@ bool IsPgUnknown(const velox::Type& type) {
   return &type == PG_UNKNOWN().get();
 }
 
+velox::TypePtr REGTYPE() { return RegtypeType::get(); }
+
+bool IsRegtype(const velox::TypePtr& type) { return type == REGTYPE(); }
+
+bool IsRegtype(const velox::Type& type) { return &type == REGTYPE().get(); }
+
+class RegtypeTypeFactory : public velox::CustomTypeFactory {
+ public:
+  RegtypeTypeFactory() = default;
+
+  velox::TypePtr getType(
+    const std::vector<velox::TypeParameter>& parameters) const final {
+    VELOX_CHECK(parameters.empty(), "REGTYPE type does not take parameters");
+    return REGTYPE();
+  }
+
+  velox::exec::CastOperatorPtr getCastOperator() const final { return nullptr; }
+
+  velox::AbstractInputGeneratorPtr getInputGenerator(
+    const velox::InputGeneratorConfig& /*config*/) const final {
+    VELOX_FAIL("Input generation for REGTYPE type is not implemented");
+  }
+};
+
+class RegclassType final : public velox::IntegerType {
+  RegclassType() = default;
+
+ public:
+  static constexpr std::shared_ptr<const RegclassType> get() {
+    static constexpr RegclassType kInstance;
+    return {std::shared_ptr<const RegclassType>{}, &kInstance};
+  }
+
+  bool equivalent(const Type& other) const override { return this == &other; }
+
+  static constexpr std::string_view kRegclassTypeName = "PG_REGCLASS";
+
+  const char* name() const final { return kRegclassTypeName.data(); }
+
+  std::string toString() const final { return name(); }
+
+  folly::dynamic serialize() const final {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "RegclassType";
+    obj["type"] = name();
+    return obj;
+  }
+
+  static velox::TypePtr deserialize(const folly::dynamic& /*obj*/) {
+    return RegclassType::get();
+  }
+};
+
+velox::TypePtr REGCLASS() { return RegclassType::get(); }
+
+bool IsRegclass(const velox::TypePtr& type) { return type == REGCLASS(); }
+
+bool IsRegclass(const velox::Type& type) { return &type == REGCLASS().get(); }
+
+class RegclassTypeFactory : public velox::CustomTypeFactory {
+ public:
+  RegclassTypeFactory() = default;
+
+  velox::TypePtr getType(
+    const std::vector<velox::TypeParameter>& parameters) const final {
+    VELOX_CHECK(parameters.empty(), "REGCLASS type does not take parameters");
+    return REGCLASS();
+  }
+
+  velox::exec::CastOperatorPtr getCastOperator() const final { return nullptr; }
+
+  velox::AbstractInputGeneratorPtr getInputGenerator(
+    const velox::InputGeneratorConfig& /*config*/) const final {
+    VELOX_FAIL("Input generation for REGCLASS type is not implemented");
+  }
+};
+
 class PgUnknownTypeFactory : public velox::CustomTypeFactory {
  public:
   PgUnknownTypeFactory() = default;
@@ -164,6 +270,10 @@ void RegisterTypes() {
                             std::make_unique<const IntervalTypeFactory>());
   velox::registerCustomType(PgUnknownTrait::typeName,
                             std::make_unique<const PgUnknownTypeFactory>());
+  velox::registerCustomType(RegtypeTrait::typeName,
+                            std::make_unique<const RegtypeTypeFactory>());
+  velox::registerCustomType(RegclassTrait::typeName,
+                            std::make_unique<const RegclassTypeFactory>());
 }
 
 }  // namespace sdb::pg

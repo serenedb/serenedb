@@ -28,8 +28,13 @@
 #include <velox/functions/prestosql/types/UuidType.h>
 #include <velox/type/Timestamp.h>
 
+#include "catalog/catalog.h"
+#include "catalog/virtual_table.h"
+#include "pg/connection_context.h"
 #include "pg/functions/interval.h"
 #include "pg/serialize.h"
+#include "pg/sql_collector.h"
+#include "pg/system_catalog.h"
 #include "query/types.h"
 
 namespace sdb::pg {
@@ -52,6 +57,10 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
     return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
   } else if (IsInterval(type)) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
+  } else if (IsRegtype(type)) {
+    return in_array ? PgTypeOID::kRegtypeArray : PgTypeOID::kRegtype;
+  } else if (IsRegclass(type)) {
+    return in_array ? PgTypeOID::kRegclassArray : PgTypeOID::kRegclass;
   }
   return -1;
 }
@@ -65,6 +74,148 @@ int32_t GetTypeOID(const velox::TypePtr& type, bool in_array) {
   }
   return GetPrimitiveTypeOID(type->kind(), in_array);
 }
+
+std::string ToPgTypeString(const velox::Type& type) {
+  return ToPgTypeString(velox::TypePtr{velox::TypePtr{}, &type});
+}
+
+std::string ToPgTypeString(const velox::TypePtr& type) {
+  if (!type) [[unlikely]] {
+    return "unknown";
+  }
+  if (type->isArray()) {
+    return ToPgTypeString(type->asArray().elementType()) + "[]";
+  }
+  if (type->isDecimal()) {
+    return "numeric";
+  }
+  if (type->isDate()) {
+    return "date";
+  }
+  if (IsInterval(type)) {
+    return "interval";
+  }
+  if (IsRegtype(type)) {
+    return "regtype";
+  }
+  if (IsRegclass(type)) {
+    return "regclass";
+  }
+  if (isUuidType(type)) {
+    return "uuid";
+  }
+  if (isJsonType(type)) {
+    return "json";
+  }
+  if (isTimestampWithTimeZoneType(type)) {
+    return "timestamp with time zone";
+  }
+  switch (type->kind()) {
+    case velox::TypeKind::BOOLEAN:
+      return "boolean";
+    case velox::TypeKind::TINYINT:
+      return "character";
+    case velox::TypeKind::SMALLINT:
+      return "smallint";
+    case velox::TypeKind::INTEGER:
+      return "integer";
+    case velox::TypeKind::BIGINT:
+      return "bigint";
+    case velox::TypeKind::REAL:
+      return "real";
+    case velox::TypeKind::DOUBLE:
+      return "double precision";
+    case velox::TypeKind::VARCHAR:
+      return "text";
+    case velox::TypeKind::VARBINARY:
+      return "bytea";
+    case velox::TypeKind::TIMESTAMP:
+      return "timestamp without time zone";
+    case velox::TypeKind::UNKNOWN:
+      return "unknown";
+    default:
+      SDB_ASSERT(false);  // better to specify the name
+      return "unknown";
+  }
+}
+
+// clang-format off
+#define REGTYPE_OUT(oid, type_name)                        \
+    case PgTypeOID::oid: return type_name;                 \
+    case PgTypeOID::oid##Array: return type_name "[]";
+
+std::string RegtypeOut(int32_t oid) {
+  switch (static_cast<PgTypeOID>(oid)) {
+    REGTYPE_OUT(kBool, "boolean")
+    REGTYPE_OUT(kBytea, "bytea")
+    REGTYPE_OUT(kChar, "character")
+    REGTYPE_OUT(kInt2, "smallint")
+    REGTYPE_OUT(kInt4, "integer")
+    REGTYPE_OUT(kInt8, "bigint")
+    REGTYPE_OUT(kFloat4, "real")
+    REGTYPE_OUT(kFloat8, "double precision")
+    REGTYPE_OUT(kText, "text")
+    REGTYPE_OUT(kVarchar, "character varying")
+    REGTYPE_OUT(kJson, "json")
+    REGTYPE_OUT(kUuid, "uuid")
+    REGTYPE_OUT(kNumeric, "numeric")
+    REGTYPE_OUT(kDate, "date")
+    REGTYPE_OUT(kTimestamp, "timestamp without time zone")
+    REGTYPE_OUT(kTimestampTz, "timestamp with time zone")
+    REGTYPE_OUT(kInterval, "interval")
+    REGTYPE_OUT(kRegclass, "regclass")
+    REGTYPE_OUT(kRegtype, "regtype")
+  }
+  return absl::StrCat(oid);
+}
+#undef REGTYPE_OUT
+
+#define SDB_REGTYPE_IN(oid, type_name)             \
+    {type_name, PgTypeOID::oid},               \
+    {type_name "[]", PgTypeOID::oid##Array},
+
+int32_t RegtypeIn(std::string_view name) {
+  static const containers::FlatHashMap<std::string_view, int32_t>
+    kTypeNameToOid = {
+      SDB_REGTYPE_IN(kBool, "boolean")
+      SDB_REGTYPE_IN(kBool, "bool")
+      SDB_REGTYPE_IN(kBytea, "bytea")
+      SDB_REGTYPE_IN(kChar, "character")
+      SDB_REGTYPE_IN(kChar, "char")
+      SDB_REGTYPE_IN(kInt2, "smallint")
+      SDB_REGTYPE_IN(kInt2, "int2")
+      SDB_REGTYPE_IN(kInt4, "integer")
+      SDB_REGTYPE_IN(kInt4, "int4")
+      SDB_REGTYPE_IN(kInt4, "int")
+      SDB_REGTYPE_IN(kInt8, "bigint")
+      SDB_REGTYPE_IN(kInt8, "int8")
+      SDB_REGTYPE_IN(kFloat4, "real")
+      SDB_REGTYPE_IN(kFloat4, "float4")
+      SDB_REGTYPE_IN(kFloat8, "double precision")
+      SDB_REGTYPE_IN(kFloat8, "float8")
+      SDB_REGTYPE_IN(kText, "text")
+      SDB_REGTYPE_IN(kVarchar, "character varying")
+      SDB_REGTYPE_IN(kVarchar, "varchar")
+      SDB_REGTYPE_IN(kJson, "json")
+      SDB_REGTYPE_IN(kUuid, "uuid")
+      SDB_REGTYPE_IN(kNumeric, "numeric")
+      SDB_REGTYPE_IN(kDate, "date")
+      SDB_REGTYPE_IN(kTimestamp, "timestamp without time zone")
+      SDB_REGTYPE_IN(kTimestamp, "timestamp")
+      SDB_REGTYPE_IN(kTimestampTz, "timestamp with time zone")
+      SDB_REGTYPE_IN(kTimestampTz, "timestamptz")
+      SDB_REGTYPE_IN(kInterval, "interval")
+      SDB_REGTYPE_IN(kRegclass, "regclass")
+      SDB_REGTYPE_IN(kRegtype, "regtype")
+    };
+  auto it = kTypeNameToOid.find(name);
+  if (it != kTypeNameToOid.end()) {
+    return it->second;
+  }
+  return kInvalidOid;
+}
+#undef SDB_REGTYPE_IN
+// clang-format on
 
 namespace {
 
@@ -334,6 +485,41 @@ std::expected<velox::Variant, DeserializeError> DeserializeParameter(
   }
 
   SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported parameter format");
+}
+
+// TODO(codeworse): use snapshot from query
+std::string RegclassOut(int32_t oid) {
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(oid)});
+  if (object) {
+    return std::string{object->GetName()};
+  }
+  std::string result;
+  VisitSystemTables([&](const catalog::VirtualTable& table, Oid) {
+    if (table.Id() == oid) {
+      result = table.Name();
+    }
+  });
+  if (!result.empty()) {
+    return result;
+  }
+  return absl::StrCat(oid);
+}
+
+// TODO(codeworse): use snapshot from query
+int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto object_name = ParseObjectName(name, ctx.GetCurrentSchema());
+  auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
+                                        object_name.relation);
+  if (relation) {
+    return relation->GetId();
+  }
+  auto* system_table = GetTable(object_name.relation);
+  if (system_table) {
+    return system_table->Id();
+  }
+  return kInvalidOid;
 }
 
 }  // namespace sdb::pg

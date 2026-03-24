@@ -27,6 +27,11 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 
+namespace sdb {
+
+class ConnectionContext;
+
+}  // namespace sdb
 namespace sdb::pg {
 
 using ParamIndex = int16_t;
@@ -49,6 +54,8 @@ enum PgTypeOID : int32_t {
   kTimestamp = 1114,
   kTimestampTz = 1184,
   kInterval = 1186,
+  kRegclass = 2205,
+  kRegtype = 2206,
 
   // Array types
   kBoolArray = 1000,
@@ -68,6 +75,8 @@ enum PgTypeOID : int32_t {
   kTimestampArray = 1115,
   kTimestampTzArray = 1185,
   kIntervalArray = 1187,
+  kRegclassArray = 2210,
+  kRegtypeArray = 2211,
 };
 
 constexpr int32_t GetPrimitiveTypeOID(velox::TypeKind kind, bool in_array) {
@@ -112,6 +121,15 @@ constexpr int32_t GetPrimitiveTypeOID(velox::TypeKind kind, bool in_array) {
 }
 
 int32_t GetTypeOID(const velox::TypePtr& type, bool in_array = false);
+
+std::string ToPgTypeString(const velox::Type& type);
+std::string ToPgTypeString(const velox::TypePtr& type);
+std::string RegtypeOut(int32_t oid);
+constexpr int32_t kInvalidOid = 0;
+int32_t RegtypeIn(std::string_view name);
+
+std::string RegclassOut(int32_t oid);
+int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;
 

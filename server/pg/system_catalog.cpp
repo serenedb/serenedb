@@ -426,6 +426,9 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("ts_lexize",
           VeloxFunction{"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
                         FunctionKind::Scalar})
+    .Case("pg_typeof",
+          VeloxFunction{"pg_typeof", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
     // Search functions
     .Case("phrase", VeloxFunction{search::functions::kPhrase, false})
     .Case("term_eq", VeloxFunction{search::functions::kTermEq, false})

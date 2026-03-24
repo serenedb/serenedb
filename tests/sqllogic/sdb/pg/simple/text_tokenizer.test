@@ -122,56 +122,68 @@ HINT: Use WITH (HELP) to see available options
 
 # --- Invalid boolean value ---
 
-statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "accent": "maybe"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err11(
     template = 'text',
     locale = 'en_US.UTF-8',
     accent = 'maybe'
 )
+----
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "accent": "maybe"
 
 
-statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err12(
     template = 'text',
     locale = 'en_US.UTF-8',
     stemming = 'yes'
 )
+----
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
 
 
-statement error db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "1"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err13(
     template = 'ngram',
     mingram = 2,
     maxgram = 3,
     preserveoriginal = '1'
 )
+----
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "1"
 
 
 # --- Invalid integer value ---
 
-statement error db error: ERROR: invalid input syntax for type integer: "abc"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err14(
     template = 'ngram',
     mingram = 'abc',
     maxgram = 3
 )
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
 
 
-statement error db error: ERROR: invalid input syntax for type integer: "three"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err15(
     template = 'ngram',
     mingram = 2,
     maxgram = 'three'
 )
+----
+db error: ERROR: invalid input syntax for type integer: "three"
 
 
-statement error db error: ERROR: invalid input syntax for type integer: "two"
+statement error
 CREATE TEXT SEARCH DICTIONARY t_err16(
     template = 'minhash',
     analyzer_template = 'delimiter',
     analyzer_delimiter = '|',
     numhashes = 'two'
 )
+----
+db error: ERROR: invalid input syntax for type integer: "two"
 
 
 # --- Invalid threshold (out of range 0.0 to 1.0) ---
@@ -198,8 +210,10 @@ HINT: Minimum confidence score [0.0..1.0]
 
 # --- ts_lexize on non-existent dictionary ---
 
-query error text search dictionary "other_tokenizer" does not exist
+query error
 SELECT ts_lexize('other_tokenizer', 'a QUICK Brown Fox');
+----
+db error: ERROR: text search dictionary "other_tokenizer" does not exist
 
 
 # ===========================================================================

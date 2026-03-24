@@ -61,7 +61,7 @@ struct GetUserByIdFunction {
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<int64_t>& input) {
     if (input == 10) {
-      result = StaticStrings::kPgDefaultUser;
+      result = StaticStrings::kDefaultUser;
     } else {
       result = absl::StrCat("unknown (OID=", input, ")");
     }

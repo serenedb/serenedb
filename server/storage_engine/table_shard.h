@@ -43,7 +43,6 @@ class Methods;
 }
 
 class Index;
-class IndexesSnapshot;
 class FollowerInfo;
 class DocumentIterator;
 

@@ -29,6 +29,7 @@
 #include <iresearch/index/norm.hpp>
 
 #include "app/name_validator.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
@@ -39,7 +40,6 @@
 #include "catalog/search_common.h"
 #include "catalog/types.h"
 #include "catalog/vpack_helper.h"
-#include "frozen/set.h"
 
 namespace sdb::search {
 
@@ -96,10 +96,11 @@ bool Normalize(std::string& out, std::string_view type,
     ToStr<char>(properties), false);
 }
 
-constexpr auto kGeoAnalyzers = frozen::make_set<std::string_view>({
-  irs::analysis::GeoJsonAnalyzer::type_name(),
-  irs::analysis::GeoPointAnalyzer::type_name(),
-});
+constexpr containers::TrivialSet kGeoAnalyzers = [](auto selector) {
+  return selector()
+    .Case(irs::analysis::GeoJsonAnalyzer::type_name())
+    .Case(irs::analysis::GeoPointAnalyzer::type_name());
+};
 
 }  // namespace
 
@@ -206,7 +207,7 @@ Result Features::Validate(std::string_view type) const {
 }
 
 bool IsGeoAnalyzer(std::string_view type) noexcept {
-  return kGeoAnalyzers.count(type) != 0;
+  return kGeoAnalyzers.Contains(type);
 }
 
 AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(StringStreamTag) {

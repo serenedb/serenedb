@@ -338,25 +338,6 @@ std::string ServerState::GeneratePersistedId(Role role) {
   return id;
 }
 
-std::string ServerState::GetPersistedId() {
-  std::string uuid_filename = GetUUIDFilename();
-  if (HasPersistedId()) {
-    try {
-      auto uuid_buf = basics::file_utils::Slurp(uuid_filename);
-      basics::string_utils::TrimInPlace(uuid_buf);
-      if (!uuid_buf.empty()) {
-        return uuid_buf;
-      }
-    } catch (const basics::Exception& ex) {
-      SDB_FATAL("xxxxx", Logger::CLUSTER, "Couldn't read UUID file '",
-                uuid_filename, "' - ", ex.what());
-    }
-  }
-
-  SDB_FATAL("xxxxx", Logger::STARTUP, "Couldn't open UUID file '",
-            uuid_filename, "'");
-}
-
 std::string ServerState::GetShortName() const {
   if (_role == Role::Agent) {
     return GetId().substr(0, 13);
@@ -445,14 +426,14 @@ void ServerState::SetState(State state) {
   }
 
   if (result) {
-    SDB_DEBUG("xxxxx", Logger::CLUSTER, "changing state of ",
+    SDB_DEBUG("xxxxx", Logger::STARTUP, "changing state of ",
               ServerState::RoleToStr(role), " server from ",
               ServerState::StateToStr(_state), " to ",
               ServerState::StateToStr(state));
 
     _state = state;
   } else {
-    SDB_ERROR("xxxxx", Logger::CLUSTER, "invalid state transition for ",
+    SDB_ERROR("xxxxx", Logger::STARTUP, "invalid state transition for ",
               ServerState::RoleToStr(role), " server from ",
               ServerState::StateToStr(_state), " to ",
               ServerState::StateToStr(state));

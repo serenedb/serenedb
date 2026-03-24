@@ -51,7 +51,6 @@
 #include "catalog/identifiers/revision_id.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
-#include "database/access_mode.h"
 #include "metrics/fwd.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"

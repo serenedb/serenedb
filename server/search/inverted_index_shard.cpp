@@ -285,10 +285,8 @@ void InvertedIndexShard::Clear() {
 
 TruncateGuard InvertedIndexShard::TruncateBegin()
   ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  _commit_mutex.Lock();
-  return TruncateGuard{TruncateGuard::Ptr{
-    &_commit_mutex,
-    [](absl::Mutex* m) ABSL_NO_THREAD_SAFETY_ANALYSIS { m->Unlock(); }}};
+  return TruncateGuard{
+    std::make_unique<absl::MutexLock>(&_commit_mutex)};
 }
 
 void InvertedIndexShard::TruncateCommit(TruncateGuard guard)

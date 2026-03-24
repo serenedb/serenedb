@@ -102,7 +102,6 @@ yaclib::Future<> TruncateTable(ExecContext& context, const TruncateStmt& stmt) {
   auto current_schema =
     basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
 
-  // Resolve and validate all tables first
   std::vector<std::shared_ptr<catalog::Table>> tables;
   for (const auto* rel : PgListWrapper<RangeVar>{stmt.relations}) {
     ObjectId db_id = current_database;

@@ -34,12 +34,11 @@ struct IndexShardOptions {
 };
 
 struct TruncateGuard {
-  using Ptr = std::unique_ptr<absl::Mutex, void (*)(absl::Mutex*)>;
-
-  Ptr mutex{nullptr, [](absl::Mutex*) {}};
+  std::unique_ptr<absl::MutexLock> lock;
 
   TruncateGuard() = default;
-  explicit TruncateGuard(Ptr m) : mutex{std::move(m)} {}
+  explicit TruncateGuard(std::unique_ptr<absl::MutexLock> l)
+    : lock{std::move(l)} {}
   TruncateGuard(TruncateGuard&&) = default;
   TruncateGuard& operator=(TruncateGuard&&) = default;
 };

@@ -22,7 +22,6 @@
 
 #include <concepts>
 #include <memory>
-#include <optional>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"

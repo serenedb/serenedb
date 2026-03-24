@@ -1033,6 +1033,10 @@ void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   SDB_ASSERT(_current_portal);
   auto& portal = *_current_portal;
+  Config& config = *portal.stmt->query->GetContext().transaction;
+  config.EnsureCatalogSnapshot();
+  portal.serialization_context.snapshot = config.GetCatalogSnapshot();
+  SDB_ASSERT(portal.serialization_context.snapshot);
   const velox::vector_size_t batch_rows = batch ? batch->size() : 0;
   if (batch_rows == 0) {
     return;

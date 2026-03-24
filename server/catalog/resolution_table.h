@@ -28,16 +28,9 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
+#include "basics/result.h"
 #include "basics/system-compiler.h"
-#include "catalog/database.h"
-#include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/index.h"
-#include "catalog/object.h"
-#include "catalog/object_dependency.h"
-#include "catalog/schema.h"
-#include "catalog/table.h"
-#include "catalog/view.h"
 
 namespace sdb::catalog {
 

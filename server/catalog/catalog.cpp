@@ -28,10 +28,8 @@
 #include <vpack/slice.h>
 
 #include <expected>
-#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
-#include <utility>
 
 #include "app/app_server.h"
 #include "app/options/parameters.h"
@@ -68,6 +66,8 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "vpack/value.h"
+#include "vpack/value_type.h"
 
 namespace sdb::catalog {
 namespace {
@@ -94,24 +94,36 @@ ResultOr<CreateTableOptions> GetTableOptions(ObjectId db_id,
   return options;
 }
 
-ResultOr<std::pair<TableType, uint64_t>> GetTableOptionsForDrop(
-  vpack::Slice slice) {
-  auto type_slice = slice.get("type");
-  auto col_slice = slice.get("columns");
-  if (!type_slice.isNumber()) {
-    return std::unexpected<Result>{
-      std::in_place, ERROR_BAD_PARAMETER,
-      "cannot read \"type\" parameter in the table definition"};
+struct DropTableOptions {
+  TableType type;
+  uint64_t columns;
+};
+
+ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
+  struct {
+    int type;
+    vpack::Slice columns;
+  } opts;
+  if (auto r = vpack::ReadObjectNothrow(slice, opts, {.skip_unknown = true});
+      !r.ok()) {
+    return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  auto type = magic_enum::enum_cast<TableType>(type_slice.getNumber<int>());
-  SDB_ASSERT(type);
-  if (!col_slice.isArray()) {
+  if (!opts.columns.isArray()) {
     return std::unexpected<Result>{
-      std::in_place, ERROR_BAD_PARAMETER,
-      "cannot read \"columns\" parameter in the table definition"};
+      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
+      "\"columns\" variable should be an array in the table definition vpack"};
   }
-  auto cols = col_slice.length();
-  return std::make_pair(*type, cols);
+  auto type = magic_enum::enum_cast<TableType>(opts.type);
+  if (!type) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
+      "Cannot parse \"type\" enum variable in the table definition vpack"};
+  }
+  DropTableOptions res{
+    .type = magic_enum::enum_cast<TableType>(opts.type).value(),
+    .columns = opts.columns.length(),
+  };
+  return {res};
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
@@ -192,7 +204,7 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
       }
       auto table_drop =
         CreateTableDrop(engine, db_id, schema_id, key.GetObjectId(),
-                        options->first, options->second);
+                        options->type, options->columns);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -478,7 +490,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         return std::move(options.error());
       }
       auto drop = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                  options->first, options->second, true);
+                                  options->type, options->columns, true);
       if (!drop) {
         return std::move(drop.error());
       }

@@ -23,10 +23,8 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/node_hash_set.h>
-
 #include "basics/containers/bitset.hpp"
+#include "basics/containers/node_hash_set.h"
 #include "basics/noncopyable.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/index/buffered_column.hpp"
@@ -226,9 +224,9 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   // we can't use flat_hash_set as stored_column stores 'this' in non-cached
   // case
   using stored_columns =
-    absl::node_hash_set<StoredColumn, StoredColumn::HashEq,
-                        StoredColumn::HashEq,
-                        ManagedTypedAllocator<StoredColumn>>;
+    sdb::containers::NodeHashSet<StoredColumn, StoredColumn::HashEq,
+                                 StoredColumn::HashEq,
+                                 ManagedTypedAllocator<StoredColumn>>;
 
   struct SortedColumn : util::Noncopyable {
     explicit SortedColumn(const ColumnInfoProvider& column_info,

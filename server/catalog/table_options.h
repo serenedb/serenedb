@@ -116,13 +116,7 @@ void VPackRead(Context ctx, ForeignId& value) {
   }
 }
 
-static constexpr std::string_view kDefaultSharding =
-#ifdef SDB_CLUSTER
-  "hash"
-#else
-  "none"
-#endif
-  ;
+static constexpr std::string_view kDefaultSharding = "none";
 
 // NOLINTBEGIN
 struct IndexProperties {
@@ -152,6 +146,7 @@ struct Column {
   static constexpr Id kMaxRealId =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
+  static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
     static constexpr std::string_view kUpdatePrefix = "upd$";
@@ -173,6 +168,9 @@ struct Column {
   bool IsGeneratedPK() const { return id == kGeneratedPKId; }
 
   static std::string GeneratePKName(std::span<const std::string> column_names);
+
+  static std::string GenerateScoreName(
+    std::span<const std::string> column_names);
 
   Id id;
   velox::TypePtr type;
@@ -202,7 +200,7 @@ inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {
 }
 
 struct CreateTableRequest {
-  std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
+  std::vector<std::string> shardKeys;
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
   std::vector<CheckConstraint> checkConstraints;
@@ -233,7 +231,7 @@ struct TableStats {
 };
 
 struct TableOptions {
-  std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
+  std::vector<std::string> shardKeys;
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
   std::vector<CheckConstraint> checkConstraints;
@@ -279,14 +277,6 @@ struct TableMeta {
     SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
     return dir == EdgeDirection::Out ? from : to;
   }
-};
-
-struct ModifyCollection {
-  vpack::Slice schema;
-  uint32_t numberOfShards = 1;
-  uint32_t replicationFactor = 1;
-  uint32_t writeConcern = 1;
-  bool waitForSync = false;
 };
 // NOLINTEND
 

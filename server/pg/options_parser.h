@@ -25,7 +25,6 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
-#include <basics/containers/flat_hash_map.h>
 
 #include <algorithm>
 #include <functional>
@@ -33,6 +32,7 @@
 #include <variant>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
 #include "pg/option_help.h"
 #include "pg/pg_list_utils.h"
@@ -260,6 +260,9 @@ class OptionsParser {
     VisitNodes(options, [&](const DefElem& option) {
       std::string_view option_name = option.defname;
       if (_explain && option_name == "explain") {
+        if (!option.arg) {
+          HandleHelp();
+        }
         auto name = TryGet<std::string_view>(option.arg);
         if (!name) {
           THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),

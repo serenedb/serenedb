@@ -37,8 +37,6 @@ option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
 option(SDB_IOURING "allow to use iouring" ON)
 
-option(SDB_CLUSTER "build with cluster support" OFF)
-
 find_package(Git 1.5.3 REQUIRED)
 
 # ------------------------------------------------------------------------------
@@ -48,9 +46,12 @@ find_package(Git 1.5.3 REQUIRED)
 # stable release: MAJOR.MINOR.PATCH
 # LTS release:    MAJOR.MINOR.PATCH-lts
 #
-# MAJOR = calendar year (e.g. 26)
-# MINOR = sequential release number, typically the month (e.g. 03)
-# PATCH = growing patch number
+# MAJOR = calendar year, 2-digit, UTC (e.g. 26 for 2026)
+# MINOR = month, 2-digit zero-padded, UTC (e.g. 03 for March)
+# PATCH = growing patch number; 0 means dev/unversioned build
+#
+# MAJOR and MINOR are derived from the UTC clock at configure time.
+# PATCH defaults to 0; pass -DSERENEDB_VERSION_PATCH=N (N > 0) for releases.
 #
 # These are mapped to the following variables:
 #
@@ -59,11 +60,19 @@ find_package(Git 1.5.3 REQUIRED)
 # SERENEDB_VERSION_PATCH        = PATCH
 # SERENEDB_VERSION_RELEASE_TYPE = "lts" or empty
 #
-set(SERENEDB_VERSION_MAJOR "26")
-set(SERENEDB_VERSION_MINOR "03")
+
+# Derive MAJOR and MINOR from the UTC clock at configure time
+string(TIMESTAMP SERENEDB_VERSION_MAJOR "%y" UTC)
+string(TIMESTAMP SERENEDB_VERSION_MINOR "%m" UTC)
 
 if(NOT DEFINED SERENEDB_VERSION_PATCH)
-    set(SERENEDB_VERSION_PATCH "1")
+    set(SERENEDB_VERSION_PATCH "0")
+elseif(SERENEDB_VERSION_PATCH EQUAL 0)
+    message(
+        FATAL_ERROR
+        "SERENEDB_VERSION_PATCH must be > 0 when specified explicitly. "
+        "Omit -DSERENEDB_VERSION_PATCH for dev builds (patch defaults to 0)."
+    )
 endif()
 
 # unset RELEASE_TYPE if empty
@@ -113,12 +122,6 @@ set(CMAKE_COLOR_DIAGNOSTICS ON)
 # disable not fatal logs and all vlogs in compile time
 add_definitions(-DABSL_MAX_VLOG_VERBOSITY=-1)
 add_definitions(-DABSL_MIN_LOG_LEVEL=3)
-
-# enable V8/JavaScript in executables.
-option(USE_V8 "build with V8/JavaScript support" OFF)
-if(USE_V8)
-    add_definitions("-DUSE_V8=1")
-endif()
 
 # enable dtrace
 option(USE_DTRACE "enable dtrace probes" OFF)
@@ -644,10 +647,6 @@ message(STATUS "DEFAULT_LIBS=${DEFAULT_LIBS}")
 set(CMAKE_CXX_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 set(CMAKE_C_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 
-if(USE_V8)
-    set(SDB_SANITIZE "" CACHE STRING "" FORCE)
-endif()
-
 set(SDB_SANITIZE_WAS "${SDB_SANITIZE}")
 if(NOT "${SDB_SANITIZE}" STREQUAL "")
     # TODO(mbkkt) we also can apply sanitize-recover
@@ -793,10 +792,6 @@ include(SereneDBInstall)
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
 set(ERROR_FILES libs/basics/errors.h libs/basics/error-registry.h)
-if(SDB_CLUSTER)
-    list(APPEND ERROR_FILES private/js/common/bootstrap/errors.js)
-endif()
-
 set(ERROR_FILES_GEN)
 set(ERRORS_DAT libs/basics/errors.dat)
 
@@ -875,9 +870,6 @@ list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 add_subdirectory(libs)
 add_subdirectory(server)
 add_subdirectory(tests)
-if(SDB_CLUSTER)
-    add_subdirectory(private)
-endif()
 
 add_custom_target(packages DEPENDS ${PACKAGES_LIST})
 
@@ -893,6 +885,3 @@ add_custom_target(
 message(STATUS "building for git revision: ${SERENEDB_BUILD_REPOSITORY}")
 
 add_custom_target(serenedb DEPENDS serened)
-if(SDB_CLUSTER)
-    add_dependencies(serenedb serene-clients)
-endif()

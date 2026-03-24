@@ -25,6 +25,7 @@
 #include <string_view>
 
 namespace sdb {
+
 class CrashHandler {
  public:
   /// log backtrace for current thread to logfile

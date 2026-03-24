@@ -21,8 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/containers/bitset.hpp>
-
+#include "basics/containers/bitset.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

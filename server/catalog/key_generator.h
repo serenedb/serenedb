@@ -29,9 +29,10 @@
 #include "basics/error_code.h"
 
 namespace vpack {
-class Builder;
-}  // namespace vpack
 
+class Builder;
+
+}  // namespace vpack
 namespace sdb {
 
 // please note that coordinator-based key generators are frequently

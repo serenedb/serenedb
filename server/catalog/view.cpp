@@ -21,16 +21,13 @@
 
 #include "view.h"
 
+#include <vpack/serializer.h>
+
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/graph_view.h"
 #include "catalog/sql_query_view.h"
 #include "general_server/state.h"
-#include "vpack/serializer.h"
-
-#ifdef SDB_CLUSTER
-#include "search/search_view.h"
-#endif
 
 namespace sdb::catalog {
 
@@ -76,10 +73,7 @@ Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
       return GraphView::Make(view, database_id, std::move(options),
                              ctx != ViewContext::Internal);
     case ViewType::ViewSearch:
-#ifdef SDB_CLUSTER
-      return SearchView::Make(view, database_id, std::move(options),
-                              ctx != ViewContext::Internal);
-#endif
+      break;
   }
   return {};
 }

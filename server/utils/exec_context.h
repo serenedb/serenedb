@@ -32,6 +32,7 @@
 
 namespace sdb {
 namespace transaction {
+
 class Methods;
 }
 
@@ -157,7 +158,7 @@ struct Superuser final : ExecContext {
   static std::shared_ptr<Superuser> create(std::string_view database,
                                            ObjectId database_id);
   static std::shared_ptr<Superuser> System() {
-    return create(StaticStrings::kSystemDatabase, id::kSystemDB);
+    return create(StaticStrings::kDefaultDatabase, id::kSystemDB);
   }
 };
 

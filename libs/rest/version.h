@@ -34,11 +34,11 @@
 #endif
 
 namespace vpack {
+
 class Builder;
 }
 
 namespace sdb {
-
 namespace rest {
 
 struct FullVersion {
@@ -120,5 +120,6 @@ class Version {
  public:
   static std::map<std::string, std::string> gValues;
 };
+
 }  // namespace rest
 }  // namespace sdb

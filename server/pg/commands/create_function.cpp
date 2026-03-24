@@ -45,7 +45,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
 namespace {
 
 using namespace std::string_view_literals;

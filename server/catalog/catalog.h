@@ -79,6 +79,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Table;
   } else if constexpr (std::is_same_v<T, Index>) {
     return ObjectType::Index;
+  } else if constexpr (std::is_same_v<T, Tokenizer>) {
+    return ObjectType::Tokenizer;
   } else {
     static_assert(false);
   }
@@ -172,7 +174,7 @@ struct LogicalCatalog {
     std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
   virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexBaseOptions options) = 0;
+    IndexImplOptionsBaseWrapper&& impl_options) = 0;
   virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
 
   virtual Result CreateDatabase(
@@ -193,7 +195,7 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
-    const std::vector<std::string>& column_names, IndexBaseOptions options,
+    std::vector<CreateIndexColumn>&& columns, IndexBaseOptions options,
     IndexShardOptions& shard_options,
     CreateIndexOperationOptions operation_options = {}) = 0;
 

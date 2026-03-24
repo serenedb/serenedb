@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "basics/containers/node_hash_map.h"
 #include "basics/logger/logger.h"
 #include "basics/singleton.hpp"
 #include "basics/so_utils.hpp"
@@ -157,7 +158,8 @@ class GenericRegister : public Singleton<RegisterType> {
 
  private:
   mutable absl::Mutex _mutex{absl::kConstInit};
-  absl::node_hash_map<key_type, entry_type, hash_type, pred_type> _reg_map;
+  sdb::containers::NodeHashMap<key_type, entry_type, hash_type, pred_type>
+    _reg_map;
   std::vector<std::unique_ptr<void, std::function<void(void*)>>> _so_handles;
 };
 
@@ -199,7 +201,8 @@ class TaggedGenericRegister
 
  private:
   mutable absl::Mutex _mutex{absl::kConstInit};
-  absl::node_hash_map<key_type, tag_type, hash_type, pred_type> _tag_map;
+  sdb::containers::NodeHashMap<key_type, tag_type, hash_type, pred_type>
+    _tag_map;
 };
 
 }  // namespace irs

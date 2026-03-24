@@ -47,6 +47,7 @@
 #include "utils/query_string.h"
 
 namespace sdb::pg {
+
 class PostgresFeature;
 
 // ClientHello -> Idle -> Processing -> Idle -> ErrorRecovery -> Idle....
@@ -151,6 +152,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
     const std::vector<velox::TypePtr>& param_types);
   std::optional<std::vector<VarFormat>> ParseBindFormats(
     std::string_view& packet);
+  void BuildColumnSerializers(SqlPortal& portal);
   void ExecutePortal(SqlPortal& portal);
   bool RegisterCursor(std::unique_ptr<query::Cursor> cursor, SqlPortal& portal);
   void ReleaseCursor(SqlPortal& portal);
@@ -188,6 +190,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   uint64_t _key{0};
   bool _pop_packet{false};
   bool _success_packet{false};
+  bool _ssl_handshake_passed{false};
   char _current_packet_type{0};
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};

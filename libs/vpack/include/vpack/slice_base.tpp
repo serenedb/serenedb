@@ -19,6 +19,8 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 #include <ostream>
 
 #include "basics/sink.h"
@@ -628,6 +630,7 @@ ValueLength SliceBase<DerivedType, SliceType>::length() const {
   return ReadIntegerNonEmpty<ValueLength>(start() + end - offset_size,
                                           offset_size);
 }
+
 }  // namespace vpack
 #define INSTANTIATE_TYPE(Derived, SliceType)                                  \
   template struct SliceBase<Derived, SliceType>;                              \

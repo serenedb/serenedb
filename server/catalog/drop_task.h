@@ -36,6 +36,7 @@
 #include "rest_server/serened_single.h"
 
 namespace sdb::catalog {
+
 using AsyncResult = yaclib::Future<Result>;
 
 inline constexpr uint32_t kInitialDelay = 125;

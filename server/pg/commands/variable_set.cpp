@@ -21,6 +21,7 @@
 #include <yaclib/async/make.hpp>
 
 #include "basics/down_cast.h"
+#include "basics/logger/logger.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/isolation_level.h"
@@ -37,6 +38,8 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
+
+constexpr std::string_view kSdbLogLevel = "sdb_log_level";
 
 std::string ProcessValue(const A_Const& value) {
   switch (nodeTag(&value.val)) {
@@ -237,6 +240,34 @@ void ProcessDefaultTransactionIsolation(sdb::ConnectionContext& conn_ctx,
   }
 }
 
+void ProcessLogLevel(const VariableSetStmt& stmt,
+                     Config::VariableContext context) {
+  if (context != Config::VariableContext::Session) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("parameter \"", log::kLogLevelVariable,
+              "\" is global and cannot be set inside a transaction"));
+  }
+  switch (stmt.kind) {
+    case VAR_SET_VALUE: {
+      SDB_ASSERT(list_length(stmt.args) == 1);
+      if (list_length(stmt.args) != 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("SET ", log::kLogLevelVariable, " takes only one argument"));
+      }
+      log::SetLogLevel(ProcessValue(*list_nth_node(A_Const, stmt.args, 0)));
+    } break;
+    case VAR_SET_DEFAULT:
+      [[fallthrough]];
+    case VAR_RESET:
+      log::ResetLogLevels();
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
 }  // namespace
 
 yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt) {
@@ -291,6 +322,11 @@ yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt) {
 
   if (value_name == kDefaultTransactionIsolation) {
     ProcessDefaultTransactionIsolation(conn_ctx, stmt);
+    return {};
+  }
+
+  if (value_name == kSdbLogLevel) {
+    ProcessLogLevel(stmt, context);
     return {};
   }
 

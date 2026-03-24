@@ -27,6 +27,7 @@
 #include "vpack/options.h"
 
 namespace vpack {
+
 class Slice;
 
 class Validator {

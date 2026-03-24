@@ -37,6 +37,7 @@
 #include "rest_server/serened.h"
 
 namespace sdb {
+
 class RestServerThread;
 
 class GeneralServerFeature final : public SerenedFeature {

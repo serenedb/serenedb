@@ -66,7 +66,6 @@ constexpr customize::customize_t customize::enum_name<QueryType>(
 }
 
 }  // namespace magic_enum
-
 namespace {
 
 struct Query {

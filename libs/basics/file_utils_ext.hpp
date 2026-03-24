@@ -183,6 +183,5 @@ bool VisitDirectory(const path_char_t* name,
                     bool include_dot_dir = true);
 
 bool FileSync(const path_char_t* name) noexcept;
-bool FileSync(int fd) noexcept;
 
 }  // namespace irs::file_utils

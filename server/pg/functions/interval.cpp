@@ -26,7 +26,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
 namespace {
 
 // TODO : move this to libpq when we change their error macro act as our

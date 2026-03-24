@@ -47,4 +47,5 @@ class AcceptorUnixDomain final : public Acceptor {
   absl::Mutex _mutex;
   std::shared_ptr<AsioSocket<SocketType::Unix>> _asio_socket;
 };
+
 }  // namespace sdb::rest

@@ -549,7 +549,6 @@ auto ResolveMatchType(const SubReader& segment,
 }
 
 }  // namespace
-
 namespace irs {
 
 class ByNestedQuery : public Filter::Query {

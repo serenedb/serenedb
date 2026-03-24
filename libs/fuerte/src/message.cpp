@@ -29,6 +29,7 @@
 #include "basics/assert.h"
 
 namespace {
+
 static const std::string kEmptyString;
 
 inline int Hex2int(char ch, int error_code) {
@@ -44,7 +45,6 @@ inline int Hex2int(char ch, int error_code) {
 }
 
 }  // namespace
-
 namespace sdb::fuerte {
 
 void MessageHeader::setMeta(StringMap map) {

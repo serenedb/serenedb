@@ -25,6 +25,7 @@
 #include "endpoint/endpoint_ip.h"
 
 namespace sdb {
+
 class EndpointIpV6 final : public EndpointIp {
  public:
   EndpointIpV6(EndpointType, TransportType, EncryptionType, int, bool,
@@ -38,4 +39,5 @@ class EndpointIpV6 final : public EndpointIp {
     return '[' + host() + "]:" + sdb::basics::string_utils::Itoa(port());
   }
 };
+
 }  // namespace sdb

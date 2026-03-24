@@ -305,4 +305,5 @@ INSTANTIATE_TEST_SUITE_P(proxy_filter_real_filter, ProxyFilterRealFilter,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
                                             ::testing::Values(tests::FormatInfo{
                                               "1_5simd"})));
+
 }  // namespace

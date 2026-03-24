@@ -28,6 +28,7 @@
 #include <string>
 
 namespace vpack {
+
 class Value;
 }
 

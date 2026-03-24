@@ -32,7 +32,9 @@
 #include "iresearch/utils/text_format.hpp"
 
 namespace vpack {
+
 class Builder;
+
 }  // namespace vpack
 namespace irs::analysis {
 
@@ -52,6 +54,7 @@ class AnalyzerRegistrar {
 };
 
 namespace analyzers {
+
 // Checks whether an analyzer with the specified name is registered.
 bool Exists(std::string_view name, const TypeInfo& args_format,
             bool load_library = true);

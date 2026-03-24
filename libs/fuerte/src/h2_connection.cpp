@@ -186,6 +186,7 @@ template<SocketType T>
 }
 
 namespace {
+
 int OnErrorCallback(nghttp2_session* session, int lib_error_code,
                     const char* msg, size_t len, void*) {
   SDB_ERROR("xxxxx", Logger::FUERTE, "http2 error: \"", std::string(msg, len),
@@ -238,6 +239,7 @@ std::string MakeAuthHeader(const detail::ConnectionConfiguration& config) {
   }
   return auth;
 }
+
 }  // namespace
 
 template<SocketType T>

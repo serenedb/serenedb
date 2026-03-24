@@ -25,12 +25,6 @@
 #include "database/ticks.h"
 #include "general_server/state.h"
 
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#include "cluster_engine/cluster_engine.h"
-#endif
-
 namespace sdb::catalog {
 
 Object::~Object() = default;
@@ -44,28 +38,6 @@ Object::Object(ObjectId owner_id, ObjectId id, std::string_view name,
   UpdateTickServer(GetId().id());
 }
 
-#ifdef SDB_CLUSTER
-ObjectId NextId() {
-  const ObjectId id{[] {
-    if (!ServerState::instance()->IsClusterNode()) {
-      return NewTickServer();
-    }
-
-#ifdef SDB_GTEST
-    if (ClusterEngine::gMocking) {
-      return NewTickServer();
-    }
-#endif
-    return SerenedServer::Instance()
-      .getFeature<ClusterFeature>()
-      .clusterInfo()
-      .uniqid();
-  }()};
-  SDB_ASSERT(id.isSet());
-  return id;
-}
-#else
 ObjectId NextId() { return ObjectId{NewTickServer()}; }
-#endif
 
 }  // namespace sdb::catalog

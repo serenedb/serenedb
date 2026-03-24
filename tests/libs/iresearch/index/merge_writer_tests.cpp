@@ -48,7 +48,6 @@ irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
 }
 
 }  // namespace
-
 namespace tests {
 
 bool Visit(const irs::ColumnReader& reader,

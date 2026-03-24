@@ -30,6 +30,7 @@
 #include <vector>
 
 namespace vpack {
+
 class Builder;
 }
 namespace sdb {

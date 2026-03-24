@@ -16,6 +16,7 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/search_source_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/search_filter_builder_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/search_filter_printer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/search_test_utils.cpp
 )
 
 target_link_libraries(

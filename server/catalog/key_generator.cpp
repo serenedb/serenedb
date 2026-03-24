@@ -22,6 +22,7 @@
 #include "key_generator.h"
 
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <array>
 #include <boost/uuid/random_generator.hpp>
@@ -33,6 +34,7 @@
 
 #include "app/app_server.h"
 #include "app/name_validator.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "basics/endian.h"
 #include "basics/exceptions.h"
@@ -42,14 +44,7 @@
 #include "basics/system-compiler.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
-#include "frozen/unordered_map.h"
 #include "general_server/state.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#endif
 
 namespace sdb {
 namespace {
@@ -322,33 +317,6 @@ class TraditionalKeyGeneratorSingle final : public TraditionalKeyGenerator {
   std::atomic<uint64_t> _last_value;
 };
 
-#ifdef SDB_CLUSTER
-class TraditionalKeyGeneratorCoordinator final
-  : public TraditionalKeyGenerator {
- public:
-  explicit TraditionalKeyGeneratorCoordinator(ClusterInfo& ci,
-                                              bool allow_user_keys)
-    : TraditionalKeyGenerator{allow_user_keys}, _ci{ci} {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-  }
-
- private:
-  uint64_t GenerateValue() override {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-    SDB_IF_FAILURE("KeyGenerator::generateOnCoordinator") {
-      // for testing purposes only
-      SDB_THROW(ERROR_DEBUG);
-    }
-    return _ci.uniqid();
-  }
-
-  void TrackValue(uint64_t /* value */) noexcept override {}
-
- private:
-  ClusterInfo& _ci;
-};
-#endif
-
 class PaddedKeyGenerator : public KeyGenerator {
  public:
   explicit PaddedKeyGenerator(bool allow_user_keys, uint64_t last_value)
@@ -446,29 +414,6 @@ class PaddedKeyGeneratorSingle final : public PaddedKeyGenerator {
     return NewTickServer();
   }
 };
-
-#ifdef SDB_CLUSTER
-class PaddedKeyGeneratorCoordinator final : public PaddedKeyGenerator {
- public:
-  explicit PaddedKeyGeneratorCoordinator(ClusterInfo& ci, bool allow_user_keys,
-                                         uint64_t last_value)
-    : PaddedKeyGenerator{allow_user_keys, last_value}, _ci{ci} {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-  }
-
- private:
-  uint64_t GenerateValue() override {
-    SDB_ASSERT(ServerState::instance()->IsCoordinator());
-    SDB_IF_FAILURE("KeyGenerator::generateOnCoordinator") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-    return _ci.uniqid();
-  }
-
- private:
-  ClusterInfo& _ci;
-};
-#endif
 
 class AutoIncrementKeyGenerator final : public KeyGenerator {
  public:
@@ -587,100 +532,91 @@ class UuidKeyGenerator final : public KeyGenerator {
   boost::uuids::random_generator _uuid;
 };
 
-constexpr auto kFactories = frozen::make_unordered_map<
-  std::string_view, std::shared_ptr<KeyGenerator> (*)(uint32_t, vpack::Slice)>(
-  {{"traditional",
-    [](uint32_t, vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
-      bool allow_user_keys = basics::VPackHelper::getBool(
-        options, StaticStrings::kAllowUserKeys, true);
+using FactoryFn = std::shared_ptr<KeyGenerator> (*)(uint32_t, vpack::Slice);
 
-#ifdef SDB_CLUSTER
-      if (ServerState::instance()->IsCoordinator()) {
-        auto& ci =
-          SerenedServer::Instance().getFeature<ClusterFeature>().clusterInfo();
-        return std::make_shared<TraditionalKeyGeneratorCoordinator>(
-          ci, allow_user_keys);
-      }
-#endif
-      return std::make_shared<TraditionalKeyGeneratorSingle>(
-        allow_user_keys, ReadLastValue(options));
-    }},
-   {"autoincrement",
-    [](uint32_t number_of_shards,
-       vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
-      if (!ServerState::instance()->IsSingle() && number_of_shards > 1) {
-        SDB_THROW(ERROR_CLUSTER_UNSUPPORTED,
-                  "the specified key generator is not "
-                  "supported for collections with more than one shard");
-      }
+constexpr containers::TrivialBiMap kFactories = [](auto selector) {
+  return selector()
+    .Case("traditional",
+          FactoryFn{[](uint32_t,
+                       vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
+            bool allow_user_keys = basics::VPackHelper::getBool(
+              options, StaticStrings::kAllowUserKeys, true);
 
-      uint64_t offset = 0;
-      uint64_t increment = 1;
+            return std::make_shared<TraditionalKeyGeneratorSingle>(
+              allow_user_keys, ReadLastValue(options));
+          }})
+    .Case("autoincrement",
+          FactoryFn{[](uint32_t number_of_shards,
+                       vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
+            if (!ServerState::instance()->IsSingle() && number_of_shards > 1) {
+              SDB_THROW(ERROR_CLUSTER_UNSUPPORTED,
+                        "the specified key generator is not "
+                        "supported for collections with more than one shard");
+            }
 
-      if (auto increment_slice = options.get("increment");
-          increment_slice.isNumber()) {
-        double v = increment_slice.getNumber<double>();
-        if (v <= 0.0) {
-          // negative or 0 increment is not allowed
-          SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR,
-                    "increment value must be greater than zero");
-        }
+            uint64_t offset = 0;
+            uint64_t increment = 1;
 
-        increment = increment_slice.getNumber<uint64_t>();
+            if (auto increment_slice = options.get("increment");
+                increment_slice.isNumber()) {
+              double v = increment_slice.getNumber<double>();
+              if (v <= 0.0) {
+                // negative or 0 increment is not allowed
+                SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR,
+                          "increment value must be greater than zero");
+              }
 
-        if (increment == 0 || increment >= (1ULL << 16)) {
-          SDB_THROW(
-            ERROR_SERVER_INVALID_KEY_GENERATOR,
-            "increment value must be greater than zero and smaller than "
-            "65536");
-        }
-      }
+              increment = increment_slice.getNumber<uint64_t>();
 
-      if (auto offset_slice = options.get("offset"); offset_slice.isNumber()) {
-        double v = offset_slice.getNumber<double>();
-        if (v < 0.0) {
-          // negative or 0 offset is not allowed
-          SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR,
-                    "offset value must be zero or greater");
-        }
+              if (increment == 0 || increment >= (1ULL << 16)) {
+                SDB_THROW(
+                  ERROR_SERVER_INVALID_KEY_GENERATOR,
+                  "increment value must be greater than zero and smaller than "
+                  "65536");
+              }
+            }
 
-        offset = offset_slice.getNumber<uint64_t>();
+            if (auto offset_slice = options.get("offset");
+                offset_slice.isNumber()) {
+              double v = offset_slice.getNumber<double>();
+              if (v < 0.0) {
+                // negative or 0 offset is not allowed
+                SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR,
+                          "offset value must be zero or greater");
+              }
 
-        if (offset >= UINT64_MAX) {
-          SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR,
-                    "offset value is too high");
-        }
-      }
+              offset = offset_slice.getNumber<uint64_t>();
 
-      bool allow_user_keys = basics::VPackHelper::getBool(
-        options, StaticStrings::kAllowUserKeys, true);
+              if (offset >= UINT64_MAX) {
+                SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR,
+                          "offset value is too high");
+              }
+            }
 
-      return std::make_shared<AutoIncrementKeyGenerator>(
-        allow_user_keys, ReadLastValue(options), offset, increment);
-    }},
-   {"uuid",
-    [](uint32_t, vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
-      bool allow_user_keys = basics::VPackHelper::getBool(
-        options, StaticStrings::kAllowUserKeys, true);
+            bool allow_user_keys = basics::VPackHelper::getBool(
+              options, StaticStrings::kAllowUserKeys, true);
 
-      return std::make_shared<UuidKeyGenerator>(allow_user_keys);
-    }},
-   {"padded",
-    [](uint32_t, vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
-      bool allow_user_keys = basics::VPackHelper::getBool(
-        options, StaticStrings::kAllowUserKeys, true);
+            return std::make_shared<AutoIncrementKeyGenerator>(
+              allow_user_keys, ReadLastValue(options), offset, increment);
+          }})
+    .Case("uuid",
+          FactoryFn{[](uint32_t,
+                       vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
+            bool allow_user_keys = basics::VPackHelper::getBool(
+              options, StaticStrings::kAllowUserKeys, true);
 
-#ifdef SDB_CLUSTER
-      if (ServerState::instance()->IsCoordinator()) {
-        auto& ci =
-          SerenedServer::Instance().getFeature<ClusterFeature>().clusterInfo();
-        return std::make_unique<PaddedKeyGeneratorCoordinator>(
-          ci, allow_user_keys, ReadLastValue(options));
-      }
-#endif
-      return std::make_shared<PaddedKeyGeneratorSingle>(allow_user_keys,
-                                                        ReadLastValue(options));
-    }}});
+            return std::make_shared<UuidKeyGenerator>(allow_user_keys);
+          }})
+    .Case("padded",
+          FactoryFn{[](uint32_t,
+                       vpack::Slice options) -> std::shared_ptr<KeyGenerator> {
+            bool allow_user_keys = basics::VPackHelper::getBool(
+              options, StaticStrings::kAllowUserKeys, true);
+
+            return std::make_shared<PaddedKeyGeneratorSingle>(
+              allow_user_keys, ReadLastValue(options));
+          }});
+};
 
 }  // namespace
 
@@ -822,19 +758,19 @@ std::shared_ptr<KeyGenerator> KeyGeneratorHelper::createKeyGenerator(
 
   const auto type =
     basics::VPackHelper::getString(options, "type", "traditional");
-  const auto it = kFactories.find(absl::AsciiStrToLower(type));
+  const auto it = kFactories.TryFindICaseByFirst(type);
 
-  if (it == kFactories.end()) {
+  if (!it) {
     SDB_THROW(ERROR_SERVER_INVALID_KEY_GENERATOR, "invalid key generator type");
   }
 
-  return it->second(number_of_shards, options);
+  return (*it)(number_of_shards, options);
 }
 
 std::shared_ptr<KeyGenerator> KeyGeneratorHelper::createTraditional() {
-  constexpr auto kIt = kFactories.find("traditional");
-  static_assert(kIt != kFactories.end());
-  return kIt->second(0, vpack::Slice::emptyObjectSlice());
+  constexpr auto kIt = kFactories.TryFindByFirst("traditional");
+  static_assert(kIt);
+  return (*kIt)(0, vpack::Slice::emptyObjectSlice());
 }
 
 void KeyGenerator::toVPack(vpack::Builder& builder) const {

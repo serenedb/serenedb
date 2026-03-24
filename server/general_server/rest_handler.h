@@ -36,9 +36,11 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 namespace basics {
+
 class Exception;
 }
 
@@ -53,6 +55,7 @@ enum class RestStatus {
 };
 
 namespace rest {
+
 class RestHandler : public std::enable_shared_from_this<RestHandler> {
   friend class CommTask;
 

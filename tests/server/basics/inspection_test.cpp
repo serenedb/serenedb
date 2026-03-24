@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 #include <vpack/builder.h>
 #include <vpack/literal.h>
+#include <vpack/serializer.h>
 #include <vpack/value.h>
 #include <vpack/value_type.h>
 
@@ -38,9 +39,9 @@
 
 #include "basics/logger/logger.h"
 #include "inspection_test_helper.h"
-#include "vpack/serializer.h"
 
 namespace {
+
 using namespace sdb;
 
 struct VPackInspectionTest : public ::testing::Test {};
@@ -137,6 +138,7 @@ TEST_F(VPackInspectionTest, StructIncludingVPackBuilder) {
 using namespace vpack;
 
 namespace {
+
 struct ErrorTTest {
   std::string s;
   size_t id;

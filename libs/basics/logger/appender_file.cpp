@@ -44,6 +44,7 @@
 #include "basics/logger/logger.h"
 
 namespace sdb::log {
+
 using namespace sdb::basics;
 
 AppenderStream::AppenderStream(const std::string& filename, int fd)

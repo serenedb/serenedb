@@ -99,6 +99,7 @@ void ResolveConnect(const detail::ConnectionConfiguration& config,
   resolver.async_resolve(config.host, config.port, std::move(cb));
 #endif
 }
+
 }  // namespace
 
 enum class ConnectTimerRole {

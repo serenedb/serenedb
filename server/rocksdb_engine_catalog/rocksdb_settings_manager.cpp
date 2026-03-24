@@ -27,6 +27,7 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include "app/app_server.h"
 #include "basics/debugging.h"
@@ -45,14 +46,10 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "utils/exec_context.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "rocksdb_engine/rocksdb_collection.h"
-#endif
 
 namespace sdb {
 namespace {
+
 void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
   b.clear();
   b.openObject();
@@ -81,6 +78,7 @@ Result WriteSettings(vpack::Slice slice, rocksdb::WriteBatch& batch) {
 
   return {};
 }
+
 }  // namespace
 
 /// Constructor needs to be called synchrunously,
@@ -132,67 +130,6 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
     // small here. it will grow as needed.
     constexpr size_t kScratchBufferSize = 128 * 1024;
     _scratch.reserve(kScratchBufferSize);
-
-#ifdef SDB_CLUSTER
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-    auto snapshot = catalog.Local().GetSnapshot();
-
-    for (auto& physical : snapshot->GetTableShards()) {
-      if (physical->deleted()) {
-        continue;
-      }
-
-      auto coll = snapshot->GetObject<catalog::Table>(physical->GetMeta().id);
-      if (!coll) {
-        continue;
-      }
-
-      SDB_TRACE("xxxxx", Logger::ENGINES, "syncing metadata for collection '",
-                physical->GetMeta().id, "', maxSeqNr: ", max_seq_nr);
-
-      // clear our scratch buffers for this round
-      _scratch.clear();
-      _tmp_builder.clear();
-      batch.Clear();
-
-      rocksdb::SequenceNumber applied_seq = max_seq_nr;
-
-      auto* rcoll = basics::downCast<RocksDBCollection>(physical.get());
-      Result res = rcoll->meta().serializeMeta(
-        batch, *rcoll, *coll, force, _tmp_builder, applied_seq, _scratch);
-
-      if (res.ok() && batch.Count() > 0) {
-        did_work = true;
-
-        auto s = _db->Write(wo, &batch);
-        if (!s.ok()) {
-          res = rocksutils::ConvertStatus(s);
-        }
-      }
-
-      if (!res.ok()) {
-        SDB_WARN("xxxxx", Logger::ENGINES,
-                 "could not sync metadata for collection '", coll->GetId(),
-                 "'");
-        return std::unexpected{std::move(res)};
-      }
-
-      // always log in TRACE mode
-      SDB_TRACE("xxxxx", Logger::ENGINES, "synced metadata for collection '",
-                coll->GetId(), "', maxSeqNr: ", max_seq_nr,
-                ", minSeqNr: ", min_seq_nr, ", appliedSeq: ", applied_seq);
-
-      if (applied_seq < min_seq_nr) {
-        // in DEBUG mode only log _relevant_ information
-        SDB_DEBUG("xxxxx", Logger::ENGINES, "synced metadata for collection '",
-                  coll->GetId(), "', maxSeqNr: ", max_seq_nr,
-                  ", minSeqNr: ", min_seq_nr, ", appliedSeq: ", applied_seq);
-      }
-
-      min_seq_nr = std::min(min_seq_nr, applied_seq);
-    }
-#endif
 
     if (_scratch.capacity() >= 32 * 1024 * 1024) {
       // much data in _scratch, let's shrink it to save memory

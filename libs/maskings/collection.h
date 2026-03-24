@@ -31,11 +31,12 @@
 #include "maskings/parse_result.h"
 
 namespace vpack {
+
 class Slice;
 }
 namespace sdb {
-
 namespace maskings {
+
 class Collection {
  public:
   static ParseResult<Collection> parse(Maskings* maskings, vpack::Slice def);
@@ -56,5 +57,6 @@ class Collection {
   // LATER: CollectionFilter _filter;
   std::vector<AttributeMasking> _maskings;
 };
+
 }  // namespace maskings
 }  // namespace sdb

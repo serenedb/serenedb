@@ -23,10 +23,10 @@
 #include <utf8/core.h>
 
 #include "basics/containers/small_vector.h"
-#include "basics/utf8_utils.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 
 class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
  protected:

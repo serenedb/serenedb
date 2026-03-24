@@ -20,7 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/sparse_bitmap.hpp"
+#include "iresearch/formats/column/sparse_bitmap.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -29,8 +29,8 @@ class SparseBitmapTestCase
  public:
   static std::string to_string(const testing::TestParamInfo<ParamType>& info) {
     auto& [factory, version] = info.param;
-    return (*factory)(nullptr).second + "___" +
-           std::to_string(static_cast<uint32_t>(version));
+    return absl::StrCat((*factory)(nullptr).second, "___",
+                        static_cast<uint32_t>(version));
   }
 
  protected:

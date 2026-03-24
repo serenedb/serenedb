@@ -4,9 +4,7 @@ target_sources(
         engine_feature.cpp
         health_data.cpp
         table_shard.cpp
-        indexes_snapshot.cpp
         index_shard.cpp
         wal_access.cpp
-        hints.cpp
         search_engine.cpp
 )

@@ -28,6 +28,7 @@
 #include <s2/s2polyline.h>
 #include <s2/util/coding/coder.h>
 #include <vpack/iterator.h>
+#include <vpack/vpack_helper.h>
 
 #include <algorithm>
 #include <span>
@@ -42,7 +43,6 @@
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
 #include "geo/shape_container.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::geo::json {
 namespace {

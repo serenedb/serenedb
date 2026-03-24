@@ -233,7 +233,6 @@ class DirectoryTestCaseBase
 };
 
 }  // namespace tests
-
 namespace irs {
 
 template<>

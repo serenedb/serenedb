@@ -24,6 +24,8 @@
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
+#include <iresearch/search/levenshtein_filter.hpp>
+#include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
@@ -55,11 +57,12 @@ LIBPG_QUERY_INCLUDES_END
 #include "connector_mock.hpp"
 #include "pg/pg_functions_registration.hpp"
 #include "pg/system_catalog.h"
+#include "search_test_utils.hpp"
 
 namespace {
 
 using namespace sdb;
-using namespace sdb::connector::test;
+using namespace connector::test;
 
 class SearchFilterBuilderTest : public ::testing::Test {
  public:
@@ -67,7 +70,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
     velox::memory::MemoryManager::testingSetInstance({});
     gServerState.SetGTest(true);
     gServerState.SetRole(ServerState::Role::Single);
-    sdb::pg::RegisterVeloxFunctionsAndTypes();
+    pg::RegisterVeloxFunctionsAndTypes();
+    RegisterSearchEntities();
   }
 
   static void TearDownTestCase() { gServerState.Reset(); }
@@ -76,22 +80,65 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
   void TearDown() final { pg::ResetMemoryContext(*_pg_memory_ctx); }
 
-  static sdb::catalog::ColumnAnalyzer IdentityAnalyzerProvider(
-    catalog::Column::Id) {
-    return {.analyzer = std::make_unique<irs::StringTokenizer>()};
+  static catalog::ColumnAnalyzer IdentityAnalyzerProvider(catalog::Column::Id) {
+    auto make_identity = [] {
+      return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
+                         vpack::Slice::emptyObjectSlice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12345}, "test_string_verbartim", {}, make_identity());
+    return {.analyzer = *std::move(gStringTokenizer.GetTokenizer()),
+            .features = irs::IndexFeatures::None};
   }
 
-  static sdb::catalog::ColumnAnalyzer SegmentationAnalyzerProvider(
+  template<irs::IndexFeatures Features>
+  static catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(
     catalog::Column::Id) {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
+    auto make_segmentation = [] {
+      auto builder =
+        vpack::Parser::fromJson("{ \"analyzer\": {\"type\":\"segmentation\"}}");
+      return std::string(builder->slice().startAs<char>(),
+                         builder->slice().byteSize());
+    };
+    static catalog::Tokenizer gStringTokenizer(
+      ObjectId{12346}, "test_segmentation", {}, make_segmentation());
+    auto tokenizer = gStringTokenizer.GetTokenizer();
+    if (!tokenizer) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to crete tokenizer");
+    }
+    return {.analyzer = *std::move(tokenizer), .features = Features};
+  }
+
+  static catalog::ColumnAnalyzer SegmentationAnalyzerProvider(
+    catalog::Column::Id id) {
+    return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
+                                            irs::IndexFeatures::Freq>(id);
+  }
+
+  static catalog::ColumnAnalyzer NgramAnalyzerProvider(catalog::Column::Id) {
+    auto make_ngram = [] {
+      auto builder = vpack::Parser::fromJson(
+        "{ \"analyzer\": {\"type\":\"ngram\","
+        "\"properties\":{\"min\":2,\"max\":2,"
+        "\"preserveOriginal\":false,\"streamType\":\"utf8\"}}}");
+      return std::string(builder->slice().startAs<char>(),
+                         builder->slice().byteSize());
+    };
+    static catalog::Tokenizer gNgramTokenizer(ObjectId{12347}, "test_ngram", {},
+                                              make_ngram());
+    auto tokenizer = gNgramTokenizer.GetTokenizer();
+    if (!tokenizer) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to create ngram tokenizer");
+    }
+    return {.analyzer = *std::move(tokenizer),
+            .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
   }
 
   void AssertFilter(
     const irs::And& expected, std::string_view query_string,
     std::vector<std::unique_ptr<const axiom::connector::Column>>&& columns,
     bool must_succeed,
-    absl::AnyInvocable<sdb::catalog::ColumnAnalyzer(catalog::Column::Id) const>
+    absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id) const>
       analyzer_provider = IdentityAnalyzerProvider) {
     SCOPED_TRACE(testing::Message("Parsing: <") << query_string << ">");
     pg::Params params;
@@ -109,10 +156,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
     opts.name = rel.first.relation;
     for (auto& col : columns) {
       auto& serene_column = basics::downCast<connector::SereneDBColumn>(*col);
-      opts.columns.emplace_back(
-        sdb::catalog::Column{.id = serene_column.Id(),
-                             .type = serene_column.type(),
-                             .name = serene_column.name()});
+      opts.columns.emplace_back(catalog::Column{
+        .id = serene_column.Id(),
+        .type = serene_column.type(),
+        .name = serene_column.name(),
+      });
     }
     rel.second.object =
       std::make_shared<catalog::Table>(std::move(opts), ObjectId{1});
@@ -176,19 +224,21 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
       auto plan = opt.toVeloxPlan(opt.bestPlan()->op);
 
-      auto column_getter = [&](std::string_view cn)
-        -> std::optional<sdb::connector::search::ColumnInfo> {
+      auto column_getter =
+        [&](std::string_view cn) -> std::optional<connector::SearchColumnInfo> {
         auto it = table->columnMap().find(cn);
         if (it == table->columnMap().end()) {
           return std::nullopt;
         }
         auto& column =
           basics::downCast<const connector::SereneDBColumn>(*it->second);
-        return sdb::connector::search::ColumnInfo{
-          .info = column, .analyzer = analyzer_provider(column.Id())};
+        return connector::SearchColumnInfo{
+          .info = column,
+          .analyzer = analyzer_provider(column.Id()),
+        };
       };
 
-      auto res = connector::search::MakeSearchFilter(
+      auto res = connector::MakeSearchFilter(
         root, connector._table_handles[rel.first.relation]->AcceptedFilters(),
         column_getter);
       ASSERT_EQ(res.ok(), must_succeed) << res.errorMessage();
@@ -204,11 +254,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
     basics::StrResize(field_name, sizeof(column_id));
     absl::big_endian::Store(field_name.data(), column_id);
     if constexpr (std::is_same_v<T, bool>) {
-      sdb::search::mangling::MangleBool(field_name);
+      search::mangling::MangleBool(field_name);
     } else if constexpr (std::is_same_v<T, velox::StringView>) {
-      sdb::search::mangling::MangleString(field_name);
+      search::mangling::MangleString(field_name);
     } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
-      sdb::search::mangling::MangleNumeric(field_name);
+      search::mangling::MangleNumeric(field_name);
     } else {
       EXPECT_FALSE(true) << "Unexpected conversion";
     }
@@ -344,7 +394,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     std::string field_name;
     basics::StrResize(field_name, sizeof(column));
     absl::big_endian::Store(field_name.data(), column);
-    sdb::search::mangling::MangleNull(field_name);
+    search::mangling::MangleNull(field_name);
     *term.mutable_field() = field_name;
     term.mutable_options()->term.assign(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
@@ -356,6 +406,37 @@ class SearchFilterBuilderTest : public ::testing::Test {
     auto& wc = AddFilter<irs::ByWildcard>(root);
     *wc.mutable_field() = MakeFieldName<velox::StringView>(column);
     wc.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
+  }
+
+  template<typename Filter>
+  void AddNgramSimilarityFilter(Filter& root, catalog::Column::Id column,
+                                std::vector<std::string_view> ngrams,
+                                float_t threshold = 0.7f) {
+    auto& ngf = AddFilter<irs::ByNGramSimilarity>(root);
+    *ngf.mutable_field() = MakeFieldName<velox::StringView>(column);
+    ngf.mutable_options()->threshold = threshold;
+    for (auto ngram : ngrams) {
+      ngf.mutable_options()->ngrams.emplace_back(
+        irs::ViewCast<irs::byte_type>(ngram));
+    }
+  }
+
+  template<typename Filter>
+  void AddEditDistanceFilter(Filter& root, catalog::Column::Id column,
+                             std::string_view term, uint8_t max_distance,
+                             bool with_transpositions = true,
+                             size_t max_terms = 64,
+                             std::string_view prefix = "") {
+    auto& ed = AddFilter<irs::ByEditDistance>(root);
+    *ed.mutable_field() = MakeFieldName<velox::StringView>(column);
+    ed.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(term));
+    ed.mutable_options()->max_distance = max_distance;
+    ed.mutable_options()->with_transpositions = with_transpositions;
+    ed.mutable_options()->max_terms = max_terms;
+    if (!prefix.empty()) {
+      ed.mutable_options()->prefix.assign(
+        irs::ViewCast<irs::byte_type>(prefix));
+    }
   }
 
   template<typename Filter>
@@ -636,14 +717,10 @@ TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualString) {
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualStringNotIdentity) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
   columns.emplace_back(
     std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
   AssertFilter(expected, "SELECT * FROM foo WHERE a <= 'test'",
-               std::move(columns), false, provider);
+               std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
 // ============================================================================
@@ -1154,17 +1231,12 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorStrings) {
 TEST_F(SearchFilterBuilderTest, test_InOperatorStringsNotIdentity) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
-
   columns.emplace_back(
     std::make_unique<connector::SereneDBColumn>("status", velox::VARCHAR(), 1));
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE status IN ('active', 'pending', 'completed')",
-    std::move(columns), false, provider);
+    std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorLongStrings) {
@@ -1590,57 +1662,41 @@ TEST_F(SearchFilterBuilderTest, test_FieldCastError) {
 
 TEST_F(SearchFilterBuilderTest, test_LikeWithNotIdentity) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
   irs::And expected;
 
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "required_field", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field LIKE UPPER('!!!%foo_')",
-               std::move(columns), false, provider);
+               std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimplePhrase) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
-
   AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
 
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "category", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox')",
-               std::move(columns), true, provider);
+               std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq};
-  };
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "category", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox')",
-               std::move(columns), false, provider);
+               std::move(columns), false,
+               SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
 
   AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
   AddPhraseFilter(expected, 1, {"quick", "lazy", "fox"});
@@ -1650,16 +1706,12 @@ TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox') "
                "AND PHRASE(category, 'quick lazy fox')",
-               std::move(columns), true, provider);
+               std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
-  auto provider = [](catalog::Column::Id) -> sdb::catalog::ColumnAnalyzer {
-    return {.analyzer = irs::analysis::SegmentationTokenizer::make({}),
-            .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-  };
 
   auto& or_filter = expected.add<irs::Or>();
 
@@ -1671,7 +1723,7 @@ TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox') OR "
                "PHRASE(category, 'quick lazy fox')",
-               std::move(columns), true, provider);
+               std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermEq_Segmentation) {
@@ -1896,6 +1948,117 @@ TEST_F(SearchFilterBuilderTest, test_TermIn_NotConst) {
     std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
   AssertFilter(expected, "SELECT * FROM foo WHERE TERM_IN(a, 'foo', b, 'bar')",
                std::move(columns), false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NgramMatch_Basic) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NGRAM_MATCH(name, 'hello')",
+               std::move(columns), true, NgramAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NgramMatch_WithThreshold) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NGRAM_MATCH(name, 'hello', 0.5)",
+               std::move(columns), true, NgramAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NgramMatch_NoFeatures) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NGRAM_MATCH(name, 'hello')",
+               std::move(columns), false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_Basic) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 2)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_WithTranspositions) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 2, false)",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_WithMaxTerms) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 1, true, 128);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 1, true, 128)",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_WithPrefix) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "ing", 1, true, 64, "test");
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'ing', 1, "
+               "true, 64, 'test')",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_DistanceTooHigh) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 5)",
+               std::move(columns), false);
+}
+
+TEST_F(SearchFilterBuilderTest,
+       test_LevenshteinMatch_TranspositionDistanceTooHigh) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE LEVENSHTEIN_MATCH(name, 'test', 4, true)",
+    std::move(columns), false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_NotNegation) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& negated = expected.add<irs::Not>();
+  AddEditDistanceFilter(negated, 1, "test", 2);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("name", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT LEVENSHTEIN_MATCH(name, 'test', 2)",
+               std::move(columns), true);
 }
 
 }  // namespace

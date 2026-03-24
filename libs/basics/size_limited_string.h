@@ -153,4 +153,5 @@ class SizeLimitedString {
   size_t _offset;
   bool _full;
 };
+
 }  // namespace sdb

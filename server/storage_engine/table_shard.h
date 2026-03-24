@@ -31,16 +31,18 @@
 #include "catalog/table_options.h"
 
 namespace vpack {
+
 class Builder;
 class Slice;
+
 }  // namespace vpack
 namespace sdb {
 namespace transaction {
+
 class Methods;
 }
 
 class Index;
-class IndexesSnapshot;
 class FollowerInfo;
 class DocumentIterator;
 

@@ -23,10 +23,10 @@
 #include <folly/json.h>
 #include <velox/serializers/UnsafeRowSerializer.h>
 #include <velox/type/Type.h>
+#include <vpack/vpack.h>
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "vpack/vpack.h"
 
 namespace facebook::velox {
 

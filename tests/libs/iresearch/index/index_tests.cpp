@@ -162,7 +162,6 @@ class SubReaderMock final : public irs::SubReader {
 };
 
 }  // namespace
-
 namespace tests {
 
 void AssertSnapshotEquality(irs::DirectoryReader lhs,

@@ -51,9 +51,10 @@ Result CreateRootRole(bool skip_if_exists) {
     SerenedServer::Instance().getFeature<InitDatabaseFeature>();
 
   auto create_root = [&]() {
-    auto new_role = catalog::Role::NewUser(
-      kRootUserName, init_db_feature.defaultPassword(), id::kRootUser);
-    new_role->grantDatabase(StaticStrings::kSystemDatabase, Level::RW);
+    auto new_role =
+      catalog::Role::NewUser(StaticStrings::kDefaultUser,
+                             init_db_feature.defaultPassword(), id::kRootUser);
+    new_role->grantDatabase(StaticStrings::kDefaultDatabase, Level::RW);
     new_role->grantDatabase("*", Level::RW);
     return new_role;
   };
@@ -66,8 +67,8 @@ Result CreateRootRole(bool skip_if_exists) {
     return r;
   }
 
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, "Creating user \"", kRootUserName,
-            "\"");
+  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, "Creating user \"",
+            StaticStrings::kDefaultUser, "\"");
   return catalog.CreateRole(create_root());
 }
 
@@ -122,7 +123,7 @@ Result UpdateRole(std::string_view name,
 }
 
 Result RemoveRole(std::string_view name) {
-  if (name == kRootUserName) {
+  if (name == StaticStrings::kDefaultUser) {
     return {ERROR_FORBIDDEN};
   }
 

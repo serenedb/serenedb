@@ -24,6 +24,7 @@
 #include "maskings/random_string_mask.h"
 
 namespace sdb::maskings {
+
 class RandomMask : public RandomStringMask {
  public:
   static ParseResult<AttributeMasking> create(Path, Maskings*,
@@ -37,4 +38,5 @@ class RandomMask : public RandomStringMask {
 
   using RandomStringMask::mask;
 };
+
 }  // namespace sdb::maskings

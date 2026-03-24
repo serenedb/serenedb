@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include <basics/buffer.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/status.h>
 #include <vpack/builder.h>
@@ -30,6 +29,7 @@
 #include <memory>
 #include <utility>
 
+#include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/result.h"
 

@@ -28,10 +28,11 @@
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace fasttext {
+
 class ImmutableFastText;
 class Dictionary;
-}  // namespace fasttext
 
+}  // namespace fasttext
 namespace irs::analysis {
 
 class NearestNeighborsTokenizer final

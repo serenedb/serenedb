@@ -23,8 +23,7 @@
 
 #include <gtest/gtest.h>
 
-#include <basics/bit_packing.hpp>
-
+#include "basics/bit_packing.hpp"
 #include "basics/down_cast.h"
 #include "formats_test_case_base.hpp"
 #include "iresearch/formats/format_utils.hpp"

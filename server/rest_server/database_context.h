@@ -27,8 +27,8 @@
 #include "utils/exec_context.h"
 
 namespace sdb {
-
 namespace catalog {
+
 class Database;
 }
 

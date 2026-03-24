@@ -24,10 +24,10 @@
 #pragma once
 
 #include <algorithm>
-#include <basics/singleton.hpp>
 #include <variant>
 
 #include "basics/memory.hpp"
+#include "basics/singleton.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/column_collector.hpp"

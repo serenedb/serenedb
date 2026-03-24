@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025-2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -27,33 +27,10 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/fixed_buffer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-template<typename T, size_t Capacity, size_t Align = 64>
-struct FixedBuffer {
-  auto* data(this auto& self) noexcept { return self._data; }
-  size_t size() const noexcept { return _size; }
-  bool empty() const noexcept { return _size == 0; }
-  constexpr size_t capacity() const noexcept { return Capacity; }
-  auto& operator[](this auto& self, size_t i) noexcept { return self._data[i]; }
-  auto* begin(this auto& self) noexcept { return self._data; }
-  auto* end(this auto& self) noexcept { return self.data() + self.size(); }
-  void clear() noexcept { _size = 0; }
-  void push_back(T v) noexcept {
-    SDB_ASSERT(_size < Capacity);
-    _data[_size++] = v;
-  }
-  void resize(size_t n) noexcept {
-    SDB_ASSERT(n <= Capacity);
-    _size = n;
-  }
-
- private:
-  alignas(Align) T _data[Capacity];
-  size_t _size = 0;
-};
 
 template<typename Adapter>
 class MaxScoreIterator : public DocIterator {
@@ -430,10 +407,14 @@ class MaxScoreIterator : public DocIterator {
 
   using Attributes = std::tuple<ScoreThresholdAttr, CostAttr>;
 
+  // TODO(mbkkt) This is strange alignment, probably allocation is better way
   alignas(4096) uint64_t _mask[kNumBlocks]{};
   alignas(4096) score_t _scores[kWindow]{};
-  FixedBuffer<doc_id_t, kWindow> _cand_docs;
-  FixedBuffer<score_t, kWindow> _cand_scores;  // TODO(gnusi): single buffer
+
+  // TODO(gnusi): single buffer?
+  utils::FixedBuffer<doc_id_t, kWindow, ABSL_CACHELINE_SIZE> _cand_docs;
+  utils::FixedBuffer<score_t, kWindow, ABSL_CACHELINE_SIZE> _cand_scores;
+
   std::vector<AdapterWrapper> _itrs;
   std::vector<AdapterWrapper*> _itrs_sorted;
   std::vector<AdapterWrapper*>::iterator _first_essential;

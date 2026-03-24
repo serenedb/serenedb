@@ -20,14 +20,15 @@
 
 #pragma once
 
+#include <vpack/builder.h>
+#include <vpack/serializer.h>
+
 #include <string>
 #include <type_traits>
 
 #include "basics/bit_utils.hpp"
 #include "basics/identifier.h"
 #include "catalog/identifiers/identifier.h"
-#include "vpack/builder.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 

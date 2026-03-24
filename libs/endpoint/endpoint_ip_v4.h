@@ -40,4 +40,5 @@ class EndpointIpV4 final : public EndpointIp {
     return host() + ':' + sdb::basics::string_utils::Itoa(port());
   }
 };
+
 }  // namespace sdb

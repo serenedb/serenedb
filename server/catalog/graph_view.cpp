@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <vpack/serializer.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -43,7 +44,6 @@
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "general_server/state.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 namespace {

@@ -40,10 +40,6 @@
 #include "rest_server/environment_feature.h"
 #include "rest_server/server_id_feature.h"
 
-#ifdef SDB_CLUSTER
-#include "replication/replication_feature.h"
-#endif
-
 using namespace sdb::app;
 using namespace sdb::basics;
 using namespace sdb::options;
@@ -81,10 +77,6 @@ void CheckVersionFeature::validateOptions(
 
   LoggerFeature& logger = server().getFeature<LoggerFeature>();
   logger.disableThreaded();
-
-#ifdef SDB_CLUSTER
-  server().getFeature<ReplicationFeature>().disableReplicationApplier();
-#endif
 }
 
 void CheckVersionFeature::start() {

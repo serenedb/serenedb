@@ -32,7 +32,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
 namespace {
 
 void FormatGroup(std::string& out, const OptionGroup& group, int indent) {

@@ -31,9 +31,10 @@
 #include "catalog/types.h"
 
 namespace rocksdb {
-class DB;
-}  // namespace rocksdb
 
+class DB;
+
+}  // namespace rocksdb
 namespace sdb {
 
 class RocksDBEngineCatalog;
@@ -80,4 +81,5 @@ class RocksDBSettingsManager {
 
   Tick _initial_released_tick;
 };
+
 }  // namespace sdb

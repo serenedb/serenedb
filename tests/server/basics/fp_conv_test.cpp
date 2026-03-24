@@ -19,11 +19,10 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/sink.h>
-
 #include <cmath>
 
 #include "basics/arithmetic.h"
+#include "basics/sink.h"
 #include "basics/string_buffer.h"
 #include "gtest/gtest.h"
 

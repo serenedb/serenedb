@@ -77,6 +77,7 @@ inline size_t CommonPrefixLength(basic_string_view<Char> lhs,
 
 }  // namespace irs
 namespace absl::hash_internal {
+
 // std or absl::hash_internal required because these classes in std
 
 template<typename H>

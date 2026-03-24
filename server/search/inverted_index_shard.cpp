@@ -23,6 +23,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
+#include <vpack/serializer.h>
 
 #include <chrono>
 #include <filesystem>
@@ -51,11 +52,10 @@
 #include "search/task.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
-#include "vpack/serializer.h"
 
 namespace sdb::search {
-
 namespace {
+
 uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
   constexpr uint64_t kWindowSize{10};
   const auto old_time_num =
@@ -135,6 +135,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =
     GetPath(db_id, schema_id, index.GetRelationId(), index_id, GetId());
+  // TODO(mbkkt) maybe we should use create_directories result instead of
+  // exists?
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {

@@ -23,12 +23,12 @@
 
 #include <vpack/iterator.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/system-compiler.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_prefix_extractor.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb {
 namespace {

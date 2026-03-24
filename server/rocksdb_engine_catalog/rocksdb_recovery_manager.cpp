@@ -28,6 +28,7 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include <atomic>
 
@@ -56,14 +57,6 @@
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "replication/replication_feature.h"
-#include "rocksdb_engine/rocksdb_collection.h"
-#include "rocksdb_engine/rocksdb_edge_index.h"
-#include "rocksdb_engine/rocksdb_vpack_index.h"
-#endif
 
 namespace sdb {
 
@@ -236,35 +229,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       _max_tick_found = tick;
     }
   }
-
-#ifdef SDB_CLUSTER
-  std::shared_ptr<RocksDBCollection> FindCollection(uint64_t object_id) {
-    auto physical = GetTableShard(ObjectId{object_id});
-    if (!physical) {
-      return {};
-    }
-
-    return basics::downCast<RocksDBCollection>(physical);
-  }
-
-  RocksDBIndex* FindIndex(uint64_t object_id) {
-    auto triple = _engine.mapObjectToIndex(object_id);
-    if (!std::get<1>(triple).isSet()) {
-      return nullptr;
-    }
-
-    auto coll = GetTableShard(std::get<1>(triple));
-    if (coll == nullptr) {
-      return nullptr;
-    }
-
-    auto index = coll->lookupIndex(std::get<2>(triple));
-    if (index == nullptr) {
-      return nullptr;
-    }
-    return static_cast<RocksDBIndex*>(index.get());
-  }
-#endif
 
   void UpdateMaxTick(uint32_t column_family_id, const rocksdb::Slice& key,
                      const rocksdb::Slice& value) {
@@ -521,15 +485,6 @@ void RocksDBRecoveryManager::recoveryDone() {
       SDB_THROW(std::move(r));
     }
   }
-
-#ifdef SDB_CLUSTER
-  if (auto replication_feature = server().TryGetFeature<ReplicationFeature>()) {
-    for (auto [_, applier] : GetAllReplicationAppliers()) {
-      replication_feature->startApplier(applier->configuration().database,
-                                        *applier);
-    }
-  }
-#endif
 }
 
 Result RocksDBRecoveryManager::registerPostRecoveryCallback(

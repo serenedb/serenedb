@@ -20,6 +20,7 @@
 /// @author Jan Christoph Uhde
 /// @author Ewout Prangsma
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <chrono>
@@ -30,6 +31,7 @@
 #include <string_view>
 
 namespace sdb::fuerte {
+
 class Request;
 class Response;
 

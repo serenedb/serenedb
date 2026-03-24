@@ -16,6 +16,10 @@
 
 /perf.*
 
+/serenedb-data/
 /logs/
 *.pyc
 docker.env
+
+# Macos
+.DS_Store

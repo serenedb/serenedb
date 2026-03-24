@@ -20,13 +20,14 @@
 
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
+#include <iresearch/utils/bytes_utils.hpp>
+
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/data_source.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
 namespace sdb::connector {
@@ -98,7 +99,7 @@ class DataSourceTest : public ::testing::Test,
 
   void MakeRocksDBWriteRead(velox::RowVectorPtr data, ObjectId object_key) {
     MakeRocksDBWrite(data, object_key);
-    std::vector<sdb::catalog::Column::Id> column_ids;
+    std::vector<catalog::Column::Id> column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       column_ids.emplace_back(i);

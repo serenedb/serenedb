@@ -57,7 +57,6 @@ irs::bstring& StaticBuf() {
 }
 
 }  // namespace
-
 namespace irs {
 namespace numeric_utils {
 

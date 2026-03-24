@@ -39,11 +39,6 @@
 #include "rest_server/init_database_feature.h"
 #include "rest_server/restart_action.h"
 
-#ifdef SDB_CLUSTER
-#include "cluster/backup_feature.h"
-#include "replication/replication_feature.h"
-#endif
-
 using namespace sdb::app;
 using namespace sdb::basics;
 using namespace sdb::options;
@@ -161,11 +156,6 @@ void UpgradeFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
     server().forceDisableFeatures(
       {Server::id<BootstrapFeature>(), Server::id<HttpEndpointProvider>()});
   }
-
-#ifdef SDB_CLUSTER
-  server().getFeature<ReplicationFeature>().disableReplicationApplier();
-  server().getFeature<BackupFeature>().forceDisable();
-#endif
 }
 
 void UpgradeFeature::prepare() {

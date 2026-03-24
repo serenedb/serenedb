@@ -27,6 +27,7 @@
 #include <limits>
 
 namespace sdb {
+
 class RebootId {
  public:
   using value_type = uint64_t;

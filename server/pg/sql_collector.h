@@ -37,7 +37,6 @@ namespace sdb::query {
 class Transaction;
 
 }  // namespace sdb::query
-
 namespace sdb::catalog {
 
 class Table;

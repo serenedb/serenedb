@@ -279,7 +279,20 @@ void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
 }
 
 void InvertedIndexShard::Clear() {
-  absl::MutexLock lock{&_commit_mutex};
+  auto guard = TruncateBegin();
+  TruncateCommit(std::move(guard));
+}
+
+TruncateGuard InvertedIndexShard::TruncateBegin()
+  ABSL_NO_THREAD_SAFETY_ANALYSIS {
+  _commit_mutex.Lock();
+  return TruncateGuard{TruncateGuard::Ptr{
+    &_commit_mutex,
+    [](absl::Mutex* m) ABSL_NO_THREAD_SAFETY_ANALYSIS { m->Unlock(); }}};
+}
+
+void InvertedIndexShard::TruncateCommit(TruncateGuard /*guard*/)
+  ABSL_NO_THREAD_SAFETY_ANALYSIS {
   _writer->Clear(_engine.currentTick());
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);

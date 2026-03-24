@@ -162,6 +162,8 @@ class InvertedIndexShard final
 
   void WriteInternal(vpack::Builder& builder) const final;
   void Clear() final;
+  TruncateGuard TruncateBegin() final;
+  void TruncateCommit(TruncateGuard guard) final;
 
   auto GetTransaction() { return _writer->GetBatch(); }
 

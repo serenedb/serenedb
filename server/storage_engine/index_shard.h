@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <vpack/builder.h>
+
+#include <memory>
 
 #include "catalog/index.h"
 
@@ -28,6 +31,17 @@ namespace sdb {
 
 struct IndexShardOptions {
   virtual ~IndexShardOptions() = default;
+};
+
+struct TruncateGuard {
+  using Ptr = std::unique_ptr<absl::Mutex, void (*)(absl::Mutex*)>;
+
+  Ptr mutex{nullptr, [](absl::Mutex*) {}};
+
+  TruncateGuard() = default;
+  explicit TruncateGuard(Ptr m) : mutex{std::move(m)} {}
+  TruncateGuard(TruncateGuard&&) = default;
+  TruncateGuard& operator=(TruncateGuard&&) = default;
 };
 
 class IndexShard : public catalog::Object {
@@ -41,6 +55,8 @@ class IndexShard : public catalog::Object {
 
   virtual void WriteInternal(vpack::Builder& builder) const = 0;
   virtual void Clear() = 0;
+  virtual TruncateGuard TruncateBegin() = 0;
+  virtual void TruncateCommit(TruncateGuard guard) = 0;
 
   ObjectId GetId() const { return _id; }
   ObjectId GetIndexId() const { return _index_id; }

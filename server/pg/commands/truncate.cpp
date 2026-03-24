@@ -64,6 +64,16 @@ void TruncateTables(const std::vector<std::shared_ptr<catalog::Table>>& tables,
   for (auto& table : tables) {
     auto table_id = table->GetId();
 
+    auto index_shards = snapshot->GetIndexShardsByTable(table_id);
+
+    // Phase 1: lock all index shards before the RocksDB write
+    std::vector<TruncateGuard> guards;
+    guards.reserve(index_shards.size());
+    for (auto& index_shard : index_shards) {
+      SDB_ASSERT(index_shard);
+      guards.push_back(index_shard->TruncateBegin());
+    }
+
     auto [start, end] = connector::key_utils::CreateTableRange(table_id);
     auto r = rocksutils::RemoveLargeRange(engine.db(), rocksdb::Slice{start},
                                           rocksdb::Slice{end}, cf, true, true);
@@ -71,9 +81,9 @@ void TruncateTables(const std::vector<std::shared_ptr<catalog::Table>>& tables,
       SDB_THROW(std::move(r));
     }
 
-    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
-      SDB_ASSERT(index_shard);
-      index_shard->Clear();
+    // Phase 2: commit truncate on all index shards after RocksDB write
+    for (size_t i = 0; i < index_shards.size(); ++i) {
+      index_shards[i]->TruncateCommit(std::move(guards[i]));
     }
   }
 }

@@ -312,7 +312,8 @@ struct VersionFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   // TODO(mbkkt) Don't use hard-coded version
-  // PG version should be from libpg_query, SereneDB version should be from build.hu
+  // PG version should be from libpg_query,
+  // SereneDB version should be from build.h
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {
     out = "PostgreSQL 18.1 (SereneDB 26.03.1)";
   }
@@ -624,17 +625,10 @@ DEFINE_NOT_SUPPORTED_FUNC(NotSupported2TextText, out_type<velox::Varchar>&,
 DEFINE_NOT_SUPPORTED_FUNC(NotSupported3OidOidInt, out_type<velox::Varchar>&,
                           const arg_type<int64_t>&, const arg_type<int64_t>&,
                           const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupportedBool2TextText, out_type<bool>&,
-                          const arg_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupported1IntTimestamp,
                           out_type<velox::Timestamp>&, const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported0Timestamp, out_type<velox::Timestamp>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupportedBool2IntInt, out_type<bool>&,
                           const arg_type<int64_t>&, const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported2IntText, out_type<velox::Varchar>&,
-                          const arg_type<int64_t>&,
-                          const arg_type<velox::Varchar>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupported4OidOidTextBool,
                           out_type<velox::Varchar>&, const arg_type<int64_t>&,
                           const arg_type<int64_t>&,
@@ -642,6 +636,20 @@ DEFINE_NOT_SUPPORTED_FUNC(NotSupported4OidOidTextBool,
                           const arg_type<bool>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Int, out_type<int32_t>&,
                           const arg_type<int64_t>&)
+DEFINE_NOT_SUPPORTED_FUNC(NotSupported2TextInt, out_type<velox::Varchar>&,
+                          const arg_type<velox::Varchar>&,
+                          const arg_type<int64_t>&)
+DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt2TextText, out_type<int32_t>&,
+                          const arg_type<velox::Varchar>&,
+                          const arg_type<velox::Varchar>&)
+DEFINE_NOT_SUPPORTED_FUNC(
+  NotSupported1TextArray, out_type<velox::Varchar>&,
+  const arg_type<velox::Array<velox::Varchar>>&)
+DEFINE_NOT_SUPPORTED_FUNC(
+  NotSupported3TextTextArrayTextArray, out_type<velox::Varchar>&,
+  const arg_type<velox::Varchar>&,
+  const arg_type<velox::Array<velox::Varchar>>&,
+  const arg_type<velox::Array<velox::Varchar>>&)
 
 #undef DEFINE_NOT_SUPPORTED_FUNC
 
@@ -1530,19 +1538,19 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "has_role"});
   velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
                           velox::Varchar, velox::Varchar>(
-    {prefix + "pg_has_role"});
+    {prefix + "has_role"});
   velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "pg_has_role"});
+                          velox::Varchar>({prefix + "has_role"});
   velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>({prefix + "pg_has_role"});
+                          int64_t, velox::Varchar>({prefix + "has_role"});
 
   velox::registerFunction<AlwaysTrueFunction1Text, bool, velox::Varchar>(
     {prefix + "row_security_active"});
   velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
     {prefix + "row_security_active"});
 
-  velox::registerFunction<NotSupported2IntText, velox::Varchar, int64_t,
-                          velox::Varchar>({prefix + "acldefault"});
+  velox::registerFunction<NotSupported2TextInt, velox::Varchar, velox::Varchar,
+                          int64_t>({prefix + "acldefault"});
   velox::registerFunction<NotSupported1Text, velox::Varchar, velox::Varchar>(
     {prefix + "aclexplode"});
   velox::registerFunction<NotSupported4OidOidTextBool, velox::Varchar, int64_t,
@@ -1649,7 +1657,8 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "index_has_property"});
   velox::registerFunction<AlwaysFalseIntText, bool, int64_t, velox::Varchar>(
     {prefix + "indexam_has_property"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupported1TextArray, velox::Varchar,
+                          velox::Array<velox::Varchar>>(
     {prefix + "options_to_table"});
   velox::registerFunction<EmptyTextArrayFromText, velox::Array<velox::Varchar>,
                           velox::Varchar>({prefix + "settings_get_flags"});
@@ -1679,8 +1688,8 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "to_regrole"});
   velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
     {prefix + "to_regtype"});
-  velox::registerFunction<NotSupportedInt1Int, int32_t, int64_t>(
-    {prefix + "to_regtypemod"});
+  velox::registerFunction<NotSupportedInt2TextText, int32_t, velox::Varchar,
+                          velox::Varchar>({prefix + "to_regtypemod"});
 
   // 9.27.5 Object Information and Addressing Functions
 
@@ -1693,8 +1702,10 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<NotSupported3OidOidInt, velox::Varchar, int64_t,
                           int64_t, int64_t>(
     {prefix + "identify_object_as_address"});
-  velox::registerFunction<NotSupported2TextText, velox::Varchar, velox::Varchar,
-                          velox::Varchar>({prefix + "get_object_address"});
+  velox::registerFunction<NotSupported3TextTextArrayTextArray, velox::Varchar,
+                          velox::Varchar, velox::Array<velox::Varchar>,
+                          velox::Array<velox::Varchar>>(
+    {prefix + "get_object_address"});
 
   // 9.27.6 Comment Information Functions
 
@@ -1716,6 +1727,8 @@ void registerFunctions(const std::string& prefix) {
 
   // column_compression and column_size are not in 9.27 but related
   velox::registerFunction<NotSupported1Text, velox::Varchar, velox::Varchar>(
+    {prefix + "column_compression"});
+  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
     {prefix + "column_compression"});
   velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
     {prefix + "column_size"});

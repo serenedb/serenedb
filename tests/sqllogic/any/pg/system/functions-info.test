@@ -307,7 +307,7 @@ query
 SELECT pg_has_role(current_user, 'postgres', 'USAGE');
 ----
 pg_has_role
-
+t
 
 query
 SELECT has_sequence_privilege('seq_name', 'USAGE');
@@ -431,6 +431,7 @@ t
 query error
 SELECT acldefault('r'::text, 0);
 ----
+db error: ERROR: Function is not supported in SereneDB
 
 
 query error
@@ -776,8 +777,9 @@ f
 
 
 query error
-SELECT pg_options_to_table('{}'::text[]);
+SELECT pg_options_to_table(ARRAY['']::text[]);
 ----
+db error: ERROR: Function is not supported in SereneDB
 
 
 query
@@ -880,7 +882,7 @@ t
 query error
 SELECT to_regtypemod('varchar', '42');
 ----
-
+db error: ERROR: Function is not supported in SereneDB
 
 
 # 9.27.5 Object Information and Addressing Functions
@@ -911,9 +913,9 @@ db error: ERROR: Function is not supported in SereneDB
 
 
 query error
-SELECT pg_get_object_address('table', '{}', '{}');
+SELECT pg_get_object_address('table', ARRAY['']::text[], ARRAY['']::text[]);
 ----
-
+db error: ERROR: Function is not supported in SereneDB
 
 
 # 9.27.6 Comment Information Functions
@@ -964,6 +966,7 @@ db error: ERROR: Function is not supported in SereneDB
 query error
 SELECT pg_column_compression(1);
 ----
+db error: ERROR: Function is not supported in SereneDB
 
 
 query error

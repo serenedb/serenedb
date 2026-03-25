@@ -508,7 +508,8 @@ std::string RegclassOut(const catalog::Snapshot& snapshot, int32_t oid) {
 // TODO(codeworse): use snapshot from query
 int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   auto snapshot = ctx.EnsureCatalogSnapshot();
-  auto object_name = ParseObjectName(name, ctx.GetCurrentSchema());
+  auto current_schema = ctx.GetCurrentSchema();
+  auto object_name = ParseObjectName(name, current_schema);
   auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
                                         object_name.relation);
   if (relation) {

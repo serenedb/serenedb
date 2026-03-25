@@ -1,0 +1,1192 @@
+# 9.27. System Information Functions and Operators
+
+# 9.27.1 Session Information Functions
+
+query
+SELECT current_schema;
+----
+current_schema
+public
+
+
+query
+SELECT current_schema();
+----
+current_schema
+public
+
+
+query
+SELECT current_schemas(false);
+----
+current_schemas
+{public}
+
+
+query
+SELECT current_schemas(true);
+----
+current_schemas
+{pg_catalog,public}
+
+
+query
+SELECT current_user;
+----
+current_user
+postgres
+
+
+query
+SELECT current_role;
+----
+current_role
+postgres
+
+
+query
+SELECT session_user;
+----
+session_user
+postgres
+
+
+query
+SELECT user;
+----
+user
+postgres
+
+
+query
+SELECT current_catalog;
+----
+current_catalog
+<slt:ignore>info_test<slt:ignore>
+
+
+query
+SELECT current_database();
+----
+current_database
+<slt:ignore>info_test<slt:ignore>
+
+
+onlyif serenedb
+query
+SELECT current_query();
+----
+current_query
+(empty)
+
+
+query
+SELECT pg_backend_pid() > 0;
+----
+?column?
+t
+
+
+query
+SELECT pg_blocking_pids(0);
+----
+pg_blocking_pids
+{}
+
+
+query
+SELECT pg_conf_load_time() IS NOT NULL;
+----
+?column?
+t
+
+
+query
+SELECT pg_current_logfile() IS NULL;
+----
+?column?
+t
+
+
+query
+SELECT pg_current_logfile('stderr') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query error
+SELECT pg_get_loaded_modules();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+query
+SELECT pg_my_temp_schema();
+----
+pg_my_temp_schema
+0
+
+
+onlyif serenedb
+query
+SELECT pg_is_other_temp_schema(0);
+----
+pg_is_other_temp_schema
+t
+
+
+onlyif serenedb
+query
+SELECT pg_jit_available();
+----
+pg_jit_available
+f
+
+
+onlyif serenedb
+query error
+SELECT pg_listening_channels();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+query
+SELECT pg_numa_available();
+----
+pg_numa_available
+f
+
+
+query
+SELECT pg_postmaster_start_time() IS NOT NULL;
+----
+?column?
+t
+
+
+query
+SELECT pg_safe_snapshot_blocking_pids(0);
+----
+pg_safe_snapshot_blocking_pids
+{}
+
+
+query
+SELECT pg_trigger_depth();
+----
+pg_trigger_depth
+0
+
+
+onlyif serenedb
+query
+SELECT inet_client_addr() IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT inet_client_port() IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT inet_server_addr() IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT inet_server_port() IS NULL;
+----
+?column?
+t
+
+
+# 9.27.2 Access Privilege Inquiry Functions
+
+query
+SELECT has_schema_privilege('public', 'USAGE');
+----
+has_schema_privilege
+t
+
+
+query
+SELECT has_schema_privilege(current_user, 'public', 'USAGE');
+----
+has_schema_privilege
+t
+
+
+query
+SELECT has_table_privilege('pg_class', 'SELECT');
+----
+has_table_privilege
+t
+
+
+query
+SELECT has_table_privilege(current_user, 'pg_class', 'SELECT');
+----
+has_table_privilege
+t
+
+
+query
+SELECT has_database_privilege('postgres', 'CONNECT');
+----
+has_database_privilege
+t
+
+
+query
+SELECT has_database_privilege(current_user, 'postgres', 'CONNECT');
+----
+has_database_privilege
+t
+
+
+query
+SELECT has_function_privilege('version()', 'EXECUTE');
+----
+has_function_privilege
+t
+
+
+query
+SELECT has_function_privilege(current_user, 'version()', 'EXECUTE');
+----
+has_function_privilege
+t
+
+
+query
+SELECT has_language_privilege('sql', 'USAGE');
+----
+has_language_privilege
+t
+
+
+query
+SELECT has_language_privilege(current_user, 'sql', 'USAGE');
+----
+has_language_privilege
+t
+
+
+query
+SELECT has_type_privilege('integer', 'USAGE');
+----
+has_type_privilege
+t
+
+
+query
+SELECT has_type_privilege(current_user, 'integer', 'USAGE');
+----
+has_type_privilege
+t
+
+
+query
+SELECT pg_has_role('postgres', 'USAGE');
+----
+pg_has_role
+t
+
+
+query
+SELECT pg_has_role(current_user, 'postgres', 'USAGE');
+----
+pg_has_role
+t
+
+onlyif serenedb
+query
+SELECT has_sequence_privilege('seq_name', 'USAGE');
+----
+has_sequence_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_sequence_privilege(current_user, 'seq_name', 'USAGE');
+----
+has_sequence_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_server_privilege('server_name', 'USAGE');
+----
+has_server_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_server_privilege(current_user, 'server_name', 'USAGE');
+----
+has_server_privilege
+t
+
+
+query
+SELECT has_tablespace_privilege('pg_default', 'CREATE');
+----
+has_tablespace_privilege
+t
+
+
+query
+SELECT has_tablespace_privilege(current_user, 'pg_default', 'CREATE');
+----
+has_tablespace_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_foreign_data_wrapper_privilege('fdw_name', 'USAGE');
+----
+has_foreign_data_wrapper_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_foreign_data_wrapper_privilege(current_user, 'fdw_name', 'USAGE');
+----
+has_foreign_data_wrapper_privilege
+t
+
+
+query
+SELECT has_parameter_privilege('work_mem', 'SET');
+----
+has_parameter_privilege
+t
+
+
+query
+SELECT has_parameter_privilege(current_user, 'work_mem', 'SET');
+----
+has_parameter_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_largeobject_privilege(0, 'SELECT');
+----
+has_largeobject_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT has_largeobject_privilege(current_user, 0, 'SELECT');
+----
+has_largeobject_privilege
+t
+
+
+query
+SELECT has_any_column_privilege('pg_class', 'SELECT');
+----
+has_any_column_privilege
+t
+
+
+query
+SELECT has_any_column_privilege(current_user, 'pg_class', 'SELECT');
+----
+has_any_column_privilege
+t
+
+
+query
+SELECT has_column_privilege('pg_class', 'relname', 'SELECT');
+----
+has_column_privilege
+t
+
+
+query
+SELECT has_column_privilege(current_user, 'pg_class', 'relname', 'SELECT');
+----
+has_column_privilege
+t
+
+
+onlyif serenedb
+query
+SELECT row_security_active('pg_class');
+----
+row_security_active
+t
+
+
+onlyif serenedb
+query error
+SELECT acldefault(114::character, 0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+# TODO(Pasha): add aclitem type
+onlyif serenedb
+query error
+SELECT aclexplode(ARRAY[]::bigint[]);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT makeaclitem(0, 0, 'SELECT', false);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query
+SELECT pg_function_is_visible(0);
+----
+pg_function_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_type_is_visible(0);
+----
+pg_type_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_operator_is_visible(0);
+----
+pg_operator_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_opclass_is_visible(0);
+----
+pg_opclass_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_opfamily_is_visible(0);
+----
+pg_opfamily_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_collation_is_visible(0);
+----
+pg_collation_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_conversion_is_visible(0);
+----
+pg_conversion_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_statistics_obj_is_visible(0);
+----
+pg_statistics_obj_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_ts_config_is_visible(0);
+----
+pg_ts_config_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_ts_dict_is_visible(0);
+----
+pg_ts_dict_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_ts_parser_is_visible(0);
+----
+pg_ts_parser_is_visible
+t
+
+
+onlyif serenedb
+query
+SELECT pg_ts_template_is_visible(0);
+----
+pg_ts_template_is_visible
+t
+
+
+# 9.27.4 System Catalog Information Functions
+
+query
+SELECT format_type(23, -1);
+----
+format_type
+integer
+
+
+onlyif serenedb
+query error
+SELECT pg_basetype(0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+query
+SELECT pg_encoding_to_char(6);
+----
+pg_encoding_to_char
+UTF8
+
+
+onlyif serenedb
+query error
+SELECT pg_get_catalog_foreign_keys();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query
+SELECT pg_get_constraintdef(0);
+----
+pg_get_constraintdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_constraintdef(0, true);
+----
+pg_get_constraintdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_functiondef(0);
+----
+pg_get_functiondef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_function_arguments(0);
+----
+pg_get_function_arguments
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_function_identity_arguments(0);
+----
+pg_get_function_identity_arguments
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_function_result(0);
+----
+pg_get_function_result
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_indexdef(0);
+----
+pg_get_indexdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_indexdef(0, 0, true);
+----
+pg_get_indexdef
+(empty)
+
+
+onlyif serenedb
+query error
+SELECT pg_get_keywords();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query
+SELECT pg_get_partkeydef(0);
+----
+pg_get_partkeydef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_ruledef(0);
+----
+pg_get_ruledef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_ruledef(0, true);
+----
+pg_get_ruledef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_serial_sequence('table', 'col') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT pg_get_statisticsobjdef(0);
+----
+pg_get_statisticsobjdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_triggerdef(0);
+----
+pg_get_triggerdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_triggerdef(0, true);
+----
+pg_get_triggerdef
+(empty)
+
+
+query
+SELECT pg_get_userbyid(0);
+----
+pg_get_userbyid
+unknown (OID=0)
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef(0);
+----
+pg_get_viewdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef(0, true);
+----
+pg_get_viewdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef(0, 0);
+----
+pg_get_viewdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef('pg_class');
+----
+pg_get_viewdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef('pg_class', true);
+----
+pg_get_viewdef
+(empty)
+
+
+onlyif serenedb
+query
+SELECT pg_index_column_has_property(0, 0, 'asc');
+----
+pg_index_column_has_property
+f
+
+
+onlyif serenedb
+query
+SELECT pg_index_has_property(0, 'clusterable');
+----
+pg_index_has_property
+f
+
+
+onlyif serenedb
+query
+SELECT pg_indexam_has_property(0, 'can_order');
+----
+pg_indexam_has_property
+f
+
+
+onlyif serenedb
+query error
+SELECT pg_options_to_table(ARRAY['']::text[]);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query
+SELECT pg_settings_get_flags('work_mem');
+----
+pg_settings_get_flags
+{}
+
+
+onlyif serenedb
+query error
+SELECT pg_tablespace_databases(0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+query
+SELECT pg_typeof(1);
+----
+pg_typeof
+integer
+
+
+onlyif serenedb
+query
+SELECT to_regclass('pg_class') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regcollation('default') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regnamespace('public') IS NULL;
+----
+?column?
+t
+
+
+query
+SELECT to_regoper('+') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regoperator('+(integer,integer)') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regproc('now') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regprocedure('now()') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regrole('postgres') IS NULL;
+----
+?column?
+t
+
+
+onlyif serenedb
+query
+SELECT to_regtype('integer') IS NULL;
+----
+?column?
+t
+
+
+# 9.27.5 Object Information and Addressing Functions
+
+onlyif serenedb
+query error
+SELECT pg_get_acl(0, 0, 0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query
+SELECT pg_describe_object(0, 0, 0);
+----
+pg_describe_object
+(empty)
+
+
+onlyif serenedb
+query error
+SELECT pg_identify_object(0, 0, 0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_identify_object_as_address(0, 0, 0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_get_object_address('table', ARRAY['']::text[], ARRAY['']::text[]);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+# 9.27.6 Comment Information Functions
+
+query
+SELECT col_description(0, 1) IS NULL;
+----
+?column?
+t
+
+
+query
+SELECT obj_description(0) IS NULL;
+----
+?column?
+t
+
+
+query
+SELECT obj_description(0, 'pg_class') IS NULL;
+----
+?column?
+t
+
+
+query
+SELECT shobj_description(0, 'pg_database') IS NULL;
+----
+?column?
+t
+
+
+# 9.27.7 Data Validity Checking Functions
+
+query
+SELECT pg_input_is_valid('42', 'integer');
+----
+pg_input_is_valid
+t
+
+
+onlyif serenedb
+query error
+SELECT pg_input_error_info('bad', 'integer');
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_column_compression(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_column_size(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_current_xact_id();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_current_xact_id_if_assigned();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+# TODO(Pasha): add type convertion to xid8
+onlyif serenedb
+query error
+SELECT pg_xact_status(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_current_snapshot();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_snapshot_xip(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_snapshot_xmax(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_snapshot_xmin(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_visible_in_snapshot(1, 1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_get_multixact_members(0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_get_multixact_stats();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_current();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_current_if_assigned();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_current_snapshot();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_snapshot_xip(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_snapshot_xmax(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_snapshot_xmin(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_visible_in_snapshot(1, 1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT txid_status(1);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_xact_commit_timestamp_origin(0);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_last_committed_xact();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+# 9.27.10 Control Data Functions
+
+onlyif serenedb
+query error
+SELECT pg_control_checkpoint();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_control_system();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_control_init();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_control_recovery();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query
+SELECT unicode_version();
+----
+unicode_version
+15.1.0
+
+
+query
+SELECT icu_unicode_version() IS NULL;
+----
+?column?
+f
+
+
+# 9.27.12 WAL Summarization Information Functions
+
+onlyif serenedb
+query error
+SELECT pg_available_wal_summaries();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+onlyif serenedb
+query error
+SELECT pg_wal_summary_contents(0, 0, 0, 0, 0);
+----
+db error: ERROR: function pg_wal_summary_contents(integer, integer, integer, integer, integer) does not exist
+
+
+onlyif serenedb
+query error
+SELECT pg_get_wal_summarizer_state();
+----
+db error: ERROR: Function is not supported in SereneDB

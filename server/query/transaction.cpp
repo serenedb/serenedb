@@ -30,9 +30,9 @@
 namespace sdb::query {
 
 void Transaction::OnNewStatement() {
+  Config::DropCatalogSnapshot();
   if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
     _rocksdb_snapshot = nullptr;
-    Config::DropCatalogSnapshot();
   }
 }
 

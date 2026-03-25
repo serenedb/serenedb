@@ -86,8 +86,7 @@ class ObjectDependencies {
     return it->second;
   }
 
-  template<typename T>
-    requires std::derived_from<T, ObjectDependencyBase>
+  template<std::derived_from<ObjectDependencyBase> T>
   bool AddDependency(ObjectId id,
                      std::shared_ptr<T> dep = std::make_shared<T>()) {
     auto [_, inserted] = _object_dependencies.insert_or_assign(id, dep);

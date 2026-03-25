@@ -190,14 +190,9 @@ class Config : public velox::config::IConfig {
 
   void ResetAll();
 
-  void EnsureCatalogSnapshot();
-
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
-  std::shared_ptr<const catalog::Snapshot> GetCatalogSnapshot() const {
-    SDB_ASSERT(_snapshot);
-    return _snapshot;
-  }
+  std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
 
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
@@ -224,7 +219,7 @@ class Config : public velox::config::IConfig {
   containers::FlatHashMap<std::string_view, std::string> _session;
 
   // Catalog snapshot
-  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
 
   // Transaction variable
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;

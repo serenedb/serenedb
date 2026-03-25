@@ -73,6 +73,7 @@ class DropTask {
                 task->GetContext());
       return yaclib::MakeFuture<Result>(ERROR_LOCKED);
     }
+    task->_object.reset();
     return task->Execute();
   }
 

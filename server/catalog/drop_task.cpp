@@ -176,7 +176,7 @@ AsyncResult TableDrop::Execute() {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
   SDB_ASSERT(_type != TableType::Unknown);
-  if (_type == TableType::Document) {
+  if (_type == TableType::RocksDB) {
     auto r = co_await Schedule(_shard_drop);
     if (!r.ok() || !Finalize().ok()) {
       co_return Result{ERROR_LOCKED};

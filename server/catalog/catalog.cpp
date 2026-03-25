@@ -94,6 +94,7 @@ ResultOr<CreateTableOptions> GetTableOptions(ObjectId db_id,
   return options;
 }
 
+// In case of recovery the ColumnExpr shouldn't be parsed
 struct DropTableOptions {
   TableType type;
   uint64_t columns;
@@ -617,7 +618,7 @@ template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(key);
+  auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
                                    ERROR_SERVER_DATABASE_NOT_FOUND,

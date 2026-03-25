@@ -243,10 +243,7 @@ struct CurrentSchemasFunction {
     SDB_ASSERT(conn_ctx);
     auto database_id = conn_ctx->GetDatabaseId();
     auto search_path = conn_ctx->Get<VariableType::PgSearchPath>("search_path");
-    auto catalog = SerenedServer::Instance()
-                     .getFeature<catalog::CatalogFeature>()
-                     .Global()
-                     .GetSnapshot();
+    auto catalog = conn_ctx->EnsureCatalogSnapshot();
     auto filter = [&](const std::string_view schema_name) {
       return catalog->GetSchema(database_id, schema_name) != nullptr;
     };
@@ -588,13 +585,13 @@ struct RegclassOutFunction {
     const velox::core::QueryConfig& config,
     const arg_type<int32_t>* /*input*/) {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
-    _snapshot = conn->GetCatalogSnapshot();
+    _snapshot = conn->EnsureCatalogSnapshot();
     _db_id = conn->GetDatabaseId();
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
-    result = RegclassOut(_snapshot, input);
+    result = RegclassOut(*_snapshot, input);
   }
 
   ObjectId _db_id;

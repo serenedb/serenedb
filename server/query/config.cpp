@@ -103,14 +103,16 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   return var.data() != nullptr ? std::optional<std::string>{var} : std::nullopt;
 }
 
-void Config::EnsureCatalogSnapshot() {
+std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
-    return;
+    return _snapshot;
   }
   _snapshot = SerenedServer::Instance()
                 .getFeature<catalog::CatalogFeature>()
                 .Global()
-                .GetSnapshot();
+                .GetCatalogSnapshot();
+  SDB_ASSERT(_snapshot);
+  return _snapshot;
 }
 
 std::string_view Config::GetNonDefault(std::string_view key) const {

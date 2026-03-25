@@ -74,7 +74,7 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
       return;
     }
 
-    auto snapshot = config.GetCatalogSnapshot();
+    auto snapshot = config.EnsureCatalogSnapshot();
     data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
       switch (type) {
         case ObjectType::Function:
@@ -212,9 +212,7 @@ void ResolveRelation(ObjectId database,
     resolve_view();
   } else if (data.object->GetType() == catalog::ObjectType::Index) {
     auto& index = basics::downCast<catalog::Index>(*data.object);
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = config.EnsureCatalogSnapshot();
     auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
     SDB_ASSERT(table);
     SDB_ASSERT(!data.catalog_table);
@@ -252,7 +250,6 @@ void Resolve(ObjectId database, Objects& objects, Config& config) {
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
-  config.EnsureCatalogSnapshot();
 
   auto functions = std::move(objects.getFunctions());
   for (auto& [name, old_data] : functions) {

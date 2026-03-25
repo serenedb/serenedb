@@ -166,7 +166,8 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto database = snapshot->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
   const auto access_method = absl::NullSafeStringView(stmt.accessMethod);
@@ -477,8 +478,7 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
                                  CTASState& state, velox::RowVectorPtr& batch) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
-  conn_ctx.EnsureCatalogSnapshot();
-  auto snapshot = conn_ctx.GetCatalogSnapshot();
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   std::string current_schema = conn_ctx.GetCurrentSchema();
 
   const auto& rel = *into.rel;
@@ -522,10 +522,9 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
 
   state.created = true;
 
-  // Update snapshot
+  // TODO(codeworse): CreateTableImpl should return updated snapshot with DDL
   conn_ctx.DropCatalogSnapshot();
-  conn_ctx.EnsureCatalogSnapshot();
-  snapshot = conn_ctx.GetCatalogSnapshot();
+  snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, table_name);
   SDB_ASSERT(catalog_table);
   auto& transaction = static_cast<query::Transaction&>(conn_ctx);

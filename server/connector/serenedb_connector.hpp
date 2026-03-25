@@ -113,7 +113,7 @@ std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
 
 inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
   ObjectId backfill_index_id, query::Transaction& transaction) {
-  auto snapshot = transaction.GetCatalogSnapshot();
+  auto snapshot = transaction.EnsureCatalogSnapshot();
   auto shard = snapshot->GetIndexShard(backfill_index_id);
   SDB_ASSERT(shard);
   auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
@@ -121,7 +121,7 @@ inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
     *snapshot->template GetObject<catalog::Index>(shard->GetIndexId()));
   return std::make_unique<SearchSinkBackfillWriter>(
     inverted_shard,
-    MakeAnalyzerProvider(transaction.GetCatalogSnapshot(), index),
+    MakeAnalyzerProvider(transaction.EnsureCatalogSnapshot(), index),
     index.GetColumnIds());
 }
 
@@ -137,7 +137,7 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
                                  irs::IndexWriter::Transaction>) {
       const auto& inverted_index =
         basics::downCast<catalog::InvertedIndex>(index);
-      auto snapshot = transaction.GetCatalogSnapshot();
+      auto snapshot = transaction.EnsureCatalogSnapshot();
       writers.push_back(MakeInvertedIndexWriter<Kind>(
         index_transaction, snapshot, inverted_index));
     } else {
@@ -172,7 +172,7 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   // TODO(Dronplane): Find a better way. Maybe make failpoints database
   // bindable to allow parallel execution.
   auto table_ptr =
-    transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(table_id);
+    transaction.EnsureCatalogSnapshot()->GetObject<catalog::Table>(table_id);
   SDB_ASSERT(table_ptr);
   auto one_index_fp =
     absl::StrCat(table_ptr->GetName(), "_connector_must_one_index");
@@ -921,7 +921,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
       // bindable to allow parallel execution.
       auto table_ptr =
-        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+        transaction.EnsureCatalogSnapshot()->GetObject<catalog::Table>(
+          object_key);
       SDB_ASSERT(table_ptr);
       auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
       SDB_IF_FAILURE(fail_on_ryow) {
@@ -993,13 +994,12 @@ class SereneDBConnector final : public velox::connector::Connector {
       basics::downCast<SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
     auto& transaction = serene_insert_handle.GetTransaction();
-    transaction.EnsureCatalogSnapshot();
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
 
     auto table_shard =
-      transaction.GetCatalogSnapshot()->GetTableShard(object_key);
+      transaction.EnsureCatalogSnapshot()->GetTableShard(object_key);
     SDB_ASSERT(table_shard);
     auto& table_lock = table_shard->GetTableLock();
 

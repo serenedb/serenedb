@@ -1687,6 +1687,11 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
                     magic_enum::enum_name(obj->GetType())};
     }
     auto index = basics::downCast<Index>(std::move(obj));
+    if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
+        !r.ok()) {
+      return r;
+    }
+
     if (index->GetIndexType() == IndexType::Inverted) {
       auto deps = clone->GetDependency<IndexDependency>(*(index_id));
       SDB_ASSERT(deps);
@@ -1696,10 +1701,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
         basics::downCast<search::InvertedIndexShard>(*shard).MarkDeleted();
       }
     }
-    if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
-        !r.ok()) {
-      return r;
-    }
+
     // Check that SereneDB won't open this index after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
@@ -1812,7 +1814,8 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
   });
 }
 
-std::shared_ptr<const Snapshot> LocalCatalog::GetSnapshot() const noexcept {
+std::shared_ptr<const Snapshot> LocalCatalog::GetCatalogSnapshot()
+  const noexcept {
   return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
 }
 

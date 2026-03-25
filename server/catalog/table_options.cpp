@@ -135,7 +135,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
                         CreateTableOptions& options,
                         uint32_t replication_factor, uint32_t write_concern,
                         bool enforce_replication_factor) {
-  if (request.type != std::to_underlying(TableType::Document) &&
+  if (request.type != std::to_underlying(TableType::RocksDB) &&
       request.type != std::to_underlying(TableType::File)) {
     return {ERROR_BAD_PARAMETER, "Invalid collection type: ", request.type};
   }
@@ -191,7 +191,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   } else if (request.distributeShardsLike) {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = catalog.GetCatalogSnapshot();
     auto leader = snapshot->GetTable(database_id, StaticStrings::kPublic,
                                      *request.distributeShardsLike);
     if (!leader) {
@@ -392,25 +392,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.file_info = std::move(request.file_info);
 
   return {};
-}
-
-void WriteTableName(vpack::Builder& b, ObjectId id) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c = catalog.GetSnapshot()->GetObject<catalog::Table>(id);
-  if (!c) {
-    b.add(vpack::Slice::emptyStringSlice());  // dangling reference
-  } else {
-    b.add(c->GetName());
-  }
-}
-
-std::shared_ptr<Table> GetVertexByName(ObjectId database,
-                                       std::string_view name) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<CatalogFeature>().Global();
-  return catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic,
-                                         name);
 }
 
 }  // namespace sdb::catalog

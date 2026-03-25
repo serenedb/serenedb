@@ -302,7 +302,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     auto database = _feature.server()
                       .getFeature<catalog::CatalogFeature>()
                       .Global()
-                      .GetSnapshot()
+                      .GetCatalogSnapshot()
                       ->GetDatabase(DatabaseName());
     if (!database) {
       // sending invalid schema name as SQLSTATE
@@ -1034,8 +1034,7 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   SDB_ASSERT(_current_portal);
   auto& portal = *_current_portal;
   Config& config = *portal.stmt->query->GetContext().transaction;
-  config.EnsureCatalogSnapshot();
-  portal.serialization_context.snapshot = config.GetCatalogSnapshot();
+  portal.serialization_context.snapshot = config.EnsureCatalogSnapshot();
   SDB_ASSERT(portal.serialization_context.snapshot);
   const velox::vector_size_t batch_rows = batch ? batch->size() : 0;
   if (batch_rows == 0) {

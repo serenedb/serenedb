@@ -50,7 +50,7 @@ std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
 }
 
 std::string ConnectionContext::GetCurrentSchema() const {
-  auto snapshot = query::Transaction::GetCatalogSnapshot();
+  auto snapshot = EnsureCatalogSnapshot();
   return GetCurrentSchemaFromSnapshot(snapshot);
 }
 

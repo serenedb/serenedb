@@ -488,9 +488,8 @@ std::expected<velox::Variant, DeserializeError> DeserializeParameter(
 }
 
 // TODO(codeworse): use snapshot from query
-std::string RegclassOut(
-  const std::shared_ptr<const catalog::Snapshot>& snapshot, int32_t oid) {
-  auto object = snapshot->GetObject(ObjectId{static_cast<uint64_t>(oid)});
+std::string RegclassOut(const catalog::Snapshot& snapshot, int32_t oid) {
+  auto object = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
   if (object) {
     return std::string{object->GetName()};
   }
@@ -508,7 +507,7 @@ std::string RegclassOut(
 
 // TODO(codeworse): use snapshot from query
 int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
-  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto snapshot = ctx.EnsureCatalogSnapshot();
   auto object_name = ParseObjectName(name, ctx.GetCurrentSchema());
   auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
                                         object_name.relation);

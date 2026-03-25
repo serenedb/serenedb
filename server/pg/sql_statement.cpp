@@ -61,7 +61,6 @@ auto GetRollback(const std::shared_ptr<ConnectionContext>& connection_ctx,
       return;
     }
     auto db = connection_ctx->GetDatabaseId();
-    connection_ctx->EnsureCatalogSnapshot();
     std::string current_schema = connection_ctx->GetCurrentSchema();
     const std::string_view schema =
       schemaname.empty() ? std::string_view{current_schema} : schemaname;

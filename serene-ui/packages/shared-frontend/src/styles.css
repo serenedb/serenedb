@@ -244,6 +244,13 @@ dv-tabs-container > .dv-tab:focus::after {
     margin-right: 12px !important;
 }
 
+.dv-groupview.dv-inactive-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-inactive-tab {
+    background-color: var(--color-muted) !important;
+}
+
 @font-face {
     font-family: "DMSans";
     src: url("./shared/assets/fonts/DMSans/DMSans.ttf") format("truetype");

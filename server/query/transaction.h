@@ -99,7 +99,6 @@ class Transaction : public Config {
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
-    EnsureCatalogSnapshot();
     auto snapshot = EnsureCatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);

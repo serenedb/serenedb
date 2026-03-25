@@ -41,6 +41,7 @@
 #include "connector/primary_key.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "key_utils.hpp"
+#include "pg/progress_tracker.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
@@ -2582,7 +2583,8 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
-  std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock)
+  std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
+  pg::IndexProgressReporter* progress)
   : RocksDBDataSinkBase<
       NoopSinkWriter>{NoopSinkWriter{},
                       memory_pool,
@@ -2594,7 +2596,8 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
                         w.push_back(std::move(index_writer));
                         return w;
                       }()},
-    _table_lock_guard{table_lock} {}
+    _table_lock_guard{table_lock},
+    _progress{progress} {}
 
 void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
@@ -2628,6 +2631,10 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
       break;
     }
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
+  }
+
+  if (_progress) {
+    _progress->ReportBatch(num_rows);
   }
 }
 

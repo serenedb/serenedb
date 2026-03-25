@@ -46,8 +46,9 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
-                     std::vector<PgNamespace>& values) {
-  auto schemas = catalog.GetSnapshot()->GetSchemas(database_id);
+                     std::vector<PgNamespace>& values,
+                     const catalog::Snapshot& snapshot) {
+  auto schemas = snapshot.GetSchemas(database_id);
 
   values.emplace_back(kPgCatalog);
   values.emplace_back(kPgInformationSchema);
@@ -71,7 +72,8 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgNamespace>::GetTableData(
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
   std::vector<PgNamespace> values;
-  RetrieveObjects(GetDatabaseId(), catalog, values);
+  auto snapshot = _config.EnsureCatalogSnapshot();
+  RetrieveObjects(GetDatabaseId(), catalog, values, *snapshot);
 
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgNamespace>);

@@ -117,8 +117,6 @@ inline constexpr OptionInfo kTextOptions[] = {kTextDelimiter, kTextEscape,
 inline constexpr OptionInfo kCsvOptions[] = {kCsvDelimiter, kCsvEscape,
                                              kCsvNull, kHeader};
 
-inline constexpr OptionInfo kProgress{"progress", false,
-                                      "Show progress notices during COPY"};
 inline constexpr EnumOptionInfo<CopyOnError> kOnError{
   "on_error", CopyOnError::Stop, "Error handling"};
 
@@ -130,7 +128,7 @@ inline constexpr OptionInfo kRejectLimit{
 inline constexpr EnumOptionInfo<CopyLogVerbosity> kLogVerbosity{
   "log_verbosity", CopyLogVerbosity::Default, "Logging level"};
 
-inline constexpr OptionInfo kCommonCopyFormatOptions[] = {kFormat, kProgress};
+inline constexpr OptionInfo kCommonCopyFormatOptions[] = {kFormat};
 
 inline constexpr OptionInfo kCopyTextOptions[] = {
   kTextDelimiter, kTextEscape,  kTextNull,    kHeader,

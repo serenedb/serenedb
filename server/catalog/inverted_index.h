@@ -63,7 +63,9 @@ class InvertedIndex final : public Index {
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 
-  ColumnAnalyzer GetColumnAnalyzer(catalog::Column::Id columnd_id) const;
+  ColumnAnalyzer GetColumnAnalyzer(
+    const std::shared_ptr<const Snapshot>& snapshot,
+    catalog::Column::Id columnd_id) const;
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 

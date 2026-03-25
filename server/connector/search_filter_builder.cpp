@@ -20,6 +20,8 @@
 
 #include "search_filter_builder.hpp"
 
+#include "rocksdb_filter.hpp"
+
 // NOLINTBEGIN
 // Need this header to stay before iresearch/utils/wildcard_utils.hpp to avoid
 // conflict in DCHECK macros see issue #230
@@ -231,14 +233,17 @@ Filter& Negate(Source& parent) {
 
 enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
-ComparisonOp GetComparisonOp(const std::string& name) {
-  if (name == "lte" || name.ends_with("_lte")) {
+ComparisonOp GetComparisonOp(const velox::core::CallTypedExpr& call) {
+  if (IsCallOf(&call, "_lte")) {
     return ComparisonOp::Le;
-  } else if (name == "lt" || name.ends_with("_lt")) {
+  }
+  if (IsCallOf(&call, "_lt")) {
     return ComparisonOp::Lt;
-  } else if (name == "gte" || name.ends_with("_gte")) {
+  }
+  if (IsCallOf(&call, "_gte")) {
     return ComparisonOp::Ge;
-  } else if (name == "gt" || name.ends_with("_gt")) {
+  }
+  if (IsCallOf(&call, "_gt")) {
     return ComparisonOp::Gt;
   }
   return ComparisonOp::None;
@@ -272,7 +277,7 @@ Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
         }
         const auto& call =
           basics::downCast<const velox::core::CallTypedExpr>(*input);
-        return GetComparisonOp(call.name()) != ComparisonOp::None;
+        return GetComparisonOp(call) != ComparisonOp::None;
       })) {
     // DeMorgan`s law could be used if we negate group of comparisons. As
     // comparisons consume negation by invertion we can reduce number of NOT
@@ -298,41 +303,7 @@ Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
   return {};
 }
 
-bool IsNotExpr(const std::string& name) {
-  return name == "not" || name.ends_with("_not");
-}
-
-bool IsEqualityOp(const std::string& name, bool& not_equal) {
-  if (name == "eq" || name.ends_with("_eq")) {
-    not_equal = false;
-    return true;
-  }
-
-  if (name == "neq" || name.ends_with("_neq")) {
-    not_equal = true;
-    return true;
-  }
-
-  return false;
-}
-
 bool IsIn(std::string_view name) { return name == "in"; }
-
-bool IsNullEq(std::string_view name, bool& negated) {
-  if (name == "isnull" || name.ends_with("_isnull")) {
-    negated = false;
-    return true;
-  }
-  if (name == "isnotnull" || name.ends_with("_isnotnull")) {
-    negated = true;
-    return true;
-  }
-  return false;
-}
-
-bool IsLike(std::string_view name) {
-  return name == "like" || name.ends_with("_like");
-}
 
 template<bool GenericVersion>
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
@@ -949,19 +920,19 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   const auto& call =
     basics::downCast<const velox::core::CallTypedExpr>(*expr.get());
 
-  if (IsNotExpr(call.name())) {
+  if (IsCallOf(&call, "_not")) {
     auto negated_ctx = ctx;
     negated_ctx.negated = !ctx.negated;
     SDB_ASSERT(call.inputs().size() == 1);
     return FromVeloxExpression(filter, negated_ctx, call.inputs()[0]);
   }
 
-  bool negated;
-  if (IsNullEq(call.name(), negated)) {
+  if (IsCallOf(&call, "_isnull")) {
+    return FromVeloxIsNull(filter, ctx, call);
+  }
+  if (IsCallOf(&call, "_isnotnull")) {
     VeloxFilterContext sub_ctx = ctx;
-    if (negated) {
-      sub_ctx.negated = !ctx.negated;
-    }
+    sub_ctx.negated = !ctx.negated;
     return FromVeloxIsNull(filter, sub_ctx, call);
   }
 
@@ -977,13 +948,16 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxBinaryEq<false>(filter, ctx, call, false);
   }
 
-  if (IsEqualityOp(call.name(), negated)) {
-    return FromVeloxBinaryEq<true>(filter, ctx, call, negated);
+  if (IsCallOf(&call, "_eq")) {
+    return FromVeloxBinaryEq<true>(filter, ctx, call, false);
+  }
+  if (IsCallOf(&call, "_neq")) {
+    return FromVeloxBinaryEq<true>(filter, ctx, call, true);
   }
 
   // This handles also BETWEEN as it is currently executed as conjunction of
   // comparisons That is why there is no dedicated BETWEEN handler.
-  const auto comparison_op = GetComparisonOp(call.name());
+  const auto comparison_op = GetComparisonOp(call);
   if (comparison_op != ComparisonOp::None) {
     if (call.name().starts_with("sdb_term_")) {
       return FromVeloxComparison<false>(filter, ctx, call, comparison_op);
@@ -1004,7 +978,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxLike<false>(filter, ctx, call);
   }
 
-  if (IsLike(call.name())) {
+  if (IsCallOf(&call, "_like")) {
     return FromVeloxLike<true>(filter, ctx, call);
   }
 

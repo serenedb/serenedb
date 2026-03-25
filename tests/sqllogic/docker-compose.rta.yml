@@ -12,6 +12,8 @@ services:
       sh -c '
         exec /usr/sbin/serened \
           --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+          --server.endpoint pgsql+ssl://0.0.0.0:7778 \
+          --ssl.keyfile /serenedb/resources/ca.pem \
           --server.authentication 0 \
           --log.foreground-tty true
       '
@@ -38,6 +40,7 @@ services:
           --host serenedb-single \
           --single-port 7777 \
           --test "sdb/**/*.test*" \
+          --single-port-ssl 7778 \
           --junit /logs/rta-tests \
           --protocol both \
           --runner /sqllogictest-rs

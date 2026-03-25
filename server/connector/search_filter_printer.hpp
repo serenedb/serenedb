@@ -48,8 +48,4 @@ void AbslStringify(Sink& sink, const Filter& filter) {
   sink.Append(ToString(filter));
 }
 
-inline std::ostream& operator<<(std::ostream& os, const Filter& filter) {
-  return os << ToString(filter);
-}
-
 }  // namespace irs

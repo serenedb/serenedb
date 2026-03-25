@@ -26,6 +26,7 @@
 #include "connector/primary_key.hpp"
 #include "connector/rocksdb_materializer.hpp"
 #include "connector/search_remove_filter.hpp"
+#include "connector/text_materializer.hpp"
 #include "velox/core/PlanNode.h"
 
 namespace sdb::connector {
@@ -189,5 +190,6 @@ void SearchDataSource<Materializer>::cancel() {
 
 template class SearchDataSource<RocksDBMaterializer>;
 template class SearchDataSource<ParquetMaterializer>;
+template class SearchDataSource<TextMaterializer>;
 
 }  // namespace sdb::connector

@@ -330,3 +330,82 @@ DROP TABLE babsky_ext;
 
 statement ok
 DROP TABLE babsky_src;
+
+
+# index backfill from external (text/csv) table
+
+statement ok
+CREATE TABLE text_idx_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO text_idx_src VALUES
+  (1, 'pudge goes mid every game', 'clickclack university'),
+  (2, 'anchin-chan reads manga all day', 'clickclack university'),
+  (3, 'vedernikoff carries team again', 'deadinside academy'),
+  (4, 'gayazov plays mass effect', 'deadinside academy'),
+  (5, 'krivda writes sql at night', 'clickclack university');
+
+statement count 5
+COPY text_idx_src TO '/tmp/${__DATABASE__}_text_idx_memes.csv';
+
+statement ok
+CREATE TABLE text_idx_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_text_idx_memes.csv'
+);
+
+statement ok
+CREATE INDEX text_idx_ext_idx ON text_idx_ext USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'anchin-chan') ORDER BY a;
+----
+a	b
+2	anchin-chan reads manga all day
+
+query
+SELECT a, b, c FROM text_idx_ext_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+5	krivda writes sql at night	clickclack university
+
+query
+SELECT a, b, c FROM text_idx_ext_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+----
+a	b	c
+3	vedernikoff carries team again	deadinside academy
+
+query
+SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+4	gayazov plays mass effect
+
+query
+SELECT * FROM text_idx_ext_idx;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+3	vedernikoff carries team again	deadinside academy
+4	gayazov plays mass effect	deadinside academy
+5	krivda writes sql at night	clickclack university
+
+statement ok
+DROP TABLE text_idx_ext;
+
+statement ok
+DROP TABLE text_idx_src;

@@ -12,6 +12,7 @@ add_library(
     file_table.cpp
     rocksdb_materializer.cpp
     parquet_materializer.cpp
+    text_materializer.cpp
     search_count_data_source.cpp
     search_scan_data_source.cpp
     search_filter_builder.cpp

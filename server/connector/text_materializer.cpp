@@ -59,7 +59,7 @@ velox::RowVectorPtr TextMaterializer::ReadRows(
     velox::BaseVector::create<velox::RowVector>(_output_type, total, &_pool);
   for (size_t i = 0; i < row_keys.size(); ++i) {
     auto file_offset = decode(row_keys[i]);
-    text_row_reader.nextAtOffset(file_offset, output->size(), 1, output);
+    text_row_reader.nextAtOffset(file_offset, i, 1, output);
   }
 
   if (output->size() == 0) {

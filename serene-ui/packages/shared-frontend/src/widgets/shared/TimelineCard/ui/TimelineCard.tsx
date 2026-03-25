@@ -28,11 +28,15 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
 
     return (
         <ButtonCard>
-            <ButtonCardButtonContent variant="thirdly">
-                <ClockIcon />
-                {displayTime !== null && displayTime !== undefined
-                    ? `${Math.round(displayTime)} ms`
-                    : "-- ms"}
+            <ButtonCardButtonContent variant="secondary">
+                <div className="flex items-center px-3 border-r-[0.5px] h-full">
+                    <ClockIcon />
+                    <p className="text-xs ml-2 text-foreground">
+                        {displayTime !== null && displayTime !== undefined
+                            ? `${Math.round(displayTime)} ms`
+                            : "-- ms"}
+                    </p>
+                </div>
             </ButtonCardButtonContent>
             {!disabled && (
                 <ButtonCardContent className="w-80">

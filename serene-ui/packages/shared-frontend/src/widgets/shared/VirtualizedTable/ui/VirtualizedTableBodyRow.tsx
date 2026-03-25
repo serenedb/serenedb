@@ -29,7 +29,7 @@ export const VirtualizedTableBodyRow = ({
             data-index={virtualRow.index}
             key={row.id}
             className={cn("flex absolute w-full", {
-                "bg-secondary/50": rowIndex % 2 === 0,
+                "bg-accent": rowIndex % 2 === 0,
             })}
             style={{
                 transform: `translateY(${virtualRow.start}px)`,

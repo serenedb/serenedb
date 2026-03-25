@@ -28,7 +28,7 @@ export const OpenSavedQueriesModalButton: React.FC<
         <Button
             onClick={handleOpenModal}
             disabled={!query}
-            variant="thirdly"
+            variant="secondary"
             className={className}
             {...props}>
             Save

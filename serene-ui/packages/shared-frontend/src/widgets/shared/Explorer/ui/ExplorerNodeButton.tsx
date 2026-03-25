@@ -35,20 +35,22 @@ export const ExplorerNodeButton = ({
     rightText,
 }: ExplorerNodeButtonProps) => {
     return (
-        <div style={style}>
-            <Button
-                variant="ghost"
-                size="small"
+        <div
+            style={{
+                height: "100%",
+                ...style,
+            }}>
+            <div
                 className={cn(
                     className,
-                    "w-full justify-start text-secondary-foreground hover:text-secondary-foreground dark:hover:text-primary-foreground/50 dark:text-primary-foreground/50 rounded-none hover:dark:bg-transparent",
+                    "pl-4 flex w-full h-full items-center justify-start border-none text-foreground dark:hover:bg-accent",
                 )}
                 onClick={onClick}>
                 {showArrow && onClick && (
                     <ArrowDownIcon className={!open ? "-rotate-90" : ""} />
                 )}
-                {icon && icon}
-                {title}
+                <div className="ml-2">{icon && icon}</div>
+                <p className="text-xs ml-1.5">{title}</p>
                 {isLoading && (
                     <LoaderIcon className="size-3.5 ml-1 animate-spin" />
                 )}
@@ -72,7 +74,7 @@ export const ExplorerNodeButton = ({
                         {rightText}
                     </span>
                 )}
-            </Button>
+            </div>
         </div>
     );
 };

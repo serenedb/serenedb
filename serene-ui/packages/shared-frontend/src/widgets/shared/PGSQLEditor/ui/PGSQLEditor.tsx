@@ -8,8 +8,8 @@ const ACTIVE_ERROR_STATEMENT_DECORATION_CLASS =
     "serene-active-error-statement-decoration";
 
 interface PGSQLEditorProps {
-    value: string;
-    onChange: (value: string) => void;
+    value?: string;
+    onChange?: (value: string) => void;
     readOnly?: boolean;
     onExecute?: (mode: "sequential" | "transaction") => void;
     onExecuteInNewTab?: () => void;

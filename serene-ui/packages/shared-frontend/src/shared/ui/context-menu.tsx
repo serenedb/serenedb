@@ -16,6 +16,7 @@ function ContextMenuTrigger({
 }: React.ComponentProps<typeof ContextMenuPrimitive.Trigger>) {
     return (
         <ContextMenuPrimitive.Trigger
+            className="h-full block"
             data-slot="context-menu-trigger"
             {...props}
         />

@@ -23,7 +23,7 @@ import type { ExplorerNodeData } from "./types";
 
 export const nodeTemplates = {
     connection: {
-        icon: <ConnectionIcon />,
+        icon: <ConnectionIcon className="size-3.5" />,
         getChildrenQuery: () => ({
             query: "SELECT datname as name FROM pg_database WHERE datistemplate = false ORDER BY datname",
             database: "",
@@ -61,16 +61,8 @@ export const nodeTemplates = {
                     type: "catalogs",
                 },
                 {
-                    name: "Publications",
-                    type: "publications",
-                },
-                {
                     name: "Schemas",
                     type: "schemas",
-                },
-                {
-                    name: "Subscriptions",
-                    type: "subscriptions",
                 },
             ].map((db, index) => ({
                 id: node.id + "/" + "d-" + index,
@@ -84,7 +76,7 @@ export const nodeTemplates = {
         },
     },
     schemas: {
-        icon: <TreeSchemaIcon />,
+        icon: <TreeSchemaIcon className="size-3.5" />,
         getChildrenQuery: (node: ExplorerNodeData) => ({
             query: `SELECT
     n.oid AS id,
@@ -117,7 +109,7 @@ WHERE s.schema_name NOT IN ('information_schema')
         getNodes: () => [],
     },
     schema: {
-        icon: <TreeSchemaIcon />,
+        icon: <TreeSchemaIcon className="size-3.5" />,
         getChildrenQuery: () => {},
         nodeType: "static",
         formatToNodes: () => [],

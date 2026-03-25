@@ -1,9 +1,14 @@
-import { SidebarIcon } from "lucide-react";
 import type { DashboardSchema } from "@serene-ui/shared-core";
 import React from "react";
 import { toast } from "sonner";
 import { useUpdateDashboard } from "../../../../entities/dashboard";
-import { Button, getErrorMessage, RefreshIcon, StarIcon } from "../../../../shared";
+import {
+    Button,
+    getErrorMessage,
+    RefreshIcon,
+    SidebarIcon,
+    StarIcon,
+} from "../../../../shared";
 
 interface DashboardsTopbarProps {
     currentDashboard?: DashboardSchema | null;
@@ -32,7 +37,10 @@ export const DashboardsTopbar: React.FC<DashboardsTopbarProps> = ({
             });
         } catch (error) {
             toast.error("Failed to update favorite", {
-                description: getErrorMessage(error, "Failed to update favorite"),
+                description: getErrorMessage(
+                    error,
+                    "Failed to update favorite",
+                ),
             });
         }
     };

@@ -50,7 +50,7 @@ export const ExplorerStaticNode = ({
 
     return (
         <ContextMenu>
-            <ContextMenuTrigger>
+            <ContextMenuTrigger className="h-full block">
                 <ExplorerNodeButton
                     title={node.data.name}
                     onClick={handleClick}

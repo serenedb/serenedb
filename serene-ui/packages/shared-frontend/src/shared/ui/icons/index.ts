@@ -23,6 +23,8 @@ export {
     DownloadIcon as ExportIcon,
     EllipsisVerticalIcon as ThreeDotsIcon,
     Settings2Icon as DashboardSettingsIcon,
+    NewspaperIcon as NewsIcon,
+    SidebarIcon as SidebarIcon,
 } from "lucide-react";
 // styled icons
 export { ArrowDownIcon } from "./ArrowDownIcon";

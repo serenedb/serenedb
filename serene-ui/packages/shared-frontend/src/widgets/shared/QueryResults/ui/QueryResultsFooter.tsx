@@ -1,5 +1,6 @@
 import { DownloadResultsButton } from "@serene-ui/shared-frontend/features";
 import {
+    ArrowDownIcon,
     Button,
     Input,
     Popover,
@@ -42,6 +43,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
 }) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [searchValue, setSearchValue] = useState("");
+    const [viewMode, setViewMode] = useState<"viewer" | "json">("viewer");
     const queueTime =
         created_at && execution_started_at
             ? new Date(execution_started_at).getTime() -
@@ -88,7 +90,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
         isActive: boolean,
     ) => {
         if (isActive) {
-            return "bg-primary text-primary-foreground hover:bg-primary/90";
+            return "bg-transparent text-foreground hover:bg-accent";
         }
 
         if (status === "failed") {
@@ -138,27 +140,60 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
     };
 
     return (
-        <Tabs defaultValue="viewer" className="h-full flex flex-col min-h-0">
+        <Tabs
+            value={viewMode}
+            onValueChange={(value) => {
+                setViewMode(value as "viewer" | "json");
+            }}
+            className="h-full flex flex-col min-h-0">
             <div className="flex-1 min-h-0">{children}</div>
             <TabsList className="mt-0 h-max px-0">
-                <div className="flex w-full p-2 border-t border-border justify-between">
-                    <div className="flex gap-1 items-center">
-                        <Button variant="thirdly">
+                <div className="flex w-full border-t border-border justify-between">
+                    <div className="flex items-center">
+                        <div className="flex items-center px-3 border-r-[0.5px] h-full">
                             <TreeColumnsIcon />
-                            {rows?.length || 0}{" "}
-                            {rows?.length === 1 ? "element" : "elements"}
-                        </Button>
+                            <p className="text-xs ml-2 text-foreground">
+                                {rows?.length || 0}{" "}
+                                {rows?.length === 1 ? "element" : "elements"}
+                            </p>
+                        </div>
                         <TimelineCard
                             title="Query Execution Timeline"
                             items={timelineItems}
                             displayTime={executionTime}
                             disabled={true}
                         />
+                    </div>
+                    <div className="flex">
+                        {showViewModes ? (
+                            <div>
+                                {viewMode === "viewer" ? (
+                                    <TabsTrigger
+                                        key="to-json"
+                                        className="dark:bg-transparent dark:hover:bg-accent duration-300 px-3 text-xs w-max rounded-none h-full border-0 border-l-[0.5px] border-border"
+                                        value="json">
+                                        JSON
+                                    </TabsTrigger>
+                                ) : (
+                                    <TabsTrigger
+                                        key="to-viewer"
+                                        className="dark:bg-transparent dark:hover:bg-accent duration-300 px-3 text-xs w-max rounded-none h-full border-0 border-l-[0.5px] border-border"
+                                        value="viewer">
+                                        Viewer
+                                    </TabsTrigger>
+                                )}
+                            </div>
+                        ) : (
+                            <div />
+                        )}
+
+                        <DownloadResultsButton rows={rows} />
                         {results.length > 1 && (
-                            <div className="flex gap-1 items-center">
+                            <div className="flex items-center h-full">
                                 <Button
-                                    variant="outline"
-                                    size="iconSmall"
+                                    variant="ghost"
+                                    className="rounded-none h-full border-l-[0.5px] w-9 "
+                                    size="icon"
                                     disabled={!canGoPrevious}
                                     onClick={() => {
                                         if (canGoPrevious) {
@@ -167,7 +202,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                             );
                                         }
                                     }}>
-                                    {"<"}
+                                    <ArrowDownIcon className="rotate-90" />
                                 </Button>
                                 <Popover
                                     open={isPopoverOpen}
@@ -179,10 +214,10 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                     }}>
                                     <PopoverTrigger asChild>
                                         <Button
-                                            variant="outline"
+                                            variant="ghost"
                                             size="small"
                                             className={cn(
-                                                "h-8 min-w-18 px-2",
+                                                "min-w-18 px-2 rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]",
                                                 getResultButtonClassName(
                                                     results[selectedResultIndex]
                                                         ?.status || "",
@@ -269,8 +304,9 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                     </PopoverContent>
                                 </Popover>
                                 <Button
-                                    variant="outline"
-                                    size="iconSmall"
+                                    className="rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]"
+                                    variant="ghost"
+                                    size="icon"
                                     disabled={!canGoNext}
                                     onClick={() => {
                                         if (canGoNext) {
@@ -279,23 +315,10 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                             );
                                         }
                                     }}>
-                                    {">"}
+                                    <ArrowDownIcon className="rotate-[-90deg]" />
                                 </Button>
                             </div>
                         )}
-                    </div>
-                    {showViewModes ? (
-                        <div className="flex gap-1">
-                            <TabsTrigger value="viewer">Viewer</TabsTrigger>
-                            <TabsTrigger className="px-2.5 w-max" value="json">
-                                JSON
-                            </TabsTrigger>
-                        </div>
-                    ) : (
-                        <div />
-                    )}
-                    <div className="flex gap-1">
-                        <DownloadResultsButton rows={rows} />
                     </div>
                 </div>
             </TabsList>

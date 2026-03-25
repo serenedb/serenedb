@@ -4,12 +4,11 @@ import {
     useSupportModal,
 } from "@serene-ui/shared-frontend/features";
 import {
+    Button,
     DarkThemeIcon,
+    GithubIcon,
     LightThemeIcon,
-    SidebarGroup,
-    SidebarMenu,
-    SidebarMenuButton,
-    SidebarMenuItem,
+    NewsIcon,
     SupportIcon,
 } from "@serene-ui/shared-frontend/shared";
 import { SearchIcon } from "lucide-react";
@@ -23,6 +22,11 @@ export const NavBottom = () => {
     const { theme, changeTheme } = useChangeTheme();
 
     const buttons: SidebarButton[] = [
+        {
+            title: "News",
+            icon: <NewsIcon />,
+            action: () => {},
+        },
         {
             title: "Change theme",
             icon: theme === "dark" ? <LightThemeIcon /> : <DarkThemeIcon />,
@@ -48,20 +52,26 @@ export const NavBottom = () => {
     };
 
     return (
-        <SidebarGroup className="mt-auto">
-            <SidebarMenu>
-                {buttons.map((item, index) => (
-                    <SidebarMenuItem key={index}>
-                        <SidebarMenuButton
-                            title={item.title.toLowerCase()}
-                            onClick={getAction(item)}
-                            tooltip={item.title}>
+        <div className="mt-auto flex flex-col gap-1">
+            <div className="p-2.5 flex flex-col gap-1.5">
+                {buttons.map((item, index) => {
+                    return (
+                        <Button
+                            variant="ghost"
+                            key={index}
+                            size={"icon"}
+                            onClick={getAction(item)}>
                             {item.icon}
-                            <span>{item.title}</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                ))}
-            </SidebarMenu>
-        </SidebarGroup>
+                        </Button>
+                    );
+                })}
+                <Button
+                    size="icon"
+                    variant="secondary"
+                    title="Open GitHub repository">
+                    <GithubIcon />
+                </Button>
+            </div>
+        </div>
     );
 };

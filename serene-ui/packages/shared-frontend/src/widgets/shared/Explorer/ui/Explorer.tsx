@@ -68,6 +68,7 @@ const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
                     <Tree
                         className="scrollbar fade-in"
                         searchTerm={searchTerm}
+                        indent={8}
                         renderRow={Row}
                         width={size.width}
                         height={size.height}
@@ -115,7 +116,7 @@ export const Row = ({
     return (
         <div
             {...attrs}
-            className="focus:outline-none focus:bg-secondary hover:bg-secondary/100"
+            className="focus:outline-none focus:bg-accent hover:bg-accent/100"
             tabIndex={0}
             ref={innerRef}
             onKeyDown={(e) => {

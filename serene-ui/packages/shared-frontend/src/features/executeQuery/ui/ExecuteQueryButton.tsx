@@ -14,7 +14,7 @@ interface ExecuteQueryButtonProps {
     bind_vars?: any[];
     saveToHistory?: boolean;
     limit?: number;
-    handleJobId: (jobId: number) => void;
+    handleJobId?: (jobId: number) => void;
     onExecute?: (mode: "sequential" | "transaction") => Promise<void> | void;
     onBeforeExecute?: () => void;
     onExecuteInNewTab?: () => void;
@@ -53,16 +53,15 @@ export const ExecuteQueryButton = ({
                         limit || 1000,
                     );
                     if (result.success) {
-                        handleJobId(result.jobId);
+                        handleJobId?.(result.jobId);
                     }
                 }}
                 disabled={disabled}>
-                Execute
+                Run
             </Button>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                     <Button
-                        size="icon"
                         className="rounded-l-none border-l border-[#ffffff10] outline-none"
                         title="Execute options"
                         aria-label="Execute options"

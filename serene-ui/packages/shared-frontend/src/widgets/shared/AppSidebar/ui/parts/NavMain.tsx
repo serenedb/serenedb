@@ -1,16 +1,14 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+    Button,
+    cn,
     ConsoleIcon,
     DashboardsIcon,
     navigationMap,
     ReplicationIcon,
-    SidebarGroup,
-    SidebarGroupLabel,
-    SidebarMenu,
-    SidebarMenuButton,
-    SidebarMenuItem,
 } from "@serene-ui/shared-frontend/shared";
 import type { SidebarButton } from "../../model/types";
+import { useMemo } from "react";
 
 export const NavMain = () => {
     const navigate = useNavigate();
@@ -26,11 +24,6 @@ export const NavMain = () => {
             icon: <DashboardsIcon />,
             link: navigationMap.dashboards,
         },
-        {
-            title: "Replication",
-            icon: <ReplicationIcon />,
-            link: navigationMap.replication,
-        },
     ];
 
     const getAction = (item: SidebarButton) => {
@@ -41,27 +34,22 @@ export const NavMain = () => {
     };
 
     return (
-        <SidebarGroup>
-            <SidebarGroupLabel>Main</SidebarGroupLabel>
-            <SidebarMenu>
-                {buttons.map((item, index) => (
-                    <SidebarMenuItem key={index}>
-                        <SidebarMenuButton
-                            isActive={
-                                item.link === navigationMap.dashboards
-                                    ? location.pathname.startsWith(
-                                          `${navigationMap.dashboards}`,
-                                      )
-                                    : location.pathname === item.link
-                            }
-                            onClick={getAction(item)}
-                            tooltip={item.title}>
-                            {item.icon}
-                            <span>{item.title}</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                ))}
-            </SidebarMenu>
-        </SidebarGroup>
+        <div className="p-2.5 flex flex-col gap-1.5">
+            {buttons.map((item, index) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        className={cn("", {
+                            "bg-accent text-accent-foreground":
+                                item.link && location.pathname === item.link,
+                        })}
+                        key={index}
+                        size={"icon"}
+                        onClick={getAction(item)}>
+                        {item.icon}
+                    </Button>
+                );
+            })}
+        </div>
     );
 };

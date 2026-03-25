@@ -25,15 +25,8 @@ const ButtonCardButtonContent = ({
     ...props
 }: ButtonCardButtonContentProps) => {
     return (
-        <HoverCardTrigger asChild>
-            <Button
-                asChild={asChild}
-                className={className}
-                variant={variant}
-                size={size}
-                {...props}>
-                {children}
-            </Button>
+        <HoverCardTrigger className="h-full" asChild>
+            <div>{children}</div>
         </HoverCardTrigger>
     );
 };

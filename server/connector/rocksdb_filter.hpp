@@ -27,10 +27,12 @@
 #include <velox/type/Variant.h>
 #include <velox/vector/ComplexVector.h>
 
+#include <cassert>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/fwd.h"
@@ -101,5 +103,15 @@ struct ExtractAndRewriteResult {
 // Sorts points in-place by PK key order. Column order matches the pk_type used
 // during ToSpecificPoints. Comparison uses velox::variant::operator<.
 void SortPoints(std::vector<SpecificPoint>& points);
+
+// Returns true if `call` matches a velox function named either `suffix[1:]`
+// (bare name, e.g. "eq") or anything ending with `suffix` (prefixed name, e.g.
+// "presto_eq"). `suffix` must start with '_'.
+[[nodiscard]] inline bool IsCallOf(const velox::core::CallTypedExpr* call,
+                                   std::string_view suffix) {
+  SDB_ASSERT(!suffix.empty() && suffix[0] == '_');
+  const auto& name = call->name();
+  return name == suffix.substr(1) || name.ends_with(suffix);
+}
 
 }  // namespace sdb::connector

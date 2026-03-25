@@ -206,12 +206,6 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
-bool IsCallOf(const velox::core::CallTypedExpr* call, std::string_view suffix) {
-  SDB_ASSERT(suffix[0] == '_');
-  auto name = suffix.substr(1);
-  return call->name() == name || call->name().ends_with(suffix);
-}
-
 }  // namespace
 
 bool Point::IsSpecific() const {

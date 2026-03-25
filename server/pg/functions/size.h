@@ -42,10 +42,18 @@ template<typename T>
 struct PgDatabaseSize {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config,
+    const arg_type<velox::Varchar>& /*input*/
+  ) {
+    auto conn = basics::downCast<const ConnectionContext>(config.config());
+    snapshot = conn->EnsureCatalogSnapshot();
+  }
+
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<int64_t>& result, const arg_type<velox::Varchar>& input) {
     std::string_view database_name = input;
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
     auto database = snapshot->GetDatabase(database_name);
     if (!database) {
       THROW_SQL_ERROR(
@@ -54,6 +62,8 @@ struct PgDatabaseSize {
     }
     result = GetServerEngine().GetDatabaseSize(*snapshot, database->GetId());
   }
+
+  std::shared_ptr<const catalog::Snapshot> snapshot;
 };
 
 template<typename T>
@@ -67,12 +77,12 @@ struct PgTableSize {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
     db_id = conn->GetDatabaseId();
     current_schema = conn->GetCurrentSchema();
+    snapshot = conn->EnsureCatalogSnapshot();
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<int64_t>& result, const arg_type<velox::Varchar>& input) {
     auto object_name = ParseObjectName(input, current_schema);
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
     auto table =
       snapshot->GetTable(db_id, object_name.schema, object_name.relation);
     if (!table) {
@@ -84,6 +94,7 @@ struct PgTableSize {
   }
   ObjectId db_id;
   std::string current_schema;
+  std::shared_ptr<const catalog::Snapshot> snapshot;
 };
 
 template<typename T>
@@ -95,12 +106,12 @@ struct PgSchemaSize {
     const arg_type<velox::Varchar>* /*input*/) {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
     db_id = conn->GetDatabaseId();
+    snapshot = conn->EnsureCatalogSnapshot();
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<int64_t>& result, const arg_type<velox::Varchar>& input) {
     std::string_view schema_name = input;
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
     if (!snapshot->GetSchema(db_id, schema_name)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_NAME),
                       ERR_MSG("schema \"", schema_name, "\" does not exist"));
@@ -108,6 +119,7 @@ struct PgSchemaSize {
     result = GetServerEngine().GetSchemaSize(*snapshot, db_id, schema_name);
   }
   ObjectId db_id;
+  std::shared_ptr<const catalog::Snapshot> snapshot;
 };
 
 }  // namespace sdb::pg

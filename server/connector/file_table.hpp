@@ -44,9 +44,12 @@
 #include "basics/message_buffer.h"
 #include "catalog/storage_options.h"
 
-namespace sdb::connector {
+namespace sdb::pg {
 
-using ReportCallback = std::function<void(uint64_t)>;
+class CopyProgressReporter;
+
+}  // namespace sdb::pg
+namespace sdb::connector {
 
 struct FileConnectorSplit final : public velox::connector::ConnectorSplit {
   const uint64_t start;
@@ -69,6 +72,7 @@ struct DwioReaderOptions {
 struct WriterOptions {
   DwioWriterOptions dwio;
   std::shared_ptr<StorageOptions> storage_options;
+  pg::CopyProgressReporter* progress = nullptr;
 
   const auto& Writer() const { return dwio.writer; }
   auto& Writer() { return dwio.writer; }
@@ -76,8 +80,7 @@ struct WriterOptions {
 
 struct ReaderOptions {
   DwioReaderOptions dwio;
-  // if set then progress messages are written here
-  ReportCallback report_callback;
+  pg::CopyProgressReporter* progress = nullptr;
   std::shared_ptr<StorageOptions> storage_options;
 
   const auto& Reader() const { return dwio.reader; }
@@ -245,7 +248,9 @@ class FileDataSink final : public velox::connector::DataSink {
 
  private:
   std::shared_ptr<velox::dwio::common::Writer> _writer;
+  velox::dwio::common::FileSink* _sink = nullptr;
   velox::connector::DataSink::Stats _stats;
+  pg::CopyProgressReporter* _progress = nullptr;
 };
 
 class FileDataSource final : public velox::connector::DataSource {
@@ -281,9 +286,11 @@ class FileDataSource final : public velox::connector::DataSource {
     velox::column_index_t output_channel,
     const std::shared_ptr<velox::common::Filter>& filter) final {}
 
-  uint64_t getCompletedBytes() final { return 0; }
+  void cancel() final {}
 
-  uint64_t getCompletedRows() final { return _completed_rows; }
+  uint64_t getCompletedBytes() final { return _completed_bytes; }
+
+  uint64_t getCompletedRows() final { return 0; }
 
  private:
   velox::memory::MemoryPool* _pool;
@@ -295,9 +302,9 @@ class FileDataSource final : public velox::connector::DataSource {
   // We store RowReaderOptions to keep ScanSpec alive
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
-  uint64_t _completed_rows = 0;
-  std::chrono::high_resolution_clock::time_point _last_report_time;
-  ReportCallback _report_callback;
+  uint64_t _completed_bytes = 0;
+  uint64_t _prev_bytes_read = 0;
+  pg::CopyProgressReporter* _progress = nullptr;
 };
 
 }  // namespace sdb::connector

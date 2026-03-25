@@ -120,7 +120,7 @@ class LocalCatalog final : public LogicalCatalog,
                          std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
-  std::shared_ptr<const Snapshot> GetSnapshot() const noexcept final;
+  std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;

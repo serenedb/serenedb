@@ -42,7 +42,6 @@ enum class ViewContext {
 
 enum class ViewType : uint8_t {
   ViewSearch = 0,
-  ViewGraph,
   ViewSqlQuery,
 };
 
@@ -98,8 +97,6 @@ template<>
 constexpr customize::customize_t customize::enum_name<sdb::catalog::ViewType>(
   sdb::catalog::ViewType value) noexcept {
   switch (value) {
-    case sdb::catalog::ViewType::ViewGraph:
-      return "graph";
     case sdb::catalog::ViewType::ViewSearch:
       return "search-alias";
     case sdb::catalog::ViewType::ViewSqlQuery:

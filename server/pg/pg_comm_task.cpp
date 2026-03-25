@@ -173,9 +173,11 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
 PgSQLCommTaskBase::~PgSQLCommTaskBase() {
-  if (_connection_ctx && _connection_ctx->HasTransactionBegin()) {
-    // if it doesn't have BEGIN - it's supposed to be rollbacked / commited
-    // before, there're checks in ~Transaction to ensure that.
+  if (_connection_ctx) {
+    // Rollback unconditionally: even for auto-commit connections
+    // (HasTransactionBegin() == false), Config::_snapshot may be set and must
+    // be released via Destroy() to avoid unreleased RocksDB snapshots at
+    // shutdown.
     std::ignore = _connection_ctx->Rollback();
   }
   if (_key != 0) {
@@ -300,7 +302,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     auto database = _feature.server()
                       .getFeature<catalog::CatalogFeature>()
                       .Global()
-                      .GetSnapshot()
+                      .GetCatalogSnapshot()
                       ->GetDatabase(DatabaseName());
     if (!database) {
       // sending invalid schema name as SQLSTATE
@@ -340,7 +342,6 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     // authRes->auth.authMethod = hba::UserAuth::Password;
 
     if (auth.auth.auth_method == hba::UserAuth::Trust) {
-      _database = std::move(database);
       // _session_ctx.auth_method = auth.auth.auth_method;
       // _session_ctx.session_user = auth.user;
       // _session_ctx.user = _session_ctx.user;
@@ -1032,6 +1033,9 @@ void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   SDB_ASSERT(_current_portal);
   auto& portal = *_current_portal;
+  Config& config = *portal.stmt->query->GetContext().transaction;
+  portal.serialization_context.snapshot = config.EnsureCatalogSnapshot();
+  SDB_ASSERT(portal.serialization_context.snapshot);
   const velox::vector_size_t batch_rows = batch ? batch->size() : 0;
   if (batch_rows == 0) {
     return;
@@ -1273,7 +1277,10 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
   std::lock_guard lock{_queue_mutex};
   if (_current_packet_type == PQ_MSG_QUERY ||
       _current_packet_type == PQ_MSG_EXECUTE) {
-    _current_portal = nullptr;
+    if (_current_portal) {
+      _current_portal->cursor.reset();
+      _current_portal = nullptr;
+    }
   }
   _current_packet_type = 0;
   SDB_ASSERT(!_queue.empty());

@@ -20,13 +20,32 @@
 
 #pragma once
 
+#include <functional>
 #include <iresearch/search/filter.hpp>
 #include <ostream>
 #include <string>
+#include <string_view>
+
+#include "catalog/table_options.h"
 
 namespace irs {
 
+// Decodes a binary-encoded field name (uint64 column id + mangle byte)
+// into a human-readable string.
+std::string FieldToString(std::string_view field);
+
+// Prints filter with raw bytes for field names (identity transform).
+std::string ToString(const Filter& f);
+
+// Prints filter with column names resolved via col_name(id).
+// Falls back to "col=ID" for unknown ids.
+std::string ToStringDemangled(
+  const Filter& f,
+  const std::function<std::string_view(sdb::catalog::Column::Id)>& col_name);
+
 template<typename Sink>
-void AbslStringify(Sink& sink, const Filter& filter);
+void AbslStringify(Sink& sink, const Filter& filter) {
+  sink.Append(ToString(filter));
+}
 
 }  // namespace irs

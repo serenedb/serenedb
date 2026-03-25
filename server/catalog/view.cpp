@@ -25,7 +25,6 @@
 
 #include "basics/errors.h"
 #include "catalog/catalog.h"
-#include "catalog/graph_view.h"
 #include "catalog/sql_query_view.h"
 #include "general_server/state.h"
 
@@ -69,9 +68,6 @@ Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
       SDB_ASSERT(ctx != ViewContext::User);
       return SqlQueryView::Make(view, database_id, std::move(options), ctx,
                                 nullptr);
-    case ViewType::ViewGraph:
-      return GraphView::Make(view, database_id, std::move(options),
-                             ctx != ViewContext::Internal);
     case ViewType::ViewSearch:
       break;
   }

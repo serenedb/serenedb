@@ -29,6 +29,7 @@
 #include <velox/dwio/common/WriterFactory.h>
 
 #include "basics/down_cast.h"
+#include "pg/progress_tracker.h"
 #include "serenedb_connector.hpp"
 
 namespace {
@@ -78,11 +79,13 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path,
 
 FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
                            velox::memory::MemoryPool& leaf_pool,
-                           velox::memory::MemoryPool& aggregate_pool) {
+                           velox::memory::MemoryPool& aggregate_pool)
+  : _progress{options->progress} {
   // S3 requiries leaf_pool
   auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
     std::move(sink), "serenedb_sink");
+  _sink = write_sink.get();
   const auto& writer_factory =
     velox::dwio::common::getWriterFactory(options->Writer()->fileFormat);
   options->Writer()->memoryPool = &aggregate_pool;
@@ -92,8 +95,11 @@ FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
 }
 
 void FileDataSink::appendData(velox::RowVectorPtr input) {
+  const auto bytes_before = _sink->size();
   _writer->write(input);
-  _stats.numWrittenBytes += input->estimateFlatSize();
+  if (_progress) {
+    _progress->ReportBatch(input->size(), _sink->size() - bytes_before, 0);
+  }
 }
 
 bool FileDataSink::finish() { return _writer->finish(); }
@@ -164,7 +170,7 @@ FileDataSource::FileDataSource(
   : _output_type{std::move(output_type)},
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
-    _report_callback{options->report_callback} {
+    _progress{options->progress} {
   auto [source, reader, row_reader] =
     CreateReader(*options, memory_pool, _output_type, column_handles,
                  subfield_filters, remaining_filter, evaluator);
@@ -172,6 +178,9 @@ FileDataSource::FileDataSource(
   _reader = std::move(reader);
   _row_reader = std::move(row_reader);
   _pool = &memory_pool;
+  if (_progress) {
+    _progress->SetBytesTotal(_source->size());
+  }
 }
 
 FileSplitSource::FileSplitSource(std::shared_ptr<ReaderOptions> options,
@@ -266,16 +275,12 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  _completed_rows += batch->size();
-  if (_report_callback) {
-    const auto now = std::chrono::high_resolution_clock::now();
-    auto seconds_since_last_report =
-      std::chrono::duration_cast<std::chrono::seconds>(now - _last_report_time)
-        .count();
-    if (seconds_since_last_report >= 10) {
-      _report_callback(_completed_rows);
-      _last_report_time = now;
-    }
+  if (_progress) {
+    const auto batch_rows = batch->size();
+    auto bytes_read = _source->bytesRead();
+    auto delta_bytes = bytes_read - _prev_bytes_read;
+    _prev_bytes_read = bytes_read;
+    _progress->ReportBatch(batch_rows, delta_bytes, rows_read - batch_rows);
   }
   return std::dynamic_pointer_cast<velox::RowVector>(batch);
 }

@@ -123,37 +123,38 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
-    result->_object_dependencies.reserve(_object_dependencies.size());
-    for (auto& [id, dep] : _object_dependencies) {
-      result->_object_dependencies.emplace(id, dep->Clone());
-    }
+    result->_object_dependencies = _object_dependencies;
     return result;
   }
 
-  std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(ObjectId db_id) {
-    auto db_deps = GetDependency<DatabaseDependency>(db_id);
-    auto drop_task = std::make_shared<DatabaseDrop>(db_id);
-    drop_task->schemas = db_deps->schemas |
-                         std::views::transform([&](ObjectId id) {
-                           return CreateSchemaDrop(db_id, id, false);
-                         }) |
-                         std::ranges::to<std::vector>();
+  std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
+    const std::shared_ptr<Database>& db) {
+    auto db_deps = GetDependency<DatabaseDependency>(db->GetId());
+    auto schemas_drop = db_deps->schemas |
+                        std::views::transform([&](ObjectId id) {
+                          auto schema = GetObject<Schema>(id);
+                          SDB_ASSERT(schema);
+                          return CreateSchemaDrop(db->GetId(), schema, false);
+                        }) |
+                        std::ranges::to<std::vector>();
+    auto drop_task =
+      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop));
     return drop_task;
   }
 
-  std::shared_ptr<SchemaDrop> CreateSchemaDrop(ObjectId db_id,
-                                               ObjectId schema_id,
-                                               bool is_root) {
-    auto schema_deps = GetDependency<SchemaDependency>(schema_id);
-    auto drop_task = std::make_shared<SchemaDrop>(db_id, schema_id, is_root);
-    drop_task->tables =
+  std::shared_ptr<SchemaDrop> CreateSchemaDrop(
+    ObjectId db_id, const std::shared_ptr<Schema>& schema, bool is_root) {
+    auto schema_deps = GetDependency<SchemaDependency>(schema->GetId());
+    auto tables_drop =
       schema_deps->tables | std::views::transform([&](ObjectId id) {
         auto table = GetObject<Table>(id);
         SDB_ASSERT(table);
-        return CreateTableDrop(db_id, schema_id, std::move(table), false);
+        return CreateTableDrop(db_id, schema->GetId(), table, false);
       }) |
       std::ranges::to<std::vector>();
 
+    auto drop_task = std::make_shared<SchemaDrop>(
+      schema, std::move(tables_drop), db_id, is_root);
     return drop_task;
   }
 
@@ -161,30 +162,26 @@ class SnapshotImpl : public Snapshot {
     ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
     bool is_root) {
     auto table_deps = GetDependency<TableDependency>(table->GetId());
-    auto drop_task = std::make_shared<TableDrop>(
-      schema_id, table->GetId(), table->GetTableType(), is_root);
-    drop_task->indexes =
-      table_deps->indexes | std::views::transform([&](ObjectId id) {
-        return CreateIndexDrop(db_id, schema_id, table->GetId(), id, is_root);
-      }) |
-      std::ranges::to<std::vector>();
-    drop_task->shard_id = table_deps->shard_id;
     auto shard = GetObject<TableShard>(table_deps->shard_id);
-    SDB_ASSERT(shard);
-    drop_task->table_size =
-      table->Columns().size() * shard->GetTableStats().num_rows;
-    return drop_task;
+    auto indexes = table_deps->indexes |
+                   std::views::transform([&](ObjectId id) {
+                     auto index = GetObject<Index>(id);
+                     SDB_ASSERT(index);
+                     return CreateIndexDrop(db_id, schema_id, table->GetId(),
+                                            index, is_root);
+                   }) |
+                   std::ranges::to<std::vector>();
+
+    return std::make_shared<TableDrop>(table, shard, std::move(indexes),
+                                       schema_id, is_root);
   }
 
-  std::shared_ptr<IndexDrop> CreateIndexDrop(ObjectId db_id, ObjectId schema_id,
-                                             ObjectId table_id,
-                                             ObjectId index_id, bool is_root) {
-    auto index_deps = GetDependency<IndexDependency>(index_id);
-    auto index = GetObject<Index>(index_id);
-    auto drop_task = std::make_shared<IndexDrop>(
-      db_id, schema_id, table_id, index_id, index->GetIndexType(), is_root);
-    drop_task->shard_id = index_deps->shard_id;
-    return drop_task;
+  std::shared_ptr<IndexDrop> CreateIndexDrop(
+    ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+    const std::shared_ptr<Index>& index, bool is_root) {
+    auto index_deps = GetDependency<IndexDependency>(index->GetId());
+    return std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
+                                       index_deps->shard_id, is_root);
   }
 
   template<typename T>
@@ -313,8 +310,8 @@ class SnapshotImpl : public Snapshot {
   Result AddObjectDefinition(ObjectId parent_id,
                              std::shared_ptr<Object> object) {
     if constexpr (!std::is_void_v<DependencyType>) {
-      auto [_, inserted] = _object_dependencies.try_emplace(
-        object->GetId(), std::make_shared<DependencyType>());
+      bool inserted =
+        _object_dependencies.AddDependency<DependencyType>(object->GetId());
       SDB_ASSERT(inserted);
     }
     SDB_ASSERT(object->GetId().isSet());
@@ -323,41 +320,41 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Role:
         break;
       case ObjectType::Schema: {
-        auto db_deps = GetDependency<DatabaseDependency>(parent_id);
+        auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
         db_deps->schemas.insert(object->GetId());
       } break;
       case ObjectType::Table: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tables.insert(object->GetId());
       } break;
       case ObjectType::Function: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
       } break;
       case ObjectType::Tokenizer: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tokenizers.insert(object->GetId());
       } break;
       case ObjectType::View: {
-        auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->views.insert(object->GetId());
       } break;
       case ObjectType::Index: {
-        auto table_deps = GetDependency<TableDependency>(parent_id);
+        auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
         table_deps->indexes.insert(object->GetId());
         const auto& index = basics::downCast<Index>(*object);
         for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
+          auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
           SDB_ASSERT(dep);
           dep->indexes.insert(object->GetId());
         }
       } break;
       case ObjectType::TableShard: {
-        auto table_deps = GetDependency<TableDependency>(parent_id);
+        auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
         table_deps->shard_id = object->GetId();
       } break;
       case ObjectType::IndexShard: {
-        auto index_deps = GetDependency<IndexDependency>(parent_id);
+        auto index_deps = GetDependencyForWrite<IndexDependency>(parent_id);
         index_deps->shard_id = object->GetId();
       } break;
       default:
@@ -451,10 +448,7 @@ class SnapshotImpl : public Snapshot {
   }
 
   bool CheckSchemaEmptyDependency(ObjectId schema_id) {
-    auto it = _object_dependencies.find(schema_id);
-    SDB_ASSERT(it != _object_dependencies.end());
-    auto& deps = basics::downCast<SchemaDependency>(*it->second);
-    return deps.Empty();
+    return GetDependency<SchemaDependency>(schema_id)->Empty();
   }
 
   std::shared_ptr<SchemaObject> GetRelation(
@@ -615,16 +609,22 @@ class SnapshotImpl : public Snapshot {
     return {};
   }
 
- private:
   template<typename T>
-  std::shared_ptr<T> GetDependency(ObjectId id) const {
-    auto it = _object_dependencies.find(id);
-    SDB_ASSERT(it != _object_dependencies.end());
-    auto deps = it->second;
-    SDB_ASSERT(deps);
-    return basics::downCast<T>(deps);
+  std::shared_ptr<const T> GetDependency(ObjectId id) const {
+    return basics::downCast<const T>(_object_dependencies.GetDependency(id));
   }
 
+  template<typename T>
+  std::shared_ptr<T> GetDependencyForWrite(ObjectId id) {
+    auto dep =
+      basics::downCast<T>(_object_dependencies.GetDependency(id)->Clone());
+
+    auto inserted = _object_dependencies.AddDependency<T>(id, dep);
+    SDB_ASSERT(!inserted);
+    return dep;
+  }
+
+ private:
   void RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
                               bool root = false,
                               bool maybe_not_found = false) noexcept {
@@ -647,32 +647,38 @@ class SnapshotImpl : public Snapshot {
         case ObjectType::Role:
           break;
         case ObjectType::Schema: {
-          auto db_deps = GetDependency<DatabaseDependency>(parent_id);
+          auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
           SDB_ASSERT(db_deps);
           db_deps->schemas.erase(id);
         } break;
         case ObjectType::Index: {
-          auto table_deps = GetDependency<TableDependency>(parent_id);
+          auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->indexes.erase(id);
+          const auto& index = basics::downCast<Index>(*obj);
+          for (auto tokenizer_id : index.GetTokenizers()) {
+            auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
+            SDB_ASSERT(dep);
+            dep->indexes.erase(obj->GetId());
+          }
         } break;
         case ObjectType::Function: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
         } break;
         case ObjectType::Tokenizer: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->tokenizers.erase(id);
         } break;
         case ObjectType::Table: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->tables.erase(id);
         } break;
         case ObjectType::View: {
-          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->views.erase(id);
         } break;
@@ -698,16 +704,17 @@ class SnapshotImpl : public Snapshot {
         auto table_deps = GetDependency<TableDependency>(id);
         if (table_deps->shard_id.isSet()) {
           RemoveObjectDefinition(id, table_deps->shard_id);
-          table_deps->shard_id = ObjectId::none();
         }
         auto index_ids = table_deps->indexes;
-        if (root) {
-          for (auto index_id : index_ids) {
+        for (auto index_id : index_ids) {
+          if (root) {
             // While `DROP TABLE` statement indexes were not deleted from
             // resolution table, because they were nested in schema scope.
             // Therefore, we have to explicitly erase them here.
             auto index = GetObject<Index>(index_id);
             UnregisterObject(index, id, false);
+          } else {
+            RemoveObjectDefinition(id, index_id);
           }
         }
       } break;
@@ -715,13 +722,6 @@ class SnapshotImpl : public Snapshot {
         auto index_deps = GetDependency<IndexDependency>(id);
         if (index_deps->shard_id.isSet()) {
           RemoveObjectDefinition(id, index_deps->shard_id);
-          index_deps->shard_id = ObjectId::none();
-        }
-        const auto& index = basics::downCast<Index>(*obj);
-        for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependency<TokenizerDependency>(tokenizer_id);
-          SDB_ASSERT(dep);
-          dep->indexes.erase(obj->GetId());
         }
 
       } break;
@@ -736,7 +736,7 @@ class SnapshotImpl : public Snapshot {
       default:
         SDB_UNREACHABLE();
     }
-    _object_dependencies.erase(id);
+    _object_dependencies.RemoveDependency(id);
   }
 
   template<typename W>
@@ -784,8 +784,7 @@ class SnapshotImpl : public Snapshot {
   };
 
   ResolutionTable _resolution_table;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<ObjectDependencyBase>>
-    _object_dependencies;
+  ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
 };
 
@@ -1027,9 +1026,9 @@ Result LocalCatalog::CreateIndex(
     options.column_ids.push_back(column->id);
   }
 
-  auto index =
-    MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
-              table.GetId(), std::move(options), std::move(create_columns));
+  auto index = MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
+                         table.GetId(), std::move(options),
+                         std::move(create_columns), _snapshot);
   if (!index) {
     return std::move(index).error();
   }
@@ -1548,18 +1547,19 @@ Result LocalCatalog::DropRole(std::string_view role) {
 Result LocalCatalog::DropDatabase(std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto db_id = clone->GetObjectId<ResolveType::Database>(id::kInstance, name);
-    if (!db_id) {
+    auto db = clone->GetDatabase(name);
+    if (!db) {
       return Result{ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
                     "\" does not exist"};
     }
-    auto task = clone->CreateDatabaseDrop(*db_id);
+    auto task = clone->CreateDatabaseDrop(db);
 
-    if (auto r = GetServerEngine().WriteTombstone(id::kInstance, *db_id);
+    if (auto r = GetServerEngine().WriteTombstone(id::kInstance, db->GetId());
         !r.ok()) {
       return r;
     }
-    clone->UnregisterObject(clone->GetObject<Database>(*db_id), id::kInstance);
+    clone->UnregisterObject(clone->GetObject<Database>(db->GetId()),
+                            id::kInstance);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -1571,23 +1571,23 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
                                 bool cascade) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto schema_id = clone->GetObjectId<ResolveType::Schema>(db_id, name);
-    if (!schema_id) {
+    auto schema = clone->GetSchema(db_id, name);
+    if (!schema) {
       return Result{ERROR_SERVER_ILLEGAL_NAME, "schema \"", name,
                     "\" does not exist"};
     }
 
-    if (!cascade && !clone->CheckSchemaEmptyDependency(*schema_id)) {
+    if (!cascade && !clone->CheckSchemaEmptyDependency(schema->GetId())) {
       return Result{ERROR_BAD_PARAMETER, "cannot drop schema ", name,
                     " because other objects depend on it"};
     }
 
-    auto task = clone->CreateSchemaDrop(db_id, *schema_id, true);
+    auto task = clone->CreateSchemaDrop(db_id, schema, true);
 
-    if (auto r = _engine->WriteTombstone(db_id, *schema_id); !r.ok()) {
+    if (auto r = _engine->WriteTombstone(db_id, schema->GetId()); !r.ok()) {
       return r;
     }
-    clone->UnregisterObject(clone->GetObject<Schema>(*schema_id), db_id);
+    clone->UnregisterObject(schema, db_id);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -1691,11 +1691,22 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
         !r.ok()) {
       return r;
     }
+
+    if (index->GetIndexType() == IndexType::Inverted) {
+      auto deps = clone->GetDependency<IndexDependency>(*(index_id));
+      SDB_ASSERT(deps);
+      if (deps->shard_id.isSet()) {
+        auto shard = clone->GetObject<IndexShard>(deps->shard_id);
+        SDB_ASSERT(shard);
+        basics::downCast<search::InvertedIndexShard>(*shard).MarkDeleted();
+      }
+    }
+
     // Check that SereneDB won't open this index after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
-                                       index->GetRelationId(), *index_id, true);
+                                       index->GetRelationId(), index, true);
     clone->UnregisterObject(index, *schema_id);
     DropTask::Schedule(std::move(task)).Detach();
     return Result{};
@@ -1803,7 +1814,8 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
   });
 }
 
-std::shared_ptr<const Snapshot> LocalCatalog::GetSnapshot() const noexcept {
+std::shared_ptr<const Snapshot> LocalCatalog::GetCatalogSnapshot()
+  const noexcept {
   return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
 }
 

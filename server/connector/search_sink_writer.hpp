@@ -40,9 +40,10 @@ using AnalyzerProvider =
   absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
 
 inline AnalyzerProvider MakeAnalyzerProvider(
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
-  return [&index](catalog::Column::Id column_id) {
-    return index.GetColumnAnalyzer(column_id);
+  return [snapshot, &index](catalog::Column::Id column_id) {
+    return index.GetColumnAnalyzer(snapshot, column_id);
   };
 }
 

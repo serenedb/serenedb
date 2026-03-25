@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "basics/fwd.h"
+#include "pg/progress_tracker.h"
 #include "query/context.h"
 #include "query/executor.h"
 #include "query/runner.h"
@@ -87,6 +88,10 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
+  void AddProgressReporter(std::unique_ptr<pg::ProgressReporterBase> reporter) {
+    _progress_reporters.push_back(std::move(reporter));
+  }
+
   void SetExecutor(std::unique_ptr<Executor> executor);
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
@@ -136,6 +141,7 @@ class Query {
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;
   std::string _physical_plan;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 using QueryPtr = std::unique_ptr<Query>;

@@ -63,7 +63,7 @@ void RocksDBBackgroundThread::beginShutdown() {
 
 void RocksDBBackgroundThread::SyncStats() {
   SDB_TRACE("xxxxx", Logger::ENGINES, "syncing RocksDB settings statistics");
-  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   for (auto& db : snapshot->GetDatabases()) {
     for (auto& schema : snapshot->GetSchemas(db->GetId())) {
       catalog::VisitTableShards(

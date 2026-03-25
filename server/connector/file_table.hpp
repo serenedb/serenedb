@@ -290,7 +290,7 @@ class FileDataSource final : public velox::connector::DataSource {
 
   uint64_t getCompletedBytes() final { return _completed_bytes; }
 
-  uint64_t getCompletedRows() final { return _completed_rows; }
+  uint64_t getCompletedRows() final { return 0; }
 
  private:
   velox::memory::MemoryPool* _pool;

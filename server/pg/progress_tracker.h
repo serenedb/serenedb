@@ -173,7 +173,7 @@ class ProgressReporterBase {
 
  protected:
   ProgressReporterBase(ObjectId relid, ProgressCommand command_type,
-                       ObjectId datid = {});
+                       ObjectId datid);
 
   ProgressTracker& _tracker;
   uint64_t _id;
@@ -182,7 +182,8 @@ class ProgressReporterBase {
 
 class CopyProgressReporter : public ProgressReporterBase {
  public:
-  CopyProgressReporter(ObjectId relid, copy_progress::Command command,
+  CopyProgressReporter(ObjectId datid, ObjectId relid,
+                       copy_progress::Command command,
                        copy_progress::Type type);
 
   void ReportBatch(uint64_t delta_rows, uint64_t delta_bytes,

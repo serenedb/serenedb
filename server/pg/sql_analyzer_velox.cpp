@@ -2188,9 +2188,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   };
 
   auto setup_progress_tracking = [&](auto& options, bool is_from,
-                                     ObjectId relid) {
+                                     ObjectId datid, ObjectId relid) {
     auto reporter = std::make_unique<CopyProgressReporter>(
-      relid,
+      datid, relid,
       is_from ? copy_progress::Command::CopyFrom
               : copy_progress::Command::CopyTo,
       file_path.empty() ? copy_progress::Type::Pipe
@@ -2209,7 +2209,8 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     auto [object, schemaname, relname] = get_object();
     auto& table = basics::downCast<catalog::Table>(*object.object);
-    setup_progress_tracking(options, true, table.GetId());
+    setup_progress_tracking(options, true, table.GetDatabaseId(),
+                            table.GetId());
 
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
@@ -2228,11 +2229,13 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     velox::RowTypePtr table_type;
     std::vector<std::string> column_names;
     std::vector<lp::ExprPtr> column_exprs;
+    ObjectId datid{0};
     ObjectId relid{0};
     if (stmt.relation) {
       SDB_ASSERT(!stmt.query);
       auto [object, schemaname, relname] = get_object();
       auto& table = basics::downCast<catalog::Table>(*object.object);
+      datid = table.GetDatabaseId();
       relid = table.GetId();
       auto table_state =
         ProcessTable(&state, schemaname, relname, object, stmt.relation, false);
@@ -2270,7 +2273,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     auto parser = create_options_parser(table_type);
     auto options = std::move(parser).GetWriterOptions();
-    setup_progress_tracking(options, false, relid);
+    setup_progress_tracking(options, false, datid, relid);
     auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,
       std::move(options));

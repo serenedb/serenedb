@@ -37,10 +37,10 @@ ProgressReporterBase::ProgressReporterBase(ObjectId relid,
 
 ProgressReporterBase::~ProgressReporterBase() { _tracker.EndCommand(_id); }
 
-CopyProgressReporter::CopyProgressReporter(ObjectId relid,
+CopyProgressReporter::CopyProgressReporter(ObjectId datid, ObjectId relid,
                                            copy_progress::Command command,
                                            copy_progress::Type type)
-  : ProgressReporterBase{relid, ProgressCommand::Copy} {
+  : ProgressReporterBase{relid, ProgressCommand::Copy, datid} {
   _params[copy_progress::kCommand].store(std::to_underlying(command),
                                          std::memory_order_relaxed);
   _params[copy_progress::kType].store(std::to_underlying(type),

@@ -58,6 +58,7 @@
 #include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
+#include "connector/text_materializer.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
@@ -1150,16 +1151,21 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     if (const auto* file_table =
           dynamic_cast<const ReadFileTable*>(&underlying_table)) {
-      SDB_ASSERT(file_table->GetOptions()->Reader()->fileFormat() ==
-                   velox::dwio::common::FileFormat::PARQUET,
-                 "Only parquet is supported for inverted index search");
       auto [source, reader, row_reader] = FileDataSource::CreateReader(
         *file_table->GetOptions(), pool, output_type, column_handles, {},
         nullptr, nullptr);
-      return std::make_unique<SearchDataSource<ParquetMaterializer>>(
+      auto format = file_table->GetOptions()->Reader()->fileFormat();
+      if (format == velox::dwio::common::FileFormat::PARQUET) {
+        return std::make_unique<SearchDataSource<ParquetMaterializer>>(
+          pool,
+          ParquetMaterializer(pool, std::move(source), std::move(reader),
+                              std::move(row_reader), output_type),
+          search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+      }
+      return std::make_unique<SearchDataSource<TextMaterializer>>(
         pool,
-        ParquetMaterializer(pool, std::move(source), std::move(reader),
-                            std::move(row_reader), output_type),
+        TextMaterializer(pool, std::move(source), std::move(reader),
+                         std::move(row_reader), output_type),
         search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
     }
 

@@ -20,6 +20,8 @@
 
 #include "pg/sql_resolver.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
@@ -66,6 +68,7 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
                                const Objects::ObjectName& name,
                                Objects::ObjectData& data,
                                const Config& config) {
+  auto snapshot = config.EnsureCatalogSnapshot();
   auto resolve_object = [&](std::string_view schema) {
     SDB_ASSERT(!data.object);
     if (schema == StaticStrings::kInformationSchema) {
@@ -74,7 +77,6 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
       return;
     }
 
-    auto snapshot = config.EnsureCatalogSnapshot();
     data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
       switch (type) {
         case ObjectType::Function:
@@ -247,6 +249,7 @@ void ResolveFunctions(ObjectId database,
 }  // namespace
 
 void Resolve(ObjectId database, Objects& objects, Config& config) {
+  absl::Cleanup drop_snapshot = [&] noexcept { config.DropCatalogSnapshot(); };
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
@@ -266,6 +269,7 @@ void Resolve(ObjectId database, Objects& objects, Config& config) {
     ResolveRelation(database, search_path, objects, disallowed, name, new_data,
                     config);
   }
+  std::move(drop_snapshot).Cancel();
 }
 
 void ResolveQueryView(ObjectId database,

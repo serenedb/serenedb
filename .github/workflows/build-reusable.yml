@@ -29,7 +29,7 @@ on:
         type: string
         default: ""
       PUSH_IMAGES_2_REGISTRY:
-        description: "Push images to Private Docker Registry"
+        description: "Push images to Docker Hub"
         required: true
         type: boolean
         default: false
@@ -47,12 +47,17 @@ on:
         description: "JSON configuration for builds and job settings"
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
       CREATE_GITHUB_RELEASE:
         description: 'Create a GitHub Release with packages'
         required: true
         type: boolean
         default: false
+      SERENEDB_VERSION_PATCH:
+        description: "Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release."
+        required: false
+        type: string
+        default: ""
     secrets:
       PAT_TOKEN:
         required: true
@@ -76,7 +81,7 @@ env:
   PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
   CLUSTER_BRANCH: main
-  BUILD_IMAGE: registry.serenedb.com:5000/serenedb-build-ubuntu:latest
+  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   DEBUG_PRINT_ENV: "false"
 
 jobs:
@@ -165,6 +170,25 @@ jobs:
 
           git config --global --add safe.directory '*'
 
+      - name: Resolve version patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
+          if [[ "${{ inputs.PRESET }}" == "release" ]]; then
+            if [[ -z "$PATCH" ]]; then
+              MAJOR=$(date -u +%y)
+              MINOR=$(date -u +%m)
+              LAST=$(gh release list --limit 100 --json tagName \
+                --jq "[.[] | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
+                2>/dev/null || echo "0")
+              PATCH=$(( LAST + 1 ))
+            fi
+          else
+            PATCH="0"
+          fi
+          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
+
       - name: Checkout SereneDB
         uses: actions/checkout@v6
         with:
@@ -199,11 +223,13 @@ jobs:
         run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 
       # ==================== GTEST PARALLEL CACHE ====================
       - name: Restore gtest-parallel timing cache
         id: gtest-cache
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         uses: actions/cache@v4
         with:
           path: .gtest-parallel-cache
@@ -214,6 +240,7 @@ jobs:
             gtest-times-${{ inputs.PRESET }}-
 
       - name: Prepare gtest-parallel cache directory
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: |
           mkdir -p .gtest-parallel-cache
           echo "GTEST_PARALLEL_CACHE_DIR=${WORKSPACE}/.gtest-parallel-cache" >> $GITHUB_ENV
@@ -272,11 +299,15 @@ jobs:
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
+        env:
+          DOCKER_REGISTRY: serenedb
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: ./build_images.sh
 
       # ==================== UPDATE FILE OWNERSHIP ====================
       - name: Update file ownership
-        if: always()
+        if: always() && env.DOCKER_BUILD_IMAGES != 'true'
         run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
 
       # ==================== DETERMINE FINAL STATUS ====================

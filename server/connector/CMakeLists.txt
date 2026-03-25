@@ -16,6 +16,7 @@ add_library(
     search_count_data_source.cpp
     search_scan_data_source.cpp
     search_filter_builder.cpp
+    search_filter_printer.cpp
     sst_sink_writer.cpp
     rocksdb_filter.cpp
 )

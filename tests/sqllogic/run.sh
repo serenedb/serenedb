@@ -310,12 +310,23 @@ fi
 # Variable to track the highest exit code encountered
 final_exit_code=0
 
-if [[ "$debug" == "true" ]]; then
-	cargo install --debug --path $runner/sqllogictest-bin --quiet --force
+build_type="release"
+[[ "$debug" == "true" ]] && build_type="debug"
+
+submodule_commit=$(git -C "$runner" rev-parse HEAD 2>/dev/null || echo "unknown")
+build_marker="$runner/target/.last_built_commit_${build_type}"
+last_built_commit=$(cat "$build_marker" 2>/dev/null || echo "")
+
+if [[ "$submodule_commit" != "$last_built_commit" ]] || ! command -v sqllogictest &>/dev/null; then
+	if [[ "$debug" == "true" ]]; then
+		cargo install --debug --path $runner/sqllogictest-bin --quiet --force
+	else
+		cargo install --path $runner/sqllogictest-bin --quiet --force
+	fi
 	test_exit_code=$?
+	[[ $test_exit_code == 0 ]] && echo "$submodule_commit" >"$build_marker"
 else
-	cargo install --path $runner/sqllogictest-bin --quiet --force
-	test_exit_code=$?
+	test_exit_code=0
 fi
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 

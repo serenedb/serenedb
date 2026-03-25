@@ -131,7 +131,7 @@ std::unique_ptr<query::Query> CreateIndexPipeline(
   auto& state = create_index->GetState();
   auto velox_exec = std::make_unique<query::VeloxExecutor>();
   auto finish_creation = std::make_unique<FinishCreateIndexExecutor>(
-    connection_ctx, schemaname, name);
+    connection_ctx, schemaname, name, state);
   auto remove_tombstone =
     std::make_unique<RemoveTombstoneExecutor>(connection_ctx, schemaname, name);
 
@@ -162,6 +162,7 @@ void* SqlTree::GetNextRoot() {
 }
 
 void SqlStatement::Reset() noexcept {
+  query.reset();
   memory_context.reset();
   objects.clear();
   query_string.reset();
@@ -207,10 +208,7 @@ bool SqlStatement::ProcessNextRoot(
 
   if (query_ctx.command_type.HasOnly(query::CommandType::Explain)) {
     query = query::Query::CreateExplain(query_desc.root, query_ctx);
-    return true;
-  }
-
-  if (query_desc.type == SqlCommandType::Show) {
+  } else if (query_desc.type == SqlCommandType::Show) {
     SDB_ASSERT(query_desc.pgsql_node);
     const auto* show_stmt = castNode(VariableShowStmt, query_desc.pgsql_node);
     std::string_view name = show_stmt->name;
@@ -219,27 +217,21 @@ bool SqlStatement::ProcessNextRoot(
     } else {
       query = query::Query::CreateShow(show_stmt->name, query_ctx);
     }
-    return true;
-  }
-
-  if (query_desc.type == SqlCommandType::CTAS) {
+  } else if (query_desc.type == SqlCommandType::CTAS) {
     query = CreateCTASPipeline(query_desc, query_ctx, connection_ctx);
-    return true;
-  }
-
-  if (query_desc.type == pg::SqlCommandType::CreateIndex) {
+  } else if (query_desc.type == pg::SqlCommandType::CreateIndex) {
     query = CreateIndexPipeline(query_desc, query_ctx, connection_ctx);
-    return true;
-  }
-
-  if (query_desc.pgsql_node) {
+  } else if (query_desc.pgsql_node) {
     auto executor =
       std::make_unique<DDLExecutor>(connection_ctx, *query_desc.pgsql_node);
     query = query::Query::CreateDDL(std::move(executor), query_ctx);
-    return true;
+  } else {
+    query = query::Query::CreateQuery(query_desc.root, query_ctx);
   }
 
-  query = query::Query::CreateQuery(query_desc.root, query_ctx);
+  for (auto& reporter : query_desc.progress_reporters) {
+    query->AddProgressReporter(std::move(reporter));
+  }
   return true;
 }
 

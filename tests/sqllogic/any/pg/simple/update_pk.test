@@ -57,7 +57,7 @@ Fragment 0:  numWorkers=0:
 -- TableWrite[3][serenedb(table=single_pk, kind=UPDATE)] -> rows:BIGINT
   -- Project[2][expressions: (a:INTEGER, "a"), (upd$a:INTEGER, 200), (b:INTEGER, 200)] -> "a":INTEGER, "upd$a":INTEGER, "b":INTEGER
     -- Filter[1][expression: if(spark_isnotnull("a"),true,cast(pg_error(33575106,0,null value in column "a" of relation "single_pk" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("a" as VARCHAR),null),, ,200,, ,200,).)) as BOOLEAN))] -> "a":INTEGER
-      -- TableScan[0][single_pk, scan=point] -> "a":INTEGER
+      -- TableScan[0][single_pk, type=rocksdb_point_lookup, points=[(a=2)]] -> "a":INTEGER
 
 statement error
 UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;

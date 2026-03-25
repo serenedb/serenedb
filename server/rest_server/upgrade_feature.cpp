@@ -244,7 +244,7 @@ void UpgradeFeature::upgradeLocalDatabase() {
   for (auto& database : server()
                           .getFeature<catalog::CatalogFeature>()
                           .Local()
-                          .GetSnapshot()
+                          .GetCatalogSnapshot()
                           ->GetDatabases()) {
     auto res =
       methods::Upgrade::startup(*database, _upgrade, ignore_datafile_errors);

@@ -84,7 +84,7 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
-#include "pg/pg_types.h"
+#include "pg/progress_tracker.h"
 #include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
@@ -1100,6 +1100,7 @@ class SqlAnalyzer {
   CopyMessagesQueue* _copy_queue;
   std::shared_ptr<const irs::Scorer> _scorer_for_select;
   lp::ExprPtr _expr_for_scorer;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -2000,17 +2001,6 @@ class CopyOptionsParser : public FileOptionsParser {
         }
       } break;
     }
-
-    auto show_progress = EraseOptionOrDefault<kProgress>();
-    if (!_is_writer) {  // TODO: make same for writer
-      if (show_progress) {
-        _reader_options->report_callback =
-          [send = &_send_buffer](uint64_t rows_read) {
-            WriteNoticeInBuffer(
-              *send, absl::StrCat("COPY FROM ", rows_read, " rows processed"));
-          };
-      }
-    }
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {
@@ -2197,10 +2187,31 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       _copy_queue, table_name,    _query_ctx.explain_params};
   };
 
+  auto setup_progress_tracking = [&](auto& options, bool is_from,
+                                     ObjectId datid, ObjectId relid) {
+    auto reporter = std::make_unique<CopyProgressReporter>(
+      datid, relid,
+      is_from ? copy_progress::Command::CopyFrom
+              : copy_progress::Command::CopyTo,
+      file_path.empty() ? copy_progress::Type::Pipe
+                        : copy_progress::Type::File);
+    options->progress = reporter.get();
+    _progress_reporters.push_back(std::move(reporter));
+    WriteNoticeInBuffer(
+      *_send_buffer,
+      "to monitor progress, use: SELECT * FROM pg_stat_progress_copy");
+  };
+
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto parser = create_options_parser(file_table_type);
     auto options = std::move(parser).GetReaderOptions();
+
+    auto [object, schemaname, relname] = get_object();
+    auto& table = basics::downCast<catalog::Table>(*object.object);
+    setup_progress_tracking(options, true, table.GetDatabaseId(),
+                            table.GetId());
+
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
       std::move(options), false);
@@ -2209,8 +2220,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       _id_generator.NextPlanId(), std::move(file_output_type),
       std::move(read_file_table), file_table_type->names());
     ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
-
-    auto [object, schemaname, relname] = get_object();
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
 
@@ -2220,9 +2229,14 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     velox::RowTypePtr table_type;
     std::vector<std::string> column_names;
     std::vector<lp::ExprPtr> column_exprs;
+    ObjectId datid{0};
+    ObjectId relid{0};
     if (stmt.relation) {
       SDB_ASSERT(!stmt.query);
       auto [object, schemaname, relname] = get_object();
+      auto& table = basics::downCast<catalog::Table>(*object.object);
+      datid = table.GetDatabaseId();
+      relid = table.GetId();
       auto table_state =
         ProcessTable(&state, schemaname, relname, object, stmt.relation, false);
       state.root = std::move(table_state.root);
@@ -2259,6 +2273,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     auto parser = create_options_parser(table_type);
     auto options = std::move(parser).GetWriterOptions();
+    setup_progress_tracking(options, false, datid, relid);
     auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,
       std::move(options));
@@ -5946,6 +5961,25 @@ lp::ExprPtr SqlAnalyzer::ProcessSQLValueFunction(State& state,
     case SVFOP_CURRENT_SCHEMA:
       return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
                                             "pg_current_schema");
+    case SVFOP_CURRENT_USER:
+    case SVFOP_CURRENT_ROLE:
+    case SVFOP_USER:
+    case SVFOP_SESSION_USER:
+      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
+                                            "pg_current_user");
+    case SVFOP_CURRENT_CATALOG:
+      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
+                                            "pg_current_database");
+    case SVFOP_CURRENT_DATE:
+    case SVFOP_CURRENT_TIME:
+    case SVFOP_CURRENT_TIME_N:
+    case SVFOP_CURRENT_TIMESTAMP:
+    case SVFOP_CURRENT_TIMESTAMP_N:
+    case SVFOP_LOCALTIME:
+    case SVFOP_LOCALTIME_N:
+    case SVFOP_LOCALTIMESTAMP:
+    case SVFOP_LOCALTIMESTAMP_N:
+      // TODO(mbkkt) implement these
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
@@ -6005,6 +6039,7 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
     .root = std::move(state.root),
     .pgsql_node = state.pgsql_node,
     .type = command_type,
+    .progress_reporters = std::move(_progress_reporters),
   };
 }
 
@@ -6080,7 +6115,10 @@ velox::TypePtr NameToType(const TypeName& type_name) {
     return wrap_in_array(std::move(decimal));
   }
 
-  // a particular case because mods_size can be != 0
+  // particular cases because mods_size can be != 0
+  if (name == "bpchar") {
+    return wrap_in_array(velox::TINYINT());
+  }
   if (name == "interval") {
     return wrap_in_array(pg::INTERVAL());
   }

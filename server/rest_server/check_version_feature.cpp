@@ -117,7 +117,7 @@ void CheckVersionFeature::checkVersion() {
   for (const auto& database : server()
                                 .getFeature<catalog::CatalogFeature>()
                                 .Global()
-                                .GetSnapshot()
+                                .GetCatalogSnapshot()
                                 ->GetDatabases()) {
     methods::VersionResult res = methods::Version::check(database->GetId());
 

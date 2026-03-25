@@ -70,7 +70,6 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                              ->Id();
   }
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
-
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
     _table_column_map.emplace(orig_name,

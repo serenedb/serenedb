@@ -135,9 +135,21 @@ SereneDBTableLayout::createTableHandle(
         {.index = snapshot.reader, .scorer = scorer.get()});
     }
 
+    const auto& col_map = inv_index->columnMap();
+    auto column_id_to_name =
+      [&](sdb::catalog::Column::Id id) -> std::string_view {
+      for (const auto& [name, col_ptr] : col_map) {
+        if (basics::downCast<const SereneDBColumn>(col_ptr)->Id() == id) {
+          return name;
+        }
+      }
+      SDB_ASSERT(false, "Unknown column id");
+      return "unknown";
+    };
+
     return std::make_shared<InvertedIndexTableHandle>(
       *inv_index, index.GetId(), std::move(prepared), scorer,
-      irs::ToStringDemangled(conjunct_root));
+      irs::ToStringDemangled(conjunct_root, column_id_to_name));
   }
 
   if (const auto* read_file_table = dynamic_cast<const ReadFileTable*>(table)) {

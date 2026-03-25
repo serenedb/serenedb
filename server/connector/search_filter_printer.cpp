@@ -311,47 +311,46 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
 
 std::string_view IdentityField(std::string_view f) { return f; }
 
-}  // namespace
-
-std::string FieldToString(std::string_view field) {
-  constexpr size_t kIdSize = sizeof(uint64_t);
-  if (field.size() < kIdSize) {
-    return TermToString(field);
+std::string_view MangleName(std::string_view mangle_suffix) {
+  if (mangle_suffix.empty()) {
+    return "unknown";
   }
-  const uint64_t col_id = absl::big_endian::Load64(field.data());
-  std::string_view mangle_suffix = field.substr(kIdSize);
-  std::string_view mangle_name = "unknown";
-  if (!mangle_suffix.empty()) {
-    switch (mangle_suffix[0]) {
-      case sdb::search::mangling::kNull:
-        mangle_name = "null";
-        break;
-      case sdb::search::mangling::kBool:
-        mangle_name = "bool";
-        break;
-      case sdb::search::mangling::kNumeric:
-        mangle_name = "numeric";
-        break;
-      case sdb::search::mangling::kString:
-        mangle_name = "string";
-        break;
-      case sdb::search::mangling::kAnalyzer:
-        mangle_name = "analyzer";
-        break;
-      case sdb::search::mangling::kNested:
-        mangle_name = "nested";
-        break;
-    }
+  switch (mangle_suffix[0]) {
+    case sdb::search::mangling::kNull:
+      return "null";
+    case sdb::search::mangling::kBool:
+      return "bool";
+    case sdb::search::mangling::kNumeric:
+      return "numeric";
+    case sdb::search::mangling::kString:
+      return "string";
+    case sdb::search::mangling::kAnalyzer:
+      return "analyzer";
+    case sdb::search::mangling::kNested:
+      return "nested";
+    default:
+      return "unknown";
   }
-  return absl::StrCat("col=", col_id, "(", mangle_name, ")");
 }
+
+}  // namespace
 
 std::string ToString(const Filter& f) {
   return StringifyFilter(f, IdentityField);
 }
 
-std::string ToStringDemangled(const Filter& f) {
-  return StringifyFilter(f, FieldToString);
+std::string ToStringDemangled(
+  const Filter& f,
+  const std::function<std::string_view(sdb::catalog::Column::Id)>& col_name) {
+  return StringifyFilter(f, [&](std::string_view field) -> std::string {
+    constexpr size_t kIdSize = sizeof(uint64_t);
+    if (field.size() < kIdSize) {
+      return TermToString(field);
+    }
+    const uint64_t col_id = absl::big_endian::Load64(field.data());
+    const std::string_view name = col_name(col_id);
+    return absl::StrCat(name, "(", MangleName(field.substr(kIdSize)), ")");
+  });
 }
 
 }  // namespace irs

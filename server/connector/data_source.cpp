@@ -32,6 +32,7 @@
 #include "connector/primary_key.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "serenedb_connector.hpp"
 
 namespace sdb::connector {
 namespace {
@@ -191,6 +192,60 @@ RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
                               evaluator},
     _db{db} {}
 
+void RocksDBFullScanDataSource::ApplySplitRange(const std::string& pk_start,
+                                                const std::string& pk_end) {
+  const auto num_columns = _column_keys.size();
+
+  // Always reset seek keys to column prefix, then append pk_start if present.
+  for (size_t i = 0; i < num_columns; ++i) {
+    basics::StrResize(_column_keys[i], kKeyPrefixSize);
+    if (!pk_start.empty()) {
+      _column_keys[i].append(pk_start);
+    }
+  }
+
+  // Always rebuild upper bounds from scratch. When pk_end is empty, restore
+  // the original column-end bounds ([ObjectId][ColId+1]).
+  // This is critical because a DataSource may process multiple splits
+  // sequentially, and we must not carry over stale bounds from a prior split.
+  _upper_bound_keys_data.clear();
+  _upper_bound_slices.clear();
+
+  if (!pk_end.empty()) {
+    const size_t bound_size = kKeyPrefixSize + pk_end.size();
+    _upper_bound_keys_data.reserve(bound_size * num_columns);
+    for (size_t i = 0; i < num_columns; ++i) {
+      _upper_bound_keys_data.append(_column_keys[i], 0, kKeyPrefixSize);
+      _upper_bound_keys_data.append(pk_end);
+    }
+    _upper_bound_slices.reserve(num_columns);
+    for (size_t i = 0; i < num_columns; ++i) {
+      _upper_bound_slices.emplace_back(
+        _upper_bound_keys_data.data() + i * bound_size, bound_size);
+    }
+  } else {
+    // Restore original upper bounds: [ObjectId][ColId+1] for each column.
+    _upper_bound_keys_data.reserve(kKeyPrefixSize * num_columns);
+    for (size_t i = 0; i < num_columns; ++i) {
+      std::string_view prefix{_column_keys[i].data(), kKeyPrefixSize};
+      _upper_bound_keys_data.append(prefix);
+      // Increment the ColumnId byte to form [ObjectId][ColId+1].
+      auto col_id = absl::big_endian::Load64(
+        _upper_bound_keys_data.data() +
+        i * kKeyPrefixSize + kTablePrefixSize);
+      absl::big_endian::Store64(
+        _upper_bound_keys_data.data() +
+        i * kKeyPrefixSize + kTablePrefixSize,
+        col_id + 1);
+    }
+    _upper_bound_slices.reserve(num_columns);
+    for (size_t i = 0; i < num_columns; ++i) {
+      _upper_bound_slices.emplace_back(
+        _upper_bound_keys_data.data() + i * kKeyPrefixSize, kKeyPrefixSize);
+    }
+  }
+}
+
 void RocksDBRYOWFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBFullScanDataSource::addSplit(std::move(split));
@@ -202,7 +257,12 @@ void RocksDBRYOWFullScanDataSource::addSplit(
 
 void RocksDBSnapshotFullScanDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  const auto* rocksdb_split =
+    dynamic_cast<const SereneDBConnectorSplit*>(split.get());
   RocksDBFullScanDataSource::addSplit(std::move(split));
+  if (rocksdb_split && rocksdb_split->HasRange()) {
+    ApplySplitRange(rocksdb_split->PkStart(), rocksdb_split->PkEnd());
+  }
   InitIterators([&](const rocksdb::ReadOptions& options) {
     return std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(options, &_cf));
   });

@@ -107,7 +107,8 @@ void PostgresFeature::start() {
       StaticStrings::kSereneDBConnector, nullptr, *engine.db(), *cf);
     velox::connector::registerConnector(std::move(connector));
     auto connector_metadata =
-      std::make_shared<connector::SereneDBConnectorMetadata>();
+      std::make_shared<connector::SereneDBConnectorMetadata>(
+        *engine.db(), *cf);
     axiom::connector::ConnectorMetadata::registerMetadata(
       StaticStrings::kSereneDBConnector, connector_metadata);
   }

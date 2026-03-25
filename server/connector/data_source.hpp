@@ -171,6 +171,8 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
   void InitIterators(CreateFn&& create);
 
+  void ApplySplitRange(const std::string& pk_start, const std::string& pk_end);
+
   const rocksdb::Snapshot* _snapshot;
 
  private:

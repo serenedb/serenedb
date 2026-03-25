@@ -335,10 +335,13 @@ std::unique_ptr<Cursor> Query::MakeCursor(UserTask&& user_task) {
 }
 
 void Query::MakeRunner() {
+  axiom::connector::SplitOptions split_options;
+  split_options.targetSplitCount = std::max<int>(
+    _query_ctx.transaction->Get<VariableType::U32>("execution_threads"), 1);
   _runner = Runner{_execution_plan, std::move(_finish_write),
                    _query_ctx.velox_query_ctx,
                    std::make_shared<axiom::runner::ConnectorSplitSourceFactory>(
-                     axiom::connector::SplitOptions{}),
+                     split_options),
                    _query_ctx.query_memory_pool};
 }
 

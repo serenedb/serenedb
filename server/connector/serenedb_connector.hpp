@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <axiom/connectors/ConnectorMetadata.h>
+#include <rocksdb/metadata.h>
 #include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
@@ -498,6 +499,22 @@ class RocksDBInvertedIndexTable : public RocksDBTable {
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
  public:
   using ConnectorSplit::ConnectorSplit;
+
+  SereneDBConnectorSplit(const std::string& connector_id,
+                         std::string pk_start, std::string pk_end)
+    : ConnectorSplit(connector_id),
+      _pk_start(std::move(pk_start)),
+      _pk_end(std::move(pk_end)),
+      _has_range(true) {}
+
+  bool HasRange() const { return _has_range; }
+  const std::string& PkStart() const { return _pk_start; }
+  const std::string& PkEnd() const { return _pk_end; }
+
+ private:
+  std::string _pk_start;
+  std::string _pk_end;
+  bool _has_range = false;
 };
 
 class SereneDBPartitionHandle final : public axiom::connector::PartitionHandle {
@@ -512,9 +529,36 @@ class SereneDBSplitSource final : public axiom::connector::SplitSource {
   }
 };
 
+class RocksDBSplitSource final : public axiom::connector::SplitSource {
+ public:
+  RocksDBSplitSource(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+                     ObjectId table_id,
+                     catalog::Column::Id reference_column_id,
+                     axiom::connector::SplitOptions options)
+    : _db{db},
+      _cf{cf},
+      _table_id{table_id},
+      _reference_column_id{reference_column_id},
+      _options{options} {}
+
+  std::vector<SplitAndGroup> getSplits(uint64_t target_bytes) final;
+
+ private:
+  rocksdb::DB& _db;
+  rocksdb::ColumnFamilyHandle& _cf;
+  ObjectId _table_id;
+  catalog::Column::Id _reference_column_id;
+  axiom::connector::SplitOptions _options;
+  bool _done = false;
+};
+
 class SereneDBConnectorSplitManager final
   : public axiom::connector::ConnectorSplitManager {
  public:
+  SereneDBConnectorSplitManager(rocksdb::DB& db,
+                                rocksdb::ColumnFamilyHandle& cf)
+    : _db{db}, _cf{cf} {}
+
   std::vector<axiom::connector::PartitionHandlePtr> listPartitions(
     const axiom::connector::ConnectorSessionPtr& session,
     const velox::connector::ConnectorTableHandlePtr& table_handle) final {
@@ -531,8 +575,28 @@ class SereneDBConnectorSplitManager final
       return std::make_shared<FileSplitSource>(
         file_handle->GetOptions(), StaticStrings::kSereneDBConnector, options);
     }
+
+    if (const auto* serene_handle =
+          dynamic_cast<const SereneDBConnectorTableHandle*>(
+            table_handle.get())) {
+      auto& transaction = serene_handle->GetTransaction();
+      bool is_ryow = transaction.HasRocksDBWrite() &&
+                     transaction.Get<VariableType::Bool>(
+                       "sdb_read_your_own_writes");
+      if (!is_ryow && serene_handle->GetPoints().empty() &&
+          !serene_handle->GetSearchQuery()) {
+        return std::make_shared<RocksDBSplitSource>(
+          _db, _cf, serene_handle->TableId(),
+          serene_handle->GetEffectiveColumnId(), options);
+      }
+    }
+
     return std::make_shared<SereneDBSplitSource>();
   }
+
+ private:
+  rocksdb::DB& _db;
+  rocksdb::ColumnFamilyHandle& _cf;
 };
 
 // Store info to create DataSink
@@ -592,6 +656,9 @@ class SereneDBConnectorWriteHandle final
 class SereneDBConnectorMetadata final
   : public axiom::connector::ConnectorMetadata {
  public:
+  SereneDBConnectorMetadata(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf)
+    : _split_manager{db, cf} {}
+
   axiom::connector::TablePtr findTable(std::string_view name) final {
     VELOX_UNSUPPORTED();
   }

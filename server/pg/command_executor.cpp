@@ -27,6 +27,7 @@
 #include "catalog/catalog.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/progress_tracker.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::pg {
@@ -131,10 +132,11 @@ yaclib::Future<> CreateIndexExecutor::Execute(velox::RowVectorPtr& batch) {
 
 FinishCreateIndexExecutor::FinishCreateIndexExecutor(
   std::shared_ptr<ExecContext> context, std::string_view schemaname,
-  std::string_view index_name)
+  std::string_view index_name, CreateIndexState& state)
   : CommandExecutor{std::move(context)},
     _schemaname{schemaname},
-    _index_name{index_name} {}
+    _index_name{index_name},
+    _state{state} {}
 
 yaclib::Future<> FinishCreateIndexExecutor::Execute(
   velox::RowVectorPtr& batch) {
@@ -157,9 +159,17 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
 
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
+    if (_state.progress) {
+      _state.progress->SetPhase(create_index_progress::Phase::Committing);
+    }
+
     return inverted_index.CommitWait().ThenInline(
-      [shard = std::move(shard)](yaclib::Result<> r) {
+      [shard = std::move(shard),
+       progress = _state.progress](yaclib::Result<> r) {
         std::ignore = std::move(r).Ok();
+        if (progress) {
+          progress->SetPhase(create_index_progress::Phase::Finalizing);
+        }
         auto& inverted_index =
           basics::downCast<search::InvertedIndexShard>(*shard);
         inverted_index.FinishCreation();

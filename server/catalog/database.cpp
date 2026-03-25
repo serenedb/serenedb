@@ -39,7 +39,7 @@ DatabaseOptions MakeDatabaseOptions(std::string_view name, ObjectId id) {
 }
 
 DatabaseOptions MakeSystemDatabaseOptions() {
-  return MakeDatabaseOptions(StaticStrings::kSystemDatabase, id::kSystemDB);
+  return MakeDatabaseOptions(StaticStrings::kDefaultDatabase, id::kSystemDB);
 }
 
 void Database::WriteInternal(vpack::Builder& b) const {

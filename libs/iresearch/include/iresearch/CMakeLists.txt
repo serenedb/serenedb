@@ -72,6 +72,8 @@ set(IResearch_core_sources
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
+    ./analysis/pattern_tokenizer.cpp
+    ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
     ./formats/column/common.cpp
     ./formats/formats.cpp
@@ -119,6 +121,7 @@ set(IResearch_core_sources
     ./search/column_existence_filter.cpp
     ./search/same_position_filter.cpp
     ./search/wildcard_filter.cpp
+    ./search/wildcard_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp

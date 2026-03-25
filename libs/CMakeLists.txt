@@ -90,7 +90,6 @@ target_include_directories(
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR} # auto-generated headers, like "basics/build.h"
-        ${FROZEN_INCLUDE_DIR}
         ${FUNCTION2_INCLUDE_DIR}
         ${MAGIC_ENUM_INCLUDE_DIR}
 )
@@ -112,6 +111,7 @@ target_link_libraries(
         absl::synchronization
         absl::strings
         faiss
+        fmt::fmt
         yaclib
         zlib
         icu
@@ -219,10 +219,6 @@ add_library(
     http_client/http_result.cpp
     http_client/ssl_client_connection.cpp
 )
-
-if(SDB_FAULT_INJECTION)
-    target_sources(serene PRIVATE basics/global_serialization.cpp)
-endif()
 
 target_link_libraries(
     serene

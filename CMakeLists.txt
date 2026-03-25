@@ -46,9 +46,12 @@ find_package(Git 1.5.3 REQUIRED)
 # stable release: MAJOR.MINOR.PATCH
 # LTS release:    MAJOR.MINOR.PATCH-lts
 #
-# MAJOR = calendar year (e.g. 26)
-# MINOR = sequential release number, typically the month (e.g. 03)
-# PATCH = growing patch number
+# MAJOR = calendar year, 2-digit, UTC (e.g. 26 for 2026)
+# MINOR = month, 2-digit zero-padded, UTC (e.g. 03 for March)
+# PATCH = growing patch number; 0 means dev/unversioned build
+#
+# MAJOR and MINOR are derived from the UTC clock at configure time.
+# PATCH defaults to 0; pass -DSERENEDB_VERSION_PATCH=N (N > 0) for releases.
 #
 # These are mapped to the following variables:
 #
@@ -57,11 +60,19 @@ find_package(Git 1.5.3 REQUIRED)
 # SERENEDB_VERSION_PATCH        = PATCH
 # SERENEDB_VERSION_RELEASE_TYPE = "lts" or empty
 #
-set(SERENEDB_VERSION_MAJOR "26")
-set(SERENEDB_VERSION_MINOR "03")
+
+# Derive MAJOR and MINOR from the UTC clock at configure time
+string(TIMESTAMP SERENEDB_VERSION_MAJOR "%y" UTC)
+string(TIMESTAMP SERENEDB_VERSION_MINOR "%m" UTC)
 
 if(NOT DEFINED SERENEDB_VERSION_PATCH)
-    set(SERENEDB_VERSION_PATCH "1")
+    set(SERENEDB_VERSION_PATCH "0")
+elseif(SERENEDB_VERSION_PATCH EQUAL 0)
+    message(
+        FATAL_ERROR
+        "SERENEDB_VERSION_PATCH must be > 0 when specified explicitly. "
+        "Omit -DSERENEDB_VERSION_PATCH for dev builds (patch defaults to 0)."
+    )
 endif()
 
 # unset RELEASE_TYPE if empty

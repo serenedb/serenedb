@@ -29,12 +29,13 @@
 #include <velox/dwio/common/WriterFactory.h>
 
 #include "basics/down_cast.h"
+#include "pg/progress_tracker.h"
 #include "serenedb_connector.hpp"
 
 namespace {
 
-auto CreateReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
-                  const velox::dwio::common::ReaderOptions& options) {
+auto CreateDwioReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
+                      const velox::dwio::common::ReaderOptions& options) {
   return velox::dwio::common::getReaderFactory(options.fileFormat())
     ->createReader(std::move(input), options);
 }
@@ -42,18 +43,30 @@ auto CreateReader(std::unique_ptr<velox::dwio::common::BufferedInput> input,
 }  // namespace
 namespace sdb::connector {
 
-FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
+FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path,
+                     bool has_pk)
   : Table{std::string{file_path}, [&] {
-            std::vector<std::unique_ptr<const axiom::connector::Column>>
-              column_handles;
-            column_handles.reserve(table_type->size());
-            catalog::Column::Id id = 0;
-            for (const auto& [type, name] : std::ranges::views::zip(
-                   table_type->children(), table_type->names())) {
-              column_handles.emplace_back(
-                std::make_unique<SereneDBColumn>(name, type, id++));
+            std::vector<std::unique_ptr<const axiom::connector::Column>> cols;
+            const size_t col_cnt = table_type->size();
+            cols.reserve(col_cnt);
+            std::span names = table_type->names();
+            std::span types = table_type->children();
+            for (size_t i = 0; i < col_cnt; ++i) {
+              catalog::Column::Id id;
+              if (has_pk && i == col_cnt - 1) {
+                id = catalog::Column::kGeneratedPKId;
+              } else {
+                id = i;
+              }
+              const auto& name = names[i];
+              const auto& type = types[i];
+              auto col = std::make_unique<SereneDBColumn>(name, type, id);
+              cols.emplace_back(std::move(col));
             }
-            return column_handles;
+            if (has_pk) {
+              SDB_ASSERT(col_cnt > 0);
+            }
+            return cols;
           }()} {
   auto connector = velox::connector::getConnector("serenedb");
   auto layout = std::make_unique<SereneDBTableLayout>(
@@ -66,11 +79,13 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
 
 FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
                            velox::memory::MemoryPool& leaf_pool,
-                           velox::memory::MemoryPool& aggregate_pool) {
+                           velox::memory::MemoryPool& aggregate_pool)
+  : _progress{options->progress} {
   // S3 requiries leaf_pool
   auto sink = options->storage_options->CreateFileSink({.pool = &leaf_pool});
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
     std::move(sink), "serenedb_sink");
+  _sink = write_sink.get();
   const auto& writer_factory =
     velox::dwio::common::getWriterFactory(options->Writer()->fileFormat);
   options->Writer()->memoryPool = &aggregate_pool;
@@ -80,8 +95,11 @@ FileDataSink::FileDataSink(std::shared_ptr<WriterOptions> options,
 }
 
 void FileDataSink::appendData(velox::RowVectorPtr input) {
+  const auto bytes_before = _sink->size();
   _writer->write(input);
-  _stats.numWrittenBytes += input->estimateFlatSize();
+  if (_progress) {
+    _progress->ReportBatch(input->size(), _sink->size() - bytes_before, 0);
+  }
 }
 
 bool FileDataSink::finish() { return _writer->finish(); }
@@ -93,6 +111,54 @@ std::vector<std::string> FileDataSink::close() {
 
 void FileDataSink::abort() { _writer->abort(); }
 
+FileDataSource::ReaderComponents FileDataSource::CreateReader(
+  const ReaderOptions& options, velox::memory::MemoryPool& pool,
+  const velox::RowTypePtr& output_type,
+  const velox::connector::ColumnHandleMap& column_handles,
+  const velox::common::SubfieldFilters& subfield_filters,
+  const velox::core::TypedExprPtr& remaining_filter,
+  velox::core::ExpressionEvaluator* evaluator) {
+  auto reader_options = options.dwio.reader;
+  reader_options->setMemoryPool(pool);
+
+  auto row_reader_options = options.dwio.row_reader;
+  SDB_ASSERT(row_reader_options);
+
+  auto spec = std::make_shared<velox::common::ScanSpec>("root");
+  const auto& names = output_type->names();
+  for (size_t i = 0; i < names.size(); ++i) {
+    auto handle_it = column_handles.find(names[i]);
+    SDB_ENSURE(handle_it != column_handles.end(), ERROR_INTERNAL,
+               "FileDataSource: can't find column handle for ", names[i]);
+    const auto& handle =
+      basics::downCast<const SereneDBColumnHandle>(*handle_it->second);
+    auto* field = spec->addField(handle.name(), i);
+    if (handle.Id() == catalog::Column::kGeneratedPKId) {
+      field->setColumnType(velox::common::ScanSpec::ColumnType::kRowIndex);
+    }
+  }
+
+  for (const auto& [subfield, filter] : subfield_filters) {
+    spec->getOrCreateChild(subfield)->setFilter(filter);
+  }
+
+  if (remaining_filter) {
+    SDB_ASSERT(evaluator);
+    row_reader_options->setMetadataFilter(
+      std::make_shared<velox::common::MetadataFilter>(*spec, *remaining_filter,
+                                                      evaluator));
+  }
+
+  row_reader_options->setScanSpec(std::move(spec));
+
+  auto source = options.storage_options->CreateFileSource({});
+  auto input =
+    std::make_unique<velox::dwio::common::BufferedInput>(source, pool);
+  auto reader = CreateDwioReader(std::move(input), *reader_options);
+  auto row_reader = reader->createRowReader(*row_reader_options);
+  return {std::move(source), std::move(reader), std::move(row_reader)};
+}
+
 FileDataSource::FileDataSource(
   std::shared_ptr<ReaderOptions> options,
   const velox::common::SubfieldFilters& subfield_filters,
@@ -102,36 +168,19 @@ FileDataSource::FileDataSource(
   const velox::core::TypedExprPtr& remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : _output_type{std::move(output_type)},
-    _source{options->storage_options->CreateFileSource({})},
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
-    _report_callback{options->report_callback} {
-  SDB_ASSERT(_row_reader_options);
-  _reader_options->setMemoryPool(memory_pool);
-
-  auto spec = std::make_shared<velox::common::ScanSpec>("root");
-  const auto& names = _output_type->names();
-  for (size_t i = 0; i < names.size(); ++i) {
-    auto handle_it = column_handles.find(names[i]);
-    SDB_ENSURE(handle_it != column_handles.end(), ERROR_INTERNAL,
-               "FileDataSource: can't find column handle for ", names[i]);
-    const auto& handle = *handle_it->second;
-    spec->addField(handle.name(), i);
-  }
-
-  for (auto& [subfield, filter] : subfield_filters) {
-    spec->getOrCreateChild(subfield)->setFilter(filter);
-  }
-
-  if (remaining_filter) {
-    SDB_ASSERT(evaluator);
-    _row_reader_options->setMetadataFilter(
-      std::make_shared<velox::common::MetadataFilter>(*spec, *remaining_filter,
-                                                      evaluator));
-  }
-
-  _row_reader_options->setScanSpec(std::move(spec));
+    _progress{options->progress} {
+  auto [source, reader, row_reader] =
+    CreateReader(*options, memory_pool, _output_type, column_handles,
+                 subfield_filters, remaining_filter, evaluator);
+  _source = std::move(source);
+  _reader = std::move(reader);
+  _row_reader = std::move(row_reader);
   _pool = &memory_pool;
+  if (_progress) {
+    _progress->SetBytesTotal(_source->size());
+  }
 }
 
 FileSplitSource::FileSplitSource(std::shared_ptr<ReaderOptions> options,
@@ -211,7 +260,7 @@ void FileDataSource::addSplit(
   auto file_split = basics::downCast<const FileConnectorSplit>(split.get());
   auto input =
     std::make_unique<velox::dwio::common::BufferedInput>(_source, *_pool);
-  _reader = CreateReader(std::move(input), *_reader_options);
+  _reader = CreateDwioReader(std::move(input), *_reader_options);
   auto opts = *_row_reader_options;
   opts.range(file_split->start, file_split->length);
   _row_reader = _reader->createRowReader(opts);
@@ -226,16 +275,12 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   if (rows_read == 0) {
     return nullptr;
   }
-  _completed_rows += batch->size();
-  if (_report_callback) {
-    const auto now = std::chrono::high_resolution_clock::now();
-    auto seconds_since_last_report =
-      std::chrono::duration_cast<std::chrono::seconds>(now - _last_report_time)
-        .count();
-    if (seconds_since_last_report >= 10) {
-      _report_callback(_completed_rows);
-      _last_report_time = now;
-    }
+  if (_progress) {
+    const auto batch_rows = batch->size();
+    auto bytes_read = _source->bytesRead();
+    auto delta_bytes = bytes_read - _prev_bytes_read;
+    _prev_bytes_read = bytes_read;
+    _progress->ReportBatch(batch_rows, delta_bytes, rows_read - batch_rows);
   }
   return std::dynamic_pointer_cast<velox::RowVector>(batch);
 }

@@ -13,14 +13,14 @@ directory = @LOCALSTATEDIR@/lib/serenedb
 #  unix:///path/to/socket
 #
 # Examples:
-#   endpoint = tcp://0.0.0.0:8529
-#   endpoint = tcp://127.0.0.1:8529
-#   endpoint = tcp://localhost:8529
-#   endpoint = tcp://myserver.somedomain.com:8529
-#   endpoint = tcp://[::]:8529
-#   endpoint = tcp://[fe80::21a:5df1:aede:98cf]:8529
+#   endpoint = tcp://0.0.0.0:7890
+#   endpoint = tcp://127.0.0.1:7890
+#   endpoint = tcp://localhost:7890
+#   endpoint = tcp://myserver.somedomain.com:7890
+#   endpoint = tcp://[::]:7890
+#   endpoint = tcp://[fe80::21a:5df1:aede:98cf]:7890
 #
-endpoint = pgsql+tcp://127.0.0.1:8529
+endpoint = pgsql+tcp://127.0.0.1:7890
 
 # reuse a port on restart or wait until it is freed by the operating system
 # reuse-address = false

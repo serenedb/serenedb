@@ -24,26 +24,23 @@
 
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 
 #include "basics/fwd.h"
-#include "data_materializer.hpp"
+#include "iresearch/index/index_reader.hpp"
 
 namespace sdb::connector {
 
-class SearchScanDataSource final : public velox::connector::DataSource,
-                                   public Materializer {
+template<typename Materializer>
+class SearchDataSource final : public velox::connector::DataSource {
  public:
-  SearchScanDataSource(velox::memory::MemoryPool& memory_pool,
-                       // Search source always uses snapshot synced with index
-                       // state to avoid materialization failures
-                       const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
-                       rocksdb::ColumnFamilyHandle& cf,
-                       velox::RowTypePtr row_type,
-                       std::vector<catalog::Column::Id> column_ids,
-                       catalog::Column::Id effective_column_id,
-                       ObjectId object_key, const irs::IndexReader& reader,
-                       const irs::Filter::Query& query);
+  SearchDataSource(velox::memory::MemoryPool& memory_pool,
+                   Materializer materializer, const irs::IndexReader& reader,
+                   const irs::Filter::Query& query, const irs::Scorer* scorer);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -57,6 +54,8 @@ class SearchScanDataSource final : public velox::connector::DataSource,
   void cancel() final;
 
  private:
+  velox::memory::MemoryPool& _memory_pool;
+  Materializer _materializer;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   const irs::IndexReader& _reader;
   // TODO(Dronplane) when we have sorted indexes we will need Merge reader for
@@ -66,7 +65,10 @@ class SearchScanDataSource final : public velox::connector::DataSource,
   irs::DocIterator::ptr _pk_iterator;
   const irs::PayAttr* _pk_value;
   irs::DocIterator::ptr _doc;
-  uint64_t _produced{0};
+  uint64_t _produced = 0;
+  const irs::Scorer* _scorer = nullptr;
+  irs::ColumnArgsFetcher _fetcher;
+  irs::ScoreFunction _score_function;
 };
 
 }  // namespace sdb::connector

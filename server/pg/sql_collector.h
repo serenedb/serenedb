@@ -29,6 +29,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
 #include "catalog/object.h"
+#include "iresearch/search/scorer.hpp"
 #include "pg/pg_types.h"
 
 namespace sdb::query {
@@ -36,6 +37,11 @@ namespace sdb::query {
 class Transaction;
 
 }  // namespace sdb::query
+namespace sdb::catalog {
+
+class Table;
+
+}  // namespace sdb::catalog
 
 struct RawStmt;
 struct List;
@@ -74,8 +80,9 @@ class Objects : public irs::memory::Managed {
   };
 
   struct ObjectData {
-    AccessType type = AccessType::None;
     std::shared_ptr<catalog::SchemaObject> object;
+    // TODO(mbkkt): remove it
+    std::shared_ptr<catalog::Table> catalog_table;
 
     // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
     // to implement connector::Table without allocation.
@@ -111,6 +118,31 @@ class Objects : public irs::memory::Managed {
   auto& getRelations(this auto& self) noexcept { return self._relations; }
   auto& getFunctions(this auto& self) noexcept { return self._functions; }
 
+  std::shared_ptr<const irs::Scorer> BeginNode() {
+    return std::exchange(_scorer, nullptr);
+  }
+
+  bool SetScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
+    if (_scorer) {
+      return _scorer->equals(*scorer);
+    }
+    _scorer = std::move(scorer);
+    return true;
+  }
+
+  void EndNode(const void* node, std::shared_ptr<const irs::Scorer> outer) {
+    SDB_ASSERT(node);
+    auto inner = std::exchange(_scorer, std::move(outer));
+    if (inner) {
+      _node_to_scorer[node] = std::move(inner);
+    }
+  }
+
+  std::shared_ptr<const irs::Scorer> GetScorer(const void* node) const {
+    auto it = _node_to_scorer.find(node);
+    return it != _node_to_scorer.end() ? it->second : nullptr;
+  }
+
   bool empty() const noexcept {
     return _relations.empty() && _functions.empty();
   }
@@ -118,6 +150,8 @@ class Objects : public irs::memory::Managed {
   void clear() noexcept {
     _relations.clear();
     _functions.clear();
+    _scorer.reset();
+    _node_to_scorer.clear();
   }
 
  private:
@@ -133,9 +167,9 @@ class Objects : public irs::memory::Managed {
 
   Map _relations;
   Map _functions;
-  containers::FlatHashSet<void*> _search_functions;
-  containers::FlatHashMap<std::string_view, std::vector<void*>>
-    _scope_to_search_functions;
+  std::shared_ptr<const irs::Scorer> _scorer;
+  containers::FlatHashMap<const void*, std::shared_ptr<const irs::Scorer>>
+    _node_to_scorer;
 };
 
 // collect objects to objects

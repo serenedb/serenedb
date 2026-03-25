@@ -48,6 +48,7 @@ enum class FormatType : uint8_t {
   Parquet,
   Dwrf,
   Orc,
+  Json,
 };
 
 // Storage
@@ -116,8 +117,6 @@ inline constexpr OptionInfo kTextOptions[] = {kTextDelimiter, kTextEscape,
 inline constexpr OptionInfo kCsvOptions[] = {kCsvDelimiter, kCsvEscape,
                                              kCsvNull, kHeader};
 
-inline constexpr OptionInfo kProgress{"progress", false,
-                                      "Show progress notices during COPY"};
 inline constexpr EnumOptionInfo<CopyOnError> kOnError{
   "on_error", CopyOnError::Stop, "Error handling"};
 
@@ -129,7 +128,7 @@ inline constexpr OptionInfo kRejectLimit{
 inline constexpr EnumOptionInfo<CopyLogVerbosity> kLogVerbosity{
   "log_verbosity", CopyLogVerbosity::Default, "Logging level"};
 
-inline constexpr OptionInfo kCommonCopyFormatOptions[] = {kFormat, kProgress};
+inline constexpr OptionInfo kCommonCopyFormatOptions[] = {kFormat};
 
 inline constexpr OptionInfo kCopyTextOptions[] = {
   kTextDelimiter, kTextEscape,  kTextNull,    kHeader,
@@ -149,15 +148,20 @@ inline constexpr OptionGroup kCopyCsvGroup{"CSV", kCopyCsvOptions, {}};
 inline constexpr OptionGroup kParquetGroup{"Parquet", {}, {}};
 inline constexpr OptionGroup kDwrfGroup{"DWRF", {}, {}};
 inline constexpr OptionGroup kOrcGroup{"ORC", {}, {}};
+inline constexpr OptionGroup kJsonGroup{"JSON", {}, {}};
 
 inline constexpr OptionGroup kFormatSubgroups[] = {
-  kCommonFormatGroup, kTextGroup, kCsvGroup,
-  kParquetGroup,      kDwrfGroup, kOrcGroup};
+  kCommonFormatGroup, kTextGroup, kCsvGroup, kParquetGroup,
+  kDwrfGroup,         kOrcGroup,  kJsonGroup};
 inline constexpr OptionGroup kFormatGroup{"Format", {}, kFormatSubgroups};
 
-inline constexpr OptionGroup kCopyFormatSubgroups[] = {
-  kCommonCopyFormatGroup, kCopyTextGroup, kCopyCsvGroup,
-  kParquetGroup,          kDwrfGroup,     kOrcGroup};
+inline constexpr OptionGroup kCopyFormatSubgroups[] = {kCommonCopyFormatGroup,
+                                                       kCopyTextGroup,
+                                                       kCopyCsvGroup,
+                                                       kParquetGroup,
+                                                       kDwrfGroup,
+                                                       kOrcGroup,
+                                                       kJsonGroup};
 inline constexpr OptionGroup kCopyFormatGroup{
   "Format", {}, kCopyFormatSubgroups};
 

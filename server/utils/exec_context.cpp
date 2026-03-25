@@ -29,7 +29,7 @@
 
 namespace sdb {
 
-static constexpr Superuser kSuperuser{StaticStrings::kSystemDatabase,
+static constexpr Superuser kSuperuser{StaticStrings::kDefaultDatabase,
                                       id::kSystemDB};
 
 ExecContext::ExecContext(std::string_view user, std::string_view dbname,
@@ -47,14 +47,14 @@ ExecContext::ExecContext(std::string_view user, std::string_view dbname,
   if (af->isActive()) {
     _database_auth_level = _system_db_auth_level =
       auth::DatabaseAuthLevel(user, dbname, false);
-    if (dbname != StaticStrings::kSystemDatabase) {
+    if (dbname != StaticStrings::kDefaultDatabase) {
       _system_db_auth_level =
-        auth::DatabaseAuthLevel(user, StaticStrings::kSystemDatabase, false);
+        auth::DatabaseAuthLevel(user, StaticStrings::kDefaultDatabase, false);
     }
     _is_admin_user = (_system_db_auth_level == auth::Level::RW);
     if (!_is_admin_user && ServerState::instance()->ReadOnly()) {
       _is_admin_user =
-        auth::DatabaseAuthLevel(user, StaticStrings::kSystemDatabase, true) ==
+        auth::DatabaseAuthLevel(user, StaticStrings::kDefaultDatabase, true) ==
         auth::Level::RW;
     }
   }

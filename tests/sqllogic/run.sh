@@ -19,6 +19,7 @@ is_boolean_flag() {
 # Default values
 declare -A defaults=(
 	[single_port]=''
+	[single_port_ssl]=''
 	[cluster_port]=''
 	[protocol]='simple' # simple|extended|both TODO(mbkkt) make both
 	[test]='./tests/sqllogic/sdb/**/*.test*'
@@ -32,6 +33,7 @@ declare -A defaults=(
 	[show_all_errors]=false
 	[fast]=false
 	[skip_failed]=''
+	[skip]=''
 	[database]='serenedb'
 	[host]='localhost'
 	[iterations]=1
@@ -67,10 +69,9 @@ launch_s3() {
 			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
 			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
 			echo "Stopping MinIO container..."
-			docker rm -f "$MINIO_CONTAINER_NAME" 2>/dev/null || true
+			docker rm -fv "$MINIO_CONTAINER_NAME" 2>/dev/null || true
 		fi
 	}
-	trap cleanup_minio EXIT
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -140,7 +141,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | database | host | iterations | cancellation)
+		single-port | single-port-ssl | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -165,7 +166,7 @@ parse_options() {
 
 			# Type validation
 			case "$key" in
-			single-port | cluster-port | jobs | iterations)
+			single-port | single-port-ssl | cluster-port | jobs | iterations)
 				validate_number "$value" "--$key" || return 1
 				;;
 			debug)
@@ -198,6 +199,7 @@ done
 echo "Database: $database"
 echo "Host: $host"
 echo "Single Port: $single_port"
+echo "Single Port SSL: $single_port_ssl"
 echo "Cluster Port: $cluster_port"
 echo "Protocol: $protocol"
 echo "Test Path: $test"
@@ -211,6 +213,7 @@ echo "Format: $format"
 echo "Show all errors: $show_all_errors"
 echo "Fast: $fast"
 echo "Skip failed: $skip_failed"
+echo "Skip: $skip"
 echo "Iterations: $iterations"
 echo "Cancellation: $cancellation"
 
@@ -228,6 +231,13 @@ run_tests() {
 
 	echo
 	echo "Running tests for $database database in $mode mode on port $port with $engine engine"
+
+	local ssl_port_opt=""
+	if [[ -n "$4" ]]; then
+		ssl_port_opt="--ssl-port $4"
+		echo "Using SSL port: $4"
+	fi
+
 	echo
 
 	# Build options dynamically
@@ -256,6 +266,11 @@ run_tests() {
 		skip_failed_opt="--skip-failed"
 	fi
 
+	local skip_opt=""
+	if [[ -n "$skip" ]]; then
+		skip_opt="--skip $skip"
+	fi
+
 	# Execute the command and capture the exit code
 	sqllogictest "$test" \
 		--host "$host" --port "$port" --engine "$engine" \
@@ -263,7 +278,9 @@ run_tests() {
 		--label "$database" --label "$mode" --label "$engine-protocol" \
 		--junit "$junit-$mode-$engine" \
 		$options \
-		$skip_failed_opt ${skip_failed:+"$skip_failed"}
+		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+		$skip_opt \
+		$ssl_port_opt
 	return $?
 }
 
@@ -293,17 +310,28 @@ fi
 # Variable to track the highest exit code encountered
 final_exit_code=0
 
-if [[ "$debug" == "true" ]]; then
-	cargo install --debug --path $runner/sqllogictest-bin --quiet --force
+build_type="release"
+[[ "$debug" == "true" ]] && build_type="debug"
+
+submodule_commit=$(git -C "$runner" rev-parse HEAD 2>/dev/null || echo "unknown")
+build_marker="$runner/target/.last_built_commit_${build_type}"
+last_built_commit=$(cat "$build_marker" 2>/dev/null || echo "")
+
+if [[ "$submodule_commit" != "$last_built_commit" ]] || ! command -v sqllogictest &>/dev/null; then
+	if [[ "$debug" == "true" ]]; then
+		cargo install --debug --path $runner/sqllogictest-bin --quiet --force
+	else
+		cargo install --path $runner/sqllogictest-bin --quiet --force
+	fi
 	test_exit_code=$?
+	[[ $test_exit_code == 0 ]] && echo "$submodule_commit" >"$build_marker"
 else
-	cargo install --path $runner/sqllogictest-bin --quiet --force
-	test_exit_code=$?
+	test_exit_code=0
 fi
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
 cancel_pid=""
-trap 'kill "$cancel_pid" 2>/dev/null || true' EXIT
+trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT
 if [[ "$cancellation" == "true" ]]; then
 	trap '' INT
 	# One background process that keeps sending SIGINT at random intervals
@@ -319,7 +347,7 @@ fi
 for iter in $(seq 1 "$iterations"); do
 	if [[ "$protocol" == "simple" || "$protocol" == "both" ]]; then
 		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres"
+			run_tests "single" "$single_port" "postgres" "$single_port_ssl"
 			test_exit_code=$?
 			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 		fi
@@ -332,7 +360,7 @@ for iter in $(seq 1 "$iterations"); do
 
 	if [[ "$protocol" == "extended" || "$protocol" == "both" ]]; then
 		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres-extended"
+			run_tests "single" "$single_port" "postgres-extended" "$single_port_ssl"
 			test_exit_code=$?
 			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 		fi

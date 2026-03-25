@@ -99,8 +99,8 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
-    ApplyTableStatsDiffs();
   }
+  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
 
@@ -151,7 +151,6 @@ bool Transaction::HasTransactionBegin() const noexcept {
 
 const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
-  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
     auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);

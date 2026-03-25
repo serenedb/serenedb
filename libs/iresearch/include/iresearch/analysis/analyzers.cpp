@@ -37,6 +37,7 @@
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
 #include "iresearch/analysis/path_hierarchy_tokenizer.hpp"
+#include "iresearch/analysis/pattern_tokenizer.hpp"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
@@ -265,6 +266,7 @@ void Init() {
   PathHierarchyTokenizer::init();
   StopwordsTokenizer::init();
   NGramTokenizerBase::init();
+  PatternTokenizer::init();
   PipelineTokenizer::init();
   SegmentationTokenizer::init();
   NormalizingTokenizer::init();

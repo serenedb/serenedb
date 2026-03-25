@@ -17,6 +17,7 @@ set(iresearch-tests_sources
     ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
+    ./analysis/pattern_tokenizer_tests.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_tests.cpp

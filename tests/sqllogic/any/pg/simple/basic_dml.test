@@ -90,7 +90,7 @@ statement count 8000
 DELETE FROM series_table;
 
 statement ok
-CREATE TABLE cast_table(a INTEGER, b TIMESTAMP,  c SMALLINT, PRIMARY KEY(a,b));
+CREATE TABLE cast_table(a INTEGER, b TIMESTAMP, c SMALLINT, PRIMARY KEY(a,b));
 
 statement count 1
 INSERT INTO cast_table VALUES (CAST(1 AS BIGINT), '2025-01-01', CAST(9 AS INTEGER));

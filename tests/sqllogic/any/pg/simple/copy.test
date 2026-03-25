@@ -629,7 +629,6 @@ Copy:
   Format:
     Common:
       format (enum) [default: Text, values: Text, Csv, Parquet, Dwrf, Orc, Json] - File format
-      progress (boolean) [default: false] - Show progress notices during COPY
     Text:
       delimiter (character) [default: \t] - Column delimiter character
       escape (character) [default: \\] - Escape character

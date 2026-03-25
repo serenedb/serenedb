@@ -62,6 +62,7 @@
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
+#include "pg/command_executor.h"
 #include "query/transaction.h"
 #include "query/utils.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -421,8 +422,8 @@ class RocksDBTable : public axiom::connector::Table {
     return (self._bulk_insert);
   }
 
-  decltype(auto) BackfillIndexId(this auto&& self) noexcept {
-    return (self._backfill_index_id);
+  decltype(auto) CreateIndexState(this auto&& self) noexcept {
+    return (self._create_index_state);
   }
 
  private:
@@ -436,7 +437,7 @@ class RocksDBTable : public axiom::connector::Table {
     WriteConflictPolicy::EmitError;
   bool _update_pk = false;
   bool _bulk_insert = false;
-  ObjectId _backfill_index_id;
+  pg::CreateIndexState* _create_index_state = nullptr;
 };
 
 class InvertedIndexTable : public axiom::connector::Table {
@@ -729,16 +730,14 @@ class SereneDBConnectorMetadata final
                "Wrong type of insert table handle");
     auto& rocksdb_table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle->Table());
-    if (rocksdb_table.BulkInsert()) {
-      return yaclib::MakeFuture(get_total_rows_from_write_results());
-    }
     auto& transaction = serene_insert_handle->GetTransaction();
+    const auto kind = serene_insert_handle->Kind();
 
     const int64_t number_of_rows_affected =
-      serene_insert_handle->NumberOfRowsAffected();
-    const auto kind = serene_insert_handle->Kind();
-    if (number_of_rows_affected != 0 &&
-        kind != axiom::connector::WriteKind::kUpdate) {
+      rocksdb_table.BulkInsert() ? get_total_rows_from_write_results()
+                                 : serene_insert_handle->NumberOfRowsAffected();
+
+    if (kind != axiom::connector::WriteKind::kUpdate) {
       transaction.UpdateNumRows(rocksdb_table.TableId(),
                                 kind == axiom::connector::WriteKind::kDelete
                                   ? -number_of_rows_affected
@@ -1065,12 +1064,12 @@ class SereneDBConnector final : public velox::connector::Connector {
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
               std::move(update_sinks), table_lock);
-          } else if (table.BackfillIndexId().isSet()) {
+          } else if (auto* cis = table.CreateIndexState()) {
             auto backfill_writer =
-              CreateBackfillIndexWriter(table.BackfillIndexId(), transaction);
+              CreateBackfillIndexWriter(cis->index_id, transaction);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              columns, std::move(backfill_writer), table_lock);
+              columns, std::move(backfill_writer), table_lock, cis->progress);
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

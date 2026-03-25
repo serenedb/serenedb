@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/functional/overload.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <memory>
 #include <string_view>
@@ -39,6 +41,7 @@
 #include "pg/connection_context.h"
 #include "pg/create_index_options.h"
 #include "pg/pg_list_utils.h"
+#include "pg/progress_tracker.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -165,6 +168,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   SDB_ASSERT(catalog_table);
   auto catalog_index = snapshot->GetRelation(db, schema, stmt.idxname);
   SDB_ASSERT(catalog_index);
+  state.index_id = catalog_index->GetId();
 
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);
@@ -176,10 +180,17 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));
   auto& root =
     basics::downCast<const axiom::logical_plan::TableWriteNode>(logical_plan);
+
   auto& table = basics::downCast<connector::RocksDBTable>(
     const_cast<axiom::connector::Table&>(*root.table()));
-  table.BackfillIndexId() = catalog_index->GetId();
 
+  auto reporter = std::make_unique<IndexProgressReporter>(
+    db, catalog_table->GetId(), create_index_progress::Command::CreateIndex,
+    create_index_progress::Phase::BuildingIndex, catalog_index->GetId());
+  reporter->SetTuplesTotal(table.numRows());
+  state.progress = reporter.get();
+  query.AddProgressReporter(std::move(reporter));
+  table.CreateIndexState() = &state;
   query.CompileQuery();
   query.MakeRunner();
 

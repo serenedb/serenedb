@@ -106,13 +106,13 @@ yaclib::Future<> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
   for (auto elem : options) {
     names.insert(elem->defname);
   }
+  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
   std::vector<yaclib::Future<>> res;
   std::vector<std::shared_ptr<catalog::Table>> tables;
   PgListWrapper<VacuumRelation> rels{stmt.rels};
-  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto current_database = context.GetDatabaseId();
-  auto current_schema =
-    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+  auto current_schema = conn_ctx.GetCurrentSchema();
   for (auto rel : rels) {
     ObjectId db_id = current_database;
     std::string_view schema_name = current_schema;

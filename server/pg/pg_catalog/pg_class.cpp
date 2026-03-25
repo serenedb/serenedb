@@ -49,8 +49,8 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
-                     std::vector<PgClass>& values) {
-  auto snapshot = catalog::GetCatalog().GetSnapshot();
+                     std::vector<PgClass>& values,
+                     const catalog::Snapshot& snapshot) {
   auto insert_object = [&](ObjectId schema_id,
                            const std::shared_ptr<catalog::Object>& object) {
     PgClass::Relkind relkind;
@@ -79,7 +79,7 @@ void RetrieveObjects(ObjectId database_id,
     };
 
     if (relkind == PgClass::Relkind::OrdinaryTable) {
-      auto shard = snapshot->GetTableShard(object->GetId());
+      auto shard = snapshot.GetTableShard(object->GetId());
       SDB_ASSERT(shard);
       auto stats = shard->GetTableStats();
       row.reltuples = static_cast<float>(stats.num_rows);
@@ -89,9 +89,9 @@ void RetrieveObjects(ObjectId database_id,
     values.push_back(std::move(row));
   };
 
-  for (const auto& schema : snapshot->GetSchemas(database_id)) {
+  for (const auto& schema : snapshot.GetSchemas(database_id)) {
     for (const auto& relation :
-         snapshot->GetRelations(database_id, schema->GetName())) {
+         snapshot.GetRelations(database_id, schema->GetName())) {
       insert_object(schema->GetId(), relation);
     }
   }
@@ -105,7 +105,8 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgClass>);
   std::vector<PgClass> values;
-  RetrieveObjects(GetDatabaseId(), catalog, values);
+  auto snapshot = _config.EnsureCatalogSnapshot();
+  RetrieveObjects(GetDatabaseId(), catalog, values, *snapshot);
 
   {  // get system tables
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {

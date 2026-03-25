@@ -27,6 +27,7 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "catalog/catalog.h"
 #include "pg/isolation_level.h"
 
 namespace sdb {
@@ -100,6 +101,18 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   }
   auto var = GetDefaultVariable(key);
   return var.data() != nullptr ? std::optional<std::string>{var} : std::nullopt;
+}
+
+std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
+  if (_snapshot) {
+    return _snapshot;
+  }
+  _snapshot = SerenedServer::Instance()
+                .getFeature<catalog::CatalogFeature>()
+                .Global()
+                .GetCatalogSnapshot();
+  SDB_ASSERT(_snapshot);
+  return _snapshot;
 }
 
 std::string_view Config::GetNonDefault(std::string_view key) const {

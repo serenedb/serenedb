@@ -64,57 +64,9 @@ struct ForeignId : ObjectId {
   using ObjectId::ObjectId;
 };
 
-std::shared_ptr<catalog::Table> GetVertexByName(ObjectId database,
-                                                std::string_view name);
-
 void WriteTableName(vpack::Builder& b, ObjectId id);
 
 bool VPackWriteHook(auto ctx, auto&&, ForeignId value) { return value.isSet(); }
-
-template<typename Context>
-void VPackWrite(Context ctx, ForeignId value) {
-  static constexpr bool kIsInternal =
-    std::is_same_v<typename Context::Arg, ObjectInternal>;
-
-  auto& vpack = ctx.vpack();
-  if constexpr (kIsInternal) {
-    vpack.add(value.id());
-  } else {
-    WriteTableName(vpack, value);
-  }
-}
-
-template<typename Context>
-void VPackRead(Context ctx, ForeignId& value) {
-  static constexpr bool kIsInternal =
-    std::is_same_v<typename Context::Arg, ObjectInternal>;
-
-  auto vpack = ctx.vpack();
-
-  if (vpack.isNumber()) {
-    // Cluster inventory
-    // Cluster action
-    // User action on single server
-    // Open existing database cluster
-    value = ForeignId{vpack.template getNumber<uint64_t>()};
-  } else {
-    if constexpr (!kIsInternal) {
-      // Open existing database single
-      // Tailing sync
-      // Initial sync
-      // Restore
-      auto c = GetVertexByName(ctx.arg().database, vpack.stringView());
-      if (!c) {
-        SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND,
-                  "Object not found: ", vpack.stringView());
-      }
-      value = ForeignId{c->planId().id()};
-
-    } else {
-      SDB_ENSURE(false, ERROR_INTERNAL);
-    }
-  }
-}
 
 static constexpr std::string_view kDefaultSharding = "none";
 
@@ -221,7 +173,7 @@ struct CreateTableRequest {
   vpack::Slice keyOptions = vpack::Slice::emptyObjectSlice();
   vpack::Slice indexes;
   std::string_view id;  // TODO(gnusi): make ObjectId
-  int type = std::to_underlying(TableType::Document);
+  int type = std::to_underlying(TableType::RocksDB);
   bool waitForSync = false;
   FileInfo file_info;
 };
@@ -250,7 +202,7 @@ struct TableOptions {
   uint32_t numberOfShards = 1;
   uint32_t replicationFactor = 1;
   uint32_t writeConcern = 1;
-  int type = std::to_underlying(TableType::Document);
+  int type = std::to_underlying(TableType::RocksDB);
   bool waitForSync = false;
   FileInfo file_info;
 };

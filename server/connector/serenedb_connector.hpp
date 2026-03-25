@@ -94,31 +94,36 @@ inline bool HasColumnOverlap(
 
 template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
-  irs::IndexWriter::Transaction& transaction,
+  irs::IndexWriter::Transaction& index_transaction,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<SearchSinkInsertWriter>(
-      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
+      index_transaction, MakeAnalyzerProvider(snapshot, index),
+      index.GetColumnIds());
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<SearchSinkUpdateWriter>(
-      transaction, MakeAnalyzerProvider(index), index.GetColumnIds());
+      index_transaction, MakeAnalyzerProvider(snapshot, index),
+      index.GetColumnIds());
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
-    return std::make_unique<SearchSinkDeleteWriter>(transaction);
+    return std::make_unique<SearchSinkDeleteWriter>(index_transaction);
   }
 }
 
 inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
   ObjectId backfill_index_id, query::Transaction& transaction) {
-  auto snapshot = transaction.GetCatalogSnapshot();
+  auto snapshot = transaction.EnsureCatalogSnapshot();
   auto shard = snapshot->GetIndexShard(backfill_index_id);
   SDB_ASSERT(shard);
   auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
   auto& index = basics::downCast<const catalog::InvertedIndex>(
     *snapshot->template GetObject<catalog::Index>(shard->GetIndexId()));
   return std::make_unique<SearchSinkBackfillWriter>(
-    inverted_shard, MakeAnalyzerProvider(index), index.GetColumnIds());
+    inverted_shard,
+    MakeAnalyzerProvider(transaction.EnsureCatalogSnapshot(), index),
+    index.GetColumnIds());
 }
 
 template<axiom::connector::WriteKind Kind>
@@ -127,14 +132,15 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
-  auto resolve_index_writer = [&](auto& transaction,
+  auto resolve_index_writer = [&](auto& index_transaction,
                                   const catalog::Index& index) {
-    if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
+    if constexpr (std::is_same_v<std::decay_t<decltype(index_transaction)>,
                                  irs::IndexWriter::Transaction>) {
       const auto& inverted_index =
         basics::downCast<catalog::InvertedIndex>(index);
-      writers.push_back(
-        MakeInvertedIndexWriter<Kind>(transaction, inverted_index));
+      auto snapshot = transaction.EnsureCatalogSnapshot();
+      writers.push_back(MakeInvertedIndexWriter<Kind>(
+        index_transaction, snapshot, inverted_index));
     } else {
       SDB_UNREACHABLE();
     }
@@ -167,7 +173,7 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   // TODO(Dronplane): Find a better way. Maybe make failpoints database
   // bindable to allow parallel execution.
   auto table_ptr =
-    transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(table_id);
+    transaction.EnsureCatalogSnapshot()->GetObject<catalog::Table>(table_id);
   SDB_ASSERT(table_ptr);
   auto one_index_fp =
     absl::StrCat(table_ptr->GetName(), "_connector_must_one_index");
@@ -914,7 +920,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
       // bindable to allow parallel execution.
       auto table_ptr =
-        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+        transaction.EnsureCatalogSnapshot()->GetObject<catalog::Table>(
+          object_key);
       SDB_ASSERT(table_ptr);
       auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
       SDB_IF_FAILURE(fail_on_ryow) {
@@ -991,7 +998,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& object_key = table.TableId();
 
     auto table_shard =
-      transaction.GetCatalogSnapshot()->GetTableShard(object_key);
+      transaction.EnsureCatalogSnapshot()->GetTableShard(object_key);
     SDB_ASSERT(table_shard);
     auto& table_lock = table_shard->GetTableLock();
 

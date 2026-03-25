@@ -38,6 +38,11 @@
 #include "catalog/types.h"
 
 namespace sdb {
+namespace catalog {
+
+struct Snapshot;
+
+}  // namespace catalog
 
 enum class VariableType {
   Bool = 0,
@@ -185,6 +190,10 @@ class Config : public velox::config::IConfig {
 
   void ResetAll();
 
+  void DropCatalogSnapshot() { _snapshot.reset(); }
+
+  std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
+
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
   // Visit all the settings and call function f(setting_name, value,
@@ -208,6 +217,9 @@ class Config : public velox::config::IConfig {
 
   // Session variables
   containers::FlatHashMap<std::string_view, std::string> _session;
+
+  // Catalog snapshot
+  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
 
   // Transaction variable
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;

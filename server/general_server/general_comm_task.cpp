@@ -98,7 +98,7 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
 
   return server.getFeature<catalog::CatalogFeature>()
     .Global()
-    .GetSnapshot()
+    .GetCatalogSnapshot()
     ->GetDatabase(req.databaseName());
 }
 

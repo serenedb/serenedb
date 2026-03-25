@@ -181,7 +181,7 @@ std::vector<std::shared_ptr<catalog::Role>> GetRoles() {
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()
-    .GetSnapshot()
+    .GetCatalogSnapshot()
     ->GetRoles();
 }
 
@@ -189,7 +189,7 @@ std::shared_ptr<catalog::Role> GetRole(std::string_view name) {
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()
-    .GetSnapshot()
+    .GetCatalogSnapshot()
     ->GetRole(name);
 }
 

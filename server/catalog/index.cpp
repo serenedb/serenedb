@@ -111,7 +111,8 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, IndexBaseOptions options,
-  std::vector<catalog::CreateIndexColumn> columns) {
+  std::vector<catalog::CreateIndexColumn> columns,
+  const std::shared_ptr<const Snapshot>& snapshot) {
   switch (options.type) {
     case IndexType::Inverted: {
       auto column_validation_res = ValidateInvertedIndexColumns(columns);
@@ -120,7 +121,6 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
       }
 
       InvertedIndexOptionsWrapper impl_options(std::move(options));
-      auto snapshot = catalog::GetCatalog().GetSnapshot();
 
       for (const auto& c : columns) {
         InvertedIndexColumnInfo index_col;

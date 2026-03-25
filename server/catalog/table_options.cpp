@@ -77,25 +77,6 @@ struct KeyGeneratorOptions {
 
 // NOLINTEND
 
-Result ResolveId(ObjectId database, const auto& name, ObjectId& id) {
-  if (name.empty()) {
-    return {ERROR_BAD_PARAMETER, "Vertex collection name is not set"};
-  }
-
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c =
-    catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic, name);
-  if (!c) {
-    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "Collection not found: ", name};
-  }
-
-  SDB_ASSERT(c);
-  id = c->planId();
-
-  return {};
-};
-
 std::string GenerateUniqueName(std::string_view prefix,
                                std::span<const std::string> column_names) {
   std::string candidate{prefix};
@@ -154,8 +135,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
                         CreateTableOptions& options,
                         uint32_t replication_factor, uint32_t write_concern,
                         bool enforce_replication_factor) {
-  if (request.type != std::to_underlying(TableType::Document) &&
-      request.type != std::to_underlying(TableType::Edge) &&
+  if (request.type != std::to_underlying(TableType::RocksDB) &&
       request.type != std::to_underlying(TableType::File)) {
     return {ERROR_BAD_PARAMETER, "Invalid collection type: ", request.type};
   }
@@ -211,7 +191,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   } else if (request.distributeShardsLike) {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = catalog.GetCatalogSnapshot();
     auto leader = snapshot->GetTable(database_id, StaticStrings::kPublic,
                                      *request.distributeShardsLike);
     if (!leader) {
@@ -364,16 +344,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     return {ERROR_BAD_PARAMETER, "numberOfShards cannot be 0"};
   }
 
-  if (request.type == std::to_underlying(TableType::Edge)) {
-    auto r = ResolveId(database_id, request.from, options.from);
-    if (!r.ok()) {
-      return r;
-    }
-    r = ResolveId(database_id, request.to, options.to);
-    if (!r.ok()) {
-      return r;
-    }
-  }
   if (auto r = ValidatorJsonSchema::buildInstance(request.schema); r) {
     options.schema = std::move(*r);
   } else {
@@ -422,25 +392,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.file_info = std::move(request.file_info);
 
   return {};
-}
-
-void WriteTableName(vpack::Builder& b, ObjectId id) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c = catalog.GetSnapshot()->GetObject<catalog::Table>(id);
-  if (!c) {
-    b.add(vpack::Slice::emptyStringSlice());  // dangling reference
-  } else {
-    b.add(c->GetName());
-  }
-}
-
-std::shared_ptr<Table> GetVertexByName(ObjectId database,
-                                       std::string_view name) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<CatalogFeature>().Global();
-  return catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic,
-                                         name);
 }
 
 }  // namespace sdb::catalog

@@ -343,7 +343,7 @@ std::string FieldToString(std::string_view field) {
         break;
     }
   }
-  return absl::StrCat("col:", col_id, "(", mangle_name, ")");
+  return absl::StrCat("col=", col_id, "(", mangle_name, ")");
 }
 
 std::string ToString(const Filter& f) {

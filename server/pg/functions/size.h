@@ -30,7 +30,6 @@
 #include "basics/fwd.h"
 #include "catalog/catalog.h"
 #include "catalog/object.h"
-#include "folly/CPortability.h"
 #include "pg/connection_context.h"
 #include "pg/functions/json.h"
 #include "pg/sql_collector.h"
@@ -46,7 +45,7 @@ struct PgDatabaseSize {
   FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
     const std::vector<velox::TypePtr>& /*inputTypes*/,
     const velox::core::QueryConfig& config,
-    const arg_type<velox::Varchar>& /* input */
+    const arg_type<velox::Varchar>& /*input*/
   ) {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
     snapshot = conn->EnsureCatalogSnapshot();

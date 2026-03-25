@@ -55,6 +55,7 @@
 #include "connector/parquet_materializer.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/rocksdb_materializer.hpp"
+#include "connector/search_filter_printer.hpp"
 #include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
@@ -72,8 +73,9 @@
 namespace sdb::connector {
 namespace {
 
-inline void ExtractInputFields(const velox::core::TypedExprPtr& expr,
-                               absl::flat_hash_set<std::string_view>& names) {
+inline void ExtractInputFields(
+  const velox::core::TypedExprPtr& expr,
+  containers::FlatHashSet<std::string_view>& names) {
   if (expr->kind() == velox::core::ExprKind::kFieldAccess) {
     names.insert(
       basics::downCast<velox::core::FieldAccessTypedExpr>(expr.get())->name());
@@ -220,20 +222,15 @@ class SereneDBConnectorTableHandle final
 
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
-    const axiom::connector::TableLayout& layout, std::vector<Point> points,
+    const axiom::connector::TableLayout& layout,
+    std::vector<SpecificPoint> points,
     velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
 
   const std::string& name() const final { return _name; }
 
-  std::string toString() const final {
-    // TODO(mkornaukhov) implement filter printing
-    if (!_points.empty()) {
-      return absl::StrCat(_name, ", scan=point");
-    }
-    return absl::StrCat(_name, ", scan=full");
-  }
+  std::string toString() const final;
 
   ObjectId TableId() const noexcept { return _table_id; }
 
@@ -247,9 +244,11 @@ class SereneDBConnectorTableHandle final
 
   auto& GetRemainingFilter() const noexcept { return _remaining_filter; }
 
-  const std::vector<Point>& GetPoints() const noexcept { return _points; }
+  const std::vector<SpecificPoint>& GetPoints() const noexcept {
+    return _points;
+  }
 
-  const absl::flat_hash_map<std::string, FilterColumn>& GetTableColumnMap()
+  const containers::FlatHashMap<std::string, FilterColumn>& GetTableColumnMap()
     const noexcept {
     return _table_column_map;
   }
@@ -260,10 +259,9 @@ class SereneDBConnectorTableHandle final
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
-  std::vector<Point> _points;
+  std::vector<SpecificPoint> _points;
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
-  std::shared_ptr<const irs::Scorer> _scorer;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -522,7 +520,8 @@ class InvertedIndexTableHandle final
 
   InvertedIndexTableHandle(const InvertedIndexTable& table, ObjectId index_id,
                            irs::Filter::Query::ptr search_query,
-                           std::shared_ptr<const irs::Scorer> scorer)
+                           std::shared_ptr<const irs::Scorer> scorer,
+                           std::string search_filter_str)
     : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
       _name{table.name()},
       _table_id{table.GetIndex().GetRelationId()},
@@ -530,7 +529,8 @@ class InvertedIndexTableHandle final
       _index_id{index_id},
       _search_query{std::move(search_query)},
       _scorer{std::move(scorer)},
-      _underlying_table{table.GetTable()} {
+      _underlying_table{table.GetTable()},
+      _search_filter_str{std::move(search_filter_str)} {
     const auto& column_map = table.columnMap();
     SDB_ASSERT(!column_map.empty());
     _effective_column_id =
@@ -547,7 +547,10 @@ class InvertedIndexTableHandle final
   const std::string& name() const final { return _name; }
 
   std::string toString() const final {
-    return absl::StrCat(_name, ", scan=search");
+    return absl::StrCat(_name, ", type=search_lookup",
+                        _search_filter_str.empty()
+                          ? ""
+                          : absl::StrCat(", filter=", _search_filter_str));
   }
 
   ObjectId TableId() const noexcept { return _table_id; }
@@ -580,6 +583,7 @@ class InvertedIndexTableHandle final
   std::shared_ptr<const irs::Scorer> _scorer;
   axiom::connector::TablePtr _underlying_table;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
+  std::string _search_filter_str;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
@@ -849,7 +853,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto& remaining_filter =
           serene_table_handle.GetRemainingFilter()) {
       std::unordered_map<std::string, velox::core::TypedExprPtr> name_mapping;
-      absl::flat_hash_set<std::string_view> output_original_names;
+      containers::FlatHashSet<std::string_view> output_original_names;
       for (size_t i = 0; i < output_type->size(); ++i) {
         const auto& mangled = output_type->nameOf(i);
         const auto sep = mangled.rfind(query::kColumnSeparator);
@@ -865,7 +869,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       // Detect filter-only columns: referenced in filter but absent from
       // output. Extend column_oids and read_type so ApplyRemainingFilter can
       // read them.
-      absl::flat_hash_set<std::string_view> filter_field_names;
+      containers::FlatHashSet<std::string_view> filter_field_names;
       ExtractInputFields(remaining_filter, filter_field_names);
 
       const auto& table_col_map = serene_table_handle.GetTableColumnMap();
@@ -932,30 +936,27 @@ class SereneDBConnector final : public velox::connector::Connector {
       const auto& points = serene_table_handle.GetPoints();
       if (!points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
-          *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
-          read_type, column_oids, object_key,
-          PointsToRowVector(points, serene_table_handle.GetPKType(),
-                            connector_query_ctx->memoryPool()),
+          *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
+          object_key, points, serene_table_handle.GetPKType(),
           output_column_count, compiled_filter,
-          connector_query_ctx->expressionEvaluator());
+          rocksdb_transaction.GetSnapshot(),
+          connector_query_ctx->expressionEvaluator(), rocksdb_transaction);
       }
 
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
         *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf, read_type,
         column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
-        output_column_count, compiled_filter,
+        output_column_count, rocksdb_transaction.GetSnapshot(), compiled_filter,
         connector_query_ctx->expressionEvaluator());
     }
 
     const auto& points = serene_table_handle.GetPoints();
     if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
-        *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
-        object_key, snapshot,
-        PointsToRowVector(points, serene_table_handle.GetPKType(),
-                          connector_query_ctx->memoryPool()),
-        output_column_count, compiled_filter,
-        connector_query_ctx->expressionEvaluator());
+        *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
+        object_key, points, serene_table_handle.GetPKType(),
+        output_column_count, compiled_filter, snapshot,
+        connector_query_ctx->expressionEvaluator(), _db);
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

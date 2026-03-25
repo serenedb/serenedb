@@ -170,7 +170,6 @@ FileDataSource::FileDataSource(
   : _output_type{std::move(output_type)},
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
-    _report_callback{options->report_callback},
     _progress{options->progress} {
   if (_progress) {
     _progress->SetBytesTotal(_source->size());
@@ -278,21 +277,10 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
   }
   if (_progress) {
     const auto batch_rows = batch->size();
-    _completed_rows += batch_rows;
     auto bytes_read = _source->bytesRead();
     auto delta_bytes = bytes_read - _prev_bytes_read;
     _prev_bytes_read = bytes_read;
     _progress->ReportBatch(batch_rows, delta_bytes, rows_read - batch_rows);
-  }
-  if (_report_callback) {
-    const auto now = std::chrono::high_resolution_clock::now();
-    auto seconds_since_last_report =
-      std::chrono::duration_cast<std::chrono::seconds>(now - _last_report_time)
-        .count();
-    if (seconds_since_last_report >= 10) {
-      _report_callback(_completed_rows);
-      _last_report_time = now;
-    }
   }
   return std::dynamic_pointer_cast<velox::RowVector>(batch);
 }

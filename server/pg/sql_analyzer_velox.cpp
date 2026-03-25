@@ -2000,17 +2000,6 @@ class CopyOptionsParser : public FileOptionsParser {
         }
       } break;
     }
-
-    auto show_progress = EraseOptionOrDefault<kProgress>();
-    if (!_is_writer) {  // TODO: make same for writer
-      if (show_progress) {
-        _reader_options->report_callback =
-          [send = &_send_buffer](uint64_t rows_read) {
-            WriteNoticeInBuffer(
-              *send, absl::StrCat("COPY FROM ", rows_read, " rows processed"));
-          };
-      }
-    }
   }
 
   void ParseTextFormatOptionsSpecified(bool is_csv) {
@@ -2207,6 +2196,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
                         : copy_progress::Type::File);
     options->progress = reporter.get();
     _transaction.AddProgressReporter(std::move(reporter));
+    WriteNoticeInBuffer(
+      *_send_buffer,
+      "to monitor progress, use: SELECT * FROM pg_stat_progress_copy");
   };
 
   if (stmt.is_from) {

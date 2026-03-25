@@ -51,8 +51,6 @@ class CopyProgressReporter;
 }  // namespace sdb::pg
 namespace sdb::connector {
 
-using ReportCallback = std::function<void(uint64_t)>;
-
 struct FileConnectorSplit final : public velox::connector::ConnectorSplit {
   const uint64_t start;
   const uint64_t length;
@@ -82,8 +80,6 @@ struct WriterOptions {
 
 struct ReaderOptions {
   DwioReaderOptions dwio;
-  // if set then progress messages are written here
-  ReportCallback report_callback;
   pg::CopyProgressReporter* progress = nullptr;
   std::shared_ptr<StorageOptions> storage_options;
 
@@ -309,8 +305,6 @@ class FileDataSource final : public velox::connector::DataSource {
   uint64_t _completed_rows = 0;
   uint64_t _completed_bytes = 0;
   uint64_t _prev_bytes_read = 0;
-  std::chrono::high_resolution_clock::time_point _last_report_time;
-  ReportCallback _report_callback;
   pg::CopyProgressReporter* _progress = nullptr;
 };
 

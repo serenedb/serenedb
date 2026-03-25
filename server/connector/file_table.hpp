@@ -302,7 +302,6 @@ class FileDataSource final : public velox::connector::DataSource {
   // We store RowReaderOptions to keep ScanSpec alive
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
-  uint64_t _completed_rows = 0;
   uint64_t _completed_bytes = 0;
   uint64_t _prev_bytes_read = 0;
   pg::CopyProgressReporter* _progress = nullptr;

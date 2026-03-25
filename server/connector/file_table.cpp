@@ -171,9 +171,6 @@ FileDataSource::FileDataSource(
     _reader_options{options->Reader()},
     _row_reader_options{options->RowReader()},
     _progress{options->progress} {
-  if (_progress) {
-    _progress->SetBytesTotal(_source->size());
-  }
   auto [source, reader, row_reader] =
     CreateReader(*options, memory_pool, _output_type, column_handles,
                  subfield_filters, remaining_filter, evaluator);
@@ -181,6 +178,9 @@ FileDataSource::FileDataSource(
   _reader = std::move(reader);
   _row_reader = std::move(row_reader);
   _pool = &memory_pool;
+  if (_progress) {
+    _progress->SetBytesTotal(_source->size());
+  }
 }
 
 FileSplitSource::FileSplitSource(std::shared_ptr<ReaderOptions> options,

@@ -1100,6 +1100,7 @@ class SqlAnalyzer {
   CopyMessagesQueue* _copy_queue;
   std::shared_ptr<const irs::Scorer> _scorer_for_select;
   lp::ExprPtr _expr_for_scorer;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -2195,7 +2196,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
       file_path.empty() ? copy_progress::Type::Pipe
                         : copy_progress::Type::File);
     options->progress = reporter.get();
-    _transaction.AddProgressReporter(std::move(reporter));
+    _progress_reporters.push_back(std::move(reporter));
     WriteNoticeInBuffer(
       *_send_buffer,
       "to monitor progress, use: SELECT * FROM pg_stat_progress_copy");
@@ -6008,6 +6009,7 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
     .root = std::move(state.root),
     .pgsql_node = state.pgsql_node,
     .type = command_type,
+    .progress_reporters = std::move(_progress_reporters),
   };
 }
 

@@ -204,7 +204,6 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
 }
 
 void Transaction::Destroy() noexcept {
-  _progress_reporters.clear();
   _state = State::None;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();

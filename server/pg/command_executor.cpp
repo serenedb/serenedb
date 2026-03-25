@@ -21,6 +21,7 @@
 #include "pg/command_executor.h"
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/misc.hpp"
@@ -146,10 +147,8 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
     std::string current_schema = conn_ctx.GetCurrentSchema();
     const std::string_view schema =
       _schemaname.empty() ? std::string_view{current_schema} : _schemaname;
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
 
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
     auto index = snapshot->GetRelation(db, schema, _index_name);
     SDB_ASSERT(index);
     auto shard = snapshot->GetIndexShard(index->GetId());

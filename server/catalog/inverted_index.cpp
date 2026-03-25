@@ -45,6 +45,7 @@ void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
 }
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
+  const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
   auto it = _options.columns.find(column_id);
   if (it == _options.columns.end()) {
@@ -55,8 +56,6 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   if (!it->second.text_dictionary.isSet()) {
     return {};
   }
-
-  auto snapshot = GetCatalog().GetSnapshot();
 
   auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);
   SDB_ENSURE(dict, ERROR_INTERNAL,

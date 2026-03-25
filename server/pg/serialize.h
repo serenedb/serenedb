@@ -37,6 +37,7 @@ struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
+  std::shared_ptr<const catalog::Snapshot> snapshot;
 };
 
 using SerializationFunction = void (*)(

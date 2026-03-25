@@ -46,9 +46,8 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
-                     std::vector<PgIndex>& values) {
-  auto snapshot = catalog.GetSnapshot();
-
+                     std::vector<PgIndex>& values,
+                     const catalog::Snapshot& snapshot) {
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       if (object->GetType() != catalog::ObjectType::Index) {
@@ -66,10 +65,10 @@ void RetrieveObjects(ObjectId database_id,
       values.push_back(std::move(row));
     };
 
-  for (const auto& schema : snapshot->GetSchemas(database_id)) {
+  for (const auto& schema : snapshot.GetSchemas(database_id)) {
     SDB_ASSERT(schema);
     for (const auto& relation :
-         snapshot->GetRelations(database_id, schema->GetName())) {
+         snapshot.GetRelations(database_id, schema->GetName())) {
       SDB_ASSERT(relation);
       insert_object(relation);
     }
@@ -84,7 +83,8 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgIndex>::GetTableData(
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgIndex>);
   std::vector<PgIndex> values;
-  RetrieveObjects(GetDatabaseId(), catalog, values);
+  auto snapshot = _config.EnsureCatalogSnapshot();
+  RetrieveObjects(GetDatabaseId(), catalog, values, *snapshot);
 
   boost::pfr::for_each_field(
     PgIndex{}, [&]<typename Field>(const Field& field) {

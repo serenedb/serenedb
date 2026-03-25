@@ -615,7 +615,7 @@ void SerializeRegclass(SerializationContext context,
                        velox::vector_size_t row) {
   const auto oid = decoded_vector.valueAt<int32_t>(row);
   if constexpr (Format == VarFormat::Text) {
-    context.buffer->WriteUncommitted(RegclassOut(oid));
+    context.buffer->WriteUncommitted(RegclassOut(*context.snapshot, oid));
   } else {
     absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
   }

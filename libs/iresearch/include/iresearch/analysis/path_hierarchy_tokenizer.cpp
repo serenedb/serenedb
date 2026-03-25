@@ -252,8 +252,9 @@ bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
 }
 
 bool ForwardPathHierarchyTokenizer::next() {
-  if (_term_eof || !_has_state)
+  if (_term_eof || !_has_state) {
     return false;
+  }
 
   auto& term_attr = std::get<TermAttr>(_attrs);
   auto& offset_attr = std::get<OffsAttr>(_attrs);
@@ -393,8 +394,9 @@ void ReversePathHierarchyTokenizer::ApplyReplacement(
       while (pos != data_end) {
         const char* next = static_cast<const char*>(
           std::memchr(pos, delimiter, static_cast<size_t>(data_end - pos)));
-        if (!next)
+        if (!next) {
           break;
+        }
         pos = next + 1;
         component_starts->push_back(static_cast<size_t>(pos - data));
       }
@@ -411,8 +413,9 @@ void ReversePathHierarchyTokenizer::ApplyReplacement(
   size_t len = input.size();
   const char* const data_end = data + len;
 
-  if (component_starts)
+  if (component_starts) {
     component_starts->push_back(0);
+  }
 
   const char* first =
     static_cast<const char*>(std::memchr(data, delimiter, len));
@@ -463,8 +466,9 @@ void ReversePathHierarchyTokenizer::ApplyReplacement(
 }
 
 bool ReversePathHierarchyTokenizer::next() {
-  if (_term_eof)
+  if (_term_eof) {
     return false;
+  }
 
   auto& term_attr = std::get<TermAttr>(_attrs);
   auto& offset_attr = std::get<OffsAttr>(_attrs);

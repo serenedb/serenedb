@@ -488,30 +488,29 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     std::min(static_cast<size_t>(size), _values.size() - _values_offset);
   SDB_ASSERT(batch_size > 0);
 
-  // Fill _present_rows_batch for this batch: fetch column 0 in chunks of
-  // kMultiGetBatchSize to determine which of the batch_size consecutive points
-  // exist in RocksDB.
-  _present_rows_batch.reset(batch_size);
-  const auto presence_col_id = _column_ids[_sorted_col_indices[0]];
-  for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
-    const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
-    BuildBatchKeys(presence_col_id, _values_offset + start, chunk);
-    _ctx.Fetch(_cf, chunk);
-    for (size_t i = 0; i < chunk; ++i) {
-      if (_ctx.Status(i).ok()) {
-        _present_rows_batch.set(start + i);
-      } else {
-        SDB_ENSURE(_ctx.Status(i).IsNotFound(),
-                   rocksutils::ConvertStatus(_ctx.Status(i)));
-      }
-    }
-  }
-  const size_t found_count = _present_rows_batch.count();
+  // Step 1: fetch column 0 in sorted order to fill _present_rows_batch and,
+  // when num_columns >= 1, also populate the column 0 vector directly.
+  const size_t least_column_index = _sorted_col_indices[0];
+  const auto least_column_id = _column_ids[least_column_index];
 
   if (num_columns == 0) {
-    // count(*) path: presence already determined above, no column data needed.
+    // count(*) path: only need presence count, no column data or mask needed.
     SDB_ASSERT(_column_ids.size() == 1);
     SDB_ASSERT(!_remaining_expr_set);
+    size_t found_count = 0;
+    for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
+      const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
+      BuildBatchKeys(least_column_id, _values_offset + start, chunk);
+      _ctx.Fetch(_cf, chunk);
+      for (size_t i = 0; i < chunk; ++i) {
+        if (_ctx.Status(i).ok()) {
+          ++found_count;
+        } else {
+          SDB_ENSURE(_ctx.Status(i).IsNotFound(),
+                     rocksutils::ConvertStatus(_ctx.Status(i)));
+        }
+      }
+    }
     _values_offset += batch_size;
     if (_values_offset >= _values.size()) {
       _current_split.reset();
@@ -521,11 +520,42 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
                                                        &_memory_pool);
   }
 
-  // For each column, iterate mask with chunks of
-  // kMultiGetBatchSize, fetching only the found_count present points.
-  // _in_batch_offset is reset per column.
+  _present_rows_batch.reset(batch_size);
+
+  // num_columns >= 1: fetch column 0 in sorted order, build presence mask and
+  // fill the column 0 vector simultaneously.
+  const auto& least_column_type = _read_type->childAt(least_column_index);
+  auto least_column_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    CreatePointsColumnVector, least_column_type->kind(), batch_size,
+    _memory_pool);
+
+  size_t found_count = 0;
+  for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
+    const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
+    BuildBatchKeys(least_column_id, _values_offset + start, chunk);
+    _ctx.Fetch(_cf, chunk);
+    const auto all_values = _ctx.Values(chunk);
+    for (size_t i = 0; i < chunk; ++i) {
+      if (_ctx.Status(i).ok()) {
+        _present_rows_batch.set(start + i);
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          FillPointsColumnValues, least_column_type->kind(), *least_column_vec,
+          found_count, all_values.subspan(i, 1));
+        ++found_count;
+      } else {
+        SDB_ENSURE(_ctx.Status(i).IsNotFound(),
+                   rocksutils::ConvertStatus(_ctx.Status(i)));
+      }
+    }
+  }
+  SDB_ASSERT(_present_rows_batch.count() == found_count);
+  least_column_vec->resize(found_count);
+
+  // Step 2: fill remaining columns using BuildBatchKeysUsingMask.
   std::vector<velox::VectorPtr> columns(num_columns);
-  for (size_t col_idx : _sorted_col_indices) {
+  columns[least_column_index] = std::move(least_column_vec);
+  for (size_t col_idx :
+       std::span{_sorted_col_indices.begin() + 1, _sorted_col_indices.end()}) {
     const auto col_id = _column_ids[col_idx];
     const auto& type = _read_type->childAt(col_idx);
 

@@ -40,6 +40,20 @@ Results, methodology and per-query breakdowns are available in the [benchmark ov
 
 **Transactional integration.** IResearch integrates with the host database's WAL and transaction manager. Search indexes participate in the host's commit protocol, providing eventual snapshot-isolation.
 
+## Examples
+
+The [examples/](examples/) directory contains self-contained programs demonstrating common iresearch workflows:
+
+- **[basic.cpp](examples/basic.cpp)** — Index documents with text fields, run term queries, boolean queries, top-K retrieval with BM25 scoring, read stored fields and delete documents.
+
+To build the examples, enable the `IRESEARCH_BUILD_EXAMPLES` CMake option:
+
+```bash
+cmake -S . -B build -DIRESEARCH_BUILD_EXAMPLES=ON
+cmake --build build --target iresearch-example-basic
+./build/bin/iresearch-example-basic
+```
+
 ## Architecture
 
 The library exposes two primary interfaces: a **IndexWriter** that accepts document batches and indexes field values per-transaction and a **IndexReader** that evaluates query trees against a consistent snapshot of the index. Concurrent readers and writers are supported without external locking.

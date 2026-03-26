@@ -7,7 +7,12 @@ import { type ConsoleTab } from "../../ConsoleEditorTabsSelector";
 import { useSavedQueriesModal } from "@serene-ui/shared-frontend/features";
 
 interface ConsoleSavedTabProps {
-    updateTab: (id: number, tabUpdate: Partial<ConsoleTab>) => void;
+    updateTab: (
+        id: number,
+        tabUpdate:
+            | Partial<ConsoleTab>
+            | ((tab: ConsoleTab) => Partial<ConsoleTab>),
+    ) => void;
     selectedTabId: number;
     explorerRef?: React.RefObject<HTMLDivElement | null>;
 }

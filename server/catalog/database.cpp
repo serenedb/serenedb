@@ -20,11 +20,12 @@
 
 #include "catalog/database.h"
 
+#include <vpack/serializer.h>
+
 #include "basics/assert.h"
 #include "basics/static_strings.h"
 #include "catalog/table_options.h"
 #include "general_server/server_options_feature.h"
-#include "vpack/serializer.h"
 
 namespace sdb::catalog {
 
@@ -38,7 +39,7 @@ DatabaseOptions MakeDatabaseOptions(std::string_view name, ObjectId id) {
 }
 
 DatabaseOptions MakeSystemDatabaseOptions() {
-  return MakeDatabaseOptions(StaticStrings::kSystemDatabase, id::kSystemDB);
+  return MakeDatabaseOptions(StaticStrings::kDefaultDatabase, id::kSystemDB);
 }
 
 void Database::WriteInternal(vpack::Builder& b) const {

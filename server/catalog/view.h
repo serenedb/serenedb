@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include <vpack/serializer.h>
+#include <vpack/slice.h>
+
 #include "basics/containers/small_vector.h"
 #include "basics/result.h"
 #include "catalog/fwd.h"
@@ -28,8 +31,6 @@
 #include "catalog/object.h"
 #include "catalog/types.h"
 #include "query/config.h"
-#include "vpack/serializer.h"
-#include "vpack/slice.h"
 
 namespace sdb::catalog {
 
@@ -41,7 +42,6 @@ enum class ViewContext {
 
 enum class ViewType : uint8_t {
   ViewSearch = 0,
-  ViewGraph,
   ViewSqlQuery,
 };
 
@@ -91,15 +91,12 @@ Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
                           ViewContext ctx);
 
 }  // namespace sdb::catalog
-
 namespace magic_enum {
 
 template<>
 constexpr customize::customize_t customize::enum_name<sdb::catalog::ViewType>(
   sdb::catalog::ViewType value) noexcept {
   switch (value) {
-    case sdb::catalog::ViewType::ViewGraph:
-      return "graph";
     case sdb::catalog::ViewType::ViewSearch:
       return "search-alias";
     case sdb::catalog::ViewType::ViewSqlQuery:

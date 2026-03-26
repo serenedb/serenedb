@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
-#include <iresearch/parser/parser.h>
 
 #include "basics/down_cast.h"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/parser/parser.h"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"

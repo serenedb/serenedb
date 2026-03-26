@@ -21,9 +21,9 @@
 /// @author Ewout Prangsma
 /// @author Simon Grätzer
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
-#include <basics/buffer.h>
 #include <fuerte/asio_ns.h>
 #include <fuerte/types.h>
 #include <vpack/builder.h>
@@ -33,6 +33,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "basics/buffer.h"
 
 namespace sdb::fuerte {
 

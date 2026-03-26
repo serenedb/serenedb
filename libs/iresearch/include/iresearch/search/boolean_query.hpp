@@ -30,6 +30,7 @@
 namespace irs {
 
 class BooleanFilter;
+class Or;
 
 // Base class for boolean queries
 class BooleanQuery : public Filter::Query {
@@ -117,11 +118,11 @@ class BoostQuery : public Filter::Query {
   }
 
   void Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-               const BooleanFilter& opt);
+               const Or& opt);
 
  private:
   Query::ptr _req;
-  Query::ptr _opt;
+  std::vector<Query::ptr> _opt;
 };
 
 }  // namespace irs

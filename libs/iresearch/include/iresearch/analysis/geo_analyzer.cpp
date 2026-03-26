@@ -22,7 +22,6 @@
 #include "iresearch/analysis/geo_analyzer.hpp"
 
 #include <absl/strings/str_cat.h>
-#include <frozen/map.h>
 #include <s2/s2latlng.h>
 #include <s2/s2point_region.h>
 #include <vpack/builder.h>
@@ -77,9 +76,7 @@ customize::enum_name<irs::analysis::GeoJsonAnalyzer::Coding>(
 }
 
 }  // namespace magic_enum
-
 namespace irs::analysis {
-
 namespace {
 
 using namespace sdb;

@@ -18,10 +18,10 @@ export const ConsoleConnectionSelect: React.FC = () => {
     };
 
     const handleChangeDatabase = (newDatabase: string) => {
-        setCurrentConnection({
-            ...currentConnection,
+        setCurrentConnection((prev) => ({
+            ...prev,
             database: newDatabase,
-        });
+        }));
     };
 
     return (

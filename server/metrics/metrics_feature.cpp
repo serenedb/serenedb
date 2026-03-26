@@ -20,7 +20,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "metrics/metrics_feature.h"
 
-#include <frozen/unordered_set.h>
 #include <vpack/builder.h>
 
 #include <chrono>
@@ -32,18 +31,13 @@
 #include "app/options/section.h"
 #include "basics/application-exit.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "general_server/state.h"
 #include "metrics/metric.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "statistics/statistics_feature.h"
 #include "storage_engine/engine_feature.h"
-
-#ifdef SDB_CLUSTER
-#include "agency/node.h"
-#include "aql/query_registry_feature.h"
-#include "cluster/cluster_metrics_feature.h"
-#endif
 
 namespace sdb::metrics {
 
@@ -198,16 +192,6 @@ void MetricsFeature::toPrometheus(std::string& result,
   // minimize reallocs
   result.reserve(64 * 1024);
 
-#ifdef SDB_CLUSTER
-  if (metrics_parts.includeStandardMetrics()) {
-    // QueryRegistryFeature only provides standard metrics.
-    // update only necessary if these metrics should be included
-    // in the output
-    auto& q = server().getFeature<QueryRegistryFeature>();
-    q.updateMetrics();
-  }
-#endif
-
   [[maybe_unused]] bool has_globals = false;
   {
     auto lock = initGlobalLabels();
@@ -249,37 +233,25 @@ void MetricsFeature::toPrometheus(std::string& result,
     // Storage engine only provides standard metrics
     auto& es = server().getFeature<EngineFeature>().engine();
     es.toPrometheus(result, _globals, _ensure_whitespace);
-
-#ifdef SDB_CLUSTER
-    // ClusterMetricsFeature only provides standard metrics
-    auto& cm = server().getFeature<ClusterMetricsFeature>();
-    if (has_globals && cm.isEnabled() && mode != CollectMode::Local) {
-      cm.toPrometheus(result, _globals, _ensure_whitespace);
-    }
-
-    // agency node metrics only provide standard metrics
-    consensus::Node::toPrometheus(result, _globals, _ensure_whitespace);
-#endif
   }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Sets metrics that can be collected by ClusterMetricsFeature
 ////////////////////////////////////////////////////////////////////////////////
-constexpr auto kCoordinatorBatch =
-  frozen::make_unordered_set<std::string_view>({
-    "serenedb_search_link_stats",
-  });
+constexpr containers::TrivialSet kCoordinatorBatch = [](auto selector) {
+  return selector().Case("serenedb_search_link_stats");
+};
 
-constexpr auto kCoordinatorMetrics =
-  frozen::make_unordered_set<std::string_view>({
-    "serenedb_search_num_failed_commits",
-    "serenedb_search_num_failed_cleanups",
-    "serenedb_search_num_failed_consolidations",
-    "serenedb_search_commit_time",
-    "serenedb_search_cleanup_time",
-    "serenedb_search_consolidation_time",
-  });
+constexpr containers::TrivialSet kCoordinatorMetrics = [](auto selector) {
+  return selector()
+    .Case("serenedb_search_num_failed_commits")
+    .Case("serenedb_search_num_failed_cleanups")
+    .Case("serenedb_search_num_failed_consolidations")
+    .Case("serenedb_search_commit_time")
+    .Case("serenedb_search_cleanup_time")
+    .Case("serenedb_search_consolidation_time");
+};
 
 void MetricsFeature::toVPack(vpack::Builder& builder,
                              MetricsParts metrics_parts) const {
@@ -288,13 +260,13 @@ void MetricsFeature::toVPack(vpack::Builder& builder,
   for (const auto& i : _registry) {
     SDB_ASSERT(i.second);
     const auto name = i.second->name();
-    if (kCoordinatorMetrics.count(name)) {
+    if (kCoordinatorMetrics.Contains(name)) {
       i.second->toVPack(builder, server());
     }
   }
   for (const auto& [name, batch] : _batch) {
     SDB_ASSERT(batch);
-    if (kCoordinatorBatch.count(name)) {
+    if (kCoordinatorBatch.Contains(name)) {
       batch->toVPack(builder, server());
     }
   }

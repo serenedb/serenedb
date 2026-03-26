@@ -279,6 +279,9 @@ std::string HeadersToString(
 /// returns the endpoint from a URL
 std::string_view GetEndpointFromUrl(std::string_view url);
 
+/// returns "an" for words starting with a vowel sound, "a" otherwise
+std::string_view GetArticle(std::string_view word) noexcept;
+
 template<typename Char>
 constexpr bool IsNull(std::basic_string_view<Char> str) noexcept {
   return str.data() == nullptr;
@@ -286,6 +289,13 @@ constexpr bool IsNull(std::basic_string_view<Char> str) noexcept {
 
 // helper function to strip-non-numeric data from a string
 std::string RemoveWhitespaceAndComments(const std::string& value);
+
+// Returns the English plural form of a word
+// doesn't work for all the cases, cause applies basic rules:
+// -s, -sh, -ch, -x, -z -> +es;
+// consonant + y -> -y +ies;
+// otherwise -> +s.
+std::string GetPluralFormLowerCase(std::string_view word);
 
 struct EscapeJsonOptions {
   // escape forward slashes when serializing VPack values into

@@ -19,19 +19,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <boost/pfr.hpp>
 #include <boost/pfr/core_name.hpp>
 #include <initializer_list>
+#include <iresearch/utils/string.hpp>
 #include <span>
 #include <type_traits>
-
-#include "iresearch/utils/string.hpp"
 
 namespace sdb::pg {
 
 using Oid = uint64_t;
 using Xid = uint64_t;
 using Regproc = Oid;
+using Regtype = Oid;
+using Regclass = Oid;
 using Text = std::string_view;
 using Bytea = irs::bytes_view;
 using Name = std::string_view;

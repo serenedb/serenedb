@@ -20,13 +20,14 @@
 
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
+#include <iresearch/utils/bytes_utils.hpp>
+
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
 #include "connector/data_source.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
 namespace sdb::connector {
@@ -87,7 +88,8 @@ class DataSourceTest : public ::testing::Test,
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink(
       "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_ids), WriteConflictPolicy::Replace, rows_affected, {});
+      std::move(column_ids), WriteConflictPolicy::Replace, rows_affected, {},
+      _table_lock);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -97,7 +99,7 @@ class DataSourceTest : public ::testing::Test,
 
   void MakeRocksDBWriteRead(velox::RowVectorPtr data, ObjectId object_key) {
     MakeRocksDBWrite(data, object_key);
-    std::vector<sdb::catalog::Column::Id> column_ids;
+    std::vector<catalog::Column::Id> column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       column_ids.emplace_back(i);
@@ -109,7 +111,8 @@ class DataSourceTest : public ::testing::Test,
       *pool_.get(), *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
-      column_ids, effective_column_id, object_key, data->rowType()->size());
+      column_ids, effective_column_id, object_key, data->rowType()->size(),
+      nullptr);
 
     // read as single batch
     {
@@ -175,6 +178,7 @@ class DataSourceTest : public ::testing::Test,
   std::vector<rocksdb::ColumnFamilyDescriptor> _cf_families;
   rocksdb::TransactionDB* _db{nullptr};
   std::vector<rocksdb::ColumnFamilyHandle*> _cf_handles;
+  absl::Mutex _table_lock;
 };
 
 TEST_F(DataSourceTest, test_tableReadFlatScalar) {
@@ -290,7 +294,7 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
   MakeRocksDBWrite(row_data, kObjectKey);
   RocksDBSnapshotFullScanDataSource source(
     *pool_.get(), *_db, *_cf_handles.front(), row_type_empty, {0}, 0,
-    kObjectKey, row_type_empty->size());
+    kObjectKey, row_type_empty->size(), nullptr);
 
   // read as single batch
   {

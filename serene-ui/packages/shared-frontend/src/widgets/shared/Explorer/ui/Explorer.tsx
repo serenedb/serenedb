@@ -39,7 +39,7 @@ const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
         );
 
         return (
-            <div className="h-full" ref={handleRef}>
+            <div className="h-full w-full" ref={handleRef}>
                 {!isDataFetched && (
                     <div className="flex flex-col items-center justify-center gap-3 mt-1.5 ">
                         <div className="flex gap-1.5 mr-auto ml-2 items-center">

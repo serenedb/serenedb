@@ -53,12 +53,12 @@ struct PgTsLexize {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
     db_id = conn->GetDatabaseId();
     current_schema = conn->GetCurrentSchema();
+    snapshot = conn->EnsureCatalogSnapshot();
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<velox::Varchar>>& result,
                                 const arg_type<velox::Varchar>& tokenizer_name,
                                 const arg_type<velox::Varchar>& text) {
-    auto snapshot = catalog::GetCatalog().GetSnapshot();
     auto object_name = ParseObjectName(tokenizer_name, current_schema);
     auto dict =
       snapshot->GetTokenizer(db_id, object_name.schema, object_name.relation);
@@ -87,6 +87,7 @@ struct PgTsLexize {
 
   ObjectId db_id;
   std::string current_schema;
+  std::shared_ptr<const catalog::Snapshot> snapshot;
 };
 
 }  // namespace sdb::pg

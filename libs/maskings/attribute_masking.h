@@ -38,6 +38,7 @@
 
 namespace sdb {
 namespace maskings {
+
 void InstallMaskings();
 
 class AttributeMasking {
@@ -69,5 +70,6 @@ class AttributeMasking {
   Path _path;
   std::shared_ptr<MaskingFunction> _func;
 };
+
 }  // namespace maskings
 }  // namespace sdb

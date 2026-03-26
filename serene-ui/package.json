@@ -1,6 +1,6 @@
 {
     "name": "serene-ui",
-    "version": "0.1.0",
+    "version": "26.03.2",
     "description": "Serene UI",
     "scripts": {
         "prettify": "npx prettier --write .",

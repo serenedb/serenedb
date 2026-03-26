@@ -194,17 +194,9 @@ class SerialPositionsChecker final : public Base {
       _total_terms_count{static_cast<score_t>(total_terms_count)},
       _collect_all_states{collect_all_states} {}
 
-  bool Check(size_t potential, irs::doc_id_t doc);
+  bool Match(size_t potential, irs::doc_id_t doc);
 
   Attribute* GetMutableAttr(TypeInfo::type_id type) noexcept {
-    if (type == irs::Type<FreqAttr>::id()) {
-      return &_seq_freq;
-    }
-
-    if (type == irs::Type<FilterBoost>::id()) {
-      return &_filter_boost;
-    }
-
     if constexpr (kHasPosition) {
       if (type == irs::Type<PosAttr>::id()) {
         return static_cast<Base*>(this);
@@ -214,8 +206,8 @@ class SerialPositionsChecker final : public Base {
     return nullptr;
   }
 
-  score_t GetFilterBoost() const noexcept { return _filter_boost.value; }
-  uint32_t GetFreq() const noexcept { return _seq_freq.value; }
+  score_t GetBoost() const noexcept { return _filter_boost; }
+  uint32_t GetFreq() const noexcept { return _seq_freq; }
 
  private:
   friend class NGramPosition;
@@ -235,18 +227,18 @@ class SerialPositionsChecker final : public Base {
   size_t _min_match_count;
   SearchStates _search_buf;
   score_t _total_terms_count;
-  FilterBoost _filter_boost;
-  FreqAttr _seq_freq;
+  score_t _filter_boost = kNoBoost;
+  uint32_t _seq_freq = 0;
   bool _collect_all_states;
 };
 
 template<typename Base>
-bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
+bool SerialPositionsChecker<Base>::Match(size_t potential, doc_id_t doc) {
   // how long max sequence could be in the best case
   _search_buf.clear();
   uint32_t longest_sequence_len = 0;
 
-  _seq_freq.value = 0;
+  _seq_freq = 0;
   for (const auto& pos_iterator : _pos) {
     if (pos_iterator.doc == doc) {
       auto& pos = *pos_iterator.pos;
@@ -447,9 +439,9 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
         static_cast<NGramPosition&>(*this).PushOffset(*last_state);
       }
     }
-    _seq_freq.value = freq;
+    _seq_freq = freq;
     SDB_ASSERT(!_pos.empty());
-    _filter_boost.value =
+    _filter_boost =
       static_cast<score_t>(longest_sequence_len) / _total_terms_count;
 
     if constexpr (kHasPosition) {
@@ -470,8 +462,7 @@ class NGramSimilarityDocIterator : public DocIterator {
       // we are not interested in disjunction`s // scoring
       _approx{docs_count, std::move(itrs), min_match_count} {
     // FIXME find a better estimation
-    std::get<AttributePtr<CostAttr>>(_attrs) =
-      irs::GetMutable<CostAttr>(&_approx);
+    _cost = irs::GetMutable<CostAttr>(&_approx);
   }
 
   NGramSimilarityDocIterator(doc_id_t docs_count, CostAdapters&& itrs,
@@ -486,20 +477,20 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
   ~NGramSimilarityDocIterator() noexcept {
-    if (_collected_boost) {
-      std::allocator<score_t>{}.deallocate(_collected_boost, kScoreBlock);
+    if (_collected_boosts.value) {
+      std::allocator<score_t>{}.deallocate(_collected_boosts.value,
+                                           kScoreBlock);
     }
-    if (_collected_freq) {
-      std::allocator<uint32_t>{}.deallocate(_collected_freq, kScoreBlock);
+    if (_collected_freqs.value) {
+      std::allocator<uint32_t>{}.deallocate(_collected_freqs.value,
+                                            kScoreBlock);
     }
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    _collected_boost = std::allocator<score_t>{}.allocate(kScoreBlock);
-    std::get<BoostBlockAttr>(_attrs).value = _collected_boost;
+    _collected_boosts.value = std::allocator<score_t>{}.allocate(kScoreBlock);
 
-    _collected_freq = std::allocator<uint32_t>{}.allocate(kScoreBlock);
-    std::get<FreqBlockAttr>(_attrs).value = _collected_freq;
+    _collected_freqs.value = std::allocator<uint32_t>{}.allocate(kScoreBlock);
 
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
@@ -513,15 +504,22 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    auto* attr = irs::GetMutable(_attrs, type);
-
-    return attr != nullptr ? attr : _checker.GetMutableAttr(type);
+    if (type == irs::Type<CostAttr>::id()) {
+      return _cost;
+    }
+    if (type == irs::Type<BoostBlockAttr>::id()) {
+      return _collected_boosts.value ? &_collected_boosts : nullptr;
+    }
+    if (type == irs::Type<FreqBlockAttr>::id()) {
+      return _collected_freqs.value ? &_collected_freqs : nullptr;
+    }
+    return _checker.GetMutableAttr(type);
   }
 
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
-      if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      if (doc_limits::eof(doc) || _checker.Match(_approx.MatchCount(), doc)) {
         return _doc = doc;
       }
     }
@@ -532,7 +530,7 @@ class NGramSimilarityDocIterator : public DocIterator {
       return doc;
     }
     const auto doc = _approx.seek(target);
-    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+    if (doc_limits::eof(doc) || _checker.Match(_approx.MatchCount(), doc)) {
       return _doc = doc;
     }
     return advance();
@@ -546,7 +544,7 @@ class NGramSimilarityDocIterator : public DocIterator {
     if (target != doc) {
       return doc;
     }
-    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+    if (doc_limits::eof(doc) || _checker.Match(_approx.MatchCount(), doc)) {
       return _doc = doc;
     }
     return doc + 1;
@@ -555,10 +553,10 @@ class NGramSimilarityDocIterator : public DocIterator {
   uint32_t count() final { return CountImpl(*this); }
 
   void FetchScoreArgs(uint16_t index) final {
-    SDB_ASSERT(_collected_boost);
-    SDB_ASSERT(_collected_freq);
-    _collected_boost[index] = _checker.GetFilterBoost();
-    _collected_freq[index] = _checker.GetFreq();
+    SDB_ASSERT(_collected_boosts.value);
+    _collected_boosts.value[index] = _checker.GetBoost();
+    SDB_ASSERT(_collected_freqs.value);
+    _collected_freqs.value[index] = _checker.GetFreq();
   }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
@@ -574,18 +572,17 @@ class NGramSimilarityDocIterator : public DocIterator {
   }
 
  private:
-  using Attributes =
-    std::tuple<AttributePtr<CostAttr>, BoostBlockAttr, FreqBlockAttr>;
-
   const byte_type* _stats{};
   score_t _boost{1.0f};
   FieldProperties _field;
 
   Checker _checker;
   Approx _approx;
-  Attributes _attrs;
-  score_t* _collected_boost = nullptr;  // TODO(gnusi): maybe array?
-  uint32_t* _collected_freq = nullptr;
+  CostAttr* _cost = nullptr;
+  // TODO(gnusi): maybe array?
+  BoostBlockAttr _collected_boosts;
+  // TODO(gnusi): maybe array?
+  FreqBlockAttr _collected_freqs;
 };
 
 CostAdapters Execute(const NGramState& query_state,

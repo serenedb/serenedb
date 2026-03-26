@@ -88,7 +88,6 @@ void init_thread_name_api() {
 }
 
 }  // namespace
-
 namespace irs {
 
 struct local_deleter {

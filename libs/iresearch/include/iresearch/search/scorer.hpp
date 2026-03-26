@@ -42,16 +42,6 @@ class ColumnArgsFetcher;
 // Represents no boost value.
 inline constexpr score_t kNoBoost{1.f};
 
-// Represents an addition to score from filter specific to a particular
-// document. May vary from document to document.
-struct FilterBoost final : Attribute {
-  static constexpr std::string_view type_name() noexcept {
-    return "filter_boost";
-  }
-
-  score_t value{kNoBoost};
-};
-
 // Caller writes value, iterator reads at block boundaries to skip
 // blocks whose max score is below the threshold.
 struct ScoreThresholdAttr final : Attribute {

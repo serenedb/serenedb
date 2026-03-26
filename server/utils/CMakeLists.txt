@@ -1,9 +1,4 @@
 target_sources(
     sereneserver
-    PRIVATE
-        exec_context.cpp
-        merkle_tree.cpp
-        operation_options.cpp
-        url_helper.cpp
-        query_string.cpp
+    PRIVATE exec_context.cpp url_helper.cpp query_string.cpp
 )

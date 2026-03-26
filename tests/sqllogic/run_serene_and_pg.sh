@@ -8,6 +8,7 @@ echo "Running tests against SereneDB"
 ./run.sh \
 	--host serenedb-single \
 	--single-port 7777 \
+	--single-port-ssl 7778 \
 	--test "sdb/**/*.test*" \
 	--junit "tests-serenedb" \
 	--protocol both \
@@ -27,5 +28,22 @@ echo "Running tests against PostgreSQL"
 	--protocol both \
 	--database postgres \
 	--runner=/sqllogictest-rs || exit_code=$?
+
+if [[ $exit_code != 0 ]]; then
+	echo "PostgreSQL tests failed, skipping cancellation tests"
+	exit $exit_code
+fi
+
+echo "Running cancellation stress tests against SereneDB"
+./run.sh \
+	--host serenedb-single \
+	--single-port 7777 \
+	--test "sdb/**/*.test*" \
+	--junit "tests-cancellation" \
+	--protocol simple \
+	--runner=/sqllogictest-rs \
+	--fast \
+	--cancellation \
+	--iterations 30 || exit_code=$?
 
 exit $exit_code

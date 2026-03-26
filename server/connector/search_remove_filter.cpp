@@ -22,7 +22,7 @@
 
 #include <iresearch/index/index_reader.hpp>
 
-namespace sdb::connector::search {
+namespace sdb::connector {
 
 irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   const irs::ExecutionContext& ctx) const {
@@ -95,4 +95,4 @@ irs::doc_id_t SearchRemoveFilter::advance() {
   }
 }
 
-}  // namespace sdb::connector::search
+}  // namespace sdb::connector

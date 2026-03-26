@@ -76,8 +76,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto sub = rdr.begin();
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -90,8 +90,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto sub = rdr.begin();
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -112,8 +112,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -184,8 +184,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -286,8 +286,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -388,8 +388,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -460,8 +460,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -532,8 +532,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -604,8 +604,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -676,8 +676,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -749,8 +749,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -822,8 +822,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -894,8 +894,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -967,8 +967,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1052,8 +1052,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1094,8 +1094,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
@@ -1124,8 +1124,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
@@ -1154,8 +1154,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
@@ -1184,8 +1184,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1250,8 +1250,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1310,8 +1310,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1364,8 +1364,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1412,8 +1412,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1448,8 +1448,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1494,8 +1494,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1540,8 +1540,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1588,8 +1588,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1627,8 +1627,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1670,8 +1670,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1747,8 +1747,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1854,8 +1854,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -1961,8 +1961,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2039,8 +2039,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2119,8 +2119,8 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2186,8 +2186,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2233,8 +2233,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2285,8 +2285,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2383,8 +2383,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2479,8 +2479,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2566,8 +2566,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2664,8 +2664,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2714,8 +2714,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2751,8 +2751,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2803,8 +2803,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2902,8 +2902,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -2952,8 +2952,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -3049,8 +3049,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -3163,8 +3163,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -3256,8 +3256,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -3318,8 +3318,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -3436,8 +3436,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, actual_value);
 
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -3863,96 +3863,124 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     // no order passed - no frequency
     {
       auto docs = prepared->execute({.segment = *sub});
-      ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-      ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+      ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
+      ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     }
 
     auto docs = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     it = docs.get();
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("U", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("W", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("X", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("Y", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -4168,8 +4196,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     // no order passed - no frequency
     {
       auto docs = prepared->execute({.segment = *sub});
-      ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-      ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+      ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
+      ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     }
 
     auto column = sub->column("name");
@@ -4181,40 +4209,47 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     it = docs.get();
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -4561,8 +4596,8 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
     auto docs = prepared->execute({.segment = *sub});
-    ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
@@ -4610,9 +4645,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .scorer = scorer.get(),
 
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    auto* boost = irs::get<irs::FilterBoost>(*docs);
+    auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
     ASSERT_TRUE(boost);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
@@ -4623,24 +4658,30 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_FLOAT_EQ((0.5f + 0.75f) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_FLOAT_EQ((0.5f + 0.75f) / 2, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_FLOAT_EQ(boost->value,
-                    irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_FLOAT_EQ(boost->value[0],
+                    irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
-    ASSERT_FLOAT_EQ((0.5f + 0.75f) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
+    ASSERT_FLOAT_EQ((0.5f + 0.75f) / 2, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_FLOAT_EQ(boost->value,
-                    irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_FLOAT_EQ(boost->value[0],
+                    irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -4674,9 +4715,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .scorer = scorer.get(),
 
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
@@ -4686,18 +4727,24 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -4737,9 +4784,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .scorer = scorer.get(),
 
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    auto* boost = irs::get<irs::FilterBoost>(*docs);
+    auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
     ASSERT_TRUE(boost);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
@@ -4750,49 +4797,70 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_FLOAT_EQ((1.f + 0.75f) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_FLOAT_EQ((1.f + 0.75f) / 2, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
-    ASSERT_FLOAT_EQ(((1.f + 0.25f) / 2 + (1.f + 0.5f) / 2) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
+    ASSERT_FLOAT_EQ(((1.f + 0.25f) / 2 + (1.f + 0.5f) / 2) / 2,
+                    boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("O", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(4, freq->value);
-    ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(4, freq->value[0]);
+    ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("P", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(3, freq->value);
-    ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(3, freq->value[0]);
+    ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("Q", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
-    ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
+    ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("R", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -4824,9 +4892,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .scorer = scorer.get(),
 
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
@@ -4836,81 +4904,114 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("B", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("D", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("K", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(4, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(4, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -4942,9 +5043,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .scorer = scorer.get(),
 
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    auto* boost = irs::get<irs::FilterBoost>(*docs);
+    auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
     ASSERT_TRUE(boost);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
@@ -4955,101 +5056,145 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("B", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(irs::kNoBoost, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(irs::kNoBoost, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("D", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("K", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(4, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(4, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
-    ASSERT_EQ(0.5f, boost->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
+    ASSERT_EQ(0.5f, boost->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
-    ASSERT_EQ(boost->value, irs::get<irs::FilterBoost>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_EQ(boost->value[0],
+              irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5085,9 +5230,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .scorer = scorer.get(),
 
     });
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
@@ -5097,11 +5242,14 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("Z", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5741,17 +5889,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     it = docs.get();
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = it->PrepareScore({
@@ -5760,14 +5906,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     });
 
     ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
     irs::score_t score_value{};
     score.Score(&score_value, 1);
     ASSERT_EQ(docs->value(), score_value);
-    ASSERT_EQ(1, freq->value);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("H", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5817,12 +5966,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     it = docs.get();
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
@@ -5835,14 +5983,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     });
 
     ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
     irs::score_t score_value{};
     score.Score(&score_value, 1);
     ASSERT_EQ(docs->value(), score_value);
-    ASSERT_EQ(1, freq->value);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("H", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5918,26 +6069,27 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     it = docs.get();
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -6373,9 +6525,9 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     });
     it = docs.get();
 
-    auto* freq = irs::get<irs::FreqAttr>(*docs);
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
-    ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     auto docs_seek = prepared->execute({
       .segment = *sub,
@@ -6384,64 +6536,79 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq->value);
+    ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("B", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq->value);
+    ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(2, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("C", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq->value);
+    ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(1, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("D", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq->value);
+    ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
     ASSERT_TRUE(docs->next());
-    ASSERT_EQ(4, freq->value);
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(4, freq->value[0]);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("E", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq->value);
+    ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -6603,10 +6770,9 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-    auto* freq_seek = irs::get<irs::FreqAttr>(*docs_seek);
+    auto* freq_seek = irs::get<irs::FreqBlockAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
@@ -6629,45 +6795,49 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("E", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(1, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("F", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(6, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(6, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(11, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(11, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("H", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(2, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -6727,10 +6897,9 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-    auto* freq_seek = irs::get<irs::FreqAttr>(*docs_seek);
+    auto* freq_seek = irs::get<irs::FreqBlockAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
@@ -6753,45 +6922,49 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("E", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(1, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(1, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("F", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(3, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(3, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(5, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(5, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("H", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(3, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(3, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -6851,10 +7024,9 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared->execute({
       .segment = *sub,
       .scorer = &sort,
-
     });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-    auto* freq_seek = irs::get<irs::FreqAttr>(*docs_seek);
+    auto* freq_seek = irs::get<irs::FreqBlockAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
@@ -6877,12 +7049,13 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("K", irs::ToString<std::string_view>(actual_value->value.data()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
-    ASSERT_EQ(3, freq_seek->value);
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(3, freq_seek->value[0]);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
-    ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
+    ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
     ASSERT_FALSE(docs->next());
     ASSERT_FALSE(disj_docs->next());

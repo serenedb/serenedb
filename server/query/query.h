@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "basics/fwd.h"
+#include "pg/progress_tracker.h"
 #include "query/context.h"
 #include "query/executor.h"
 #include "query/runner.h"
@@ -58,10 +59,15 @@ class Query {
 
   static std::unique_ptr<Query> CreateShowAll(const QueryContext& query_ctx);
 
-  static std::unique_ptr<Query> CreateWithExecutor(
+  static std::unique_ptr<Query> CreateExplain(
+    const axiom::logical_plan::LogicalPlanNodePtr& root,
+    const QueryContext& query_ctx);
+
+  static std::unique_ptr<Query> CreatePipeline(
     const axiom::logical_plan::LogicalPlanNodePtr& root,
     const QueryContext& query_ctx,
-    std::vector<std::unique_ptr<Executor>> executors);
+    std::vector<std::unique_ptr<Executor>> executors,
+    absl::AnyInvocable<void()> on_error);
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
@@ -82,10 +88,15 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
+  void AddProgressReporter(std::unique_ptr<pg::ProgressReporterBase> reporter) {
+    _progress_reporters.push_back(std::move(reporter));
+  }
+
   void SetExecutor(std::unique_ptr<Executor> executor);
   void SetExecutors(std::vector<std::unique_ptr<Executor>> executors);
 
-  auto StealExecutors() { return std::move(_executors); }
+  auto GetExecutors() const { return std::span{_executors}; }
+  auto& GetOnError() { return _on_error; }
 
   std::unique_ptr<Cursor> MakeCursor(UserTask&& user_task);
 
@@ -111,10 +122,11 @@ class Query {
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
-  // use for CreateWithExecutor
+  // use for CreatePipeline
   Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
         const QueryContext& query_ctx,
-        std::vector<std::unique_ptr<Executor>> executors);
+        std::vector<std::unique_ptr<Executor>> executors,
+        absl::AnyInvocable<void()> on_error);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;
@@ -124,10 +136,12 @@ class Query {
 
   Runner _runner;  // runner is supposed to be destroyed after executors.
   std::vector<std::unique_ptr<Executor>> _executors;
+  absl::AnyInvocable<void()> _on_error = [] {};
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;
   std::string _physical_plan;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 using QueryPtr = std::unique_ptr<Query>;

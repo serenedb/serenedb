@@ -120,6 +120,26 @@ function copyMigrations() {
     }
 }
 
+function copyLibpgQueryWasm() {
+    const wasmSrc = path.join(
+        __dirname,
+        "..",
+        "..",
+        "node_modules",
+        "libpg-query",
+        "wasm",
+        "libpg-query.wasm",
+    );
+    const wasmDest = path.join(__dirname, "dist", "libpg-query.wasm");
+
+    if (!fs.existsSync(wasmSrc)) {
+        throw new Error(`libpg-query wasm not found: ${wasmSrc}`);
+    }
+
+    fs.copyFileSync(wasmSrc, wasmDest);
+    console.log("✓ Copied libpg-query.wasm");
+}
+
 async function build() {
     try {
         await Promise.all([
@@ -129,6 +149,7 @@ async function build() {
 
         copyConfigFiles();
         copyMigrations();
+        copyLibpgQueryWasm();
 
         console.log("✓ Build complete!");
 

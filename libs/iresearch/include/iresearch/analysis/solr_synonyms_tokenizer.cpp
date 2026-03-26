@@ -31,8 +31,8 @@
 #include "iresearch/analysis/token_attributes.hpp"
 
 namespace irs::analysis {
-
 namespace {
+
 SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
   std::vector<std::string_view> outputs(absl::StrSplit(line, ','));
 
@@ -48,6 +48,7 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
 
   return outputs;
 }
+
 }  // namespace
 
 sdb::ResultOr<SolrSynonymsTokenizer::SynonymsLines>

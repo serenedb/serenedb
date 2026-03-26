@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/functional/overload.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
@@ -30,7 +31,6 @@
 #include <axiom/logical_plan/LogicalPlanNode.h>
 #include <axiom/logical_plan/Utils.h>
 #include <axiom/optimizer/ConstantExprEvaluator.h>
-#include <frozen/unordered_map.h>
 #include <velox/common/file/File.h>
 #include <velox/common/memory/Memory.h>
 #include <velox/core/PlanFragment.h>
@@ -58,6 +58,8 @@
 
 #include <algorithm>
 #include <expected>
+#include <iresearch/search/bm25.hpp>
+#include <iresearch/search/tfidf.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <vector>
@@ -65,6 +67,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
+#include "basics/string_utils.h"
 #include "catalog/function.h"
 #include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
@@ -75,10 +78,13 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/create_index_options.h"
+#include "pg/explain_options.h"
 #include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
+#include "pg/progress_tracker.h"
 #include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
@@ -107,6 +113,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
+
 namespace lp = axiom::logical_plan;
 namespace ve = velox::exec;
 namespace vc = velox::core;
@@ -200,6 +207,26 @@ NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
              column.name, &column};
          }) |
          std::ranges::to<NameToColumnMap>();
+}
+
+std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
+  return absl::StrCat(
+    "This operation is not supported for ",
+    basics::string_utils::GetPluralFormLowerCase(magic_enum::enum_name(type)),
+    ".");
+}
+
+std::shared_ptr<connector::ReadFileTable> MakeReadFileTable(
+  const catalog::Table& table, const velox::RowTypePtr& type,
+  bool load_implicit_pk) {
+  SDB_ASSERT(table.PKColumns().empty());
+  const auto& file_info = table.GetFileInfo();
+  auto file_options = std::make_shared<connector::ReaderOptions>();
+  file_options->storage_options = file_info.storage_options;
+  file_options->dwio = file_info.format_options->createReaderOptions(type);
+  return std::make_shared<connector::ReadFileTable>(
+    type, file_info.storage_options->Path(), std::move(file_options),
+    load_implicit_pk);
 }
 
 const Node& ToNode(const void* node) {
@@ -299,18 +326,6 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
 }
 
 using query::ToAlias;
-
-std::string ToPgTypeString(const velox::Type& type) {
-  return absl::AsciiStrToLower(type.toString());
-}
-
-// TODO: temporary solution, this works wrong for some types
-std::string ToPgTypeString(const velox::TypePtr& type) {
-  if (!type) {
-    return "unknown";
-  }
-  return ToPgTypeString(*type);
-}
 
 std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
                                 std::string_view sep) {
@@ -659,42 +674,6 @@ class TargetList {
   containers::FlatHashMap<std::string_view, lp::ExprPtr> _alias_to_expr;
 };
 
-std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
-  const DefElem* option) {
-  std::string_view name = option->defname;
-  VeloxQuery::OptionValue value;
-  SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
-  if (!option->arg) {
-    return std::pair{name, true};
-  }
-  SDB_ASSERT(option->arg);
-  switch (option->arg->type) {
-    case NodeTag::T_Integer:
-      value = intVal(option->arg);
-    case NodeTag::T_Boolean:
-      value = boolVal(option->arg);
-    case NodeTag::T_String:
-      value = strVal(option->arg);
-    case NodeTag::T_Float:
-      value = floatVal(option->arg);
-    default:
-      SDB_ASSERT(false);
-  }
-  return std::pair{name, std::move(value)};
-}
-
-using NameToOption =
-  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>;
-NameToOption ConvertOptions(const List* options) {
-  const size_t options_size = list_length(options);
-  NameToOption res;
-  res.reserve(options_size);
-  for (size_t i = 0; i < options_size; ++i) {
-    res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));
-  }
-  return res;
-}
-
 class SqlAnalyzer {
  public:
   explicit SqlAnalyzer(const QueryString& query_sting, const Objects& objects,
@@ -705,7 +684,8 @@ class SqlAnalyzer {
     : _objects{objects},
       _query_string{query_sting},
       _id_generator{id_generator},
-      _query_ctx{*query_ctx.velox_query_ctx},
+      _query_ctx{query_ctx},
+      _velox_query_ctx{*query_ctx.velox_query_ctx},
       _memory_pool{*query_ctx.query_memory_pool},
       _params{params},
       _transaction{*query_ctx.transaction},
@@ -740,6 +720,7 @@ class SqlAnalyzer {
   void ProcessDefineStmt(State& state, const DefineStmt& stmt);
 
   void ProcessIntoClause(State& state, const IntoClause& into);
+  void ProcessIndexStmt(State& state, const IndexStmt& stmt);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -765,6 +746,8 @@ class SqlAnalyzer {
                                          const UsingList& using_list);
   State ProcessRangeSubselect(State* parent, const RangeSubselect* node);
   State ProcessRangeFunction(State* parent, const RangeFunction* node);
+  void RefreshExprForScorer(std::vector<std::string>& names,
+                            std::vector<lp::ExprPtr>& exprs);
 
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
@@ -773,12 +756,9 @@ class SqlAnalyzer {
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
-                     bool implicit_pk_column = false);
+                     bool load_implicit_pk = false);
   State ProcessInvertedIndex(State* parent, const Objects::ObjectData& object,
                              const RangeVar* node);
-
-  State ProcessFileTable(State* parent, const catalog::Table& table,
-                         std::string_view table_name, const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -802,7 +782,7 @@ class SqlAnalyzer {
       column_exprs.emplace_back(std::move(expr));
       column_names.emplace_back(name);
     }
-    if (pk_type.size() == 0) {
+    if (pk_type.size() == 0 && output_type->size() > 0) {
       auto generated_pk_name =
         catalog::Column::GeneratePKName(row_type.names());
       auto column = state.resolver.Resolve(output_type, generated_pk_name);
@@ -1110,14 +1090,17 @@ class SqlAnalyzer {
   const Objects& _objects;
   const QueryString& _query_string;
   UniqueIdGenerator& _id_generator;
-  vc::QueryCtx& _query_ctx;
+  query::QueryContext& _query_ctx;
+  vc::QueryCtx& _velox_query_ctx;
   velox::memory::MemoryPool& _memory_pool;
-  NameToOption _options;
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
   query::Transaction& _transaction;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
+  std::shared_ptr<const irs::Scorer> _scorer_for_select;
+  lp::ExprPtr _expr_for_scorer;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1260,6 +1243,8 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
     add_expr(alias);
   }
 
+  RefreshExprForScorer(names, exprs);
+
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
@@ -1277,6 +1262,14 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
   if (stmt.lockingClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "LOCK clause is not implemented yet");
   }
+  auto scorer_for_select =
+    std::exchange(_scorer_for_select, _objects.GetScorer(&stmt));
+  auto expr_for_scorer = std::exchange(_expr_for_scorer, nullptr);
+  irs::Finally end = [&] noexcept {
+    _scorer_for_select = std::move(scorer_for_select);
+    _expr_for_scorer = std::move(expr_for_scorer);
+  };
+
   ProcessWithClause(state, stmt.withClause);
 
   if (stmt.valuesLists) {
@@ -1531,7 +1524,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "RETURNING clause is not implemented yet");
   }
   const auto& config =
-    basics::downCast<Config>(*_query_ctx.queryConfig().config());
+    basics::downCast<Config>(*_velox_query_ctx.queryConfig().config());
   auto conflict_policy = config.Get<VariableType::SdbWriteConflictPolicy>(
     "sdb_write_conflict_policy");
   if (stmt.onConflictClause) {
@@ -1576,14 +1569,18 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() != catalog::ObjectType::Table) {
-    // TODO: write more pg-like error message
+  if (logical_object.GetType() == catalog::ObjectType::View) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-      ERR_MSG(
-        "INSERT statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.GetType())));
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot insert into view \"", table_name, "\""),
+      ERR_HINT(
+        "To enable inserting into the view, provide an INSTEAD OF INSERT "
+        "trigger or an unconditional ON INSERT DO INSTEAD rule."));
+  } else if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table_name, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
@@ -1670,17 +1667,19 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() != catalog::ObjectType::Table) {
-    // TODO: write more pg-like error message
-    THROW_SQL_ERROR(
-      ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-      ERR_MSG(
-        "UPDATE statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.GetType())));
-  }
-
   const std::string_view table_name = relation.relname;
+  if (logical_object.GetType() == catalog::ObjectType::View) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot update view \"", table_name, "\""),
+      ERR_HINT("To enable updating the view, provide an INSTEAD OF UPDATE "
+               "trigger or an unconditional ON UPDATE DO INSTEAD rule."));
+  } else if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table_name, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
+  }
 
   auto table_state =
     ProcessTable(&state, schema_name, table_name, *object, &relation, true);
@@ -1778,17 +1777,19 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() != catalog::ObjectType::Table) {
-    // TODO: write more pg-like error message
-    THROW_SQL_ERROR(
-      ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-      ERR_MSG(
-        "DELETE statement is only applicable for tables , but the object is: ",
-        magic_enum::enum_name(logical_object.GetType())));
-  }
-
   const std::string_view table_name = relation.relname;
+  if (logical_object.GetType() == catalog::ObjectType::View) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot delete from view \"", table_name, "\""),
+      ERR_HINT("To enable deleting from the view, provide an INSTEAD OF DELETE "
+               "trigger or an unconditional ON DELETE DO INSTEAD rule."));
+  } else if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table_name, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
+  }
 
   auto table_state =
     ProcessTable(&state, schema_name, table_name, *object, &relation, true);
@@ -1939,16 +1940,17 @@ class CopyOptionsParser : public FileOptionsParser {
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
-                    NameToOption& explain_options)
+                    explain_options::ExplainOptions& explain_options)
     : FileOptionsParser{file_path,
-                        MakeCopyOptions(options, query_string, explain_options),
-                        file_options::kCopyParserGroups,
+                        options,
+                        file_options::kCopyGroup,
                         {.operation = "COPY",
                          .query_string = query_string,
                          .notice =
                            [&send_buffer](std::string msg) {
                              WriteNoticeInBuffer(send_buffer, msg);
-                           }}},
+                           },
+                         .explain = &explain_options}},
       _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _send_buffer{send_buffer},
@@ -1974,38 +1976,6 @@ class CopyOptionsParser : public FileOptionsParser {
   }
 
  private:
-  static Options MakeCopyOptions(const List* options,
-                                 std::string_view query_string,
-                                 NameToOption& explain_options) {
-    Options result;
-    result.reserve(list_length(options));
-    VisitNodes(options, [&](const DefElem& option) {
-      std::string_view option_name = option.defname;
-      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
-      if (option_name == "explain") {
-        auto maybe_explain = TryGet<std::string_view>(option.arg);
-        if (!maybe_explain) {
-          THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
-                            query_string, ExprLocation(&option))),
-                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                          ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
-        }
-        explain_options.emplace(*maybe_explain, true);
-        return;
-      }
-
-      auto [_, emplaced] = result.try_emplace(option_name, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(::sdb::pg::ErrorPosition(
-                          query_string, ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-    return result;
-  }
-
   void Parse() {
     using namespace file_options;
 
@@ -2021,7 +1991,8 @@ class CopyOptionsParser : public FileOptionsParser {
         break;
       case FormatType::Parquet:
       case FormatType::Dwrf:
-      case FormatType::Orc: {
+      case FormatType::Orc:
+      case FormatType::Json: {
         auto options = ParseFormatOptions(format);
         if (_is_writer) {
           _writer_options->dwio = options->createWriterOptions(_row_type);
@@ -2029,17 +2000,6 @@ class CopyOptionsParser : public FileOptionsParser {
           _reader_options->dwio = options->createReaderOptions(_row_type);
         }
       } break;
-    }
-
-    auto show_progress = EraseOptionOrDefault<kProgress>();
-    if (!_is_writer) {  // TODO: make same for writer
-      if (show_progress) {
-        _reader_options->report_callback =
-          [send = &_send_buffer](uint64_t rows_read) {
-            WriteNoticeInBuffer(
-              *send, absl::StrCat("COPY FROM ", rows_read, " rows processed"));
-          };
-      }
     }
   }
 
@@ -2161,6 +2121,19 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   velox::RowTypePtr file_table_type;
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
+    SDB_ASSERT(object.object);
+    if (object.object->GetType() == catalog::ObjectType::View) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("cannot copy to view \"", relname, "\""),
+        ERR_HINT("To enable copying to a view, provide an INSTEAD OF INSERT "
+                 "trigger."));
+    } else if (object.object->GetType() != catalog::ObjectType::Table) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("cannot open relation \"", relname, "\""),
+        ERR_DETAIL(GetUnsupportedObjectTypeDetail(object.object->GetType())));
+    }
     const auto& table = basics::downCast<catalog::Table>(*object.object);
     table_name = table.GetName();
 
@@ -2208,25 +2181,45 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
     SDB_ASSERT(_send_buffer);
-    return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
-                             file_path,   stmt.options,  *_send_buffer,
-                             _copy_queue, table_name,    _options};
+    return CopyOptionsParser{
+      type,        !stmt.is_from, _query_string.view(),
+      file_path,   stmt.options,  *_send_buffer,
+      _copy_queue, table_name,    _query_ctx.explain_params};
+  };
+
+  auto setup_progress_tracking = [&](auto& options, bool is_from,
+                                     ObjectId datid, ObjectId relid) {
+    auto reporter = std::make_unique<CopyProgressReporter>(
+      datid, relid,
+      is_from ? copy_progress::Command::CopyFrom
+              : copy_progress::Command::CopyTo,
+      file_path.empty() ? copy_progress::Type::Pipe
+                        : copy_progress::Type::File);
+    options->progress = reporter.get();
+    _progress_reporters.push_back(std::move(reporter));
+    WriteNoticeInBuffer(
+      *_send_buffer,
+      "to monitor progress, use: SELECT * FROM pg_stat_progress_copy");
   };
 
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto parser = create_options_parser(file_table_type);
     auto options = std::move(parser).GetReaderOptions();
+
+    auto [object, schemaname, relname] = get_object();
+    auto& table = basics::downCast<catalog::Table>(*object.object);
+    setup_progress_tracking(options, true, table.GetDatabaseId(),
+                            table.GetId());
+
     auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
-      std::move(options));
+      std::move(options), false);
     auto file_output_type = ROW(std::move(names), file_table_type->children());
     state.root = std::make_shared<lp::TableScanNode>(
       _id_generator.NextPlanId(), std::move(file_output_type),
       std::move(read_file_table), file_table_type->names());
     ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
-
-    auto [object, schemaname, relname] = get_object();
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
 
@@ -2236,9 +2229,14 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     velox::RowTypePtr table_type;
     std::vector<std::string> column_names;
     std::vector<lp::ExprPtr> column_exprs;
+    ObjectId datid{0};
+    ObjectId relid{0};
     if (stmt.relation) {
       SDB_ASSERT(!stmt.query);
       auto [object, schemaname, relname] = get_object();
+      auto& table = basics::downCast<catalog::Table>(*object.object);
+      datid = table.GetDatabaseId();
+      relid = table.GetId();
       auto table_state =
         ProcessTable(&state, schemaname, relname, object, stmt.relation, false);
       state.root = std::move(table_state.root);
@@ -2275,6 +2273,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     auto parser = create_options_parser(table_type);
     auto options = std::move(parser).GetWriterOptions();
+    setup_progress_tracking(options, false, datid, relid);
     auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,
       std::move(options));
@@ -2600,6 +2599,83 @@ void SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
     std::move(column_exprs));
 }
 
+void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
+  SDB_ASSERT(stmt.relation);
+  const auto& relation = *stmt.relation;
+  const std::string_view relname = relation.relname;
+  const std::string_view schemaname =
+    absl::NullSafeStringView(relation.schemaname);
+
+  const auto* object = _objects.getRelation(schemaname, relname);
+  SDB_ASSERT(object);
+  SDB_ASSERT(object->object);
+  const auto& logical_object = *object->object;
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot create index on relation \"", relname, "\""),
+      ERR_DETAIL(GetUnsupportedObjectTypeDetail(logical_object.GetType())));
+  }
+  const auto& table = basics::downCast<catalog::Table>(logical_object);
+  if (table.GetTableType() == TableType::File) {
+    const auto& file_info = table.GetFileInfo();
+    if (!file_info.format_options ||
+        file_info.format_options->createReaderOptions(table.RowType())
+            .reader->fileFormat() != velox::dwio::common::FileFormat::PARQUET) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ErrorPosition(ExprLocation(stmt.relation))),
+        ERR_MSG("Inverted index is only supported for parquet file tables"));
+    }
+  }
+  const auto& table_type = *table.RowType();
+
+  auto table_state =
+    ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
+  const auto& input_type = *table_state.root->outputType();
+
+  const auto& pk = *table.PKType();
+  size_t size = pk.size() + list_length(stmt.indexParams);
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+  column_names.reserve(size);
+  column_exprs.reserve(size);
+  FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
+
+  VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
+    if (!index_elem.name) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("Unsupported index column definition"));
+    }
+    const std::string_view colname = index_elem.name;
+    auto maybe_col_idx = table_type.getChildIdxIfExists(colname);
+    if (!maybe_col_idx) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", colname, "\" does not exist"));
+    }
+    if (pk.containsChild(colname)) {
+      return;
+    }
+    size_t col_idx = *maybe_col_idx;
+    column_names.emplace_back(colname);
+    auto expr = std::make_shared<lp::InputReferenceExpr>(
+      input_type.childAt(col_idx), input_type.nameOf(col_idx));
+    column_exprs.emplace_back(std::move(expr));
+  });
+
+  // TODO: reuse parsed shard options in CreateIndex to avoid double parsing.
+  // We must parse WITH options here at analysis time because they may contain
+  // EXPLAIN flags that affect query planning (e.g. choosing the explain
+  // executor).
+  CreateIndexOptionsParser{stmt.options, _query_ctx.explain_params};
+
+  object->EnsureTable(_transaction);
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(table_state.root), object->table,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
+}
+
 void SqlAnalyzer::ProcessDefineStmt(State& state, const DefineStmt& stmt) {
   switch (stmt.kind) {
     case OBJECT_TSDICTIONARY: {
@@ -2661,9 +2737,13 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_ExplainStmt: {
       const auto& stmt = *castNode(ExplainStmt, &node);
-      _options = ConvertOptions(stmt.options);
-      ProcessStmt(state, *stmt.query);
-      return SqlCommandType::Explain;
+      ExplainStmtOptionsParser parser{stmt.options, _query_string.view()};
+      auto& explain = _query_ctx.explain_params;
+      explain = std::move(parser).GetExplainOptions();
+      if (!explain) {
+        explain.Add(query::ExplainWith::Execution);
+      }
+      return ProcessStmt(state, *stmt.query);
     }
     case T_ViewStmt: {  // CREATE VIEW
       const auto& stmt = *castNode(ViewStmt, &node);
@@ -2691,7 +2771,9 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     }
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;
-      return SqlCommandType::DDL;
+      const auto& stmt = *castNode(IndexStmt, &node);
+      ProcessIndexStmt(state, stmt);
+      return SqlCommandType::CreateIndex;
     }
     case T_CreateRoleStmt:
     case T_DropRoleStmt:
@@ -2713,7 +2795,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     case T_CopyStmt: {
       const auto& stmt = *castNode(CopyStmt, &node);
       ProcessCopyStmt(state, stmt);
-      return _options.empty() ? SqlCommandType::Copy : SqlCommandType::Explain;
+      return SqlCommandType::Copy;
     }
     case T_VariableShowStmt: {
       state.pgsql_node = &node;
@@ -2787,10 +2869,12 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
   exprs.reserve(entries.size());
 
   for (auto&& [expr, alias] : entries) {
-    std::string name = _id_generator.NextColumnName(alias);
+    auto name = _id_generator.NextColumnName(alias);
     names.emplace_back(std::move(name));
     exprs.emplace_back(std::move(expr));
   }
+
+  RefreshExprForScorer(names, exprs);
 
   ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
@@ -3534,9 +3618,13 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
   auto l_state = state.MakeChild();
   auto l_query_type = ProcessStmt(l_state, *castNode(Node, stmt.larg));
   SDB_ASSERT(l_query_type == SqlCommandType::Select);
+  auto l_expr_for_scorer = std::move(_expr_for_scorer);
+
   auto r_state = state.MakeChild();
   auto r_query_type = ProcessStmt(r_state, *castNode(Node, stmt.rarg));
   SDB_ASSERT(r_query_type == SqlCommandType::Select);
+
+  _expr_for_scorer = std::move(l_expr_for_scorer);
 
   const auto set_operation_type = [&] {
     switch (stmt.op) {
@@ -3690,20 +3778,55 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   SDB_ASSERT(object.object);
   const auto& inverted_index =
     basics::downCast<const catalog::InvertedIndex>(*object.object);
-  auto& table = *catalog::GetCatalog().GetSnapshot()->GetObject<catalog::Table>(
-    inverted_index.GetRelationId());
+  SDB_ASSERT(object.catalog_table);
+  const auto& table = *object.catalog_table;
   auto type = table.RowType();
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
+  axiom::connector::TablePtr scan_table;
+  if (table.GetTableType() == TableType::File) {
+    scan_table = MakeReadFileTable(table, type, false);
+  } else {
+    scan_table = std::make_shared<connector::RocksDBTable>(table, _transaction);
+  }
+
   if (!object.table) {
-    object.table = std::make_shared<connector::RocksDBInvertedIndexTable>(
-      table, _transaction, inverted_index);
+    object.table = std::make_shared<connector::InvertedIndexTable>(
+      _transaction, std::move(scan_table), inverted_index);
+  } else {
+    auto table = object.table.get();
+    SDB_ASSERT(dynamic_cast<connector::InvertedIndexTable*>(table));
   }
 
   SDB_ASSERT(
     !table.Columns().empty(),
     "Column with inverted index should have at least one column to index");
+
+  if (_expr_for_scorer) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Only one inverted index scan can produce a score per query"));
+  }
+
+  if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
+    basics::downCast<connector::InvertedIndexTable>(*object.table)
+      .SetScorer(scorer);
+
+    auto score_name = catalog::Column::GenerateScoreName(type->names());
+    auto unique_score_name = _id_generator.NextColumnName(score_name);
+
+    std::vector types = type->children();
+    std::vector type_names = type->names();
+    types.push_back(velox::REAL());
+    type_names.emplace_back(score_name);
+    type = velox::ROW(std::move(type_names), std::move(types));
+
+    column_names.emplace_back(std::move(unique_score_name));
+    _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
+      velox::REAL(), column_names.back());
+  }
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
@@ -3720,16 +3843,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 const Objects::ObjectData& object,
                                 const RangeVar* node, bool load_implicit_pk) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
-
-  if (table.GetTableType() == TableType::File) {
-    return ProcessFileTable(parent, table, table_name, node);
-  }
-
   auto type = table.RowType();
-
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
-
-  object.EnsureTable(_transaction);
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();
@@ -3751,47 +3866,26 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     std::vector types = type->children();
     std::vector type_names = type->names();
 
+    //  Important that  if the generated primary key is present, it must be the
+    //  last field in the type — there are data sources that rely on this
     types.push_back(velox::BIGINT());
     type_names.emplace_back(std::move(generated_pk_name));
     type = velox::ROW(std::move(type_names), std::move(types));
   }
 
+  axiom::connector::TablePtr scan_table;
+  if (table.GetTableType() == TableType::File) {
+    scan_table = MakeReadFileTable(table, type, load_implicit_pk);
+  } else {
+    object.EnsureTable(_transaction);
+    scan_table = object.table;
+  }
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type->children()), object.table,
-    type->names());
-
-  state.resolver.CreateTable(table_alias,
-                             MakePtrView(state.root->outputType()));
-  return state;
-}
-
-State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
-                                    std::string_view table_name,
-                                    const RangeVar* node) {
-  const auto& file_info = table.GetFileInfo();
-  SDB_ASSERT(file_info.storage_options);
-  SDB_ASSERT(file_info.format_options);
-
-  auto row_type = table.RowType();
-
-  auto [table_alias, column_names] =
-    ProcessTableColumns(parent, node, row_type);
-  auto file_output_type =
-    velox::ROW(std::move(column_names), row_type->children());
-
-  auto options = std::make_shared<connector::ReaderOptions>();
-  options->storage_options = file_info.storage_options;
-  options->dwio = file_info.format_options->createReaderOptions(row_type);
-  auto read_file_table = std::make_shared<connector::ReadFileTable>(
-    row_type, file_info.storage_options->Path(), std::move(options));
-
-  auto state = parent->MakeChild();
-  state.root = std::make_shared<lp::TableScanNode>(
-    _id_generator.NextPlanId(), std::move(file_output_type),
-    std::move(read_file_table), row_type->names());
-
+    velox::ROW(std::move(column_names), type->children()),
+    std::move(scan_table), type->names());
   state.resolver.CreateTable(table_alias,
                              MakePtrView(state.root->outputType()));
   return state;
@@ -4053,6 +4147,28 @@ State SqlAnalyzer::ProcessJoinExpr(State* parent, const JoinExpr* node) {
   ProcessAlias(l_state, node->alias);
 
   return l_state;
+}
+
+void SqlAnalyzer::RefreshExprForScorer(std::vector<std::string>& names,
+                                       std::vector<lp::ExprPtr>& exprs) {
+  if (!_expr_for_scorer) {
+    return;
+  }
+  auto expr_for_scorer = std::move(_expr_for_scorer);
+  SDB_ASSERT(expr_for_scorer->isInputReference());
+  const auto& score_column =
+    expr_for_scorer->as<lp::InputReferenceExpr>()->name();
+  for (size_t i = 0; i < exprs.size(); ++i) {
+    SDB_ASSERT(exprs[i]);
+    if (!exprs[i]->isInputReference()) {
+      continue;
+    }
+    if (exprs[i]->as<lp::InputReferenceExpr>()->name() == score_column) {
+      _expr_for_scorer =
+        std::make_shared<lp::InputReferenceExpr>(velox::REAL(), names[i]);
+      ;
+    }
+  }
 }
 
 State SqlAnalyzer::ProcessRangeSubselect(State* parent,
@@ -4838,6 +4954,21 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   auto [_, schema, name] = GetDbSchemaRelation(expr.funcname);
+
+  // bm25()/tfidf() are not registered catalog functions -- they are
+  // scorer directives resolved during collection. Return the injected
+  // score column reference that was set up in ProcessInvertedIndex.
+  if (schema.empty() &&
+      (name == irs::BM25::type_name() || name == irs::TFIDF::type_name())) {
+    if (!_expr_for_scorer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG(name, "() requires an inverted index scan in the same query"));
+    }
+    return _expr_for_scorer;
+  }
+
   auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
@@ -5166,6 +5297,8 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"uuid", velox::UUID()},
   {"cidr", velox::IPPREFIX()},
   {"void", pg::VOID()},
+  {"regtype", pg::REGTYPE()},
+  {"regclass", pg::REGCLASS()},
 };
 
 lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,
@@ -5512,6 +5645,9 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   }
 
+  for (auto& coercion : coercions) {
+    coercion = FixupReturnType(coercion);
+  }
   ApplyCoercions(args, coercions);
   auto it = kSpecialForms.find(name);
   if (it == kSpecialForms.end()) {
@@ -5786,6 +5922,28 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           std::move(arg));
   }
 
+  if (arg->type() == velox::VARCHAR() && pg::IsRegtype(type)) {
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regtypein", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
+  }
+
+  if (pg::IsRegtype(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypeout",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::VARCHAR() && pg::IsRegclass(type)) {
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regclassin", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
+  }
+
+  if (pg::IsRegclass(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regclassout",
+                                          std::move(arg));
+  }
+
   return MakeCast(std::move(type), std::move(arg));
 }
 
@@ -5795,6 +5953,25 @@ lp::ExprPtr SqlAnalyzer::ProcessSQLValueFunction(State& state,
     case SVFOP_CURRENT_SCHEMA:
       return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
                                             "pg_current_schema");
+    case SVFOP_CURRENT_USER:
+    case SVFOP_CURRENT_ROLE:
+    case SVFOP_USER:
+    case SVFOP_SESSION_USER:
+      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
+                                            "pg_current_user");
+    case SVFOP_CURRENT_CATALOG:
+      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
+                                            "pg_current_database");
+    case SVFOP_CURRENT_DATE:
+    case SVFOP_CURRENT_TIME:
+    case SVFOP_CURRENT_TIME_N:
+    case SVFOP_CURRENT_TIMESTAMP:
+    case SVFOP_CURRENT_TIMESTAMP_N:
+    case SVFOP_LOCALTIME:
+    case SVFOP_LOCALTIME_N:
+    case SVFOP_LOCALTIMESTAMP:
+    case SVFOP_LOCALTIMESTAMP_N:
+      // TODO(mbkkt) implement these
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
@@ -5852,9 +6029,9 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
   auto command_type = ProcessStmt(state, node, true);
   return {
     .root = std::move(state.root),
-    .options = std::move(_options),
     .pgsql_node = state.pgsql_node,
     .type = command_type,
+    .progress_reporters = std::move(_progress_reporters),
   };
 }
 
@@ -5909,24 +6086,31 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   // TODO(mbkkt) more types and validation
   if (name == "numeric") {
     SDB_ASSERT(mods_size >= 1);
-    const auto precision = TryGet<int>(type_name.typmods, 0);
-    std::optional<int> scale = std::nullopt;
-    if (mods_size > 1) {
-      if (scale = TryGet<int>(type_name.typmods, 1); !scale) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                        ERR_MSG("invalid input syntax for type integer"));
+    auto get_typemod = [&](size_t idx) {
+      if (auto i = TryGet<int>(type_name.typmods, idx)) {
+        return *i;
       }
-    }
+      if (auto str = TryGet<std::string_view>(type_name.typmods, idx)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+          ERR_MSG("invalid input syntax for type integer: \"", *str, "\""));
+      }
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("type modifiers must be simple constants or identifiers"));
+    };
 
-    if (!precision) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type integer"));
-    }
-    auto decimal = velox::DECIMAL(*precision, scale.value_or(0));
+    const auto precision = get_typemod(0);
+    const auto scale =
+      mods_size > 1 ? std::optional{get_typemod(1)} : std::nullopt;
+    auto decimal = velox::DECIMAL(precision, scale.value_or(0));
     return wrap_in_array(std::move(decimal));
   }
 
-  // a particular case because mods_size can be != 0
+  // particular cases because mods_size can be != 0
+  if (name == "bpchar") {
+    return wrap_in_array(velox::TINYINT());
+  }
   if (name == "interval") {
     return wrap_in_array(pg::INTERVAL());
   }

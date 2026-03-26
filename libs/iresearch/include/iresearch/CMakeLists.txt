@@ -71,15 +71,17 @@ set(IResearch_core_sources
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
+    ./analysis/pattern_tokenizer.cpp
+    ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
-    ./formats/columnstore2.cpp
+    ./formats/column/common.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
-    ./formats/skip_list.cpp
-    ./formats/sparse_bitmap.cpp
+    ./formats/posting/skip_list.cpp
+    ./formats/column/sparse_bitmap.cpp
     ./formats/format_block_128.cpp
-    ./formats/formats_burst_trie.cpp
-    ./formats/hnsw_index.cpp
+    ./formats/index/burst_trie.cpp
+    ./formats/column/hnsw_index.cpp
     ./index/buffered_column.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
@@ -118,6 +120,7 @@ set(IResearch_core_sources
     ./search/column_existence_filter.cpp
     ./search/same_position_filter.cpp
     ./search/wildcard_filter.cpp
+    ./search/wildcard_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp

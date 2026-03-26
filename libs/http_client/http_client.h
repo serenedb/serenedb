@@ -39,6 +39,7 @@
 
 namespace sdb {
 namespace app {
+
 class CommunicationFeaturePhase;
 }
 
@@ -515,5 +516,6 @@ class HttpClient {
   // lookup may be expensive otherwise)
   app::CommunicationFeaturePhase& _comm;
 };
+
 }  // namespace httpclient
 }  // namespace sdb

@@ -25,6 +25,7 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include "app/app_server.h"
 #include "basics/common.h"
@@ -35,7 +36,6 @@
 #include "rest/version.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::methods {
 

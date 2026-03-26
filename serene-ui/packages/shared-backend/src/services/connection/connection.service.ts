@@ -17,6 +17,9 @@ export const ConnectionService = {
 
             return connections;
         } catch (error) {
+            if (error instanceof ORPCError) {
+                throw error;
+            }
             const message =
                 error instanceof Error ? error.message : String(error);
             console.error("Error listing connections:", message);
@@ -57,6 +60,9 @@ export const ConnectionService = {
 
             return newConnection;
         } catch (error) {
+            if (error instanceof ORPCError) {
+                throw error;
+            }
             const message =
                 error instanceof Error ? error.message : String(error);
             console.error("Error adding connection:", message);
@@ -81,6 +87,9 @@ export const ConnectionService = {
             }
             return updatedConnection;
         } catch (error) {
+            if (error instanceof ORPCError) {
+                throw error;
+            }
             const message =
                 error instanceof Error ? error.message : String(error);
             console.error("Error updating connection:", message);
@@ -102,6 +111,9 @@ export const ConnectionService = {
             }
             return deletedConnection;
         } catch (error) {
+            if (error instanceof ORPCError) {
+                throw error;
+            }
             const message =
                 error instanceof Error ? error.message : String(error);
             console.error("Error deleting connection:", message);

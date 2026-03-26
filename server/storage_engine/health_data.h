@@ -26,10 +26,11 @@
 #include "basics/result.h"
 
 namespace vpack {
+
 class Builder;
 class Slice;
-}  // namespace vpack
 
+}  // namespace vpack
 namespace sdb {
 
 struct HealthDataBase {

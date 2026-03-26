@@ -32,9 +32,11 @@
 
 namespace sdb {
 namespace options {
+
 class ProgramOptions;
 }
 namespace app {
+
 class AppServer;
 
 class AppFeature {

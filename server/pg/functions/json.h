@@ -96,6 +96,7 @@ bool ValidateJson(T& value) {
       return false;
   }
 }
+
 }  // namespace
 
 class JsonParser {

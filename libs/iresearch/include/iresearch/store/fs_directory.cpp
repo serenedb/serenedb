@@ -60,10 +60,9 @@ inline int GetPosixFadvice(IOAdvice advice) noexcept {
       return IR_FADVICE_RANDOM | IR_FADVICE_NOREUSE;
   }
 
-  SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
-    absl::StrCat("fadvice '", static_cast<uint32_t>(advice),
-                 "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL"));
+  SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "fadvice '",
+            static_cast<uint32_t>(advice),
+            "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL");
 
   return IR_FADVICE_NORMAL;
 }
@@ -180,8 +179,8 @@ class FSIndexOutput final : public IndexOutput {
       }
 
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Failed to open output file, error: ", GET_ERROR(),
-                             ", path: ", file_utils::ToStr(name)));
+                "Failed to open output file, error: ", GET_ERROR(),
+                ", path: ", file_utils::ToStr(name));
     } catch (...) {
     }
     rm.file_descriptors->DecreaseChecked(descriptors);
@@ -329,15 +328,15 @@ class FsIndexInput : public BufferedIndexInput {
 
     if (nullptr == handle->handle) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Failed to open input file, error: ", GET_ERROR(),
-                             ", path: ", file_utils::ToStr(name)));
+                "Failed to open input file, error: ", GET_ERROR(),
+                ", path: ", file_utils::ToStr(name));
       return nullptr;
     }
     uint64_t size;
     if (!file_utils::ByteSize(size, *handle)) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Failed to get stat for input file, error: ",
-                             GET_ERROR(), ", path: ", file_utils::ToStr(name)));
+                "Failed to get stat for input file, error: ", GET_ERROR(),
+                ", path: ", file_utils::ToStr(name));
       return nullptr;
     }
 
@@ -558,7 +557,7 @@ IndexOutput::ptr FSDirectory::create(std::string_view name) noexcept {
 
     if (!out) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Failed to open output file, path: ", name));
+                "Failed to open output file, path: ", name);
     }
 
     return out;
@@ -595,14 +594,8 @@ bool FSDirectory::mtime(std::time_t& result,
 }
 
 bool FSDirectory::remove(std::string_view name) noexcept {
-  try {
-    const auto path = _dir / name;
-
-    return file_utils::Remove(path.c_str());
-  } catch (...) {
-  }
-
-  return false;
+  const auto path = _dir / name;
+  return file_utils::Remove(path.c_str());
 }
 
 IndexInput::ptr FSDirectory::open(std::string_view name,
@@ -619,15 +612,15 @@ IndexInput::ptr FSDirectory::open(std::string_view name,
 }
 
 bool FSDirectory::rename(std::string_view src, std::string_view dst) noexcept {
-  try {
-    const auto src_path = _dir / src;
-    const auto dst_path = _dir / dst;
-
-    return file_utils::Move(src_path.c_str(), dst_path.c_str());
-  } catch (...) {
+  const auto src_path = _dir / src;
+  const auto dst_path = _dir / dst;
+  const bool r = file_utils::Move(src_path.c_str(), dst_path.c_str());
+  if (!r) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Unable to move file: '",
+              src_path.c_str(), "' to '", dst_path.c_str(),
+              "', error: ", GET_ERROR());
   }
-
-  return false;
+  return r;
 }
 
 bool FSDirectory::visit(const Directory::visitor_f& visitor) const {
@@ -657,22 +650,8 @@ bool FSDirectory::visit(const Directory::visitor_f& visitor) const {
 }
 
 bool FSDirectory::sync(std::string_view name) noexcept {
-  try {
-    const auto path = _dir / name;
-
-    if (file_utils::FileSync(path.c_str())) {
-      return true;
-    }
-
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to sync file, error: ", GET_ERROR(),
-                           ", path: ", path.string()));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to sync file, name: ", name));
-  }
-
-  return false;
+  const auto path = _dir / name;
+  return file_utils::FileSync(path.c_str());
 }
 
 bool FSDirectory::sync(std::span<const std::string_view> files) noexcept {

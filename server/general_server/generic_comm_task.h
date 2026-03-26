@@ -45,6 +45,7 @@ class GenericCommTask : public Base {
   static constexpr size_t kReadBlockSize = 1024 * 32;
 
   /// read from socket
+  template<bool UseRaw = false>
   void AsyncReadSome();
 
   bool Stopped() const noexcept override {

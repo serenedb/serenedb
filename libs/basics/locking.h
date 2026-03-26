@@ -32,8 +32,9 @@ enum class LockerType {
 };
 
 namespace conditional_locking {
+
 static constexpr bool kDoLock = true;
 static constexpr bool kDoNotLock = false;
-}  // namespace conditional_locking
 
+}  // namespace conditional_locking
 }  // namespace sdb::basics

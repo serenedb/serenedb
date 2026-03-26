@@ -80,7 +80,6 @@ const std::string FILENAME_EXTENSION("");
 #endif
 
 }  // namespace
-
 namespace irs {
 
 void* LoadLibrary(const char* soname, int mode /* = 2 */) {

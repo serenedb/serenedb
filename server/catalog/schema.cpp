@@ -20,7 +20,7 @@
 
 #include "catalog/schema.h"
 
-#include "vpack/serializer.h"
+#include <vpack/serializer.h>
 
 namespace sdb::catalog {
 

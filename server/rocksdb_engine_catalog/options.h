@@ -26,12 +26,12 @@
 #include "catalog/types.h"
 
 namespace vpack {
+
 class Builder;
 class Slice;
+
 }  // namespace vpack
-
 namespace sdb {
-
 namespace transaction {
 
 struct Options {

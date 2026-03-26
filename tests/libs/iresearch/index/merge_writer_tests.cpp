@@ -48,7 +48,6 @@ irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
 }
 
 }  // namespace
-
 namespace tests {
 
 bool Visit(const irs::ColumnReader& reader,
@@ -129,8 +128,10 @@ void ValidateTerms(
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
 
       if (frequency) {
-        ASSERT_TRUE(irs::get<irs::FreqAttr>(*docs_itr));
-        ASSERT_EQ(*frequency, irs::get<irs::FreqAttr>(*docs_itr)->value);
+        const auto* freq_block = irs::get<irs::FreqBlockAttr>(*docs_itr);
+        ASSERT_TRUE(freq_block);
+        docs_itr->FetchScoreArgs(0);
+        ASSERT_EQ(*frequency, freq_block->value[0]);
       }
 
       if (position) {

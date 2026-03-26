@@ -37,7 +37,6 @@
 #include <string_view>
 
 #include "app/app_server.h"
-#include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/endian.h"
@@ -99,6 +98,7 @@ static_assert(PG_PROTOCOL_EARLIEST == PG_PROTOCOL_LATEST);
 // clang-format off
 // Pre-defined packets
 constexpr std::array<char, 1> kNo{'N'};
+constexpr std::array<char, 1> kYes{'S'};
 
 constexpr std::array<char, 5> kNoData{
   PQ_MSG_NO_DATA, 0x00, 0x00, 0x00, 0x04,
@@ -149,11 +149,12 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
-CommandTag GetCommandTag(Node* node) {
+CommandTag GetCommandTag(Node* node, const query::QueryPtr& query) {
   if (nodeTag(node) == T_RawStmt) {
     auto* stmt = castNode(RawStmt, node)->stmt;
-    if (nodeTag(stmt) == T_CreateTableAsStmt) {
-      // PostgreSQL returns SELECT N for CTAS
+    if (nodeTag(stmt) == T_CreateTableAsStmt && query->IsCompiled()) {
+      // PostgreSQL replace CTAS cmdtag with SELECT when the table is
+      // succesfully created and a filling process has been started.
       return CMDTAG_SELECT;
     }
   }
@@ -172,6 +173,13 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
 PgSQLCommTaskBase::~PgSQLCommTaskBase() {
+  if (_connection_ctx) {
+    // Rollback unconditionally: even for auto-commit connections
+    // (HasTransactionBegin() == false), Config::_snapshot may be set and must
+    // be released via Destroy() to avoid unreleased RocksDB snapshots at
+    // shutdown.
+    std::ignore = _connection_ctx->Rollback();
+  }
   if (_key != 0) {
     _feature.UnregisterTask(_key);
   }
@@ -222,7 +230,13 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
   SDB_ASSERT(_current_portal);
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
-  SafeCall([&] { ExecutePortal(*_current_portal); });
+  SafeCall([&] {
+    auto& portal = *_current_portal;
+    portal.rows = 0;
+    BuildColumnSerializers(portal);
+    DescribeAnalyzedQuery(*portal.stmt, portal.bind_info.output_formats, false);
+    ExecutePortal(portal);
+  });
   if (_pop_packet) {
     FinishPacket();
   }
@@ -258,9 +272,14 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
   }
   static_assert(sizeof(ProtocolVersion) == sizeof(uint32_t));
   ProtocolVersion protocol_ver = absl::big_endian::Load32(packet.data() + 4);
-  if (protocol_ver == NEGOTIATE_SSL_CODE ||
-      protocol_ver == NEGOTIATE_GSS_CODE) {
-    // TODO: HANDLE SSL / GSS here
+  if (protocol_ver == NEGOTIATE_GSS_CODE ||
+      protocol_ver == NEGOTIATE_SSL_CODE) {
+    if (_ssl_handshake_passed) {
+      // something nasty is happening. Double SSL switch is not expected.
+      // better abort connection
+      return;
+    }
+    // TODO: Add GSS handling.
     _send.Write(ToBuffer(kNo), true);
     std::move(cleanup).Cancel();
     _success_packet = true;
@@ -283,7 +302,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     auto database = _feature.server()
                       .getFeature<catalog::CatalogFeature>()
                       .Global()
-                      .GetSnapshot()
+                      .GetCatalogSnapshot()
                       ->GetDatabase(DatabaseName());
     if (!database) {
       // sending invalid schema name as SQLSTATE
@@ -302,7 +321,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       .host_name = ci.client_address,
       .raddr =
         ci.sas_len ? reinterpret_cast<const sockaddr*>(&ci.sas) : nullptr,
-      .ssl_in_use = false,
+      .ssl_in_use = _ssl_handshake_passed,
     };
 
     // TODO: auth check
@@ -323,7 +342,6 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     // authRes->auth.authMethod = hba::UserAuth::Password;
 
     if (auth.auth.auth_method == hba::UserAuth::Trust) {
-      _database = std::move(database);
       // _session_ctx.auth_method = auth.auth.auth_method;
       // _session_ctx.session_user = auth.user;
       // _session_ctx.user = _session_ctx.user;
@@ -980,18 +998,25 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
     SendNotices();
   }
-  SDB_ASSERT(stmt.query);
-  const auto& output_type = stmt.query->GetOutputType();
+  BuildColumnSerializers(portal);
+
+  return portal;
+}
+
+void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
+  SDB_ASSERT(portal.stmt);
+  SDB_ASSERT(portal.stmt->query);
+  portal.columns_serializers.clear();
+  const auto& output_type = portal.stmt->query->GetOutputType();
 
   // DDL does not have output type
   if (!output_type) {
-    return portal;
+    return;
   }
   const auto columns_count = output_type->size();
   if (columns_count == 0) {
-    return portal;
+    return;
   }
-  SDB_ASSERT(columns_count > 0);
   portal.columns_serializers.reserve(columns_count);
 
   const auto& formats = portal.bind_info.output_formats;
@@ -1003,13 +1028,14 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
     portal.columns_serializers.push_back(
       GetSerialization(column_type, format, portal.serialization_context));
   }
-
-  return portal;
 }
 
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   SDB_ASSERT(_current_portal);
   auto& portal = *_current_portal;
+  Config& config = *portal.stmt->query->GetContext().transaction;
+  portal.serialization_context.snapshot = config.EnsureCatalogSnapshot();
+  SDB_ASSERT(portal.serialization_context.snapshot);
   const velox::vector_size_t batch_rows = batch ? batch->size() : 0;
   if (batch_rows == 0) {
     return;
@@ -1078,7 +1104,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
     return ProcessState::Wait;
   }
   SDB_ASSERT(state == query::Cursor::Process::Done);
-  SendCommandComplete(portal.stmt->tree, portal.rows);
+  SendCommandComplete(portal.stmt->tree, portal.rows, portal.stmt->query);
 
   ReleaseCursor(portal);
   if (_current_packet_type == PQ_MSG_QUERY &&
@@ -1091,12 +1117,12 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   return ProcessState::DonePacket;
 }
 
-void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree,
-                                            uint64_t rows) {
+void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree, uint64_t rows,
+                                            const query::QueryPtr& query) {
   SDB_ASSERT(tree.root_idx);
   auto* root = castNode(Node, tree.GetRoot());
 
-  const auto command_tag = GetCommandTag(root);
+  const auto command_tag = GetCommandTag(root, query);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
   {
@@ -1179,25 +1205,18 @@ bool PgSQLCommTaskBase::RegisterCursor(std::unique_ptr<query::Cursor> cursor,
 
 std::string_view PgSQLCommTaskBase::DatabaseName() const noexcept {
   auto db_name = _client_parameters.find(kDatabaseParameter);
-
   if (db_name != _client_parameters.end()) {
-    if (db_name->second == StaticStrings::kPgDefaultDatabase) {
-      return StaticStrings::kSystemDatabase;
-    }
     return db_name->second;
   }
-  return StaticStrings::kSystemDatabase;
+  return StaticStrings::kDefaultDatabase;
 }
 
 std::string_view PgSQLCommTaskBase::UserName() const noexcept {
   auto user_name = _client_parameters.find(kUserParameter);
   if (user_name != _client_parameters.end()) {
-    if (user_name->second == StaticStrings::kPgDefaultUser) {
-      return auth::kRootUserName;
-    }
     return user_name->second;
   }
-  return {};
+  return StaticStrings::kDefaultUser;
 }
 
 void PgSQLCommTaskBase::SendNotices() {
@@ -1258,7 +1277,10 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
   std::lock_guard lock{_queue_mutex};
   if (_current_packet_type == PQ_MSG_QUERY ||
       _current_packet_type == PQ_MSG_EXECUTE) {
-    _current_portal = nullptr;
+    if (_current_portal) {
+      _current_portal->cursor.reset();
+      _current_portal = nullptr;
+    }
   }
   _current_packet_type = 0;
   SDB_ASSERT(!_queue.empty());
@@ -1359,7 +1381,17 @@ void PgSQLCommTask<T>::Start() {
             std::bit_cast<size_t>(this));
   asio_ns::post(this->_protocol->context.io_context,
                 [self = this->shared_from_this()] {
-                  basics::downCast<PgSQLCommTask<T>>(*self).AsyncReadSome();
+                  if constexpr (T == rest::SocketType::Ssl) {
+                    // SSL starts as plain text and waits for actual SSL request
+                    // before doing handshake to allow client change connection
+                    // type over same port. We do not support such choices but
+                    // still have to follow the protocol.
+                    basics::downCast<PgSQLCommTask<T>>(*self)
+                      .template AsyncReadSome<true>();
+                  } else {
+                    basics::downCast<PgSQLCommTask<T>>(*self)
+                      .template AsyncReadSome<false>();
+                  }
                 });
 }
 
@@ -1441,8 +1473,8 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
             }
             return ss_str;
           }());
-          if (this->_state.load() != State::ClientHello &&
-              _packet[0] == PQ_MSG_TERMINATE) {
+          const auto hello_passed = this->_state.load() != State::ClientHello;
+          if (hello_passed && _packet[0] == PQ_MSG_TERMINATE) {
             SDB_DEBUG("xxxxx", Logger::REQUESTS, "Termination request for ",
                       std::bit_cast<size_t>(this));
             this->Stop();
@@ -1451,11 +1483,53 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
             return false;
           }
           {
+            if constexpr (T == rest::SocketType::Ssl) {
+              if (!this->_ssl_handshake_passed) {
+                // Wait for SSL request
+                ProtocolVersion protocol_ver =
+                  absl::big_endian::Load32(_packet.data() + 4);
+                if (protocol_ver == NEGOTIATE_SSL_CODE) {
+                  asio_ns::write(this->_protocol->socket.next_layer(),
+                                 asio_ns::buffer(kYes));
+                  auto cb = [this](const asio_ns::error_code& ec) mutable {
+                    if (ec) {
+                      SDB_DEBUG("xxxxx", sdb::Logger::COMMUNICATION,
+                                "error during TLS handshake: '", ec.message(),
+                                "'");
+                      this->Stop();
+                      return;
+                    }
+                    // Would be fair to restart keep-alive timeout
+                    // to not include what have passed during handshake
+                    this->SetIOTimeout();
+                    this->_ssl_handshake_passed = true;
+                    _packet.clear();
+                    this->_protocol->buffer.consume(_pending_len);
+                    _pending_len = 0;
+                    // Now switch to reads from SSL stream
+                    asio_ns::post(this->_protocol->context.io_context,
+                                  [self = this->shared_from_this()] {
+                                    basics::downCast<PgSQLCommTask<T>>(*self)
+                                      .template AsyncReadSome<false>();
+                                  });
+                  };
+                  this->SetIOTimeout();
+                  this->_protocol->handshake(std::move(cb));
+                  // stop reading with this mode.
+                  return false;
+                } else if (protocol_ver != CANCEL_REQUEST_CODE) {
+                  this->Stop();
+                  _packet.clear();
+                  _pending_len = 0;
+                  return false;
+                }
+              }
+            }
             std::string packet{_packet.data(), _pending_len};
             // TODO: error if there's no copy in progress
-            if (packet.starts_with(PQ_MSG_COPY_DATA)) {
+            if (hello_passed && packet.starts_with(PQ_MSG_COPY_DATA)) {
               this->_copy_queue.AppendCopyDataMsg(std::move(packet));
-            } else if (packet.starts_with(PQ_MSG_COPY_DONE)) {
+            } else if (hello_passed && packet.starts_with(PQ_MSG_COPY_DONE)) {
               this->_copy_queue.AppendCopyDoneMsg();
             } else {
               std::lock_guard lock{this->_queue_mutex};

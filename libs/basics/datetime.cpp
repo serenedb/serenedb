@@ -44,6 +44,7 @@
 
 namespace sdb::basics {
 namespace {
+
 using namespace std::chrono;
 
 std::string Tail(const std::string& source, const size_t length) {

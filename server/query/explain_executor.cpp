@@ -46,7 +46,7 @@ velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
     !query_ctx.explain_params.Has(ExplainWith::Registers);
 
   std::vector<std::string> plans;
-  static constexpr size_t kMaxPlanCount = 5;
+  static constexpr size_t kMaxPlanCount = 6;
   plans.reserve(kMaxPlanCount);
   std::vector<std::string_view> data;
 
@@ -85,13 +85,13 @@ velox::RowVectorPtr ExplainExecutor::BuildExplainBatch() {
   }
 
   if (query_ctx.explain_params.Has(ExplainWith::Execution)) {
-    if (query_ctx.explain_params.Has(ExplainWith::Stats)) {
-      data.emplace_back("EXECUTION PLAN WITH STATS:");
-      process_plan(_query->GetRunner().PrintPlanWithStats());
-    } else {
-      data.emplace_back("EXECUTION PLAN:");
-      process_plan(_query->GetExecutionPlan());
-    }
+    data.emplace_back("EXECUTION PLAN:");
+    process_plan(_query->GetExecutionPlan());
+  }
+
+  if (query_ctx.explain_params.Has(ExplainWith::Analyze)) {
+    data.emplace_back("EXECUTION PLAN WITH STATS:");
+    process_plan(_query->GetRunner().PrintPlanWithStats());
   }
 
   return _query->BuildBatch({data});

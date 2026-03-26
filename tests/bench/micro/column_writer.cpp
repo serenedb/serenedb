@@ -20,7 +20,7 @@
 /// @author Valerii Mironov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/columnstore2.hpp>
+#include <iresearch/formats/column/common.hpp>
 #include <random>
 #include <thread>
 #include <vector>

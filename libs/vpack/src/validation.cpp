@@ -8,6 +8,7 @@
 
 namespace vpack::validation {
 namespace {
+
 [[nodiscard]] tao::json::value SliceObjectToValue(vpack::Slice slice,
                                                   SpecialProperties special,
                                                   const vpack::Options* options,

@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <memory>
@@ -25,8 +26,10 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/schema.h"
+#include "pg/connection_context.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -47,15 +50,14 @@ yaclib::Future<> CreateSchema(ExecContext& context,
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("CREATE SCHEMA with schema elements is not implemented"));
   }
+  SDB_ASSERT(stmt.schemaname);
 
-  if (stmt.schemaname == StaticStrings::kPgCatalogSchema ||
-      stmt.schemaname == StaticStrings::kInformationSchema) {
+  if (absl::StartsWith(stmt.schemaname, "pg_")) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
-      ERR_MSG("unacceptable schema name \"", stmt.schemaname, "\""));
+      ERR_MSG("unacceptable schema name \"", stmt.schemaname, "\""),
+      ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
   }
-
-  SDB_ASSERT(stmt.schemaname);
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
@@ -64,10 +66,18 @@ yaclib::Future<> CreateSchema(ExecContext& context,
   catalog::SchemaOptions options;
   options.name = stmt.schemaname;
 
-  const auto db = context.GetDatabaseId();
-  auto r = catalog.CreateSchema(
-    db, std::make_shared<catalog::Schema>(db, std::move(options)));
+  auto r = [&] {
+    if (stmt.schemaname == StaticStrings::kInformationSchema) {
+      return Result{ERROR_SERVER_DUPLICATE_NAME};
+    }
+    const auto db = context.GetDatabaseId();
+    return catalog.CreateSchema(
+      db, std::make_shared<catalog::Schema>(db, std::move(options)));
+  }();
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+    basics::downCast<ConnectionContext>(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+      ERR_MSG("schema \"", stmt.schemaname, "\" already exists, skipping")));
     return {};
   } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),

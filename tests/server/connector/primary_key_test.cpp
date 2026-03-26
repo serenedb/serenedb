@@ -26,6 +26,8 @@
 
 namespace {
 
+using namespace sdb::connector;
+
 using TinInt = typename velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType;
 using SmlInt =
   typename velox::TypeTraits<velox::TypeKind::SMALLINT>::NativeType;
@@ -59,8 +61,8 @@ class PrimaryKeyTest : public ::testing::Test,
          std::numeric_limits<T>::infinity(),
          std::numeric_limits<T>::quiet_NaN()})});
 
-    sdb::connector::primary_key::Keys actual{*pool_.get()};
-    sdb::connector::primary_key::Create(*data, key_columns, actual);
+    primary_key::Keys actual{*pool_.get()};
+    primary_key::Create(*data, key_columns, actual);
     ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
   }
 
@@ -76,8 +78,8 @@ class PrimaryKeyTest : public ::testing::Test,
            std::numeric_limits<T>::min() / 2, -1, 0, 1,
            std::numeric_limits<T>::max() / 2, std::numeric_limits<T>::max() - 1,
            std::numeric_limits<T>::max()})});
-      sdb::connector::primary_key::Keys actual{*pool_.get()};
-      sdb::connector::primary_key::Create(*data, key_columns, actual);
+      primary_key::Keys actual{*pool_.get()};
+      primary_key::Create(*data, key_columns, actual);
       ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
     }
   }
@@ -104,8 +106,8 @@ TEST_F(PrimaryKeyTest, test_singleFloat) {
          std::numeric_limits<FltType>::infinity(), -FltType{0}, +FltType{0},
          1234.5f, -1234.5f})});
 
-    sdb::connector::primary_key::Keys actual{*pool_.get()};
-    sdb::connector::primary_key::Create(*data, key_columns, actual);
+    primary_key::Keys actual{*pool_.get()};
+    primary_key::Create(*data, key_columns, actual);
 
     // Negative NaNs
     constexpr std::string_view kPositiveNan{"\xFF\xC0\x00\x00", 4};
@@ -157,8 +159,8 @@ TEST_F(PrimaryKeyTest, test_singleDouble) {
          std::numeric_limits<DblType>::infinity(), -DblType{0}, +DblType{0},
          1234.5, -1234.5})});
 
-    sdb::connector::primary_key::Keys actual{*pool_.get()};
-    sdb::connector::primary_key::Create(*data, key_columns, actual);
+    primary_key::Keys actual{*pool_.get()};
+    primary_key::Create(*data, key_columns, actual);
 
     // Negative NaNs
     constexpr std::string_view kPositiveNan{"\xFF\xF8\x00\x00\x00\x00\x00\x00",
@@ -204,8 +206,8 @@ TEST_F(PrimaryKeyTest, test_singleTinyInteger) {
     {makeFlatVector<TinInt>({std::numeric_limits<TinInt>::min(), -5, TinInt{0},
                              5, std::numeric_limits<TinInt>::max()})});
 
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual[0], std::string_view("\x00", 1));
   ASSERT_EQ(actual[1], std::string_view("\x7B", 1));
   ASSERT_EQ(actual[2], std::string_view("\x80", 1));
@@ -221,8 +223,8 @@ TEST_F(PrimaryKeyTest, test_singleSmlInteger) {
     {makeFlatVector<SmlInt>({std::numeric_limits<SmlInt>::min(), -5, SmlInt{0},
                              5, std::numeric_limits<SmlInt>::max()})});
 
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual[0], std::string_view("\x00\x00", 2));
   ASSERT_EQ(actual[1], std::string_view("\x7F\xFB", 2));
   ASSERT_EQ(actual[2], std::string_view("\x80\x00", 2));
@@ -238,8 +240,8 @@ TEST_F(PrimaryKeyTest, test_singleNrmInteger) {
     {makeFlatVector<NrmInt>({std::numeric_limits<NrmInt>::min(), -5, NrmInt{0},
                              5, std::numeric_limits<NrmInt>::max()})});
 
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual[0], std::string_view("\x00\x00\x00\x00", 4));
   ASSERT_EQ(actual[1], std::string_view("\x7F\xFF\xFF\xFB", 4));
   ASSERT_EQ(actual[2], std::string_view("\x80\x00\x00\x00", 4));
@@ -255,8 +257,8 @@ TEST_F(PrimaryKeyTest, test_singleBigInteger) {
     {makeFlatVector<BigInt>({std::numeric_limits<BigInt>::min(), -5, BigInt{0},
                              5, std::numeric_limits<BigInt>::max()})});
 
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual[0], std::string_view("\x00\x00\x00\x00\x00\x00\x00\x00", 8));
   ASSERT_EQ(actual[1], std::string_view("\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFB", 8));
   ASSERT_EQ(actual[2], std::string_view("\x80\x00\x00\x00\x00\x00\x00\x00", 8));
@@ -272,8 +274,8 @@ TEST_F(PrimaryKeyTest, test_singleHugInteger) {
     {makeFlatVector<HugInt>({std::numeric_limits<HugInt>::min(), -5, HugInt{0},
                              5, std::numeric_limits<HugInt>::max()})});
 
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(
     actual[0],
     std::string_view(
@@ -319,8 +321,8 @@ TEST_F(PrimaryKeyTest, test_multiSizeIntegerPositive) {
                              std::numeric_limits<HugInt>::max(), 0, 0, 5, 6,
                              std::numeric_limits<HugInt>::max(),
                              std::numeric_limits<HugInt>::max()})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_FALSE(absl::c_any_of(
     actual, [&](const auto& str) { return str.size() != actual[0].size(); }));
@@ -371,8 +373,8 @@ TEST_F(PrimaryKeyTest, test_multiSizeInteger) {
         std::numeric_limits<HugInt>::max(), std::numeric_limits<HugInt>::min(),
         0, 5, 6, std::numeric_limits<HugInt>::max(),
         std::numeric_limits<HugInt>::max()})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_FALSE(absl::c_any_of(
     actual, [&](const auto& str) { return str.size() != actual[0].size(); }));
@@ -391,8 +393,8 @@ TEST_F(PrimaryKeyTest, test_FloatingNumbers) {
      makeFlatVector<DblType>({4., std::numeric_limits<DblType>::max() * -1.,
                               -1., 0., 6., 5., 4., 0., 1000.,
                               std::numeric_limits<DblType>::max()})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_FALSE(absl::c_any_of(
     actual, [&](const auto& str) { return str.size() != actual[0].size(); }));
@@ -404,8 +406,8 @@ TEST_F(PrimaryKeyTest, test_Bools) {
   auto data = makeRowVector({"foo", "bar"},
                             {makeFlatVector<bool>({false, false, true, true}),
                              makeFlatVector<bool>({false, true, false, true})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_FALSE(absl::c_any_of(
     actual, [&](const auto& str) { return str.size() != actual[0].size(); }));
@@ -422,8 +424,8 @@ TEST_F(PrimaryKeyTest, test_Strings) {
     {"foo", "bar"},
     {makeFlatVector<velox::StringView>({"foo", "foob", "foobar", "foobar"}),
      makeFlatVector<velox::StringView>({"barfoo", "arfoo", "foo", "goo"})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
 }
@@ -435,8 +437,8 @@ TEST_F(PrimaryKeyTest, test_BoolsStrings) {
     {makeFlatVector<velox::StringView>({"foo", "foob", "foob", "foob", "foob"}),
      makeFlatVector<bool>({true, false, true, true, true}),
      makeFlatVector<velox::StringView>({"a", "a", "a", "b", "bar"})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
 }
@@ -449,8 +451,8 @@ TEST_F(PrimaryKeyTest, test_StringsNumbers) {
      makeFlatVector<int32_t>(
        {-1339019216, -1339019216}),  // would be stored as 0x30303030
      makeFlatVector<velox::StringView>({"00", "0"})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
 }
@@ -465,8 +467,8 @@ TEST_F(PrimaryKeyTest, test_StringsWithSeparators) {
                 velox::StringView{"ccc\0", 4}, velox::StringView{"ccc\0\0", 5},
                 velox::StringView{"ccc\0\1", 5}, velox::StringView{"ccc\0c", 5},
                 velox::StringView{"ccc\1", 4}, "cccc"})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
 }
@@ -481,8 +483,8 @@ TEST_F(PrimaryKeyTest, test_Timestamp) {
                 velox::Timestamp(0, 0),
                 velox::Timestamp(velox::Timestamp::kMaxSeconds, 0),
                 velox::Timestamp::max()})});
-  sdb::connector::primary_key::Keys actual{*pool_.get()};
-  sdb::connector::primary_key::Create(*data, key_columns, actual);
+  primary_key::Keys actual{*pool_.get()};
+  primary_key::Create(*data, key_columns, actual);
   ASSERT_EQ(actual.size(), data->size());
   ASSERT_TRUE(absl::c_is_sorted(actual, kKeyCheck));
   ASSERT_EQ(

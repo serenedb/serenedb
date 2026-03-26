@@ -27,6 +27,7 @@
 
 namespace irs {
 namespace mmap_utils {
+
 class MMapHandle;
 }
 

@@ -30,9 +30,11 @@
 #include "rest_server/serened.h"
 
 namespace app {
+
 class AppServer;
 }
 namespace options {
+
 class ProgramOptions;
 }
 

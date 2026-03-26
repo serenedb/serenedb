@@ -16,6 +16,7 @@ import HtmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
 // @ts-ignore - Vite query is valid at build time
 import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { useResizeObserver } from "../hooks";
+import { useChangeTheme } from "@serene-ui/shared-frontend/features";
 
 const _self = self as any;
 if (!_self.MonacoEnvironment || !_self.MonacoEnvironment.getWorker) {
@@ -49,7 +50,7 @@ type MonacoEditorProps = {
         monaco: typeof import("monaco-editor"),
     ) => void;
     onChange?: (value: string) => void;
-    onExecute?: () => void;
+    onExecute?: (mode: "sequential" | "transaction") => void;
     onExecuteInNewTab?: () => void;
 };
 
@@ -68,6 +69,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
         },
         forwardedRef,
     ) => {
+        const { theme: globalTheme } = useChangeTheme();
         const { ref: resizeRef } = useResizeObserver();
         const containerRef = useRef<HTMLDivElement | null>(null);
         const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(
@@ -103,10 +105,10 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                 ],
                 colors: {
                     "editor.background": "#1E1E1E",
-                    "editor.foreground": "#B6B7B9",
+                    "editor.foreground":
+                        globalTheme === "dark" ? "#B6B7B9" : "#506182",
                     "editorLineNumber.foreground": "#57575D",
                     "editorLineNumber.activeForeground": "#D4D4D4",
-                    "editor.selectionBackground": "#895AF8",
                     "editorCursor.foreground": "#A6ACCD",
                 },
             });
@@ -140,7 +142,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                     label: "Execute Query",
                     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
                     run: () => {
-                        onExecuteRef.current?.();
+                        onExecuteRef.current?.("transaction");
                     },
                 });
             }
@@ -236,6 +238,37 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
         useEffect(() => {
             monaco.editor.setTheme(theme);
         }, [theme]);
+
+        useEffect(() => {
+            const isDark = globalTheme === "dark";
+            monaco.editor.defineTheme("myTheme", {
+                base: isDark ? "vs-dark" : "vs",
+                inherit: true,
+                rules: [
+                    {
+                        token: "comment",
+                        foreground: "#ffa500",
+                        fontStyle: "medium",
+                    },
+                    { token: "keyword", foreground: "#895AF8" },
+                    { token: "type", foreground: "#4EC9B0" },
+                    { token: "string", foreground: "#CE9178" },
+                    { token: "number", foreground: "#80BEFF" },
+                ],
+                colors: {
+                    "editor.background": isDark ? "#1E1E1E" : "#FFFFFF",
+                    "editor.foreground": isDark ? "#B6B7B9" : "#506182",
+                    "editorLineNumber.foreground": isDark
+                        ? "#57575D"
+                        : "#A0A0A0",
+                    "editorLineNumber.activeForeground": isDark
+                        ? "#D4D4D4"
+                        : "#333333",
+                    "editorCursor.foreground": isDark ? "#A6ACCD" : "#506182",
+                },
+            });
+            monaco.editor.setTheme("myTheme");
+        }, [globalTheme]);
 
         useEffect(() => {
             const editor = editorRef.current;

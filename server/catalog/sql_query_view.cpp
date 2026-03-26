@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 
 #include <algorithm>
@@ -48,7 +49,6 @@
 #include "pg/sql_resolver.h"
 #include "utils/exec_context.h"
 #include "utils/query_string.h"
-#include "vpack/serializer.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

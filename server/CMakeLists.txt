@@ -21,19 +21,17 @@ endif()
 install(TARGETS serened RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR} OPTIONAL)
 install_config(serened "${CMAKE_SOURCE_DIR}/etc/serenedb")
 
-if(NOT USE_V8)
-    install_command_alias(serened
-      ${CMAKE_INSTALL_SBINDIR}
-      serene-secure-installation
-    )
-    install_config(serene-secure-installation "${CMAKE_SOURCE_DIR}/etc/serenedb")
+install_command_alias(serened
+  ${CMAKE_INSTALL_SBINDIR}
+  serene-secure-installation
+)
+install_config(serene-secure-installation "${CMAKE_SOURCE_DIR}/etc/serenedb")
 
-    install_command_alias(serened
-      ${CMAKE_INSTALL_SBINDIR}
-      serene-init-database
-    )
-    install_config(serene-init-database "${CMAKE_SOURCE_DIR}/etc/serenedb")
-endif()
+install_command_alias(serened
+  ${CMAKE_INSTALL_SBINDIR}
+  serene-init-database
+)
+install_config(serene-init-database "${CMAKE_SOURCE_DIR}/etc/serenedb")
 
 ################################################################################
 ## libraries

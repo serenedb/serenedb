@@ -41,18 +41,18 @@ export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <Button
-                    variant="thirdly"
+                    variant="secondary"
                     role="combobox"
                     tabIndex={-1}
                     aria-expanded={open}
                     aria-label="Select connection"
-                    className="flex-1 gap-2 justify-between max-w-full overflow-hidden">
+                    className="flex-1 gap-2 justify-between max-w-full overflow-hidden transition-colors duration-150">
                     <div className="flex flex-1 gap-2 items-center min-w-0 overflow-hidden">
                         <ConnectionIcon className="flex-shrink-0" />
                         {isLoading && !isFetched ? (
                             <Skeleton className="flex-1 h-4 max-w-30" />
                         ) : currentConnectionId !== -1 ? (
-                            <span className="text-left fade-in duration-100 truncate min-w-0 block flex-1">
+                            <span className="text-left truncate min-w-0 block flex-1">
                                 {
                                     connections?.find(
                                         (connection) =>
@@ -62,7 +62,7 @@ export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
                                 }
                             </span>
                         ) : (
-                            <span className="text-left fade-in duration-100 truncate min-w-0 block flex-1">
+                            <span className="text-left truncate min-w-0 block flex-1">
                                 Select host
                             </span>
                         )}

@@ -22,6 +22,8 @@
 
 #include <velox/common/file/File.h>
 #include <velox/common/file/FileSystems.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
 #include <memory>
 #include <string>
@@ -29,8 +31,6 @@
 #include <utility>
 
 #include "basics/fwd.h"
-#include "vpack/builder.h"
-#include "vpack/slice.h"
 
 namespace sdb {
 

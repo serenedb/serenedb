@@ -22,6 +22,7 @@
 #include "global_context.h"
 
 #include <absl/debugging/symbolize.h>
+#include <vpack/vpack_helper.h>
 
 #include <yaclib/log.hpp>
 
@@ -38,7 +39,6 @@
 #include "basics/signals.h"
 #include "basics/string_utils.h"
 #include "rest/version.h"
-#include "vpack/vpack_helper.h"
 #define ZLIB_COMPAT
 #include <functable.h>
 #include <stdlib.h>
@@ -58,6 +58,7 @@ using namespace sdb::basics;
 namespace {
 
 static void ReopenLog(int) { log::Appender::reopen(); }
+
 }  // namespace
 
 GlobalContext* GlobalContext::gContext = nullptr;

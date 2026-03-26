@@ -25,6 +25,7 @@
 #include "basics/operating-system.h"
 
 namespace sdb::log {
+
 #ifdef SERENEDB_ENABLE_SYSLOG
 
 class AppenderSyslog final : public Appender {
@@ -41,4 +42,5 @@ class AppenderSyslog final : public Appender {
   inline static bool gOpened = false;
 };
 #endif
+
 }  // namespace sdb::log

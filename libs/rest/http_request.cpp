@@ -26,18 +26,19 @@
 #include <vpack/options.h>
 #include <vpack/parser.h>
 #include <vpack/validator.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/debugging.h"
 #include "basics/number_utils.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/utf8_helper.h"
-#include "vpack/vpack_helper.h"
 
 using namespace sdb;
 using namespace sdb::basics;
 
 namespace {
+
 std::string UrlDecode(const char* begin, const char* end) {
   std::string out;
   out.reserve(static_cast<size_t>(end - begin));
@@ -65,6 +66,7 @@ std::string UrlDecode(const char* begin, const char* end) {
 
   return out;
 }
+
 }  // namespace
 
 HttpRequest::HttpRequest(const ConnectionInfo& connection_info, uint64_t mid)

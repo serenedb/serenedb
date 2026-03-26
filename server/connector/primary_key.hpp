@@ -21,8 +21,11 @@
 #pragma once
 
 #include <velox/common/memory/MemoryPool.h>
+#include <velox/type/Type.h>
+#include <velox/type/Variant.h>
 #include <velox/vector/ComplexVector.h>
 
+#include <span>
 #include <string>
 #include <type_traits>
 
@@ -47,8 +50,14 @@ void Create(const velox::RowVector& data,
 void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key);
 
+// Creates a key from a fully resolved point (one variant per PK column,
+// ordered by pk_type).
+void Create(std::span<const velox::variant> point,
+            const velox::RowType& pk_type, std::string& key);
+
 void AppendKeyValue(std::string& key, const velox::BaseVector& column,
                     velox::vector_size_t idx);
+
 template<typename T>
 void AppendSigned(std::string& key, T value) {
   SDB_ASSERT(std::is_signed_v<T>,

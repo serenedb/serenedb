@@ -24,13 +24,13 @@
 #include <geodesic.h>
 #include <s2/s2latlng.h>
 #include <s2/s2region_coverer.h>
+#include <vpack/vpack_helper.h>
 
 #include <vector>
 
 #include "basics/debugging.h"
 #include "geo/ellipsoid.h"
 #include "geo/shape_container.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::geo::utils {
 

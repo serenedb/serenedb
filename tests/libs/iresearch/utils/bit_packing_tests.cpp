@@ -22,9 +22,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
-#include <basics/bit_packing.hpp>
 #include <vector>
 
+#include "basics/bit_packing.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

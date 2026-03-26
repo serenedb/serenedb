@@ -111,4 +111,5 @@ class HttpResponse : public GeneralResponse {
   size_t _body_size;
   rest::ResponseCompressionType _allow_compression;
 };
+
 }  // namespace sdb

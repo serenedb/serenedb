@@ -40,8 +40,8 @@ void DoNothing(fuerte::Error, std::unique_ptr<fuerte::Request> req,
                std::unique_ptr<fuerte::Response> res) {
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 };
-}  // namespace
 
+}  // namespace
 namespace sdb {
 namespace tests {
 

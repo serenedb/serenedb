@@ -32,7 +32,6 @@ jobs:
       FULL_SUITE: false
       SANITIZERS: ''
       USE_COVERAGE: 'SourceBased'
-      SDB_CLUSTER: 'Off'
       SDB_ALLOC: 'JE'
       SDB_DEV: 'On'
       USE_IPO: 'Off'
@@ -69,7 +68,6 @@ jobs:
       FULL_SUITE: false
       SANITIZERS: 'MemoryWithOrigins'
       USE_COVERAGE: ''
-      SDB_CLUSTER: 'Off'
       SDB_ALLOC: 'JE'
       SDB_DEV: 'On'
       USE_IPO: 'Off'
@@ -106,7 +104,6 @@ jobs:
       FULL_SUITE: false
       SANITIZERS: 'Address'
       USE_COVERAGE: ''
-      SDB_CLUSTER: 'Off'
       SDB_ALLOC: 'JE'
       SDB_DEV: 'On'
       USE_IPO: 'Off'
@@ -143,7 +140,6 @@ jobs:
       FULL_SUITE: false
       SANITIZERS: 'Undefined'
       USE_COVERAGE: ''
-      SDB_CLUSTER: 'Off'
       SDB_ALLOC: 'JE'
       SDB_DEV: 'On'
       USE_IPO: 'Off'
@@ -180,7 +176,6 @@ jobs:
       FULL_SUITE: false
       SANITIZERS: 'Thread'
       USE_COVERAGE: ''
-      SDB_CLUSTER: 'Off'
       SDB_ALLOC: 'JE'
       SDB_DEV: 'On'
       USE_IPO: 'Off'

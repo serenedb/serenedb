@@ -23,22 +23,14 @@
 
 #include "merge_writer.hpp"
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/strings/internal/resize_uninitialized.h>
+
+#include <ranges>
 #include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/small_vector.h"
-#include "basics/down_cast.h"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/utils/string.hpp"
-
-#if defined(SDB_DEV) && !defined(__clang__)
-#include <ranges>
-#endif
-
-#include <absl/container/flat_hash_map.h>
-#include <absl/strings/internal/resize_uninitialized.h>
-
 #include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
@@ -48,9 +40,12 @@
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/heap_iterator.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -152,6 +147,11 @@ class RemappingDocIterator : public DocIterator {
     return _doc = doc_limits::eof();
   }
 
+  uint32_t GetFreq() const final {
+    SDB_ASSERT(_it);
+    return _it->GetFreq();
+  }
+
  private:
   DocIterator::ptr _it;
   const DocMapF* _mapper;
@@ -211,6 +211,12 @@ class CompoundDocIterator : public DocIterator {
   doc_id_t seek(doc_id_t target) final {
     SDB_ASSERT(false);
     return _doc = doc_limits::eof();
+  }
+
+  uint32_t GetFreq() const final {
+    SDB_ASSERT(_current_itr < _iterators.size());
+    SDB_ASSERT(_iterators[_current_itr].first);
+    return _iterators[_current_itr].first->GetFreq();
   }
 
  private:
@@ -290,6 +296,12 @@ class SortingCompoundDocIterator : public DocIterator {
   doc_id_t seek(doc_id_t target) final {
     SDB_ASSERT(false);
     return doc_limits::eof();
+  }
+
+  uint32_t GetFreq() const final {
+    const auto& new_lead = _merge_it.Lead();
+    SDB_ASSERT(new_lead.first);
+    return new_lead.first->GetFreq();
   }
 
  private:

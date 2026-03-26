@@ -82,7 +82,6 @@ vpack::Builder& StripObjectIdsImpl(vpack::Builder& builder,
 }
 
 }  // namespace
-
 namespace sdb::rocksutils {
 
 sdb::Result ConvertStatus(const rocksdb::Status& status, StatusHint hint) {

@@ -51,7 +51,6 @@
 #include "catalog/identifiers/revision_id.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
-#include "database/access_mode.h"
 #include "metrics/fwd.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -61,13 +60,14 @@
 #include "storage_engine/wal_access.h"
 
 namespace rocksdb {
+
 class Env;
 class TransactionDB;
+
 }  // namespace rocksdb
-
 namespace sdb {
-
 namespace search {
+
 class InvertedIndexShard;
 }
 
@@ -88,6 +88,7 @@ class TransactionTable;
 class TransactionState;
 
 namespace rest {
+
 class RestHandlerFactory;
 }
 

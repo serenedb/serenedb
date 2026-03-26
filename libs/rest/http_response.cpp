@@ -21,7 +21,6 @@
 
 #include "http_response.h"
 
-#include <basics/sink.h>
 #include <time.h>
 #include <vpack/builder.h>
 #include <vpack/dumper.h>
@@ -33,6 +32,7 @@
 #include "basics/encoding_utils.h"
 #include "basics/error_code.h"
 #include "basics/exceptions.h"
+#include "basics/sink.h"
 #include "basics/static_strings.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
@@ -42,6 +42,7 @@ using namespace sdb;
 using namespace sdb::basics;
 
 namespace {
+
 template<typename Func>
 ErrorCode Deflate(Func&& func, basics::StringBuffer& body,
                   bool only_if_smaller) {
@@ -58,6 +59,7 @@ ErrorCode Deflate(Func&& func, basics::StringBuffer& body,
   }
   return code;
 }
+
 }  // namespace
 
 HttpResponse::HttpResponse(ResponseCode code, uint64_t mid,

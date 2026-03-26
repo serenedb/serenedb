@@ -361,8 +361,9 @@ class BlockDisjunction : public DocIterator {
       ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
         while (RefillImpl()) {
           const doc_id_t window_base = _max - kWindow;
+          // TODO(gnusi): make true
           collector.AddWindow(_score_buf.score_window.data(), _mask,
-                              window_base, kNumBlocks);
+                              window_base, kNumBlocks, false);
         }
       });
       _doc = doc_limits::eof();

@@ -35,11 +35,6 @@
 #include "database/ticks.h"
 #include "general_server/state.h"
 
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#endif
-
 namespace sdb {
 
 RevisionId RevisionId::lowerBound() {
@@ -54,21 +49,7 @@ RevisionId RevisionId::lowerBound() {
 void RevisionId::track(RevisionId id) { NewTickHybridLogicalClock(id.id()); }
 
 RevisionId RevisionId::create() {
-#ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsDBServer()) {
-    auto& ci =
-      SerenedServer::Instance().getFeature<ClusterFeature>().clusterInfo();
-    return RevisionId{ci.uniqid()};
-  }
-#endif
   return RevisionId{NewTickHybridLogicalClock()};
-}
-
-RevisionId RevisionId::fromObject(vpack::Slice slice) {
-  if (slice.isObject()) {
-    return fromString(slice.get(StaticStrings::kRevString));
-  }
-  return {};
 }
 
 RevisionId RevisionId::fromString(vpack::Slice slice) {

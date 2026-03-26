@@ -150,6 +150,7 @@ target_link_libraries(minizip PUBLIC zlib)
 ################################################################################
 
 # TODO(mbkkt) make it submodule
+sdb_update_module(${GIT_EXECUTABLE} "boost" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(boost)
 set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
@@ -699,6 +700,7 @@ target_link_libraries(thrift PRIVATE Boost::headers)
 ## arrow
 ################################################################################
 
+sdb_update_module(${GIT_EXECUTABLE} "arrow" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_library(
     arrow
     STATIC
@@ -947,7 +949,19 @@ target_sources(folly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/folly/folly/Uri.cpp)
 ## AWS SDK (monolithic build)
 ################################################################################
 
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-auth" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-cal" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-common" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-compression" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-event-stream" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-http" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-io" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-mqtt" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-s3" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-c-sdkutils" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-checksums" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "aws-sdk-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "aws-crt-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(aws-cmake)
 
 set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
@@ -1016,24 +1030,3 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/velox
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/axiom
 )
-
-################################################################################
-## WAMR (SHOULD BE LAST!)
-################################################################################
-
-if(USE_WASM)
-    sdb_update_module(${GIT_EXECUTABLE} "wasm-micro-runtime" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-    set(WAMR_BUILD_PLATFORM "linux")
-    set(WAMR_BUILD_INTERP 1)
-    set(WAMR_BUILD_FAST_INTERP 1)
-    set(WAMR_BUILD_FAST_JIT 0) # TODO(mbkkt) doesn't work in cmake configure step
-    set(WAMR_BUILD_JIT 0) # needs llvm
-    set(WAMR_BUILD_AOT 0) # compile wasm to their aot format
-    set(WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/wasm-micro-runtime)
-    set(WAMR_ROOT_DIR ${WAMR_ROOT_DIR} PARENT_SCOPE)
-    set(WAMR_DISABLE_HW_BOUND_CHECK 1)
-
-    include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
-    add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
-endif()

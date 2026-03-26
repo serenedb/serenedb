@@ -80,7 +80,7 @@ export const ConsoleProvider = ({
         }
     });
 
-    const { addJobId } = useQueryExecution({
+    const { addPendingResults } = useQueryExecution({
         tabs,
         selectedTabId,
         updateTab,
@@ -93,6 +93,18 @@ export const ConsoleProvider = ({
         tabs,
         selectedTabId,
     });
+
+    const selectResult = (tabId: number, resultIndex: number) => {
+        const tab = tabs.find((item) => item.id === tabId);
+        if (!tab) {
+            return;
+        }
+
+        const maxIndex = Math.max(0, tab.results.length - 1);
+        updateTab(tabId, {
+            selectedResultIndex: Math.min(Math.max(0, resultIndex), maxIndex),
+        });
+    };
 
     useEffect(() => {
         const tab = tabs.find((t) => t.id === selectedTabId);
@@ -108,6 +120,22 @@ export const ConsoleProvider = ({
     }, [tabs, selectedTabId, updateTab]);
 
     useEffect(() => {
+        tabs.forEach((tab) => {
+            const maxIndex = Math.max(0, tab.results.length - 1);
+            const nextSelectedIndex = Math.min(
+                Math.max(0, tab.selectedResultIndex ?? 0),
+                maxIndex,
+            );
+
+            if (tab.selectedResultIndex !== nextSelectedIndex) {
+                updateTab(tab.id, {
+                    selectedResultIndex: nextSelectedIndex,
+                });
+            }
+        });
+    }, [tabs, updateTab]);
+
+    useEffect(() => {
         localStorage.setItem("console:rows-limit", JSON.stringify(limit));
     }, [limit]);
 
@@ -118,9 +146,10 @@ export const ConsoleProvider = ({
                 addTab: handleAddTab,
                 removeTab: handleRemoveTab,
                 selectTab: handleSelectTab,
+                selectResult,
                 selectedTabId,
                 updateTab,
-                addJobId,
+                addPendingResults,
                 limit,
                 setLimit,
                 explorerRef,

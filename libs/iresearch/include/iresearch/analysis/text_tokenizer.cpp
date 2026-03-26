@@ -41,20 +41,21 @@
 #include <cctype>  // for std::isspace(...)
 #include <filesystem>
 #include <fstream>
-#include <iresearch/analysis/tokenizer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <mutex>
 #include <string_view>
 
 #include "absl/strings/str_cat.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/file_utils_ext.hpp"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "basics/runtime_utils.hpp"
 #include "basics/thread_utils.hpp"
-#include "basics/utf8_utils.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -130,7 +131,8 @@ struct StrHash {
   size_t operator()(hashed_string_view v) const { return v.Hash(); }
 };
 
-absl::node_hash_map<std::string, CachedOptions, StrHash> gCachedStateByKey;
+sdb::containers::NodeHashMap<std::string, CachedOptions, StrHash>
+  gCachedStateByKey;
 constinit absl::Mutex gMutex{absl::kConstInit};
 
 // Retrieves a set of ignored words from FS at the specified custom path

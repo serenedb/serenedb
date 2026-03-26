@@ -23,8 +23,6 @@
 
 #pragma once
 
-#include <frozen/unordered_map.h>
-
 #include <memory>
 
 #include "iresearch/utils/attribute_provider.hpp"
@@ -38,6 +36,10 @@ class Tokenizer : public AttributeProvider {
   virtual bool next() = 0;
 };
 
-enum class Case : uint8_t { Lower = 0, None, Upper };
+enum class Case : uint8_t {
+  Lower = 0,
+  None,
+  Upper,
+};
 
 }  // namespace irs

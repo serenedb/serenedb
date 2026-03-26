@@ -49,18 +49,25 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-class CreateTableUsingExternalOptions : public FileOptionsParser {
+class CreateTableOptionsParser : public FileOptionsParser {
  public:
-  CreateTableUsingExternalOptions(const List* options,
-                                  ConnectionContext& conn_ctx)
+  CreateTableOptionsParser(bool is_external, const List* options,
+                           ConnectionContext& conn_ctx)
     : FileOptionsParser{
         {},
-        OptionsParser::MakeOptions(options, {}),
-        file_options::kCreateExternalParserGroups,
+        options,
+        file_options::kCreateExternalGroup,
         {.operation = "CREATE TABLE", .notice = [&conn_ctx](std::string msg) {
            conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
          }}} {
-    ParseOptions([&] { Parse(); });
+    if (is_external) {
+      ParseOptions([&] { Parse(); });
+    } else if (!_options.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(
+          "options are available only for CREATE TABLE ... USING EXTERNAL"));
+    }
   }
 
   void Parse() {
@@ -115,7 +122,7 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
   return column_expr;
 }
 
-void CreateTableImpl(catalog::LogicalCatalog& catalog,
+bool CreateTableImpl(catalog::LogicalCatalog& catalog,
                      const catalog::Database& database, ObjectId db,
                      std::string_view schema, std::string_view table_name,
                      catalog::CreateTableRequest request, bool if_not_exists,
@@ -129,14 +136,16 @@ void CreateTableImpl(catalog::LogicalCatalog& catalog,
   }
   r = catalog.CreateTable(db, schema, std::move(options), operation_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return;
-  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    return false;
+  }
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("relation \"", table_name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
+  return true;
 }
 
 enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
@@ -157,10 +166,17 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto database = snapshot->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
-  bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
+  const auto access_method = absl::NullSafeStringView(stmt.accessMethod);
+  bool is_external = access_method == "external";
+  if (stmt.accessMethod && !is_external) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+      ERR_MSG("acess method ", "\\", access_method, "\\ does not exist"));
+  }
 
   catalog::CreateTableRequest request;
   request.name = table;
@@ -442,21 +458,27 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
   });
   SDB_ASSERT(!stmt.constraints);
 
+  CreateTableOptionsParser parser{is_external, stmt.options, conn_ctx};
   if (is_external) {
-    CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
     request.file_info = std::move(parser).GetFileInfo();
     request.type = std::to_underlying(TableType::File);
   }
 
-  CreateTableImpl(catalog, *database, db, schema, table, std::move(request),
-                  stmt.if_not_exists, {});
+  if (!CreateTableImpl(catalog, *database, db, schema, table,
+                       std::move(request), stmt.if_not_exists, {})) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table, "\" already exists, skipping")));
+  }
   return {};
 }
 
 yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
-                                 const IntoClause& into, bool if_not_exists) {
+                                 const IntoClause& into, bool if_not_exists,
+                                 CTASState& state, velox::RowVectorPtr& batch) {
   const auto db = context.GetDatabaseId();
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   std::string current_schema = conn_ctx.GetCurrentSchema();
 
   const auto& rel = *into.rel;
@@ -470,7 +492,7 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  auto database = snapshot->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
   auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
@@ -488,11 +510,21 @@ yaclib::Future<> CreateTableCTAS(ExecContext& context, query::Query& query,
     columns[i].type = write_node.columnExpressions()[i]->type();
   }
 
-  CreateTableImpl(catalog, *database, db, schema, table_name,
-                  std::move(request), if_not_exists,
-                  {.create_with_tombstone = true});
+  if (!CreateTableImpl(catalog, *database, db, schema, table_name,
+                       std::move(request), if_not_exists,
+                       {.create_with_tombstone = true})) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_name, "\" already exists, skipping")));
+    query::Executor::SetEarlyExit(batch);
+    return {};
+  }
 
-  auto snapshot = catalog.GetSnapshot();
+  state.created = true;
+
+  // TODO(codeworse): CreateTableImpl should return updated snapshot with DDL
+  conn_ctx.DropCatalogSnapshot();
+  snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(db, schema, table_name);
   SDB_ASSERT(catalog_table);
   auto& transaction = static_cast<query::Transaction&>(conn_ctx);

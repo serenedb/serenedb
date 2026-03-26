@@ -59,7 +59,6 @@ using namespace sdb;
 using namespace sdb::basics;
 
 namespace sdb::httpclient {
-
 namespace {
 
 using InflateFunc = ErrorCode (*)(const uint8_t* uncompressed,
@@ -1156,4 +1155,5 @@ std::string HttpClient::getServerVersion(ErrorCode* error_code) {
 
   return "";
 }
+
 }  // namespace sdb::httpclient

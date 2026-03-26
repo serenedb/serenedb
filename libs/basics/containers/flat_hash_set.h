@@ -18,6 +18,7 @@
 ///
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/container/flat_hash_set.h>
@@ -49,7 +50,7 @@ template<typename T, typename Hash = typename absl::flat_hash_set<T>::hasher,
          class Allocator =
            typename absl::flat_hash_set<T, Hash, Eq>::allocator_type
 #if !defined(ABSL_HAVE_ADDRESS_SANITIZER) && \
-  !defined(ABSL_HAVE_MEMORY_SANITIZER) && !defined(USE_V8)
+  !defined(ABSL_HAVE_MEMORY_SANITIZER)
          ,  // TODO(mbkkt) After additional benchmarks change Sizeof
          class = std::enable_if_t<detail::SetSizeofChecker<32, T>()>
 #endif

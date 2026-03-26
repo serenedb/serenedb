@@ -24,9 +24,11 @@
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/minhash_tokenizer.hpp>
+#include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
@@ -43,20 +45,25 @@ namespace sdb::pg::tokenizer_options {
 
 using namespace std::string_view_literals;
 
+void CheckFileExists(std::string_view name);
+
 // Features
 
-inline constexpr OptionInfo kNormFeature{irs::Type<irs::Norm>::name(), false,
+// TODO(codeworse) Add for option alternative names? dl, norms
+inline constexpr OptionInfo kNormFeature{"norm", false,
                                          "Enables norm feature in index"};
 
-inline constexpr OptionInfo kFreqFeature{irs::Type<irs::FreqAttr>::name(),
-                                         false,
+// TODO(codeworse) Add for option alternative names? freq, frequencies, freqs
+inline constexpr OptionInfo kFreqFeature{"frequency", false,
                                          "Enables frequency feature in index"};
 
-inline constexpr OptionInfo kPosFeature{irs::Type<irs::PosAttr>::name(), false,
+// TODO(codeworse) Add for option alternative names? pos, positions
+inline constexpr OptionInfo kPosFeature{"position", false,
                                         "Enables position feature in index"};
 
-inline constexpr OptionInfo kOffsetFeature{
-  irs::Type<irs::OffsAttr>::name(), false, "Enables offset feature in index"};
+// TODO(codeworse) Add for option alternative names? offsets
+inline constexpr OptionInfo kOffsetFeature{"offset", false,
+                                           "Enables offset feature in index"};
 
 // Common
 
@@ -70,8 +77,8 @@ void CheckCase(std::string_view value);
 inline constexpr OptionInfo kCase{
   "case", "none"sv, "Text case conversion: none, lower, upper", CheckCase};
 
-inline constexpr OptionInfo kModelLocation{"modellocation", ""sv,
-                                           "Path to the ML model file"};
+inline constexpr OptionInfo kModelLocation{
+  "modellocation", ""sv, "Path to the ML model file", CheckFileExists};
 
 inline constexpr OptionInfo kTopK{"topk", 1, "Number of top results to return"};
 
@@ -84,7 +91,7 @@ inline constexpr OptionInfo kStopwords{
   "stopwords", ""sv, "Comma-separated list of inline stop words"};
 
 inline constexpr OptionInfo kStopwordsPath{
-  "stopwordspath", ""sv, "Path to file containing stop words"};
+  "stopwordspath", ""sv, "Path to file containing stop words", CheckFileExists};
 
 // NGram
 
@@ -118,8 +125,9 @@ inline constexpr OptionInfo kHex{"hex", false,
 
 // MinHash
 
-inline constexpr OptionInfo kNumHashes{"numhashes", 1,
-                                       "Number of hash functions to use"};
+void CheckNumHashes(int);
+inline constexpr OptionInfo kNumHashes{
+  "numhashes", 1, "Number of hash functions to use", CheckNumHashes};
 
 // Segmentation
 
@@ -131,6 +139,25 @@ inline constexpr OptionInfo kBreak{
 inline constexpr OptionInfo kDelimiter{
   "delimiter", OptionInfo::RequiredTag<std::string_view>{},
   "Token delimiter character or string"};
+
+// Multi-Delimiter
+
+inline constexpr OptionInfo kDelimiters{
+  "delimiters", OptionInfo::RequiredTag<std::string_view>{},
+  "The list of delimiters(e.g., \'\",\", \"|\", \"!\"\'"};
+
+// Copy From
+
+inline constexpr OptionInfo kFrom{"from",
+                                  OptionInfo::RequiredTag<std::string_view>{},
+                                  "the source tokenizer name"};
+
+// Template
+
+void CheckTemplate(std::string_view);
+constexpr OptionInfo kTemplate{"template",
+                               OptionInfo::RequiredTag<std::string_view>{},
+                               "Tokenizer template type", CheckTemplate};
 
 // Per-tokenizer option arrays
 
@@ -156,6 +183,10 @@ inline constexpr OptionInfo kClassificationOptions[] = {kModelLocation, kTopK,
 inline constexpr OptionInfo kCollationOptions[] = {kLocale};
 
 inline constexpr OptionInfo kDelimiterOptions[] = {kDelimiter};
+
+inline constexpr OptionInfo kMultiDelimiterOptions[] = {kDelimiters};
+
+inline constexpr OptionInfo kCopyFromOptions[] = {kFrom};
 
 inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
@@ -212,6 +243,12 @@ inline constexpr OptionGroup kDelimiterGroup{
   kDelimiterOptions,
   {},
 };
+inline constexpr OptionGroup kMultiDelimiterGroup{
+  irs::analysis::MultiDelimitedTokenizer::type_name(),
+  kMultiDelimiterOptions,
+  {},
+};
+inline constexpr OptionGroup kCopyFromGroup{"copy_from", kCopyFromOptions, {}};
 inline constexpr OptionGroup kMinHashGroup{
   irs::analysis::MinHashTokenizer::type_name(),
   kMinHashOptions,
@@ -227,11 +264,17 @@ inline constexpr OptionGroup kSegmentationGroup{
   kSegmentationOptions,
   {},
 };
+inline constexpr OptionGroup kPipelineGroup{
+  irs::analysis::PipelineTokenizer::type_name(),
+  {},
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,
   kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
   kClassificationGroup,   kCollationGroup, kDelimiterGroup,
-  kMinHashGroup,          kNormGroup,      kSegmentationGroup};
+  kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
+  kSegmentationGroup,     kPipelineGroup,  kCopyFromGroup};
 
 }  // namespace sdb::pg::tokenizer_options

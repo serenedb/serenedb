@@ -68,7 +68,6 @@ void AppendNumber(uint64_t value, std::string& out, size_t size) {
 }
 
 }  // namespace
-
 namespace sdb {
 namespace log_time_formats {
 

@@ -20,37 +20,22 @@
 
 #pragma once
 
-#include <functional>
-
 #include "query/executor.h"
 
 namespace sdb::query {
 
-class VeloxExecutor : public Executor {
+class VeloxExecutor final : public Executor {
  public:
   void Init(Query& query) final;
 
-  yaclib::Future<> Execute(velox::RowVectorPtr& batch) override;
+  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
   yaclib::Future<> RequestCancel() final;
 
   auto& IgnoreOutput(this auto& self) noexcept { return self._ignore_output; }
 
- protected:
+ private:
   Query* _query = nullptr;
-
- private:
   bool _ignore_output = false;
-};
-
-class RollbackVeloxExecutor final : public VeloxExecutor {
- public:
-  explicit RollbackVeloxExecutor(std::function<void()> on_error)
-    : _on_error{std::move(on_error)} {}
-
-  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-
- private:
-  std::function<void()> _on_error;
 };
 
 }  // namespace sdb::query

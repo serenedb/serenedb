@@ -148,22 +148,22 @@ CREATE INDEX csv_idx_ext_facts ON csv_idx_ext USING inverted(fact test_english, 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'team member');
 ----
-400000 values hashing to 71f7b6556a1e844c65326504e973a5c3
+200000 values hashing to 6d2ad7a0ebd2e960552c260264d0d336
 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff has');
 ----
-200000 values hashing to 7418163ee36fc93c02b097fd35174d67
+100000 values hashing to 34f662b4d982809f3ebf1404cf9a6131
 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'cutelooked has');
 ----
-200000 values hashing to 2b415f31ca41a86c7c5643c68bd81ab0
+100000 values hashing to 6effaddc6b167d0a7e7a29d7bff0f581
 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(dept, 'department alpha');
 ----
-133200 values hashing to 4f8172aea4b236e780b47e52b4020249
+66600 values hashing to 38511a6d103a2b2ecb6b9f9fd5354daa
 
 statement ok
 DROP TABLE csv_idx_ext;

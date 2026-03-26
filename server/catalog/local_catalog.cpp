@@ -413,7 +413,7 @@ class SnapshotImpl : public Snapshot {
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
-        auto schema_deps = GetDependency<SchemaDependency>(schema_id);
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
         return schema_deps->functions |
                std::views::transform([&](ObjectId function_id) {
                  auto it = _objects.find(function_id);
@@ -423,6 +423,25 @@ class SnapshotImpl : public Snapshot {
                std::ranges::to<std::vector>();
       })
       .value_or(std::vector<std::shared_ptr<Function>>{});
+  }
+
+  std::vector<std::shared_ptr<Index>> GetIndexes(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        std::vector<std::shared_ptr<Index>> result;
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        for (const auto table_id : schema_deps->tables) {
+          const auto& table_deps = GetDependency<TableDependency>(table_id);
+          for (const auto index_id : table_deps->indexes) {
+            auto it = _objects.find(index_id);
+            SDB_ASSERT(it != _objects.end());
+            result.push_back(basics::downCast<Index>(*it));
+          }
+        }
+        return result;
+      })
+      .value_or(std::vector<std::shared_ptr<Index>>{});
   }
 
   std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(

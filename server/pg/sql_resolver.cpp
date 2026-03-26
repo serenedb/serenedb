@@ -108,7 +108,9 @@ void ResolveFunction(ObjectId database,
   }
 
   // system functions
-  if (const auto func = pg::GetFunction(name.relation)) {
+  if (auto object = pg::GetFunction(name.relation)) {
+    const auto* func = object.get();
+    data.object = std::move(object);
     if (func->Options().language == catalog::FunctionLanguage::SQL) {
       bool changed = disallowed.emplace(name).second;
       SDB_ASSERT(changed);
@@ -117,7 +119,6 @@ void ResolveFunction(ObjectId database,
       changed = disallowed.erase(name) != 0;
       SDB_ASSERT(changed);
     }
-    data.object = std::move(func);
     return;
   }
 

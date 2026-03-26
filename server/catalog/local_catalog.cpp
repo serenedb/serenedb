@@ -409,6 +409,22 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<SchemaObject>>{});
   }
 
+  std::vector<std::shared_ptr<Table>> GetTables(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        return schema_deps->tables |
+               std::views::transform([&](ObjectId table_id) {
+                 auto it = _objects.find(table_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<Table>(*it);
+               }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Table>>{});
+  }
+
   std::vector<std::shared_ptr<Function>> GetFunctions(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)

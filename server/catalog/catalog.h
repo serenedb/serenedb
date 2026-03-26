@@ -94,6 +94,8 @@ struct Snapshot {
     ObjectId database) const = 0;
   virtual std::vector<std::shared_ptr<SchemaObject>> GetRelations(
     ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Table>> GetTables(
+    ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Function>> GetFunctions(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Index>> GetIndexes(

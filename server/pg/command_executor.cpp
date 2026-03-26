@@ -141,7 +141,7 @@ FinishCreateIndexExecutor::FinishCreateIndexExecutor(
 
 yaclib::Future<> FinishCreateIndexExecutor::Execute(
   velox::RowVectorPtr& batch) {
-  return OneShot([&] -> yaclib::Future<> {
+  return OneShot([&] {
     const auto db = _context->GetDatabaseId();
     auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
     std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -161,17 +161,18 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
     if (_state.progress) {
       _state.progress->SetPhase(create_index_progress::Phase::Committing);
     }
-    search::CommitResult code;
-    auto [res, timeMs] = inverted_index.CommitUnsafe(true, nullptr, code);
-    SDB_ASSERT(code != search::CommitResult::InProgress);
-    if (res.fail()) {
-      SDB_THROW(std::move(res));
-    }
-    if (_state.progress) {
-      _state.progress->SetPhase(create_index_progress::Phase::Finalizing);
-    }
-    inverted_index.FinishCreation();
-    return {};
+
+    return inverted_index.CommitWait().ThenInline(
+      [shard = std::move(shard),
+       progress = _state.progress](yaclib::Result<> r) {
+        std::ignore = std::move(r).Ok();
+        if (progress) {
+          progress->SetPhase(create_index_progress::Phase::Finalizing);
+        }
+        auto& inverted_index =
+          basics::downCast<search::InvertedIndexShard>(*shard);
+        inverted_index.FinishCreation();
+      });
   });
 }
 

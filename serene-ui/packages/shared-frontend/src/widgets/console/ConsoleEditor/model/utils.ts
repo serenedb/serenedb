@@ -29,6 +29,9 @@ export const normalizePanelParams = (
         typeof params?.selectedResultIndex === "number"
             ? params.selectedResultIndex
             : 0,
+    highlightJobIds: Array.isArray(params?.highlightJobIds)
+        ? params.highlightJobIds
+        : [],
     runOnMountMode: params?.runOnMountMode,
 });
 

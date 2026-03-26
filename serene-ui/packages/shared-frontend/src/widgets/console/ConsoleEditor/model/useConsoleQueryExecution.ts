@@ -29,6 +29,7 @@ interface UseConsoleQueryExecutionParams {
         activate?: boolean,
         initialState?: NormalizedEditorPanelParams,
     ) => void;
+    notifyResultsReady: (status: "success" | "failed") => void;
     limit: number;
 }
 
@@ -38,17 +39,31 @@ export const useConsoleQueryExecution = ({
     paramsRef,
     updatePanelParams,
     showResultsPanel,
+    notifyResultsReady,
     limit,
 }: UseConsoleQueryExecutionParams) => {
     const { executeQuery, executeQueryBatch } = useQueryResults();
 
     const appendPendingResults = useCallback(
-        (resultsToAdd: PendingConsoleResult[]) => {
+        (
+            resultsToAdd: PendingConsoleResult[],
+            options?: {
+                showPanel?: boolean;
+            },
+        ) => {
             if (!resultsToAdd.length) {
                 return;
             }
 
+            let nextPanelState: NormalizedEditorPanelParams | undefined;
+
             updatePanelParams((current) => {
+                const nextHighlightJobIds = Array.from(
+                    new Set([
+                        ...current.highlightJobIds,
+                        ...resultsToAdd.map((result) => result.jobId),
+                    ]),
+                );
                 const nextResults = [
                     ...current.results,
                     ...resultsToAdd.map((result) => ({
@@ -62,20 +77,35 @@ export const useConsoleQueryExecution = ({
                     })),
                 ];
 
-                return {
+                nextPanelState = {
+                    ...current,
                     results: nextResults,
                     selectedResultIndex: Math.max(0, nextResults.length - 1),
+                    highlightJobIds: nextHighlightJobIds,
+                };
+
+                return {
+                    results: nextResults,
+                    selectedResultIndex: nextPanelState.selectedResultIndex,
+                    highlightJobIds: nextHighlightJobIds,
                 };
             });
+
+            if (options?.showPanel && nextPanelState) {
+                showResultsPanel(false, nextPanelState);
+            }
         },
-        [updatePanelParams],
+        [showResultsPanel, updatePanelParams],
     );
 
     const handleExecute = useCallback(
         async (mode: ConsoleExecutionMode) => {
             const current = paramsRef.current;
+            updatePanelParams({ highlightJobIds: [] });
 
             if (mode === "sequential") {
+                let shouldShowResultsPanel = true;
+
                 const result = await executeQueryBatch(
                     current.query,
                     [],
@@ -90,7 +120,10 @@ export const useConsoleQueryExecution = ({
                                 sourceQuery: job.sourceQuery,
                                 statementRange: job.statementRange,
                             },
-                        ]);
+                        ], {
+                            showPanel: shouldShowResultsPanel,
+                        });
+                        shouldShowResultsPanel = false;
                     },
                 );
 
@@ -118,7 +151,9 @@ export const useConsoleQueryExecution = ({
                         endOffset: current.query.length,
                     },
                 },
-            ]);
+            ], {
+                showPanel: true,
+            });
         },
         [appendPendingResults, executeQuery, executeQueryBatch, limit, paramsRef],
     );
@@ -150,6 +185,7 @@ export const useConsoleQueryExecution = ({
     useQuerySubscription(pendingJobIds, (_jobId, result) => {
         const receivedAt = new Date().toISOString();
         let nextPanelState: NormalizedEditorPanelParams | undefined;
+        let shouldNotifyResultsReady = false;
 
         updatePanelParams((current) => {
             let nextSelectedResultIndex = current.selectedResultIndex;
@@ -220,16 +256,21 @@ export const useConsoleQueryExecution = ({
                     nextResults.length - 1,
                 ),
             };
-
-            if (result.status === "success" || result.status === "failed") {
-                showResultsPanel(false, nextPanelState);
-            }
+            shouldNotifyResultsReady = !nextResults.some(isPendingResult);
 
             return {
                 results: nextResults,
                 selectedResultIndex: nextPanelState.selectedResultIndex,
             };
         });
+
+        if (
+            nextPanelState &&
+            shouldNotifyResultsReady &&
+            (result.status === "success" || result.status === "failed")
+        ) {
+            notifyResultsReady(result.status);
+        }
     });
 
     useEffect(() => {

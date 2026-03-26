@@ -15,6 +15,7 @@ import {
 import { DashboardSelectChartParams } from "./DashboardSelectChartParams";
 import { Separator } from "@serene-ui/shared-frontend";
 import { PGSQLEditor } from "../../../shared/PGSQLEditor";
+import { useConnectionAutocomplete } from "../../../shared/PGSQLEditor/model";
 import { DashboardNumericOverrideControl } from "./components";
 import {
     isDashboardChartBlock,
@@ -72,6 +73,7 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
     onClose,
     onEditedBlockChange,
 }) => {
+    const autocomplete = useConnectionAutocomplete();
     const { displayEditedBlock, handleClose, queryDraft, setQueryDraft } =
         useDashboardCardEditorState({
             editedBlock,
@@ -261,6 +263,7 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                                 data-testid="dashboardCardEditor-queryInput">
                                 <PGSQLEditor
                                     value={queryDraft.value}
+                                    autocomplete={autocomplete}
                                     onChange={(value) => {
                                         setQueryDraft({
                                             blockId: displayEditedBlock.id,

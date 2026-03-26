@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { IDockviewPanelProps } from "dockview";
+import { useCallback, useEffect, useState } from "react";
+import type { DockviewIDisposable, IDockviewPanelProps } from "dockview";
 import type { EditorPanelParams } from "./types";
 
 interface UseResultsPanelVisibilityParams {
@@ -11,25 +11,75 @@ export const useResultsPanelVisibility = ({
     containerApi,
     resultsPanelId,
 }: UseResultsPanelVisibilityParams) => {
-    const [isVisible, setIsVisible] = useState(
-        Boolean(containerApi.getPanel(resultsPanelId)),
-    );
+    const getVisibility = useCallback(() => {
+        const panel = containerApi.getPanel(resultsPanelId);
+
+        return panel?.api.isVisible ?? false;
+    }, [containerApi, resultsPanelId]);
+
+    const [isVisible, setIsVisible] = useState(getVisibility);
 
     useEffect(() => {
+        let panelSubscription: DockviewIDisposable | undefined;
+
         const syncVisibility = () => {
-            setIsVisible(Boolean(containerApi.getPanel(resultsPanelId)));
+            setIsVisible(getVisibility());
         };
 
-        syncVisibility();
+        const bindPanelEvents = () => {
+            panelSubscription?.dispose();
 
-        const onAdd = containerApi.onDidAddPanel(syncVisibility);
-        const onRemove = containerApi.onDidRemovePanel(syncVisibility);
+            const panel = containerApi.getPanel(resultsPanelId);
+
+            if (!panel) {
+                panelSubscription = undefined;
+                return;
+            }
+
+            const onVisibilityChange =
+                panel.api.onDidVisibilityChange(syncVisibility);
+            const onActiveChange = panel.api.onDidActiveChange(syncVisibility);
+            const onActiveGroupChange =
+                panel.api.onDidActiveGroupChange(syncVisibility);
+
+            panelSubscription = {
+                dispose: () => {
+                    onVisibilityChange.dispose();
+                    onActiveChange.dispose();
+                    onActiveGroupChange.dispose();
+                },
+            };
+        };
+
+        const refresh = () => {
+            bindPanelEvents();
+            syncVisibility();
+        };
+
+        refresh();
+
+        const onAdd = containerApi.onDidAddPanel((panel) => {
+            if (panel.id === resultsPanelId) {
+                refresh();
+            }
+        });
+        const onRemove = containerApi.onDidRemovePanel((panel) => {
+            if (panel.id === resultsPanelId) {
+                refresh();
+            }
+        });
+        const onActivePanelChange =
+            containerApi.onDidActivePanelChange(syncVisibility);
+        const onLayoutChange = containerApi.onDidLayoutChange(syncVisibility);
 
         return () => {
+            panelSubscription?.dispose();
             onAdd.dispose();
             onRemove.dispose();
+            onActivePanelChange.dispose();
+            onLayoutChange.dispose();
         };
-    }, [containerApi, resultsPanelId]);
+    }, [containerApi, getVisibility, resultsPanelId]);
 
     return isVisible;
 };

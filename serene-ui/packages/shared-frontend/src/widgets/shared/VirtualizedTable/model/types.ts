@@ -96,18 +96,31 @@ export interface UseVirtualizedTableHeaderOptions {
     toggleSort: (columnIndex: number) => void;
 }
 
+export interface SortButtonDescriptor {
+    columnIndex: number;
+    direction: SortDirection | null;
+    isSorted: boolean;
+    key: string;
+    left: number;
+    top: number;
+}
+
 export interface UseVirtualizedTableHeaderResult {
     drawHeader: DrawHeaderCallback;
-    handleContainerMouseDownCapture: (
-        event: ReactMouseEvent<HTMLDivElement>,
+    blockSortButtonMouseEvent: (
+        event: ReactMouseEvent<HTMLButtonElement>,
     ) => void;
-    handleContainerMouseLeave: () => void;
-    handleContainerMouseMoveCapture: (
-        event: ReactMouseEvent<HTMLDivElement>,
+    handleSortButtonMouseDown: (
+        columnIndex: number,
+        event: ReactMouseEvent<HTMLButtonElement>,
     ) => void;
+    handleSortButtonMouseEnter: (columnIndex: number) => void;
+    handleSortButtonMouseLeave: () => void;
     handleVisibleRegionChanged: NonNullable<
         DataEditorProps["onVisibleRegionChanged"]
     >;
+    hoveredSortColumn: number | null;
+    sortButtons: SortButtonDescriptor[];
 }
 
 export interface UseVirtualizedTableSelectionOptions {

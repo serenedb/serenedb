@@ -1,41 +1,142 @@
 import { useConnectionsModal } from "@serene-ui/shared-frontend/features";
 import React from "react";
-import { useGetConnections } from "@serene-ui/shared-frontend/entities";
+import {
+    useConnection,
+    useGetConnections,
+} from "@serene-ui/shared-frontend/entities";
 import {
     Popover,
     PopoverTrigger,
     Button,
+    ComboboxPanel,
     PopoverContent,
-    Command,
-    CommandInput,
-    CommandList,
-    CommandEmpty,
-    CommandGroup,
-    CommandItem,
     ConnectionIcon,
     cn,
-    CheckIcon,
     ArrowDownIcon,
     Skeleton,
 } from "@serene-ui/shared-frontend/shared";
 
 interface ConnectionsComboboxProps {
-    currentConnectionId: number;
-    setCurrentConnectionId: (id: number) => void;
+    currentConnectionId?: number;
+    setCurrentConnectionId?: (id: number) => void;
+    variant?: "popover" | "inline";
+    autoFocus?: boolean;
+    onSelect?: (id: number) => void;
+    panelClassName?: string;
+    listClassName?: string;
 }
 
 export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
     currentConnectionId,
     setCurrentConnectionId,
+    variant = "popover",
+    autoFocus = false,
+    onSelect,
+    panelClassName,
+    listClassName,
 }) => {
     const { setOpen: setModalOpen } = useConnectionsModal();
     const [open, setOpen] = React.useState(false);
 
+    const { currentConnection, setCurrentConnection } = useConnection();
+    const isControlled =
+        currentConnectionId !== undefined &&
+        setCurrentConnectionId !== undefined;
+
+    const selectedConnectionId = isControlled
+        ? currentConnectionId
+        : currentConnection.connectionId;
+
     const handleAddConnection = () => {
+        setOpen(false);
         setModalOpen(true);
     };
 
     const { data: connections, isFetched, isLoading } = useGetConnections();
+
+    const options = React.useMemo(() => {
+        return (
+            connections?.map((connection) => ({
+                value: connection.id.toString(),
+                label: connection.name,
+            })) ?? []
+        );
+    }, [connections]);
+
+    const selectedConnectionName = React.useMemo(() => {
+        if (selectedConnectionId === undefined || selectedConnectionId === -1) {
+            return "";
+        }
+
+        return (
+            connections?.find(
+                (connection) => connection.id === selectedConnectionId,
+            )?.name ?? ""
+        );
+    }, [connections, selectedConnectionId]);
+
+    const handleSelectConnection = React.useCallback(
+        (nextConnectionId: number) => {
+            if (isControlled) {
+                setCurrentConnectionId?.(nextConnectionId);
+                onSelect?.(nextConnectionId);
+                return;
+            }
+
+            setCurrentConnection((prev) => ({
+                connectionId: nextConnectionId,
+                database:
+                    prev.connectionId === nextConnectionId ? prev.database : "",
+            }));
+            onSelect?.(nextConnectionId);
+        },
+        [
+            isControlled,
+            onSelect,
+            setCurrentConnection,
+            setCurrentConnectionId,
+        ],
+    );
+
+    const panel = (
+        <ComboboxPanel
+            items={options}
+            selectedValue={
+                selectedConnectionId !== undefined &&
+                selectedConnectionId !== -1
+                    ? selectedConnectionId.toString()
+                    : undefined
+            }
+            placeholder="Search connections"
+            emptyMessage="No connections"
+            isLoading={isLoading && !isFetched}
+            loadingMessage="Loading connections..."
+            autoFocus={variant === "popover" ? true : autoFocus}
+            className={cn("bg-transparent", panelClassName)}
+            listClassName={listClassName}
+            onSelect={(value) => {
+                handleSelectConnection(parseInt(value, 10));
+
+                if (variant === "popover") {
+                    setOpen(false);
+                }
+            }}
+            footer={
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="small"
+                    onClick={handleAddConnection}
+                    className="border-border h-8 w-full justify-start rounded-none border-t px-2 text-xs">
+                    Add connection
+                </Button>
+            }
+        />
+    );
+
+    if (variant === "inline") {
+        return panel;
+    }
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
@@ -46,24 +147,19 @@ export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
                     tabIndex={-1}
                     aria-expanded={open}
                     aria-label="Select connection"
+                    size={"small"}
                     className="flex-1 gap-2 justify-between max-w-full overflow-hidden transition-colors duration-150">
                     <div className="flex flex-1 gap-2 items-center min-w-0 overflow-hidden">
                         <ConnectionIcon className="flex-shrink-0" />
                         {isLoading && !isFetched ? (
                             <Skeleton className="flex-1 h-4 max-w-30" />
-                        ) : currentConnectionId !== -1 ? (
+                        ) : selectedConnectionName ? (
                             <span className="text-left truncate min-w-0 block flex-1">
-                                {
-                                    connections?.find(
-                                        (connection) =>
-                                            connection.id ===
-                                            currentConnectionId,
-                                    )?.name
-                                }
+                                {selectedConnectionName}
                             </span>
                         ) : (
-                            <span className="text-left truncate min-w-0 block flex-1">
-                                Select host
+                            <span className="text-xs text-left truncate min-w-0 block flex-1">
+                                Select connection
                             </span>
                         )}
                     </div>
@@ -75,51 +171,8 @@ export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
                     />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent
-                sideOffset={5}
-                variant="secondary"
-                className="w-full p-0">
-                <Command className="bg-transparent">
-                    <CommandInput
-                        placeholder="Search connections"
-                        className="h-9"
-                    />
-                    <CommandList>
-                        <CommandEmpty>No connections</CommandEmpty>
-                        <CommandGroup>
-                            {connections?.map((connection) => (
-                                <CommandItem
-                                    key={connection.id}
-                                    value={connection.id.toString()}
-                                    onSelect={(currentValue: string) => {
-                                        setCurrentConnectionId(
-                                            currentValue ===
-                                                currentConnectionId?.toString()
-                                                ? -1
-                                                : parseInt(currentValue),
-                                        );
-                                        setOpen(false);
-                                    }}>
-                                    {connection.name}
-                                    <CheckIcon
-                                        className={cn(
-                                            "ml-auto",
-                                            currentConnectionId ===
-                                                connection.id
-                                                ? "opacity-100"
-                                                : "opacity-0",
-                                        )}
-                                    />
-                                </CommandItem>
-                            ))}
-                            <button
-                                onClick={handleAddConnection}
-                                className="w-full pointer-events-auto">
-                                <CommandItem>Add connection</CommandItem>
-                            </button>
-                        </CommandGroup>
-                    </CommandList>
-                </Command>
+            <PopoverContent sideOffset={5} className="w-full p-0">
+                {panel}
             </PopoverContent>
         </Popover>
     );

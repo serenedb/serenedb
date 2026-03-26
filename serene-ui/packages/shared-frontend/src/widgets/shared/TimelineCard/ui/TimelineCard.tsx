@@ -28,7 +28,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
 
     return (
         <ButtonCard>
-            <ButtonCardButtonContent variant="secondary">
+            <ButtonCardButtonContent
+                className="bg-transparent dark:bg-transparent hover:bg-transparent dark:hover:bg-transparent h-full p-0"
+                variant="secondary">
                 <div className="flex items-center px-3 border-r-[0.5px] h-full">
                     <ClockIcon />
                     <p className="text-xs ml-2 text-foreground">

@@ -36,6 +36,7 @@ export interface EditorPanelParams {
     query?: string;
     results?: ConsoleResult[];
     selectedResultIndex?: number;
+    highlightJobIds?: number[];
     runOnMountMode?: ConsoleExecutionMode;
 }
 
@@ -48,6 +49,7 @@ export interface NormalizedEditorPanelParams {
     query: string;
     results: ConsoleResult[];
     selectedResultIndex: number;
+    highlightJobIds: number[];
     runOnMountMode?: ConsoleExecutionMode;
 }
 

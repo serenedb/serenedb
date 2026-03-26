@@ -2,24 +2,35 @@ import {
     type MouseEvent as ReactMouseEvent,
     useCallback,
     useEffect,
+    useMemo,
     useState,
 } from "react";
 
 import {
     EMPTY_VISIBLE_REGION,
+    SORT_BUTTON_SIZE,
     SORT_BUTTON_WIDTH,
     SORT_RESIZE_GUARD,
     TABLE_HEADER_HEIGHT,
 } from "./consts";
-import {
-    drawArrowDownIcon,
-    drawCellBorders,
-    drawChevronsUpDownIcon,
-} from "./draw";
+import { drawCellBorders } from "./draw";
 import type {
+    SortButtonDescriptor,
     UseVirtualizedTableHeaderOptions,
     UseVirtualizedTableHeaderResult,
 } from "./types";
+
+const getSortButtonOffset = (columnWidth: number) => {
+    const buttonTrackWidth = SORT_BUTTON_WIDTH - SORT_RESIZE_GUARD;
+
+    return {
+        x:
+            columnWidth -
+            SORT_BUTTON_WIDTH +
+            Math.floor((buttonTrackWidth - SORT_BUTTON_SIZE) / 2),
+        y: Math.floor((TABLE_HEADER_HEIGHT - SORT_BUTTON_SIZE) / 2),
+    };
+};
 
 export const useVirtualizedTableHeader = ({
     columnKeys,
@@ -42,107 +53,112 @@ export const useVirtualizedTableHeader = ({
         setHoveredSortColumn(null);
     }, [visibleRegion.tx, visibleRegion.x]);
 
-    const getSortColumnFromMouseEvent = useCallback(
-        (event: ReactMouseEvent<HTMLDivElement>) => {
-            if (!rootRef.current) {
-                return null;
-            }
+    const viewportWidth = rootRef.current?.clientWidth ?? 0;
 
-            const bounds = rootRef.current.getBoundingClientRect();
-            const localX = event.clientX - bounds.left;
-            const localY = event.clientY - bounds.top;
+    const sortButtons = useMemo<SortButtonDescriptor[]>(() => {
+        if (
+            viewportWidth <= indexColumnWidth ||
+            resolvedColumnWidths.length <= 1 ||
+            visibleRegion.width <= 0
+        ) {
+            return [];
+        }
 
-            if (
-                localY < 0 ||
-                localY > TABLE_HEADER_HEIGHT ||
-                localX < indexColumnWidth ||
-                resolvedColumnWidths.length === 0
-            ) {
-                return null;
-            }
+        const firstScrollableColumn = Math.max(visibleRegion.x, 1);
+        const lastScrollableColumn = Math.min(
+            resolvedColumnWidths.length - 1,
+            visibleRegion.x + visibleRegion.width + 1,
+        );
+        const baseOffset =
+            columnOffsets[firstScrollableColumn] ?? indexColumnWidth;
 
-            const firstScrollableColumn = Math.max(visibleRegion.x, 1);
-            const dataX =
-                localX -
-                indexColumnWidth -
-                visibleRegion.tx +
-                (columnOffsets[firstScrollableColumn] ?? indexColumnWidth);
+        if (lastScrollableColumn < firstScrollableColumn) {
+            return [];
+        }
 
-            if (dataX < 0) {
-                return null;
-            }
+        return Array.from(
+            { length: lastScrollableColumn - firstScrollableColumn + 1 },
+            (_, index) => firstScrollableColumn + index,
+        )
+            .map((columnIndex) => {
+                const key = columnKeys[columnIndex - 1];
 
-            for (
-                let columnIndex = 1;
-                columnIndex < resolvedColumnWidths.length;
-                columnIndex++
-            ) {
-                const columnStart = columnOffsets[columnIndex] ?? 0;
-                const columnEnd = columnOffsets[columnIndex + 1] ?? columnStart;
-
-                if (dataX < columnStart || dataX >= columnEnd) {
-                    continue;
+                if (!key) {
+                    return null;
                 }
 
                 const columnWidth =
                     resolvedColumnWidths[columnIndex] ?? minimumColumnWidth;
-                const offsetInsideColumn = dataX - columnStart;
-                const sortAreaStart = columnWidth - SORT_BUTTON_WIDTH;
-                const resizeAreaStart = columnWidth - SORT_RESIZE_GUARD;
+                const columnLeft =
+                    (columnOffsets[columnIndex] ?? 0) -
+                    baseOffset +
+                    indexColumnWidth +
+                    visibleRegion.tx;
+                const columnRight = columnLeft + columnWidth;
 
                 if (
-                    offsetInsideColumn >= sortAreaStart &&
-                    offsetInsideColumn < resizeAreaStart
+                    columnRight <= indexColumnWidth ||
+                    columnLeft >= viewportWidth
                 ) {
-                    return columnIndex;
+                    return null;
                 }
 
-                return null;
-            }
+                const { x, y } = getSortButtonOffset(columnWidth);
+                const isSorted = sortState?.key === key;
 
-            return null;
+                return {
+                    columnIndex,
+                    direction: isSorted ? sortState.direction : null,
+                    isSorted,
+                    key,
+                    left: columnLeft + x,
+                    top: y,
+                };
+            })
+            .filter(
+                (button): button is SortButtonDescriptor => button !== null,
+            );
+    }, [
+        columnKeys,
+        columnOffsets,
+        indexColumnWidth,
+        minimumColumnWidth,
+        resolvedColumnWidths,
+        sortState,
+        viewportWidth,
+        visibleRegion.tx,
+        visibleRegion.width,
+        visibleRegion.x,
+    ]);
+
+    const handleSortButtonMouseEnter = useCallback((columnIndex: number) => {
+        setHoveredSortColumn(columnIndex);
+    }, []);
+
+    const handleSortButtonMouseLeave = useCallback(() => {
+        setHoveredSortColumn(null);
+    }, []);
+
+    const blockSortButtonMouseEvent = useCallback(
+        (event: ReactMouseEvent<HTMLButtonElement>) => {
+            event.preventDefault();
+            event.stopPropagation();
         },
-        [
-            columnOffsets,
-            indexColumnWidth,
-            minimumColumnWidth,
-            resolvedColumnWidths,
-            rootRef,
-            visibleRegion.tx,
-            visibleRegion.x,
-        ],
+        [],
     );
 
-    const handleContainerMouseMoveCapture = useCallback(
-        (event: ReactMouseEvent<HTMLDivElement>) => {
-            setHoveredSortColumn(getSortColumnFromMouseEvent(event));
-        },
-        [getSortColumnFromMouseEvent],
-    );
-
-    const handleContainerMouseDownCapture = useCallback(
-        (event: ReactMouseEvent<HTMLDivElement>) => {
+    const handleSortButtonMouseDown = useCallback(
+        (columnIndex: number, event: ReactMouseEvent<HTMLButtonElement>) => {
             if (event.button !== 0) {
                 return;
             }
 
-            const columnIndex = getSortColumnFromMouseEvent(event);
-
-            if (columnIndex === null) {
-                return;
-            }
-
-            event.preventDefault();
-            event.stopPropagation();
+            blockSortButtonMouseEvent(event);
             onSortColumnMouseDown();
             toggleSort(columnIndex - 1);
         },
-        [getSortColumnFromMouseEvent, onSortColumnMouseDown, toggleSort],
+        [blockSortButtonMouseEvent, onSortColumnMouseDown, toggleSort],
     );
-
-    const handleContainerMouseLeave = useCallback(() => {
-        setHoveredSortColumn(null);
-    }, []);
 
     const drawHeader = useCallback<
         UseVirtualizedTableHeaderResult["drawHeader"]
@@ -162,7 +178,7 @@ export const useVirtualizedTableHeader = ({
                 args.rect.height,
             );
 
-            const isSortHovered = hoveredSortColumn === args.columnIndex;
+            const isSortHovered = hoveredSortColumn !== null;
 
             if (!args.isSelected && args.hoverAmount > 0 && !isSortHovered) {
                 args.ctx.globalAlpha = args.hoverAmount;
@@ -178,49 +194,10 @@ export const useVirtualizedTableHeader = ({
 
             drawContent();
 
-            const columnKey =
-                args.columnIndex > 0
-                    ? columnKeys[args.columnIndex - 1]
-                    : undefined;
-
-            if (columnKey) {
-                const isSorted = sortState?.key === columnKey;
-                const iconX = args.rect.x + args.rect.width - SORT_BUTTON_WIDTH;
-                const centerX = iconX + SORT_BUTTON_WIDTH / 2;
-                const centerY = args.rect.y + args.rect.height / 2;
-
-                args.ctx.fillStyle = isSortHovered
-                    ? args.theme.bgHeaderHovered
-                    : backgroundColor;
-                args.ctx.fillRect(
-                    iconX,
-                    args.rect.y,
-                    SORT_BUTTON_WIDTH,
-                    args.rect.height,
-                );
-
-                if (!isSorted) {
-                    drawChevronsUpDownIcon(
-                        args.ctx,
-                        centerX,
-                        centerY,
-                        args.theme.textLight,
-                    );
-                } else {
-                    drawArrowDownIcon(
-                        args.ctx,
-                        centerX,
-                        centerY,
-                        sortState.direction,
-                        args.theme.accentColor,
-                    );
-                }
-            }
-
             drawCellBorders(args.ctx, args.rect, gridLineColor);
             args.ctx.restore();
         },
-        [columnKeys, gridLineColor, hoveredSortColumn, sortState],
+        [gridLineColor, hoveredSortColumn],
     );
 
     const handleVisibleRegionChanged = useCallback<
@@ -250,10 +227,13 @@ export const useVirtualizedTableHeader = ({
     }, []);
 
     return {
+        blockSortButtonMouseEvent,
         drawHeader,
-        handleContainerMouseDownCapture,
-        handleContainerMouseLeave,
-        handleContainerMouseMoveCapture,
+        handleSortButtonMouseDown,
+        handleSortButtonMouseEnter,
+        handleSortButtonMouseLeave,
         handleVisibleRegionChanged,
+        hoveredSortColumn,
+        sortButtons,
     };
 };

@@ -9,6 +9,9 @@ export const createPanelId = () =>
 
 export const createPanelTitle = (index: number) => `Query ${index}`;
 
+export const createResultsPanelTitle = (sourceTitle?: string) =>
+    sourceTitle ? `${sourceTitle} - Results` : "Results";
+
 export const getResultsPanelId = (editorPanelId: string) =>
     `${editorPanelId}__results`;
 
@@ -18,5 +21,6 @@ export const createEditorPanelParams = (
     query: "",
     results: [],
     selectedResultIndex: 0,
+    highlightJobIds: [],
     ...overrides,
 });

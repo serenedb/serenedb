@@ -1,14 +1,8 @@
 import React from "react";
 import {
     ArrowDownIcon,
-    CheckIcon,
     cn,
-    Command,
-    CommandEmpty,
-    CommandGroup,
-    CommandInput,
-    CommandItem,
-    CommandList,
+    ComboboxPanel,
     DatabaseIcon,
     Popover,
     PopoverContent,
@@ -30,6 +24,38 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
     setCurrentDatabase,
 }) => {
     const [open, setOpen] = React.useState(false);
+
+    const options = React.useMemo(() => {
+        return databases.map((database) => ({
+            value: database,
+            label: database,
+        }));
+    }, [databases]);
+
+    const panel = (
+        <ComboboxPanel
+            items={options}
+            selectedValue={currentDatabase || undefined}
+            placeholder="Search databases"
+            emptyMessage="No databases found."
+            isLoading={isLoading && databases.length === 0}
+            loadingMessage="Loading databases..."
+            autoFocus
+            className="bg-transparent"
+            onSelect={(value) => {
+                setCurrentDatabase(value);
+                setOpen(false);
+            }}
+            inputProps={{
+                className: "h-9",
+                "data-testid":
+                    "dashboardSelectChartParams-databaseSearch",
+            }}
+            getItemProps={(item) => ({
+                "data-testid": `dashboardSelectChartParams-databaseOption-${item.value}`,
+            })}
+        />
+    );
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
@@ -58,42 +84,7 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
                 variant="secondary"
                 className="w-full p-0"
                 data-testid="dashboardSelectChartParams-databasePopover">
-                <Command className="bg-transparent">
-                    <CommandInput
-                        placeholder="Search databases"
-                        className="h-9"
-                        data-testid="dashboardSelectChartParams-databaseSearch"
-                    />
-                    <CommandList>
-                        <CommandEmpty>No databases found.</CommandEmpty>
-                        <CommandGroup>
-                            {databases.map((database) => (
-                                <CommandItem
-                                    key={database}
-                                    value={database}
-                                    data-testid={`dashboardSelectChartParams-databaseOption-${database}`}
-                                    onSelect={(currentValue: string) => {
-                                        setCurrentDatabase(
-                                            currentValue === currentDatabase
-                                                ? ""
-                                                : currentValue,
-                                        );
-                                        setOpen(false);
-                                    }}>
-                                    {database}
-                                    <CheckIcon
-                                        className={cn(
-                                            "ml-auto",
-                                            currentDatabase === database
-                                                ? "opacity-100"
-                                                : "opacity-0",
-                                        )}
-                                    />
-                                </CommandItem>
-                            ))}
-                        </CommandGroup>
-                    </CommandList>
-                </Command>
+                {panel}
             </PopoverContent>
         </Popover>
     );

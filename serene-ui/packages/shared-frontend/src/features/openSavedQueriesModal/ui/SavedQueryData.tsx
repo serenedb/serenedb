@@ -11,8 +11,10 @@ import { PGSQLEditor } from "@serene-ui/shared-frontend/widgets";
 import { ExecuteQueryButton } from "../../executeQuery";
 import { useState, useRef, useEffect } from "react";
 import { ExportSavedQueryButton, ImportSavedQueryButton } from "./buttons";
+import { useConnectionAutocomplete } from "../../../widgets/shared/PGSQLEditor/model";
 
 export const SavedQueryData = () => {
+    const autocomplete = useConnectionAutocomplete();
     const {
         setOpen,
         currentSavedQuery,
@@ -107,6 +109,7 @@ export const SavedQueryData = () => {
             <div className="flex flex-col flex-1 bg-background pt-2 relative">
                 <PGSQLEditor
                     value={currentSavedQuery?.query || ""}
+                    autocomplete={autocomplete}
                     onChange={(value) => {
                         setCurrentSavedQuery((prev) => ({
                             ...prev!,

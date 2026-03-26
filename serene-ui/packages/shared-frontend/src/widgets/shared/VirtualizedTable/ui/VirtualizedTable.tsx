@@ -6,8 +6,10 @@ import { useChangeTheme } from "@serene-ui/shared-frontend/features";
 import { useResizeObserver } from "@serene-ui/shared-frontend/shared";
 
 import {
+    SORT_BUTTON_SIZE,
     TABLE_HEADER_HEIGHT,
     TABLE_ROW_HEIGHT,
+    type SortDirection,
     useVirtualizedTableCellRenderer,
     useVirtualizedTableData,
     useVirtualizedTableHeader,
@@ -15,6 +17,56 @@ import {
     type VirtualizedTableProps,
 } from "../model";
 import { VirtualizedTableContextMenu } from "./VirtualizedTableContextMenu";
+
+const SortButtonIcon = ({
+    color,
+    direction,
+}: {
+    color: string;
+    direction: SortDirection | null;
+}) =>
+    direction === null ? (
+        <svg
+            aria-hidden
+            width="10"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none">
+            <polyline
+                points="7 15 12 20 17 15"
+                stroke={color}
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+            <polyline
+                points="7 9 12 4 17 9"
+                stroke={color}
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    ) : (
+        <svg
+            aria-hidden
+            width="9"
+            height="6"
+            viewBox="0 0 8 6"
+            fill="none"
+            style={{
+                transform:
+                    direction === "asc" ? "rotate(180deg)" : undefined,
+            }}>
+            <polyline
+                points="0.5 1.25 4 4.75 7.5 1.25"
+                stroke={color}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
 
 export const VirtualizedTable = ({ data }: VirtualizedTableProps) => {
     const { theme } = useChangeTheme();
@@ -58,12 +110,7 @@ export const VirtualizedTable = ({ data }: VirtualizedTableProps) => {
     });
 
     return (
-        <div
-            ref={setContainerRef}
-            className="relative flex-1 min-h-0 overflow-hidden"
-            onMouseMoveCapture={tableHeader.handleContainerMouseMoveCapture}
-            onMouseDownCapture={tableHeader.handleContainerMouseDownCapture}
-            onMouseLeave={tableHeader.handleContainerMouseLeave}>
+        <div ref={setContainerRef} className="relative flex-1 min-h-0 overflow-hidden">
             {size.width > 0 && size.height > 0 ? (
                 <>
                     <DataEditor
@@ -103,6 +150,80 @@ export const VirtualizedTable = ({ data }: VirtualizedTableProps) => {
                         drawFocusRing
                         onPaste={false}
                     />
+
+                    <div
+                        className="pointer-events-none absolute left-0 top-0 z-10 w-full"
+                        style={{ height: TABLE_HEADER_HEIGHT }}>
+                        {tableHeader.sortButtons.map((button) => {
+                            const isHovered =
+                                tableHeader.hoveredSortColumn ===
+                                button.columnIndex;
+                            const backgroundColor = isHovered
+                                ? (tableData.gridTheme.bgHeaderHovered ??
+                                  tableData.gridTheme.bgIconHeader ??
+                                  "transparent")
+                                : button.isSorted
+                                  ? (tableData.gridTheme.accentLight ??
+                                    "transparent")
+                                  : "transparent";
+                            const iconColor = button.isSorted
+                                ? (tableData.gridTheme.accentColor ??
+                                  tableData.gridTheme.fgIconHeader ??
+                                  tableData.gridTheme.textLight ??
+                                  "currentColor")
+                                : (tableData.gridTheme.fgIconHeader ??
+                                  tableData.gridTheme.textLight ??
+                                  "currentColor");
+
+                            return (
+                                <button
+                                    key={button.columnIndex}
+                                    type="button"
+                                    aria-label={`Sort by ${button.key}`}
+                                    aria-pressed={button.isSorted}
+                                    tabIndex={-1}
+                                    className="pointer-events-auto absolute flex items-center justify-center rounded"
+                                    style={{
+                                        backgroundColor,
+                                        height: SORT_BUTTON_SIZE,
+                                        left: button.left,
+                                        top: button.top,
+                                        width: SORT_BUTTON_SIZE,
+                                    }}
+                                    onMouseEnter={() =>
+                                        tableHeader.handleSortButtonMouseEnter(
+                                            button.columnIndex,
+                                        )
+                                    }
+                                    onMouseLeave={
+                                        tableHeader.handleSortButtonMouseLeave
+                                    }
+                                    onMouseDown={(event) =>
+                                        tableHeader.handleSortButtonMouseDown(
+                                            button.columnIndex,
+                                            event,
+                                        )
+                                    }
+                                    onMouseUp={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }
+                                    onClick={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }
+                                    onDoubleClick={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }
+                                    onContextMenu={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }>
+                                    <SortButtonIcon
+                                        color={iconColor}
+                                        direction={button.direction}
+                                    />
+                                </button>
+                            );
+                        })}
+                    </div>
 
                     <VirtualizedTableContextMenu
                         contextMenu={tableSelection.contextMenu}

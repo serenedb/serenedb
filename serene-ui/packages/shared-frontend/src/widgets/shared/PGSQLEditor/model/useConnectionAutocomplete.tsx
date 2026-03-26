@@ -11,8 +11,14 @@ type AutocompleteData = {
     tables: string[];
     views: string[];
     indexes: string[];
-    savedQueries: string[];
-    queryHistory: string[];
+    savedQueries: Array<{
+        name: string;
+        query: string;
+    }>;
+    queryHistory: Array<{
+        query: string;
+        executedAt: string;
+    }>;
 };
 
 type AutocompleteKey = "tables" | "views" | "indexes";
@@ -84,8 +90,28 @@ export const useConnectionAutocomplete = () => {
         if (!savedQueries) return;
 
         const names = Array.from(
-            new Set(savedQueries.map((q) => q.query)),
-        ).sort() as string[];
+            new Map(
+                savedQueries
+                    .filter(
+                        (query) =>
+                            typeof query.name === "string" &&
+                            query.name.length > 0 &&
+                            typeof query.query === "string" &&
+                            query.query.length > 0,
+                    )
+                    .map((query) => [
+                        `${query.query}\u0000${query.name}`,
+                        {
+                            name: query.name,
+                            query: query.query,
+                        },
+                    ]),
+            ).values(),
+        ).sort(
+            (left, right) =>
+                left.name.localeCompare(right.name) ||
+                left.query.localeCompare(right.query),
+        );
 
         setAutocomplete((prev) => ({
             ...prev,
@@ -97,8 +123,24 @@ export const useConnectionAutocomplete = () => {
         if (!queryHistory) return;
 
         const names = Array.from(
-            new Set(queryHistory.map((q) => q.query)),
-        ).sort();
+            new Map(
+                queryHistory
+                    .filter(
+                        (query) =>
+                            typeof query.query === "string" &&
+                            query.query.length > 0 &&
+                            typeof query.executed_at === "string" &&
+                            query.executed_at.length > 0,
+                    )
+                    .map((query) => [
+                        `${query.query}\u0000${query.executed_at}`,
+                        {
+                            query: query.query,
+                            executedAt: query.executed_at,
+                        },
+                    ]),
+            ).values(),
+        );
 
         setAutocomplete((prev) => ({
             ...prev,

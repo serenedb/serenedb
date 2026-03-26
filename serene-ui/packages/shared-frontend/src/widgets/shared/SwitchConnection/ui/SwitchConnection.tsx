@@ -1,0 +1,114 @@
+import React, { useEffect, useMemo, useState } from "react";
+import {
+    cn,
+    ConnectionIcon,
+    DEFAULT_HOTKEYS,
+    Kbd,
+    KbdGroup,
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+    useAppHotkey,
+    useConnection,
+    useGetConnections,
+    useTestConnection,
+} from "@serene-ui/shared-frontend";
+import { SwitchConnectionModal } from "./SwitchConnectionModal";
+
+interface SwitchConnectionProps {}
+
+export const SwitchConnection: React.FC<SwitchConnectionProps> = () => {
+    const [open, setOpen] = useState(false);
+    const [connectionState, setConnectionState] = useState<
+        "pending" | "success" | "failed"
+    >("pending");
+    const { currentConnection } = useConnection();
+    const { data: connections } = useGetConnections();
+
+    useAppHotkey(DEFAULT_HOTKEYS.SWITCH_CONNECTION_TOGGLE, () => {
+        setOpen(true);
+    });
+
+    const connectionName = useMemo(() => {
+        return (
+            connections?.find(
+                (connection) =>
+                    connection.id === currentConnection.connectionId,
+            )?.name || undefined
+        );
+    }, [currentConnection, connections]);
+
+    const { handleTestConnection } = useTestConnection();
+
+    const testConnection = async () => {
+        let result: "pending" | "success" | "failed" = "pending";
+        try {
+            await handleTestConnection({
+                connectionId: currentConnection.connectionId,
+                database: currentConnection.database,
+            });
+            result = "success";
+        } catch {
+            result = "failed";
+        }
+        setConnectionState(result);
+    };
+    useEffect(() => {
+        if (currentConnection.connectionId !== -1 && currentConnection.database)
+            testConnection();
+    }, [currentConnection]);
+
+    return (
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    aria-label="Switch connection"
+                    className="outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0">
+                    <div className="border-[0.5px] bg-muted rounded-md flex p-1.5 pl-2.5 items-center min-w-80">
+                        <div className="relative">
+                            <ConnectionIcon className="size-4 text-muted-foreground/50" />
+                            <div
+                                className={cn(
+                                    "absolute rounded-full w-1.5 h-1.5 right-0 top-[-1px] bg-orange-700",
+                                    {
+                                        "bg-red-700":
+                                            connectionState === "failed",
+                                        "bg-orange-700":
+                                            connectionState === "pending",
+                                        "bg-green-700":
+                                            connectionState === "success",
+                                    },
+                                )}
+                            />
+                        </div>
+                        {currentConnection.connectionId !== -1 &&
+                            currentConnection.database && (
+                                <p className="text-xs text-muted-foreground/50 ml-2">
+                                    {connectionName} /{" "}
+                                    {currentConnection.database}
+                                </p>
+                            )}
+
+                        <KbdGroup className="ml-auto pl-3">
+                            <Kbd>Cmd</Kbd>
+                            <Kbd>P</Kbd>
+                        </KbdGroup>
+                    </div>
+                </button>
+            </PopoverTrigger>
+            <PopoverContent
+                className="min-w-100 p-1 pt-2.5"
+                onOpenAutoFocus={(event) => {
+                    event.preventDefault();
+                }}>
+                <SwitchConnectionModal
+                    open={open}
+                    onComplete={() => {
+                        setOpen(false);
+                    }}
+                />
+            </PopoverContent>
+        </Popover>
+    );
+};

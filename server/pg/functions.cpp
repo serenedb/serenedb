@@ -866,7 +866,7 @@ struct NameConcatOidFunction {
     // Velox. It's also doesn't really matter.
     result.reserve(name.size() + 1 + 22);
     result.append(name);
-    result.push_back('_');
+    result.append("_");
     result.append(absl::StrCat(static_cast<int64_t>(oid)));
   }
 };

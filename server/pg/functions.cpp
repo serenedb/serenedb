@@ -475,6 +475,29 @@ struct EmptyStringTextBool {
 };
 
 template<typename T>
+struct EmptyStringTextOid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&) {
+    result = "";
+  }
+};
+
+template<typename T>
+struct EmptyStringTextOidBool {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<bool>&) {
+    result = "";
+  }
+};
+
+template<typename T>
 struct NullVarcharTextText {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -669,6 +692,41 @@ struct AlwaysTrueFunction2Text {
 };
 
 template<typename T>
+struct PgEncodingMaxLength {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // Returns max bytes per character for the given encoding (always 4 for UTF-8)
+  FOLLY_ALWAYS_INLINE void call(out_type<int32_t>& result,
+                                const arg_type<int32_t>&) {
+    result = 4;
+  }
+};
+
+template<typename T>
+struct PgRelationIsUpdatable {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // Returns bitmask: INSERT=8, UPDATE=4, DELETE=16, all=28
+  FOLLY_ALWAYS_INLINE void call(out_type<int32_t>& result,
+                                const arg_type<int64_t>&,
+                                const arg_type<bool>&) {
+    result = 28;
+  }
+};
+
+template<typename T>
+struct PgColumnIsUpdatable {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
+                                const arg_type<int64_t>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<bool>&) {
+    result = true;
+  }
+};
+
+template<typename T>
 struct AlwaysTrueFunction2IntText {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -743,6 +801,18 @@ struct AlwaysTrueFunction4TextIntIntText {
 };
 
 template<typename T>
+struct AlwaysTrueFunction3IntSmallintText {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
+                                const arg_type<int64_t>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    result = true;
+  }
+};
+
+template<typename T>
 struct ColDescriptionFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -782,6 +852,22 @@ struct ShObjDescriptionFunction {
                                 const arg_type<int64_t>&,
                                 const arg_type<velox::Varchar>&) {
     return false;  // returns NULL
+  }
+};
+
+template<typename T>
+struct NameConcatOidFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& name,
+                                const arg_type<int64_t>& oid) {
+    // TODO(mbkkt) It doesn't look very good, but it's best what we can for
+    // Velox. It's also doesn't really matter.
+    result.reserve(name.size() + 1 + 22);
+    result.append(name);
+    result.push_back('_');
+    result.append(absl::StrCat(static_cast<int64_t>(oid)));
   }
 };
 
@@ -1381,6 +1467,9 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<AlwaysTrueFunction4TextIntIntText, bool,
                           velox::Varchar, int64_t, int64_t, velox::Varchar>(
     {prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction3IntSmallintText, bool, int64_t,
+                          int16_t, velox::Varchar>(
+    {prefix + "has_column_privilege"});
 
   velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_database_privilege"});
@@ -1561,16 +1650,29 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
     {prefix + "ts_template_is_visible"});
 
+  velox::registerFunction<PgEncodingMaxLength, int32_t, int32_t>(
+    {prefix + "encoding_max_length"});
+  velox::registerFunction<PgRelationIsUpdatable, int32_t, int64_t, bool>(
+    {prefix + "relation_is_updatable"});
+  velox::registerFunction<PgColumnIsUpdatable, bool, int64_t, int16_t, bool>(
+    {prefix + "column_is_updatable"});
+
   // 9.27.4 System Catalog Information Functions
 
   velox::registerFunction<FormatTypeFunction, velox::Varchar, int64_t, int64_t>(
     {prefix + "format_type"});
+  velox::registerFunction<NameConcatOidFunction, velox::Varchar, velox::Varchar,
+                          int64_t>({prefix + "nameconcatoid"});
   velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
     {prefix + "basetype"});
   velox::registerFunction<PgCharToEncodingFunction, int32_t, velox::Varchar>(
     {prefix + "char_to_encoding"});
   velox::registerFunction<PgEncodingToCharFunction, velox::Varchar, int32_t>(
     {prefix + "encoding_to_char"});
+  velox::registerFunction<EmptyStringTextOid, velox::Varchar, velox::Varchar,
+                          int64_t>({prefix + "get_expr"});
+  velox::registerFunction<EmptyStringTextOidBool, velox::Varchar,
+                          velox::Varchar, int64_t, bool>({prefix + "get_expr"});
   velox::registerFunction<NotSupported0Text, velox::Varchar>(
     {prefix + "get_catalog_foreign_keys"});
   velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(

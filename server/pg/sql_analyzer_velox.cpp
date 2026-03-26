@@ -2625,8 +2625,9 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
         CURSOR_POS(ErrorPosition(ExprLocation(stmt.relation))),
         ERR_MSG("Inverted index is not supported for this file table"));
     }
-    auto format = file_info.format_options->createReaderOptions(table.RowType())
-                    .reader->fileFormat();
+    const auto format =
+      file_info.format_options->createReaderOptions(table.RowType())
+        .reader->fileFormat();
     if (format != velox::dwio::common::FileFormat::PARQUET &&
         format != velox::dwio::common::FileFormat::TEXT) {
       THROW_SQL_ERROR(

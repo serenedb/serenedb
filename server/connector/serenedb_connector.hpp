@@ -1169,6 +1169,8 @@ class SereneDBConnector final : public velox::connector::Connector {
                               std::move(row_reader), output_type),
           search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
       }
+
+      SDB_ASSERT(format == velox::dwio::common::FileFormat::PARQUET);
       return std::make_unique<SearchDataSource<TextMaterializer>>(
         pool,
         TextMaterializer(pool, std::move(source), std::move(reader),

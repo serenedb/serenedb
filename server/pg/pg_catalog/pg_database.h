@@ -57,4 +57,8 @@ struct PgDatabase {
 };
 // NOLINTEND
 
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgDatabase>::GetTableData(
+  velox::memory::MemoryPool& pool);
+
 }  // namespace sdb::pg

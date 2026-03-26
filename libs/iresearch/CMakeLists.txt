@@ -13,3 +13,8 @@ set(IResearch_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 add_definitions(-DUNICODE -D_UNICODE)
 
 add_subdirectory(include/iresearch)
+
+option(IRESEARCH_BUILD_EXAMPLES "Build iresearch examples" OFF)
+if(IRESEARCH_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()

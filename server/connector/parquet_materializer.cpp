@@ -68,7 +68,6 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
   if (_score_column_idx >= 0) {
     SDB_ASSERT(scores);
     auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
-    // Sort keys and scores together via in-place permutation cycle.
     std::vector<uint32_t> order(total);
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {

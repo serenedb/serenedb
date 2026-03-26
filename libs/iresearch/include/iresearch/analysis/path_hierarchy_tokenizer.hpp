@@ -36,20 +36,22 @@ namespace analysis {
 ///       "/a", "/a/b", "/a/b/c" or in reverse mode: "/a/b/c", "a/b/c", "b/c",
 ///       "c"
 /// @note Configuration (compatible with Lucene PathHierarchyTokenizer):
-///       - delimiter: path separator character (default: "/")
-///       - replacement: optional replacement character for delimiter
-///       - buffer_size: characters read in single pass (default: 1024)
+///       - delimiter: path separator (default: "/"); UTF-8 byte sequence
+///       - replacement: optional replacement for delimiter (default: "/")
+///       - buffer_size: config compatibility (default: 1024); forward mode uses
+///         at most one scratch string sized to the current input when delimiter
+///         and replacement differ; equal delimiter/replacement uses only views
 ///       - reverse: use reverse tokenization for domain-like hierarchies
 ///       (default: false)
 ///       - skip: number of initial tokens to skip (default: 0)
 class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
  public:
   struct Options {
-    char delimiter = '/';       // path separator
-    char replacement = '/';     // replacement character for delimiter
-    size_t buffer_size = 1024;  // term buffer size hint
-    bool reverse = false;       // reverse: domain hierarchies
-    size_t skip = 0;            // skip first N tokens
+    std::string delimiter = "/";    // path separator (byte sequence)
+    std::string replacement = "/";  // replacement for delimiter
+    size_t buffer_size = 1024;      // term buffer size hint
+    bool reverse = false;           // reverse: domain hierarchies
+    size_t skip = 0;                // skip first N tokens
   };
 
   static constexpr std::string_view type_name() noexcept {
@@ -71,7 +73,6 @@ class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
   const Options _options;
 
   bool _term_eof = true;
-  std::string _replace_buffer;
 };
 
 }  // namespace analysis

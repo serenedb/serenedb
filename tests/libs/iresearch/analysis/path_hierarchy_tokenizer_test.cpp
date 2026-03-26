@@ -81,8 +81,8 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_mode) {
 
 TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.reverse = false;
 
   std::string_view data = "a";
@@ -95,8 +95,8 @@ TEST_F(PathHierarchyTokenizerTests, test_single_element_path) {
 
 TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
   Options options;
-  options.delimiter = '-';
-  options.replacement = '-';
+  options.delimiter = "-";
+  options.replacement = "-";
   options.reverse = false;
 
   std::string_view data = "a-b-c";
@@ -110,7 +110,7 @@ TEST_F(PathHierarchyTokenizerTests, test_custom_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reset_multiple_times) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   auto stream = PathHierarchyTokenizer::make(std::move(options));
   ASSERT_NE(nullptr, stream);
 
@@ -144,7 +144,7 @@ TEST_F(PathHierarchyTokenizerTests, test_path_with_trailing_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 5;
   options.reverse = false;
 
@@ -158,7 +158,7 @@ TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
 
 TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 2;
   options.reverse = false;
 
@@ -173,7 +173,7 @@ TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
   Options options;
-  options.delimiter = '\0';
+  options.delimiter = std::string(1, '\0');
   options.reverse = false;
 
   std::string_view data = "abc";
@@ -186,7 +186,7 @@ TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
 
   auto stream = PathHierarchyTokenizer::make(std::move(options));
   ASSERT_NE(nullptr, stream);
@@ -200,7 +200,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
 
 TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.reverse = false;
 
   std::string_view data = "/café/café/café";
@@ -213,10 +213,79 @@ TEST_F(PathHierarchyTokenizerTests, test_utf8_characters) {
                             {0, 0, 0}, {6, 12, 18}, {1, 1, 1});
 }
 
+TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter) {
+  Options options;
+  options.delimiter = "::";
+  options.replacement = "::";
+  options.reverse = false;
+
+  std::string_view data = "a::b::c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a", "a::b", "a::b::c"}, {0, 0, 0},
+                            {1, 4, 7}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter_leading) {
+  Options options;
+  options.delimiter = "::";
+  options.replacement = "::";
+  options.reverse = false;
+
+  std::string_view data = "::a::b";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"::a", "::a::b"}, {0, 0}, {3, 6},
+                            {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_string_delimiter_replacement) {
+  Options options;
+  options.delimiter = "::";
+  options.replacement = "|";
+  options.reverse = false;
+
+  std::string_view data = "a::b::c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"a", "a|b", "a|b|c"}, {0, 0, 0},
+                            {1, 3, 5}, {1, 1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_utf8_delimiter_bytes) {
+  const std::string utf1 = "\xF0\x9F\x98\x8A";
+  const std::string utf2 = "\xF0\x9F\x98\x8B";
+  Options options;
+  options.delimiter = utf1;
+  options.replacement = utf2;
+  options.reverse = false;
+
+  const std::string data = std::string("a") + utf1 + "b" + utf1 + "c";
+  const std::string expect1 = "a";
+  const std::string expect2 = "a" + utf2 + "b";
+  const std::string expect3 = "a" + utf2 + "b" + utf2 + "c";
+
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(
+    stream.get(),
+    {std::string_view(expect1), std::string_view(expect2),
+     std::string_view(expect3)},
+    {0, 0, 0}, {1, 6, 11}, {1, 1, 1});
+}
+
 TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '_';
+  options.delimiter = "/";
+  options.replacement = "_";
   options.reverse = false;
 
   std::string_view data = "/a/b/c";
@@ -230,7 +299,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_with_different_replacement) {
 
 TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.reverse = false;
 
   std::string_view data = "//a///b//";
@@ -246,7 +315,7 @@ TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
 
 TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.reverse = false;
 
   std::string_view data = "a/b/c";
@@ -260,7 +329,7 @@ TEST_F(PathHierarchyTokenizerTests, test_basic_without_leading_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.reverse = false;
 
   std::string_view data = "/";
@@ -273,7 +342,7 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.reverse = false;
 
   std::string_view data = "//";
@@ -286,7 +355,7 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 1;
   options.reverse = false;
 
@@ -301,7 +370,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 1;
   options.reverse = false;
 
@@ -316,7 +385,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_end_of_delimiter_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 1;
   options.reverse = false;
 
@@ -332,7 +401,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_start_of_char_skip) {
 TEST_F(PathHierarchyTokenizerTests,
        test_forward_start_of_char_end_of_delimiter_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 1;
   options.reverse = false;
 
@@ -347,7 +416,7 @@ TEST_F(PathHierarchyTokenizerTests,
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 1;
   options.reverse = false;
 
@@ -361,7 +430,7 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiter_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.skip = 1;
   options.reverse = false;
 
@@ -375,8 +444,8 @@ TEST_F(PathHierarchyTokenizerTests, test_forward_only_delimiters_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
   Options options;
-  options.delimiter = '\\';
-  options.replacement = '\\';
+  options.delimiter = "\\";
+  options.replacement = "\\";
   options.reverse = false;
 
   std::string_view data = "c:\\a\\b\\c";
@@ -391,8 +460,8 @@ TEST_F(PathHierarchyTokenizerTests, test_windows_path) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
   Options options;
-  options.delimiter = '.';
-  options.replacement = '-';
+  options.delimiter = ".";
+  options.replacement = "-";
   options.reverse = true;
 
   std::string_view data("www.example.com");
@@ -407,8 +476,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_mode) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
   Options options;
-  options.delimiter = '.';
-  options.replacement = '-';
+  options.delimiter = ".";
+  options.replacement = "-";
   options.skip = 2;
   options.reverse = true;
 
@@ -423,8 +492,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_domain_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.reverse = true;
   options.skip = 0;
 
@@ -439,8 +508,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_basic) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.reverse = true;
   options.skip = 0;
 
@@ -456,8 +525,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter) {
 TEST_F(PathHierarchyTokenizerTests,
        test_reverse_start_of_char_end_of_delimiter) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.reverse = true;
   options.skip = 0;
 
@@ -472,8 +541,8 @@ TEST_F(PathHierarchyTokenizerTests,
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.reverse = true;
   options.skip = 0;
 
@@ -487,8 +556,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.reverse = true;
   options.skip = 0;
 
@@ -502,8 +571,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.skip = 1;
   options.reverse = true;
 
@@ -518,8 +587,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.skip = 1;
   options.reverse = true;
 
@@ -533,8 +602,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiter_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.skip = 1;
   options.reverse = true;
 
@@ -548,7 +617,7 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters_skip) {
 
 TEST_F(PathHierarchyTokenizerTests, test_start_of_char_end_of_delimiter) {
   Options options;
-  options.delimiter = '/';
+  options.delimiter = "/";
   options.reverse = false;
 
   std::string_view data = "a/b/c/";
@@ -583,8 +652,8 @@ TEST_F(PathHierarchyTokenizerTests, test_tokenizer_via_analyzer_forward) {
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.skip = 1;
   options.reverse = true;
 
@@ -600,8 +669,8 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_start_of_char_skip) {
 TEST_F(PathHierarchyTokenizerTests,
        test_reverse_start_of_char_end_of_delimiter_skip) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.skip = 1;
   options.reverse = true;
 
@@ -616,8 +685,8 @@ TEST_F(PathHierarchyTokenizerTests,
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_skip2) {
   Options options;
-  options.delimiter = '/';
-  options.replacement = '/';
+  options.delimiter = "/";
+  options.replacement = "/";
   options.skip = 2;
   options.reverse = true;
 

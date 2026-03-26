@@ -45,4 +45,8 @@ struct PgAuthid {
 };
 // NOLINTEND
 
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgAuthid>::GetTableData(
+  velox::memory::MemoryPool& pool);
+
 }  // namespace sdb::pg

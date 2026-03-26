@@ -96,6 +96,8 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Function>> GetFunctions(
     ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
+    ObjectId database, std::string_view schema) const = 0;
 
   virtual std::shared_ptr<Role> GetRole(std::string_view name) const = 0;
   virtual std::shared_ptr<Database> GetDatabase(

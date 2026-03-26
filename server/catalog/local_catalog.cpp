@@ -425,6 +425,20 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<Function>>{});
   }
 
+  std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        return _resolution_table.GetTokenizerIds(schema_id) |
+               std::views::transform(
+                 [&](ObjectId tokenizer_id) -> std::shared_ptr<Tokenizer> {
+                   return GetObject<Tokenizer>(tokenizer_id);
+                 }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
+  }
+
   std::shared_ptr<Database> GetDatabase(std::string_view database) const final {
     return _resolution_table
       .ResolveObject<ResolveType::Database>(id::kInstance, database)

@@ -4492,6 +4492,9 @@ const OpToFuncMap kOpToFunc{
   {"is", "presto_is"},
   {"IS DISTINCT FROM", "presto_distinct_from"},
   {"count_star", "presto_count"},
+  // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
+  {"<->", "presto_l2_squared"},
+  {"<=>", "presto_cosine_similarity"},
 };
 
 const OpToFuncMap kDateIntervalOp{

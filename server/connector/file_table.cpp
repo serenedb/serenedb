@@ -282,7 +282,7 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
     _prev_bytes_read = bytes_read;
     _progress->ReportBatch(batch_rows, delta_bytes, rows_read - batch_rows);
   }
-  return std::dynamic_pointer_cast<velox::RowVector>(batch);
+  return basics::downCast<velox::RowVector>(batch);
 }
 
 }  // namespace sdb::connector

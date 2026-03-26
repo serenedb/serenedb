@@ -2619,13 +2619,22 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   const auto& table = basics::downCast<catalog::Table>(logical_object);
   if (table.GetTableType() == TableType::File) {
     const auto& file_info = table.GetFileInfo();
-    if (!file_info.format_options ||
-        file_info.format_options->createReaderOptions(table.RowType())
-            .reader->fileFormat() != velox::dwio::common::FileFormat::PARQUET) {
+    if (!file_info.format_options) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         CURSOR_POS(ErrorPosition(ExprLocation(stmt.relation))),
-        ERR_MSG("Inverted index is only supported for parquet file tables"));
+        ERR_MSG("Inverted index is not supported for this file table"));
+    }
+    const auto format =
+      file_info.format_options->createReaderOptions(table.RowType())
+        .reader->fileFormat();
+    if (format != velox::dwio::common::FileFormat::PARQUET &&
+        format != velox::dwio::common::FileFormat::TEXT) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ErrorPosition(ExprLocation(stmt.relation))),
+        ERR_MSG(
+          "Inverted index is only supported for parquet and text file tables"));
     }
   }
   const auto& table_type = *table.RowType();

@@ -305,9 +305,9 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
   }
 
  private:
-  void Commit(bool final) {
+  void Commit(bool finish) {
     _trx_storage.Commit();
-    if (!final) {
+    if (!finish) {
       _trx_storage = _shard.GetTransaction();
     }
   }

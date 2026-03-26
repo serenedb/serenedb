@@ -159,15 +159,23 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
     // All checks for user functions are guaranteed by sql_analyzer_velox.cpp,
     // but that is not the case for system functions, so throw if something in
     // system functions is not OK.
-    SDB_ENSURE(IsA(stmt.sql_body, List), ERROR_INTERNAL);
-    const auto* outer_list = castNode(List, stmt.sql_body);
-    SDB_ENSURE(list_length(outer_list) == 1, ERROR_INTERNAL);
-    const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
-    SDB_ENSURE(IsA(inner_list_node, List), ERROR_INTERNAL);
-    const auto* inner_list = castNode(List, inner_list_node);
-    SDB_ENSURE(list_length(inner_list) == 1, ERROR_INTERNAL);
-    auto* body_stmt = list_nth_node(Node, inner_list, 0);
-    function_body = pg::DeparseStmt(body_stmt);
+    if (IsA(stmt.sql_body, ReturnStmt)) {
+      // RETURN <expr> syntax: wrap the return expression in a SELECT statement.
+      const auto* return_stmt = castNode(ReturnStmt, stmt.sql_body);
+      SDB_ENSURE(return_stmt->returnval, ERROR_INTERNAL);
+      function_body =
+        absl::StrCat("SELECT ", pg::DeparseExpr(return_stmt->returnval));
+    } else {
+      SDB_ENSURE(IsA(stmt.sql_body, List), ERROR_INTERNAL);
+      const auto* outer_list = castNode(List, stmt.sql_body);
+      SDB_ENSURE(list_length(outer_list) == 1, ERROR_INTERNAL);
+      const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
+      SDB_ENSURE(IsA(inner_list_node, List), ERROR_INTERNAL);
+      const auto* inner_list = castNode(List, inner_list_node);
+      SDB_ENSURE(list_length(inner_list) == 1, ERROR_INTERNAL);
+      auto* body_stmt = list_nth_node(Node, inner_list, 0);
+      function_body = pg::DeparseStmt(body_stmt);
+    }
   }
 
   auto& signature = properties.signature;

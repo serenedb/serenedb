@@ -21,6 +21,7 @@
 #include "catalog/inverted_index.h"
 
 #include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
@@ -54,7 +55,9 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   }
 
   if (!it->second.text_dictionary.isSet()) {
-    return {};
+    auto analyzer = std::make_unique<irs::StringTokenizer>();
+    return {.analyzer = Tokenizer::AnalyzerWrapper{
+              analyzer.release(), Tokenizer::Deleter{nullptr}}};
   }
 
   auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);

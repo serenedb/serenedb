@@ -45,8 +45,12 @@ class Tokenizer : public SchemaObject {
     Tokenizer* tokenizer{nullptr};
 
     void operator()(irs::analysis::Analyzer* analyzer) {
-      SDB_ASSERT(tokenizer);
-      tokenizer->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+      // TODO(mbkkt) Revert this when global identity will be available
+      if (tokenizer) {
+        tokenizer->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+      } else {
+        delete analyzer;
+      }
     }
   };
 

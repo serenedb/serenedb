@@ -33,20 +33,25 @@ TextMaterializer::TextMaterializer(
   velox::memory::MemoryPool& pool, std::shared_ptr<velox::ReadFile> source,
   std::unique_ptr<velox::dwio::common::Reader> reader,
   std::unique_ptr<velox::dwio::common::RowReader> row_reader,
-  velox::RowTypePtr output_type)
+  velox::RowTypePtr output_type, std::vector<catalog::Column::Id> column_ids)
   : _pool{pool},
     _source{std::move(source)},
     _reader{std::move(reader)},
     _row_reader{std::move(row_reader)},
-    _output_type{std::move(output_type)} {}
+    _output_type{std::move(output_type)} {
+  for (size_t i = 0; i < column_ids.size(); ++i) {
+    if (column_ids[i] == catalog::Column::kInvertedIndexScoreId) {
+      _score_column_idx = i;
+      break;
+    }
+  }
+}
 
-velox::RowVectorPtr TextMaterializer::ReadRows(
-  std::span<const std::string> row_keys, velox::VectorPtr /*scores*/) {
+velox::RowVectorPtr TextMaterializer::ReadRows(std::span<std::string> row_keys,
+                                               velox::VectorPtr scores) {
   if (row_keys.empty()) {
     return nullptr;
   }
-  SDB_ASSERT(std::is_sorted(row_keys.begin(), row_keys.end()));
-
   auto decode = [](std::string_view key) {
     return primary_key::ReadSigned<int64_t>(key);
   };
@@ -66,7 +71,13 @@ velox::RowVectorPtr TextMaterializer::ReadRows(
     return nullptr;
   }
 
-  return std::dynamic_pointer_cast<velox::RowVector>(output);
+  auto result = basics::downCast<velox::RowVector>(output);
+  if (_score_column_idx >= 0) {
+    SDB_ASSERT(scores);
+    SDB_ASSERT(scores->size() == row_keys.size());
+    result->children()[_score_column_idx] = std::move(scores);
+  }
+  return result;
 }
 
 }  // namespace sdb::connector

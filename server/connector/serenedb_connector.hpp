@@ -1158,23 +1158,35 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     if (const auto* file_table =
           dynamic_cast<const ReadFileTable*>(&underlying_table)) {
+      // TODO: teach ScanSpec to skip the score column instead of stripping it
+      // from the type. Constant approach doesn't work due to pool lifetime.
+      std::vector<std::string> reader_names;
+      std::vector<velox::TypePtr> reader_types;
+      for (size_t i = 0; i < output_type->size(); ++i) {
+        if (column_oids[i] != catalog::Column::kInvertedIndexScoreId) {
+          reader_names.push_back(output_type->nameOf(i));
+          reader_types.push_back(output_type->childAt(i));
+        }
+      }
+      auto reader_type =
+        velox::ROW(std::move(reader_names), std::move(reader_types));
       auto [source, reader, row_reader] = FileDataSource::CreateReader(
-        *file_table->GetOptions(), pool, output_type, column_handles, {},
+        *file_table->GetOptions(), pool, reader_type, column_handles, {},
         nullptr, nullptr);
       auto format = file_table->GetOptions()->Reader()->fileFormat();
       if (format == velox::dwio::common::FileFormat::PARQUET) {
         return std::make_unique<SearchDataSource<ParquetMaterializer>>(
           pool,
           ParquetMaterializer(pool, std::move(source), std::move(reader),
-                              std::move(row_reader), output_type),
+                              std::move(row_reader), output_type, column_oids),
           search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
       }
 
-      SDB_ASSERT(format == velox::dwio::common::FileFormat::PARQUET);
+      SDB_ASSERT(format == velox::dwio::common::FileFormat::TEXT);
       return std::make_unique<SearchDataSource<TextMaterializer>>(
         pool,
         TextMaterializer(pool, std::move(source), std::move(reader),
-                         std::move(row_reader), output_type),
+                         std::move(row_reader), output_type, column_oids),
         search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
     }
 

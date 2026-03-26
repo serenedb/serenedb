@@ -1159,7 +1159,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_table =
           dynamic_cast<const ReadFileTable*>(&underlying_table)) {
       // TODO: teach ScanSpec to skip the score column instead of stripping it
-      // from the type. Constant approach doesn't work due to pool lifetime.
+      // from the type.
       std::vector<std::string> reader_names;
       std::vector<velox::TypePtr> reader_types;
       for (size_t i = 0; i < output_type->size(); ++i) {

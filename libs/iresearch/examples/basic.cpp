@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +17,6 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-
-// This example demonstrates the core iresearch workflow:
-//   1. Create a directory and index writer
-//   2. Define fields and index documents
-//   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
 #include <iresearch/parser/parser.h>
 
@@ -40,6 +37,11 @@
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/text_format.hpp>
+
+// This example demonstrates the core iresearch workflow:
+//   1. Create a directory and index writer
+//   2. Define fields and index documents
+//   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
 // A minimal text field that tokenizes its value and optionally stores it.
 // Fields must provide: Name(), GetIndexFeatures(), GetTokens(), Write().

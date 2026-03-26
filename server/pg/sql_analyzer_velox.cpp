@@ -66,6 +66,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
 #include "catalog/function.h"
@@ -83,6 +84,7 @@
 #include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
+#include "pg/pg_catalog/pg_attribute.h"
 #include "pg/pg_list_utils.h"
 #include "pg/progress_tracker.h"
 #include "pg/protocol.h"
@@ -186,17 +188,18 @@ constexpr lp::SpecialForm kSpecialFormPlaceholder{
   std::numeric_limits<std::underlying_type_t<lp::SpecialForm>>::max()};
 
 // axiom special form; doesn't exist in velox
-const containers::FlatHashMap<std::string_view, lp::SpecialForm> kSpecialForms{
-  {"and", lp::SpecialForm::kAnd},
-  {"cast", lp::SpecialForm::kCast},
-  {"try_cast", lp::SpecialForm::kTryCast},
-  {"coalesce", lp::SpecialForm::kCoalesce},
-  {"if", lp::SpecialForm::kIf},
-  {"or", lp::SpecialForm::kOr},
-  {"switch", lp::SpecialForm::kSwitch},
-  {"try", lp::SpecialForm::kTry},
-  {"row_constructor", kSpecialFormPlaceholder},
-  {"in", lp::SpecialForm::kIn},
+constexpr containers::TrivialBiMap kSpecialForms = [](auto selector) {
+  return selector()
+    .Case("and", lp::SpecialForm::kAnd)
+    .Case("cast", lp::SpecialForm::kCast)
+    .Case("try_cast", lp::SpecialForm::kTryCast)
+    .Case("coalesce", lp::SpecialForm::kCoalesce)
+    .Case("if", lp::SpecialForm::kIf)
+    .Case("or", lp::SpecialForm::kOr)
+    .Case("switch", lp::SpecialForm::kSwitch)
+    .Case("try", lp::SpecialForm::kTry)
+    .Case("row_constructor", kSpecialFormPlaceholder)
+    .Case("in", lp::SpecialForm::kIn);
 };
 
 using NameToColumnMap =
@@ -4479,43 +4482,46 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
   return res;
 }
 
-using OpToFuncMap = containers::FlatHashMap<std::string_view, std::string_view>;
-
-const OpToFuncMap kOpToFunc{
-  {"+", "presto_plus"},
-  {"-", "presto_minus"},
-  {"*", "presto_multiply"},
-  {"/", "presto_divide"},
-  {"%", "presto_mod"},
-  {"<", "presto_lt"},
-  {"<=", "presto_lte"},
-  {">", "presto_gt"},
-  {">=", "presto_gte"},
-  {"=", "presto_eq"},
-  {"!", "presto_not"},
-  {"!=", "presto_neq"},
-  {"<>", "presto_neq"},
-  {"||", "presto_concat"},
-  {"and", "and"},
-  {"or", "or"},
-  {"is", "presto_is"},
-  {"IS DISTINCT FROM", "presto_distinct_from"},
-  {"count_star", "presto_count"},
-  // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
-  {"<->", "presto_l2_squared"},
-  {"<#>", "presto_dot_product"},
-  {"<=>", "presto_cosine_similarity"},
-  {"<+>", "presto_l1_distance"},
+constexpr containers::TrivialBiMap kOpToFunc = [](auto selector) {
+  return selector()
+    .Case("+", "presto_plus")
+    .Case("-", "presto_minus")
+    .Case("*", "presto_multiply")
+    .Case("/", "presto_divide")
+    .Case("%", "presto_mod")
+    .Case("<", "presto_lt")
+    .Case("<=", "presto_lte")
+    .Case(">", "presto_gt")
+    .Case(">=", "presto_gte")
+    .Case("=", "presto_eq")
+    .Case("!", "presto_not")
+    .Case("!=", "presto_neq")
+    .Case("<>", "presto_neq")
+    .Case("||", "presto_concat")
+    .Case("&", "presto_bitwise_and")
+    .Case("|", "presto_bitwise_or")
+    .Case("#", "presto_bitwise_xor")
+    .Case("^", "presto_power")
+    .Case("<<", "presto_bitwise_left_shift")
+    .Case(">>", "presto_bitwise_right_shift")
+    .Case("and", "and")
+    .Case("or", "or")
+    .Case("is", "presto_is")
+    .Case("IS DISTINCT FROM", "presto_distinct_from")
+    .Case("count_star", "presto_count")
+    // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
+    .Case("<->", "presto_l2_squared")
+    .Case("<#>", "presto_dot_product")
+    .Case("<=>", "presto_cosine_similarity")
+    .Case("<+>", "presto_l1_distance");
 };
 
-const OpToFuncMap kDateIntervalOp{
-  {"+", "pg_time_plus"},
-  {"-", "pg_time_minus"},
+constexpr containers::TrivialBiMap kDateIntervalOp = [](auto selector) {
+  return selector().Case("+", "pg_time_plus").Case("-", "pg_time_minus");
 };
 
-const OpToFuncMap kDateOp{
-  {"+", "presto_date_add"},
-  {"-", "presto_date_diff"},
+constexpr containers::TrivialBiMap kDateOp = [](auto selector) {
+  return selector().Case("+", "presto_date_add").Case("-", "presto_date_diff");
 };
 
 static constexpr std::string_view kMatch = "~";
@@ -4680,8 +4686,8 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonOp(std::string_view type, lp::ExprPtr input,
 
 lp::ExprPtr SqlAnalyzer::MaybeIntervalOp(std::string_view op, lp::ExprPtr& lhs,
                                          lp::ExprPtr& rhs) {
-  auto it = kDateIntervalOp.find(op);
-  if (it == kDateIntervalOp.end()) {
+  auto func = kDateIntervalOp.TryFindByFirst(op);
+  if (!func) {
     return nullptr;
   }
 
@@ -4698,7 +4704,7 @@ lp::ExprPtr SqlAnalyzer::MaybeIntervalOp(std::string_view op, lp::ExprPtr& lhs,
   }
 
   return ResolveVeloxFunctionAndInferArgsCommonType(
-    std::string{it->second}, {std::move(lhs), std::move(rhs)});
+    std::string{*func}, {std::move(lhs), std::move(rhs)});
 }
 
 lp::ExprPtr SqlAnalyzer::MaybeTimeOp(std::string_view op, lp::ExprPtr& lhs,
@@ -4711,10 +4717,10 @@ lp::ExprPtr SqlAnalyzer::MaybeTimeOp(std::string_view op, lp::ExprPtr& lhs,
   const auto& r_type = rhs->type();
 
   if (l_type->isDate() && r_type->isDate()) {
-    if (auto it = kDateOp.find(op); it != kDateOp.end()) {
+    if (auto func = kDateOp.TryFindByFirst(op)) {
       std::swap(lhs, rhs);  // date_diff(x1, x2) does x2 - x1
       return std::make_shared<lp::CallExpr>(
-        velox::BIGINT(), std::string{it->second},
+        velox::BIGINT(), std::string{*func},
         std::vector<lp::ExprPtr>{MakeConst("day"), std::move(lhs),
                                  std::move(rhs)});
     }
@@ -4748,10 +4754,9 @@ lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
     return time_op;
   }
 
-  auto it = kOpToFunc.find(name);
-  if (it != kOpToFunc.end()) {
+  if (auto func = kOpToFunc.TryFindByFirst(name)) {
     return ResolveVeloxFunctionAndInferArgsCommonType(
-      std::string{it->second}, {std::move(lhs), std::move(rhs)});
+      std::string{*func}, {std::move(lhs), std::move(rhs)});
   }
 
   if (IsMatchOperator(name)) {
@@ -4787,9 +4792,63 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
   std::string_view name = strVal(llast(expr.name));
   switch (expr.kind) {
     case AEXPR_OP: {
+      const int location = ExprLocation(&expr);
+
+      // Row comparison: (x1, x2) op (y1, y2)
+      if (expr.lexpr && expr.rexpr && IsA(expr.lexpr, RowExpr) &&
+          IsA(expr.rexpr, RowExpr)) {
+        auto* lrow = castNode(RowExpr, expr.lexpr);
+        auto* rrow = castNode(RowExpr, expr.rexpr);
+        auto largs = ProcessExprListImpl(state, lrow->args);
+        auto rargs = ProcessExprListImpl(state, rrow->args);
+        SDB_ENSURE(largs.size() == rargs.size(), ERROR_INTERNAL,
+                   "row comparison requires equal number of columns");
+        const auto n = largs.size();
+        SDB_ENSURE(n != 0, ERROR_INTERNAL,
+                   "row comparison requires at least one column");
+        // (x1, x2) = (y1, y2) -> x1 = y1 AND x2 = y2
+        // (x1, x2) <> (y1, y2) -> x1 <> y1 OR x2 <> y2
+        if (name == "=" || name == "<>" || name == "!=") {
+          std::vector<lp::ExprPtr> comparisons;
+          comparisons.reserve(largs.size());
+          for (size_t i = 0; i != n; ++i) {
+            comparisons.push_back(ProcessBinaryOp(
+              name, std::move(largs[i]), std::move(rargs[i]), location));
+          }
+          return name == "=" ? MakeAnd(std::move(comparisons))
+                             : MakeOr(std::move(comparisons));
+        }
+        // (x1, x2) < (y1, y2) -> x1 < y1 OR (x1 = y1 AND x2 < y2)
+        // (x1, x2) <= (y1, y2) -> NOT((x1, x2) > (y1, y2))
+        auto build_lexicographic = [&](std::string_view op) {
+          auto result = ProcessBinaryOp(op, std::move(largs[n - 1]),
+                                        std::move(rargs[n - 1]), location);
+          for (size_t i = 1; i != n; ++i) {
+            const auto j = n - 1 - i;
+            auto cmp = ProcessBinaryOp(op, largs[j], rargs[j], location);
+            auto eq = ProcessBinaryOp("=", std::move(largs[j]),
+                                      std::move(rargs[j]), location);
+            result = MakeOr(
+              {std::move(cmp), MakeAnd({std::move(eq), std::move(result)})});
+          }
+          return result;
+        };
+        if (name == "<" || name == ">") {
+          return build_lexicographic(name);
+        }
+        if (name == "<=" || name == ">=") {
+          auto negated_op = name == "<=" ? ">" : "<";
+          return ResolveVeloxFunctionAndInferArgsCommonType(
+            "presto_not", {build_lexicographic(negated_op)});
+        }
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          CURSOR_POS(ErrorPosition(location)),
+          ERR_MSG("row comparison operator \"", name, "\" is not supported"));
+      }
+
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
-      const int location = ExprLocation(&expr);
       if (!lhs && !rhs) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         CURSOR_POS(ErrorPosition(location)),
@@ -5665,12 +5724,12 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
     coercion = FixupReturnType(coercion);
   }
   ApplyCoercions(args, coercions);
-  auto it = kSpecialForms.find(name);
-  if (it == kSpecialForms.end()) {
+  auto special_form = kSpecialForms.TryFind(name);
+  if (!special_form) {
     return std::make_shared<lp::CallExpr>(std::move(type), std::move(name),
                                           std::move(args));
   }
-  return std::make_shared<lp::SpecialFormExpr>(std::move(type), it->second,
+  return std::make_shared<lp::SpecialFormExpr>(std::move(type), *special_form,
                                                std::move(args));
 }
 

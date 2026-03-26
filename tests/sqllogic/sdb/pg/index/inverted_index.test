@@ -330,3 +330,230 @@ DROP TABLE babsky_ext;
 
 statement ok
 DROP TABLE babsky_src;
+
+
+# index backfill from external (text/csv) table
+
+statement ok
+CREATE TABLE text_idx_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO text_idx_src VALUES
+  (1, 'pudge goes mid every game', 'clickclack university'),
+  (2, 'anchin-chan reads manga all day', 'clickclack university'),
+  (3, 'vedernikoff carries team again', 'deadinside academy'),
+  (4, 'gayazov plays mass effect', 'deadinside academy'),
+  (5, 'krivda writes sql at night', 'clickclack university');
+
+statement count 5
+COPY text_idx_src TO '/tmp/${__DATABASE__}_text_idx_memes.csv';
+
+statement ok
+CREATE TABLE text_idx_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_text_idx_memes.csv'
+);
+
+statement ok
+CREATE INDEX text_idx_ext_idx ON text_idx_ext USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+
+query
+SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'anchin-chan') ORDER BY a;
+----
+a	b
+2	anchin-chan reads manga all day
+
+query
+SELECT a, b, c FROM text_idx_ext_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+5	krivda writes sql at night	clickclack university
+
+query
+SELECT a, b, c FROM text_idx_ext_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+----
+a	b	c
+3	vedernikoff carries team again	deadinside academy
+
+query
+SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+----
+a	b
+1	pudge goes mid every game
+4	gayazov plays mass effect
+
+query
+SELECT * FROM text_idx_ext_idx;
+----
+a	b	c
+1	pudge goes mid every game	clickclack university
+2	anchin-chan reads manga all day	clickclack university
+3	vedernikoff carries team again	deadinside academy
+4	gayazov plays mass effect	deadinside academy
+5	krivda writes sql at night	clickclack university
+
+statement ok
+DROP TABLE text_idx_ext;
+
+statement ok
+DROP TABLE text_idx_src;
+
+
+# BM25 scoring on external (parquet) table
+
+statement ok
+CREATE TABLE score_parquet_src (a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO score_parquet_src VALUES
+  (1, 'the quick brown fox jumps over the lazy dog'),
+  (2, 'the quick fox'),
+  (3, 'the lazy dog');
+
+statement count 3
+COPY score_parquet_src TO '/tmp/${__DATABASE__}_score_parquet.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TABLE score_parquet_ext(
+  a INT8,
+  b TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_score_parquet.parquet'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY score_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE INDEX score_parquet_idx ON score_parquet_ext USING inverted(a, b score_en);
+
+query
+SELECT a, BM25() > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+----
+a	has_score
+1	t
+2	t
+
+query
+SELECT a FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+----
+a
+1
+2
+
+statement ok
+DROP TABLE score_parquet_ext;
+
+statement ok
+DROP TABLE score_parquet_src;
+
+
+# BM25 scoring on external (text/csv) table
+
+statement ok
+CREATE TABLE score_text_src (a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO score_text_src VALUES
+  (1, 'the quick brown fox jumps over the lazy dog'),
+  (2, 'the quick fox'),
+  (3, 'the lazy dog');
+
+statement count 3
+COPY score_text_src TO '/tmp/${__DATABASE__}_score_text.csv';
+
+statement ok
+CREATE TABLE score_text_ext(
+  a INT8,
+  b TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_score_text.csv'
+);
+
+statement ok
+CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
+
+query
+SELECT a, BM25() > 0 AS has_score FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+----
+a	has_score
+1	t
+2	t
+
+query
+SELECT a FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+----
+a
+1
+2
+
+statement ok
+DROP TABLE score_text_ext;
+
+statement ok
+DROP TABLE score_text_src;
+
+
+# Multi-segment scoring: insert+vacuum then insert again (unsorted keys across segments)
+
+statement ok
+CREATE TABLE multi_seg (a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO multi_seg VALUES (1, 'alpha fox'), (2, 'beta fox');
+
+statement ok
+CREATE INDEX multi_seg_idx ON multi_seg USING inverted(a, b score_en);
+
+statement ok
+VACUUM (UPDATE_INDEXES) multi_seg;
+
+statement ok
+INSERT INTO multi_seg VALUES (3, 'gamma fox'), (4, 'delta fox');
+
+statement ok
+VACUUM (UPDATE_INDEXES) multi_seg;
+
+query
+SELECT a, BM25() > 0 AS has_score FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+----
+a	has_score
+1	t
+2	t
+3	t
+4	t
+
+query
+SELECT a FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+----
+a
+1
+2
+3
+4
+
+statement ok
+DROP TABLE multi_seg;

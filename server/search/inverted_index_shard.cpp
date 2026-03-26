@@ -196,6 +196,9 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     return true;
   };
 
+  SDB_IF_FAILURE("segment_1000_docs_max") {
+    writer_options.segment_docs_max = 1000;
+  }
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
 
   if (!path_exists) {

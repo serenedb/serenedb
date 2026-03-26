@@ -48,9 +48,11 @@ c
 statement ok
 VACUUM (UPDATE_INDEXES) t;
 
-statement error
+statement error db error: ERROR: relation 'wrong_t_name' not found.
 VACUUM (UPDATE_INDEXES) wrong_t_name;
 
+statement error db error: ERROR: relation 'index_t' not found.
+VACUUM (UPDATE_INDEXES) index_t;
 
 query
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;

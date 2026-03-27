@@ -57,7 +57,7 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
     }, [databaseSelectorVersion, focusSearchInput]);
 
     return (
-        <div ref={containerRef} className="grid min-w-0 grid-cols-2 gap-2">
+        <div ref={containerRef} className="grid min-w-0 grid-cols-2 gap-1">
             <div className="min-w-0 space-y-2">
                 <div className="pl-2 text-secondary-foreground/70 flex items-center gap-2 px-1 text-[11px] uppercase tracking-[0.08em]">
                     <ConnectionIcon className="size-3.5" />

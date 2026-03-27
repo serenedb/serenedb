@@ -43,7 +43,8 @@ export const ConsoleEditorTopbar = () => {
                     onClick={toggleSettingsSidebar}
                     title="Toggle settings sidebar"
                     className={cn({
-                        "text-muted-foreground": settingsSidebarCollapsed,
+                        "text-accent-foreground bg-accent":
+                            !settingsSidebarCollapsed,
                     })}>
                     <SettingsIcon className="size-4" />
                 </Button>
@@ -53,8 +54,8 @@ export const ConsoleEditorTopbar = () => {
                     onClick={toggleExecutionHistorySidebar}
                     title="Toggle execution history sidebar"
                     className={cn({
-                        "text-muted-foreground":
-                            executionHistorySidebarCollapsed,
+                        "text-accent-foreground bg-accent":
+                            !executionHistorySidebarCollapsed,
                     })}>
                     <QueryHistoryIcon className="size-4" />
                 </Button>

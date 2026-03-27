@@ -92,7 +92,7 @@ export const SwitchConnection: React.FC<SwitchConnectionProps> = () => {
 
                         <KbdGroup className="ml-auto pl-3">
                             <Kbd>Cmd</Kbd>
-                            <Kbd>P</Kbd>
+                            <Kbd>K</Kbd>
                         </KbdGroup>
                     </div>
                 </button>

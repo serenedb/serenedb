@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
+#include <vpack/builder.h>
 #include <vpack/collection.h>
 #include <vpack/slice.h>
 
@@ -43,7 +44,6 @@
 #include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-#include "vpack/builder.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -77,31 +77,9 @@ struct KeyGeneratorOptions {
 
 // NOLINTEND
 
-Result ResolveId(ObjectId database, const auto& name, ObjectId& id) {
-  if (name.empty()) {
-    return {ERROR_BAD_PARAMETER, "Vertex collection name is not set"};
-  }
-
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c =
-    catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic, name);
-  if (!c) {
-    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "Collection not found: ", name};
-  }
-
-  SDB_ASSERT(c);
-  id = c->planId();
-
-  return {};
-};
-
-}  // namespace
-
-std::string Column::GeneratePKName(std::span<const std::string> column_names) {
-  static constexpr std::string_view kGeneratedPKPrefix = "sdb_generated_pk";
-
-  std::string candidate{kGeneratedPKPrefix};
+std::string GenerateUniqueName(std::string_view prefix,
+                               std::span<const std::string> column_names) {
+  std::string candidate{prefix};
   size_t suffix = 0;
   bool found_unique = false;
 
@@ -110,7 +88,7 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
     for (const auto& str : column_names) {
       if (str == candidate) [[unlikely]] {
         found_unique = false;
-        candidate.erase(kGeneratedPKPrefix.size());
+        candidate.erase(prefix.size());
         absl::StrAppend(&candidate, "_", ++suffix);
         break;
       }
@@ -118,6 +96,17 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
   }
 
   return candidate;
+}
+
+}  // namespace
+
+std::string Column::GeneratePKName(std::span<const std::string> column_names) {
+  return GenerateUniqueName("sdb_generated_pk", column_names);
+}
+
+std::string Column::GenerateScoreName(
+  std::span<const std::string> column_names) {
+  return GenerateUniqueName("sdb_inverted_index_score", column_names);
 }
 
 std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
@@ -146,8 +135,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
                         CreateTableOptions& options,
                         uint32_t replication_factor, uint32_t write_concern,
                         bool enforce_replication_factor) {
-  if (request.type != std::to_underlying(TableType::Document) &&
-      request.type != std::to_underlying(TableType::Edge) &&
+  if (request.type != std::to_underlying(TableType::RocksDB) &&
       request.type != std::to_underlying(TableType::File)) {
     return {ERROR_BAD_PARAMETER, "Invalid collection type: ", request.type};
   }
@@ -203,7 +191,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   } else if (request.distributeShardsLike) {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = catalog.GetCatalogSnapshot();
     auto leader = snapshot->GetTable(database_id, StaticStrings::kPublic,
                                      *request.distributeShardsLike);
     if (!leader) {
@@ -300,19 +288,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   SDB_ASSERT(request.writeConcern);
   SDB_ASSERT(request.numberOfShards);
 
-  if (const auto& keys = request.shardKeys; keys.empty() || keys.size() > 8) {
-    return {ERROR_BAD_PARAMETER, "Invalid number of shard keys for collection"};
-  } else if (auto it = absl::c_find_if(
-               keys,
-               [](auto name) {
-                 return name.empty() || name == StaticStrings::kRevString;
-               });
-             it != keys.end()) {
-    return {ERROR_BAD_PARAMETER,
-            it->empty() ? "Empty string" : StaticStrings::kRevString,
-            " cannot be used as a shard key"};
-  }
-
   const auto& server_options = GetServerOptions();
 
   if (enforce_replication_factor) {
@@ -356,11 +331,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
               "A satellite collection can only have 1 shard"};
     }
 
-    if (request.shardKeys.size() != 1 ||
-        request.shardKeys.front() != StaticStrings::kKeyString) {
-      return {ERROR_BAD_PARAMETER, "'satellite' cannot use shardKeys"};
-    }
-
     // TODO(gnusi): check and error?
     request.writeConcern = 0;
     request.numberOfShards = 1;
@@ -374,16 +344,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     return {ERROR_BAD_PARAMETER, "numberOfShards cannot be 0"};
   }
 
-  if (request.type == std::to_underlying(TableType::Edge)) {
-    auto r = ResolveId(database_id, request.from, options.from);
-    if (!r.ok()) {
-      return r;
-    }
-    r = ResolveId(database_id, request.to, options.to);
-    if (!r.ok()) {
-      return r;
-    }
-  }
   if (auto r = ValidatorJsonSchema::buildInstance(request.schema); r) {
     options.schema = std::move(*r);
   } else {
@@ -432,25 +392,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.file_info = std::move(request.file_info);
 
   return {};
-}
-
-void WriteTableName(vpack::Builder& b, ObjectId id) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c = catalog.GetSnapshot()->GetObject<catalog::Table>(id);
-  if (!c) {
-    b.add(vpack::Slice::emptyStringSlice());  // dangling reference
-  } else {
-    b.add(c->GetName());
-  }
-}
-
-std::shared_ptr<Table> GetVertexByName(ObjectId database,
-                                       std::string_view name) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<CatalogFeature>().Global();
-  return catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic,
-                                         name);
 }
 
 }  // namespace sdb::catalog

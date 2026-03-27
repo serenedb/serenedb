@@ -27,8 +27,10 @@
 
 namespace sdb {
 namespace options {
+
 void DefineEnvironment(std::string_view key_value);
 std::string EnvironmentTranslator(std::string_view value,
                                   const char* binary_path);
+
 }  // namespace options
 }  // namespace sdb

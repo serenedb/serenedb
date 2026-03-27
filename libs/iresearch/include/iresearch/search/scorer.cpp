@@ -68,6 +68,4 @@ uint8_t Scorer::compatible(WandType index, WandType query) noexcept {
   return 0;
 }
 
-REGISTER_ATTRIBUTE(FilterBoost);
-
 }  // namespace irs

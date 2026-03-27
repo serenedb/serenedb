@@ -24,8 +24,8 @@
 
 #include <vector>
 
+#include "iresearch/formats/column/hnsw_index.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/hnsw_index.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/store_utils.hpp"
 

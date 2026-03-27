@@ -42,6 +42,7 @@ using namespace sdb;
 using namespace sdb::basics;
 
 namespace {
+
 struct Synchronizer {
   std::mutex mutex;
   std::condition_variable cv;

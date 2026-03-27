@@ -42,30 +42,29 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
     auto sequential_docs = q->execute({.segment = sub});
     ASSERT_NE(nullptr, sequential_docs);
 
-    auto* doc = irs::get<irs::DocAttr>(*sequential_docs);
-    ASSERT_NE(nullptr, doc);
-
     result_costs.emplace_back(irs::CostAttr::extract(*sequential_docs));
 
     while (sequential_docs->next()) {
       auto stateless_random_docs = q->execute({.segment = sub});
       ASSERT_NE(nullptr, stateless_random_docs);
-      ASSERT_EQ(sequential_docs->value(), doc->value);
-      ASSERT_EQ(doc->value, random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, random_docs->value());
-      ASSERT_EQ(doc->value, random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, random_docs->value());
-      ASSERT_EQ(doc->value, stateless_random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, stateless_random_docs->value());
-      ASSERT_EQ(doc->value, stateless_random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, stateless_random_docs->value());
+      ASSERT_EQ(sequential_docs->value(),
+                random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(), random_docs->value());
+      ASSERT_EQ(sequential_docs->value(),
+                random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(), random_docs->value());
+      ASSERT_EQ(sequential_docs->value(),
+                stateless_random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(), stateless_random_docs->value());
+      ASSERT_EQ(sequential_docs->value(),
+                stateless_random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(), stateless_random_docs->value());
 
       result.push_back(sequential_docs->value());
     }
     ASSERT_FALSE(sequential_docs->next());
     ASSERT_FALSE(random_docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(doc->value));
 
     // seek to eof
     ASSERT_TRUE(irs::doc_limits::eof(
@@ -91,9 +90,6 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
     auto sequential_docs = q->execute({.segment = sub, .scorer = scorer});
     ASSERT_NE(nullptr, sequential_docs);
 
-    auto* doc = irs::get<irs::DocAttr>(*sequential_docs);
-    ASSERT_NE(nullptr, doc);
-
     auto score = sequential_docs->PrepareScore({
       .scorer = scorer,
       .segment = &sub,
@@ -110,13 +106,16 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
       });
 
       ASSERT_NE(nullptr, stateless_random_docs);
-      ASSERT_EQ(sequential_docs->value(), doc->value);
-      ASSERT_EQ(doc->value, random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, random_docs->value());
-      ASSERT_EQ(doc->value, stateless_random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, stateless_random_docs->seek(doc->value));
-      ASSERT_EQ(doc->value, stateless_random_docs->value());
+      ASSERT_EQ(sequential_docs->value(),
+                random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(),
+                random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(), random_docs->value());
+      ASSERT_EQ(sequential_docs->value(),
+                stateless_random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(),
+                stateless_random_docs->seek(sequential_docs->value()));
+      ASSERT_EQ(sequential_docs->value(), stateless_random_docs->value());
 
       sequential_docs->FetchScoreArgs(0);
       stateless_random_docs->FetchScoreArgs(0);
@@ -137,7 +136,6 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
     ASSERT_FALSE(sequential_docs->next());
     ASSERT_FALSE(random_docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(doc->value));
 
     // seek to eof
     ASSERT_TRUE(irs::doc_limits::eof(
@@ -180,8 +178,6 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
   };
 
   auto assert_iterator = [&](auto& test, auto& it, auto& score) {
-    auto* doc = irs::get<irs::DocAttr>(it);
-    ASSERT_NE(nullptr, doc);
     std::visit(
       [&it, expected = test.expected]<typename A>(A action) {
         if constexpr (std::is_same_v<A, Seek>) {
@@ -196,7 +192,6 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
       },
       test.action);
     ASSERT_EQ(test.expected, it.value());
-    ASSERT_EQ(test.expected, doc->value);
     if (!irs::doc_limits::eof(test.expected)) {
       it.FetchScoreArgs(0);
       assert_equal_scores(test.score, score);
@@ -286,10 +281,6 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
       .scorer = scorer,
     });
 
-    auto* doc = irs::get<irs::DocAttr>(*docs);
-    // ensure all iterators contain "document" attribute
-    ASSERT_TRUE(bool(doc));
-
     irs::ScoreFunction score;
     if (score_must_be_present) {
       score = docs->PrepareScore({
@@ -302,7 +293,6 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
     irs::score_t score_value{};
 
     while (docs->next()) {
-      ASSERT_EQ(docs->value(), doc->value);
       docs->FetchScoreArgs(0);
       fetcher.Fetch(docs->value());
       score.Score(&score_value, 1);

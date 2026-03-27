@@ -93,9 +93,6 @@ class GeoIterator : public DocIterator {
       _stored_value{get<PayAttr>(*_column_it)},
       _acceptor{acceptor},
       _parser{parser} {
-    std::get<AttributePtr<DocAttr>>(_attrs) =
-      GetMutable<DocAttr>(_approx.get());
-
     std::get<CostAttr>(_attrs).reset(
       [&]() noexcept { return kExtraCost * CostAttr::extract(*_approx); });
 
@@ -133,15 +130,11 @@ class GeoIterator : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
-  }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx->advance();
-      if (doc_limits::eof(doc) || Accept()) {
-        return doc;
+      if (doc_limits::eof(doc) || Accept(doc)) {
+        return _doc = doc;
       }
     }
   }
@@ -151,8 +144,8 @@ class GeoIterator : public DocIterator {
       return doc;
     }
     const auto doc = _approx->seek(target);
-    if (doc_limits::eof(doc) || Accept()) {
-      return doc;
+    if (doc_limits::eof(doc) || Accept(doc)) {
+      return _doc = doc;
     }
     return advance();
   }
@@ -165,8 +158,8 @@ class GeoIterator : public DocIterator {
     if (target != doc) {
       return doc;
     }
-    if (doc_limits::eof(doc) || Accept()) {
-      return doc;
+    if (doc_limits::eof(doc) || Accept(doc)) {
+      return _doc = doc;
     }
     return doc + 1;
   }
@@ -174,20 +167,17 @@ class GeoIterator : public DocIterator {
   uint32_t count() final { return CountImpl(*this); }
 
  private:
-  bool Accept() {
-    auto* doc = std::get<AttributePtr<DocAttr>>(_attrs).ptr;
-    SDB_ASSERT(_column_it->value() < doc->value);
-
-    if (doc->value != _column_it->seek(doc->value) ||
-        _stored_value->value.empty()) {
+  bool Accept(doc_id_t doc) {
+    SDB_ASSERT(_column_it->value() < doc);
+    if (doc != _column_it->LazySeek(doc) || _stored_value->value.empty()) {
       SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
-                "Missing stored geo value, doc='", doc->value, "'");
+                "Missing stored geo value, doc='", doc, "'");
       return false;
     }
     return _parser(_stored_value->value, _shape) && _acceptor(_shape);
   }
 
-  using Attributes = std::tuple<AttributePtr<DocAttr>, CostAttr>;
+  using Attributes = std::tuple<CostAttr>;
 
   const byte_type* _stats = nullptr;
   score_t _boost = {};
@@ -214,8 +204,9 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
 
   return memory::make_managed<GeoIterator<Parser, Acceptor>>(
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
-    MakeDisjunction<Disjunction>({}, std::move(itrs)), std::move(column_it),
-    parser, acceptor, field.meta(), query_stats, boost);
+    MakeDisjunction<Disjunction>(
+      {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
+    std::move(column_it), parser, acceptor, field.meta(), query_stats, boost);
 }
 
 // Cached per reader query state
@@ -262,14 +253,11 @@ class GeoQuery : public Filter::Query {
 
     for (auto& entry : state->states) {
       SDB_ASSERT(entry);
-      auto& it = itrs.emplace_back(
-        field->Iterator(IndexFeatures::None, {.cookie = entry.get()}));
-
-      if (!it || doc_limits::eof(it.value())) [[unlikely]] {
-        itrs.pop_back();
-
+      auto it = field->Iterator(IndexFeatures::None, {.cookie = entry.get()});
+      if (!it || doc_limits::eof(it->value())) [[unlikely]] {
         continue;
       }
+      itrs.emplace_back(std::move(it));
     }
 
     auto column_it = state->stored_field->iterator(ColumnHint::Normal);

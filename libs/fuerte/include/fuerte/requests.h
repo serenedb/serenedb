@@ -19,6 +19,7 @@
 ///
 /// @author Jan Christoph Uhde
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include "message.h"
@@ -42,6 +43,7 @@
 //
 
 namespace sdb::fuerte {
+
 // Helper and Implementation
 
 std::unique_ptr<Request> CreateRequest(RestVerb verb, ContentType content_type);

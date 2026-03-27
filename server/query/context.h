@@ -22,6 +22,7 @@
 
 #include <velox/core/QueryCtx.h>
 
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -52,10 +53,18 @@ class EnumType {
   }
 
   template<typename... Commands>
+  bool HasOnly(Commands... commands) const {
+    const auto mask = (... | std::to_underlying(commands));
+    return _commands == mask;
+  }
+
+  template<typename... Commands>
   bool HasAnyNot(Commands... commands) const {
     const auto mask = (... | std::to_underlying(commands));
     return _commands & ~mask;
   }
+
+  explicit operator bool() const { return _commands != 0; }
 
  private:
   ValueType _commands = 0;
@@ -65,8 +74,6 @@ enum class CommandType : uint64_t {
   None = 0,
   Query = 1 << 0,
   Explain = 1 << 1,
-  Show = 1 << 2,
-  External = 1 << 3,
 };
 
 enum class ExplainWith : uint64_t {
@@ -80,11 +87,20 @@ enum class ExplainWith : uint64_t {
   Execution = 1 << 5,
 
   // parameters
-  Registers = 1 << 6,
-  Oneline = 1 << 7,
-  Cost = 1 << 8,
-  Stats = 1 << 9,
+  Analyze = 1 << 6,
+  Registers = 1 << 7,
+  Oneline = 1 << 8,
+  Cost = 1 << 9,
 };
+
+}  // namespace sdb::query
+
+template<>
+struct magic_enum::customize::enum_range<sdb::query::ExplainWith> {
+  static constexpr bool is_flags = true;
+};
+
+namespace sdb::query {
 
 struct QueryContext {
   explicit QueryContext(const std::shared_ptr<Transaction>& transaction,

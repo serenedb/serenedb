@@ -11,5 +11,7 @@ target_sources(
         drop_object.cpp
         transaction.cpp
         variable_set.cpp
+        remove_tombstone.cpp
         vacuum.cpp
+        create_tsdictionary.cpp
 )

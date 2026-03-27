@@ -31,6 +31,7 @@
 
 namespace sdb {
 namespace options {
+
 class ProgramOptions;
 }
 

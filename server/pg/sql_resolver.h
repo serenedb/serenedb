@@ -38,6 +38,6 @@ void ResolveSqlFunction(ObjectId database,
                         Objects& objects, Disallowed& disallowed,
                         const Objects& query, const Config& config);
 
-void Resolve(ObjectId database, Objects& objects, const Config& config);
+void Resolve(ObjectId database, Objects& objects, Config& config);
 
 }  // namespace sdb::pg

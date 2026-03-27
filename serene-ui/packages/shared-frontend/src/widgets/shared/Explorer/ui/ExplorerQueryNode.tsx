@@ -10,6 +10,7 @@ import {
     ContextMenuTrigger,
 } from "@serene-ui/shared-frontend/shared";
 import { useState } from "react";
+import type { QueryExecutionResultSchema } from "@serene-ui/shared-core";
 
 export const ExplorerQueryNode = ({
     nodeData,
@@ -22,7 +23,7 @@ export const ExplorerQueryNode = ({
 
     const nodeType = node.data.type as keyof typeof nodeTemplates;
     const { mutateAsync: executeQuery, isPending: isLoading } =
-        useExecuteQuery();
+        useExecuteQuery<QueryExecutionResultSchema[]>();
 
     const handleClick = async () => {
         const rootNodeId = node.id.split("/")[0];
@@ -44,21 +45,19 @@ export const ExplorerQueryNode = ({
         }
 
         try {
-            const { result } = await executeQuery({
+            const { results } = await executeQuery({
                 query: queryInput?.query || "",
                 database: queryInput?.database || "",
                 connectionId,
             });
+            const rows = (results?.[0]?.rows || []) as any[];
 
             const connectionNode = treeRef.current?.get(node.data.id);
             if (!connectionNode) return;
 
             addNodes(
                 node.data.id,
-                nodeTemplates[nodeType].formatToNodes(
-                    result as any[],
-                    node.data,
-                ),
+                nodeTemplates[nodeType].formatToNodes(rows, node.data),
             );
             node.open();
         } catch (error) {
@@ -111,21 +110,19 @@ export const ExplorerQueryNode = ({
         }
 
         try {
-            const { result } = await executeQuery({
+            const { results } = await executeQuery({
                 query: queryInput?.query || "",
                 database: queryInput?.database || "",
                 connectionId,
             });
+            const rows = (results?.[0]?.rows || []) as any[];
 
             const connectionNode = treeRef.current?.get(node.data.id);
             if (!connectionNode) return;
 
             addNodes(
                 node.data.id,
-                nodeTemplates[nodeType].formatToNodes(
-                    result as any[],
-                    node.data,
-                ),
+                nodeTemplates[nodeType].formatToNodes(rows, node.data),
                 true,
             );
         } catch (error) {

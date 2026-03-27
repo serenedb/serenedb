@@ -30,7 +30,7 @@ export const useExecuteQuery = <T>() => {
 
             const typedResonse = {
                 ...response,
-                result: response.result as T,
+                results: response.results as T,
             };
 
             return typedResonse;

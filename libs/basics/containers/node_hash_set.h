@@ -18,6 +18,7 @@
 ///
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/container/node_hash_set.h>

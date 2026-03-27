@@ -20,17 +20,21 @@
 
 #include "mixed_boolean_filter.hpp"
 
+#include "iresearch/search/boolean_query.hpp"
+
 namespace irs {
 
 Filter::Query::ptr MixedBooleanFilter::prepare(
   const PrepareContext& ctx) const {
-  if (_or->empty()) {
-    return _and->prepare(ctx);
-  }
   if (_and->empty()) {
     return _or->prepare(ctx);
   }
-  return _root.prepare(ctx);
+  if (_or->empty()) {
+    return _and->prepare(ctx);
+  }
+  auto q = memory::make_tracked<BoostQuery>(ctx.memory);
+  q->Prepare(ctx, *_and, *_or);
+  return q;
 }
 
 bool MixedBooleanFilter::equals(const Filter& rhs) const noexcept {
@@ -38,7 +42,7 @@ bool MixedBooleanFilter::equals(const Filter& rhs) const noexcept {
     return false;
   }
   const auto& typed_rhs = sdb::basics::downCast<MixedBooleanFilter>(rhs);
-  return _root == typed_rhs._root;
+  return *_and == *typed_rhs._and && *_or == *typed_rhs._or;
 }
 
 }  // namespace irs

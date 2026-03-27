@@ -64,8 +64,10 @@ constexpr bool IsPower2(T v) noexcept {  // undefined for 0
   return !(v & (v - 1));
 }
 
-inline bool ApproxEquals(double_t lhs, double_t rhs) noexcept {
-  return std::fabs(rhs - lhs) < std::numeric_limits<double_t>::epsilon();
+template<std::floating_point T>
+inline bool ApproxEquals(T lhs, T rhs,
+                         T eps = std::numeric_limits<T>::epsilon()) noexcept {
+  return std::fabs(rhs - lhs) < eps;
 }
 
 constexpr uint64_t Ceil64(double_t v) noexcept {

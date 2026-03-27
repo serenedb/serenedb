@@ -21,7 +21,6 @@
 #include "pg/hba.h"
 
 namespace sdb::hba {
-
 namespace {
 
 bool checkHostname(const hba::Client& client, std::string_view hostName) {

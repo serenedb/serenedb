@@ -23,7 +23,7 @@ a	b	c
 123	456	NULL
 
 
-query ?
+query
 SELECT a + b FROM no_pk;
 ----
 ?column?

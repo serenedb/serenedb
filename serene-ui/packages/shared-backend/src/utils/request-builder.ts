@@ -11,6 +11,10 @@
  * // sql: "INSERT INTO users (name, age) VALUES (?, ?)"
  * // values: ['John', 30]
  */
+function normalizeSqlValue(value: any): any {
+    return typeof value === "boolean" ? (value ? 1 : 0) : value;
+}
+
 export function buildInsert<T extends Record<string, any>>(
     tableName: string,
     data: T,
@@ -28,7 +32,7 @@ export function buildInsert<T extends Record<string, any>>(
     });
 
     const columns = entries.map(([key]) => key);
-    const values = entries.map(([, value]) => value);
+    const values = entries.map(([, value]) => normalizeSqlValue(value));
     const placeholders = columns.map(() => "?").join(", ");
 
     const sql = `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`;
@@ -69,7 +73,7 @@ export function buildUpdate<T extends Record<string, any>>(
     }
 
     const setClause = entries.map(([key]) => `${key} = ?`).join(", ");
-    const values = entries.map(([, value]) => value);
+    const values = entries.map(([, value]) => normalizeSqlValue(value));
 
     let sql = `UPDATE ${tableName} SET ${setClause}`;
 
@@ -82,7 +86,9 @@ export function buildUpdate<T extends Record<string, any>>(
                 .map(([key]) => `${key} = ?`)
                 .join(" AND ");
             sql += ` WHERE ${whereClause}`;
-            values.push(...whereEntries.map(([, value]) => value));
+            values.push(
+                ...whereEntries.map(([, value]) => normalizeSqlValue(value)),
+            );
         }
     }
 
@@ -124,7 +130,7 @@ export function buildSelect(
                 .map(([key]) => `${key} = ?`)
                 .join(" AND ");
             sql += ` WHERE ${whereClause}`;
-            values.push(...entries.map(([, value]) => value));
+            values.push(...entries.map(([, value]) => normalizeSqlValue(value)));
         }
     }
 
@@ -171,7 +177,7 @@ export function buildDelete(
                 .map(([key]) => `${key} = ?`)
                 .join(" AND ");
             sql += ` WHERE ${whereClause}`;
-            values.push(...entries.map(([, value]) => value));
+            values.push(...entries.map(([, value]) => normalizeSqlValue(value)));
         }
     }
 

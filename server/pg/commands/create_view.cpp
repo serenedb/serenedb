@@ -68,8 +68,7 @@ std::string DeparseWithAlias(Node* select, const char* table_alias,
   return body;
 }
 
-yaclib::Future<Result> CreateView(const ExecContext& context,
-                                  const ViewStmt& stmt) {
+yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
   const auto db = context.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
@@ -99,7 +98,7 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
   auto r = SqlQueryView::Make(view, db, std::move(options),
                               catalog::ViewContext::User, &conn_ctx);
   if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
 
   r = catalog.CreateView(db, schema, view, stmt.replace);
@@ -114,8 +113,10 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
         ERR_MSG("relation \"", stmt.view->relname, "\" already exists"));
     }
   }
-
-  return yaclib::MakeFuture(std::move(r));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return {};
 }
 
 std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {

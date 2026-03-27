@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+
 #include <axiom/optimizer/FunctionRegistry.h>
 #include <velox/dwio/parquet/RegisterParquetReader.h>
 #include <velox/dwio/parquet/RegisterParquetWriter.h>
@@ -84,6 +85,8 @@ inline velox::AllowedCoercions AllowedCoercions() {
   add(velox::BIGINT(), {velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
+  add(REGCLASS(), {velox::INTEGER(), velox::BIGINT()});
+  add(REGTYPE(), {velox::INTEGER(), velox::BIGINT()});
 
   add_same_cost(
     PG_UNKNOWN(),

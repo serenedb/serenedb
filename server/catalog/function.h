@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <basics/bit_utils.hpp>
 #include <memory>
 
+#include "basics/bit_utils.hpp"
 #include "basics/fwd.h"
 #include "basics/type_traits.h"
 #include "catalog/fwd.h"
@@ -38,8 +38,8 @@ struct AstNode;
 struct Cell;
 using FunctionImpl = Cell (*)(ExpressionContext*, const AstNode&,
                               std::span<const Cell>);
-}  // namespace aql
 
+}  // namespace aql
 namespace search {
 
 class AnalyzerImpl;
@@ -50,7 +50,6 @@ namespace pg {
 class FunctionImpl;
 
 }  // namespace pg
-
 namespace catalog {
 
 enum class FunctionLanguage : uint8_t {
@@ -177,13 +176,7 @@ class Function final : public SchemaObject {
                             bool is_user_request);
 
   Function(std::string_view name, FunctionSignature signature,
-           FunctionOptions options, aql::FunctionImpl impl);
-
-  Function(std::string_view name, FunctionSignature signature,
            FunctionOptions options);
-
-  Function(FunctionProperties&& properties,
-           std::unique_ptr<search::AnalyzerImpl> impl, ObjectId database_id);
 
   Function(FunctionProperties&& properties,
            std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id);
@@ -198,18 +191,6 @@ class Function final : public SchemaObject {
 
   const FunctionOptions& Options() const noexcept { return _options; }
 
-  aql::FunctionImpl AqlFunction() const noexcept {
-    SDB_ASSERT(_options.language == FunctionLanguage::AqlNative);
-    SDB_ASSERT(_aql_impl);
-    return _aql_impl;
-  }
-
-  search::AnalyzerImpl& Analyzer() const noexcept {
-    SDB_ASSERT(_options.language == FunctionLanguage::AnalyzerJson);
-    SDB_ASSERT(_analyzer_impl);
-    return *_analyzer_impl;
-  }
-
   pg::FunctionImpl& SqlFunction() const noexcept {
     SDB_ASSERT(_options.language == FunctionLanguage::SQL);
     SDB_ASSERT(_sql_impl);
@@ -219,17 +200,13 @@ class Function final : public SchemaObject {
  private:
   FunctionSignature _signature;
   FunctionOptions _options;
-
-  // TODO: use inheritance for different function implementations?
-  aql::FunctionImpl _aql_impl;
-  std::unique_ptr<search::AnalyzerImpl> _analyzer_impl;
   std::unique_ptr<pg::FunctionImpl> _sql_impl;
 };
 
 }  // namespace catalog
 }  // namespace sdb
-
 namespace magic_enum {
+
 template<>
 constexpr customize::customize_t
 customize::enum_name<sdb::catalog::FunctionLanguage>(

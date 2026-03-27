@@ -23,7 +23,7 @@
 
 #include "normalizing_tokenizer.hpp"
 
-#include <frozen/unordered_map.h>
+#include <absl/strings/ascii.h>
 #include <unicode/normalizer2.h>  // for icu::Normalizer2
 #include <unicode/translit.h>     // for icu::Transliterator
 #include <vpack/builder.h>
@@ -31,8 +31,10 @@
 #include <vpack/parser.h>
 #include <vpack/slice.h>
 
+#include <magic_enum/magic_enum.hpp>
 #include <string_view>
 
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
@@ -54,14 +56,6 @@ namespace {
 constexpr std::string_view kLocaleParamName = "locale";
 constexpr std::string_view kCaseConvertParamName = "case";
 constexpr std::string_view kAccentParamName = "accent";
-
-constexpr frozen::unordered_map<std::string_view,
-                                NormalizingTokenizer::CaseConvertT, 3>
-  kCaseConvertMap = {
-    {"lower", NormalizingTokenizer::kLower},
-    {"none", NormalizingTokenizer::kNone},
-    {"upper", NormalizingTokenizer::kUpper},
-};
 
 bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
   if (!slice.isString()) {
@@ -123,9 +117,10 @@ bool ParseVPackOptions(const vpack::Slice slice,
           return false;
         }
 
-        const auto* it = kCaseConvertMap.find(case_convert_slice.stringView());
+        const auto case_value = magic_enum::enum_cast<irs::Case>(
+          case_convert_slice.stringView(), magic_enum::case_insensitive);
 
-        if (it == kCaseConvertMap.end()) {
+        if (!case_value) {
           SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
                    kCaseConvertParamName,
                    "' while constructing normalizing_tokenizer "
@@ -134,7 +129,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
           return false;
         }
 
-        options.case_convert = it->second;
+        options.case_convert = *case_value;
       }
 
       // optional bool
@@ -201,18 +196,17 @@ bool MakeVPackConfig(const NormalizingTokenizer::OptionsT& options,
     builder->add(kLocaleParamName, locale_name);
 
     // case convert
-    const auto case_value = absl::c_find_if(
-      kCaseConvertMap,
-      [&](const auto& v) { return v.second == options.case_convert; });
-    if (case_value != kCaseConvertMap.end()) {
-      builder->add(kCaseConvertParamName, case_value->first);
-    } else {
+    const auto case_name_sv = magic_enum::enum_name(options.case_convert);
+    if (case_name_sv.empty()) {
       SDB_ERROR(
         "xxxxx", sdb::Logger::IRESEARCH,
         absl::StrCat("Invalid case_convert value in text analyzer options: ",
                      static_cast<int>(options.case_convert)));
       return false;
     }
+    std::string case_name{case_name_sv};
+    absl::AsciiStrToLower(&case_name);
+    builder->add(kCaseConvertParamName, case_name);
 
     // Accent
     builder->add(kAccentParamName, options.accent);
@@ -363,13 +357,13 @@ bool NormalizingTokenizer::reset(std::string_view data) {
 
   // case-convert unicode
   switch (_state->options.case_convert) {
-    case kLower:
+    case Case::Lower:
       _state->token.toLower(_state->options.locale);  // inplace case-conversion
       break;
-    case kUpper:
+    case Case::Upper:
       _state->token.toUpper(_state->options.locale);  // inplace case-conversion
       break;
-    case kNone:
+    case Case::None:
       break;
   }
 

@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "query/transaction.h"
 #include "rest_server/serened.h"
 
 namespace sdb {
@@ -36,17 +37,21 @@ ConnectionContext::ConnectionContext(std::string_view user,
     _send_buffer{send_buffer},
     _copy_queue{copy_queue} {}
 
-std::string ConnectionContext::GetCurrentSchema() const {
+std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
+  std::shared_ptr<const catalog::Snapshot> snapshot) const {
+  SDB_ASSERT(snapshot);
   auto database_id = ExecContext::GetDatabaseId();
   auto search_path = Config::Get<VariableType::PgSearchPath>("search_path");
-  auto catalog = SerenedServer::Instance()
-                   .getFeature<catalog::CatalogFeature>()
-                   .Global()
-                   .GetSnapshot();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return catalog->GetSchema(database_id, schema_name);
+    return snapshot->GetSchema(database_id, schema_name);
   });
 
   return it != search_path.end() ? *it : "";
 }
+
+std::string ConnectionContext::GetCurrentSchema() const {
+  auto snapshot = EnsureCatalogSnapshot();
+  return GetCurrentSchemaFromSnapshot(snapshot);
+}
+
 }  // namespace sdb

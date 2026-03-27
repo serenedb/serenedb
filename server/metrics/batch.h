@@ -18,6 +18,7 @@
 ///
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/strings/str_cat.h>

@@ -28,6 +28,7 @@
 #include "endpoint/endpoint.h"
 
 namespace sdb {
+
 class EndpointSrv final : public Endpoint {
  public:
   explicit EndpointSrv(const std::string&);
@@ -46,4 +47,5 @@ class EndpointSrv final : public Endpoint {
  private:
   std::unique_ptr<Endpoint> _endpoint;
 };
+
 }  // namespace sdb

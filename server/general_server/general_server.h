@@ -31,6 +31,7 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 class Endpoint;
@@ -38,6 +39,7 @@ class EndpointList;
 class GeneralServerFeature;
 
 namespace rest {
+
 class Acceptor;
 class CommTask;
 
@@ -83,5 +85,6 @@ class GeneralServer {
   /// global SSL context to use here
   SslServerFeature::SslContextList _ssl_contexts;
 };
+
 }  // namespace rest
 }  // namespace sdb

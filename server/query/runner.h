@@ -31,6 +31,9 @@
 
 namespace sdb::query {
 
+// TODO(mbkkt): Use exception ptr instead of Result.
+using UserTask = std::function<void(yaclib::Result<>)>;
+
 // TODO: Axiom Runner is not designed for async execution this should be fixed.
 class Runner final {
  public:

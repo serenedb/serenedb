@@ -22,6 +22,7 @@
 #pragma once
 
 namespace sdb {
+
 enum class LogLevel : char {
   DEFAULT = 0,
   FATAL = 1,

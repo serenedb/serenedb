@@ -24,10 +24,10 @@
 #pragma once
 
 #include <algorithm>
-#include <basics/singleton.hpp>
 #include <variant>
 
 #include "basics/memory.hpp"
+#include "basics/singleton.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/column_collector.hpp"
@@ -50,13 +50,16 @@ struct DocBlockAttr : public irs::Attribute {
 class DocIteratorWrapper : public irs::DocIterator {
  public:
   explicit DocIteratorWrapper(irs::DocIterator::ptr it)
-    : _it(std::move(it)), _docs(irs::kScoreBlock) {}
+    : _it(std::move(it)), _docs(irs::kScoreBlock) {
+    SDB_ASSERT(_it);
+    _doc = _it->value();
+  }
 
-  irs::doc_id_t value() const noexcept final { return _it->value(); }
+  irs::doc_id_t advance() final { return _doc = _it->advance(); }
 
-  irs::doc_id_t advance() final { return _it->advance(); }
-
-  irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
+  irs::doc_id_t seek(irs::doc_id_t target) final {
+    return _doc = _it->seek(target);
+  }
 
   void FetchScoreArgs(uint16_t index) final { _docs[index] = value(); }
 

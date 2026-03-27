@@ -36,6 +36,8 @@ class ConnectionContext : public ExecContext, public query::Transaction {
                     pg::CopyMessagesQueue* copy_queue);
 
   std::string GetCurrentSchema() const;
+  std::string GetCurrentSchemaFromSnapshot(
+    std::shared_ptr<const catalog::Snapshot> snapshot) const;
 
   message::Buffer* GetSendBuffer() { return _send_buffer; }
 

@@ -28,8 +28,8 @@
 
 namespace sdb::pg {
 
-yaclib::Future<Result> Transaction(ExecContext& context,
-                                   const TransactionStmt& stmt) {
+yaclib::Future<> Transaction(ExecContext& context,
+                             const TransactionStmt& stmt) {
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   Result r;
   switch (stmt.kind) {
@@ -72,7 +72,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
       SDB_UNREACHABLE();
   }
   if (!r.ok()) {
-    return yaclib::MakeFuture(std::move(r));
+    SDB_THROW(std::move(r));
   }
   return {};
 }

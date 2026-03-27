@@ -4,6 +4,7 @@ import {
     DialogDescription,
     DialogTitle,
 } from "@serene-ui/shared-frontend/shared";
+import { useEffect, useState } from "react";
 import {
     BindVariables,
     QueryResults,
@@ -32,6 +33,34 @@ export const SavedQueriesModal = () => {
 
     const hasBindVars =
         currentSavedQuery?.bind_vars && currentSavedQuery.bind_vars.length > 0;
+    const [selectedResultIndex, setSelectedResultIndex] = useState(0);
+    const queryResults =
+        result?.status === "success"
+            ? result.results.map((item) => ({
+                  rows: item.rows,
+                  status: "success" as const,
+                  message: item.message,
+              }))
+            : result
+              ? [
+                    {
+                        rows: [],
+                        status: isQueryRunning ? "running" : result.status,
+                        error: result.status === "failed" ? result.error : undefined,
+                    },
+                ]
+              : [];
+
+    useEffect(() => {
+        if (queryResults.length === 0) {
+            setSelectedResultIndex(0);
+            return;
+        }
+
+        setSelectedResultIndex((currentIndex) =>
+            Math.min(currentIndex, queryResults.length - 1),
+        );
+    }, [queryResults.length]);
 
     return (
         <Dialog open={open} onOpenChange={(value) => setOpen(value)}>
@@ -42,7 +71,7 @@ export const SavedQueriesModal = () => {
                 <DialogTitle />
                 <div className="flex flex-col gap-2">
                     <div className="flex gap-2">
-                        <div className="flex flex-1 min-h-110 min-w-200 bg-sidebar rounded-md border border-border">
+                        <div className="flex flex-1 min-h-120 min-w-250 bg-sidebar rounded-md border border-border">
                             <SavedQueriesSidebar />
                             <SavedQueryData />
                         </div>
@@ -50,25 +79,18 @@ export const SavedQueriesModal = () => {
                             <BindVariables
                                 bind_vars={currentSavedQuery?.bind_vars}
                                 setBindVars={handleChangeBindVars}
-                                className="h-110"
+                                className="h-120"
                             />
                         ) : null}
                     </div>
 
-                    <div className="flex-1 flex min-h-50 bg-background rounded-md border border-border">
+                    <div className="flex-1 flex min-h-60 bg-background rounded-md border border-border">
                         <QueryResults
-                            results={[
-                                {
-                                    rows:
-                                        result?.status == "success"
-                                            ? result?.result
-                                            : [],
-                                    status: isQueryRunning
-                                        ? "running"
-                                        : result?.status || "success",
-                                },
-                            ]}
-                            selectedResultIndex={0}
+                            results={queryResults}
+                            selectedResultIndex={
+                                queryResults.length > 0 ? selectedResultIndex : -1
+                            }
+                            onSelectResult={setSelectedResultIndex}
                         />
                     </div>
                 </div>

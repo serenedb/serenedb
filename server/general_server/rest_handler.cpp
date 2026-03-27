@@ -47,11 +47,6 @@
 #include "statistics/request_statistics.h"
 #include "utils/exec_context.h"
 
-#ifdef SDB_CLUSTER
-#include "cluster/cluster_feature.h"
-#include "cluster/cluster_info.h"
-#endif
-
 using namespace sdb;
 using namespace sdb::basics;
 using namespace sdb::rest;
@@ -270,21 +265,6 @@ yaclib::Future<Result> RestHandler::forwardRequest(bool& forwarded) {
   payload.append(res_payload.data(), res_payload.size());
 
   nf.trackForwardedRequest();
-
-#ifdef SDB_CLUSTER
-  // Should the coordinator be gone by now, we'll respond with 404.
-  // There is no point forwarding requests. This affects transactions, cursors,
-  // ...
-  if (server()
-        .getFeature<ClusterFeature>()
-        .clusterInfo()
-        .getServerEndpoint(server_id)
-        .empty()) {
-    generateError(rest::ResponseCode::NotFound, ERROR_CLUSTER_SERVER_UNKNOWN,
-                  std::string("cluster server ") + server_id + " unknown");
-    return yaclib::MakeFuture<Result>(ERROR_CLUSTER_SERVER_UNKNOWN);
-  }
-#endif
 
   auto future = network::SendRequestRetry(
     pool, "server:" + server_id, request_type, _request->requestPath(),

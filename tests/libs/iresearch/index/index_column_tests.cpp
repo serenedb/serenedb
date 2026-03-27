@@ -27,28 +27,26 @@
 #include "tests_shared.hpp"
 
 namespace {
+
 bool Visit(const irs::ColumnReader& reader,
            const std::function<bool(irs::doc_id_t, irs::bytes_view)>& visitor) {
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
 
   return true;
 }
+
 }  // namespace
 
 class IndexColumnTestCase : public tests::IndexTestBase {};

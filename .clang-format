@@ -149,3 +149,4 @@ StatementMacros:
 TabWidth:        8
 UseTab:          Never
 QualifierAlignment: Left
+InsertBraces: true

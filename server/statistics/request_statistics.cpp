@@ -34,6 +34,7 @@
 using namespace sdb;
 
 namespace {
+
 #ifdef SDB_DEV
 // this variable is only used in maintainer mode, to check that we are
 // only acquiring memory for statistics in case they are enabled.

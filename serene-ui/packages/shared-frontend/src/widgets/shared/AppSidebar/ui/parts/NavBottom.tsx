@@ -1,21 +1,33 @@
-import { useNavigate } from "react-router-dom";
-import type { SidebarButton } from "../../model/types";
-import { SearchIcon } from "lucide-react";
 import {
-    SupportIcon,
+    useChangeTheme,
+    useCommandModal,
+    useSupportModal,
+} from "@serene-ui/shared-frontend/features";
+import {
+    DarkThemeIcon,
+    LightThemeIcon,
     SidebarGroup,
     SidebarMenu,
-    SidebarMenuItem,
     SidebarMenuButton,
+    SidebarMenuItem,
+    SupportIcon,
 } from "@serene-ui/shared-frontend/shared";
-import { useCommandModal } from "@serene-ui/shared-frontend/features";
-import { useSupportModal } from "@serene-ui/shared-frontend/features";
+import { SearchIcon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import type { SidebarButton } from "../../model/types";
 
 export const NavBottom = () => {
     const navigate = useNavigate();
     const { setOpen: setOpenSearch } = useCommandModal();
     const { setOpen: setOpenSupport } = useSupportModal();
+    const { theme, changeTheme } = useChangeTheme();
+
     const buttons: SidebarButton[] = [
+        {
+            title: "Change theme",
+            icon: theme === "dark" ? <LightThemeIcon /> : <DarkThemeIcon />,
+            action: () => changeTheme(),
+        },
         {
             title: "Support",
             icon: <SupportIcon />,

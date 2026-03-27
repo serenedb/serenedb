@@ -74,9 +74,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       });
       auto sub = rdr.begin();
       auto docs0 = prepared->execute({.segment = *sub});
-      auto* doc = irs::get<irs::DocAttr>(*docs0);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs0->value(), doc->value);
       auto docs1 = prepared->execute({.segment = *sub});
       ASSERT_TRUE(docs0->next());
       ASSERT_EQ(docs0->value(), docs1->seek(docs0->value()));
@@ -125,9 +122,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
         .scorer = &scorer,
       });
       auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
-      auto* doc = irs::get<irs::DocAttr>(*docs);
-      ASSERT_TRUE(bool(doc));
-      ASSERT_EQ(docs->value(), doc->value);
 
       auto score = docs->PrepareScore({
         .scorer = &scorer,
@@ -141,11 +135,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(0), score_value);
-        ASSERT_EQ(docs->value(), doc->value);
       }
 
       ASSERT_FALSE(docs->next());
-      ASSERT_EQ(docs->value(), doc->value);
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -300,12 +292,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -333,12 +321,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -366,12 +350,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -399,12 +379,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -432,12 +408,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -465,12 +437,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);
@@ -498,12 +466,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (const auto& sub : rdr) {
         auto docs = prepared->execute({.segment = sub});
-        auto* doc = irs::get<irs::DocAttr>(*docs);
-        ASSERT_TRUE(bool(doc));
-        ASSERT_EQ(docs->value(), doc->value);
         for (; docs->next();) {
           actual.push_back(docs->value());
-          ASSERT_EQ(docs->value(), doc->value);
         }
       }
       ASSERT_EQ(expected, actual);

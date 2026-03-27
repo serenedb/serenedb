@@ -32,6 +32,7 @@
 #include "endpoint/endpoint.h"
 
 namespace sdb {
+
 class EndpointList {
  public:
   static std::string_view encryptionName(Endpoint::EncryptionType);
@@ -50,4 +51,5 @@ class EndpointList {
  private:
   std::map<std::string, std::unique_ptr<Endpoint>> _endpoints;
 };
+
 }  // namespace sdb

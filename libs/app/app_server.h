@@ -32,6 +32,7 @@
 
 namespace sdb {
 namespace options {
+
 class ProgramOptions;
 }
 namespace app {
@@ -384,7 +385,6 @@ class AppServerImpl : public AppServer {
 
 }  // namespace app
 }  // namespace sdb
-
 namespace magic_enum {
 
 template<>

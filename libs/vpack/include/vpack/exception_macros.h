@@ -19,6 +19,8 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 #define VPACK_GLOBAL_EXCEPTION_TRY try {
 #define VPACK_GLOBAL_EXCEPTION_CATCH                             \
   }                                                              \

@@ -30,9 +30,11 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 namespace basics {
+
 struct ConditionVariable;
 }
 

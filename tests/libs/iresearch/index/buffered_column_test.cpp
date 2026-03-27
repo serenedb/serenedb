@@ -87,44 +87,35 @@ void AssertIteratorNext(const irs::BufferedColumn& column,
                         std::span<const uint32_t> expected_values) {
   irs::BufferedColumnIterator it{column.Index(), column.Data()};
   ASSERT_EQ(expected_values.size(), irs::CostAttr::extract(it));
-  auto* doc = irs::get<irs::DocAttr>(it);
-  ASSERT_NE(nullptr, doc);
   auto* payload = irs::get<irs::PayAttr>(it);
   ASSERT_NE(nullptr, payload);
 
-  ASSERT_FALSE(irs::doc_limits::valid(doc->value));
-  ASSERT_EQ(it.value(), doc->value);
+  ASSERT_FALSE(irs::doc_limits::valid(it.value()));
   for (const auto expected_value : expected_values) {
     ASSERT_TRUE(it.next());
-    ASSERT_EQ(it.value(), doc->value);
     ASSERT_FALSE(payload->value.empty());
     const auto* data = payload->value.data();
     const auto value = irs::vread<uint32_t>(data);
     ASSERT_EQ(expected_value, value);
   }
   ASSERT_FALSE(it.next());
-  ASSERT_TRUE(irs::doc_limits::eof(doc->value));
+  ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   ASSERT_FALSE(it.next());
-  ASSERT_TRUE(irs::doc_limits::eof(doc->value));
+  ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 }
 
 void AssertIteratorSeekStateful(const irs::BufferedColumn& column,
                                 std::span<const uint32_t> expected_values) {
   irs::BufferedColumnIterator it{column.Index(), column.Data()};
   ASSERT_EQ(expected_values.size(), irs::CostAttr::extract(it));
-  auto* doc = irs::get<irs::DocAttr>(it);
-  ASSERT_NE(nullptr, doc);
   auto* payload = irs::get<irs::PayAttr>(it);
   ASSERT_NE(nullptr, payload);
 
-  ASSERT_FALSE(irs::doc_limits::valid(doc->value));
-  ASSERT_EQ(it.value(), doc->value);
+  ASSERT_FALSE(irs::doc_limits::valid(it.value()));
   irs::doc_id_t expected_doc = irs::doc_limits::min();
   for (const auto expected_value : expected_values) {
     ASSERT_EQ(expected_doc, it.seek(expected_doc));
-    ASSERT_EQ(it.value(), doc->value);
     ASSERT_EQ(expected_doc, it.seek(expected_doc));
-    ASSERT_EQ(it.value(), doc->value);
     ASSERT_FALSE(payload->value.empty());
     const auto* data = payload->value.data();
     const auto value = irs::vread<uint32_t>(data);
@@ -132,9 +123,9 @@ void AssertIteratorSeekStateful(const irs::BufferedColumn& column,
     ++expected_doc;
   }
   ASSERT_FALSE(it.next());
-  ASSERT_TRUE(irs::doc_limits::eof(doc->value));
+  ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   ASSERT_FALSE(it.next());
-  ASSERT_TRUE(irs::doc_limits::eof(doc->value));
+  ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 }
 
 void AssertIteratorSeekStateles(const irs::BufferedColumn& column,

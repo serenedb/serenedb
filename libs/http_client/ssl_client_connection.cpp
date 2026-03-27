@@ -158,10 +158,11 @@ static void sslTlsTrace(int direction, int sslVersion, int contentType,
   if (sslVersion) {
     sslVersion >>= 8; /* check the upper 8 bits only below */
     std::string_view tlsRtName;
-    if (sslVersion == SSL3_VERSION_MAJOR && contentType)
+    if (sslVersion == SSL3_VERSION_MAJOR && contentType) {
       tlsRtName = tlsTypeName(contentType);
-    else
+    } else {
       tlsRtName = "";
+    }
 
     SDB_TRACE("xxxxx", Logger::FIXME,
               "SSL connection trace: ", (direction ? "out" : "in"), ", ",

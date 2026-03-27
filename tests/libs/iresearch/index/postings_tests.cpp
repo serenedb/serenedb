@@ -33,6 +33,7 @@
 using namespace irs;
 
 namespace {
+
 constexpr size_t kBlockSize = 32768;
 }
 
@@ -42,6 +43,7 @@ namespace detail {
 bytes_view ToBytesView(const std::string& s) {
   return bytes_view(reinterpret_cast<const byte_type*>(s.c_str()), s.size());
 }
+
 }  // namespace detail
 
 void InsertFindCore(const std::vector<std::string>& src) {

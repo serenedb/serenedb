@@ -44,9 +44,12 @@
 #include "basics/message_buffer.h"
 #include "catalog/storage_options.h"
 
-namespace sdb::connector {
+namespace sdb::pg {
 
-using ReportCallback = std::function<void(uint64_t)>;
+class CopyProgressReporter;
+
+}  // namespace sdb::pg
+namespace sdb::connector {
 
 struct FileConnectorSplit final : public velox::connector::ConnectorSplit {
   const uint64_t start;
@@ -69,6 +72,7 @@ struct DwioReaderOptions {
 struct WriterOptions {
   DwioWriterOptions dwio;
   std::shared_ptr<StorageOptions> storage_options;
+  pg::CopyProgressReporter* progress = nullptr;
 
   const auto& Writer() const { return dwio.writer; }
   auto& Writer() { return dwio.writer; }
@@ -76,8 +80,7 @@ struct WriterOptions {
 
 struct ReaderOptions {
   DwioReaderOptions dwio;
-  // if set then progress messages are written here
-  ReportCallback report_callback;
+  pg::CopyProgressReporter* progress = nullptr;
   std::shared_ptr<StorageOptions> storage_options;
 
   const auto& Reader() const { return dwio.reader; }
@@ -107,7 +110,7 @@ class FileSplitSource final : public axiom::connector::SplitSource {
 
 class FileTable : public axiom::connector::Table {
  public:
-  explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
+  FileTable(velox::RowTypePtr type, std::string_view file_path, bool has_pk);
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
@@ -129,8 +132,9 @@ class FileTable : public axiom::connector::Table {
 class ReadFileTable final : public FileTable {
  public:
   ReadFileTable(velox::RowTypePtr type, std::string_view file_path,
-                std::shared_ptr<ReaderOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+                std::shared_ptr<ReaderOptions> options, bool has_pk)
+    : FileTable{std::move(type), file_path, has_pk},
+      _options{std::move(options)} {}
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
@@ -142,7 +146,8 @@ class WriteFileTable final : public FileTable {
  public:
   WriteFileTable(velox::RowTypePtr type, std::string_view file_path,
                  std::shared_ptr<WriterOptions> options)
-    : FileTable{std::move(type), file_path}, _options{std::move(options)} {}
+    : FileTable{std::move(type), file_path, false},
+      _options{std::move(options)} {}
 
   const std::shared_ptr<WriterOptions>& GetOptions() const { return _options; }
 
@@ -243,12 +248,19 @@ class FileDataSink final : public velox::connector::DataSink {
 
  private:
   std::shared_ptr<velox::dwio::common::Writer> _writer;
+  velox::dwio::common::FileSink* _sink = nullptr;
   velox::connector::DataSink::Stats _stats;
-  bool _closed = false;
+  pg::CopyProgressReporter* _progress = nullptr;
 };
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
+  struct ReaderComponents {
+    std::shared_ptr<velox::ReadFile> source;
+    std::unique_ptr<velox::dwio::common::Reader> reader;
+    std::unique_ptr<velox::dwio::common::RowReader> row_reader;
+  };
+
   FileDataSource(std::shared_ptr<ReaderOptions> options,
                  const velox::common::SubfieldFilters& subfield_filters,
                  velox::RowTypePtr output_type,
@@ -256,6 +268,14 @@ class FileDataSource final : public velox::connector::DataSource {
                  velox::memory::MemoryPool& memory_pool,
                  const velox::core::TypedExprPtr& remaining_filter,
                  velox::core::ExpressionEvaluator* evaluator);
+
+  static ReaderComponents CreateReader(
+    const ReaderOptions& options, velox::memory::MemoryPool& pool,
+    const velox::RowTypePtr& output_type,
+    const velox::connector::ColumnHandleMap& column_handles,
+    const velox::common::SubfieldFilters& subfield_filters,
+    const velox::core::TypedExprPtr& remaining_filter,
+    velox::core::ExpressionEvaluator* evaluator);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
@@ -266,9 +286,11 @@ class FileDataSource final : public velox::connector::DataSource {
     velox::column_index_t output_channel,
     const std::shared_ptr<velox::common::Filter>& filter) final {}
 
-  uint64_t getCompletedBytes() final { return 0; }
+  void cancel() final {}
 
-  uint64_t getCompletedRows() final { return _completed_rows; }
+  uint64_t getCompletedBytes() final { return _completed_bytes; }
+
+  uint64_t getCompletedRows() final { return 0; }
 
  private:
   velox::memory::MemoryPool* _pool;
@@ -280,9 +302,9 @@ class FileDataSource final : public velox::connector::DataSource {
   // We store RowReaderOptions to keep ScanSpec alive
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
-  uint64_t _completed_rows = 0;
-  std::chrono::high_resolution_clock::time_point _last_report_time;
-  ReportCallback _report_callback;
+  uint64_t _completed_bytes = 0;
+  uint64_t _prev_bytes_read = 0;
+  pg::CopyProgressReporter* _progress = nullptr;
 };
 
 }  // namespace sdb::connector

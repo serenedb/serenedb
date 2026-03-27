@@ -19,8 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/error_t.h>
-
+#include "basics/error_t.h"
 #include "gtest/gtest.h"
 
 using namespace ::sdb::errors;

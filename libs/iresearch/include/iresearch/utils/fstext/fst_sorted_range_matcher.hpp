@@ -67,8 +67,9 @@ class SortedRangeExplicitMatcher final : public MatcherBase<typename F::Arc> {
   }
 
   fst::MatchType Type(bool test) const final {
-    if constexpr (MatchType == MATCH_NONE)
+    if constexpr (MatchType == MATCH_NONE) {
       return MatchType;
+    }
     const auto true_prop =
       MatchType == MATCH_INPUT ? kILabelSorted : kOLabelSorted;
     const auto false_prop =
@@ -84,8 +85,9 @@ class SortedRangeExplicitMatcher final : public MatcherBase<typename F::Arc> {
   }
 
   void SetState(StateId s) final {
-    if (_state == s)
+    if (_state == s) {
       return;
+    }
     _state = s;
     if constexpr (MatchType == MATCH_NONE) {
       FSTERROR() << "SortedMatcher: Bad match type";
@@ -126,10 +128,12 @@ class SortedRangeExplicitMatcher final : public MatcherBase<typename F::Arc> {
   // After Find(), returns false if no more exact matches.
   // After LowerBound(), returns false if no more arcs.
   bool Done() const final {
-    if (_aiter->Done())
+    if (_aiter->Done()) {
       return true;
-    if (!_exact_match)
+    }
+    if (!_exact_match) {
       return false;
+    }
     _aiter->SetFlags(
       MatchType == MATCH_INPUT ? kArcILabelValue : kArcOLabelValue,
       kArcValueFlags);
@@ -221,10 +225,12 @@ template<class FST, fst::MatchType MatchType>
 inline bool SortedRangeExplicitMatcher<FST, MatchType>::LinearSearch() {
   for (_aiter->Reset(); !_aiter->Done(); _aiter->Next()) {
     const fsa::RangeLabel range{GetLabel()};
-    if (range.min <= _match_label && range.max >= _match_label)
+    if (range.min <= _match_label && range.max >= _match_label) {
       return true;
-    if (range.min > _match_label)
+    }
+    if (range.min > _match_label) {
       break;
+    }
   }
   return false;
 }

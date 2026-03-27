@@ -3,7 +3,7 @@ add_subdirectory(functions)
 target_sources(
     sereneserver
     PRIVATE
-        executor.cpp
+        command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
         sql_statement.cpp
@@ -15,6 +15,8 @@ target_sources(
         pg_catalog/pg_class.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_namespace.cpp
+        progress_tracker.cpp
+        pg_catalog/pg_stat_progress.cpp
         pg_catalog/pg_type.cpp
         sdb_catalog/sdb_log.cpp
         functions.cpp
@@ -25,4 +27,7 @@ target_sources(
         sql_resolver.cpp
         sql_utils.cpp
         isolation_level.cpp
+        option_help.cpp
+        file_options.cpp
+        tokenizer_options.cpp
 )

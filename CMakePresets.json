@@ -16,9 +16,7 @@
         "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",
         "SDB_GTEST": "On",
-        "SDB_IOURING": "On",
-        "SDB_CLUSTER": "Off",
-        "USE_V8": "Off"
+        "SDB_IOURING": "On"
       }
     },
     {

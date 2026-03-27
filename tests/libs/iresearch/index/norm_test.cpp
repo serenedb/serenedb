@@ -20,7 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <frozen/map.h>
+#include <absl/container/flat_hash_map.h>
 
 #include "index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -111,13 +111,14 @@ void AssertNormHeader(irs::bytes_view header, uint32_t num_bytes, uint32_t min,
   constexpr irs::NormVersion kVersion{irs::NormVersion::Min};
 
   ASSERT_FALSE(irs::IsNull(header));
-  ASSERT_EQ(14, header.size());
+  ASSERT_EQ(22, header.size());
 
   auto* p = header.data();
   const auto actual_verson = *p++;
   const auto actual_num_bytes = *p++;
   const auto actual_max = irs::read<uint32_t>(p);
   [[maybe_unused]] const auto actual_sum = irs::read<uint64_t>(p);
+  [[maybe_unused]] const auto actual_non_zero_count = irs::read<uint64_t>(p);
   ASSERT_EQ(p, header.data() + header.size());
 
   ASSERT_EQ(static_cast<uint32_t>(kVersion), actual_verson);
@@ -363,13 +364,10 @@ void NormTestCase::AssertNormColumn(
   ASSERT_NE(nullptr, values);
   auto* payload = irs::get<irs::PayAttr>(*values);
   ASSERT_NE(nullptr, payload);
-  auto* doc = irs::get<irs::DocAttr>(*values);
-  ASSERT_NE(nullptr, doc);
 
   for (auto expected_doc = std::begin(expected_docs); values->next();
        ++expected_doc) {
     ASSERT_EQ(expected_doc->first, values->value());
-    ASSERT_EQ(expected_doc->first, doc->value);
     ASSERT_EQ(sizeof(T), payload->value.size());
 
     const auto value = irs::Norm::Read(payload->value);
@@ -378,23 +376,24 @@ void NormTestCase::AssertNormColumn(
 }
 
 TEST_P(NormTestCase, CheckNorms) {
-  constexpr frozen::map<std::string_view, uint32_t, 4> kSeedMapping{
+  const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 8},
     {"duplicated", uint32_t{1} << 15},
-    {"prefix", uint32_t{1} << 14}};
+    {"prefix", uint32_t{1} << 14},
+  };
 
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
-    [count = size_t{0}, &kSeedMapping](
+    [count = size_t{0}, &seed_mapping](
       tests::Document& doc, const std::string& name,
       const tests::JsonDocGenerator::JsonValue& data) mutable {
       if (data.is_string()) {
         const bool is_name = (name == "name");
         count += static_cast<size_t>(is_name);
 
-        const auto it = kSeedMapping.find(std::string_view{name});
-        ASSERT_NE(kSeedMapping.end(), it);
+        const auto it = seed_mapping.find(std::string_view{name});
+        ASSERT_NE(seed_mapping.end(), it);
 
         auto field =
           std::make_shared<NormField>(name, data.str, count * it->second);
@@ -450,8 +449,8 @@ TEST_P(NormTestCase, CheckNorms) {
 
   {
     constexpr std::string_view kName = "duplicated";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                {{1, seed}, {2, seed * 2}, {3, seed * 3}});
@@ -459,8 +458,8 @@ TEST_P(NormTestCase, CheckNorms) {
 
   {
     constexpr std::string_view kName = "name";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
       segment, {kName.data(), kName.size()},
@@ -469,8 +468,8 @@ TEST_P(NormTestCase, CheckNorms) {
 
   {
     constexpr std::string_view kName = "same";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
       segment, {kName.data(), kName.size()},
@@ -479,8 +478,8 @@ TEST_P(NormTestCase, CheckNorms) {
 
   {
     constexpr std::string_view kName = "prefix";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                {{1, seed}, {4, seed * 4}});
@@ -488,7 +487,7 @@ TEST_P(NormTestCase, CheckNorms) {
 }
 
 TEST_P(NormTestCase, CheckNormsBatched) {
-  constexpr frozen::map<std::string_view, uint32_t, 4> kSeedMapping{
+  const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 8},
     {"duplicated", uint32_t{1} << 15},
@@ -496,15 +495,15 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
-    [count = size_t{0}, &kSeedMapping](
+    [count = size_t{0}, &seed_mapping](
       tests::Document& doc, const std::string& name,
       const tests::JsonDocGenerator::JsonValue& data) mutable {
       if (data.is_string()) {
         const bool is_name = (name == "name");
         count += static_cast<size_t>(is_name);
 
-        const auto it = kSeedMapping.find(std::string_view{name});
-        ASSERT_NE(kSeedMapping.end(), it);
+        const auto it = seed_mapping.find(std::string_view{name});
+        ASSERT_NE(seed_mapping.end(), it);
 
         auto field =
           std::make_shared<NormField>(name, data.str, count * it->second);
@@ -560,8 +559,8 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 
   {
     constexpr std::string_view kName = "duplicated";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                {{1, seed}, {2, seed * 2}, {3, seed * 3}});
@@ -569,8 +568,8 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 
   {
     constexpr std::string_view kName = "name";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
       segment, {kName.data(), kName.size()},
@@ -579,8 +578,8 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 
   {
     constexpr std::string_view kName = "same";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
       segment, {kName.data(), kName.size()},
@@ -589,8 +588,8 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 
   {
     constexpr std::string_view kName = "prefix";
-    const auto it = kSeedMapping.find(kName);
-    ASSERT_NE(kSeedMapping.end(), it);
+    const auto it = seed_mapping.find(kName);
+    ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                {{1, seed}, {4, seed * 4}});
@@ -598,7 +597,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 }
 
 TEST_P(NormTestCase, CheckNormsConsolidation) {
-  constexpr frozen::map<std::string_view, uint32_t, 4> kSeedMapping{
+  const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 5},
     {"duplicated", uint32_t{1} << 12},
@@ -606,15 +605,15 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
-    [count = size_t{0}, &kSeedMapping](
+    [count = size_t{0}, &seed_mapping](
       tests::Document& doc, const std::string& name,
       const tests::JsonDocGenerator::JsonValue& data) mutable {
       if (data.is_string()) {
         const bool is_name = (name == "name");
         count += static_cast<size_t>(is_name);
 
-        const auto it = kSeedMapping.find(std::string_view{name});
-        ASSERT_NE(kSeedMapping.end(), it);
+        const auto it = seed_mapping.find(std::string_view{name});
+        ASSERT_NE(seed_mapping.end(), it);
 
         auto field =
           std::make_shared<NormField>(name, data.str, count * it->second);
@@ -691,8 +690,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}, {2, seed * 2}, {3, seed * 3}});
@@ -700,8 +699,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
         segment, {kName.data(), kName.size()},
@@ -710,8 +709,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
         segment, {kName.data(), kName.size()},
@@ -720,8 +719,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "prefix";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}, {4, seed * 4}});
@@ -736,8 +735,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed * 5}});
@@ -745,8 +744,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
@@ -754,8 +753,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
@@ -811,8 +810,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(
         segment, {kName.data(), kName.size()},
@@ -821,8 +820,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
                                 {{1, seed},
@@ -836,8 +835,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
                                 {{1, seed},
@@ -851,8 +850,8 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     {
       constexpr std::string_view kName = "prefix";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}, {4, seed * 4}});
@@ -861,7 +860,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 }
 
 TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
-  constexpr frozen::map<std::string_view, uint32_t, 4> kSeedMapping{
+  const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 5},
     {"duplicated", uint32_t{1} << 12},
@@ -869,15 +868,15 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
-    [count = size_t{0}, &kSeedMapping](
+    [count = size_t{0}, &seed_mapping](
       tests::Document& doc, const std::string& name,
       const tests::JsonDocGenerator::JsonValue& data) mutable {
       if (data.is_string()) {
         const bool is_name = (name == "name");
         count += static_cast<size_t>(is_name);
 
-        const auto it = kSeedMapping.find(std::string_view{name});
-        ASSERT_NE(kSeedMapping.end(), it);
+        const auto it = seed_mapping.find(std::string_view{name});
+        ASSERT_NE(seed_mapping.end(), it);
 
         auto field =
           std::make_shared<NormField>(name, data.str, count * it->second);
@@ -954,8 +953,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}, {2, seed * 2}, {3, seed * 3}});
@@ -963,8 +962,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
         segment, {kName.data(), kName.size()},
@@ -973,8 +972,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
         segment, {kName.data(), kName.size()},
@@ -983,8 +982,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "prefix";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}, {4, seed * 4}});
@@ -999,8 +998,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed * 5}});
@@ -1008,8 +1007,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
@@ -1017,8 +1016,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
@@ -1081,8 +1080,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(
         segment, {kName.data(), kName.size()},
@@ -1091,8 +1090,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
                                 {{1, seed},
@@ -1105,8 +1104,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
                                 {{1, seed},
@@ -1119,8 +1118,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "prefix";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}});
@@ -1152,8 +1151,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "duplicated";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(
         segment, {kName.data(), kName.size()},
@@ -1162,8 +1161,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "name";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
                                 {{1, seed},
@@ -1177,8 +1176,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "same";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
                                 {{1, seed},
@@ -1192,8 +1191,8 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     {
       constexpr std::string_view kName = "prefix";
-      const auto it = kSeedMapping.find(kName);
-      ASSERT_NE(kSeedMapping.end(), it);
+      const auto it = seed_mapping.find(kName);
+      ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(segment, {kName.data(), kName.size()},
                                  {{1, seed}, {7, seed}});

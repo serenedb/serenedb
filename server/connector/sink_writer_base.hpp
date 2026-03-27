@@ -40,7 +40,7 @@ class SinkIndexWriter {
 
   // returns true if writer is interested in this column
   virtual bool SwitchColumn(const velox::Type& type, bool have_nulls,
-                            sdb::catalog::Column::Id column_id) {
+                            catalog::Column::Id column_id) {
     SDB_ASSERT(false, "SwitchColumn call not implemented");
     return false;
   }
@@ -71,7 +71,7 @@ class ColumnSinkWriterImplBase {
     SDB_ASSERT(!_columns.empty());
   }
 
-  bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept {
+  bool IsIndexed(catalog::Column::Id column_id) const noexcept {
     return _columns.contains(column_id);
   }
 

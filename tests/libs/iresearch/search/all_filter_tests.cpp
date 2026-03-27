@@ -56,7 +56,6 @@ TEST_P(AllFilterTestCase, all_sequential) {
   auto it = irs::All()
               .prepare({.index = *rdr, .memory = counter})
               ->execute({.segment = segment});
-  ASSERT_TRUE(irs::get<irs::DocAttr>(*it));
   auto* it_cost = irs::get<irs::CostAttr>(*it);
   ASSERT_TRUE(it_cost);
   ASSERT_EQ(docs.size(), it_cost->estimate());

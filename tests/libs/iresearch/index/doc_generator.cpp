@@ -107,7 +107,6 @@ class BreakIterator {
 
 }  // namespace unchecked
 }  // namespace utf8
-
 namespace tests {
 
 Document::Document(Document&& rhs) noexcept

@@ -22,11 +22,11 @@
 #pragma once
 
 #include <atomic>
-#include <basics/thread_utils.hpp>
 #include <iresearch/utils/hash_utils.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "basics/memory.hpp"
+#include "basics/thread_utils.hpp"
 
 namespace sdb::search {
 

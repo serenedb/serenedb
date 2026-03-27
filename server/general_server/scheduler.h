@@ -32,8 +32,10 @@
 #include <queue>
 #include <string_view>
 #include <utility>
+#include <yaclib/async/connect.hpp>
 #include <yaclib/async/contract.hpp>
 #include <yaclib/async/make.hpp>
+#include <yaclib/util/type_traits.hpp>
 
 #include "basics/exceptions.h"
 #include "basics/system-compiler.h"
@@ -71,12 +73,23 @@ class Scheduler {
   void queue(RequestLane lane, folly::Func func) noexcept;
 
   template<typename Func, typename R = std::invoke_result_t<Func>>
-  yaclib::Future<R> queueWithFuture(RequestLane lane, Func&& func) {
-    auto [f, p] = yaclib::MakeContract<R>();
-    queue(lane, [p = std::move(p), func = std::forward<Func>(func)] mutable {
-      std::move(p).Set(std::forward<Func>(func)());
-    });
-    return std::move(f);
+  auto queueWithFuture(RequestLane lane, Func&& func) {
+    // TODO(codeworse): Use yaclib::Run, when scheduler will be inherited from
+    // yaclib::IExecutor
+    if constexpr (yaclib::is_future_base_v<R>) {
+      // Use future unwrap
+      auto [f, p] = yaclib::MakeContract<yaclib::async_value_t<R>>();
+      queue(lane, [p = std::move(p), func = std::forward<Func>(func)] mutable {
+        yaclib::Connect(std::forward<Func>(func)(), std::move(p));
+      });
+      return std::move(f);
+    } else {
+      auto [f, p] = yaclib::MakeContract<R>();
+      queue(lane, [p = std::move(p), func = std::forward<Func>(func)] mutable {
+        std::move(p).Set(std::forward<Func>(func)());
+      });
+      return std::move(f);
+    }
   }
 
   // push an item onto the queue. indicates success or failure by returning

@@ -7,8 +7,11 @@ import {
     ContextMenuItem,
     ContextMenuShortcut,
     ContextMenuTrigger,
+    Popover,
+    PopoverAnchor,
+    PopoverContent,
 } from "@serene-ui/shared-frontend/shared";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useDownloadResults } from "@serene-ui/shared-frontend/features";
 
 interface VirtualizedTableBodyCellProps {
@@ -18,6 +21,8 @@ interface VirtualizedTableBodyCellProps {
 export const VirtualizedTableBodyCell = ({
     cell,
 }: VirtualizedTableBodyCellProps) => {
+    const [expandedValue, setExpandedValue] = useState<string | null>(null);
+
     const {
         isSelected,
         startAreaSelection,
@@ -32,6 +37,22 @@ export const VirtualizedTableBodyCell = ({
 
     const { copyJSON, copyCSV } = useDownloadResults();
     const isIndexCol = cell.column.columnDef.header === "index";
+    const rows = cell.getContext().table.getRowModel().rows;
+    const rowIndex = rows.findIndex((r) => r.id === cell.row.id);
+
+    const getCellTextValue = () => {
+        const rawValue = isIndexCol
+            ? rowIndex + 1
+            : (cell.row.original as Record<string, unknown>)[cell.column.id];
+
+        return rawValue === null
+            ? "null"
+            : rawValue === undefined
+              ? "undefined"
+              : typeof rawValue === "object"
+                ? JSON.stringify(rawValue, null, 2)
+                : String(rawValue);
+    };
 
     useEffect(() => {
         const handleMouseUp = () => {
@@ -43,9 +64,6 @@ export const VirtualizedTableBodyCell = ({
         document.addEventListener("mouseup", handleMouseUp);
         return () => document.removeEventListener("mouseup", handleMouseUp);
     }, [isDragging, endAreaSelection]);
-
-    const rows = cell.getContext().table.getRowModel().rows;
-    const rowIndex = rows.findIndex((r) => r.id === cell.row.id);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0) return;
@@ -146,40 +164,64 @@ export const VirtualizedTableBodyCell = ({
         await copyJSON(data);
     };
 
+    const handleDoubleClick = () => {
+        setExpandedValue(getCellTextValue());
+    };
+
     return (
-        <ContextMenu>
-            <ContextMenuTrigger asChild>
-                <td
-                    key={cell.id}
-                    className={cn(
-                        "flex border border-transparent border-r border-r-border",
-                        getBorderClass(rowIndex, cell.column.getIndex()),
-                    )}
-                    style={{
-                        width: !isIndexCol ? cell.column.getSize() : "50px",
-                    }}>
-                    <div
-                        onMouseDown={handleMouseDown}
-                        onMouseEnter={handleMouseEnter}
-                        onContextMenu={handleContextMenu}
-                        className="text-xs p-2 overflow-hidden text-ellipsis whitespace-nowrap flex-1 select-none cursor-pointer">
-                        {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext(),
+        <Popover
+            open={expandedValue !== null}
+            onOpenChange={(open) => {
+                if (!open) setExpandedValue(null);
+            }}>
+            <ContextMenu>
+                <ContextMenuTrigger asChild>
+                    <td
+                        key={cell.id}
+                        className={cn(
+                            "flex border border-transparent border-r border-r-border",
+                            getBorderClass(rowIndex, cell.column.getIndex()),
                         )}
-                    </div>
-                </td>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="w-52">
-                <ContextMenuItem onClick={handleCopyCSV}>
-                    Copy as CSV
-                    <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-                </ContextMenuItem>
-                <ContextMenuItem onClick={handleCopyJSON}>
-                    Copy as JSON
-                    <ContextMenuShortcut>⌘Shift+C</ContextMenuShortcut>
-                </ContextMenuItem>
-            </ContextMenuContent>
-        </ContextMenu>
+                        style={{
+                            width: !isIndexCol ? cell.column.getSize() : "50px",
+                        }}>
+                        <PopoverAnchor title="" asChild>
+                            <div
+                                tabIndex={0}
+                                onMouseDown={handleMouseDown}
+                                onMouseEnter={handleMouseEnter}
+                                onContextMenu={handleContextMenu}
+                                onDoubleClick={handleDoubleClick}
+                                className="text-xs p-2 overflow-hidden text-ellipsis whitespace-nowrap flex-1 select-none cursor-pointer">
+                                {flexRender(
+                                    cell.column.columnDef.cell,
+                                    cell.getContext(),
+                                )}
+                            </div>
+                        </PopoverAnchor>
+                    </td>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-52">
+                    <ContextMenuItem onClick={handleCopyCSV}>
+                        Copy as CSV
+                        <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={handleCopyJSON}>
+                        Copy as JSON
+                        <ContextMenuShortcut>⌘Shift+C</ContextMenuShortcut>
+                    </ContextMenuItem>
+                </ContextMenuContent>
+            </ContextMenu>
+            <PopoverContent
+                side="bottom"
+                align="start"
+                sideOffset={-36}
+                alignOffset={-4}
+                className="min-w-80 max-h-[60vh] overflow-auto p-3 z-[60] border-1 border-border rounded-none">
+                <pre className=" whitespace-pre-wrap break-words text-xs leading-5">
+                    {expandedValue}
+                </pre>
+            </PopoverContent>
+        </Popover>
     );
 };

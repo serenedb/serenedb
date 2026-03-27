@@ -503,15 +503,11 @@ TEST(GeoDistanceFilterTest, query) {
         continue;
       }
 
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      EXPECT_NE(nullptr, doc);
-      EXPECT_FALSE(irs::doc_limits::valid(doc->value));
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
       while (it->next()) {
         auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
-        EXPECT_EQ(doc_id, doc->value);
         EXPECT_EQ(doc_id, values->seek(doc_id));
         EXPECT_FALSE(irs::IsNull(value->value));
 
@@ -1016,9 +1012,6 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       });
       EXPECT_FALSE(seek_score.IsDefault());
 
-      auto* doc = irs::get<irs::DocAttr>(*it);
-      EXPECT_NE(nullptr, doc);
-      EXPECT_FALSE(irs::doc_limits::valid(doc->value));
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
 
       cur_it = it.get();

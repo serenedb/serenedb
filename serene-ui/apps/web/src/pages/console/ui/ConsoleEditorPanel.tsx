@@ -22,10 +22,10 @@ export const ConsoleEditorPanel = ({ layout }: ConsoleEditorPanelProps) => {
         selectTab,
         removeTab,
         updateTab,
-        addJobId,
+        addPendingResults,
         limit,
         setLimit,
-        editorRef
+        editorRef,
     } = useConsole();
     const currentTab = useMemo(
         () => tabs.find((tab) => tab.id === selectedTabId),
@@ -47,6 +47,19 @@ export const ConsoleEditorPanel = ({ layout }: ConsoleEditorPanelProps) => {
         );
     }
 
+    const selectedResultIndex = Math.min(
+        Math.max(0, currentTab.selectedResultIndex ?? currentTab.results.length - 1),
+        Math.max(0, currentTab.results.length - 1),
+    );
+    const activeResult = currentTab.results[selectedResultIndex];
+    const highlightRange =
+        activeResult &&
+        currentTab.value === activeResult.sourceQuery &&
+        activeResult.statementRange
+            ? activeResult.statementRange
+            : undefined;
+    const highlightVariant = activeResult?.status === "failed" ? "error" : "default";
+
     return (
         <ResizablePanelGroup
             direction={layout === "horizontal" ? "vertical" : "horizontal"}>
@@ -58,10 +71,12 @@ export const ConsoleEditorPanel = ({ layout }: ConsoleEditorPanelProps) => {
                     selectTab={selectTab}
                     removeTab={removeTab}
                     updateTab={updateTab}
-                    addJobId={addJobId}
+                    addPendingResults={addPendingResults}
                     limit={limit}
                     editorRef={editorRef}
                     setLimit={setLimit}
+                    highlightRange={highlightRange}
+                    highlightVariant={highlightRange ? highlightVariant : undefined}
                 />
             </ResizablePanel>
             {currentTab.bind_vars?.length ? (

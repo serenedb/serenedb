@@ -41,7 +41,7 @@ export const ExplorerNodeButton = ({
                 size="small"
                 className={cn(
                     className,
-                    "w-full justify-start hover:text-primary-foreground/50 text-primary-foreground/50 rounded-none hover:dark:bg-transparent",
+                    "w-full justify-start text-secondary-foreground hover:text-secondary-foreground dark:hover:text-primary-foreground/50 dark:text-primary-foreground/50 rounded-none hover:dark:bg-transparent",
                 )}
                 onClick={onClick}>
                 {showArrow && onClick && (

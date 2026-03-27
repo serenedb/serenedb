@@ -121,9 +121,14 @@ describe("QueryExecutionRouter", () => {
         it("should return immediate result for fast queries", async () => {
             const mockResult = {
                 jobId: 7,
-                result: [
-                    { id: 1, name: "Alice" },
-                    { id: 2, name: "Bob" },
+                results: [
+                    {
+                        action_type: "SELECT" as const,
+                        rows: [
+                            { id: 1, name: "Alice" },
+                            { id: 2, name: "Bob" },
+                        ],
+                    },
                 ],
             };
 
@@ -193,10 +198,14 @@ describe("QueryExecutionRouter", () => {
                     id: 1,
                     query: "SELECT * FROM users",
                     status: "success" as const,
-                    action_type: "SELECT" as const,
-                    result: [
-                        { id: 1, name: "Alice" },
-                        { id: 2, name: "Bob" },
+                    results: [
+                        {
+                            action_type: "SELECT" as const,
+                            rows: [
+                                { id: 1, name: "Alice" },
+                                { id: 2, name: "Bob" },
+                            ],
+                        },
                     ],
                 },
             ];
@@ -218,7 +227,7 @@ describe("QueryExecutionRouter", () => {
             assert.strictEqual(results[0].status, "pending");
             assert.strictEqual(results[1].status, "running");
             assert.strictEqual(results[2].status, "success");
-            assert.ok("result" in results[2]);
+            assert.ok("results" in results[2]);
         });
 
         it("should handle immediate success", async () => {
@@ -226,8 +235,12 @@ describe("QueryExecutionRouter", () => {
                 id: 1,
                 query: "SELECT COUNT(*) FROM users",
                 status: "success" as const,
-                action_type: "SELECT" as const,
-                result: [{ count: 42 }],
+                results: [
+                    {
+                        action_type: "SELECT" as const,
+                        rows: [{ count: 42 }],
+                    },
+                ],
             };
 
             const fakeSubscribe = os.subscribe.handler(async function* () {
@@ -243,7 +256,7 @@ describe("QueryExecutionRouter", () => {
 
             assert.strictEqual(results.length, 1);
             assert.strictEqual(results[0].status, "success");
-            assert.deepStrictEqual(results[0].result, [{ count: 42 }]);
+            assert.deepStrictEqual(results[0].results[0].rows, [{ count: 42 }]);
         });
 
         it("should handle query failure", async () => {
@@ -289,8 +302,12 @@ describe("QueryExecutionRouter", () => {
                 id: 1,
                 query: "INSERT INTO users (name) VALUES ('Charlie')",
                 status: "success" as const,
-                action_type: "INSERT" as const,
-                result: [],
+                results: [
+                    {
+                        action_type: "INSERT" as const,
+                        rows: [],
+                    },
+                ],
             };
 
             const fakeSubscribe = os.subscribe.handler(async function* () {
@@ -307,7 +324,7 @@ describe("QueryExecutionRouter", () => {
             assert.strictEqual(results.length, 1);
             assert.strictEqual(results[0].status, "success");
             if (results[0].status === "success") {
-                assert.strictEqual(results[0].action_type, "INSERT");
+                assert.strictEqual(results[0].results[0].action_type, "INSERT");
             }
         });
 
@@ -316,8 +333,12 @@ describe("QueryExecutionRouter", () => {
                 id: 1,
                 query: "UPDATE users SET active = true WHERE id = 1",
                 status: "success" as const,
-                action_type: "UPDATE" as const,
-                result: [],
+                results: [
+                    {
+                        action_type: "UPDATE" as const,
+                        rows: [],
+                    },
+                ],
             };
 
             const fakeSubscribe = os.subscribe.handler(async function* () {
@@ -334,7 +355,7 @@ describe("QueryExecutionRouter", () => {
             assert.strictEqual(results.length, 1);
             assert.strictEqual(results[0].status, "success");
             if (results[0].status === "success") {
-                assert.strictEqual(results[0].action_type, "UPDATE");
+                assert.strictEqual(results[0].results[0].action_type, "UPDATE");
             }
         });
 
@@ -343,8 +364,12 @@ describe("QueryExecutionRouter", () => {
                 id: 1,
                 query: "DELETE FROM users WHERE id = 99",
                 status: "success" as const,
-                action_type: "DELETE" as const,
-                result: [],
+                results: [
+                    {
+                        action_type: "DELETE" as const,
+                        rows: [],
+                    },
+                ],
             };
 
             const fakeSubscribe = os.subscribe.handler(async function* () {
@@ -361,7 +386,7 @@ describe("QueryExecutionRouter", () => {
             assert.strictEqual(results.length, 1);
             assert.strictEqual(results[0].status, "success");
             if (results[0].status === "success") {
-                assert.strictEqual(results[0].action_type, "DELETE");
+                assert.strictEqual(results[0].results[0].action_type, "DELETE");
             }
         });
 
@@ -371,8 +396,12 @@ describe("QueryExecutionRouter", () => {
                 id: 1,
                 query: "SELECT * FROM users",
                 status: "success" as const,
-                action_type: "SELECT" as const,
-                result: [],
+                results: [
+                    {
+                        action_type: "SELECT" as const,
+                        rows: [],
+                    },
+                ],
                 created_at: now,
                 execution_started_at: now,
                 execution_finished_at: now,
@@ -401,8 +430,12 @@ describe("QueryExecutionRouter", () => {
                 query: "SELECT * FROM users WHERE email = :email",
                 bind_vars: ["user@example.com"],
                 status: "success" as const,
-                action_type: "SELECT" as const,
-                result: [{ id: 1, email: "user@example.com" }],
+                results: [
+                    {
+                        action_type: "SELECT" as const,
+                        rows: [{ id: 1, email: "user@example.com" }],
+                    },
+                ],
             };
 
             const fakeSubscribe = os.subscribe.handler(async function* () {

@@ -55,8 +55,9 @@ class AstVisitor {
   std::function<void(const TargetType&)> _visitor_func;
 
   bool IsTargetType(const Node* node) const {
-    if (!node)
+    if (!node) {
       return false;
+    }
 
     NodeTag tag = nodeTag(node);
     return GetNodeTag<TargetType>() == tag;

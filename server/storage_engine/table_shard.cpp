@@ -30,25 +30,21 @@
 #include <atomic>
 #include <yaclib/async/make.hpp>
 
+#include "catalog/object.h"
 #include "catalog/table.h"
 
 namespace sdb {
 
-catalog::TableMeta MakeTableMeta(const catalog::Table& c) {
-  return {
-    .database = c.GetDatabaseId(),
-    .schema = c.GetSchemaId(),
-    .id = c.GetId(),
-    .plan_id = c.planId(),
-    .plan_db = c.planDb(),
-    .from = c.from(),
-    .to = c.to(),
-    .name = std::string{c.GetName()},
-  };
-}
-
-TableShard::TableShard(catalog::TableMeta collection_meta,
+TableShard::TableShard(ObjectId id, ObjectId table_id,
                        const catalog::TableStats& stats)
-  : _collection_meta{std::move(collection_meta)}, _num_rows{stats.num_rows} {}
+  : catalog::Object{ObjectId{0}, id, "", catalog::ObjectType::TableShard},
+    _table_id{table_id},
+    _num_rows{stats.num_rows} {}
+
+TableShard::TableShard(ObjectId table_id, const catalog::TableStats& stats)
+  : catalog::Object{ObjectId{0}, ObjectId{0}, "",
+                    catalog::ObjectType::TableShard},
+    _table_id{table_id},
+    _num_rows{stats.num_rows} {}
 
 }  // namespace sdb

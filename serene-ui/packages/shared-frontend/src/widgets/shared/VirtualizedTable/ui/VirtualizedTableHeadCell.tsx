@@ -101,9 +101,13 @@ export const VirtualizedTableHeadCell = ({
                 onMouseDown={handleMouseDown}
                 onMouseEnter={handleMouseEnter}
                 className="select-none text-xs p-2 flex-1 text-start overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer flex items-center gap-1">
-                {flexRender(
-                    !isIndexCol ? header.column.columnDef.header : "",
-                    header.getContext(),
+                {isIndexCol ? (
+                    <span className="sr-only">Row</span>
+                ) : (
+                    flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                    )
                 )}
                 {!isIndexCol && header.column.getCanSort() && (
                     <button

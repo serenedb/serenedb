@@ -63,10 +63,6 @@ install_readme(resources/licenses/GPL-3 GPL-3)
 install_readme(resources/licenses/LGPL-3 LGPL-3)
 install_readme(LICENSE LICENSE.txt)
 
-if(USE_V8)
-    include(InstallSereneDBJSClient)
-endif()
-
 ################################################################################
 ### @brief install log directory
 ################################################################################

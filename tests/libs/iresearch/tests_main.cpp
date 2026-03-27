@@ -36,17 +36,17 @@
 #endif
 
 #include <absl/strings/str_cat.h>
-#include <basics/logger/logger.h>
 #include <signal.h>          // for signal(...)/raise(...)
 #include <unicode/uclean.h>  // for u_cleanup
 #include <unicode/udata.h>
 
-#include <basics/containers/bitset.hpp>
 #include <ctime>
 #include <filesystem>
 #include <vector>
 
+#include "basics/containers/bitset.hpp"
 #include "basics/file_utils_ext.hpp"
+#include "basics/logger/logger.h"
 #include "basics/network_utils.hpp"
 #include "index/doc_generator.hpp"
 #include "iresearch/analysis/analyzers.hpp"

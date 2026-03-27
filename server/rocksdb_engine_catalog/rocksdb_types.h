@@ -46,10 +46,9 @@ enum class RocksDBEntryType : char {
   View = '>',
   Table = '1',
   Index = '?',
+  Tokenizer = '2',
 
-  ScopeTombstone = '~',
-  TableTombstone = '|',
-  IndexTombstone = '/',
+  Tombstone = '~',
 
   TableShard = '@',
   IndexShard = '!',
@@ -119,5 +118,4 @@ enum class RocksDBSettingsType : char {
 
 inline constexpr char kRocksDBFormatVersion = '1';
 
-const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type);
 }  // namespace sdb

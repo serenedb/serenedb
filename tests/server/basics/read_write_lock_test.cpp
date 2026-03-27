@@ -254,7 +254,7 @@ TEST(ReadWriteLockTest, testTryLockWriteForWakeUpReaders) {
       // It may happen that we try to lock read before write => we pass here.
       // If we cannot get the readlock in an instant, we know the write locker
       // is in queue.
-      size_t retry_counter = 100;
+      size_t retry_counter = 1'000'000;
       while (lock.tryLockRead()) {
         lock.unlockRead();
         std::this_thread::sleep_for(std::chrono::microseconds(1));

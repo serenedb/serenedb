@@ -45,17 +45,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
@@ -80,7 +76,6 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
 }
 
 }  // namespace
-
 namespace tests {
 
 irs::ColumnFinalizer ColumnFinalizer(
@@ -119,15 +114,17 @@ void FormatTestCase::AssertFrequencyAndPositions(irs::DocIterator& expected,
     return;
   }
 
-  auto* expected_freq = irs::get<irs::FreqAttr>(expected);
-  auto* actual_freq = irs::get<irs::FreqAttr>(actual);
+  auto* expected_freq = irs::get<irs::FreqBlockAttr>(expected);
+  auto* actual_freq = irs::get<irs::FreqBlockAttr>(actual);
   ASSERT_EQ(!expected_freq, !actual_freq);
 
   if (!expected_freq) {
     return;
   }
 
-  ASSERT_EQ(expected_freq->value, actual_freq->value);
+  expected.FetchScoreArgs(0);
+  actual.FetchScoreArgs(0);
+  ASSERT_EQ(expected_freq->value[0], actual_freq->value[0]);
 
   auto* expected_pos = irs::GetMutable<irs::PosAttr>(&expected);
   auto* actual_pos = irs::GetMutable<irs::PosAttr>(&actual);
@@ -1004,6 +1001,7 @@ TEST_P(FormatTestCase, fields_read_write) {
         ASSERT_EQ(sorted_terms.end(), expected_sorted_term);
       }
     }
+
   }  // namespace tests
 }
 

@@ -70,8 +70,6 @@ inline constexpr std::string_view kPkColumn = "#";
 
 struct StaticStrings {
   static constexpr std::string_view kEngineDirRoot = "engine_search";
-  static constexpr std::string_view kDatabaseDirPrefix = "database-";
-  static constexpr std::string_view kIndexDirPrefix = "index-";
 
   /// the name of the field in the Search View definition denoting the
   /// corresponding link definitions

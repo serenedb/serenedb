@@ -21,10 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/crc.hpp>
 #include <boost/crc.hpp>
 #include <fstream>
 
+#include "basics/crc.hpp"
 #include "tests_shared.hpp"
 
 using Crc32cExpected =

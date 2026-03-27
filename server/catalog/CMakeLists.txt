@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         column_expr.cpp
         database.cpp
+        drop_task.cpp
         schema.cpp
         databases.cpp
         local_catalog.cpp
@@ -21,7 +22,6 @@ target_sources(
         native_functions.cpp
         base_query_view.cpp
         sql_query_view.cpp
-        graph_view.cpp
         validators.cpp
         sharding_strategy.cpp
         replication_common.cpp
@@ -31,6 +31,7 @@ target_sources(
         inverted_index.cpp
         analyzer.cpp
         mangling.cpp
+        tokenizer.cpp
 )
 
 add_subdirectory(identifiers)

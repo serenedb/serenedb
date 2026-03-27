@@ -66,8 +66,9 @@ class FstDrawer {
     SetStreamState(_ostrm);
     _dest = dest;
     StateId start = _fst.Start();
-    if (start == kNoStateId)
+    if (start == kNoStateId) {
       return;
+    }
     PrintString("digraph FST {\n");
     if (_vertical) {
       PrintString("rankdir = BT;\n");
@@ -79,8 +80,9 @@ class FstDrawer {
     PrintString(",");
     Print(_height);
     PrintString("\";\n");
-    if (!_title.empty())
+    if (!_title.empty()) {
       PrintString("label = \"" + _title + "\";\n");
+    }
     PrintString("center = 1;\n");
     if (_portrait) {
       PrintString("orientation = Portrait;\n");
@@ -97,8 +99,9 @@ class FstDrawer {
     DrawState(start);
     for (StateIterator<Fst<Arc>> siter(_fst); !siter.Done(); siter.Next()) {
       const auto s = siter.Value();
-      if (s != start)
+      if (s != start) {
         DrawState(s);
+      }
     }
     PrintString("}\n");
   }
@@ -106,10 +109,12 @@ class FstDrawer {
  private:
   void SetStreamState(std::ostream* strm) const {
     strm->precision(_precision);
-    if (_float_format == "e")
+    if (_float_format == "e") {
       strm->setf(std::ios_base::scientific, std::ios_base::floatfield);
-    if (_float_format == "f")
+    }
+    if (_float_format == "f") {
       strm->setf(std::ios_base::fixed, std::ios_base::floatfield);
+    }
     // O.w. defaults to "g" per standard lib.
   }
 
@@ -120,8 +125,9 @@ class FstDrawer {
   static std::string Escape(const std::string& str) {
     std::string ns;
     for (char c : str) {
-      if (c == '\\' || c == '"')
+      if (c == '\\' || c == '"') {
         ns.push_back('\\');
+      }
       ns.push_back(c);
     }
     return ns;

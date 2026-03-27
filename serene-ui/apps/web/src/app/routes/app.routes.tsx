@@ -2,7 +2,7 @@ import { type RouteObject } from "react-router-dom";
 import { AppLayout } from "@/app/layouts";
 import { ConsolePage } from "@/pages/console";
 import { navigationMap } from "@serene-ui/shared-frontend/shared";
-import { FramesPage } from "@/pages/frames/ui/FramesPage";
+import { DashboardsPage } from "@/pages/dashboards/ui/DashboardsPage";
 import { ReplicationPage } from "@/pages/replication/ui/ReplicationPage";
 
 const appRoutes: RouteObject[] = [
@@ -11,8 +11,12 @@ const appRoutes: RouteObject[] = [
         element: <ConsolePage />,
     },
     {
-        path: navigationMap.frames,
-        element: <FramesPage />,
+        path: navigationMap.dashboards,
+        element: <DashboardsPage />,
+    },
+    {
+        path: `${navigationMap.dashboards}/:id`,
+        element: <DashboardsPage />,
     },
     {
         path: navigationMap.replication,

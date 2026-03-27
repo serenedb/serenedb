@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include <basics/buffer.h>
-
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -30,6 +28,7 @@
 
 #include "auth/token_cache.h"
 #include "basics/asio_ns.h"
+#include "basics/buffer.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "endpoint/connection_info.h"
@@ -38,6 +37,7 @@
 #include "statistics/request_statistics.h"
 
 namespace sdb {
+
 class AuthenticationFeature;
 class ConnectionStatistics;
 class GeneralRequest;
@@ -45,6 +45,7 @@ class GeneralResponse;
 class RequestStatistics;
 
 namespace rest {
+
 class RestHandler;
 class GeneralServer;
 
@@ -86,5 +87,6 @@ class CommTask : public std::enable_shared_from_this<CommTask> {
   // cluster-internal-only traffic.
   bool _is_user_request{true};
 };
+
 }  // namespace rest
 }  // namespace sdb

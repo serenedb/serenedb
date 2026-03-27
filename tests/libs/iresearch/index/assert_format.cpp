@@ -24,10 +24,10 @@
 #include "assert_format.hpp"
 
 #include <algorithm>
-#include <basics/bit_utils.hpp>
 #include <iostream>
 #include <unordered_set>
 
+#include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
@@ -54,17 +54,13 @@ bool Visit(const irs::ColumnReader& reader,
   auto it = reader.iterator(irs::ColumnHint::Consolidation);
 
   irs::PayAttr dummy;
-  auto* doc = irs::get<irs::DocAttr>(*it);
-  if (!doc) {
-    return false;
-  }
   auto* payload = irs::get<irs::PayAttr>(*it);
   if (!payload) {
     payload = &dummy;
   }
 
   while (it->next()) {
-    if (!visitor(doc->value, payload->value)) {
+    if (!visitor(it->value(), payload->value)) {
       return false;
     }
   }
@@ -73,7 +69,6 @@ bool Visit(const irs::ColumnReader& reader,
 }
 
 }  // namespace
-
 namespace tests {
 
 void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
@@ -145,16 +140,13 @@ irs::bytes_view Field::max() const {
 }
 
 uint64_t Field::total_freq() const {
-  using FreqT = decltype(irs::FreqAttr{}.value);
-  static_assert(std::is_unsigned_v<FreqT>);
-
-  FreqT value{0};
+  uint64_t value = 0;
   for (auto& term : terms) {
     for (auto& post : term.postings) {
       const auto sum = value + post.positions().size();
       EXPECT_GE(sum, value);
       EXPECT_GE(sum, post.positions().size());
-      value += static_cast<FreqT>(post.positions().size());
+      value += post.positions().size();
     }
   }
 
@@ -418,8 +410,6 @@ class DocIteratorImpl : public irs::DocIterator {
  public:
   DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
 
-  irs::doc_id_t value() const noexcept final { return _doc.value; }
-
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
     const auto it = _attrs.find(type);
     return it == _attrs.end() ? nullptr : it->second;
@@ -427,15 +417,15 @@ class DocIteratorImpl : public irs::DocIterator {
 
   irs::doc_id_t advance() final {
     if (_next == _data.postings.end()) {
-      return _doc.value = irs::doc_limits::eof();
+      return _doc = irs::doc_limits::eof();
     }
 
     _prev = _next, ++_next;
-    _doc.value = _prev->id();
-    _freq.value = static_cast<uint32_t>(_prev->positions().size());
+    _doc = _prev->id();
+    _freq = static_cast<uint32_t>(_prev->positions().size());
     _pos.Clear();
 
-    return _doc.value;
+    return _doc;
   }
 
   irs::doc_id_t seek(irs::doc_id_t id) final {
@@ -448,10 +438,10 @@ class DocIteratorImpl : public irs::DocIterator {
 
     _prev = it;
     _next = ++it;
-    _doc.value = _prev->id();
+    _doc = _prev->id();
     _pos.Clear();
 
-    return _doc.value;
+    return _doc;
   }
 
  private:
@@ -505,8 +495,8 @@ class DocIteratorImpl : public irs::DocIterator {
 
   const tests::Term& _data;
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
-  irs::DocAttr _doc;
-  irs::FreqAttr _freq;
+  uint32_t _freq = 0;
+  irs::FreqBlockAttr _freq_block{.value = &_freq};
   irs::CostAttr _cost;
   PosIterator _pos;
   std::set<Posting>::const_iterator _prev;
@@ -521,10 +511,8 @@ DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
   _cost.reset(_data.postings.size());
   _attrs[irs::Type<irs::CostAttr>::id()] = &_cost;
 
-  _attrs[irs::Type<irs::DocAttr>::id()] = &_doc;
-
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
-    _attrs[irs::Type<irs::FreqAttr>::id()] = &_freq;
+    _attrs[irs::Type<irs::FreqBlockAttr>::id()] = &_freq_block;
   }
 
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
@@ -653,15 +641,18 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
 
     // check document attributes
     {
-      auto* expected_freq = irs::get<irs::FreqAttr>(*expected_docs);
-      auto* actual_seq_freq = irs::get<irs::FreqAttr>(*seq_docs);
-      auto* actual_seek_freq = irs::get<irs::FreqAttr>(*seek_docs);
+      auto* expected_freq = irs::get<irs::FreqBlockAttr>(*expected_docs);
+      auto* actual_seq_freq = irs::get<irs::FreqBlockAttr>(*seq_docs);
+      auto* actual_seek_freq = irs::get<irs::FreqBlockAttr>(*seek_docs);
 
       if (expected_freq) {
+        expected_docs->FetchScoreArgs(0);
         ASSERT_FALSE(!actual_seq_freq);
         ASSERT_FALSE(!actual_seek_freq);
-        ASSERT_EQ(expected_freq->value, actual_seq_freq->value);
-        ASSERT_EQ(expected_freq->value, actual_seek_freq->value);
+        seq_docs->FetchScoreArgs(0);
+        ASSERT_EQ(expected_freq->value[0], actual_seq_freq->value[0]);
+        seek_docs->FetchScoreArgs(0);
+        ASSERT_EQ(expected_freq->value[0], actual_seek_freq->value[0]);
       }
 
       auto* expected_pos = irs::GetMutable<irs::PosAttr>(expected_docs.get());
@@ -973,8 +964,6 @@ void AssertPk(const irs::ColumnReader& actual_reader,
     auto actual_seek_it = actual_reader.iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, actual_seek_it);
 
-    auto* actual_key = irs::get<irs::DocAttr>(*actual_it);
-    ASSERT_NE(nullptr, actual_key);
     auto* actual_value = irs::get<irs::PayAttr>(*actual_it);
     ASSERT_NE(nullptr, actual_value);
 
@@ -986,7 +975,6 @@ void AssertPk(const irs::ColumnReader& actual_reader,
       ASSERT_NE(nullptr, actual_stateless_seek_it);
 
       ASSERT_EQ(expected_key, actual_it->value());
-      ASSERT_EQ(expected_key, actual_key->value);
       ASSERT_EQ(expected_value, actual_value->value);
       ASSERT_EQ(expected_key, actual_seek_it->seek(expected_key));
       ASSERT_EQ(expected_key, actual_stateless_seek_it->seek(expected_key));
@@ -1042,8 +1030,6 @@ void AssertColumn(const irs::ColumnReader* actual_reader,
     auto actual_seek_it = actual_reader->iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, actual_seek_it);
 
-    auto* actual_key = irs::get<irs::DocAttr>(*actual_it);
-    ASSERT_NE(nullptr, actual_key);
     auto* actual_value = irs::get<irs::PayAttr>(*actual_it);
     ASSERT_NE(nullptr, actual_value);
 
@@ -1055,7 +1041,6 @@ void AssertColumn(const irs::ColumnReader* actual_reader,
       ASSERT_NE(nullptr, actual_stateless_seek_it);
 
       ASSERT_EQ(expected_key, actual_it->value());
-      ASSERT_EQ(expected_key, actual_key->value);
       ASSERT_EQ(expected_value, actual_value->value);
       ASSERT_EQ(expected_key, actual_seek_it->seek(expected_key));
       ASSERT_EQ(expected_key, actual_stateless_seek_it->seek(expected_key));
@@ -1259,7 +1244,6 @@ void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
 }
 
 }  // namespace tests
-
 namespace irs {
 
 // use base irs::position type for ancestors

@@ -156,7 +156,7 @@ SELECT DATE '1969-07-14' + INTERVAL '48 day 22 min';
 1969-08-31 00:22:00
 
 
-query ?
+query
 SELECT str::interval
 FROM (
     VALUES
@@ -283,7 +283,7 @@ str
 00:00:04
 
 
-query ?
+query
 SELECT str::interval
 FROM (
   VALUES

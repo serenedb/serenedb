@@ -71,15 +71,17 @@ set(IResearch_core_sources
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
+    ./analysis/pattern_tokenizer.cpp
+    ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
-    ./formats/columnstore2.cpp
+    ./formats/column/common.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
-    ./formats/skip_list.cpp
-    ./formats/sparse_bitmap.cpp
+    ./formats/posting/skip_list.cpp
+    ./formats/column/sparse_bitmap.cpp
     ./formats/format_block_128.cpp
-    ./formats/formats_burst_trie.cpp
-    ./formats/hnsw_index.cpp
+    ./formats/index/burst_trie.cpp
+    ./formats/column/hnsw_index.cpp
     ./index/buffered_column.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
@@ -119,6 +121,7 @@ set(IResearch_core_sources
     ./search/same_position_filter.cpp
     ./search/wildcard_filter.cpp
     ./search/regexp_filter.cpp
+    ./search/wildcard_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
     ./search/term_query.cpp
@@ -170,7 +173,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${FLEX_EXECUTABLE} -L -o
+        ${CMAKE_SOURCE_DIR}/scripts/generate-c.sh ${FLEX_EXECUTABLE}
         libs/iresearch/include/iresearch/parser/lucene_lexer.cpp
         libs/iresearch/include/iresearch/parser/lucene_lexer.l
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
@@ -181,7 +184,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${CMAKE_SOURCE_DIR}/scripts/bison-c.sh ${BISON_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/scripts/generate-c.sh ${BISON_EXECUTABLE}
         libs/iresearch/include/iresearch/parser/lucene_parser.cpp
         libs/iresearch/include/iresearch/parser/lucene_parser.y
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y

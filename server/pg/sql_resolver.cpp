@@ -20,18 +20,28 @@
 
 #include "pg/sql_resolver.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/index.h"
 #include "catalog/native_functions.h"
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/virtual_table.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
 
-namespace sdb::pg {
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
 
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
+
+namespace sdb::pg {
 namespace {
 
 void ResolveInformationSchema(ObjectId database, std::string_view relation,
@@ -58,6 +68,7 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
                                const Objects::ObjectName& name,
                                Objects::ObjectData& data,
                                const Config& config) {
+  auto snapshot = config.EnsureCatalogSnapshot();
   auto resolve_object = [&](std::string_view schema) {
     SDB_ASSERT(!data.object);
     if (schema == StaticStrings::kInformationSchema) {
@@ -66,9 +77,6 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
       return;
     }
 
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
     data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
       switch (type) {
         case ObjectType::Function:
@@ -186,13 +194,14 @@ void ResolveRelation(ObjectId database,
   ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
                             data, config);
 
-  if (!data.object) {
-    SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
-              name.FullName(), "\" does not exist");
+  if (!data.object || data.object->Tombstoned()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", name.FullName(), "\" does not exist"));
   }
 
   if (data.object->GetType() == catalog::ObjectType::Table) {
-    auto table = basics::downCast<catalog::Table>(*data.object);
+    auto& table = basics::downCast<catalog::Table>(*data.object);
     for (const auto& column : table.Columns()) {
       if (const auto& default_value = column.expr) {
         const auto& default_value_objects = default_value->GetObjects();
@@ -203,6 +212,13 @@ void ResolveRelation(ObjectId database,
     }
   } else if (data.object->GetType() == catalog::ObjectType::View) {
     resolve_view();
+  } else if (data.object->GetType() == catalog::ObjectType::Index) {
+    auto& index = basics::downCast<catalog::Index>(*data.object);
+    auto snapshot = config.EnsureCatalogSnapshot();
+    auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
+    SDB_ASSERT(table);
+    SDB_ASSERT(!data.catalog_table);
+    data.catalog_table = std::move(table);
   }
 }
 
@@ -232,7 +248,8 @@ void ResolveFunctions(ObjectId database,
 
 }  // namespace
 
-void Resolve(ObjectId database, Objects& objects, const Config& config) {
+void Resolve(ObjectId database, Objects& objects, Config& config) {
+  absl::Cleanup drop_snapshot = [&] noexcept { config.DropCatalogSnapshot(); };
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
@@ -252,6 +269,7 @@ void Resolve(ObjectId database, Objects& objects, const Config& config) {
     ResolveRelation(database, search_path, objects, disallowed, name, new_data,
                     config);
   }
+  std::move(drop_snapshot).Cancel();
 }
 
 void ResolveQueryView(ObjectId database,

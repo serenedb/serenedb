@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import {
     ConsoleIcon,
-    FramesIcon,
+    DashboardsIcon,
     navigationMap,
     ReplicationIcon,
     SidebarGroup,
@@ -22,9 +22,9 @@ export const NavMain = () => {
             link: navigationMap.console,
         },
         {
-            title: "Frames",
-            icon: <FramesIcon />,
-            link: navigationMap.frames,
+            title: "Dashboards",
+            icon: <DashboardsIcon />,
+            link: navigationMap.dashboards,
         },
         {
             title: "Replication",
@@ -47,7 +47,13 @@ export const NavMain = () => {
                 {buttons.map((item, index) => (
                     <SidebarMenuItem key={index}>
                         <SidebarMenuButton
-                            isActive={location.pathname === item.link}
+                            isActive={
+                                item.link === navigationMap.dashboards
+                                    ? location.pathname.startsWith(
+                                          `${navigationMap.dashboards}`,
+                                      )
+                                    : location.pathname === item.link
+                            }
                             onClick={getAction(item)}
                             tooltip={item.title}>
                             {item.icon}

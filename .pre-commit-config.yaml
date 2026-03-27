@@ -44,3 +44,21 @@ repos:
     hooks:
       - id: clang-format
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+
+  - repo: local
+    hooks:
+      - id: check-disclaimer
+        name: Check disclaimer header
+        language: python
+        entry: python3 scripts/check_disclaimer.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: check-namespace-format
+        name: Check namespace formatting
+        language: python
+        entry: python3 scripts/check_namespace_format.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$

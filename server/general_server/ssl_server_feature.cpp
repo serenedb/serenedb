@@ -65,7 +65,7 @@ SslServerFeature::SslServerFeature(Server& server)
     _ssl_protocol(kTlsGeneric),
     _ssl_options(asio_ns::ssl::context::default_workarounds |
                  asio_ns::ssl::context::single_dh_use),
-    _ecdh_curve("prime256v1"),
+    _ecdh_curve("x25519:prime256v1"),
     _session_cache(false),
     _prefer_http11_in_alpn(false) {
   setOptional(true);
@@ -279,6 +279,7 @@ void SslServerFeature::verifySslOptions() {
 }
 
 namespace {
+
 class BIOGuard {
  public:
   explicit BIOGuard(BIO* bio) : bio(bio) {}
@@ -288,6 +289,7 @@ class BIOGuard {
  public:
   BIO* bio;
 };
+
 }  // namespace
 
 static inline bool SearchForProtocol(const unsigned char** out,
@@ -369,30 +371,11 @@ asio_ns::ssl::context SslServerFeature::createSslContextInternal(
     }
 
     if (!_ecdh_curve.empty()) {
-      int ssl_ecdh_nid = OBJ_sn2nid(_ecdh_curve.c_str());
-
-      if (ssl_ecdh_nid == 0) {
-        SDB_ERROR("xxxxx", sdb::Logger::SSL, "SSL error: ", LastSslError(),
-                  " Unknown curve name: ", _ecdh_curve);
-        throw std::runtime_error("cannot create SSL context");
-      }
-
-      // https://www.openssl.org/docs/manmaster/apps/ecparam.html
-      EC_KEY* ecdh_key = EC_KEY_new_by_curve_name(ssl_ecdh_nid);
-      if (ecdh_key == nullptr) {
-        SDB_ERROR("xxxxx", sdb::Logger::SSL, "SSL error: ", LastSslError(),
-                  ". unable to create curve by name: ", _ecdh_curve);
-        throw std::runtime_error("cannot create SSL context");
-      }
-
-      if (SSL_CTX_set_tmp_ecdh(native_context, ecdh_key) != 1) {
-        EC_KEY_free(ecdh_key);
+      if (SSL_CTX_set1_groups_list(native_context, _ecdh_curve.c_str()) != 1) {
         SDB_ERROR("xxxxx", sdb::Logger::SSL, "cannot set ECDH option",
                   LastSslError());
         throw std::runtime_error("cannot create SSL context");
       }
-
-      EC_KEY_free(ecdh_key);
       SSL_CTX_set_options(native_context, SSL_OP_SINGLE_ECDH_USE);
     }
 
@@ -807,7 +790,6 @@ static void DumpPem(const std::string& pem, vpack::Builder& builder,
     vpack::ObjectBuilder guard2(&builder, attr_name);
     auto sha256 = func.finalize();
     builder.add("sha256", sha256);
-    builder.add("SHA256", sha256);  // deprecated in 3.7 GA
     {
       vpack::ArrayBuilder guard3(&builder, "certificates");
       for (const auto& c : certs) {
@@ -819,8 +801,6 @@ static void DumpPem(const std::string& pem, vpack::Builder& builder,
       func2(keys[0].c_str(), keys[0].size());
       sha256 = func2.finalize();
       builder.add("privateKeySha256", sha256);
-      builder.add("privateKeySHA256",
-                  sha256);  // deprecated in 3.7 GA
     }
   }
 }

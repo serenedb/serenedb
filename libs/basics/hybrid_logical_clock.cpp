@@ -22,6 +22,7 @@
 #include "basics/hybrid_logical_clock.h"
 namespace sdb::basics {
 namespace {
+
 template<typename DurationT, typename ReprT = typename DurationT::rep>
 constexpr DurationT MaxDuration() noexcept {
   return DurationT{(std::numeric_limits<ReprT>::max)()};
@@ -69,6 +70,7 @@ DstDurationT ClockOffset(
 
   return (dst_now + diff1970).time_since_epoch();
 }
+
 }  // namespace
 
 const char* HybridLogicalClock::gEncodeTable =

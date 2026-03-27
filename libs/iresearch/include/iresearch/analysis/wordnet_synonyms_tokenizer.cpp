@@ -68,6 +68,7 @@ sdb::ResultOr<std::vector<std::string_view>> ParseParams(
   }
   return outputs;
 }
+
 }  // namespace
 
 sdb::ResultOr<WordnetSynonymsTokenizer::SynonymsMap>

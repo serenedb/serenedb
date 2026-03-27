@@ -66,6 +66,7 @@ struct TypeName;
 struct CreateFunctionStmt;
 
 namespace sdb {
+
 class QueryString;
 namespace pg {
 
@@ -141,6 +142,8 @@ enum class SqlCommandType : uint32_t {
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
   Copy,         // copy stmt
+  CTAS,         // create table as select
+  CreateIndex   // create index with backfill
 };
 
 template<typename T>
@@ -176,6 +179,7 @@ std::optional<T> TryGet(const List* list, size_t i);
   _Pragma("push_macro(\"foreach\")") \
   _Pragma("push_macro(\"Min\")") \
   _Pragma("push_macro(\"Max\")") \
+  _Pragma("push_macro(\"PACKAGE_STRING\")") \
   extern "C" {
 
 #define LIBPG_QUERY_INCLUDES_END \
@@ -197,6 +201,7 @@ std::optional<T> TryGet(const List* list, size_t i);
   _Pragma("pop_macro(\"printf\")") \
   _Pragma("pop_macro(\"foreach\")") \
   _Pragma("pop_macro(\"Min\")") \
-  _Pragma("pop_macro(\"Max\")")
+  _Pragma("pop_macro(\"Max\")") \
+  _Pragma("pop_macro(\"PACKAGE_STRING\")")
 
 // clang-format on

@@ -1,4 +1,4 @@
-﻿////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
 /// Copyright 2020 ArangoDB GmbH, Cologne, Germany
@@ -20,9 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/memory.hpp>
-
 #include "basics/down_cast.h"
+#include "basics/memory.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -44,7 +43,6 @@ struct TestTermMeta : irs::TermMeta {
 };
 
 }  // namespace
-
 namespace irs {
 
 // use base irs::TermMeta type for ancestors
@@ -52,7 +50,6 @@ template<>
 struct Type<::TestTermMeta> : Type<irs::TermMeta> {};
 
 }  // namespace irs
-
 namespace {
 
 struct Sort : irs::Scorer {

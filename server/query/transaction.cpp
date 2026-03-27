@@ -31,18 +31,18 @@ namespace sdb::query {
 
 void Transaction::OnNewStatement() {
   if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
+    DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
   }
 }
 
 Result Transaction::Commit() {
-  const uint64_t num_ops = _rocksdb_transaction
-                             ? _rocksdb_transaction->GetNumPuts() +
-                                 _rocksdb_transaction->GetNumDeletes()
-                             : 0;
+  uint64_t num_ops = _rocksdb_transaction
+                       ? _rocksdb_transaction->GetNumPuts() +
+                           _rocksdb_transaction->GetNumDeletes()
+                       : 0;
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
-
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -63,6 +63,24 @@ Result Transaction::Commit() {
       Destroy();
     };
 
+    // When updating non-PK columns with a search index, the search engine
+    // Remove consumes a tick from the same range as rocksdb seq numbers.
+    // With num_ops == _queries, first_tick == committed_tick which violates
+    // the strict ordering invariant. Add an extra Delete to bump seq by 1.
+    for (const auto& [id, trx] : _search_transactions) {
+      SDB_ASSERT(trx->GetQueries() <= num_ops);
+      if (trx->GetQueries() == num_ops) {
+        SDB_ASSERT(trx->GetQueries() != 0);
+        // TODO: I'm not sure in what column family we should write
+        _rocksdb_transaction->Delete(rocksdb::Slice{});
+        ++num_ops;
+        break;
+      }
+    }
+    SDB_ASSERT(absl::c_all_of(_search_transactions, [&](const auto& p) {
+      return p.second->GetQueries() < num_ops;
+    }));
+
     SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
     auto status = _rocksdb_transaction->Commit();
     SDB_IF_FAILURE("crash_after_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
@@ -82,10 +100,11 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
-    ApplyTableStatsDiffs();
   }
+  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
+
   return {};
 }
 
@@ -133,10 +152,9 @@ bool Transaction::HasTransactionBegin() const noexcept {
 
 const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
-  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
-    auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
+    auto index_shard = EnsureCatalogSnapshot()->GetIndexShard(index_id);
     SDB_ASSERT(index_shard);
     SDB_ASSERT(index_shard->GetType() == IndexType::Inverted,
                "Expected inverted index shard");
@@ -151,6 +169,7 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
 
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT(HasRocksDBRead());
+  EnsureCatalogSnapshot();
   if (!_rocksdb_snapshot) {
     if (HasRocksDBWrite() || HasTransactionBegin()) {
       EnsureRocksDBTransaction();
@@ -187,6 +206,7 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
 }
 
 void Transaction::Destroy() noexcept {
+  DropCatalogSnapshot();
   _state = State::None;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
@@ -198,7 +218,7 @@ void Transaction::Destroy() noexcept {
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   // TODO(codeworse): manage catalog snapshot in transaction
-  auto table_shard = GetCatalogSnapshot()->GetTableShard(table_id);
+  auto table_shard = EnsureCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,
               "Table shard not found for table id: ", table_id);
@@ -207,8 +227,12 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
 }
 
 void Transaction::ApplyTableStatsDiffs() noexcept {
+  if (_table_rows_deltas.empty()) {
+    return;
+  }
+  auto snapshot = EnsureCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
-    auto table_shard = catalog::GetTableShard(table_id);
+    auto table_shard = snapshot->GetTableShard(table_id);
     SDB_ASSERT(table_shard);
     if (table_shard) {
       table_shard->UpdateNumRows(delta);

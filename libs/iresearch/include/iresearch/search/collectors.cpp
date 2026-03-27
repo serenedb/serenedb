@@ -45,7 +45,6 @@ static NoopFieldCollector gNoopFieldStats;
 static NoopTermCollector gNoopTermStats;
 
 }  // namespace
-
 namespace irs {
 
 FieldCollectorWrapper::collector_type& FieldCollectorWrapper::noop() noexcept {

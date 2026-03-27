@@ -18,7 +18,6 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/unshackled_mutex.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -29,6 +28,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#include "basics/unshackled_mutex.h"
 
 /**
  * The constructor of WorkerThread starts a thread, which immediately

@@ -47,6 +47,7 @@
 #include "utils/query_string.h"
 
 namespace sdb::pg {
+
 class PostgresFeature;
 
 // ClientHello -> Idle -> Processing -> Idle -> ErrorRecovery -> Idle....
@@ -83,7 +84,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void ProcessFirstRoot() noexcept;
   void ProcessNextRoot() noexcept;
-  void ProcessWakeup() noexcept;
+  void ProcessWakeup(yaclib::Result<> r) noexcept;
 
   virtual void SendAsync(message::SequenceView data) noexcept = 0;
 
@@ -151,6 +152,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
     const std::vector<velox::TypePtr>& param_types);
   std::optional<std::vector<VarFormat>> ParseBindFormats(
     std::string_view& packet);
+  void BuildColumnSerializers(SqlPortal& portal);
   void ExecutePortal(SqlPortal& portal);
   bool RegisterCursor(std::unique_ptr<query::Cursor> cursor, SqlPortal& portal);
   void ReleaseCursor(SqlPortal& portal);
@@ -164,7 +166,8 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   ProcessState ProcessQueryResult();
   void SendBatch(const velox::RowVectorPtr& batch);
-  void SendCommandComplete(const SqlTree& tree, uint64_t rows);
+  void SendCommandComplete(const SqlTree& tree, uint64_t rows,
+                           const query::QueryPtr& query);
 
   template<typename Func>
   void SafeCall(Func&& func) noexcept;
@@ -176,7 +179,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
   mutable absl::Mutex _queue_mutex;
   absl::Mutex _execution_mutex;
   containers::FlatHashMap<std::string, std::string> _client_parameters;
-  std::shared_ptr<catalog::Database> _database;
   SqlPortal* _current_portal{nullptr};
   std::string_view _current_query;
   containers::NodeHashMap<std::string, SqlStatement> _statements;
@@ -187,6 +189,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   uint64_t _key{0};
   bool _pop_packet{false};
   bool _success_packet{false};
+  bool _ssl_handshake_passed{false};
   char _current_packet_type{0};
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};

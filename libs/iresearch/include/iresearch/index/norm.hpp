@@ -61,7 +61,7 @@ class NormHeader final {
  public:
   constexpr static size_t ByteSize() noexcept {
     return sizeof(NormVersion) + sizeof(_encoding) + sizeof(_max) +
-           sizeof(_sum);
+           sizeof(_sum) + sizeof(_non_zero_count);
   }
 
   constexpr static bool CheckNumBytes(size_t num_bytes) noexcept {
@@ -77,11 +77,13 @@ class NormHeader final {
   void Reset(uint32_t value) noexcept {
     _max = std::max(_max, value);
     _sum += value;
+    _non_zero_count += static_cast<uint64_t>(value != 0);
   }
 
   NormEncoding Encoding() const noexcept { return _encoding; }
   uint32_t Max() const noexcept { return _max; }
   uint64_t Sum() const noexcept { return _sum; }
+  uint64_t NonZeroCount() const noexcept { return _non_zero_count; }
 
   static void Write(const NormHeader& hdr, DataOutput& out);
   static std::optional<NormHeader> Read(bytes_view payload) noexcept;
@@ -100,6 +102,7 @@ class NormHeader final {
   NormEncoding _encoding;  // Number of bytes used for encoding
   uint32_t _max = 0;
   uint64_t _sum = 0;
+  uint64_t _non_zero_count = 0;
 };
 
 class Norm : public Attribute {

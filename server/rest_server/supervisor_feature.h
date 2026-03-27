@@ -28,9 +28,11 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 }
 namespace options {
+
 class ProgramOptions;
 }
 

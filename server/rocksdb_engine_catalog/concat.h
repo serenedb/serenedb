@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <vpack/slice.h>
+
 #include <boost/pfr.hpp>
 #include <boost/pfr/core.hpp>
 #include <boost/pfr/detail/core17_generated.hpp>
@@ -29,7 +31,6 @@
 
 #include "basics/identifier.h"
 #include "catalog/identifiers/revision_id.h"
-#include "vpack/slice.h"
 
 namespace sdb::rocksutils {
 namespace detail {

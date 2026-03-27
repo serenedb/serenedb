@@ -53,10 +53,10 @@ TEST(token_attributes_test, payload) {
   ASSERT_TRUE(irs::IsNull(pay.value));
 }
 
-TEST(token_attributes_test, document) {
-  static_assert("document" == irs::Type<irs::DocAttr>::name());
+TEST(token_attributes_test, value_index) {
+  static_assert("value_index" == irs::Type<irs::ValueIndex>::name());
 
-  irs::DocAttr doc;
+  irs::ValueIndex doc;
   ASSERT_TRUE(!irs::doc_limits::valid(doc.value));
 }
 

@@ -26,6 +26,7 @@
 #include "statistics/statistics_feature.h"
 
 namespace sdb {
+
 class ConnectionStatistics {
  public:
   static uint64_t memoryUsage() noexcept;
@@ -108,4 +109,5 @@ class ConnectionStatistics {
   bool _http;
   bool _error;
 };
+
 }  // namespace sdb

@@ -31,6 +31,7 @@
 #include "basics/containers/flat_hash_set.h"
 
 namespace sdb {
+
 // SSL protocol methods
 enum SslProtocol {
   kSslUnknown = 0,

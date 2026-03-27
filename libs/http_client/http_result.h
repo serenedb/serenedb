@@ -150,4 +150,5 @@ class HttpResult final {
   // header fields
   containers::FlatHashMap<std::string, std::string> _header_fields;
 };
+
 }  // namespace sdb::httpclient

@@ -90,14 +90,6 @@ uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
     kMinThreads, threads_limit ? threads_limit : kMaxThreads);
 }
 
-std::filesystem::path GetPersistedPath(
-  const DatabasePathFeature& db_path_feature, ObjectId database_id) {
-  std::filesystem::path path = db_path_feature.directory();
-  path /= StaticStrings::kEngineDirRoot;
-  path /= absl::StrCat(StaticStrings::kDatabaseDirPrefix, database_id);
-  return path;
-}
-
 }  // namespace
 
 class SearchThreadPools {
@@ -297,19 +289,6 @@ void SearchEngine::stop() {
 
 void SearchEngine::unprepare() { SDB_ASSERT(isEnabled()); }
 
-void CleanupDatabase(ObjectId database_id) {
-  const auto& feature =
-    SerenedServer::Instance().getFeature<DatabasePathFeature>();
-  auto path = GetPersistedPath(feature, database_id);
-  std::error_code error;
-  std::filesystem::remove_all(path, error);
-  if (error) [[unlikely]] {
-    SDB_ERROR("xxxxx", Logger::SEARCH,
-              "Failed to remove search path for database '", database_id,
-              "' with error '", error.message(), "'");
-  }
-}
-
 bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
                          absl::AnyInvocable<void()>&& fn) {
   auto r = basics::SafeCall([&]() {
@@ -355,16 +334,15 @@ bool SearchEngine::failQueriesOnOutOfSync() const noexcept {
 
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
-  return ::sdb::search::GetPersistedPath(_dir_feature, database_id);
+  std::filesystem::path path = _dir_feature.directory();
+  path /= StaticStrings::kEngineDirRoot;
+  path /= absl::StrCat(database_id);
+  return path;
 }
 
 void SearchEngine::beginShutdown() {
-  // Drop rocksdb snapshots in inverted index shards
-  // in order to gracefully shutdown rocksdb engine
-  for (auto&& index_shard :
-       catalog::GetCatalog().GetSnapshot()->GetIndexShards()) {
-    auto& inverted_shard = basics::downCast<InvertedIndexShard>(*index_shard);
-    inverted_shard.ResetInvertedIndexSnapshot();
-  }
+  _thread_pools->Get(ThreadGroup::Commit).stop(false);
+  _thread_pools->Get(ThreadGroup::Consolidation).stop(false);
 }
+
 }  // namespace sdb::search

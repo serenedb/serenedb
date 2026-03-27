@@ -28,9 +28,11 @@
 #include "general_server/general_comm_task.h"
 
 namespace sdb {
+
 class HttpRequest;
 
 namespace basics {
+
 class StringBuffer;
 }
 
@@ -97,5 +99,6 @@ class HttpCommTask final : public GeneralCommTask<T> {
   bool _should_keep_alive;  /// keep connection open
   bool _message_done;
 };
+
 }  // namespace rest
 }  // namespace sdb

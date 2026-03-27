@@ -67,16 +67,6 @@ struct PayAttr final : Attribute {
   bytes_view value;
 };
 
-// Contains a document identifier
-struct DocAttr : Attribute {
-  static constexpr std::string_view type_name() noexcept { return "document"; }
-
-  explicit DocAttr(doc_id_t doc = doc_limits::invalid()) noexcept
-    : value{doc} {}
-
-  doc_id_t value;
-};
-
 // Number of occurences of a term in a document
 struct FreqAttr final : Attribute {
   static constexpr std::string_view type_name() noexcept { return "frequency"; }
@@ -89,7 +79,7 @@ struct FreqBlockAttr final : Attribute {
     return "freq_block";
   }
 
-  const uint32_t* value = nullptr;
+  uint32_t* value = nullptr;
 };
 
 struct BoostBlockAttr final : Attribute {
@@ -97,7 +87,7 @@ struct BoostBlockAttr final : Attribute {
     return "boost_block";
   }
 
-  const score_t* value = nullptr;
+  score_t* value = nullptr;
 };
 
 // Iterator representing term positions in a document
@@ -153,6 +143,19 @@ class AttrProviderChangeAttr final : public Attribute {
   static void Noop(AttributeProvider&) noexcept {}
 
   mutable Callback _callback{&Noop};
+};
+
+// Denotes a position of a value associated with a document.
+// Also used for doc_id_t passing to WandWriter
+struct ValueIndex final : Attribute {
+  static_assert(std::is_same_v<doc_id_t, uint32_t>);
+  static_assert(doc_limits::invalid() == 0);
+
+  static constexpr std::string_view type_name() noexcept {
+    return "value_index";
+  }
+
+  doc_id_t value = doc_limits::invalid();
 };
 
 }  // namespace irs

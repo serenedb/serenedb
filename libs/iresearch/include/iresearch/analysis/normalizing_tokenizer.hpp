@@ -41,12 +41,10 @@ namespace analysis {
 class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
                                    private util::Noncopyable {
  public:
-  enum CaseConvertT { kLower, kNone, kUpper };
-
   struct OptionsT {
     icu::Locale locale;
-    CaseConvertT case_convert{CaseConvertT::kNone};  // no extra normalization
-    bool accent{true};                               // no extra normalization
+    Case case_convert{Case::None};  // no extra normalization
+    bool accent{true};              // no extra normalization
 
     OptionsT() : locale{"C"} { locale.setToBogus(); }
   };

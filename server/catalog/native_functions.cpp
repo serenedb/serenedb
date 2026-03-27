@@ -49,24 +49,6 @@ static containers::FlatHashSet<std::unique_ptr<catalog::Function>, HashEq,
                                HashEq>
   gFunctions;
 
-void AddFunction(std::string_view name, catalog::FunctionSignature signature,
-                 catalog::FunctionOptions options,
-                 aql::FunctionImpl implementation) {
-  SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
-  auto function = std::make_unique<catalog::Function>(
-    name, std::move(signature), std::move(options), implementation);
-  gFunctions.emplace(std::move(function));
-}
-
-void MakeAlias(std::string_view alias, std::string_view existing) {
-  SDB_ASSERT(absl::c_none_of(alias, absl::ascii_isupper));
-  SDB_ASSERT(absl::c_none_of(existing, absl::ascii_isupper));
-  const auto* function = GetFunction(existing);
-  SDB_ASSERT(function);
-  AddFunction(alias, function->Signature(), function->Options(),
-              function->AqlFunction());
-}
-
 const catalog::Function* GetFunction(std::string_view name) {
   auto it = gFunctions.find(name);
   if (it == gFunctions.end()) {

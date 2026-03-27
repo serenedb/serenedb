@@ -21,6 +21,8 @@
 #include "catalog/function.h"
 
 #include <velox/type/Type.h>
+#include <vpack/serializer.h>
+#include <vpack/vpack_helper.h>
 
 #include <string_view>
 
@@ -32,8 +34,6 @@
 #include "catalog/sql_function_impl.h"
 #include "query/types.h"
 #include "utils/velox_vpack.h"
-#include "vpack/serializer.h"
-#include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
 
@@ -125,10 +125,6 @@ Result catalog::Function::Instantiate(
     if constexpr (std::is_same_v<T, pg::FunctionImpl>) {
       r = T::FromVPack(ObjectId{database}, properties.implementation, impl,
                        properties.signature.IsProcedure());
-    } else {
-#ifdef SDB_CLUSTER
-      r = T::FromVPack(ObjectId{database}, properties.implementation, impl);
-#endif
     }
 
     if (!r.ok()) {
@@ -142,28 +138,10 @@ Result catalog::Function::Instantiate(
   switch (properties.options.language) {
     case FunctionLanguage::SQL:
       return from_vpack.operator()<pg::FunctionImpl>();
-    case FunctionLanguage::AnalyzerJson:
-      return from_vpack.operator()<search::AnalyzerImpl>();
     default:
       return {ERROR_BAD_PARAMETER,
               "Unsupported function language: ", properties.options.language};
   }
-}
-
-catalog::Function::Function(std::string_view name, FunctionSignature signature,
-                            FunctionOptions options, aql::FunctionImpl impl)
-  : SchemaObject{{},
-                 {},
-                 {},
-                 {},  // TOOD(mbkkt) think about id
-                 std::string{name},
-                 ObjectType::Function},
-    _signature{std::move(signature)},
-    _options{std::move(options)},
-    _aql_impl{std::move(impl)} {
-  SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_options.language == FunctionLanguage::AqlNative);
-  SDB_ASSERT(_aql_impl);
 }
 
 catalog::Function::Function(std::string_view name, FunctionSignature signature,
@@ -179,23 +157,6 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
   SDB_ASSERT(!this->GetName().empty());
   SDB_ASSERT(_options.language == FunctionLanguage::VeloxNative ||
              _options.language == FunctionLanguage::Decorator);
-}
-
-catalog::Function::Function(FunctionProperties&& properties,
-                            std::unique_ptr<search::AnalyzerImpl> analyzer,
-                            ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 properties.id,
-                 std::move(properties.name),
-                 ObjectType::Function},
-    _signature{std::move(properties.signature)},
-    _options{std::move(properties.options)},
-    _analyzer_impl{std::move(analyzer)} {
-  SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_options.language == FunctionLanguage::AnalyzerJson);
-  SDB_ASSERT(_analyzer_impl);
 }
 
 catalog::Function::Function(FunctionProperties&& properties,
@@ -232,11 +193,6 @@ void catalog::Function::WriteProperties(vpack::Builder& builder) const {
     case FunctionLanguage::SQL:
       _sql_impl->ToVPack(builder);
       break;
-#ifdef SDB_CLUSTER
-    case FunctionLanguage::AnalyzerJson:
-      _analyzer_impl->ToVPack(builder);
-      break;
-#endif
     default:
       SDB_ENSURE(false, ERROR_BAD_PARAMETER,
                  "Unsupported function language: ", _options.language);
@@ -258,11 +214,6 @@ void catalog::Function::WriteInternal(vpack::Builder& builder) const {
     case FunctionLanguage::SQL:
       _sql_impl->ToVPack(builder);
       break;
-#ifdef SDB_CLUSTER
-    case FunctionLanguage::AnalyzerJson:
-      _analyzer_impl->ToVPack(builder);
-      break;
-#endif
     default:
       SDB_ENSURE(false, ERROR_BAD_PARAMETER,
                  "Unsupported function language: ", _options.language);

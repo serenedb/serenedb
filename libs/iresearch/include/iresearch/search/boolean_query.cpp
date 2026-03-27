@@ -22,9 +22,12 @@
 
 #include "iresearch/search/boolean_query.hpp"
 
-#include "iresearch/formats/formats_impl.hpp"
+#include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/format_block_128.hpp"
+#include "iresearch/formats/posting/iterator_doc.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boost_iterator.hpp"
 #include "iresearch/search/conjunction.hpp"
-#include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -78,11 +81,14 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
-    using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-    return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                        std::forward<Args>(args)...);
-  });
+  return ResolveMergeType(
+    ctx.scorer ? merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType> {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+      return MakeDisjunction<Disjunction>(
+        ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+        std::move(itrs), std::forward<Args>(args)...);
+    });
 }
 
 // Returns conjunction iterator created from the specified queries
@@ -105,13 +111,15 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return MakeConjunction(merge_type, ctx.wand, std::move(itrs),
-                         std::forward<Args>(args)...);
+  return MakeConjunction(ctx.scorer ? merge_type : ScoreMergeType::Noop,
+                         ctx.wand,
+                         static_cast<doc_id_t>(ctx.segment.docs_count()),
+                         std::move(itrs), std::forward<Args>(args)...);
 }
 
 }  // namespace
 
-DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
+DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
   if (empty()) {
     return DocIterator::empty();
   }
@@ -119,6 +127,11 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   SDB_ASSERT(_excl);
   const auto excl_begin = this->excl_begin();
   const auto end = this->end();
+  ExecutionContext ctx{old};
+  if (excl_begin != end) {
+    // TODO(mbkkt) enable back?
+    ctx.wand.index = WandContext::kDisable;
+  }
 
   auto incl = execute(ctx, begin(), excl_begin);
 
@@ -284,12 +297,92 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type(), [&]<ScoreMergeType MergeType>() {
-    // FIXME(gnusi): use FAST version
-    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
-    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            min_match_count);
-  });
+  return ResolveMergeType(
+    ctx.scorer ? merge_type() : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType> {
+      // FIXME(gnusi): use FAST version
+      using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
+      return MakeWeakDisjunction<Disjunction>(
+        ctx.wand, static_cast<doc_id_t>(ctx.segment.docs_count()),
+        std::move(itrs), min_match_count);
+    });
+}
+
+void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
+                         const Or& opt) {
+  SDB_ASSERT(!req.empty());
+  _req = req.prepare(ctx);
+  const auto opt_ctx = ctx.Boost(opt.Boost());
+  _opt.reserve(opt.size());
+  for (const auto& opt_filter : opt) {
+    _opt.emplace_back(opt_filter->prepare(opt_ctx));
+  }
+}
+
+DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {
+  ExecutionContext ctx{old};
+  // TODO(mbkkt) enable back?
+  ctx.wand.index = WandContext::kDisable;
+  auto req = _req->execute(ctx);
+  if (!ctx.scorer || doc_limits::eof(req->value())) {
+    return req;
+  }
+
+  using TermWithFreq = PostingIteratorBase<
+    IteratorTraitsImpl<FormatTraits128, true, false, false>>;
+  using TermAdapter = PostingAdapter<TermWithFreq>;
+
+  ScoreAdapters opt_itrs;
+  opt_itrs.reserve(_opt.size());
+  bool opt_is_term = true;
+  for (const auto& q : _opt) {
+    auto docs = q->execute(ctx);
+    if (doc_limits::eof(docs->value())) {
+      continue;
+    }
+    if (!dynamic_cast<TermWithFreq*>(docs.get())) {
+      opt_is_term = false;
+    }
+    opt_itrs.emplace_back(std::move(docs));
+  }
+
+  if (opt_itrs.empty()) {
+    return req;
+  }
+
+  const bool req_is_term = dynamic_cast<TermWithFreq*>(req.get());
+
+  auto make =
+    [&]<typename RequiredAdapter, typename OptAdapter>() -> DocIterator::ptr {
+    if (opt_itrs.size() == 1) {
+      return memory::make_managed<BoostIterator<RequiredAdapter, OptAdapter>>(
+        RequiredAdapter{std::move(req)}, OptAdapter{std::move(opt_itrs[0])});
+    }
+    std::vector<OptAdapter> opt_adapters;
+    opt_adapters.reserve(opt_itrs.size());
+    for (auto& it : opt_itrs) {
+      opt_adapters.emplace_back(std::move(it));
+    }
+    return memory::make_managed<
+      BoostIterator<RequiredAdapter, std::vector<OptAdapter>>>(
+      RequiredAdapter{std::move(req)}, std::move(opt_adapters));
+  };
+
+  if (req_is_term && opt_is_term) {
+    return make.template operator()<TermAdapter, TermAdapter>();
+  }
+  if (req_is_term) {
+    return make.template operator()<TermAdapter, ScoreAdapter>();
+  }
+  if (opt_is_term) {
+    return make.template operator()<ScoreAdapter, TermAdapter>();
+  }
+  return make.template operator()<ScoreAdapter, ScoreAdapter>();
+}
+
+void BoostQuery::visit(const SubReader& segment, PreparedStateVisitor& visitor,
+                       score_t boost) const {
+  _req->visit(segment, visitor, boost);
 }
 
 }  // namespace irs

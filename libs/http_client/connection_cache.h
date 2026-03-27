@@ -34,11 +34,13 @@
 
 namespace sdb {
 namespace app {
+
 class AppServer;
 class CommunicationFeaturePhase;
-}  // namespace app
 
+}  // namespace app
 namespace httpclient {
+
 class ConnectionCache;
 
 struct ConnectionLease {

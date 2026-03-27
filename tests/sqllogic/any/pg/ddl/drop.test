@@ -1,0 +1,160 @@
+statement ok
+CREATE TABLE pudge(a integer);
+
+onlyif serenedb
+statement ok
+CREATE INDEX deadinside ON pudge USING inverted(a);
+
+statement ok
+CREATE SCHEMA kostya;
+
+statement ok
+CREATE TABLE kostya.babsky(a integer);
+
+statement ok
+CREATE FUNCTION clickclack() RETURNS TABLE(a integer) LANGUAGE SQL
+BEGIN ATOMIC
+  SELECT * FROM pudge;
+END;
+
+onlyif serenedb
+statement error
+DROP TABLE deadinside;
+----
+db error: ERROR: "deadinside" is not a table
+HINT: Use DROP INDEX to remove an index.
+
+
+onlyif serenedb
+statement error
+DROP TABLE IF EXISTS deadinside;
+----
+db error: ERROR: "deadinside" is not a table
+HINT: Use DROP INDEX to remove an index.
+
+
+statement error
+DROP INDEX pudge;
+----
+db error: ERROR: "pudge" is not an index
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP INDEX IF EXISTS pudge;
+----
+db error: ERROR: "pudge" is not an index
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP VIEW pudge;
+----
+db error: ERROR: "pudge" is not a view
+HINT: Use DROP TABLE to remove a table.
+
+
+statement error
+DROP VIEW IF EXISTS pudge;
+----
+db error: ERROR: "pudge" is not a view
+HINT: Use DROP TABLE to remove a table.
+
+
+onlyif serenedb
+statement error
+DROP VIEW deadinside;
+----
+db error: ERROR: "deadinside" is not a view
+HINT: Use DROP INDEX to remove an index.
+
+
+onlyif serenedb
+statement error
+DROP VIEW IF EXISTS deadinside;
+----
+db error: ERROR: "deadinside" is not a view
+HINT: Use DROP INDEX to remove an index.
+
+
+statement error
+DROP FUNCTION pudge;
+----
+db error: ERROR: could not find a function named "pudge"
+
+
+statement error
+DROP FUNCTION deadinside;
+----
+db error: ERROR: could not find a function named "deadinside"
+
+
+statement error
+DROP TABLE clickclack;
+----
+db error: ERROR: table "clickclack" does not exist
+
+
+statement error
+DROP INDEX clickclack;
+----
+db error: ERROR: index "clickclack" does not exist
+
+
+statement error
+DROP VIEW clickclack;
+----
+db error: ERROR: view "clickclack" does not exist
+
+
+statement error
+DROP TABLE vedernikoff;
+----
+db error: ERROR: table "vedernikoff" does not exist
+
+
+statement error
+DROP INDEX vedernikoff;
+----
+db error: ERROR: index "vedernikoff" does not exist
+
+
+statement error
+DROP VIEW vedernikoff;
+----
+db error: ERROR: view "vedernikoff" does not exist
+
+
+statement error
+DROP FUNCTION vedernikoff;
+----
+db error: ERROR: could not find a function named "vedernikoff"
+
+
+statement ok
+DROP TABLE IF EXISTS vedernikoff;
+
+statement ok
+DROP INDEX IF EXISTS vedernikoff;
+
+statement ok
+DROP VIEW IF EXISTS vedernikoff;
+
+statement ok
+DROP FUNCTION IF EXISTS vedernikoff;
+
+statement ok
+DROP FUNCTION clickclack;
+
+statement ok
+DROP TABLE kostya.babsky;
+
+statement ok
+DROP SCHEMA kostya;
+
+onlyif serenedb
+statement ok
+DROP INDEX deadinside;
+
+statement ok
+DROP TABLE pudge;

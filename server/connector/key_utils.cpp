@@ -28,9 +28,8 @@
 namespace sdb::connector::key_utils {
 
 std::string PrepareTableKey(ObjectId id) {
-  SDB_ASSERT(id.isSet());
   std::string key;
-  rocksutils::Concat(key, id);
+  AppendTableKey(key, id);
   return key;
 }
 
@@ -44,6 +43,11 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
   SDB_ASSERT(!key.empty());
   rocksutils::Append(key, column_oid);
+}
+
+void AppendTableKey(std::string& key, ObjectId id) {
+  SDB_ASSERT(id.isSet());
+  rocksutils::Concat(key, id);
 }
 
 std::pair<std::string, std::string> CreateTableRange(ObjectId id) {

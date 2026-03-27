@@ -51,20 +51,15 @@ Result CreateRootRole(bool skip_if_exists) {
     SerenedServer::Instance().getFeature<InitDatabaseFeature>();
 
   auto create_root = [&]() {
-    auto new_role = catalog::Role::NewUser(
-      kRootUserName, init_db_feature.defaultPassword(), id::kRootUser);
-    new_role->grantDatabase(StaticStrings::kSystemDatabase, Level::RW);
+    auto new_role =
+      catalog::Role::NewUser(StaticStrings::kDefaultUser,
+                             init_db_feature.defaultPassword(), id::kRootUser);
+    new_role->grantDatabase(StaticStrings::kDefaultDatabase, Level::RW);
     new_role->grantDatabase("*", Level::RW);
     return new_role;
   };
-
-  auto r =
-    catalog.ChangeRole(kRootUserName,
-                       [&](const catalog::Role& old_role,
-                           std::shared_ptr<catalog::Role>& new_role) -> Result {
-                         new_role = create_root();
-                         return {};
-                       });
+  auto root_role = create_root();
+  auto r = catalog.CreateRole(std::move(root_role));
 
   if (r.ok() || (skip_if_exists && r.errorNumber() == ERROR_USER_DUPLICATE)) {
     return {};
@@ -72,8 +67,8 @@ Result CreateRootRole(bool skip_if_exists) {
     return r;
   }
 
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, "Creating user \"", kRootUserName,
-            "\"");
+  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, "Creating user \"",
+            StaticStrings::kDefaultUser, "\"");
   return catalog.CreateRole(create_root());
 }
 
@@ -128,7 +123,7 @@ Result UpdateRole(std::string_view name,
 }
 
 Result RemoveRole(std::string_view name) {
-  if (name == kRootUserName) {
+  if (name == StaticStrings::kDefaultUser) {
     return {ERROR_FORBIDDEN};
   }
 
@@ -186,7 +181,7 @@ std::vector<std::shared_ptr<catalog::Role>> GetRoles() {
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()
-    .GetSnapshot()
+    .GetCatalogSnapshot()
     ->GetRoles();
 }
 
@@ -194,7 +189,7 @@ std::shared_ptr<catalog::Role> GetRole(std::string_view name) {
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()
-    .GetSnapshot()
+    .GetCatalogSnapshot()
     ->GetRole(name);
 }
 

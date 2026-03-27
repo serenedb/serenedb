@@ -95,7 +95,7 @@ function CommandInput({
             <CommandPrimitive.Input
                 data-slot="command-input"
                 className={cn(
-                    "text-foreground placeholder:text-secondary-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+                    "text-foreground placeholder:text-secondary-foreground/70 flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
                     className,
                 )}
                 {...props}
@@ -140,7 +140,7 @@ function CommandGroup({
         <CommandPrimitive.Group
             data-slot="command-group"
             className={cn(
-                "text-foreground [&_[cmdk-group-heading]]:text-primary-foreground/80 overflow-hidden p-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium",
+                "text-secondary-foreground [&_[cmdk-group-heading]]:text-secondary-foreground/80 dark:text-foreground dark:[&_[cmdk-group-heading]]:text-primary-foreground/80 overflow-hidden p-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium",
                 className,
             )}
             {...props}

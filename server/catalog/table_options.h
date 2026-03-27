@@ -64,65 +64,11 @@ struct ForeignId : ObjectId {
   using ObjectId::ObjectId;
 };
 
-std::shared_ptr<catalog::Table> GetVertexByName(ObjectId database,
-                                                std::string_view name);
-
 void WriteTableName(vpack::Builder& b, ObjectId id);
 
 bool VPackWriteHook(auto ctx, auto&&, ForeignId value) { return value.isSet(); }
 
-template<typename Context>
-void VPackWrite(Context ctx, ForeignId value) {
-  static constexpr bool kIsInternal =
-    std::is_same_v<typename Context::Arg, ObjectInternal>;
-
-  auto& vpack = ctx.vpack();
-  if constexpr (kIsInternal) {
-    vpack.add(value.id());
-  } else {
-    WriteTableName(vpack, value);
-  }
-}
-
-template<typename Context>
-void VPackRead(Context ctx, ForeignId& value) {
-  static constexpr bool kIsInternal =
-    std::is_same_v<typename Context::Arg, ObjectInternal>;
-
-  auto vpack = ctx.vpack();
-
-  if (vpack.isNumber()) {
-    // Cluster inventory
-    // Cluster action
-    // User action on single server
-    // Open existing database cluster
-    value = ForeignId{vpack.template getNumber<uint64_t>()};
-  } else {
-    if constexpr (!kIsInternal) {
-      // Open existing database single
-      // Tailing sync
-      // Initial sync
-      // Restore
-      auto c = GetVertexByName(ctx.arg().database, vpack.stringView());
-      if (!c) {
-        SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND,
-                  "Object not found: ", vpack.stringView());
-      }
-      value = ForeignId{c->planId().id()};
-
-    } else {
-      SDB_ENSURE(false, ERROR_INTERNAL);
-    }
-  }
-}
-
-static constexpr std::string_view kDefaultSharding =
-#ifdef SDB_CLUSTER
-  "hash"
-#else
-  "none"
-#endif
-  ;
+static constexpr std::string_view kDefaultSharding = "none";
 
 // NOLINTBEGIN
 struct IndexProperties {
@@ -152,6 +98,7 @@ struct Column {
   static constexpr Id kMaxRealId =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
+  static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
     static constexpr std::string_view kUpdatePrefix = "upd$";
@@ -173,6 +120,9 @@ struct Column {
   bool IsGeneratedPK() const { return id == kGeneratedPKId; }
 
   static std::string GeneratePKName(std::span<const std::string> column_names);
+
+  static std::string GenerateScoreName(
+    std::span<const std::string> column_names);
 
   Id id;
   velox::TypePtr type;
@@ -202,7 +152,7 @@ inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {
 }
 
 struct CreateTableRequest {
-  std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
+  std::vector<std::string> shardKeys;
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
   std::vector<CheckConstraint> checkConstraints;
@@ -223,7 +173,7 @@ struct CreateTableRequest {
   vpack::Slice keyOptions = vpack::Slice::emptyObjectSlice();
   vpack::Slice indexes;
   std::string_view id;  // TODO(gnusi): make ObjectId
-  int type = std::to_underlying(TableType::Document);
+  int type = std::to_underlying(TableType::RocksDB);
   bool waitForSync = false;
   FileInfo file_info;
 };
@@ -233,7 +183,7 @@ struct TableStats {
 };
 
 struct TableOptions {
-  std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
+  std::vector<std::string> shardKeys;
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
   std::vector<CheckConstraint> checkConstraints;
@@ -252,7 +202,7 @@ struct TableOptions {
   uint32_t numberOfShards = 1;
   uint32_t replicationFactor = 1;
   uint32_t writeConcern = 1;
-  int type = std::to_underlying(TableType::Document);
+  int type = std::to_underlying(TableType::RocksDB);
   bool waitForSync = false;
   FileInfo file_info;
 };
@@ -279,14 +229,6 @@ struct TableMeta {
     SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
     return dir == EdgeDirection::Out ? from : to;
   }
-};
-
-struct ModifyCollection {
-  vpack::Slice schema;
-  uint32_t numberOfShards = 1;
-  uint32_t replicationFactor = 1;
-  uint32_t writeConcern = 1;
-  bool waitForSync = false;
 };
 // NOLINTEND
 

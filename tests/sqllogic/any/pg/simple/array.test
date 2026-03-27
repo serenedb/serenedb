@@ -23,7 +23,7 @@ array_to_string
 127.0.0.1
 
 
-query ?
+query
 SELECT array_to_string(ARRAY['abba', 'banana'], '*');
 ----
 array_to_string

@@ -24,10 +24,6 @@
 
 namespace sdb::native {
 
-void AddFunction(std::string_view name, catalog::FunctionSignature signature,
-                 catalog::FunctionOptions options,
-                 aql::FunctionImpl implementation);
-
 void MakeAlias(std::string_view alias, std::string_view existing);
 
 const catalog::Function* GetFunction(std::string_view name);

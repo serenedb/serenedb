@@ -38,13 +38,16 @@
 #include "utils/coro_helper.h"
 
 namespace vpack {
+
 class Slice;
+
 }  // namespace vpack
 namespace sdb {
 
 struct ShardID;
 
 namespace network {
+
 class ConnectionPool;
 
 /// Response data structure

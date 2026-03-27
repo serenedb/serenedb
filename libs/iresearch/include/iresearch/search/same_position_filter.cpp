@@ -43,9 +43,10 @@ class SamePositionIterator : public DocIterator {
   using Positions = std::vector<PosAttr*>;
 
   template<typename... Args>
-  SamePositionIterator(ScoreMergeType merge_type, Positions&& pos,
-                       Args&&... args)
-    : _approx{merge_type, std::forward<Args>(args)...}, _pos(std::move(pos)) {
+  SamePositionIterator(ScoreMergeType merge_type, doc_id_t docs_count,
+                       Positions&& pos, Args&&... args)
+    : _approx{merge_type, docs_count, std::forward<Args>(args)...},
+      _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
@@ -53,24 +54,22 @@ class SamePositionIterator : public DocIterator {
     return _approx.GetMutable(type);
   }
 
-  doc_id_t value() const noexcept final { return _approx.value(); }
-
   doc_id_t advance() final {
     while (true) {
       const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || FindSamePosition()) {
-        return doc;
+        return _doc = doc;
       }
     }
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = this->value(); target <= doc) [[unlikely]] {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
-      return doc;
+      return _doc = doc;
     }
     return advance();
   }
@@ -84,7 +83,7 @@ class SamePositionIterator : public DocIterator {
       return doc;
     }
     if (doc_limits::eof(doc) || FindSamePosition()) {
-      return doc;
+      return _doc = doc;
     }
     return doc + 1;
   }
@@ -184,7 +183,8 @@ class SamePositionQuery : public Filter::Query {
 
     // TODO(mbkkt) Implement wand?
     return MakeConjunction<SamePositionIterator>(
-      ScoreMergeType::Noop, {}, std::move(itrs), std::move(positions));
+      ScoreMergeType::Noop, {}, static_cast<doc_id_t>(ctx.segment.docs_count()),
+      std::move(itrs), std::move(positions));
   }
 
   score_t Boost() const noexcept final { return _boost; }

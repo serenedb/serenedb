@@ -306,7 +306,7 @@ INSERT INTO TEXT_TBL VALUES ('hi de ho neighbor');
 
 # test conversions between various string types
 # E021-10 implicit casting among the character data types
-query ?
+query
 SELECT CAST(f1 AS text) AS "text(char)" FROM CHAR_TBL;
 ----
 text(char)
@@ -315,7 +315,7 @@ ab
 abcd
 abcd
 
-query ?
+query
 SELECT CAST(f1 AS text) AS "text(varchar)" FROM VARCHAR_TBL;
 ----
 text(varchar)
@@ -332,7 +332,7 @@ namefield
 
 
 # since this is an explicit cast, it should truncate w/o error:
-query ?
+query
 SELECT CAST(f1 AS char(10)) AS "char(text)" FROM TEXT_TBL;
 ----
 char(text)
@@ -340,14 +340,14 @@ doh!
 hi de ho n
 
 # note: implicit-cast case is tested in char.sql
-query ?
+query
 SELECT CAST(f1 AS char(20)) AS "char(text)" FROM TEXT_TBL;
 ----
 char(text)
 doh!
 hi de ho neighbor
 
-query ?
+query
 SELECT CAST(f1 AS char(10)) AS "char(varchar)" FROM VARCHAR_TBL;
 ----
 char(varchar)
@@ -363,14 +363,14 @@ char(name)
 namefield
 
 
-query ?
+query
 SELECT CAST(f1 AS varchar) AS "varchar(text)" FROM TEXT_TBL;
 ----
 varchar(text)
 doh!
 hi de ho neighbor
 
-query ?
+query
 SELECT CAST(f1 AS varchar) AS "varchar(char)" FROM CHAR_TBL;
 ----
 varchar(char)
@@ -980,7 +980,7 @@ true
 t
 
 
-query ?
+query
 SELECT 'hawkeye' NOT LIKE 'h%' ESCAPE '#' AS "false";
 ----
 false

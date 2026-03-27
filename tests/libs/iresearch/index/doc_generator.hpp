@@ -43,7 +43,6 @@ class DataOutput;
 class Tokenizer;
 
 }  // namespace irs
-
 namespace tests {
 
 //////////////////////////////////////////////////////////////////////////////
@@ -366,10 +365,12 @@ struct Document : irs::util::Noncopyable {
 
   void insert(const Ifield::ptr& field, bool indexed = true,
               bool stored = true) {
-    if (indexed)
+    if (indexed) {
       this->indexed.push_back(field);
-    if (stored)
+    }
+    if (stored) {
       this->stored.push_back(field);
+    }
   }
 
   void reserve(size_t size) {

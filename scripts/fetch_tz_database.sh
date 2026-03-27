@@ -1,8 +1,9 @@
 #!/bin/bash
 
-cd third_party/tzdata; rm -f *
+cd third_party/tzdata
+rm -f *
 URL=https://data.iana.org/time-zones/releases/
-curl -q $URL$(curl $URL | grep 'tzdata....a.tar.gz"' |sed 's;.*href="\(.*\)">tzdata.*;\1;' | tail -n 1) --output - | tar -xvzf -
+curl -q $URL$(curl $URL | grep 'tzdata....a.tar.gz"' | sed 's;.*href="\(.*\)">tzdata.*;\1;' | tail -n 1) --output - | tar -xvzf -
 
 # We don't support windows and this repo is really big so disable it
 # git clone https://github.com/unicode-org/cldr.git

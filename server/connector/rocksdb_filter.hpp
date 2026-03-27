@@ -28,6 +28,7 @@
 #include <velox/vector/ComplexVector.h>
 
 #include <cassert>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -39,10 +40,43 @@
 
 namespace sdb::connector {
 
+struct Boundary {
+  velox::variant value;
+  bool inclusive;
+};
+
+// nullopt left/right means unbounded on that side.
+struct Range {
+  std::optional<Boundary> left;
+  std::optional<Boundary> right;
+};
+
 // A point in PK-space. Absent column in _column_filters means "any value".
 class Point {
  public:
   explicit Point(std::span<const std::string> pk_names) : _pk_names{pk_names} {}
+
+  Point(const Point& other)
+    : _pk_names{other._pk_names}, _source_exprs{other._source_exprs} {
+    for (const auto& [k, v] : other._column_filters) {
+      _column_filters.emplace(k, std::make_unique<Range>(*v));
+    }
+  }
+
+  Point& operator=(const Point& other) {
+    if (this != &other) {
+      _pk_names = other._pk_names;
+      _source_exprs = other._source_exprs;
+      _column_filters.clear();
+      for (const auto& [k, v] : other._column_filters) {
+        _column_filters.emplace(k, std::make_unique<Range>(*v));
+      }
+    }
+    return *this;
+  }
+
+  Point(Point&&) = default;
+  Point& operator=(Point&&) = default;
 
   [[nodiscard]] bool IsSpecific() const;
 
@@ -51,8 +85,7 @@ class Point {
   }
 
   // Returns nullptr if the column has no filter (matches any value).
-  [[nodiscard]] const velox::core::ConstantTypedExpr* FindFilter(
-    std::string_view column_name) const;
+  [[nodiscard]] const Range* FindFilter(std::string_view column_name) const;
 
   [[nodiscard]] std::span<const std::string> PkNames() const noexcept {
     return _pk_names;
@@ -64,7 +97,7 @@ class Point {
   }
 
   void AddEqFilter(std::string_view column_name,
-                   velox::core::ConstantTypedExprPtr value,
+                   const velox::core::ConstantTypedExpr& value,
                    const velox::core::ITypedExpr* source_expr);
 
   // Returns nullopt when the two points are contradictory (e.g. a=1 AND a=2).
@@ -73,8 +106,12 @@ class Point {
 
  private:
   std::span<const std::string> _pk_names;
-  containers::FlatHashMap<std::string, velox::core::ConstantTypedExprPtr>
-    _column_filters;
+
+  // TODO(mkornaukhov)
+  // Range should really be much smaller, for now it's 64 bytes
+  // But it should be just 2 varints + 4 bools -> 16 * 2 + 1 byte + alignment ->
+  // 40 bytes. It should be OK to paste it into flat hash map
+  containers::FlatHashMap<std::string, std::unique_ptr<Range>> _column_filters;
   containers::FlatHashSet<const velox::core::ITypedExpr*> _source_exprs;
 };
 

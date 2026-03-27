@@ -51,7 +51,7 @@ std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
     return AnyPoint(pk_names);
   }
   Point p{pk_names};
-  p.AddEqFilter(field_access->name(), const_val, func_call);
+  p.AddEqFilter(field_access->name(), *const_val, func_call);
   return {p};
 }
 
@@ -84,13 +84,13 @@ std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
   std::vector<Point> points;
   points.reserve(size);
   for (velox::vector_size_t i = 0; i < size; ++i) {
-    auto elem_const = std::make_shared<velox::core::ConstantTypedExpr>(
-      velox::BaseVector::wrapInConstant(1, offset + i, elements));
+    velox::core::ConstantTypedExpr elem_const{
+      velox::BaseVector::wrapInConstant(1, offset + i, elements)};
     Point p{pk_names};
     // If all points that uses func_call source expr become specific, it means
     // that this node maybe replaced with constant true, as specific points will
-    // be processed in point lookup datas ource
-    p.AddEqFilter(field_access->name(), std::move(elem_const), func_call);
+    // be processed in point lookup data source
+    p.AddEqFilter(field_access->name(), elem_const, func_call);
     points.push_back(std::move(p));
   }
   return points;
@@ -188,6 +188,62 @@ velox::core::TypedExprPtr RewriteExpr(
     expr->type(), std::move(new_inputs), call->name());
 }
 
+// Returns the more restrictive (greater) lower bound.
+std::optional<Boundary> MaxLeft(const std::optional<Boundary>& a,
+                                const std::optional<Boundary>& b) {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  if (a->value < b->value) {
+    return b;
+  }
+  if (b->value < a->value) {
+    return a;
+  }
+  // Same value: exclusive is more restrictive for a left bound.
+  return a->inclusive ? b : a;
+}
+
+// Returns the more restrictive (lesser) upper bound.
+std::optional<Boundary> MinRight(const std::optional<Boundary>& a,
+                                 const std::optional<Boundary>& b) {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  if (a->value < b->value) {
+    return a;
+  }
+  if (b->value < a->value) {
+    return b;
+  }
+  // Same value: exclusive is more restrictive for a right bound.
+  return a->inclusive ? b : a;
+}
+
+std::optional<Range> IntersectRange(const Range& lhs, const Range& rhs) {
+  auto new_left = MaxLeft(lhs.left, rhs.left);
+  auto new_right = MinRight(lhs.right, rhs.right);
+  if (new_left && new_right) {
+    if (new_right->value < new_left->value) {
+      return std::nullopt;
+    }
+    // Same boundary value but at least one side exclusive: empty interval.
+    if (new_left->value == new_right->value &&
+        (!new_left->inclusive || !new_right->inclusive)) {
+      return std::nullopt;
+    }
+  }
+  return Range{std::move(new_left), std::move(new_right)};
+}
+
+}  // namespace
+
 template<velox::TypeKind Kind>
 velox::variant ExtractScalarVariant(const velox::BaseVector& vec) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
@@ -206,25 +262,32 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
-}  // namespace
-
 bool Point::IsSpecific() const {
   return absl::c_all_of(_pk_names, [&](std::string_view name) {
-    return _column_filters.contains(name);
+    auto it = _column_filters.find(name);
+    if (it == _column_filters.end()) {
+      return false;
+    }
+    const Range& r = *it->second;
+    return r.left.has_value() && r.right.has_value() &&
+           r.left->value == r.right->value && r.left->inclusive &&
+           r.right->inclusive;
   });
 }
 
-const velox::core::ConstantTypedExpr* Point::FindFilter(
-  std::string_view column_name) const {
+const Range* Point::FindFilter(std::string_view column_name) const {
   auto it = _column_filters.find(column_name);
   return it != _column_filters.end() ? it->second.get() : nullptr;
 }
 
 void Point::AddEqFilter(std::string_view column_name,
-                        velox::core::ConstantTypedExprPtr value,
+                        const velox::core::ConstantTypedExpr& value,
                         const velox::core::ITypedExpr* source_expr) {
   SDB_ASSERT(!_column_filters.contains(column_name));
-  _column_filters.emplace(column_name, std::move(value));
+  auto v = ToVariant(value);
+  _column_filters.emplace(
+    column_name,
+    std::make_unique<Range>(Range{Boundary{v, true}, Boundary{v, true}}));
   _source_exprs.insert(source_expr);
 }
 
@@ -238,18 +301,20 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
       continue;
     }
     if (!lhs_f) {
-      result._column_filters.emplace(pk_name, rhs._column_filters.at(pk_name));
+      result._column_filters.emplace(pk_name, std::make_unique<Range>(*rhs_f));
       continue;
     }
     if (!rhs_f) {
-      result._column_filters.emplace(pk_name, lhs._column_filters.at(pk_name));
+      result._column_filters.emplace(pk_name, std::make_unique<Range>(*lhs_f));
       continue;
     }
-    if (lhs_f->value() != rhs_f->value()) {
-      // a = 1 AND a = 2 -> contradiction
+    auto merged_range = IntersectRange(*lhs_f, *rhs_f);
+    if (!merged_range) {
+      // e.g. [1,1] AND [2,2] -> contradiction
       return {};
     }
-    result._column_filters.emplace(pk_name, lhs._column_filters.at(pk_name));
+    result._column_filters.emplace(pk_name,
+                                   std::make_unique<Range>(*merged_range));
   }
   result._source_exprs.insert(lhs._source_exprs.begin(),
                               lhs._source_exprs.end());
@@ -270,7 +335,8 @@ std::vector<SpecificPoint> ToSpecificPoints(const std::vector<Point>& points,
     for (const auto& name : pk_type.names()) {
       const auto* filter = p.FindFilter(name);
       SDB_ASSERT(filter != nullptr, "pk column not found in specific point");
-      sp.push_back(ToVariant(*filter));
+      SDB_ASSERT(filter->left.has_value());
+      sp.push_back(filter->left->value);
     }
     result.push_back(std::move(sp));
   }

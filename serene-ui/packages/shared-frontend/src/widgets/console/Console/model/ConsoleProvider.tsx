@@ -4,6 +4,8 @@ import { ConsoleContext } from "./ConsoleContext";
 import {
     CONSOLE_LIMIT_STORAGE_KEY,
     CONSOLE_SIDEBAR_COLLAPSED_STORAGE_KEY,
+    CONSOLE_SETTINGS_SIDEBAR_COLLAPSED_STORAGE_KEY,
+    CONSOLE_EXECUTION_HISTORY_SIDEBAR_COLLAPSED_STORAGE_KEY,
     DEFAULT_CONSOLE_QUERY_LIMIT,
 } from "./consts";
 
@@ -32,6 +34,30 @@ const readStoredSidebarCollapsed = () => {
     );
 };
 
+const readStoredSettingsSidebarCollapsed = () => {
+    if (typeof window === "undefined") {
+        return true;
+    }
+
+    return (
+        window.localStorage.getItem(
+            CONSOLE_SETTINGS_SIDEBAR_COLLAPSED_STORAGE_KEY,
+        ) !== "false"
+    );
+};
+
+const readStoredExecutionHistorySidebarCollapsed = () => {
+    if (typeof window === "undefined") {
+        return true;
+    }
+
+    return (
+        window.localStorage.getItem(
+            CONSOLE_EXECUTION_HISTORY_SIDEBAR_COLLAPSED_STORAGE_KEY,
+        ) !== "false"
+    );
+};
+
 export const ConsoleProvider = ({
     children,
 }: {
@@ -41,6 +67,12 @@ export const ConsoleProvider = ({
     const [sidebarCollapsed, setSidebarCollapsedState] = useState(
         readStoredSidebarCollapsed,
     );
+    const [settingsSidebarCollapsed, setSettingsSidebarCollapsedState] =
+        useState(readStoredSettingsSidebarCollapsed);
+    const [
+        executionHistorySidebarCollapsed,
+        setExecutionHistorySidebarCollapsedState,
+    ] = useState(readStoredExecutionHistorySidebarCollapsed);
 
     const setLimit = useCallback((nextLimit: number) => {
         setLimitState(
@@ -56,6 +88,41 @@ export const ConsoleProvider = ({
 
     const toggleSidebar = useCallback(() => {
         setSidebarCollapsedState((current) => !current);
+    }, []);
+
+    const setSettingsSidebarCollapsed = useCallback((collapsed: boolean) => {
+        setSettingsSidebarCollapsedState(collapsed);
+    }, []);
+
+    const toggleSettingsSidebar = useCallback(() => {
+        setSettingsSidebarCollapsedState((current) => {
+            const nextCollapsed = !current;
+
+            if (!nextCollapsed) {
+                setExecutionHistorySidebarCollapsedState(true);
+            }
+
+            return nextCollapsed;
+        });
+    }, []);
+
+    const setExecutionHistorySidebarCollapsed = useCallback(
+        (collapsed: boolean) => {
+            setExecutionHistorySidebarCollapsedState(collapsed);
+        },
+        [],
+    );
+
+    const toggleExecutionHistorySidebar = useCallback(() => {
+        setExecutionHistorySidebarCollapsedState((current) => {
+            const nextCollapsed = !current;
+
+            if (!nextCollapsed) {
+                setSettingsSidebarCollapsedState(true);
+            }
+
+            return nextCollapsed;
+        });
     }, []);
 
     useEffect(() => {
@@ -80,6 +147,28 @@ export const ConsoleProvider = ({
         );
     }, [sidebarCollapsed]);
 
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        window.localStorage.setItem(
+            CONSOLE_SETTINGS_SIDEBAR_COLLAPSED_STORAGE_KEY,
+            String(settingsSidebarCollapsed),
+        );
+    }, [settingsSidebarCollapsed]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        window.localStorage.setItem(
+            CONSOLE_EXECUTION_HISTORY_SIDEBAR_COLLAPSED_STORAGE_KEY,
+            String(executionHistorySidebarCollapsed),
+        );
+    }, [executionHistorySidebarCollapsed]);
+
     const value = useMemo(
         () => ({
             limit,
@@ -87,8 +176,26 @@ export const ConsoleProvider = ({
             sidebarCollapsed,
             setSidebarCollapsed,
             toggleSidebar,
+            settingsSidebarCollapsed,
+            setSettingsSidebarCollapsed,
+            toggleSettingsSidebar,
+            executionHistorySidebarCollapsed,
+            setExecutionHistorySidebarCollapsed,
+            toggleExecutionHistorySidebar,
         }),
-        [limit, setLimit, sidebarCollapsed, setSidebarCollapsed, toggleSidebar],
+        [
+            limit,
+            setLimit,
+            sidebarCollapsed,
+            setSidebarCollapsed,
+            toggleSidebar,
+            settingsSidebarCollapsed,
+            setSettingsSidebarCollapsed,
+            toggleSettingsSidebar,
+            executionHistorySidebarCollapsed,
+            setExecutionHistorySidebarCollapsed,
+            toggleExecutionHistorySidebar,
+        ],
     );
 
     return (

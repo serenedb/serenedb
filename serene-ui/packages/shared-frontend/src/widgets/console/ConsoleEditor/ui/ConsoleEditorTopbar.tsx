@@ -1,6 +1,8 @@
 import {
     Button,
     NotificationsListButton,
+    QueryHistoryIcon,
+    SettingsIcon,
     SidebarIcon,
     cn,
 } from "@serene-ui/shared-frontend";
@@ -8,7 +10,14 @@ import { useConsole } from "../../Console/model";
 import { SwitchConnection } from "@serene-ui/shared-frontend";
 
 export const ConsoleEditorTopbar = () => {
-    const { sidebarCollapsed, toggleSidebar } = useConsole();
+    const {
+        sidebarCollapsed,
+        toggleSidebar,
+        settingsSidebarCollapsed,
+        toggleSettingsSidebar,
+        executionHistorySidebarCollapsed,
+        toggleExecutionHistorySidebar,
+    } = useConsole();
 
     return (
         <div className="flex min-h-[48.5px] w-full items-center justify-between border-b-[0.5px] px-2.5">
@@ -28,8 +37,27 @@ export const ConsoleEditorTopbar = () => {
             </div>
             <SwitchConnection />
             <div className="flex items-center gap-1 min-w-30 justify-end">
-                <Button size="icon" variant="ghost" />
-                <Button size="icon" variant="ghost" />
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={toggleSettingsSidebar}
+                    title="Toggle settings sidebar"
+                    className={cn({
+                        "text-muted-foreground": settingsSidebarCollapsed,
+                    })}>
+                    <SettingsIcon className="size-4" />
+                </Button>
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={toggleExecutionHistorySidebar}
+                    title="Toggle execution history sidebar"
+                    className={cn({
+                        "text-muted-foreground":
+                            executionHistorySidebarCollapsed,
+                    })}>
+                    <QueryHistoryIcon className="size-4" />
+                </Button>
                 <NotificationsListButton />
             </div>
         </div>

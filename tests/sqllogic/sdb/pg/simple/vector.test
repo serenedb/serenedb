@@ -80,7 +80,7 @@ SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0];
 
 
 statement ok
-CREATE TABLE c(name TEXT, emb FLOAT[3]);
+CREATE TABLE c(name TEXT, emb FLOAT ARRAY[3]);
 
 
 statement ok

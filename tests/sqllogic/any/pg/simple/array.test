@@ -63,13 +63,14 @@ CREATE TABLE t(id INT, names TEXT[]);
 
 
 statement ok
-INSERT INTO t VALUES (1, ARRAY['some', 'the', 'whaaat']), (2, ARRAY['yes', 'NO', 'Maybe']), (3, ARRAY[]::TEXT[]);
+INSERT INTO t VALUES (1, ARRAY['some', 'the', 'whaaat', NULL::TEXT]), (2, ARRAY['yes', 'NO', 'Maybe']), (3, ARRAY[]::TEXT[]), (4, NULL::TEXT[]);
 
 
 query
 SELECT * FROM t;
 ----
 id	names
-1	{some,the,whaaat}
+1	{some,the,whaaat,NULL}
 2	{yes,NO,Maybe}
 3	{}
+4	NULL

@@ -359,19 +359,17 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
 
   const auto vector_size = IterateColumn(
     it, max_size,
-    [&](uint64_t value_idx, std::string_view key, std::string_view value) {
+    [&](uint64_t value_idx, std::string_view, std::string_view value) {
       if (value.empty()) {
         // NULL array
         if (!null_buf) {
           null_buf = velox::allocateNulls(max_size, &_memory_pool);
         }
         velox::bits::clearBit(null_buf->asMutable<uint64_t>(), value_idx);
-        raw_offsets[value_idx] = elem_offset;
-        raw_sizes[value_idx] = 0;
         return;
       }
-      raw_offsets[value_idx] = elem_offset;
 
+      raw_offsets[value_idx] = elem_offset;
       const auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
       const uint32_t elem_count = irs::vread<uint32_t>(ptr);
       raw_sizes[value_idx] = static_cast<velox::vector_size_t>(elem_count);
@@ -395,6 +393,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
       }
 
       if (is_constant) {
+        SDB_ASSERT(!have_nulls);
         // Remaining bytes are the single constant value (or none for null).
         const auto remaining_size = static_cast<size_t>(
           reinterpret_cast<const uint8_t*>(value.data()) + value.size() - ptr);
@@ -420,13 +419,17 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
         if constexpr (ElemKind == velox::TypeKind::BOOLEAN) {
           // Boolean data is a packed bitset.
           const auto bool_bytes = velox::bits::nbytes(elem_count);
-          for (uint32_t i = 0; i < elem_count; i++) {
-            if (elem_nulls && !velox::bits::isBitSet(elem_nulls, i)) {
-              elements->setNull(elem_offset + i, true);
-            } else {
+          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              if constexpr (HasNulls) {
+                if (!velox::bits::isBitSet(elem_nulls, i)) {
+                  elements->setNull(elem_offset + i, true);
+                  continue;
+                }
+              }
               elements->set(elem_offset + i, velox::bits::isBitSet(ptr, i));
             }
-          }
+          });
           ptr += bool_bytes;
         } else if constexpr (!velox::TypeTraits<ElemKind>::isFixedWidth) {
           // Variable-length elements (e.g., VARCHAR).
@@ -435,17 +438,22 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
           ptr += length_array_size;
           const uint8_t* data_ptr = ptr;
 
-          for (uint32_t i = 0; i < elem_count; i++) {
-            const uint32_t len = irs::vread<uint32_t>(lptr);
-            if (elem_nulls && !velox::bits::isBitSet(elem_nulls, i)) {
-              elements->setNull(elem_offset + i, true);
-            } else {
+          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              const uint32_t len = irs::vread<uint32_t>(lptr);
+              if constexpr (HasNulls) {
+                if (!velox::bits::isBitSet(elem_nulls, i)) {
+                  elements->setNull(elem_offset + i, true);
+                  data_ptr += len;
+                  continue;
+                }
+              }
               elements->set(elem_offset + i,
                             velox::StringView(
                               reinterpret_cast<const char*>(data_ptr), len));
+              data_ptr += len;
             }
-            data_ptr += len;
-          }
+          });
         } else {
           // Fixed-width scalar: packed array of count * sizeof(ElemT) bytes.
           memcpy(elements->mutableRawValues() + elem_offset, ptr,

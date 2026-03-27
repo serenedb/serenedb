@@ -71,20 +71,24 @@ field_visitor ByRegexpRe2::visitor(bytes_view pattern) {
     }
 
     case RegexpType::Complex: {
+      auto acceptor = FromRegexpRe2(pattern);
+
+      if (!Validate(acceptor)) {
+        // Invalid pattern or too complex — return visitor that matches nothing
+        return [](const SubReader&, const TermReader&,
+                  FilterVisitor&) {};
+      }
+
       struct AutomatonContext : util::Noncopyable {
-        explicit AutomatonContext(bytes_view pattern)
-          : acceptor{FromRegexpRe2(pattern)},
+        explicit AutomatonContext(automaton&& a)
+          : acceptor{std::move(a)},
             matcher{MakeAutomatonMatcher(acceptor)} {}
 
         automaton acceptor;
         automaton_table_matcher matcher;
       };
 
-      auto ctx = std::make_shared<AutomatonContext>(pattern);
-
-      if (!Validate(ctx->acceptor)) {
-        SDB_UNREACHABLE();
-      }
+      auto ctx = std::make_shared<AutomatonContext>(std::move(acceptor));
 
       return [ctx = std::move(ctx)](const SubReader& segment,
                                     const TermReader& field,

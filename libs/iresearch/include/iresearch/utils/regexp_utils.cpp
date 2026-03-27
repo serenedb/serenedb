@@ -19,13 +19,13 @@
 #include "regexp_utils.hpp"
 
 #include "automaton_utils.hpp"
-#include "basics/utf8_utils.hpp"
 #include "fst/closure.h"
 #include "fst/concat.h"
 #include "fst/union.h"
 #include "fstext/determinize-star.h"
 #include "re2/regexp.h"
 #include "re2/walker-inl.h"
+#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 namespace {

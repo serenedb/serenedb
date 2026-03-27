@@ -42,8 +42,8 @@ template<typename Materializer>
 class SecondaryIndexDataSource final : public velox::connector::DataSource {
  public:
   SecondaryIndexDataSource(velox::memory::MemoryPool& memory_pool,
-                           Materializer materializer,
-                           rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+                           Materializer materializer, rocksdb::DB& db,
+                           rocksdb::ColumnFamilyHandle& cf,
                            const rocksdb::Snapshot* snapshot,
                            std::string scan_prefix, size_t value_key_size)
     : _memory_pool{memory_pool},
@@ -54,8 +54,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
       _scan_prefix{std::move(scan_prefix)},
       _value_key_size{value_key_size} {}
 
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) final {
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
     SDB_ENSURE(split, ERROR_INTERNAL,
                "SecondaryIndexDataSource: split is null");
     if (_current_split) {
@@ -113,9 +112,8 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
     return _materializer.ReadRows(row_keys, nullptr);
   }
 
-  void addDynamicFilter(
-    velox::column_index_t,
-    const std::shared_ptr<velox::common::Filter>&) final {
+  void addDynamicFilter(velox::column_index_t,
+                        const std::shared_ptr<velox::common::Filter>&) final {
     VELOX_UNSUPPORTED();
   }
 

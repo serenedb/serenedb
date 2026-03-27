@@ -1,7 +1,6 @@
 show-column-names false
 hash-threshold 100
 
-# Large-scale secondary index test
 
 statement count 10000
 CREATE TABLE clickclack_bigcrew AS
@@ -16,7 +15,6 @@ FROM
 statement ok
 CREATE INDEX clickclack_bigcrew_boss_idx ON clickclack_bigcrew USING secondary(boss);
 
-# Equality scan: boss=42 should return 100 rows (10000/100)
 query
 SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
 ----
@@ -31,7 +29,6 @@ SELECT * FROM clickclack_bigcrew WHERE boss = 0 ORDER BY id LIMIT 5;
 400	0	0	crook_400
 500	0	0	crook_500
 
-# Create index on existing large table (backfill)
 statement ok
 CREATE INDEX clickclack_bigcrew_team_idx ON clickclack_bigcrew USING secondary(team);
 
@@ -40,7 +37,6 @@ SELECT count(*) FROM clickclack_bigcrew WHERE team = 7;
 ----
 1000
 
-# Insert more crooks and verify index is maintained
 statement count 1000
 INSERT INTO clickclack_bigcrew
 SELECT
@@ -61,7 +57,6 @@ SELECT count(*) FROM clickclack_bigcrew WHERE team = 7;
 ----
 2000
 
-# Reassign some crooks to boss 99 and verify
 statement count 500
 UPDATE clickclack_bigcrew SET boss = 99 WHERE id > 10500;
 
@@ -75,7 +70,6 @@ SELECT count(*) FROM clickclack_bigcrew WHERE boss = 99;
 ----
 600
 
-# Fire crooks and verify
 statement count 500
 DELETE FROM clickclack_bigcrew WHERE id > 10500;
 
@@ -92,7 +86,6 @@ SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
 statement ok
 DROP TABLE clickclack_bigcrew;
 
-# Test: VARCHAR secondary index at scale
 statement count 10000
 CREATE TABLE clickclack_division AS
 SELECT

@@ -428,8 +428,7 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
         if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
           return r;
         }
-        auto shard =
-          index->CreateIndexShard(false, key.GetObjectId(), options);
+        auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
         if (!shard) {
           return std::move(shard.error());
         }

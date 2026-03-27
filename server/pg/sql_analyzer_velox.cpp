@@ -2656,10 +2656,9 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
 
   // For secondary index backfill, sort by (indexed_columns, PK) so that the
   // secondary index entries come out in key order for SST writing.
-  auto index_type =
-    magic_enum::enum_cast<IndexType>(stmt.accessMethod,
-                                     magic_enum::case_insensitive)
-      .value_or(IndexType::Unknown);
+  auto index_type = magic_enum::enum_cast<IndexType>(
+                      stmt.accessMethod, magic_enum::case_insensitive)
+                      .value_or(IndexType::Unknown);
   if (index_type == IndexType::Secondary) {
     std::vector<lp::SortingField> sorted_by;
     // First: indexed columns
@@ -2689,20 +2688,18 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
         }
         auto expr = std::make_shared<lp::InputReferenceExpr>(
           type, std::string{column.GetColumnName()});
-        sorted_by.emplace_back(std::move(expr),
-                               lp::SortOrder::kAscNullsFirst);
+        sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
       }
     } else {
       // Generated PK: resolve by generated name (same as FillColumnsInfo)
       auto generated_pk_name =
         catalog::Column::GeneratePKName(table_type.names());
-      auto column = table_state.resolver.Resolve(
-        table_state.root->outputType(), generated_pk_name);
+      auto column = table_state.resolver.Resolve(table_state.root->outputType(),
+                                                 generated_pk_name);
       if (column.IsFound()) {
         auto expr = std::make_shared<lp::InputReferenceExpr>(
           velox::BIGINT(), std::string{column.GetColumnName()});
-        sorted_by.emplace_back(std::move(expr),
-                               lp::SortOrder::kAscNullsFirst);
+        sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
       }
     }
     if (!sorted_by.empty()) {

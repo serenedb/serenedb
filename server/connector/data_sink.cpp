@@ -266,16 +266,15 @@ SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::SSTInsertDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock,
-  velox::column_index_t indexed_column_input_idx)
-  : Base(SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>{
-           object_key, db, cf,
-           IsSecondaryIndex
-             ? std::vector<ColumnInfo>{{catalog::Column::Id{0}, ""}}
-             : columns,
-           memory_pool},
-         memory_pool, object_key, key_childs, std::move(columns),
-         std::move(index_writers)),
+  absl::Mutex& table_lock, velox::column_index_t indexed_column_input_idx)
+  : Base(
+      SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>{
+        object_key, db, cf,
+        IsSecondaryIndex ? std::vector<ColumnInfo>{{catalog::Column::Id{0}, ""}}
+                         : columns,
+        memory_pool},
+      memory_pool, object_key, key_childs, std::move(columns),
+      std::move(index_writers)),
     _table_lock_guard{table_lock},
     _indexed_column_input_idx{indexed_column_input_idx} {}
 
@@ -313,8 +312,7 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::appendData(
     this->_data_writer.SetColumnIndex(0);
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       rocksdb::Slice empty;
-      this->_data_writer.Write({&empty, 1},
-                               this->_store_keys_buffers[row_idx]);
+      this->_data_writer.Write({&empty, 1}, this->_store_keys_buffers[row_idx]);
     }
   } else {
     SDB_ASSERT(input->type()->size() == this->_columns_info.size());
@@ -435,7 +433,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   for (const auto& writer : _index_writers) {
-    writer->Init(affected_rows);
+    writer->Init(affected_rows, input);
   }
 
   const velox::IndexRange all_rows{0, num_rows};
@@ -522,7 +520,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   };
 
   for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
+    writer->Init(num_rows, input);
   }
 
   if (!_update_pk) {
@@ -2640,7 +2638,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   auto& writer = *_index_writers.front();
-  writer.Init(num_rows);
+  writer.Init(num_rows, input);
 
   const velox::IndexRange all_rows{0, num_rows};
   const folly::Range all_rows_range{&all_rows, 1};
@@ -2688,7 +2686,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
 
   for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
+    writer->Init(num_rows, input);
   }
 
   _key_childs.resize(input->childrenSize());

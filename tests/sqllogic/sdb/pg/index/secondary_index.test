@@ -1,28 +1,26 @@
 hash-threshold 100
 
-# Basic secondary index DDL and DML tests
 
 statement ok
-CREATE TABLE clickclack_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
+CREATE TABLE vedernikoff_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
 
 statement ok
-CREATE INDEX clickclack_crew_stocks_idx ON clickclack_crew USING secondary(stocks);
+CREATE INDEX vedernikoff_crew_stocks_idx ON vedernikoff_crew USING secondary(stocks);
 
 statement ok
-INSERT INTO clickclack_crew VALUES (1, 'vedernikoff', 30);
+INSERT INTO vedernikoff_crew VALUES (1, 'vedernikoff', 30);
 
 statement ok
-INSERT INTO clickclack_crew VALUES (2, 'cutelooked', 25);
+INSERT INTO vedernikoff_crew VALUES (2, 'cutelooked', 25);
 
 statement ok
-INSERT INTO clickclack_crew VALUES (3, 'crookface', 30);
+INSERT INTO vedernikoff_crew VALUES (3, 'crookface', 30);
 
 statement ok
-INSERT INTO clickclack_crew VALUES (4, 'bossmann', 35);
+INSERT INTO vedernikoff_crew VALUES (4, 'bossmann', 35);
 
-# Verify full scan still works
 query
-SELECT pid, nickname, stocks FROM clickclack_crew ORDER BY pid;
+SELECT pid, nickname, stocks FROM vedernikoff_crew ORDER BY pid;
 ----
 pid	nickname	stocks
 1	vedernikoff	30
@@ -30,66 +28,60 @@ pid	nickname	stocks
 3	crookface	30
 4	bossmann	35
 
-# Test: equality filter on indexed column (uses secondary index)
 query
-SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 30 ORDER BY pid;
+SELECT pid, nickname, stocks FROM vedernikoff_crew WHERE stocks = 30 ORDER BY pid;
 ----
 pid	nickname	stocks
 1	vedernikoff	30
 3	crookface	30
 
 query
-SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 25;
+SELECT pid, nickname, stocks FROM vedernikoff_crew WHERE stocks = 25;
 ----
 pid	nickname	stocks
 2	cutelooked	25
 
-# Test: no match
 query
-SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 99;
+SELECT pid, nickname, stocks FROM vedernikoff_crew WHERE stocks = 99;
 ----
 pid	nickname	stocks
 
-# Update indexed column, then query
 statement ok
-UPDATE clickclack_crew SET stocks = 31 WHERE pid = 1;
+UPDATE vedernikoff_crew SET stocks = 31 WHERE pid = 1;
 
 query
-SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 30;
+SELECT pid, nickname, stocks FROM vedernikoff_crew WHERE stocks = 30;
 ----
 pid	nickname	stocks
 3	crookface	30
 
 query
-SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 31;
+SELECT pid, nickname, stocks FROM vedernikoff_crew WHERE stocks = 31;
 ----
 pid	nickname	stocks
 1	vedernikoff	31
 
-# Delete a row, then query
 statement ok
-DELETE FROM clickclack_crew WHERE pid = 3;
+DELETE FROM vedernikoff_crew WHERE pid = 3;
 
 query
-SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 30;
+SELECT pid, nickname, stocks FROM vedernikoff_crew WHERE stocks = 30;
 ----
 pid	nickname	stocks
 
-# Verify full scan after modifications
 query
-SELECT pid, nickname, stocks FROM clickclack_crew ORDER BY pid;
+SELECT pid, nickname, stocks FROM vedernikoff_crew ORDER BY pid;
 ----
 pid	nickname	stocks
 1	vedernikoff	31
 2	cutelooked	25
 4	bossmann	35
 
-# Insert with NULL indexed column
 statement ok
-INSERT INTO clickclack_crew VALUES (5, 'crookjunior', NULL);
+INSERT INTO vedernikoff_crew VALUES (5, 'crookjunior', NULL);
 
 query
-SELECT pid, nickname, stocks FROM clickclack_crew ORDER BY pid;
+SELECT pid, nickname, stocks FROM vedernikoff_crew ORDER BY pid;
 ----
 pid	nickname	stocks
 1	vedernikoff	31
@@ -98,78 +90,392 @@ pid	nickname	stocks
 5	crookjunior	NULL
 
 statement ok
-DROP TABLE clickclack_crew;
+DROP TABLE vedernikoff_crew;
 
-# Test: create index on existing data (backfill) then query via index
-statement ok
-CREATE TABLE clickclack_vault (pid INTEGER PRIMARY KEY, loot INTEGER);
 
 statement ok
-INSERT INTO clickclack_vault VALUES (1, 100), (2, 200), (3, 100);
+CREATE TABLE cutelooked_vault (pid INTEGER PRIMARY KEY, loot INTEGER);
 
 statement ok
-CREATE INDEX clickclack_vault_loot_idx ON clickclack_vault USING secondary(loot);
+INSERT INTO cutelooked_vault VALUES (1, 100), (2, 200), (3, 100), (4, 300), (5, 100);
+
+statement ok
+CREATE INDEX cutelooked_vault_loot_idx ON cutelooked_vault USING secondary(loot);
 
 query
-SELECT pid, loot FROM clickclack_vault WHERE loot = 100 ORDER BY pid;
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
 ----
 pid	loot
 1	100
 3	100
-
-# Insert after backfill, query
-statement ok
-INSERT INTO clickclack_vault VALUES (4, 100);
+5	100
 
 query
-SELECT pid, loot FROM clickclack_vault WHERE loot = 100 ORDER BY pid;
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 300;
+----
+pid	loot
+4	300
+
+statement ok
+INSERT INTO cutelooked_vault VALUES (6, 100), (7, 200);
+
+query
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
 ----
 pid	loot
 1	100
 3	100
-4	100
+5	100
+6	100
+
+query
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 200 ORDER BY pid;
+----
+pid	loot
+2	200
+7	200
 
 statement ok
-DROP TABLE clickclack_vault;
+UPDATE cutelooked_vault SET loot = 999 WHERE pid = 1;
 
-# Test: IF NOT EXISTS
-statement ok
-CREATE TABLE clickclack_ranks (pid INTEGER PRIMARY KEY, rank INTEGER);
+query
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
+----
+pid	loot
+3	100
+5	100
+6	100
+
+query
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 999;
+----
+pid	loot
+1	999
 
 statement ok
-CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+DELETE FROM cutelooked_vault WHERE pid = 3;
+
+query
+SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
+----
+pid	loot
+5	100
+6	100
 
 statement ok
-CREATE INDEX IF NOT EXISTS clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+DROP TABLE cutelooked_vault;
+
+
+statement ok
+CREATE TABLE crookface_ranks (pid INTEGER PRIMARY KEY, rank INTEGER);
+
+statement ok
+CREATE INDEX crookface_ranks_idx ON crookface_ranks USING secondary(rank);
+
+statement ok
+CREATE INDEX IF NOT EXISTS crookface_ranks_idx ON crookface_ranks USING secondary(rank);
 
 statement error
-CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+CREATE INDEX crookface_ranks_idx ON crookface_ranks USING secondary(rank);
 
 statement ok
-DROP TABLE clickclack_ranks;
+DROP TABLE crookface_ranks;
 
-# Test: VARCHAR indexed column
-statement ok
-CREATE TABLE clickclack_teams (pid INTEGER PRIMARY KEY, team VARCHAR);
 
 statement ok
-CREATE INDEX clickclack_teams_idx ON clickclack_teams USING secondary(team);
+CREATE TABLE bossmann_division (pid INTEGER PRIMARY KEY, leader VARCHAR, team VARCHAR);
 
 statement ok
-INSERT INTO clickclack_teams VALUES (1, 'vedernikoff'), (2, 'cutelooked'), (3, 'crookface'), (4, 'vedernikoff');
+CREATE INDEX bossmann_division_leader_idx ON bossmann_division USING secondary(leader);
+
+statement ok
+INSERT INTO bossmann_division VALUES
+  (1, 'vedernikoff', 'alpha'),
+  (2, 'cutelooked', 'beta'),
+  (3, 'crookface', 'alpha'),
+  (4, 'vedernikoff', 'gamma'),
+  (5, 'bossmann', 'delta'),
+  (6, 'cutelooked', 'alpha'),
+  (7, 'stockpiler', 'beta');
 
 query
-SELECT pid, team FROM clickclack_teams WHERE team = 'vedernikoff' ORDER BY pid;
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'vedernikoff' ORDER BY pid;
 ----
-pid	team
+pid	leader	team
+1	vedernikoff	alpha
+4	vedernikoff	gamma
+
+query
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'cutelooked' ORDER BY pid;
+----
+pid	leader	team
+2	cutelooked	beta
+6	cutelooked	alpha
+
+query
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'crookface';
+----
+pid	leader	team
+3	crookface	alpha
+
+query
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'nobody';
+----
+pid	leader	team
+
+statement ok
+UPDATE bossmann_division SET leader = 'crookface' WHERE pid = 1;
+
+query
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'vedernikoff';
+----
+pid	leader	team
+4	vedernikoff	gamma
+
+query
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'crookface' ORDER BY pid;
+----
+pid	leader	team
+1	crookface	alpha
+3	crookface	alpha
+
+statement ok
+DELETE FROM bossmann_division WHERE pid = 3;
+
+query
+SELECT pid, leader, team FROM bossmann_division WHERE leader = 'crookface';
+----
+pid	leader	team
+1	crookface	alpha
+
+statement ok
+DROP TABLE bossmann_division;
+
+
+statement ok
+CREATE TABLE stockpiler_stash (pid INTEGER PRIMARY KEY, amount BIGINT, active BOOLEAN);
+
+statement ok
+CREATE INDEX stockpiler_stash_amount_idx ON stockpiler_stash USING secondary(amount);
+
+statement ok
+CREATE INDEX stockpiler_stash_active_idx ON stockpiler_stash USING secondary(active);
+
+statement ok
+INSERT INTO stockpiler_stash VALUES
+  (1, 1000000000000, true),
+  (2, 2000000000000, false),
+  (3, 1000000000000, true),
+  (4, 3000000000000, false),
+  (5, 1000000000000, false);
+
+query
+SELECT pid, amount FROM stockpiler_stash WHERE amount = 1000000000000 ORDER BY pid;
+----
+pid	amount
+1	1000000000000
+3	1000000000000
+5	1000000000000
+
+query
+SELECT pid, active FROM stockpiler_stash WHERE active = true ORDER BY pid;
+----
+pid	active
+1	t
+3	t
+
+query
+SELECT pid, active FROM stockpiler_stash WHERE active = false ORDER BY pid;
+----
+pid	active
+2	f
+4	f
+5	f
+
+statement ok
+UPDATE stockpiler_stash SET active = false WHERE pid = 1;
+
+query
+SELECT pid, active FROM stockpiler_stash WHERE active = true;
+----
+pid	active
+3	t
+
+statement ok
+DROP TABLE stockpiler_stash;
+
+
+statement ok
+CREATE TABLE vedernikoff_empire (pid INTEGER PRIMARY KEY, balance INTEGER);
+
+statement ok
+CREATE INDEX vedernikoff_empire_balance_idx ON vedernikoff_empire USING secondary(balance);
+
+statement ok
+INSERT INTO vedernikoff_empire VALUES
+  (1, -100), (2, 0), (3, 100), (4, -100), (5, 0), (6, 200);
+
+query
+SELECT pid, balance FROM vedernikoff_empire WHERE balance = -100 ORDER BY pid;
+----
+pid	balance
+1	-100
+4	-100
+
+query
+SELECT pid, balance FROM vedernikoff_empire WHERE balance = 0 ORDER BY pid;
+----
+pid	balance
+2	0
+5	0
+
+query
+SELECT pid, balance FROM vedernikoff_empire WHERE balance = 100;
+----
+pid	balance
+3	100
+
+statement ok
+UPDATE vedernikoff_empire SET balance = 500 WHERE pid = 1;
+
+query
+SELECT pid, balance FROM vedernikoff_empire WHERE balance = -100;
+----
+pid	balance
+4	-100
+
+query
+SELECT pid, balance FROM vedernikoff_empire WHERE balance = 500;
+----
+pid	balance
+1	500
+
+statement ok
+DELETE FROM vedernikoff_empire WHERE balance = 0;
+
+query
+SELECT pid, balance FROM vedernikoff_empire WHERE balance = 0;
+----
+pid	balance
+
+query
+SELECT pid, balance FROM vedernikoff_empire ORDER BY pid;
+----
+pid	balance
+1	500
+3	100
+4	-100
+6	200
+
+statement ok
+DROP TABLE vedernikoff_empire;
+
+
+statement ok
+CREATE TABLE crookface_heist (pid INTEGER PRIMARY KEY, target VARCHAR, loot INTEGER);
+
+statement ok
+CREATE INDEX crookface_heist_loot_idx ON crookface_heist USING secondary(loot);
+
+statement ok
+INSERT INTO crookface_heist VALUES (1, 'bank', 1000), (2, 'museum', 2000);
+
+query
+EXPLAIN SELECT pid, target FROM crookface_heist WHERE loot = 1000;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (target:VARCHAR, "target")] -> "pid":INTEGER, "target":VARCHAR
+  -- TableScan[0][crookface_heist, scan=secondary_index] -> "pid":INTEGER, "target":VARCHAR
+
+statement ok
+DROP TABLE crookface_heist;
+
+
+statement ok
+CREATE TABLE bossmann_mafia (pid INTEGER PRIMARY KEY, hitman VARCHAR, bounty INTEGER);
+
+statement ok
+CREATE INDEX bossmann_mafia_bounty_idx ON bossmann_mafia USING secondary(bounty);
+
+statement ok
+CREATE INDEX bossmann_mafia_hitman_idx ON bossmann_mafia USING secondary(hitman);
+
+statement ok
+INSERT INTO bossmann_mafia VALUES
+  (1, 'vedernikoff', 500),
+  (2, 'cutelooked', 300),
+  (3, 'crookface', 500),
+  (4, 'stockpiler', 700),
+  (5, 'vedernikoff', 300),
+  (6, 'bossmann', 1000),
+  (7, 'crookface', 300),
+  (8, 'cutelooked', 500);
+
+query
+SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 500 ORDER BY pid;
+----
+pid	hitman
 1	vedernikoff
-4	vedernikoff
+3	crookface
+8	cutelooked
 
 query
-SELECT pid, team FROM clickclack_teams WHERE team = 'crookface';
+SELECT pid, bounty FROM bossmann_mafia WHERE hitman = 'vedernikoff' ORDER BY pid;
 ----
-pid	team
-3	crookface
+pid	bounty
+1	500
+5	300
+
+query
+SELECT pid, bounty FROM bossmann_mafia WHERE hitman = 'crookface' ORDER BY pid;
+----
+pid	bounty
+3	500
+7	300
 
 statement ok
-DROP TABLE clickclack_teams;
+UPDATE bossmann_mafia SET bounty = 900 WHERE hitman = 'crookface';
+
+query
+SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 500 ORDER BY pid;
+----
+pid	hitman
+1	vedernikoff
+8	cutelooked
+
+query
+SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 900 ORDER BY pid;
+----
+pid	hitman
+3	crookface
+7	crookface
+
+statement ok
+DELETE FROM bossmann_mafia WHERE hitman = 'cutelooked';
+
+query
+SELECT pid, bounty FROM bossmann_mafia WHERE hitman = 'cutelooked';
+----
+pid	bounty
+
+query
+SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 300;
+----
+pid	hitman
+5	vedernikoff
+
+query
+SELECT pid, hitman, bounty FROM bossmann_mafia ORDER BY pid;
+----
+pid	hitman	bounty
+1	vedernikoff	500
+3	crookface	900
+4	stockpiler	700
+5	vedernikoff	300
+6	bossmann	1000
+7	crookface	900
+
+statement ok
+DROP TABLE bossmann_mafia;

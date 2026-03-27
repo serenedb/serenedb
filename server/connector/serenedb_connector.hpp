@@ -97,20 +97,20 @@ template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeSecondaryIndexWriter(
   rocksdb::Transaction& transaction, ObjectId shard_id, ObjectId table_id,
   std::span<const catalog::Column::Id> columns,
-  velox::TypeKind indexed_type_kind) {
+  velox::TypeKind indexed_type_kind, std::string indexed_col_name) {
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
-    return std::make_unique<SecondarySinkInsertWriter>(transaction, shard_id,
-                                                       columns);
+    return std::make_unique<SecondarySinkInsertWriter>(
+      transaction, shard_id, columns, std::string{indexed_col_name});
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
-    return std::make_unique<SecondarySinkUpdateWriter>(transaction, shard_id,
-                                                       table_id, columns,
-                                                       indexed_type_kind);
+    return std::make_unique<SecondarySinkUpdateWriter>(
+      transaction, shard_id, table_id, columns, indexed_type_kind,
+      std::string{indexed_col_name});
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
-    return std::make_unique<SecondarySinkDeleteWriter>(transaction, shard_id,
-                                                       table_id, columns,
-                                                       indexed_type_kind);
+    return std::make_unique<SecondarySinkDeleteWriter>(
+      transaction, shard_id, table_id, columns, indexed_type_kind,
+      std::move(indexed_col_name));
   }
 }
 
@@ -132,8 +132,8 @@ std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
 }
 
 inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
-  ObjectId backfill_index_id, query::Transaction& transaction,
-  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf) {
+  ObjectId backfill_index_id, query::Transaction& transaction, rocksdb::DB& db,
+  rocksdb::ColumnFamilyHandle& cf) {
   auto snapshot = transaction.GetCatalogSnapshot();
   auto shard = snapshot->GetIndexShard(backfill_index_id);
   SDB_ASSERT(shard);
@@ -142,10 +142,8 @@ inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
   SDB_ASSERT(index);
 
   SDB_ASSERT(shard->GetType() == IndexType::Inverted);
-  auto& inverted_shard =
-    basics::downCast<search::InvertedIndexShard>(*shard);
-  auto& inverted_index =
-    basics::downCast<const catalog::InvertedIndex>(*index);
+  auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
+  auto& inverted_index = basics::downCast<const catalog::InvertedIndex>(*index);
   return std::make_unique<SearchSinkBackfillWriter>(
     inverted_shard, MakeAnalyzerProvider(inverted_index),
     inverted_index.GetColumnIds());
@@ -158,36 +156,37 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
   auto snapshot = transaction.GetCatalogSnapshot();
-  auto resolve_index_writer = [&](auto& trx,
-                                  const catalog::Index& index) {
+  auto resolve_index_writer = [&](auto& trx, const catalog::Index& index) {
     if constexpr (std::is_same_v<std::decay_t<decltype(trx)>,
                                  irs::IndexWriter::Transaction>) {
       const auto& inverted_index =
         basics::downCast<catalog::InvertedIndex>(index);
-      writers.push_back(
-        MakeInvertedIndexWriter<Kind>(trx, inverted_index));
+      writers.push_back(MakeInvertedIndexWriter<Kind>(trx, inverted_index));
     } else if constexpr (std::is_same_v<std::decay_t<decltype(trx)>,
                                         rocksdb::Transaction>) {
       auto shard = snapshot->GetIndexShard(index.GetId());
       SDB_ASSERT(shard);
       // Look up the indexed column type for UPDATE DeleteRow support
       auto indexed_type_kind = velox::TypeKind::INVALID;
-      auto idx_table = snapshot->template GetObject<catalog::Table>(
-        index.GetRelationId());
+      std::string indexed_col_name;
+      auto idx_table =
+        snapshot->template GetObject<catalog::Table>(index.GetRelationId());
       if (idx_table && !index.GetColumnIds().empty()) {
         auto idx_col_id = index.GetColumnIds()[0];
         for (const auto& col : idx_table->Columns()) {
           if (col.id == idx_col_id) {
-            indexed_type_kind = idx_table->RowType()
-              ->childAt(idx_table->RowType()->getChildIdx(col.name))
-              ->kind();
+            indexed_col_name = col.name;
+            indexed_type_kind =
+              idx_table->RowType()
+                ->childAt(idx_table->RowType()->getChildIdx(col.name))
+                ->kind();
             break;
           }
         }
       }
       writers.push_back(MakeSecondaryIndexWriter<Kind>(
-        trx, shard->GetId(), table_id, index.GetColumnIds(),
-        indexed_type_kind));
+        trx, shard->GetId(), table_id, index.GetColumnIds(), indexed_type_kind,
+        std::move(indexed_col_name)));
     } else {
       SDB_UNREACHABLE();
     }
@@ -950,9 +949,8 @@ class SereneDBConnector final : public velox::connector::Connector {
 
       const auto* underlying = sec_handle->GetUnderlyingTable();
       if (const auto* file_table =
-            underlying
-              ? dynamic_cast<const ReadFileTable*>(underlying)
-              : nullptr) {
+            underlying ? dynamic_cast<const ReadFileTable*>(underlying)
+                       : nullptr) {
         SDB_ASSERT(file_table->GetOptions()->Reader()->fileFormat() ==
                      velox::dwio::common::FileFormat::PARQUET,
                    "Only parquet is supported for secondary index search");
@@ -1216,8 +1214,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               std::move(update_sinks), table_lock);
           } else if (table.BackfillIndexId().isSet()) {
             auto snapshot = transaction.GetCatalogSnapshot();
-            auto shard =
-              snapshot->GetIndexShard(table.BackfillIndexId());
+            auto shard = snapshot->GetIndexShard(table.BackfillIndexId());
             SDB_ASSERT(shard);
 
             if (shard->GetType() == IndexType::Secondary) {
@@ -1247,15 +1244,14 @@ class SereneDBConnector final : public velox::connector::Connector {
               }
 
               return std::make_unique<SSTInsertDataSink<false, true>>(
-                _db, _cf, *connector_query_ctx->memoryPool(),
-                shard->GetId(), backfill_pk_indices, columns,
+                _db, _cf, *connector_query_ctx->memoryPool(), shard->GetId(),
+                backfill_pk_indices, columns,
                 std::vector<std::unique_ptr<SinkIndexWriter>>{}, table_lock,
                 indexed_input_idx);
             }
 
-            auto backfill_writer =
-              CreateBackfillIndexWriter(table.BackfillIndexId(), transaction,
-                                        _db, _cf);
+            auto backfill_writer = CreateBackfillIndexWriter(
+              table.BackfillIndexId(), transaction, _db, _cf);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, std::move(backfill_writer), table_lock);

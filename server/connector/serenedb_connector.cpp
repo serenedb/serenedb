@@ -53,8 +53,7 @@ struct SecondaryIndexMatch {
 };
 
 // Encode a Velox constant into the sortable index key format.
-bool EncodeConstantToSortableKey(std::string& key,
-                                 const velox::variant& value,
+bool EncodeConstantToSortableKey(std::string& key, const velox::variant& value,
                                  velox::TypeKind kind) {
   switch (kind) {
     case velox::TypeKind::BOOLEAN: {
@@ -62,11 +61,13 @@ bool EncodeConstantToSortableKey(std::string& key,
       return true;
     }
     case velox::TypeKind::TINYINT: {
-      primary_key::AppendSigned(key, static_cast<int8_t>(value.value<int8_t>()));
+      primary_key::AppendSigned(key,
+                                static_cast<int8_t>(value.value<int8_t>()));
       return true;
     }
     case velox::TypeKind::SMALLINT: {
-      primary_key::AppendSigned(key, static_cast<int16_t>(value.value<int16_t>()));
+      primary_key::AppendSigned(key,
+                                static_cast<int16_t>(value.value<int16_t>()));
       return true;
     }
     case velox::TypeKind::INTEGER: {
@@ -125,10 +126,10 @@ bool EncodeConstantToSortableKey(std::string& key,
 }
 
 // Try to match a single filter expression against a secondary index.
-// Looks for: eq(field_access("col"), constant) where "col" is an indexed column.
+// Looks for: eq(field_access("col"), constant) where "col" is an indexed
+// column.
 std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
-  const velox::core::TypedExprPtr& filter,
-  const axiom::connector::Table& table,
+  const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
   query::Transaction& transaction) {
   // Must be a function call
   const auto* call =
@@ -171,12 +172,12 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
   auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
   auto snapshot = transaction.GetCatalogSnapshot();
 
-  for (auto index_shard : snapshot->GetIndexShardsByTable(rocksdb_table.TableId())) {
+  for (auto index_shard :
+       snapshot->GetIndexShardsByTable(rocksdb_table.TableId())) {
     if (index_shard->GetType() != IndexType::Secondary) {
       continue;
     }
-    auto index =
-      snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
+    auto index = snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
     if (!index) {
       continue;
     }
@@ -358,8 +359,8 @@ SereneDBTableLayout::createTableHandle(
       return std::make_shared<SecondaryIndexTableHandle>(
         std::string{table->name()}, rocksdb_table.TableId(),
         rocksdb_table.GetTransaction(), match->effective_column_id,
-        match->shard_id, std::move(match->scan_prefix),
-        match->value_key_size, table);
+        match->shard_id, std::move(match->scan_prefix), match->value_key_size,
+        table);
     }
   }
 

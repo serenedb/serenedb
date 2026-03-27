@@ -110,8 +110,7 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
     case IndexType::Secondary: {
       return std::make_shared<SecondaryIndex>(
         database_id, schema_id, id, relation_id,
-        std::move(
-          basics::downCast<SecondaryIndexOptionsWrapper>(sub_options)));
+        std::move(basics::downCast<SecondaryIndexOptionsWrapper>(sub_options)));
     }
     case IndexType::Unknown:
       SDB_UNREACHABLE();
@@ -190,9 +189,8 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
         }
       }
       SecondaryIndexOptionsWrapper impl_options(std::move(options));
-      return std::make_shared<SecondaryIndex>(database_id, schema_id, id,
-                                              relation_id,
-                                              std::move(impl_options));
+      return std::make_shared<SecondaryIndex>(
+        database_id, schema_id, id, relation_id, std::move(impl_options));
     }
     case IndexType::Unknown:
       SDB_UNREACHABLE();

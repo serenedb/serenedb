@@ -137,16 +137,14 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     explain_options::ExplainOptions dummy;
     CreateIndexOptionsParser parser{stmt.options, dummy};
     auto shard_options = std::move(parser).GetOptions();
-    create_result =
-      catalog.CreateIndex(db, schema, relation_name, std::move(columns),
-                          std::move(options), shard_options,
-                          {.create_with_tombstone = true});
+    create_result = catalog.CreateIndex(
+      db, schema, relation_name, std::move(columns), std::move(options),
+      shard_options, {.create_with_tombstone = true});
   } else if (options.type == IndexType::Secondary) {
-    IndexShardOptions shard_options;
-    create_result =
-      catalog.CreateIndex(db, schema, relation_name, std::move(columns),
-                          std::move(options), shard_options,
-                          {.create_with_tombstone = true});
+    SecondaryIndexShardOptions shard_options;
+    create_result = catalog.CreateIndex(
+      db, schema, relation_name, std::move(columns), std::move(options),
+      shard_options, {.create_with_tombstone = true});
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index type is not supported"));
@@ -160,9 +158,8 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
     return {};
   }
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
   }
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));
@@ -181,8 +178,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
 
   // Inverted indexes need background commit/consolidation tasks.
   if (shard->GetType() == IndexType::Inverted) {
-    auto& inverted_index =
-      basics::downCast<search::InvertedIndexShard>(*shard);
+    auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
     inverted_index.StartTasks();
   }
 

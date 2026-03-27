@@ -95,9 +95,9 @@ class SSTBlockBuilder {
                     std::span<const rocksdb::Slice> value_slices);
 
   static constexpr size_t kFlushThreshold = 64 * 1024;  // 64 KB
-  static constexpr size_t kPrefixSize = IncludeColumnId
-    ? sizeof(ObjectId) + sizeof(catalog::Column::Id)
-    : sizeof(ObjectId);
+  static constexpr size_t kPrefixSize =
+    IncludeColumnId ? sizeof(ObjectId) + sizeof(catalog::Column::Id)
+                    : sizeof(ObjectId);
 
   Block _curr;
   Block _next;

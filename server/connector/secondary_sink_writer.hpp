@@ -24,8 +24,6 @@
 #include <velox/type/Type.h>
 #include <velox/vector/ComplexVector.h>
 
-#include <functional>
-
 #include "key_utils.hpp"
 #include "primary_key.hpp"
 #include "rocksdb/db.h"
@@ -165,347 +163,235 @@ inline void Create(const velox::RowVector& input,
     primary_key::Create(input, key_childs, row_idx, key);
   } else {
     // Generated PK is the last column (same convention as MakeColumnKey)
-    primary_key::AppendKeyValue(
-      key, *input.childAt(input.childrenSize() - 1), row_idx);
+    primary_key::AppendKeyValue(key, *input.childAt(input.childrenSize() - 1),
+                                row_idx);
+  }
+}
+
+// Encode a value (in RocksDB little-endian storage format) into sortable key.
+// Used by both SinkIndexWriter (cell_slices from Write) and DeleteRow (raw
+// bytes from trx.Get). Single source of truth for all value encoding.
+inline void EncodeValue(std::string& key, velox::TypeKind kind,
+                        const char* data, size_t size) {
+  switch (kind) {
+    case velox::TypeKind::BOOLEAN:
+      key.push_back(data[0]);
+      break;
+    case velox::TypeKind::TINYINT:
+      AppendSortableSigned<int8_t>(key, data);
+      break;
+    case velox::TypeKind::SMALLINT:
+      AppendSortableSigned<int16_t>(key, data);
+      break;
+    case velox::TypeKind::INTEGER:
+      AppendSortableSigned<int32_t>(key, data);
+      break;
+    case velox::TypeKind::BIGINT:
+      AppendSortableSigned<int64_t>(key, data);
+      break;
+    case velox::TypeKind::REAL:
+      AppendSortableFloat(key, data);
+      break;
+    case velox::TypeKind::DOUBLE:
+      AppendSortableDouble(key, data);
+      break;
+    case velox::TypeKind::VARCHAR:
+    case velox::TypeKind::VARBINARY:
+      AppendSortableString(key, {rocksdb::Slice{data, size}});
+      break;
+    default:
+      SDB_ASSERT(false, "Unsupported type kind for secondary index: ",
+                 velox::TypeKindName::toName(kind));
   }
 }
 
 }  // namespace secondary_key
 
-// Type-erased value encoder set per column in SwitchColumn.
-using SecondaryValueEncoder = std::function<void(
-  std::string& key, std::span<const rocksdb::Slice> cell_slices)>;
-
-// Re-encode a RocksDB column value (little-endian) into sortable key format.
-inline void EncodeOldValueToSortableKey(std::string& key,
-                                        const rocksdb::Slice& value,
-                                        velox::TypeKind kind) {
-  switch (kind) {
-    case velox::TypeKind::BOOLEAN:
-      key.push_back(value.data()[0]);
-      break;
-    case velox::TypeKind::TINYINT:
-      primary_key::AppendSigned(key,
-        absl::little_endian::Load<int8_t>(value.data()));
-      break;
-    case velox::TypeKind::SMALLINT:
-      primary_key::AppendSigned(key,
-        absl::little_endian::Load<int16_t>(value.data()));
-      break;
-    case velox::TypeKind::INTEGER:
-      primary_key::AppendSigned(key,
-        absl::little_endian::Load<int32_t>(value.data()));
-      break;
-    case velox::TypeKind::BIGINT:
-      primary_key::AppendSigned(key,
-        absl::little_endian::Load<int64_t>(value.data()));
-      break;
-    case velox::TypeKind::REAL: {
-      float v;
-      std::memcpy(&v, value.data(), sizeof(float));
-      auto bits = std::bit_cast<uint32_t>(v);
-      if (bits & 0x80000000u) bits = ~bits;
-      else bits ^= 0x80000000u;
-      auto base = key.size();
-      basics::StrAppend(key, sizeof(uint32_t));
-      absl::big_endian::Store32(key.data() + base, bits);
-      break;
-    }
-    case velox::TypeKind::DOUBLE: {
-      double v;
-      std::memcpy(&v, value.data(), sizeof(double));
-      auto bits = std::bit_cast<uint64_t>(v);
-      if (bits & 0x8000000000000000ull) bits = ~bits;
-      else bits ^= 0x8000000000000000ull;
-      auto base = key.size();
-      basics::StrAppend(key, sizeof(uint64_t));
-      absl::big_endian::Store64(key.data() + base, bits);
-      break;
-    }
-    case velox::TypeKind::VARCHAR:
-    case velox::TypeKind::VARBINARY: {
-      for (size_t i = 0; i < value.size(); ++i) {
-        char c = value.data()[i];
-        if (c == '\x00') {
-          key.push_back('\x00');
-          key.push_back('\x01');
-        } else {
-          key.push_back(c);
-        }
-      }
-      key.push_back('\x00');
-      key.push_back('\x00');
-      break;
-    }
-    default:
-      SDB_ASSERT(false, "Unsupported type kind for secondary index");
-  }
-}
-
-// Read old column value from the main table by PK, encode it, and delete
-// the corresponding secondary index entry. Used by UPDATE and DELETE writers.
-inline void DeleteOldEntryByPK(
-  std::string_view encoded_pk, rocksdb::Transaction& trx, ObjectId shard_id,
-  ObjectId table_id, catalog::Column::Id indexed_column_id,
-  velox::TypeKind indexed_type_kind,
-  std::string& old_key_buf, std::string& delete_key_buf) {
-  // Build key: <table_id><column_id><pk> to read old column value
-  old_key_buf.clear();
-  basics::StrAppend(old_key_buf,
-                    sizeof(ObjectId) + sizeof(catalog::Column::Id));
-  absl::big_endian::Store64(old_key_buf.data(), table_id.id());
-  key_utils::SetupColumnForKey(old_key_buf, indexed_column_id);
-  old_key_buf.append(encoded_pk.data(), encoded_pk.size());
-
-  std::string old_value;
-  auto s = trx.Get(rocksdb::ReadOptions{}, old_key_buf, &old_value);
-
-  // Build and delete old secondary index entry
-  delete_key_buf.clear();
-  secondary_key::AppendShardPrefix(delete_key_buf, shard_id);
-
-  if (!s.ok() || old_value.empty()) {
-    secondary_key::AppendNullMarker(delete_key_buf);
-  } else {
-    secondary_key::AppendNotNullMarker(delete_key_buf);
-    rocksdb::Slice old_slice{old_value};
-    EncodeOldValueToSortableKey(delete_key_buf, old_slice, indexed_type_kind);
-  }
-
-  delete_key_buf.append(encoded_pk.data(), encoded_pk.size());
-  trx.Delete(delete_key_buf);
-}
-
-// Base implementation shared by insert/update/backfill writers.
-class SecondarySinkWriteBaseImpl : public ColumnSinkWriterImplBase {
+// Base for secondary index writers. Stores the input RowVector from Init
+// and builds keys using primary_key::AppendKeyValue (no re-encoding needed).
+class SecondarySinkWriteBase : public SinkIndexWriter,
+                               public ColumnSinkWriterImplBase {
  public:
-  SecondarySinkWriteBaseImpl(rocksdb::Transaction& trx, ObjectId shard_id,
-                             std::span<const catalog::Column::Id> columns)
+  SecondarySinkWriteBase(rocksdb::Transaction& trx, ObjectId shard_id,
+                         std::span<const catalog::Column::Id> columns,
+                         std::string indexed_col_name)
     : ColumnSinkWriterImplBase{columns},
       _trx{trx},
-      _shard_id{shard_id} {}
+      _shard_id{shard_id},
+      _indexed_col_name{std::move(indexed_col_name)} {}
 
-  void InitImpl(size_t /*batch_size*/) {}
-
-  bool SwitchColumnImpl(const velox::Type& type, bool have_nulls,
-                        catalog::Column::Id column_id) {
-    if (!IsIndexed(column_id)) {
-      return false;
-    }
-    _current_column_may_have_nulls = have_nulls;
-    SetupEncoder(type.kind());
-    return true;
+  bool SwitchColumn(const velox::Type&, bool,
+                    catalog::Column::Id column_id) final {
+    return IsIndexed(column_id);
   }
 
-  void FinishImpl() {}
-  void AbortImpl() {}
+  void Finish() final {}
+  void Abort() final {}
 
  protected:
-  void PutImpl(std::span<const rocksdb::Slice> cell_slices,
-               std::string_view full_key) {
-    BuildKey(cell_slices, full_key);
-    auto s = _trx.Put(_key_buffer, rocksdb::Slice{});
-    SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
+  void InitBase(const velox::RowVectorPtr& input) {
+    _input = input;
+    _row_idx = 0;
+    auto maybe = input->type()->asRow().getChildIdxIfExists(_indexed_col_name);
+    _indexed_col_idx = maybe.value_or(0);
   }
 
-  void DeleteImpl(std::span<const rocksdb::Slice> cell_slices,
-                  std::string_view full_key) {
-    BuildKey(cell_slices, full_key);
-    auto s = _trx.Delete(_key_buffer);
-    SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
-  }
-
-  rocksdb::Transaction& _trx;
-  ObjectId _shard_id;
-
- private:
-  void BuildKey(std::span<const rocksdb::Slice> cell_slices,
-                std::string_view full_key) {
+  void BuildKeyFromVector(std::string_view full_key) {
     auto pk_bytes = key_utils::ExtractRowKey(full_key);
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
 
-    bool is_null = _current_column_may_have_nulls && cell_slices.size() == 1 &&
-                   cell_slices[0].empty();
-    if (is_null) {
+    const auto& col = *_input->childAt(_indexed_col_idx);
+    if (col.isNullAt(_row_idx)) {
       secondary_key::AppendNullMarker(_key_buffer);
     } else {
       secondary_key::AppendNotNullMarker(_key_buffer);
-      SDB_ASSERT(_encoder, "Encoder not set — SwitchColumn not called?");
-      _encoder(_key_buffer, cell_slices);
+      primary_key::AppendKeyValue(_key_buffer, col, _row_idx);
     }
 
     _key_buffer.append(pk_bytes.data(), pk_bytes.size());
+    ++_row_idx;
   }
 
-  void SetupEncoder(velox::TypeKind kind) {
-    switch (kind) {
-      case velox::TypeKind::BOOLEAN:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableBool(key, s);
-        };
-        break;
-      case velox::TypeKind::TINYINT:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableSigned<int8_t>(key, s[0].data());
-        };
-        break;
-      case velox::TypeKind::SMALLINT:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableSigned<int16_t>(key, s[0].data());
-        };
-        break;
-      case velox::TypeKind::INTEGER:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableSigned<int32_t>(key, s[0].data());
-        };
-        break;
-      case velox::TypeKind::BIGINT:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableSigned<int64_t>(key, s[0].data());
-        };
-        break;
-      case velox::TypeKind::REAL:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableFloat(key, s[0].data());
-        };
-        break;
-      case velox::TypeKind::DOUBLE:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableDouble(key, s[0].data());
-        };
-        break;
-      case velox::TypeKind::VARCHAR:
-      case velox::TypeKind::VARBINARY:
-        _encoder = [](std::string& key, std::span<const rocksdb::Slice> s) {
-          secondary_key::AppendSortableString(key, s);
-        };
-        break;
-      default:
-        SDB_ASSERT(false, "Unsupported type kind for secondary index: ",
-                   velox::TypeKindName::toName(kind));
-    }
-  }
-
+  rocksdb::Transaction& _trx;
+  ObjectId _shard_id;
+  velox::RowVectorPtr _input;
+  std::string _indexed_col_name;
+  velox::column_index_t _indexed_col_idx{0};
+  velox::vector_size_t _row_idx{0};
   std::string _key_buffer;
-  SecondaryValueEncoder _encoder;
-  bool _current_column_may_have_nulls{false};
 };
 
-// INSERT writer: maintains secondary index on row insertion.
-class SecondarySinkInsertWriter final : public SinkIndexWriter,
-                                        public SecondarySinkWriteBaseImpl {
+// INSERT writer
+class SecondarySinkInsertWriter final : public SecondarySinkWriteBase {
  public:
-  SecondarySinkInsertWriter(rocksdb::Transaction& trx, ObjectId shard_id,
-                            std::span<const catalog::Column::Id> columns)
-    : SecondarySinkWriteBaseImpl{trx, shard_id, columns} {}
+  using SecondarySinkWriteBase::SecondarySinkWriteBase;
 
-  void Init(size_t batch_size) final { InitImpl(batch_size); }
+  void Init(size_t, const velox::RowVectorPtr& input) final { InitBase(input); }
 
-  bool SwitchColumn(const velox::Type& type, bool have_nulls,
-                    catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(type, have_nulls, column_id);
+  void Write(std::span<const rocksdb::Slice>, std::string_view full_key) final {
+    BuildKeyFromVector(full_key);
+    auto s = _trx.Put(_key_buffer, rocksdb::Slice{});
+    SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
-
-  void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key) final {
-    PutImpl(cell_slices, full_key);
-  }
-
-  void Finish() final { FinishImpl(); }
-  void Abort() final { AbortImpl(); }
 };
 
-// DELETE writer: removes secondary index entries on row deletion.
-// DeleteRow reads old column value from RocksDB, encodes it, and deletes
-// the corresponding secondary index entry.
-class SecondarySinkDeleteWriter final : public SinkIndexWriter,
-                                        public SecondarySinkWriteBaseImpl {
+// DELETE writer
+class SecondarySinkDeleteWriter final : public SecondarySinkWriteBase {
  public:
   SecondarySinkDeleteWriter(rocksdb::Transaction& trx, ObjectId shard_id,
                             ObjectId table_id,
                             std::span<const catalog::Column::Id> columns,
-                            velox::TypeKind indexed_type_kind)
-    : SecondarySinkWriteBaseImpl{trx, shard_id, columns},
+                            velox::TypeKind indexed_type_kind,
+                            std::string indexed_col_name)
+    : SecondarySinkWriteBase{trx, shard_id, columns,
+                             std::move(indexed_col_name)},
       _table_id{table_id},
       _indexed_column_id{columns[0]},
       _indexed_type_kind{indexed_type_kind} {}
 
-  void Init(size_t batch_size) final { InitImpl(batch_size); }
+  void Init(size_t, const velox::RowVectorPtr& input) final { InitBase(input); }
 
-  bool SwitchColumn(const velox::Type& type, bool have_nulls,
-                    catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(type, have_nulls, column_id);
-  }
-
-  void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key) final {
-    DeleteImpl(cell_slices, full_key);
+  void Write(std::span<const rocksdb::Slice>, std::string_view full_key) final {
+    BuildKeyFromVector(full_key);
+    auto s = _trx.Delete(_key_buffer);
+    SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    DeleteOldEntryByPK(encoded_pk, _trx, _shard_id, _table_id,
-                       _indexed_column_id, _indexed_type_kind,
-                       _old_key_buffer, _delete_key_buffer);
+    DeleteOldEntry(encoded_pk);
   }
 
-  void Finish() final { FinishImpl(); }
-  void Abort() final { AbortImpl(); }
-
  private:
+  void DeleteOldEntry(std::string_view encoded_pk) {
+    // Read old indexed column value: <table_id><column_id><pk>
+    _read_key.clear();
+    basics::StrAppend(_read_key,
+                      sizeof(ObjectId) + sizeof(catalog::Column::Id));
+    absl::big_endian::Store64(_read_key.data(), _table_id.id());
+    key_utils::SetupColumnForKey(_read_key, _indexed_column_id);
+    _read_key.append(encoded_pk.data(), encoded_pk.size());
+
+    std::string old_value;
+    auto s = _trx.Get(rocksdb::ReadOptions{}, _read_key, &old_value);
+
+    // Build and delete old secondary index key
+    _del_key.clear();
+    secondary_key::AppendShardPrefix(_del_key, _shard_id);
+    if (!s.ok() || old_value.empty()) {
+      secondary_key::AppendNullMarker(_del_key);
+    } else {
+      secondary_key::AppendNotNullMarker(_del_key);
+      secondary_key::EncodeValue(_del_key, _indexed_type_kind, old_value.data(),
+                                 old_value.size());
+    }
+    _del_key.append(encoded_pk.data(), encoded_pk.size());
+    _trx.Delete(_del_key);
+  }
+
   ObjectId _table_id;
   catalog::Column::Id _indexed_column_id;
   velox::TypeKind _indexed_type_kind;
-  std::string _old_key_buffer;
-  std::string _delete_key_buffer;
+  std::string _read_key;
+  std::string _del_key;
 };
 
-// UPDATE writer: deletes old index entry, inserts new one.
-// DeleteRow reads old column values from RocksDB, encodes them,
-// and deletes the corresponding secondary index entry.
-class SecondarySinkUpdateWriter final : public SinkIndexWriter,
-                                        public SecondarySinkWriteBaseImpl {
+// UPDATE writer
+class SecondarySinkUpdateWriter final : public SecondarySinkWriteBase {
  public:
   SecondarySinkUpdateWriter(rocksdb::Transaction& trx, ObjectId shard_id,
                             ObjectId table_id,
                             std::span<const catalog::Column::Id> columns,
-                            velox::TypeKind indexed_type_kind)
-    : SecondarySinkWriteBaseImpl{trx, shard_id, columns},
+                            velox::TypeKind indexed_type_kind,
+                            std::string indexed_col_name)
+    : SecondarySinkWriteBase{trx, shard_id, columns,
+                             std::move(indexed_col_name)},
       _table_id{table_id},
       _indexed_column_id{columns[0]},
       _indexed_type_kind{indexed_type_kind} {}
 
-  void Init(size_t batch_size) final {
-    SecondarySinkWriteBaseImpl::InitImpl(batch_size);
-  }
+  void Init(size_t, const velox::RowVectorPtr& input) final { InitBase(input); }
 
-  bool SwitchColumn(const velox::Type& type, bool have_nulls,
-                    catalog::Column::Id column_id) final {
-    return SecondarySinkWriteBaseImpl::SwitchColumnImpl(type, have_nulls,
-                                                        column_id);
-  }
-
-  void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key) final {
-    PutImpl(cell_slices, full_key);
+  void Write(std::span<const rocksdb::Slice>, std::string_view full_key) final {
+    BuildKeyFromVector(full_key);
+    auto s = _trx.Put(_key_buffer, rocksdb::Slice{});
+    SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    DeleteOldEntryByPK(encoded_pk, _trx, _shard_id, _table_id,
-                       _indexed_column_id, _indexed_type_kind,
-                       _old_key_buffer, _delete_key_buffer);
+    DeleteOldEntry(encoded_pk);
   }
 
-  void Finish() final { SecondarySinkWriteBaseImpl::FinishImpl(); }
-
-  void Abort() final { SecondarySinkWriteBaseImpl::AbortImpl(); }
-
  private:
+  void DeleteOldEntry(std::string_view encoded_pk) {
+    _read_key.clear();
+    basics::StrAppend(_read_key,
+                      sizeof(ObjectId) + sizeof(catalog::Column::Id));
+    absl::big_endian::Store64(_read_key.data(), _table_id.id());
+    key_utils::SetupColumnForKey(_read_key, _indexed_column_id);
+    _read_key.append(encoded_pk.data(), encoded_pk.size());
+
+    std::string old_value;
+    auto s = _trx.Get(rocksdb::ReadOptions{}, _read_key, &old_value);
+
+    _del_key.clear();
+    secondary_key::AppendShardPrefix(_del_key, _shard_id);
+    if (!s.ok() || old_value.empty()) {
+      secondary_key::AppendNullMarker(_del_key);
+    } else {
+      secondary_key::AppendNotNullMarker(_del_key);
+      secondary_key::EncodeValue(_del_key, _indexed_type_kind, old_value.data(),
+                                 old_value.size());
+    }
+    _del_key.append(encoded_pk.data(), encoded_pk.size());
+    _trx.Delete(_del_key);
+  }
+
   ObjectId _table_id;
   catalog::Column::Id _indexed_column_id;
   velox::TypeKind _indexed_type_kind;
-  std::string _old_key_buffer;
-  std::string _delete_key_buffer;
+  std::string _read_key;
+  std::string _del_key;
 };
 
 // Secondary index backfill is handled by SSTInsertDataSink<false, true>.

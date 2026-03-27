@@ -355,123 +355,121 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
     elem_type, 0, &_memory_pool);
 
   velox::BufferPtr null_buf;
-  velox::vector_size_t row_idx = 0;
   velox::vector_size_t elem_offset = 0;
 
-  while (it.Valid() && static_cast<uint64_t>(row_idx) < max_size) {
-    const auto value = it.value().ToStringView();
-
-    if (value.empty()) {
-      // NULL array
-      if (!null_buf) {
-        null_buf = velox::allocateNulls(max_size, &_memory_pool);
+  const auto vector_size = IterateColumn(
+    it, max_size,
+    [&](uint64_t value_idx, std::string_view key, std::string_view value) {
+      if (value.empty()) {
+        // NULL array
+        if (!null_buf) {
+          null_buf = velox::allocateNulls(max_size, &_memory_pool);
+        }
+        velox::bits::clearBit(null_buf->asMutable<uint64_t>(), value_idx);
+        raw_offsets[value_idx] = elem_offset;
+        raw_sizes[value_idx] = 0;
+        return;
       }
-      velox::bits::clearBit(null_buf->asMutable<uint64_t>(), row_idx);
-      raw_offsets[row_idx] = elem_offset;
-      raw_sizes[row_idx] = 0;
-    } else {
-      raw_offsets[row_idx] = elem_offset;
+      raw_offsets[value_idx] = elem_offset;
 
       const auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
       const uint32_t elem_count = irs::vread<uint32_t>(ptr);
-      raw_sizes[row_idx] = static_cast<velox::vector_size_t>(elem_count);
+      raw_sizes[value_idx] = static_cast<velox::vector_size_t>(elem_count);
 
-      if (elem_count > 0) {
-        elements->resize(elem_offset + elem_count, /*setNotNull=*/true);
+      if (elem_count == 0) {
+        return;
+      }
+      elements->resize(elem_offset + elem_count, true);
 
-        const auto flags = static_cast<ValueFlags>(*ptr++);
-        const bool is_constant =
-          (flags & ValueFlags::Constant) != ValueFlags::None;
-        const bool have_nulls =
-          (flags & ValueFlags::HaveNulls) != ValueFlags::None;
-        const bool have_length =
-          (flags & ValueFlags::HaveLength) != ValueFlags::None;
+      const auto flags = static_cast<ValueFlags>(*ptr++);
+      const bool is_constant =
+        (flags & ValueFlags::Constant) != ValueFlags::None;
+      const bool have_nulls =
+        (flags & ValueFlags::HaveNulls) != ValueFlags::None;
+      const bool have_length =
+        (flags & ValueFlags::HaveLength) != ValueFlags::None;
 
-        uint32_t length_array_size = 0;
-        if (have_length) {
-          length_array_size = irs::vread<uint32_t>(ptr);
-        }
+      uint32_t length_array_size = 0;
+      if (have_length) {
+        length_array_size = irs::vread<uint32_t>(ptr);
+      }
 
-        if (is_constant) {
-          // Remaining bytes are the single constant value (or none for null).
-          const auto remaining_size =
-            static_cast<size_t>(reinterpret_cast<const uint8_t*>(value.data()) +
-                                value.size() - ptr);
-          if (remaining_size == 0) {
-            for (uint32_t i = 0; i < elem_count; i++) {
-              elements->setNull(elem_offset + i, true);
-            }
-          } else {
-            const std::string_view constant_val{
-              reinterpret_cast<const char*>(ptr), remaining_size};
-            for (uint32_t i = 0; i < elem_count; i++) {
-              SetResultValue(constant_val, elem_offset + i, *elements);
-            }
+      if (is_constant) {
+        // Remaining bytes are the single constant value (or none for null).
+        const auto remaining_size = static_cast<size_t>(
+          reinterpret_cast<const uint8_t*>(value.data()) + value.size() - ptr);
+        if (remaining_size == 0) {
+          for (uint32_t i = 0; i < elem_count; i++) {
+            elements->setNull(elem_offset + i, true);
           }
         } else {
-          // Read optional nulls bitmap.
-          const uint8_t* elem_nulls = nullptr;
-          if (have_nulls) {
-            elem_nulls = ptr;
-            ptr += velox::bits::nbytes(elem_count);
+          const std::string_view constant_val{
+            reinterpret_cast<const char*>(ptr), remaining_size};
+          for (uint32_t i = 0; i < elem_count; i++) {
+            SetResultValue(constant_val, elem_offset + i, *elements);
           }
+        }
+      } else {
+        // Read optional nulls bitmap.
+        const uint8_t* elem_nulls = nullptr;
+        if (have_nulls) {
+          elem_nulls = ptr;
+          ptr += velox::bits::nbytes(elem_count);
+        }
 
-          if constexpr (ElemKind == velox::TypeKind::BOOLEAN) {
-            // Boolean data is a packed bitset.
-            const auto bool_bytes = velox::bits::nbytes(elem_count);
-            for (uint32_t i = 0; i < elem_count; i++) {
-              if (elem_nulls && !velox::bits::isBitSet(elem_nulls, i)) {
-                elements->setNull(elem_offset + i, true);
-              } else {
-                elements->set(elem_offset + i, velox::bits::isBitSet(ptr, i));
-              }
+        if constexpr (ElemKind == velox::TypeKind::BOOLEAN) {
+          // Boolean data is a packed bitset.
+          const auto bool_bytes = velox::bits::nbytes(elem_count);
+          for (uint32_t i = 0; i < elem_count; i++) {
+            if (elem_nulls && !velox::bits::isBitSet(elem_nulls, i)) {
+              elements->setNull(elem_offset + i, true);
+            } else {
+              elements->set(elem_offset + i, velox::bits::isBitSet(ptr, i));
             }
-            ptr += bool_bytes;
-          } else if constexpr (!velox::TypeTraits<ElemKind>::isFixedWidth) {
-            // Variable-length elements (e.g., VARCHAR).
-            // Layout: [length_array: length_array_size bytes][string data]
-            const uint8_t* lptr = ptr;
-            ptr += length_array_size;
-            const uint8_t* data_ptr = ptr;
+          }
+          ptr += bool_bytes;
+        } else if constexpr (!velox::TypeTraits<ElemKind>::isFixedWidth) {
+          // Variable-length elements (e.g., VARCHAR).
+          // Layout: [length_array: length_array_size bytes][string data]
+          const uint8_t* lptr = ptr;
+          ptr += length_array_size;
+          const uint8_t* data_ptr = ptr;
 
-            for (uint32_t i = 0; i < elem_count; i++) {
-              const uint32_t len = irs::vread<uint32_t>(lptr);
-              if (elem_nulls && !velox::bits::isBitSet(elem_nulls, i)) {
-                elements->setNull(elem_offset + i, true);
-              } else {
-                elements->set(elem_offset + i,
-                              velox::StringView(
-                                reinterpret_cast<const char*>(data_ptr), len));
-              }
-              data_ptr += len;
+          for (uint32_t i = 0; i < elem_count; i++) {
+            const uint32_t len = irs::vread<uint32_t>(lptr);
+            if (elem_nulls && !velox::bits::isBitSet(elem_nulls, i)) {
+              elements->setNull(elem_offset + i, true);
+            } else {
+              elements->set(elem_offset + i,
+                            velox::StringView(
+                              reinterpret_cast<const char*>(data_ptr), len));
             }
-          } else {
-            // Fixed-width scalar: packed array of count * sizeof(ElemT) bytes.
-            memcpy(elements->mutableRawValues() + elem_offset, ptr,
-                   elem_count * sizeof(ElemT));
-            ptr += elem_count * sizeof(ElemT);
-            if (have_nulls) {
-              for (uint32_t i = 0; i < elem_count; i++) {
-                if (!velox::bits::isBitSet(elem_nulls, i)) {
-                  elements->setNull(elem_offset + i, true);
-                }
+            data_ptr += len;
+          }
+        } else {
+          // Fixed-width scalar: packed array of count * sizeof(ElemT) bytes.
+          memcpy(elements->mutableRawValues() + elem_offset, ptr,
+                 elem_count * sizeof(ElemT));
+          ptr += elem_count * sizeof(ElemT);
+          if (have_nulls) {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              if (!velox::bits::isBitSet(elem_nulls, i)) {
+                elements->setNull(elem_offset + i, true);
               }
             }
           }
         }
-
-        elem_offset += elem_count;
       }
-    }
 
-    ++row_idx;
-    it.Next();
-  }
+      elem_offset += elem_count;
+    });
+
+  SDB_ASSERT(vector_size <= max_size);
 
   rocksutils::CheckIteratorStatus(it);
 
   return std::make_shared<velox::ArrayVector>(
-    &_memory_pool, std::move(array_type), std::move(null_buf), row_idx,
+    &_memory_pool, std::move(array_type), std::move(null_buf), vector_size,
     std::move(offsets_buf), std::move(sizes_buf), std::move(elements));
 }
 

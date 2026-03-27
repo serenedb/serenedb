@@ -1,18 +1,18 @@
-query ?
+query
 SELECT ARRAY[0.0, 1.0, 2.0] <-> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
 8
 
 
-query ?
+query
 SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
 0.20000000298023224
 
 
-query ?
+query
 SELECT ARRAY[0.0, 1.0, 2.0] <+> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
@@ -31,20 +31,20 @@ query error
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0];
 
 
-query ?
+query
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0, NULL];
 ----
 ?column?
 NULL
 
-query ?
+query
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0, NULL];
 ----
 ?column?
 NULL
 
 
-query ?
+query
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0, NULL];
 ----
 ?column?

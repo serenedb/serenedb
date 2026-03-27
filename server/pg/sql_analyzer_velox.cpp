@@ -4503,6 +4503,7 @@ const OpToFuncMap kOpToFunc{
   {"count_star", "presto_count"},
   // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
   {"<->", "presto_l2_squared"},
+  {"<#>", "presto_dot_product"},
   {"<=>", "presto_cosine_similarity"},
   {"<+>", "presto_l1_distance"},
 };

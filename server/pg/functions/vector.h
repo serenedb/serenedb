@@ -60,7 +60,7 @@ template<typename T>
 struct L2Squared {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(  // NOLINT
+  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
     out_type<float>& result, const velox::exec::ArrayView<false, float>& l,
     const velox::exec::ArrayView<false, float>& r) {
     if (l.size() != r.size() || l.size() == 0) {
@@ -82,7 +82,7 @@ template<typename T>
 struct L1Distance {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(  // NOLINT
+  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
     out_type<float>& result, const velox::exec::ArrayView<false, float>& l,
     const velox::exec::ArrayView<false, float>& r) {
     if (l.size() != r.size() || l.size() == 0) {
@@ -105,7 +105,7 @@ template<typename T>
 struct CosineSimilarity {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(  // NOLINT
+  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
     out_type<float>& result, const velox::exec::ArrayView<false, float>& l,
     const velox::exec::ArrayView<false, float>& r) {
     if (l.size() != r.size() || l.size() == 0) {

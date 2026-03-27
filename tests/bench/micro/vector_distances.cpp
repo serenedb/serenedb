@@ -133,7 +133,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   sdb::pg::L2Squared<VectorExec> fn;
   for (auto _ : state) {
     float result = 0.0f;
-    fn.call(result, l->view, r->view);
+    fn.callNullFree(result, l->view, r->view);
     benchmark::DoNotOptimize(result);
   }
 }
@@ -175,7 +175,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
   sdb::pg::L1Distance<VectorExec> fn;
   for (auto _ : state) {
     float result = 0.0f;
-    fn.call(result, l->view, r->view);
+    fn.callNullFree(result, l->view, r->view);
     benchmark::DoNotOptimize(result);
   }
 }
@@ -246,7 +246,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
   sdb::pg::CosineSimilarity<VectorExec> fn;
   for (auto _ : state) {
     float result = 0.0f;
-    fn.call(result, l->view, r->view);
+    fn.callNullFree(result, l->view, r->view);
     benchmark::DoNotOptimize(result);
   }
 }

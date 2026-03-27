@@ -365,7 +365,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
         if (!null_buf) {
           null_buf = velox::allocateNulls(max_size, &_memory_pool);
         }
-        velox::bits::clearBit(null_buf->asMutable<uint64_t>(), value_idx);
+        velox::bits::setNull(null_buf->asMutable<uint64_t>(), value_idx);
         return;
       }
 

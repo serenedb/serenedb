@@ -33,8 +33,12 @@ interface PGSQLEditorProps {
     onExecuteInNewTab?: () => void;
     autocomplete?: {
         tables: string[];
+        systemTables: string[];
         views: string[];
         indexes: string[];
+        sequences: string[];
+        schemas: string[];
+        columns: string[];
         savedQueries: Array<{
             name: string;
             query: string;
@@ -54,8 +58,12 @@ let pgsqlInlineCompletionProvider: Monaco.IDisposable | null = null;
 
 const EMPTY_AUTOCOMPLETE: NonNullable<PGSQLEditorProps["autocomplete"]> = {
     tables: [],
+    systemTables: [],
     views: [],
     indexes: [],
+    sequences: [],
+    schemas: [],
+    columns: [],
     savedQueries: [],
     queryHistory: [],
 };
@@ -172,9 +180,7 @@ const getMatchingInlineAutocompleteEntries = (
         .filter(
             (entry) =>
                 entry.acceptedText.length > currentValue.length &&
-                entry.acceptedText
-                    .toLowerCase()
-                    .startsWith(currentValueLower),
+                entry.acceptedText.toLowerCase().startsWith(currentValueLower),
         )
         .sort(
             (left, right) =>
@@ -196,11 +202,425 @@ const isCursorAtModelEnd = (
     );
 };
 
+const isSuggestWidgetVisible = (
+    editor: Monaco.editor.IStandaloneCodeEditor,
+) => {
+    const domNode = editor.getDomNode();
+
+    if (!domNode) {
+        return false;
+    }
+
+    return Boolean(domNode.querySelector(".suggest-widget.visible"));
+};
+
+type SqlEntityContext =
+    | "relations"
+    | "columns"
+    | "indexes"
+    | "schemas"
+    | "none";
+
+const SQL_STATEMENT_CONTEXT_RULES: Array<{
+    pattern: RegExp;
+    keywords: string[];
+    entityContext?: SqlEntityContext;
+}> = [
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\*\s*$/i,
+        keywords: ["FROM"],
+    },
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\b(FROM|JOIN)\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\b(FROM|JOIN)\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\bFROM\s+[\w."$]+\s+$/i,
+        keywords: [
+            "WHERE",
+            "JOIN",
+            "LEFT JOIN",
+            "RIGHT JOIN",
+            "INNER JOIN",
+            "FULL JOIN",
+            "GROUP BY",
+            "HAVING",
+            "ORDER BY",
+            "LIMIT",
+            "OFFSET",
+        ],
+    },
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\b(WHERE|HAVING)\s*$/i,
+        keywords: ["AND", "OR", "NOT", "IS", "IN", "LIKE", "BETWEEN"],
+        entityContext: "columns",
+    },
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\b(WHERE|HAVING)\s+[\w."$]*$/i,
+        keywords: [
+            "AND",
+            "OR",
+            "IS",
+            "IN",
+            "LIKE",
+            "BETWEEN",
+            "ORDER BY",
+            "LIMIT",
+        ],
+        entityContext: "columns",
+    },
+    {
+        pattern: /^\s*SELECT\b[\s\S]*\bORDER\s+BY\s+[\w."$,\s]*$/i,
+        keywords: [
+            "ASC",
+            "DESC",
+            "NULLS FIRST",
+            "NULLS LAST",
+            "LIMIT",
+            "OFFSET",
+        ],
+        entityContext: "columns",
+    },
+    {
+        pattern: /^\s*INSERT\s+INTO\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*INSERT\b[\s\S]*\bINTO\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*INSERT\b[\s\S]*\bINTO\s+[\w."$]+\s+$/i,
+        keywords: ["(", "VALUES", "SELECT", "DEFAULT VALUES", "RETURNING"],
+    },
+    {
+        pattern: /^\s*UPDATE\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*UPDATE\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*UPDATE\s+[\w."$]+\s+$/i,
+        keywords: ["SET", "FROM", "WHERE", "RETURNING"],
+    },
+    {
+        pattern: /^\s*UPDATE\b[\s\S]*\bSET\s+[\w."$,\s=()*+\-/'"]*$/i,
+        keywords: ["WHERE", "FROM", "RETURNING"],
+        entityContext: "columns",
+    },
+    {
+        pattern: /^\s*DELETE\s*$/i,
+        keywords: ["FROM"],
+    },
+    {
+        pattern: /^\s*DELETE\b[\s\S]*\bFROM\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*DELETE\b[\s\S]*\bFROM\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*DELETE\b[\s\S]*\bFROM\s+[\w."$]+\s+$/i,
+        keywords: ["USING", "WHERE", "RETURNING"],
+    },
+    {
+        pattern: /^\s*CREATE\s+TABLE\s+[\w."$]*$/i,
+        keywords: ["IF NOT EXISTS", "AS", "(", "INHERITS", "PARTITION BY"],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*CREATE\s+TABLE\b[\s\S]*$/i,
+        keywords: [
+            "IF NOT EXISTS",
+            "AS",
+            "(",
+            "INHERITS",
+            "PARTITION BY",
+            "TABLESPACE",
+        ],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*CREATE\s+(MATERIALIZED\s+)?VIEW\b[\s\S]*$/i,
+        keywords: ["AS", "WITH", "SELECT"],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*CREATE\s+INDEX\b[\s\S]*\bON\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*CREATE\s+INDEX\b[\s\S]*\bON\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*CREATE\s+INDEX\b[\s\S]*$/i,
+        keywords: ["ON", "USING", "(", "WHERE", "TABLESPACE", "CONCURRENTLY"],
+        entityContext: "indexes",
+    },
+    {
+        pattern: /^\s*ALTER\s+TABLE\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*ALTER\s+TABLE\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*ALTER\s+TABLE\s+[\w."$]+\s+$/i,
+        keywords: [
+            "ADD COLUMN",
+            "DROP COLUMN",
+            "ALTER COLUMN",
+            "RENAME COLUMN",
+            "RENAME TO",
+            "SET SCHEMA",
+        ],
+    },
+    {
+        pattern: /^\s*DROP\s+(TABLE|VIEW|INDEX|SEQUENCE)\s*$/i,
+        keywords: ["IF EXISTS"],
+        entityContext: "relations",
+    },
+    {
+        pattern:
+            /^\s*DROP\s+(TABLE|VIEW|INDEX|SEQUENCE)\s+(IF\s+EXISTS\s+)?[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern:
+            /^\s*DROP\s+(TABLE|VIEW|INDEX|SEQUENCE)\s+(IF\s+EXISTS\s+)?[\w."$]+\s+$/i,
+        keywords: ["CASCADE", "RESTRICT"],
+    },
+    {
+        pattern: /^\s*TRUNCATE\s*$/i,
+        keywords: ["TABLE"],
+    },
+    {
+        pattern: /^\s*TRUNCATE\b[\s\S]*\bTABLE\s*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*TRUNCATE\b[\s\S]*\bTABLE\s+[\w."$]*$/i,
+        keywords: [],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*TRUNCATE\b[\s\S]*\bTABLE\s+[\w."$]+\s+$/i,
+        keywords: [
+            "RESTART IDENTITY",
+            "CONTINUE IDENTITY",
+            "CASCADE",
+            "RESTRICT",
+        ],
+    },
+    {
+        pattern: /^\s*TRUNCATE\b[\s\S]*$/i,
+        keywords: [
+            "TABLE",
+            "RESTART IDENTITY",
+            "CONTINUE IDENTITY",
+            "CASCADE",
+            "RESTRICT",
+        ],
+        entityContext: "relations",
+    },
+    {
+        pattern: /^\s*GRANT\b[\s\S]*$/i,
+        keywords: ["ON", "TO", "WITH GRANT OPTION"],
+    },
+    {
+        pattern: /^\s*REVOKE\b[\s\S]*$/i,
+        keywords: ["ON", "FROM", "CASCADE", "RESTRICT"],
+    },
+];
+
+const COMMON_SQL_KEYWORDS = new Set([
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "JOIN",
+    "LEFT JOIN",
+    "RIGHT JOIN",
+    "INNER JOIN",
+    "FULL JOIN",
+    "GROUP BY",
+    "ORDER BY",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "INSERT",
+    "INTO",
+    "UPDATE",
+    "SET",
+    "DELETE",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "TRUNCATE",
+    "VALUES",
+    "RETURNING",
+]);
+
+const getKeywordPriority = (
+    keyword: string,
+    context: SqlEntityContext,
+    isContextualKeyword: boolean,
+) => {
+    const normalizedKeyword = keyword.toUpperCase();
+    const isCommonKeyword = COMMON_SQL_KEYWORDS.has(normalizedKeyword);
+
+    if (isContextualKeyword) {
+        if (context === "relations") {
+            return isCommonKeyword ? 2 : 3;
+        }
+
+        if (context === "columns") {
+            return isCommonKeyword ? 2 : 3;
+        }
+
+        return isCommonKeyword ? 0 : 1;
+    }
+
+    return isCommonKeyword ? 3 : 5;
+};
+
+const getCurrentStatementText = (textBeforeCursor: string) => {
+    const statements = textBeforeCursor.split(";");
+    return statements.length
+        ? statements[statements.length - 1]
+        : textBeforeCursor;
+};
+
+const getStatementLeadingKeyword = (statementText: string) => {
+    const trimmed = statementText.trim().toUpperCase();
+    if (!trimmed) {
+        return "";
+    }
+
+    if (trimmed.startsWith("WITH")) {
+        const candidate = trimmed.match(
+            /\b(SELECT|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b/,
+        );
+        return candidate?.[1] ?? "WITH";
+    }
+
+    const firstWord = trimmed.match(/^[A-Z_]+/);
+    return firstWord?.[0] ?? "";
+};
+
+const getContextualSuggestionConfig = (statementText: string) => {
+    const rawStatement = statementText;
+    const trimmed = statementText.trim();
+    if (!trimmed) {
+        return {
+            keywords: [
+                "SELECT",
+                "WITH",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "CREATE",
+                "ALTER",
+                "DROP",
+                "TRUNCATE",
+                "GRANT",
+                "REVOKE",
+            ],
+            entityContext: "none" as SqlEntityContext,
+        };
+    }
+
+    const matchedRule = SQL_STATEMENT_CONTEXT_RULES.find((rule) =>
+        rule.pattern.test(rawStatement),
+    );
+
+    if (matchedRule) {
+        return {
+            keywords: matchedRule.keywords,
+            entityContext: matchedRule.entityContext ?? "none",
+        };
+    }
+
+    const statementKeyword = getStatementLeadingKeyword(trimmed);
+
+    if (statementKeyword === "SELECT") {
+        return {
+            keywords: [
+                "FROM",
+                "WHERE",
+                "GROUP BY",
+                "HAVING",
+                "ORDER BY",
+                "LIMIT",
+                "OFFSET",
+                "UNION",
+            ],
+            entityContext: "columns" as SqlEntityContext,
+        };
+    }
+
+    if (
+        statementKeyword === "INSERT" ||
+        statementKeyword === "UPDATE" ||
+        statementKeyword === "DELETE"
+    ) {
+        return {
+            keywords: ["FROM", "WHERE", "RETURNING"],
+            entityContext: "relations" as SqlEntityContext,
+        };
+    }
+
+    if (
+        statementKeyword === "CREATE" ||
+        statementKeyword === "ALTER" ||
+        statementKeyword === "DROP"
+    ) {
+        return {
+            keywords: [
+                "TABLE",
+                "VIEW",
+                "INDEX",
+                "SEQUENCE",
+                "SCHEMA",
+                "FUNCTION",
+            ],
+            entityContext: "relations" as SqlEntityContext,
+        };
+    }
+
+    return {
+        keywords: [],
+        entityContext: "none" as SqlEntityContext,
+    };
+};
+
 const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
     if (!pgsqlCompletionProvider) {
         pgsqlCompletionProvider =
             monaco.languages.registerCompletionItemProvider("pgsql", {
-                triggerCharacters: ["."],
+                triggerCharacters: [".", " "],
 
                 provideCompletionItems: (
                     model: Monaco.editor.ITextModel,
@@ -209,6 +629,17 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                     const autocomplete = pgsqlAutocompleteData;
                     const word = model.getWordUntilPosition(position);
                     const typedText = word.word.toLowerCase();
+                    const statementBeforeCursor = getCurrentStatementText(
+                        model.getValueInRange({
+                            startLineNumber: 1,
+                            startColumn: 1,
+                            endLineNumber: position.lineNumber,
+                            endColumn: position.column,
+                        }),
+                    );
+                    const contextualConfig = getContextualSuggestionConfig(
+                        statementBeforeCursor,
+                    );
                     const wordRange = {
                         startLineNumber: position.lineNumber,
                         endLineNumber: position.lineNumber,
@@ -218,25 +649,26 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
 
                     const getSortText = (
                         text: string,
+                        priorityGroup: number,
                         categoryPrefix: string,
                     ) => {
                         if (!text) {
-                            return `${categoryPrefix}_3_`;
+                            return `${priorityGroup}_${categoryPrefix}_3_`;
                         }
                         const lowerText = text.toLowerCase();
                         if (!typedText) {
-                            return `${categoryPrefix}_2_${text}`;
+                            return `${priorityGroup}_${categoryPrefix}_2_${text}`;
                         }
                         if (lowerText === typedText) {
-                            return `${categoryPrefix}_0_${text}`;
+                            return `${priorityGroup}_${categoryPrefix}_0_${text}`;
                         }
                         if (lowerText.startsWith(typedText)) {
-                            return `${categoryPrefix}_1_${text}`;
+                            return `${priorityGroup}_${categoryPrefix}_1_${text}`;
                         }
                         if (lowerText.includes(typedText)) {
-                            return `${categoryPrefix}_2_${text}`;
+                            return `${priorityGroup}_${categoryPrefix}_2_${text}`;
                         }
-                        return `${categoryPrefix}_3_${text}`;
+                        return `${priorityGroup}_${categoryPrefix}_3_${text}`;
                     };
 
                     const isRelevant = (text: string) => {
@@ -248,7 +680,14 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                         );
                     };
 
-                    const keywordSuggestions = pgsqlKeywords
+                    const contextualKeywords = new Set(
+                        contextualConfig.keywords.map((value) =>
+                            value.toUpperCase(),
+                        ),
+                    );
+                    const contextKeywordSuggestions = Array.from(
+                        contextualKeywords,
+                    )
                         .filter((kw) => isRelevant(kw))
                         .map((kw) => ({
                             label: kw,
@@ -256,7 +695,35 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                             insertText: kw,
                             filterText: kw,
                             range: wordRange,
-                            sortText: getSortText(kw, "0"),
+                            sortText: getSortText(
+                                kw,
+                                getKeywordPriority(
+                                    kw,
+                                    contextualConfig.entityContext,
+                                    true,
+                                ),
+                                "0",
+                            ),
+                        }));
+
+                    const keywordSuggestions = pgsqlKeywords
+                        .filter((kw) => !contextualKeywords.has(kw))
+                        .filter((kw) => isRelevant(kw))
+                        .map((kw) => ({
+                            label: kw,
+                            kind: monaco.languages.CompletionItemKind.Keyword,
+                            insertText: kw,
+                            filterText: kw,
+                            range: wordRange,
+                            sortText: getSortText(
+                                kw,
+                                getKeywordPriority(
+                                    kw,
+                                    contextualConfig.entityContext,
+                                    false,
+                                ),
+                                "0",
+                            ),
                         }));
 
                     const functionSuggestions = pgsqlFunctions
@@ -267,18 +734,54 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                             insertText: `${fn}()`,
                             filterText: fn,
                             range: wordRange,
-                            sortText: getSortText(fn, "2"),
+                            sortText: getSortText(fn, 4, "2"),
                         }));
 
-                    const tableSuggestions = autocomplete.tables
+                    const userTablePriority =
+                        contextualConfig.entityContext === "relations" ? 0 : 3;
+                    const systemTablePriority =
+                        contextualConfig.entityContext === "relations" ? 1 : 4;
+                    const viewPriority =
+                        contextualConfig.entityContext === "relations" ? 2 : 4;
+                    const schemaPriority =
+                        contextualConfig.entityContext === "schemas" ? 1 : 4;
+                    const columnPriority =
+                        contextualConfig.entityContext === "columns" ? 0 : 3;
+                    const indexPriority =
+                        contextualConfig.entityContext === "indexes" ? 1 : 4;
+                    const sequencePriority =
+                        contextualConfig.entityContext === "relations" ? 3 : 4;
+
+                    const userTableSuggestions = autocomplete.tables
                         .filter((value) => value && isRelevant(value))
                         .map((value) => ({
                             label: value,
                             kind: monaco.languages.CompletionItemKind.Class,
                             insertText: value,
                             filterText: value,
+                            detail: "User table",
                             range: wordRange,
-                            sortText: getSortText(value, "1"),
+                            sortText: getSortText(
+                                value,
+                                userTablePriority,
+                                "1",
+                            ),
+                        }));
+
+                    const systemTableSuggestions = autocomplete.systemTables
+                        .filter((value) => value && isRelevant(value))
+                        .map((value) => ({
+                            label: value,
+                            kind: monaco.languages.CompletionItemKind.Struct,
+                            insertText: value,
+                            filterText: value,
+                            detail: "System table",
+                            range: wordRange,
+                            sortText: getSortText(
+                                value,
+                                systemTablePriority,
+                                "1",
+                            ),
                         }));
 
                     const viewSuggestions = autocomplete.views
@@ -289,7 +792,7 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                             insertText: value,
                             filterText: value,
                             range: wordRange,
-                            sortText: getSortText(value, "1"),
+                            sortText: getSortText(value, viewPriority, "1"),
                         }));
 
                     const indexSuggestions = autocomplete.indexes
@@ -300,14 +803,52 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                             insertText: value,
                             filterText: value,
                             range: wordRange,
-                            sortText: getSortText(value, "1"),
+                            sortText: getSortText(value, indexPriority, "1"),
+                        }));
+
+                    const sequenceSuggestions = autocomplete.sequences
+                        .filter((value) => value && isRelevant(value))
+                        .map((value) => ({
+                            label: value,
+                            kind: monaco.languages.CompletionItemKind.Enum,
+                            insertText: value,
+                            filterText: value,
+                            range: wordRange,
+                            sortText: getSortText(value, sequencePriority, "1"),
+                        }));
+
+                    const schemaSuggestions = autocomplete.schemas
+                        .filter((value) => value && isRelevant(value))
+                        .map((value) => ({
+                            label: value,
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: value,
+                            filterText: value,
+                            range: wordRange,
+                            sortText: getSortText(value, schemaPriority, "1"),
+                        }));
+
+                    const columnSuggestions = autocomplete.columns
+                        .filter((value) => value && isRelevant(value))
+                        .map((value) => ({
+                            label: value,
+                            kind: monaco.languages.CompletionItemKind.Field,
+                            insertText: value,
+                            filterText: value,
+                            range: wordRange,
+                            sortText: getSortText(value, columnPriority, "1"),
                         }));
 
                     return {
                         suggestions: [
-                            ...tableSuggestions,
+                            ...userTableSuggestions,
+                            ...systemTableSuggestions,
                             ...viewSuggestions,
+                            ...sequenceSuggestions,
+                            ...schemaSuggestions,
+                            ...columnSuggestions,
                             ...indexSuggestions,
+                            ...contextKeywordSuggestions,
                             ...functionSuggestions,
                             ...keywordSuggestions,
                         ],
@@ -330,10 +871,11 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                     }
 
                     const currentValue = model.getValue();
-                    const matchingEntries = getMatchingInlineAutocompleteEntries(
-                        currentValue,
-                        pgsqlAutocompleteData,
-                    );
+                    const matchingEntries =
+                        getMatchingInlineAutocompleteEntries(
+                            currentValue,
+                            pgsqlAutocompleteData,
+                        );
 
                     if (!matchingEntries.length) {
                         return {
@@ -356,7 +898,7 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                             filterText: entry.filterText,
                             range,
                         })),
-                        suppressSuggestions: true,
+                        suppressSuggestions: false,
                     };
                 },
                 disposeInlineCompletions: () => undefined,
@@ -653,7 +1195,11 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                 const model = editor.getModel();
                 const position = editor.getPosition();
 
-                if (!model || !position || !isCursorAtModelEnd(model, position)) {
+                if (
+                    !model ||
+                    !position ||
+                    !isCursorAtModelEnd(model, position)
+                ) {
                     pendingInlineAutocompleteRef.current = null;
                     return;
                 }
@@ -680,6 +1226,10 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                     return;
                 }
 
+                if (isSuggestWidgetVisible(editor)) {
+                    return;
+                }
+
                 const pendingInlineAutocomplete =
                     pendingInlineAutocompleteRef.current;
 
@@ -690,7 +1240,11 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                 const model = editor.getModel();
                 const position = editor.getPosition();
 
-                if (!model || !position || !isCursorAtModelEnd(model, position)) {
+                if (
+                    !model ||
+                    !position ||
+                    !isCursorAtModelEnd(model, position)
+                ) {
                     pendingInlineAutocompleteRef.current = null;
                     return;
                 }
@@ -744,9 +1298,11 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             const modelChangeDisposable = editor.onDidChangeModelContent(() => {
                 updatePendingInlineAutocomplete();
             });
-            const cursorChangeDisposable = editor.onDidChangeCursorPosition(() => {
-                updatePendingInlineAutocomplete();
-            });
+            const cursorChangeDisposable = editor.onDidChangeCursorPosition(
+                () => {
+                    updatePendingInlineAutocomplete();
+                },
+            );
 
             domNode?.addEventListener("keydown", handleKeyDown, true);
 

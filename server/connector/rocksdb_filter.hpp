@@ -45,25 +45,31 @@ struct Boundary {
   bool inclusive;
 };
 
+enum class ComparisonOp { None, Lt, Le, Gt, Ge };
+
 // nullopt left/right means unbounded on that side.
 struct Range {
   std::optional<Boundary> left;
   std::optional<Boundary> right;
 };
 
-// A point in PK-space. Absent column in _column_filters means "any value".
-class Point {
+// A set of per-column range constraints over PK columns.
+// Absent column in _column_filters means "any value" (unconstrained).
+// A column with equal inclusive left/right bounds represents an equality
+// predicate; asymmetric or half-open bounds represent range predicates.
+class KeyConstraint {
  public:
-  explicit Point(std::span<const std::string> pk_names) : _pk_names{pk_names} {}
+  explicit KeyConstraint(std::span<const std::string> pk_names)
+    : _pk_names{pk_names} {}
 
-  Point(const Point& other)
+  KeyConstraint(const KeyConstraint& other)
     : _pk_names{other._pk_names}, _source_exprs{other._source_exprs} {
     for (const auto& [k, v] : other._column_filters) {
       _column_filters.emplace(k, std::make_unique<Range>(*v));
     }
   }
 
-  Point& operator=(const Point& other) {
+  KeyConstraint& operator=(const KeyConstraint& other) {
     if (this != &other) {
       _pk_names = other._pk_names;
       _source_exprs = other._source_exprs;
@@ -75,8 +81,8 @@ class Point {
     return *this;
   }
 
-  Point(Point&&) = default;
-  Point& operator=(Point&&) = default;
+  KeyConstraint(KeyConstraint&&) = default;
+  KeyConstraint& operator=(KeyConstraint&&) = default;
 
   [[nodiscard]] bool IsSpecific() const;
 
@@ -91,7 +97,7 @@ class Point {
     return _pk_names;
   }
 
-  // The expression nodes that specify this point
+  // The expression nodes that produced this constraint.
   [[nodiscard]] const auto& GetSourceExprs() const noexcept {
     return _source_exprs;
   }
@@ -100,9 +106,15 @@ class Point {
                    const velox::core::ConstantTypedExpr& value,
                    const velox::core::ITypedExpr* source_expr);
 
-  // Returns nullopt when the two points are contradictory (e.g. a=1 AND a=2).
-  [[nodiscard]] static std::optional<Point> Intersect(const Point& lhs,
-                                                      const Point& rhs);
+  void AddComparisonFilter(std::string_view column_name,
+                           const velox::core::ConstantTypedExpr& value,
+                           ComparisonOp op,
+                           const velox::core::ITypedExpr* source_expr);
+
+  // Returns nullopt when the two constraints are contradictory (e.g. a=1 AND
+  // a=2).
+  [[nodiscard]] static std::optional<KeyConstraint> Intersect(
+    const KeyConstraint& lhs, const KeyConstraint& rhs);
 
  private:
   std::span<const std::string> _pk_names;
@@ -119,16 +131,16 @@ class Point {
 // Used after filter extraction — no expression metadata, no names.
 using SpecificPoint = std::vector<velox::variant>;
 
-// Converts specific (fully constrained) Points to SpecificPoint, ordered by
-// pk_type column order.
+// Converts specific (fully constrained) KeyConstraints to SpecificPoint,
+// ordered by pk_type column order.
 [[nodiscard]] std::vector<SpecificPoint> ToSpecificPoints(
-  const std::vector<Point>& points, const velox::RowType& pk_type);
+  const std::vector<KeyConstraint>& points, const velox::RowType& pk_type);
 
-[[nodiscard]] std::vector<Point> ExtractFilterExpr(
+[[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
 struct ExtractAndRewriteResult {
-  std::vector<Point> points;
+  std::vector<KeyConstraint> points;
   // Rewritten filter with PK predicates replaced by true; null if the entire
   // expression reduced to true.
   velox::core::TypedExprPtr remaining_filter;

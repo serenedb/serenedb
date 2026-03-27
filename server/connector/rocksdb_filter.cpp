@@ -31,16 +31,18 @@
 namespace sdb::connector {
 namespace {
 
-std::vector<Point> AnyPoint(const std::span<const std::string> names) {
-  return {Point(names)};
+std::vector<KeyConstraint> AnyKeyConstraint(
+  const std::span<const std::string> names) {
+  return {KeyConstraint(names)};
 }
 
-std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
-                                   std::span<const std::string> pk_names) {
+std::vector<KeyConstraint> ExtractFilterEq(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
   SDB_ASSERT(func_call->inputs().size() == 2);
   if (!func_call->inputs()[0]->isFieldAccessKind() ||
       !func_call->inputs()[1]->isConstantKind()) {
-    return AnyPoint(pk_names);
+    return AnyKeyConstraint(pk_names);
   }
   auto field_access =
     basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
@@ -48,28 +50,73 @@ std::vector<Point> ExtractFilterEq(const velox::core::CallTypedExpr* func_call,
     basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
 
   if (!absl::c_linear_search(pk_names, field_access->name())) {
-    return AnyPoint(pk_names);
+    return AnyKeyConstraint(pk_names);
   }
-  Point p{pk_names};
+  KeyConstraint p{pk_names};
   p.AddEqFilter(field_access->name(), *const_val, func_call);
   return {p};
 }
 
-std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
-                                   std::span<const std::string> pk_names) {
+std::vector<KeyConstraint> ExtractFilterComparison(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
+  SDB_ASSERT(func_call->inputs().size() == 2);
+
+  const bool field_left = func_call->inputs()[0]->isFieldAccessKind() &&
+                          func_call->inputs()[1]->isConstantKind();
+  const bool field_right = func_call->inputs()[1]->isFieldAccessKind() &&
+                           func_call->inputs()[0]->isConstantKind();
+  if (!field_left && !field_right) {
+    return AnyKeyConstraint(pk_names);
+  }
+
+  const auto& field_input =
+    field_left ? func_call->inputs()[0] : func_call->inputs()[1];
+  const auto& const_input =
+    field_left ? func_call->inputs()[1] : func_call->inputs()[0];
+  auto field_access =
+    basics::downCast<velox::core::FieldAccessTypedExpr>(field_input);
+  auto const_val =
+    basics::downCast<velox::core::ConstantTypedExpr>(const_input);
+
+  if (!absl::c_linear_search(pk_names, field_access->name())) {
+    return AnyKeyConstraint(pk_names);
+  }
+
+  // Determine the op from the function name, flipping if field is on the right.
+  // e.g. `5 > a` with field_right means `a < 5`.
+  ComparisonOp op;
+  if (IsCallOf(func_call, "_gt")) {
+    op = field_left ? ComparisonOp::Gt : ComparisonOp::Lt;
+  } else if (IsCallOf(func_call, "_gte")) {
+    op = field_left ? ComparisonOp::Ge : ComparisonOp::Le;
+  } else if (IsCallOf(func_call, "_lt")) {
+    op = field_left ? ComparisonOp::Lt : ComparisonOp::Gt;
+  } else {  // _lte
+    op = field_left ? ComparisonOp::Le : ComparisonOp::Ge;
+  }
+
+  KeyConstraint kc{pk_names};
+  kc.AddComparisonFilter(field_access->name(), *const_val, op, func_call);
+  return {std::move(kc)};
+}
+
+std::vector<KeyConstraint> ExtractFilterIn(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
   if (!func_call->inputs()[0]->isFieldAccessKind() ||
       !func_call->inputs()[1]->isConstantKind()) {
-    return AnyPoint(pk_names);
+    return AnyKeyConstraint(pk_names);
   }
   auto field_access =
     basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
   auto array_const =
     basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
   if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
-    return AnyPoint(pk_names);
+    return AnyKeyConstraint(pk_names);
   }
   if (!absl::c_linear_search(pk_names, field_access->name())) {
-    return AnyPoint(pk_names);
+    return AnyKeyConstraint(pk_names);
   }
 
   SDB_ASSERT(array_const->valueVector()->typeKind() == velox::TypeKind::ARRAY);
@@ -81,12 +128,12 @@ std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
   const auto size = array_vec->sizeAt(const_vec->index());
   const auto& elements = array_vec->elements();
 
-  std::vector<Point> points;
+  std::vector<KeyConstraint> points;
   points.reserve(size);
   for (velox::vector_size_t i = 0; i < size; ++i) {
     velox::core::ConstantTypedExpr elem_const{
       velox::BaseVector::wrapInConstant(1, offset + i, elements)};
-    Point p{pk_names};
+    KeyConstraint p{pk_names};
     // If all points that uses func_call source expr become specific, it means
     // that this node maybe replaced with constant true, as specific points will
     // be processed in point lookup data source
@@ -96,22 +143,23 @@ std::vector<Point> ExtractFilterIn(const velox::core::CallTypedExpr* func_call,
   return points;
 }
 
-std::vector<Point> ExtractFilterAnd(const velox::core::CallTypedExpr* func_call,
-                                    std::span<const std::string> pk_names) {
+std::vector<KeyConstraint> ExtractFilterAnd(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
   SDB_ASSERT(!func_call->inputs().empty());
 
   // Cartesian product of all children's point sets, intersecting each tuple.
-  // An unconstrained child (AnyPoint — empty filters) acts as identity because
-  // Intersect(P, {}) == P, so no special-casing is needed.
-  std::vector<Point> result =
+  // An unconstrained child (AnyKeyConstraint — empty filters) acts as identity
+  // because Intersect(P, {}) == P, so no special-casing is needed.
+  std::vector<KeyConstraint> result =
     ExtractFilterExpr(func_call->inputs()[0], pk_names);
   for (size_t i = 1; i < func_call->inputs().size(); ++i) {
     const auto rhs_pts = ExtractFilterExpr(func_call->inputs()[i], pk_names);
-    std::vector<Point> next;
+    std::vector<KeyConstraint> next;
     next.reserve(result.size() * rhs_pts.size());
     for (const auto& lhs : result) {
       for (const auto& rhs : rhs_pts) {
-        if (auto merged = Point::Intersect(lhs, rhs);
+        if (auto merged = KeyConstraint::Intersect(lhs, rhs);
             merged && !merged->IsUnconstrained()) {
           next.push_back(std::move(*merged));
         }
@@ -122,18 +170,19 @@ std::vector<Point> ExtractFilterAnd(const velox::core::CallTypedExpr* func_call,
   return result;
 }
 
-std::vector<Point> ExtractFilterOr(const velox::core::CallTypedExpr* func_call,
-                                   std::span<const std::string> pk_names) {
+std::vector<KeyConstraint> ExtractFilterOr(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
   SDB_ASSERT(!func_call->inputs().empty());
 
-  std::vector<Point> result;
+  std::vector<KeyConstraint> result;
   for (const auto& input : func_call->inputs()) {
     auto pts = ExtractFilterExpr(input, pk_names);
     // If any point in the child result is unconstrained, the OR is
     // unconstrained.
-    if (absl::c_any_of(pts,
-                       [](const Point& p) { return p.IsUnconstrained(); })) {
-      return AnyPoint(pk_names);
+    if (absl::c_any_of(
+          pts, [](const KeyConstraint& p) { return p.IsUnconstrained(); })) {
+      return AnyKeyConstraint(pk_names);
     }
     result.insert(result.end(), std::make_move_iterator(pts.begin()),
                   std::make_move_iterator(pts.end()));
@@ -262,7 +311,7 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
-bool Point::IsSpecific() const {
+bool KeyConstraint::IsSpecific() const {
   return absl::c_all_of(_pk_names, [&](std::string_view name) {
     auto it = _column_filters.find(name);
     if (it == _column_filters.end()) {
@@ -275,14 +324,14 @@ bool Point::IsSpecific() const {
   });
 }
 
-const Range* Point::FindFilter(std::string_view column_name) const {
+const Range* KeyConstraint::FindFilter(std::string_view column_name) const {
   auto it = _column_filters.find(column_name);
   return it != _column_filters.end() ? it->second.get() : nullptr;
 }
 
-void Point::AddEqFilter(std::string_view column_name,
-                        const velox::core::ConstantTypedExpr& value,
-                        const velox::core::ITypedExpr* source_expr) {
+void KeyConstraint::AddEqFilter(std::string_view column_name,
+                                const velox::core::ConstantTypedExpr& value,
+                                const velox::core::ITypedExpr* source_expr) {
   SDB_ASSERT(!_column_filters.contains(column_name));
   auto v = ToVariant(value);
   _column_filters.emplace(
@@ -291,9 +340,37 @@ void Point::AddEqFilter(std::string_view column_name,
   _source_exprs.insert(source_expr);
 }
 
-std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
+void KeyConstraint::AddComparisonFilter(
+  std::string_view column_name, const velox::core::ConstantTypedExpr& value,
+  ComparisonOp op, const velox::core::ITypedExpr* source_expr) {
+  SDB_ASSERT(!_column_filters.contains(column_name));
+  auto v = ToVariant(value);
+  Range range;
+  switch (op) {
+    case ComparisonOp::Gt:
+      range = Range{Boundary{v, false}, std::nullopt};
+      break;
+    case ComparisonOp::Ge:
+      range = Range{Boundary{v, true}, std::nullopt};
+      break;
+    case ComparisonOp::Lt:
+      range = Range{std::nullopt, Boundary{v, false}};
+      break;
+    case ComparisonOp::Le:
+      range = Range{std::nullopt, Boundary{v, true}};
+      break;
+    case ComparisonOp::None:
+      SDB_ASSERT(false, "AddComparisonFilter called with ComparisonOp::None");
+      break;
+  }
+  _column_filters.emplace(column_name, std::make_unique<Range>(range));
+  _source_exprs.insert(source_expr);
+}
+
+std::optional<KeyConstraint> KeyConstraint::Intersect(
+  const KeyConstraint& lhs, const KeyConstraint& rhs) {
   SDB_ASSERT(lhs._pk_names.data() == rhs._pk_names.data());
-  Point result{lhs._pk_names};
+  KeyConstraint result{lhs._pk_names};
   for (std::string_view pk_name : lhs._pk_names) {
     const auto* lhs_f = lhs.FindFilter(pk_name);
     const auto* rhs_f = rhs.FindFilter(pk_name);
@@ -325,8 +402,8 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
   return result;
 }
 
-std::vector<SpecificPoint> ToSpecificPoints(const std::vector<Point>& points,
-                                            const velox::RowType& pk_type) {
+std::vector<SpecificPoint> ToSpecificPoints(
+  const std::vector<KeyConstraint>& points, const velox::RowType& pk_type) {
   std::vector<SpecificPoint> result;
   result.reserve(points.size());
   for (const auto& p : points) {
@@ -343,23 +420,27 @@ std::vector<SpecificPoint> ToSpecificPoints(const std::vector<Point>& points,
   return result;
 }
 
-std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
-                                     std::span<const std::string> pk_names) {
-  std::vector<Point> pts;
+std::vector<KeyConstraint> ExtractFilterExpr(
+  const velox::core::TypedExprPtr& expr,
+  std::span<const std::string> pk_names) {
+  std::vector<KeyConstraint> pts;
   if (!expr->isCallKind()) {
-    pts = AnyPoint(pk_names);
+    pts = AnyKeyConstraint(pk_names);
   } else {
     const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
     if (IsCallOf(func_call, "_eq")) {
       pts = ExtractFilterEq(func_call, pk_names);
     } else if (IsCallOf(func_call, "_in")) {
       pts = ExtractFilterIn(func_call, pk_names);
+    } else if (IsCallOf(func_call, "_gt") || IsCallOf(func_call, "_gte") ||
+               IsCallOf(func_call, "_lt") || IsCallOf(func_call, "_lte")) {
+      pts = ExtractFilterComparison(func_call, pk_names);
     } else if (func_call->name() == velox::expression::kAnd) {
       pts = ExtractFilterAnd(func_call, pk_names);
     } else if (func_call->name() == velox::expression::kOr) {
       pts = ExtractFilterOr(func_call, pk_names);
     } else {
-      pts = AnyPoint(pk_names);
+      pts = AnyKeyConstraint(pk_names);
     }
   }
   return pts;
@@ -369,9 +450,11 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr,
   std::span<const std::string> pk_names) {
   auto pts = ExtractFilterExpr(expr, pk_names);
-  if (!absl::c_all_of(pts, [](const Point& p) { return p.IsSpecific(); })) {
+  if (!absl::c_all_of(pts,
+                      [](const KeyConstraint& p) { return p.IsSpecific(); })) {
     return {{}, expr};
   }
+  // TODO extract ranges here
 
   // Collect the unique source sub-expressions to get rid of them.
   containers::FlatHashSet<const velox::core::ITypedExpr*> sources;

@@ -1,23 +1,51 @@
-query
+query ?
 SELECT ARRAY[0.0, 1.0, 2.0] <-> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
 8
 
 
-query
+query ?
 SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
 0.20000000298023224
 
 
+query ?
+SELECT ARRAY[0.0, 1.0, 2.0] <+> ARRAY[2.0, 1.0, 0.0];
+----
+?column?
+4
+
+
+
 query error
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0];
 
 
-query
+query error
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0];
+
+query error
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0];
+
+
+query ?
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0, NULL];
+----
+?column?
+NULL
+
+query ?
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0, NULL];
+----
+?column?
+NULL
+
+
+query ?
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0, NULL];
 ----
 ?column?
 NULL
@@ -27,18 +55,63 @@ query error
 SELECT ARRAY[] <-> ARRAY[];
 
 
-statement ok
-CREATE TABLE t(id INTEGER, emb FLOAT[]);
+query error
+SELECT ARRAY[] <=> ARRAY[];
+
+
+query error
+SELECT ARRAY[] <+> ARRAY[];
 
 
 statement ok
-INSERT INTO t VALUES (1, ARRAY[2.0, 1.0]), (2, ARRAY[0.0, 0.0]), (3, ARRAY[1.0, 2.0]);
+CREATE TABLE t(name TEXT, emb FLOAT[]);
 
 
-query ?
-SELECT id FROM t ORDER BY t.emb <-> ARRAY[3.0, 1.0];
+statement error db error: ERROR: column "pablo" does not exist
+INSERT INTO t VALUES ("pablo", ARRAY[6.0, 1.0]), ("vedernikoff", ARRAY[1.0, 8.0]);
+
+
+statement ok
+INSERT INTO t VALUES ('pablo', ARRAY[6.0, 1.0]), ('vedernikoff', ARRAY[1.0, 8.0]);
+
+
+query error
+SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0];
+
+
+statement ok
+CREATE TABLE c(name TEXT, emb FLOAT[]);
+
+
+statement ok
+INSERT INTO c VALUES ('sdb', ARRAY[4.0, 3.0]), ('clickclack', ARRAY[4.0, 6.0]);
+
+
+query
+SELECT t.name, c.name, t.emb <-> c.emb AS similarity FROM t CROSS JOIN c ORDER BY similarity;
 ----
-id
-1
-3
-2
+name	name	similarity
+pablo	sdb	8
+vedernikoff	clickclack	13
+pablo	clickclack	29
+vedernikoff	sdb	34
+
+
+query
+SELECT t.name, c.name, t.emb <=> c.emb AS similarity FROM t CROSS JOIN c ORDER BY similarity;
+----
+name	name	similarity
+pablo	clickclack	0.683941125869751
+vedernikoff	sdb	0.6945945620536804
+pablo	sdb	0.887754499912262
+vedernikoff	clickclack	0.8944271802902222
+
+
+query
+SELECT t.name, c.name, t.emb <+> c.emb AS similarity FROM t CROSS JOIN c ORDER BY similarity;
+----
+name	name	similarity
+pablo	sdb	4
+vedernikoff	clickclack	5
+pablo	clickclack	7
+vedernikoff	sdb	8

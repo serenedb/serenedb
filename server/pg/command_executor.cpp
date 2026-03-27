@@ -152,7 +152,12 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
     SDB_ASSERT(index);
     auto shard = snapshot->GetIndexShard(index->GetId());
     SDB_ASSERT(shard);
-    SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+
+    if (shard->GetType() != IndexType::Inverted) {
+      SDB_ASSERT(shard->GetType() == IndexType::Secondary);
+      return yaclib::MakeFuture();
+    }
+
     auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
 
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }

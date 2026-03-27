@@ -299,10 +299,12 @@ class RocksDBUpdateDataSink final
   absl::ReaderMutexLock _table_lock_guard;
 };
 
-template<bool IsGeneratedPK>
+template<bool IsGeneratedPK, bool IsSecondaryIndex = false>
 class SSTInsertDataSink final
-  : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>> {
-  using Base = RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>>;
+  : public RocksDBDataSinkBase<
+      SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>> {
+  using Base =
+    RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>>;
 
  public:
   SSTInsertDataSink(
@@ -311,16 +313,19 @@ class SSTInsertDataSink final
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    absl::Mutex& table_lock);
+    absl::Mutex& table_lock,
+    velox::column_index_t indexed_column_input_idx = 0);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::ReaderMutexLock _table_lock_guard;
+  velox::column_index_t _indexed_column_input_idx{0};
 };
 
 extern template class SSTInsertDataSink<true>;
 extern template class SSTInsertDataSink<false>;
+extern template class SSTInsertDataSink<false, true>;
 
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {

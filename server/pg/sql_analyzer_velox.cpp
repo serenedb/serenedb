@@ -2654,6 +2654,64 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   // executor).
   CreateIndexOptionsParser{stmt.options, _query_ctx.explain_params};
 
+  // For secondary index backfill, sort by (indexed_columns, PK) so that the
+  // secondary index entries come out in key order for SST writing.
+  auto index_type =
+    magic_enum::enum_cast<IndexType>(stmt.accessMethod,
+                                     magic_enum::case_insensitive)
+      .value_or(IndexType::Unknown);
+  if (index_type == IndexType::Secondary) {
+    std::vector<lp::SortingField> sorted_by;
+    // First: indexed columns
+    VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
+      if (!index_elem.name) {
+        return;
+      }
+      const std::string_view colname = index_elem.name;
+      auto column =
+        table_state.resolver.Resolve(table_state.root->outputType(), colname);
+      if (!column.IsFound()) {
+        return;
+      }
+      auto col_idx = table_type.getChildIdx(colname);
+      auto expr = std::make_shared<lp::InputReferenceExpr>(
+        table_type.childAt(col_idx), std::string{column.GetColumnName()});
+      sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
+    });
+    // Then: PK columns
+    if (pk.size() > 0) {
+      for (const auto& [name, type] :
+           std::views::zip(pk.names(), pk.children())) {
+        auto column =
+          table_state.resolver.Resolve(table_state.root->outputType(), name);
+        if (!column.IsFound()) {
+          continue;
+        }
+        auto expr = std::make_shared<lp::InputReferenceExpr>(
+          type, std::string{column.GetColumnName()});
+        sorted_by.emplace_back(std::move(expr),
+                               lp::SortOrder::kAscNullsFirst);
+      }
+    } else {
+      // Generated PK: resolve by generated name (same as FillColumnsInfo)
+      auto generated_pk_name =
+        catalog::Column::GeneratePKName(table_type.names());
+      auto column = table_state.resolver.Resolve(
+        table_state.root->outputType(), generated_pk_name);
+      if (column.IsFound()) {
+        auto expr = std::make_shared<lp::InputReferenceExpr>(
+          velox::BIGINT(), std::string{column.GetColumnName()});
+        sorted_by.emplace_back(std::move(expr),
+                               lp::SortOrder::kAscNullsFirst);
+      }
+    }
+    if (!sorted_by.empty()) {
+      table_state.root = std::make_shared<lp::SortNode>(
+        _id_generator.NextPlanId(), std::move(table_state.root),
+        std::move(sorted_by));
+    }
+  }
+
   object->EnsureTable(_transaction);
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(table_state.root), object->table,

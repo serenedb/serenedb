@@ -1,0 +1,175 @@
+hash-threshold 100
+
+# Basic secondary index DDL and DML tests
+
+statement ok
+CREATE TABLE clickclack_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
+
+statement ok
+CREATE INDEX clickclack_crew_stocks_idx ON clickclack_crew USING secondary(stocks);
+
+statement ok
+INSERT INTO clickclack_crew VALUES (1, 'vedernikoff', 30);
+
+statement ok
+INSERT INTO clickclack_crew VALUES (2, 'cutelooked', 25);
+
+statement ok
+INSERT INTO clickclack_crew VALUES (3, 'crookface', 30);
+
+statement ok
+INSERT INTO clickclack_crew VALUES (4, 'bossmann', 35);
+
+# Verify full scan still works
+query
+SELECT pid, nickname, stocks FROM clickclack_crew ORDER BY pid;
+----
+pid	nickname	stocks
+1	vedernikoff	30
+2	cutelooked	25
+3	crookface	30
+4	bossmann	35
+
+# Test: equality filter on indexed column (uses secondary index)
+query
+SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 30 ORDER BY pid;
+----
+pid	nickname	stocks
+1	vedernikoff	30
+3	crookface	30
+
+query
+SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 25;
+----
+pid	nickname	stocks
+2	cutelooked	25
+
+# Test: no match
+query
+SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 99;
+----
+pid	nickname	stocks
+
+# Update indexed column, then query
+statement ok
+UPDATE clickclack_crew SET stocks = 31 WHERE pid = 1;
+
+query
+SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 30;
+----
+pid	nickname	stocks
+3	crookface	30
+
+query
+SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 31;
+----
+pid	nickname	stocks
+1	vedernikoff	31
+
+# Delete a row, then query
+statement ok
+DELETE FROM clickclack_crew WHERE pid = 3;
+
+query
+SELECT pid, nickname, stocks FROM clickclack_crew WHERE stocks = 30;
+----
+pid	nickname	stocks
+
+# Verify full scan after modifications
+query
+SELECT pid, nickname, stocks FROM clickclack_crew ORDER BY pid;
+----
+pid	nickname	stocks
+1	vedernikoff	31
+2	cutelooked	25
+4	bossmann	35
+
+# Insert with NULL indexed column
+statement ok
+INSERT INTO clickclack_crew VALUES (5, 'crookjunior', NULL);
+
+query
+SELECT pid, nickname, stocks FROM clickclack_crew ORDER BY pid;
+----
+pid	nickname	stocks
+1	vedernikoff	31
+2	cutelooked	25
+4	bossmann	35
+5	crookjunior	NULL
+
+statement ok
+DROP TABLE clickclack_crew;
+
+# Test: create index on existing data (backfill) then query via index
+statement ok
+CREATE TABLE clickclack_vault (pid INTEGER PRIMARY KEY, loot INTEGER);
+
+statement ok
+INSERT INTO clickclack_vault VALUES (1, 100), (2, 200), (3, 100);
+
+statement ok
+CREATE INDEX clickclack_vault_loot_idx ON clickclack_vault USING secondary(loot);
+
+query
+SELECT pid, loot FROM clickclack_vault WHERE loot = 100 ORDER BY pid;
+----
+pid	loot
+1	100
+3	100
+
+# Insert after backfill, query
+statement ok
+INSERT INTO clickclack_vault VALUES (4, 100);
+
+query
+SELECT pid, loot FROM clickclack_vault WHERE loot = 100 ORDER BY pid;
+----
+pid	loot
+1	100
+3	100
+4	100
+
+statement ok
+DROP TABLE clickclack_vault;
+
+# Test: IF NOT EXISTS
+statement ok
+CREATE TABLE clickclack_ranks (pid INTEGER PRIMARY KEY, rank INTEGER);
+
+statement ok
+CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+
+statement ok
+CREATE INDEX IF NOT EXISTS clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+
+statement error
+CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+
+statement ok
+DROP TABLE clickclack_ranks;
+
+# Test: VARCHAR indexed column
+statement ok
+CREATE TABLE clickclack_teams (pid INTEGER PRIMARY KEY, team VARCHAR);
+
+statement ok
+CREATE INDEX clickclack_teams_idx ON clickclack_teams USING secondary(team);
+
+statement ok
+INSERT INTO clickclack_teams VALUES (1, 'vedernikoff'), (2, 'cutelooked'), (3, 'crookface'), (4, 'vedernikoff');
+
+query
+SELECT pid, team FROM clickclack_teams WHERE team = 'vedernikoff' ORDER BY pid;
+----
+pid	team
+1	vedernikoff
+4	vedernikoff
+
+query
+SELECT pid, team FROM clickclack_teams WHERE team = 'crookface';
+----
+pid	team
+3	crookface
+
+statement ok
+DROP TABLE clickclack_teams;

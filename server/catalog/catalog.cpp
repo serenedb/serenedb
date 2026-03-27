@@ -423,10 +423,20 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      search::InvertedIndexShardOptions options;
-      if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
-        return r;
+      if (index->GetIndexType() == IndexType::Inverted) {
+        search::InvertedIndexShardOptions options;
+        if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
+          return r;
+        }
+        auto shard =
+          index->CreateIndexShard(false, key.GetObjectId(), options);
+        if (!shard) {
+          return std::move(shard.error());
+        }
+        SDB_ASSERT(*shard);
+        return _catalog.RegisterIndexShard(std::move(*shard));
       }
+      IndexShardOptions options;
       auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
       if (!shard) {
         return std::move(shard.error());

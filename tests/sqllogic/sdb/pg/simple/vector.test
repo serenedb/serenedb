@@ -64,7 +64,7 @@ SELECT ARRAY[] <+> ARRAY[];
 
 
 statement ok
-CREATE TABLE t(name TEXT, emb FLOAT[]);
+CREATE TABLE t(name TEXT, emb FLOAT[3]);
 
 
 statement error db error: ERROR: column "pablo" does not exist
@@ -80,7 +80,7 @@ SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0];
 
 
 statement ok
-CREATE TABLE c(name TEXT, emb FLOAT[]);
+CREATE TABLE c(name TEXT, emb FLOAT[3]);
 
 
 statement ok

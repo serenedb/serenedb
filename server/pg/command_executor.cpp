@@ -138,7 +138,7 @@ FinishCreateIndexExecutor::FinishCreateIndexExecutor(
 
 yaclib::Future<> FinishCreateIndexExecutor::Execute(
   velox::RowVectorPtr& batch) {
-  return OneShot([&] {
+  return OneShot([&] -> yaclib::Future<> {
     const auto db = _context->GetDatabaseId();
     auto& conn_ctx = basics::downCast<ConnectionContext>(*_context);
     std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -155,7 +155,7 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
 
     if (shard->GetType() != IndexType::Inverted) {
       SDB_ASSERT(shard->GetType() == IndexType::Secondary);
-      return yaclib::MakeFuture();
+      return {};
     }
 
     auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);

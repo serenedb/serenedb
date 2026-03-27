@@ -10,6 +10,7 @@ export const CONSOLE_EXECUTION_HISTORY_SIDEBAR_COLLAPSED_STORAGE_KEY =
 
 export const CONSOLE_GRID_EDITOR_PANEL_ID = "console-grid-editor";
 export const CONSOLE_GRID_SIDEBAR_PANEL_ID = "console-grid-sidebar";
+export const CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID = "console-grid-right-sidebar";
 export const CONSOLE_GRID_SETTINGS_PANEL_ID = "console-grid-settings";
 export const CONSOLE_GRID_EXECUTION_HISTORY_PANEL_ID =
     "console-grid-execution-history";

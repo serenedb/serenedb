@@ -1751,6 +1751,45 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     column_exprs.emplace_back(std::move(expr));
   });
 
+  // Add old values of secondary-indexed columns so the update writer can
+  // delete old index entries without extra RocksDB reads.
+  {
+    auto snapshot = _transaction.GetCatalogSnapshot();
+    containers::FlatHashSet<std::string> already_added{column_names.begin(),
+                                                       column_names.end()};
+    for (auto shard : snapshot->GetIndexShardsByTable(table.GetId())) {
+      if (shard->GetType() != IndexType::Secondary) {
+        continue;
+      }
+      auto index = snapshot->GetObject<catalog::Index>(shard->GetIndexId());
+      if (!index) {
+        continue;
+      }
+      for (auto col_id : index->GetColumnIds()) {
+        for (const auto& col : table.Columns()) {
+          if (col.id != col_id) {
+            continue;
+          }
+          auto old_name = "_sdb_old_" + std::string{col.name};
+          if (already_added.contains(old_name)) {
+            continue;
+          }
+          auto column =
+            state.resolver.Resolve(state.root->outputType(), col.name);
+          if (!column.IsFound()) {
+            continue;
+          }
+          auto col_idx = table.RowType()->getChildIdx(col.name);
+          column_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+            table.RowType()->childAt(col_idx),
+            std::string{column.GetColumnName()}));
+          column_names.emplace_back(old_name);
+          already_added.emplace(old_name);
+        }
+      }
+    }
+  }
+
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
   basics::downCast<connector::RocksDBTable>(object->table)->UsedForUpdatePK() =
@@ -1809,6 +1848,41 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   column_names.reserve(pk_type.size());
   column_exprs.reserve(pk_type.size());
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
+
+  // Add secondary-indexed columns so the delete sink can build index keys
+  // from the input vector without extra RocksDB reads.
+  {
+    auto snapshot = _transaction.GetCatalogSnapshot();
+    containers::FlatHashSet<std::string> already_added{column_names.begin(),
+                                                       column_names.end()};
+    for (auto shard : snapshot->GetIndexShardsByTable(table.GetId())) {
+      if (shard->GetType() != IndexType::Secondary) {
+        continue;
+      }
+      auto index = snapshot->GetObject<catalog::Index>(shard->GetIndexId());
+      if (!index) {
+        continue;
+      }
+      for (auto col_id : index->GetColumnIds()) {
+        for (const auto& col : table.Columns()) {
+          if (col.id != col_id || already_added.contains(col.name)) {
+            continue;
+          }
+          auto column =
+            state.resolver.Resolve(state.root->outputType(), col.name);
+          if (!column.IsFound()) {
+            continue;
+          }
+          auto col_idx = table.RowType()->getChildIdx(col.name);
+          column_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+            table.RowType()->childAt(col_idx),
+            std::string{column.GetColumnName()}));
+          column_names.emplace_back(col.name);
+          already_added.emplace(col.name);
+        }
+      }
+    }
+  }
 
   object->EnsureTable(_transaction);
 

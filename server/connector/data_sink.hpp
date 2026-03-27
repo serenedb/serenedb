@@ -346,6 +346,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   RocksDBDeleteDataSink(
     rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr row_type, ObjectId object_key,
+    std::span<const velox::column_index_t> pk_indices,
     std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
     absl::Mutex& table_lock);

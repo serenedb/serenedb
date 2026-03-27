@@ -2657,6 +2657,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
+  std::span<const velox::column_index_t> pk_indices,
   std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
   absl::Mutex& table_lock)
@@ -2665,6 +2666,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _columns{std::move(columns)},
+    _key_childs{pk_indices.begin(), pk_indices.end()},
     _number_of_rows_affected{number_of_rows_affected},
     _table_lock_guard{table_lock} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
@@ -2673,8 +2675,6 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
              " does not match row "
              "type size",
              _row_type->size());
-  _key_childs.resize(_row_type->size());
-  absl::c_iota(_key_childs, 0);
 }
 
 void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
@@ -2689,7 +2689,6 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
     writer->Init(num_rows, input);
   }
 
-  _key_childs.resize(input->childrenSize());
   std::string key_buffer;
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(

@@ -95,22 +95,19 @@ inline bool HasColumnOverlap(
 
 template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeSecondaryIndexWriter(
-  rocksdb::Transaction& transaction, ObjectId shard_id, ObjectId table_id,
-  std::span<const catalog::Column::Id> columns,
-  velox::TypeKind indexed_type_kind, std::string indexed_col_name) {
+  rocksdb::Transaction& transaction, ObjectId shard_id,
+  std::span<const catalog::Column::Id> columns, std::string indexed_col_name) {
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<SecondarySinkInsertWriter>(
       transaction, shard_id, columns, std::string{indexed_col_name});
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<SecondarySinkUpdateWriter>(
-      transaction, shard_id, table_id, columns, indexed_type_kind,
-      std::string{indexed_col_name});
+      transaction, shard_id, columns, std::string{indexed_col_name});
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
     return std::make_unique<SecondarySinkDeleteWriter>(
-      transaction, shard_id, table_id, columns, indexed_type_kind,
-      std::move(indexed_col_name));
+      transaction, shard_id, columns, std::move(indexed_col_name));
   }
 }
 
@@ -166,8 +163,6 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
                                         rocksdb::Transaction>) {
       auto shard = snapshot->GetIndexShard(index.GetId());
       SDB_ASSERT(shard);
-      // Look up the indexed column type for UPDATE DeleteRow support
-      auto indexed_type_kind = velox::TypeKind::INVALID;
       std::string indexed_col_name;
       auto idx_table =
         snapshot->template GetObject<catalog::Table>(index.GetRelationId());
@@ -176,16 +171,12 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
         for (const auto& col : idx_table->Columns()) {
           if (col.id == idx_col_id) {
             indexed_col_name = col.name;
-            indexed_type_kind =
-              idx_table->RowType()
-                ->childAt(idx_table->RowType()->getChildIdx(col.name))
-                ->kind();
             break;
           }
         }
       }
       writers.push_back(MakeSecondaryIndexWriter<Kind>(
-        trx, shard->GetId(), table_id, index.GetColumnIds(), indexed_type_kind,
+        trx, shard->GetId(), index.GetColumnIds(),
         std::move(indexed_col_name)));
     } else {
       SDB_UNREACHABLE();
@@ -1151,8 +1142,13 @@ class SereneDBConnector final : public velox::connector::Connector {
       for (auto& col : input_type->names()) {
         std::string_view real_name = catalog::Column::ExtractColumnName(col);
         auto handle = table.columnMap().find(real_name);
-        SDB_ASSERT(handle != table.columnMap().end(),
-                   "RocksDBDataSink: can't find column handle for ", real_name);
+        if (handle == table.columnMap().end()) {
+          // Synthetic column (e.g. _sdb_old_* for secondary index old values).
+          // Placeholder — not iterated by the data sink's column loop.
+          columns.emplace_back(std::numeric_limits<catalog::Column::Id>::max(),
+                               col);
+          continue;
+        }
         const auto* column =
           basics::downCast<const SereneDBColumn>(handle->second);
         columns.emplace_back(column->Id(), column->name());
@@ -1296,10 +1292,18 @@ class SereneDBConnector final : public velox::connector::Connector {
       auto delete_sinks =
         CreateIndexWriters<axiom::connector::WriteKind::kDelete>(object_key,
                                                                  transaction);
+      // PK columns are first in the input. For generated PK,
+      // FillColumnsInfo adds the generated PK as column 0.
+      size_t pk_count = table.PKType()->size();
+      if (pk_count == 0) {
+        pk_count = 1;  // generated PK at index 0
+      }
+      std::vector<velox::column_index_t> del_pk_indices(pk_count);
+      absl::c_iota(del_pk_indices, 0);
       return std::make_unique<RocksDBDeleteDataSink>(
-        rocksdb_transaction, _cf, table.type(), object_key, columns,
-        serene_insert_handle.NumberOfRowsAffected(), std::move(delete_sinks),
-        table_lock);
+        rocksdb_transaction, _cf, table.type(), object_key, del_pk_indices,
+        columns, serene_insert_handle.NumberOfRowsAffected(),
+        std::move(delete_sinks), table_lock);
     }
 
     VELOX_UNSUPPORTED("Unsupported write kind");

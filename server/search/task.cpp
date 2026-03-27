@@ -126,7 +126,7 @@ void CommitTask::operator()() {
   }
 
   SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  auto [res, timeMs] = data->CommitUnsafe(false, nullptr, code);
+  auto [res, timeMs] = data->CommitUnsafe(_wait, nullptr, code);
 
   if (res.ok()) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "successful sync of Search index '",

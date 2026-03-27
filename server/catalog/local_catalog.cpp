@@ -498,7 +498,7 @@ class SnapshotImpl : public Snapshot {
   std::shared_ptr<Table> GetTable(ObjectId db_id, std::string_view schema,
                                   std::string_view table) const final {
     auto rel = GetRelation(db_id, schema, table);
-    if (!rel) {
+    if (!rel || rel->GetType() != ObjectType::Table) {
       return nullptr;
     }
     return basics::downCast<Table>(rel);

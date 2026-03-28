@@ -109,7 +109,7 @@ class IntervalTypeFactory : public velox::CustomTypeFactory {
   }
 };
 
-class RegtypeType final : public velox::IntegerType {
+class RegtypeType final : public velox::BigintType {
   RegtypeType() = default;
 
  public:
@@ -191,7 +191,7 @@ class RegtypeTypeFactory : public velox::CustomTypeFactory {
   }
 };
 
-class RegclassType final : public velox::IntegerType {
+class RegclassType final : public velox::BigintType {
   RegclassType() = default;
 
  public:
@@ -225,6 +225,64 @@ velox::TypePtr REGCLASS() { return RegclassType::get(); }
 bool IsRegclass(const velox::TypePtr& type) { return type == REGCLASS(); }
 
 bool IsRegclass(const velox::Type& type) { return &type == REGCLASS().get(); }
+
+class RegnamespaceType final : public velox::BigintType {
+  RegnamespaceType() = default;
+
+ public:
+  static constexpr std::shared_ptr<const RegnamespaceType> get() {
+    static constexpr RegnamespaceType kInstance;
+    return {std::shared_ptr<const RegnamespaceType>{}, &kInstance};
+  }
+
+  bool equivalent(const Type& other) const override { return this == &other; }
+
+  static constexpr std::string_view kTypeName = "PG_REGNAMESPACE";
+
+  const char* name() const final { return kTypeName.data(); }
+
+  std::string toString() const final { return name(); }
+
+  folly::dynamic serialize() const final {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "RegnamespaceType";
+    obj["type"] = name();
+    return obj;
+  }
+
+  static velox::TypePtr deserialize(const folly::dynamic& /*obj*/) {
+    return RegnamespaceType::get();
+  }
+};
+
+velox::TypePtr REGNAMESPACE() { return RegnamespaceType::get(); }
+
+bool IsRegnamespace(const velox::TypePtr& type) {
+  return type == REGNAMESPACE();
+}
+
+bool IsRegnamespace(const velox::Type& type) {
+  return &type == REGNAMESPACE().get();
+}
+
+class RegnamespaceTypeFactory : public velox::CustomTypeFactory {
+ public:
+  RegnamespaceTypeFactory() = default;
+
+  velox::TypePtr getType(
+    const std::vector<velox::TypeParameter>& parameters) const final {
+    VELOX_CHECK(parameters.empty(),
+                "REGNAMESPACE type does not take parameters");
+    return REGNAMESPACE();
+  }
+
+  velox::exec::CastOperatorPtr getCastOperator() const final { return nullptr; }
+
+  velox::AbstractInputGeneratorPtr getInputGenerator(
+    const velox::InputGeneratorConfig& /*config*/) const final {
+    VELOX_FAIL("Input generation for REGNAMESPACE type is not implemented");
+  }
+};
 
 class RegclassTypeFactory : public velox::CustomTypeFactory {
  public:
@@ -274,6 +332,8 @@ void RegisterTypes() {
                             std::make_unique<const RegtypeTypeFactory>());
   velox::registerCustomType(RegclassTrait::typeName,
                             std::make_unique<const RegclassTypeFactory>());
+  velox::registerCustomType(RegnamespaceTrait::typeName,
+                            std::make_unique<const RegnamespaceTypeFactory>());
 }
 
 }  // namespace sdb::pg

@@ -42,11 +42,15 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgTsDict>::GetTableData(
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& tokenizer :
          catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
+      auto owner = tokenizer->GetOwnerId();
+      if (!owner) {
+        owner = id::kRootUser;
+      }
       values.push_back({
         .oid = tokenizer->GetId().id(),
         .dictname = tokenizer->GetName(),
         .dictnamespace = tokenizer->GetSchemaId().id(),
-        .dictowner = tokenizer->GetOwnerId().id(),
+        .dictowner = owner.id(),
         .dicttemplate = 0,
       });
     }

@@ -38,4 +38,8 @@ struct SqlParts {
 };
 // NOLINTEND
 
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<SqlParts>::GetTableData(
+  velox::memory::MemoryPool& pool);
+
 }  // namespace sdb::pg

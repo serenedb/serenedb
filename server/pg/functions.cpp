@@ -27,6 +27,7 @@
 #include <velox/functions/Registerer.h>
 #include <velox/functions/prestosql/DateTimeImpl.h>
 #include <velox/type/SimpleFunctionApi.h>
+#include <velox/vector/ComplexVector.h>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -34,17 +35,23 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "pg/connection_context.h"
+#include "pg/functions/array_extra.h"
+#include "pg/functions/datetime_extra.h"
 #include "pg/functions/extract.h"
 #include "pg/functions/interval.h"
 #include "pg/functions/json.h"
 #include "pg/functions/lexize.h"
+#include "pg/functions/math_extra.h"
+#include "pg/functions/regexp.h"
 #include "pg/functions/size.h"
+#include "pg/functions/string_extra.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
 #include "query/types.h"
+#include "rest/version.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -310,9 +317,137 @@ struct VersionFunction {
 
   // TODO(mbkkt) Don't use hard-coded version
   // PG version should be from libpg_query,
-  // SereneDB version should be from build.h
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {
-    out = "PostgreSQL 18.1 (SereneDB 26.03.1)";
+    out = absl::StrCat("PostgreSQL 18.3 (SereneDB ", SERENEDB_VERSION, ")");
+  }
+};
+
+// current_setting(name text) -> text
+template<typename T>
+struct CurrentSettingFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*) {
+    _cfg = basics::downCast<const Config>(config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& out,
+                                const arg_type<velox::Varchar>& name) {
+    std::string_view key(name.data(), name.size());
+    auto val = _cfg->GetSetting(key);
+    if (!val) {
+      VELOX_USER_CHECK(false, "unrecognized configuration parameter \"{}\"",
+                       key);
+      return false;
+    }
+    out = *val;
+    return true;
+  }
+
+ private:
+  std::shared_ptr<const Config> _cfg;
+};
+
+// current_setting(name, missing_ok) overload
+template<typename T>
+struct CurrentSettingMissingOkFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const bool*) {
+    _cfg = basics::downCast<const Config>(config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& out,
+                                const arg_type<velox::Varchar>& name,
+                                const bool& missing_ok) {
+    std::string_view key(name.data(), name.size());
+    auto val = _cfg->GetSetting(key);
+    if (!val) {
+      if (missing_ok) {
+        return false;  // NULL
+      }
+      VELOX_USER_CHECK(false, "unrecognized configuration parameter \"{}\"",
+                       key);
+      return false;
+    }
+    out = *val;
+    return true;
+  }
+
+ private:
+  std::shared_ptr<const Config> _cfg;
+};
+
+// set_config(setting_name, new_value, is_local) -> text
+// Sets the parameter and returns the new value.
+template<typename T>
+struct SetConfigFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const arg_type<velox::Varchar>*,
+                                      const bool*) {
+    _cfg = basics::downCast<const Config>(config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out,
+                                const arg_type<velox::Varchar>& name,
+                                const arg_type<velox::Varchar>& value,
+                                const bool& is_local) {
+    std::string_view key(name.data(), name.size());
+    std::string val(value.data(), value.size());
+    _cfg->SetSetting(key, val, is_local);
+    out = val;
+  }
+
+ private:
+  std::shared_ptr<const Config> _cfg;
+};
+
+// num_nonnulls(VARIADIC "any") -> integer
+template<typename T>
+struct NumNonNullsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE void callNullable(
+    int32_t& result, const arg_type<velox::Variadic<velox::Any>>* args) {
+    int32_t count = 0;
+    if (args) {
+      for (auto i = 0; i < args->size(); ++i) {
+        if ((*args)[i].has_value()) {
+          ++count;
+        }
+      }
+    }
+    result = count;
+  }
+};
+
+// num_nulls(VARIADIC "any") -> integer
+template<typename T>
+struct NumNullsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE void callNullable(
+    int32_t& result, const arg_type<velox::Variadic<velox::Any>>* args) {
+    int32_t count = 0;
+    if (args) {
+      for (auto i = 0; i < args->size(); ++i) {
+        if (!(*args)[i].has_value()) {
+          ++count;
+        }
+      }
+    }
+    result = count;
   }
 };
 
@@ -535,6 +670,16 @@ struct PgEncodingToCharFunction {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<int32_t>&) {
     result = "UTF8";
+  }
+};
+
+template<typename T>
+struct AlwaysFalseFunction1Int {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
+                                const arg_type<int64_t>&) {
+    result = false;
   }
 };
 
@@ -879,7 +1024,7 @@ struct FormatTypeFunction {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<int64_t>& type_oid,
                                 const arg_type<int64_t>&) {
-    result = RegtypeOut(static_cast<int32_t>(type_oid));
+    result = RegtypeOut(type_oid);
   }
 };
 
@@ -922,6 +1067,113 @@ struct IntervalInFunction {
                                 const arg_type<int32_t>& precision) {
     std::string_view input_view{input.begin(), input.end()};
     result = IntervalIn(input_view, range, precision);
+  }
+};
+
+template<typename T>
+struct ConcatWsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE bool callNullable(
+    out_type<velox::Varchar>& result, const arg_type<velox::Varchar>* separator,
+    const arg_type<velox::Variadic<velox::Varchar>>* args) {
+    if (!separator) {
+      return false;
+    }
+    if (args) {
+      std::string_view s{*separator};
+      bool first = true;
+      for (size_t i = 0; i < args->size(); ++i) {
+        if (const auto& v = (*args)[i]) {
+          if (!first) {
+            result.append(s);
+          }
+          first = false;
+          result.append(*v);
+        }
+      }
+    }
+    return true;
+  }
+};
+
+template<typename T>
+struct QuoteIdentFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& input) {
+    auto str = std::string_view{input.data(), input.size()};
+    bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
+    if (!needs_quoting) {
+      for (auto c : str) {
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+          needs_quoting = true;
+          break;
+        }
+      }
+    }
+    if (!needs_quoting) {
+      result = str;
+      return;
+    }
+    result.reserve(str.size() + 2);
+    result.append("\"");
+    for (auto c : str) {
+      if (c == '"') {
+        result.append("\"\"");
+      } else {
+        result.append(std::string_view{&c, 1});
+      }
+    }
+    result.append("\"");
+  }
+};
+
+template<typename T>
+struct QuoteLiteralFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // STRICT: returns NULL on NULL input (the default velox behavior for
+  // non-default-null functions)
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& input) {
+    auto str = std::string_view{input.data(), input.size()};
+    bool has_backslash = str.find('\\') != std::string_view::npos;
+    result.reserve(str.size() + 2);
+    if (has_backslash) {
+      result.append(" E'");
+    } else {
+      result.append("'");
+    }
+    for (auto c : str) {
+      if (c == '\'') {
+        result.append("''");
+      } else if (c == '\\') {
+        result.append("\\\\");
+      } else {
+        result.append(std::string_view{&c, 1});
+      }
+    }
+    result.append("'");
+  }
+};
+
+template<typename T>
+struct QuoteNullableFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool callNullable(out_type<velox::Varchar>& result,
+                                        const arg_type<velox::Varchar>* input) {
+    if (!input) {
+      result = "NULL";
+      return true;
+    }
+    QuoteLiteralFunction<T> literal;
+    literal.call(result, *input);
+    return true;
   }
 };
 
@@ -1163,7 +1415,7 @@ template<typename T>
 struct RegtypeInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<int32_t>& result,
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
                                 const arg_type<velox::Varchar>& input,
                                 const arg_type<int32_t>& location) {
     std::string_view name{input};
@@ -1182,7 +1434,7 @@ struct RegtypeOutFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int32_t>& input) {
+                                const arg_type<int64_t>& input) {
     result = RegtypeOut(input);
   }
 };
@@ -1191,18 +1443,17 @@ template<typename T>
 struct RegclassInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<velox::Varchar>* /*input*/,
-    const arg_type<int32_t>* /*location*/) {
-    _conn = basics::downCast<const ConnectionContext>(config.config()).get();
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const arg_type<int32_t>*) {
+    _ctx = basics::downCast<const ConnectionContext>(config.config()).get();
   }
 
-  FOLLY_ALWAYS_INLINE void call(out_type<int32_t>& result,
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
                                 const arg_type<velox::Varchar>& input,
                                 const arg_type<int32_t>& location) {
-    result = RegclassIn(*_conn, input);
+    result = RegclassIn(*_ctx, input);
     if (result == kInvalidOid) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_TABLE), CURSOR_POS(location),
@@ -1210,29 +1461,72 @@ struct RegclassInFunction {
     }
   }
 
-  const ConnectionContext* _conn;
+ private:
+  const ConnectionContext* _ctx;
 };
 
 template<typename T>
 struct RegclassOutFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<int32_t>* /*input*/) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    _snapshot = conn->EnsureCatalogSnapshot();
-    _db_id = conn->GetDatabaseId();
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
   }
 
-  FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<velox::Varchar>& result, const arg_type<int32_t>& input) {
-    result = RegclassOut(*_snapshot, input);
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<int64_t>& input) {
+    result = RegclassOut(*_ctx->EnsureCatalogSnapshot(), input);
   }
 
-  ObjectId _db_id;
-  std::shared_ptr<const catalog::Snapshot> _snapshot;
+ private:
+  const ConnectionContext* _ctx;
+};
+
+template<typename T>
+struct RegnamespaceInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const arg_type<int32_t>*) {
+    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
+                                const arg_type<velox::Varchar>& input,
+                                const arg_type<int32_t>& location) {
+    result = RegnamespaceIn(*_ctx, input);
+    if (result == kInvalidOid) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_SCHEMA), CURSOR_POS(location),
+        ERR_MSG("schema \"", std::string_view{input}, "\" does not exist"));
+    }
+  }
+
+ private:
+  const ConnectionContext* _ctx;
+};
+
+template<typename T>
+struct RegnamespaceOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<int64_t>& input) {
+    result = RegnamespaceOut(*_ctx->EnsureCatalogSnapshot(), input);
+  }
+
+ private:
+  const ConnectionContext* _ctx;
 };
 
 template<typename T>
@@ -1245,7 +1539,7 @@ struct PgTypeofFunction {
     _type_oid = GetTypeOID(inputTypes[0]);
   }
 
-  FOLLY_ALWAYS_INLINE bool callNullable(out_type<int32_t>& result,
+  FOLLY_ALWAYS_INLINE bool callNullable(out_type<int64_t>& result,
                                         const arg_type<velox::Any>* input) {
     result = _type_oid;
     return true;
@@ -1294,6 +1588,240 @@ struct PgErrorFunction {
   }
 };
 
+using facebook::velox::T1;
+
+// array_length(anyarray, integer) → integer
+// Returns the length of the requested array dimension.
+// Produces NULL for empty arrays or missing dimensions.
+template<typename T>
+struct ArrayLengthFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  int32_t depth_ = 0;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig& /*config*/,
+    const arg_type<velox::Array<velox::Generic<T1>>>* /*input*/,
+    const arg_type<int32_t>* /*dim*/) {
+    auto type = inputTypes[0];
+    while (type->isArray()) {
+      ++depth_;
+      type = type->childAt(0);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+    out_type<int32_t>& out,
+    const arg_type<velox::Array<velox::Generic<T1>>>& input,
+    const arg_type<int32_t>& dim) {
+    if (dim < 1 || dim > depth_ || input.size() == 0) {
+      return false;
+    }
+    if (dim == 1) {
+      out = static_cast<int32_t>(input.size());
+      return true;
+    }
+    // Walk into nested arrays via first element at each level
+    auto first = input.at(0);
+    if (!first.has_value()) {
+      return false;
+    }
+    const auto* base = first->base();
+    auto idx = first->decodedIndex();
+    for (int32_t d = 2; d <= dim; ++d) {
+      const auto* arr = base->template as<velox::ArrayVector>();
+      auto size = arr->sizeAt(idx);
+      if (d == dim) {
+        if (size == 0) {
+          return false;
+        }
+        out = static_cast<int32_t>(size);
+        return true;
+      }
+      if (size == 0) {
+        return false;
+      }
+      idx = arr->offsetAt(idx);
+      base = arr->elements().get();
+    }
+    return false;
+  }
+};
+
+// array_ndims(anyarray) -> integer
+// Returns the number of dimensions of the array.
+template<typename T>
+struct ArrayNdimsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  int32_t depth_ = 0;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig&,
+    const arg_type<velox::Array<velox::Generic<T1>>>*) {
+    auto type = inputTypes[0];
+    while (type->isArray()) {
+      ++depth_;
+      type = type->childAt(0);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+    out_type<int32_t>& out,
+    const arg_type<velox::Array<velox::Generic<T1>>>& input) {
+    if (input.size() == 0) {
+      return false;  // NULL for empty arrays
+    }
+    out = depth_;
+    return true;
+  }
+};
+
+// array_lower(anyarray, integer) -> integer
+// Returns the lower bound of the requested dimension (always 1 in PG).
+template<typename T>
+struct ArrayLowerFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  int32_t depth_ = 0;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig&,
+    const arg_type<velox::Array<velox::Generic<T1>>>*,
+    const arg_type<int32_t>*) {
+    auto type = inputTypes[0];
+    while (type->isArray()) {
+      ++depth_;
+      type = type->childAt(0);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+    out_type<int32_t>& out,
+    const arg_type<velox::Array<velox::Generic<T1>>>& input,
+    const arg_type<int32_t>& dim) {
+    if (dim < 1 || dim > depth_ || input.size() == 0) {
+      return false;
+    }
+    out = 1;  // PG arrays are always 1-based
+    return true;
+  }
+};
+
+// array_upper(anyarray, integer) -> integer
+// Returns the upper bound (= length) of the requested dimension.
+template<typename T>
+struct ArrayUpperFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  int32_t depth_ = 0;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig&,
+    const arg_type<velox::Array<velox::Generic<T1>>>*,
+    const arg_type<int32_t>*) {
+    auto type = inputTypes[0];
+    while (type->isArray()) {
+      ++depth_;
+      type = type->childAt(0);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+    out_type<int32_t>& out,
+    const arg_type<velox::Array<velox::Generic<T1>>>& input,
+    const arg_type<int32_t>& dim) {
+    if (dim < 1 || dim > depth_ || input.size() == 0) {
+      return false;
+    }
+    if (dim == 1) {
+      out = static_cast<int32_t>(input.size());
+      return true;
+    }
+    // Same logic as ArrayLengthFunction for deeper dims.
+    auto first = input.at(0);
+    if (!first.has_value()) {
+      return false;
+    }
+    const auto* base = first->base();
+    auto idx = first->decodedIndex();
+    for (int32_t d = 2; d <= dim; ++d) {
+      const auto* arr = base->template as<velox::ArrayVector>();
+      auto size = arr->sizeAt(idx);
+      if (d == dim) {
+        if (size == 0) {
+          return false;
+        }
+        out = static_cast<int32_t>(size);
+        return true;
+      }
+      if (size == 0) {
+        return false;
+      }
+      idx = arr->offsetAt(idx);
+      base = arr->elements().get();
+    }
+    return false;
+  }
+};
+
+// array_dims(anyarray) -> text
+// Returns text representation of array dimensions, e.g. "[1:3][1:2]".
+template<typename T>
+struct ArrayDimsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  int32_t depth_ = 0;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+    const std::vector<velox::TypePtr>& inputTypes,
+    const velox::core::QueryConfig&,
+    const arg_type<velox::Array<velox::Generic<T1>>>*) {
+    auto type = inputTypes[0];
+    while (type->isArray()) {
+      ++depth_;
+      type = type->childAt(0);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+    out_type<velox::Varchar>& out,
+    const arg_type<velox::Array<velox::Generic<T1>>>& input) {
+    if (input.size() == 0) {
+      return false;
+    }
+
+    std::string result;
+    // First dimension.
+    result += "[1:" + std::to_string(input.size()) + "]";
+
+    if (depth_ > 1 && input.size() > 0) {
+      auto first = input.at(0);
+      if (first.has_value()) {
+        const auto* base = first->base();
+        auto idx = first->decodedIndex();
+        for (int32_t d = 2; d <= depth_; ++d) {
+          const auto* arr = base->template as<velox::ArrayVector>();
+          auto size = arr->sizeAt(idx);
+          result += "[1:" + std::to_string(size) + "]";
+          if (d < depth_ && size > 0) {
+            idx = arr->offsetAt(idx);
+            base = arr->elements().get();
+          }
+        }
+      }
+    }
+
+    out.resize(result.size());
+    std::memcpy(out.data(), result.data(), result.size());
+    return true;
+  }
+};
+
 }  // namespace
 
 void registerFunctions(const std::string& prefix) {
@@ -1315,6 +1843,13 @@ void registerFunctions(const std::string& prefix) {
                           Interval, velox::Timestamp>({prefix + "time_plus"});
   velox::registerFunction<TimestampMinusIntervalFunction, velox::Timestamp,
                           velox::Timestamp, Interval>({prefix + "time_minus"});
+
+  velox::registerFunction<QuoteIdentFunction, velox::Varchar, velox::Varchar>(
+    {prefix + "quote_ident"});
+  velox::registerFunction<QuoteLiteralFunction, velox::Varchar, velox::Varchar>(
+    {prefix + "quote_literal"});
+  velox::registerFunction<QuoteNullableFunction, velox::Varchar,
+                          velox::Varchar>({prefix + "quote_nullable"});
 
   velox::registerFunction<PgSimilarToEscape, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "similar_to_escape"});
@@ -1349,7 +1884,10 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "jsonin"});
   velox::registerFunction<PgJsonOutFunction, velox::Varchar, velox::Json>(
     {prefix + "jsonout"});
-
+  velox::registerFunction<PgJsonTypeof, velox::Varchar, velox::Json>(
+    {prefix + "json_typeof"});
+  velox::registerFunction<PgJsonStripNulls, velox::Json, velox::Json>(
+    {prefix + "json_strip_nulls"});
   // pg_error(message)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, velox::Varchar>(
     {prefix + "error"});
@@ -1376,6 +1914,12 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar, velox::Varchar>(
     {prefix + "ts_lexize"});
 
+  registerRegexpFunctions(prefix);
+  registerStringExtraFunctions(prefix);
+  registerMathExtraFunctions(prefix);
+  registerDatetimeExtraFunctions(prefix);
+  registerArrayExtraFunctions(prefix);
+
   velox::registerFunction<RegtypeInFunction, RegtypeCustomType, velox::Varchar,
                           int32_t>({prefix + "regtypein"});
   velox::registerFunction<RegtypeOutFunction, velox::Varchar,
@@ -1384,6 +1928,11 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar, int32_t>({prefix + "regclassin"});
   velox::registerFunction<RegclassOutFunction, velox::Varchar,
                           RegclassCustomType>({prefix + "regclassout"});
+
+  velox::registerFunction<RegnamespaceInFunction, RegnamespaceCustomType,
+                          velox::Varchar, int32_t>({prefix + "regnamespacein"});
+  velox::registerFunction<RegnamespaceOutFunction, velox::Varchar,
+                          RegnamespaceCustomType>({prefix + "regnamespaceout"});
 
   // 9.27.1 Session Information Functions
 
@@ -1395,6 +1944,20 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "current_user"});
   velox::registerFunction<CurrentDatabaseFunction, velox::Varchar>(
     {prefix + "current_database"});
+  velox::registerFunction<CurrentSettingFunction, velox::Varchar,
+                          velox::Varchar>({prefix + "current_setting"});
+  velox::registerFunction<CurrentSettingMissingOkFunction, velox::Varchar,
+                          velox::Varchar, bool>({prefix + "current_setting"});
+  velox::registerFunction<SetConfigFunction, velox::Varchar, velox::Varchar,
+                          velox::Varchar, bool>({prefix + "set_config"});
+  velox::registerFunction<ConcatWsFunction, velox::Varchar, velox::Varchar,
+                          velox::Variadic<velox::Varchar>>(
+    {prefix + "concat_ws"});
+  velox::registerFunction<NumNonNullsFunction, int32_t,
+                          velox::Variadic<velox::Any>>(
+    {prefix + "num_nonnulls"});
+  velox::registerFunction<NumNullsFunction, int32_t,
+                          velox::Variadic<velox::Any>>({prefix + "num_nulls"});
   velox::registerFunction<CurrentQueryFunction, velox::Varchar>(
     {prefix + "current_query"});
   velox::registerFunction<PgBackendPidFunction, int32_t>(
@@ -1411,7 +1974,7 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "get_loaded_modules"});
   velox::registerFunction<PgMyTempSchemaFunction, int64_t>(
     {prefix + "my_temp_schema"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysFalseFunction1Int, bool, int64_t>(
     {prefix + "is_other_temp_schema"});
   velox::registerFunction<PgJitAvailableFunction, bool>(
     {prefix + "jit_available"});
@@ -1663,6 +2226,21 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "format_type"});
   velox::registerFunction<NameConcatOidFunction, velox::Varchar, velox::Varchar,
                           int64_t>({prefix + "nameconcatoid"});
+  velox::registerFunction<ArrayLengthFunction, int32_t,
+                          velox::Array<velox::Generic<T1>>, int32_t>(
+    {prefix + "array_length"});
+  velox::registerFunction<ArrayNdimsFunction, int32_t,
+                          velox::Array<velox::Generic<T1>>>(
+    {prefix + "array_ndims"});
+  velox::registerFunction<ArrayLowerFunction, int32_t,
+                          velox::Array<velox::Generic<T1>>, int32_t>(
+    {prefix + "array_lower"});
+  velox::registerFunction<ArrayUpperFunction, int32_t,
+                          velox::Array<velox::Generic<T1>>, int32_t>(
+    {prefix + "array_upper"});
+  velox::registerFunction<ArrayDimsFunction, velox::Varchar,
+                          velox::Array<velox::Generic<T1>>>(
+    {prefix + "array_dims"});
   velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
     {prefix + "basetype"});
   velox::registerFunction<PgCharToEncodingFunction, int32_t, velox::Varchar>(

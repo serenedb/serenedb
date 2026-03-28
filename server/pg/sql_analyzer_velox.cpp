@@ -209,6 +209,16 @@ NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
          std::ranges::to<NameToColumnMap>();
 }
 
+using IdToColumnMap =
+  containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
+IdToColumnMap GetIdToColumn(std::span<const catalog::Column> columns) {
+  return columns | std::views::transform([](const catalog::Column& column) {
+           return std::pair<catalog::Column::Id, const catalog::Column*>{
+             column.id, &column};
+         }) |
+         std::ranges::to<IdToColumnMap>();
+}
+
 std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
   return absl::StrCat(
     "This operation is not supported for ",
@@ -326,6 +336,7 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
 }
 
 using query::ToAlias;
+using query::ToAliases;
 
 std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
                                 std::string_view sep) {
@@ -702,6 +713,12 @@ class SqlAnalyzer {
                       const Objects::ObjectData& object,
                       std::vector<std::string> column_names,
                       std::vector<lp::ExprPtr> column_exprs);
+
+  void AddIndexColumns(State& state, const Node& stmt,
+                       const Objects::ObjectData& object,
+                       const catalog::Table& table,
+                       std::vector<std::string>& column_names,
+                       std::vector<lp::ExprPtr>& column_exprs);
 
   void ProcessCopyStmt(State& state, const CopyStmt& stmt);
 
@@ -1466,16 +1483,16 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
 
     // tmp solution:
     // for bulk insert we use SST which requires sorted data by key
+    SDB_ASSERT(ToAliases(state.root->outputType()->names()) ==
+               catalog_table.RowType()->names());
     const auto& pk = *catalog_table.PKType();
     std::vector<lp::SortingField> sorted_by;
     sorted_by.reserve(pk.size());
     for (const auto& [name, type] :
          std::views::zip(pk.names(), pk.children())) {
-      auto column = state.resolver.Resolve(state.root->outputType(), name);
-      SDB_ASSERT(column.IsFound());
-      std::string resolved{column.GetColumnName()};
-      auto expr =
-        std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
+      auto col_idx = catalog_table.RowType()->getChildIdx(name);
+      auto expr = std::make_shared<lp::InputReferenceExpr>(
+        type, state.root->outputType()->nameOf(col_idx));
       sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
     }
 
@@ -1502,6 +1519,49 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), axiom_table, write_kind,
     std::move(column_names), std::move(column_exprs));
+}
+
+void SqlAnalyzer::AddIndexColumns(State& state, const Node& stmt,
+                                  const Objects::ObjectData& object,
+                                  const catalog::Table& table,
+                                  std::vector<std::string>& column_names,
+                                  std::vector<lp::ExprPtr>& column_exprs) {
+  // Output type is aligned with table's RowType, may have one extra column
+  // at the end for generated PK (which is never part of a secondary index).
+  const auto& output_names = state.root->outputType()->names();
+  const auto& row_names = table.RowType()->names();
+  SDB_ASSERT(output_names.size() - row_names.size() <= 1);
+  SDB_ASSERT(std::ranges::starts_with(ToAliases(output_names), row_names));
+
+  auto id2column = GetIdToColumn(table.Columns());
+  for (auto& index : object.Indexes()) {
+    if (index->GetIndexType() != IndexType::Secondary) {
+      continue;
+    }
+
+    for (auto col_id : index->GetColumnIds()) {
+      auto it = id2column.find(col_id);
+      SDB_ASSERT(it != id2column.end());
+      const auto& col = *(it->second);
+
+      std::string name;
+      if (stmt.type == T_UpdateStmt) {
+        name = "_sdb_old_" + col.name;
+      } else {
+        name = col.name;
+      }
+
+      if (absl::c_contains(column_names, name)) {
+        continue;
+      }
+
+      auto col_idx = table.RowType()->getChildIdx(col.name);
+      column_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+        table.RowType()->childAt(col_idx),
+        state.root->outputType()->nameOf(col_idx)));
+      column_names.emplace_back(std::move(name));
+    }
+  }
 }
 
 // It's literally UNKNOWN
@@ -1701,12 +1761,6 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   column_exprs.reserve(pk_type.size() + list_length(stmt.targetList));
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
-  containers::FlatHashSet<std::string_view> pk_column_names;
-  pk_column_names.reserve(column_names.size());
-  for (std::string_view pk_column_name : column_names) {
-    pk_column_names.insert(pk_column_name);
-  }
-
   containers::FlatHashSet<std::string_view> target_column_names;
   bool update_pk = false;
   auto name_to_column = GetNameToColumn(table.Columns());
@@ -1716,14 +1770,15 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
                 "Indirection in UPDATE target list is not implemented yet");
     }
 
-    if (!target_column_names.emplace(target.name).second) {
+    std::string_view target_name = target.name;
+    if (!target_column_names.emplace(target_name).second) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&target))),
         ERR_MSG("multiple assignments to same column \"", target.name, "\""));
     }
 
-    auto it = name_to_column.find(target.name);
+    auto it = name_to_column.find(target_name);
     if (it == name_to_column.end()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       CURSOR_POS(ErrorPosition(ExprLocation(&target))),
@@ -1733,12 +1788,12 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
-    if (pk_column_names.contains(target.name)) {
+    if (pk_type.containsChild(target_name)) {
       update_pk = true;
       column_names.emplace_back(
-        catalog::Column::GenerateUpdateName(target.name));
+        catalog::Column::GenerateUpdateName(target_name));
     } else {
-      column_names.emplace_back(target.name);
+      column_names.emplace_back(target_name);
     }
 
     auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
@@ -1751,44 +1806,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     column_exprs.emplace_back(std::move(expr));
   });
 
-  // Add old values of secondary-indexed columns so the update writer can
-  // delete old index entries without extra RocksDB reads.
-  {
-    auto snapshot = _transaction.GetCatalogSnapshot();
-    containers::FlatHashSet<std::string> already_added{column_names.begin(),
-                                                       column_names.end()};
-    for (auto shard : snapshot->GetIndexShardsByTable(table.GetId())) {
-      if (shard->GetType() != IndexType::Secondary) {
-        continue;
-      }
-      auto index = snapshot->GetObject<catalog::Index>(shard->GetIndexId());
-      if (!index) {
-        continue;
-      }
-      for (auto col_id : index->GetColumnIds()) {
-        for (const auto& col : table.Columns()) {
-          if (col.id != col_id) {
-            continue;
-          }
-          auto old_name = "_sdb_old_" + std::string{col.name};
-          if (already_added.contains(old_name)) {
-            continue;
-          }
-          auto column =
-            state.resolver.Resolve(state.root->outputType(), col.name);
-          if (!column.IsFound()) {
-            continue;
-          }
-          auto col_idx = table.RowType()->getChildIdx(col.name);
-          column_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
-            table.RowType()->childAt(col_idx),
-            std::string{column.GetColumnName()}));
-          column_names.emplace_back(old_name);
-          already_added.emplace(old_name);
-        }
-      }
-    }
-  }
+  AddIndexColumns(state, ToNode(&stmt), *object, table, column_names,
+                  column_exprs);
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
@@ -1849,40 +1868,8 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   column_exprs.reserve(pk_type.size());
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
-  // Add secondary-indexed columns so the delete sink can build index keys
-  // from the input vector without extra RocksDB reads.
-  {
-    auto snapshot = _transaction.GetCatalogSnapshot();
-    containers::FlatHashSet<std::string> already_added{column_names.begin(),
-                                                       column_names.end()};
-    for (auto shard : snapshot->GetIndexShardsByTable(table.GetId())) {
-      if (shard->GetType() != IndexType::Secondary) {
-        continue;
-      }
-      auto index = snapshot->GetObject<catalog::Index>(shard->GetIndexId());
-      if (!index) {
-        continue;
-      }
-      for (auto col_id : index->GetColumnIds()) {
-        for (const auto& col : table.Columns()) {
-          if (col.id != col_id || already_added.contains(col.name)) {
-            continue;
-          }
-          auto column =
-            state.resolver.Resolve(state.root->outputType(), col.name);
-          if (!column.IsFound()) {
-            continue;
-          }
-          auto col_idx = table.RowType()->getChildIdx(col.name);
-          column_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
-            table.RowType()->childAt(col_idx),
-            std::string{column.GetColumnName()}));
-          column_names.emplace_back(col.name);
-          already_added.emplace(col.name);
-        }
-      }
-    }
-  }
+  AddIndexColumns(state, ToNode(&stmt), *object, table, column_names,
+                  column_exprs);
 
   object->EnsureTable(_transaction);
 
@@ -2691,7 +2678,8 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
 
   auto table_state =
     ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
-  const auto& input_type = *table_state.root->outputType();
+  const auto& input_type_ptr = table_state.root->outputType();
+  const auto& input_type = *input_type_ptr;
 
   const auto& pk = *table.PKType();
   size_t size = pk.size() + list_length(stmt.indexParams);
@@ -2700,6 +2688,16 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   column_names.reserve(size);
   column_exprs.reserve(size);
   FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
+
+  auto index_type = magic_enum::enum_cast<IndexType>(
+                      stmt.accessMethod, magic_enum::case_insensitive)
+                      .value_or(IndexType::Unknown);
+  const bool is_secondary = (index_type == IndexType::Secondary);
+
+  // SST table writer requires all columns to be sorted by.
+  // So we put sorting operator as we do it for COPY
+  std::vector<lp::SortingField> sorted_by;
+  sorted_by.reserve(size);
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
     if (!index_elem.name) {
@@ -2719,7 +2717,11 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     column_names.emplace_back(colname);
     auto expr = std::make_shared<lp::InputReferenceExpr>(
       input_type.childAt(col_idx), input_type.nameOf(col_idx));
-    column_exprs.emplace_back(std::move(expr));
+    column_exprs.emplace_back(is_secondary ? expr : std::move(expr));
+
+    if (is_secondary) {
+      sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
+    }
   });
 
   // TODO: reuse parsed shard options in CreateIndex to avoid double parsing.
@@ -2728,59 +2730,31 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   // executor).
   CreateIndexOptionsParser{stmt.options, _query_ctx.explain_params};
 
-  // For secondary index backfill, sort by (indexed_columns, PK) so that the
-  // secondary index entries come out in key order for SST writing.
-  auto index_type = magic_enum::enum_cast<IndexType>(
-                      stmt.accessMethod, magic_enum::case_insensitive)
-                      .value_or(IndexType::Unknown);
-  if (index_type == IndexType::Secondary) {
-    std::vector<lp::SortingField> sorted_by;
-    // First: indexed columns
-    VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
-      if (!index_elem.name) {
-        return;
-      }
-      const std::string_view colname = index_elem.name;
-      auto column =
-        table_state.resolver.Resolve(table_state.root->outputType(), colname);
-      if (!column.IsFound()) {
-        return;
-      }
-      auto col_idx = table_type.getChildIdx(colname);
-      auto expr = std::make_shared<lp::InputReferenceExpr>(
-        table_type.childAt(col_idx), std::string{column.GetColumnName()});
-      sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
-    });
-    // Then: PK columns
-    if (pk.size() > 0) {
-      for (const auto& [name, type] :
-           std::views::zip(pk.names(), pk.children())) {
-        auto column =
-          table_state.resolver.Resolve(table_state.root->outputType(), name);
-        if (!column.IsFound()) {
-          continue;
+  if (is_secondary) {
+    auto add_sorting_field_for_pk =
+      [&](std::span<const std::string> pk_names,
+          std::span<const velox::TypePtr> pk_types) {
+        for (const auto& [name, type] : std::views::zip(pk_names, pk_types)) {
+          auto column = table_state.resolver.Resolve(input_type_ptr, name);
+          SDB_ASSERT(column.IsFound());
+          auto expr = std::make_shared<lp::InputReferenceExpr>(
+            type, std::string{column.GetColumnName()});
+          sorted_by.emplace_back(std::move(expr),
+                                 lp::SortOrder::kAscNullsFirst);
         }
-        auto expr = std::make_shared<lp::InputReferenceExpr>(
-          type, std::string{column.GetColumnName()});
-        sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
-      }
+      };
+
+    if (pk.size() > 0) {
+      add_sorting_field_for_pk(pk.names(), pk.children());
     } else {
-      // Generated PK: resolve by generated name (same as FillColumnsInfo)
-      auto generated_pk_name =
-        catalog::Column::GeneratePKName(table_type.names());
-      auto column = table_state.resolver.Resolve(table_state.root->outputType(),
-                                                 generated_pk_name);
-      if (column.IsFound()) {
-        auto expr = std::make_shared<lp::InputReferenceExpr>(
-          velox::BIGINT(), std::string{column.GetColumnName()});
-        sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
-      }
+      auto pk_name = catalog::Column::GeneratePKName(table_type.names());
+      velox::TypePtr pk_type = velox::BIGINT();
+      add_sorting_field_for_pk(std::span{&pk_name, 1}, std::span{&pk_type, 1});
     }
-    if (!sorted_by.empty()) {
-      table_state.root = std::make_shared<lp::SortNode>(
-        _id_generator.NextPlanId(), std::move(table_state.root),
-        std::move(sorted_by));
-    }
+    SDB_ASSERT(!sorted_by.empty());
+    table_state.root = std::make_shared<lp::SortNode>(
+      _id_generator.NextPlanId(), std::move(table_state.root),
+      std::move(sorted_by));
   }
 
   object->EnsureTable(_transaction);
@@ -3892,8 +3866,7 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   SDB_ASSERT(object.object);
   const auto& inverted_index =
     basics::downCast<const catalog::InvertedIndex>(*object.object);
-  SDB_ASSERT(object.catalog_table);
-  const auto& table = *object.catalog_table;
+  const auto& table = object.CatalogTable();
   auto type = table.RowType();
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);

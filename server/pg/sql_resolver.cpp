@@ -20,6 +20,8 @@
 
 #include "pg/sql_resolver.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
@@ -66,6 +68,7 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
                                const Objects::ObjectName& name,
                                Objects::ObjectData& data,
                                const Config& config) {
+  auto snapshot = config.EnsureCatalogSnapshot();
   auto resolve_object = [&](std::string_view schema) {
     SDB_ASSERT(!data.object);
     if (schema == StaticStrings::kInformationSchema) {
@@ -74,9 +77,6 @@ void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
       return;
     }
 
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
     data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
       switch (type) {
         case ObjectType::Function:
@@ -225,9 +225,7 @@ void ResolveRelation(ObjectId database,
     resolve_view();
   } else if (data.object->GetType() == catalog::ObjectType::Index) {
     auto& index = basics::downCast<catalog::Index>(*data.object);
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = config.EnsureCatalogSnapshot();
     auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
     SDB_ASSERT(table);
     SDB_ASSERT(!data.catalog_data);
@@ -263,7 +261,8 @@ void ResolveFunctions(ObjectId database,
 
 }  // namespace
 
-void Resolve(ObjectId database, Objects& objects, const Config& config) {
+void Resolve(ObjectId database, Objects& objects, Config& config) {
+  absl::Cleanup drop_snapshot = [&] noexcept { config.DropCatalogSnapshot(); };
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
@@ -283,6 +282,7 @@ void Resolve(ObjectId database, Objects& objects, const Config& config) {
     ResolveRelation(database, search_path, objects, disallowed, name, new_data,
                     config);
   }
+  std::move(drop_snapshot).Cancel();
 }
 
 void ResolveQueryView(ObjectId database,

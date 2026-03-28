@@ -40,9 +40,10 @@ using AnalyzerProvider =
   absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
 
 inline AnalyzerProvider MakeAnalyzerProvider(
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
-  return [&index](catalog::Column::Id column_id) {
-    return index.GetColumnAnalyzer(column_id);
+  return [snapshot, &index](catalog::Column::Id column_id) {
+    return index.GetColumnAnalyzer(snapshot, column_id);
   };
 }
 
@@ -277,6 +278,12 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
       _shard{shard} {}
 
   void Init(size_t batch_size, const velox::RowVectorPtr&) final {
+    // Flush should happen only at batch boundary
+    // where we re-create document and have all previous values written.
+    if (_trx.FlushRequired()) {
+      _document.reset();
+      Commit(false);
+    }
     InitImpl(batch_size);
   }
 
@@ -289,14 +296,11 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     SearchSinkInsertBaseImpl::WriteImpl(cell_slices, full_key);
-    if (_trx.FlushRequired()) {
-      Commit();
-    }
   }
 
   void Finish() final {
     SearchSinkInsertBaseImpl::FinishImpl();
-    Commit();
+    Commit(true);
   }
 
   void Abort() final {
@@ -305,9 +309,11 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
   }
 
  private:
-  void Commit() {
+  void Commit(bool finish) {
     _trx_storage.Commit();
-    _trx_storage = _shard.GetTransaction();
+    if (!finish) {
+      _trx_storage = _shard.GetTransaction();
+    }
   }
 
   search::InvertedIndexShard& _shard;

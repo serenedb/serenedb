@@ -232,7 +232,7 @@ struct LogicalCatalog {
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 
-  virtual std::shared_ptr<const Snapshot> GetSnapshot() const = 0;
+  virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 
 class CatalogFeature final : public SerenedFeature {

@@ -33,12 +33,18 @@ ParquetMaterializer::ParquetMaterializer(
   velox::memory::MemoryPool& pool, std::shared_ptr<velox::ReadFile> source,
   std::unique_ptr<velox::dwio::common::Reader> reader,
   std::unique_ptr<velox::dwio::common::RowReader> row_reader,
-  velox::RowTypePtr output_type)
+  velox::RowTypePtr output_type, std::vector<catalog::Column::Id> column_ids)
   : _pool{pool},
     _source{std::move(source)},
     _reader{std::move(reader)},
     _row_reader{std::move(row_reader)},
     _output_type{std::move(output_type)} {
+  for (size_t i = 0; i < column_ids.size(); ++i) {
+    if (column_ids[i] == catalog::Column::kInvertedIndexScoreId) {
+      _score_column_idx = i;
+      break;
+    }
+  }
   auto& parquet_reader =
     basics::downCast<velox::parquet::ParquetReader>(*_reader);
   auto metadata = parquet_reader.fileMetaData();
@@ -53,17 +59,35 @@ ParquetMaterializer::ParquetMaterializer(
 }
 
 velox::RowVectorPtr ParquetMaterializer::ReadRows(
-  std::span<const std::string> row_keys, velox::VectorPtr /*scores*/) {
+  std::span<std::string> row_keys, velox::VectorPtr scores) {
   if (row_keys.empty()) {
     return nullptr;
   }
-  SDB_ASSERT(std::is_sorted(row_keys.begin(), row_keys.end()));
+  auto total = static_cast<velox::vector_size_t>(row_keys.size());
+
+  if (_score_column_idx >= 0) {
+    SDB_ASSERT(scores);
+    auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
+    std::vector<uint32_t> order(total);
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+      return row_keys[a] < row_keys[b];
+    });
+    for (uint32_t i = 0; i < total; ++i) {
+      while (order[i] != i) {
+        uint32_t j = order[i];
+        std::swap(row_keys[i], row_keys[j]);
+        std::swap(score_raw[i], score_raw[j]);
+        std::swap(order[i], order[j]);
+      }
+    }
+  } else {
+    std::sort(row_keys.begin(), row_keys.end());
+  }
 
   auto decode = [](std::string_view key) {
     return primary_key::ReadSigned<int64_t>(key);
   };
-
-  auto total = static_cast<velox::vector_size_t>(row_keys.size());
   auto output =
     velox::BaseVector::create<velox::RowVector>(_output_type, total, &_pool);
 
@@ -113,10 +137,15 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
     if (result && result->size() > 0) {
       auto row_batch = basics::downCast<velox::RowVector>(std::move(result));
       for (auto& child : row_batch->children()) {
-        child->loadedVector();
+        if (child) {
+          child->loadedVector();
+        }
       }
       auto batch_size = row_batch->size();
       for (size_t col = 0; col < _output_type->size(); ++col) {
+        if (static_cast<int64_t>(col) == _score_column_idx) {
+          continue;
+        }
         output->childAt(col)->copy(row_batch->children()[col].get(), written, 0,
                                    batch_size);
       }
@@ -131,7 +160,12 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
   }
 
   output->resize(written);
-  _produced += written;
+  if (_score_column_idx >= 0) {
+    SDB_ASSERT(scores);
+    SDB_ASSERT(scores->size() == row_keys.size());
+    scores->resize(written);
+    output->children()[_score_column_idx] = std::move(scores);
+  }
   return output;
 }
 

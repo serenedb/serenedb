@@ -27,7 +27,7 @@
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
 #include "search_filter_builder.hpp"
-#include "storage_engine/secondary_index_shard.h"
+#include "search_filter_printer.hpp"
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
@@ -219,8 +219,8 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
-  const axiom::connector::TableLayout& layout, std::vector<Point> points,
-  velox::core::TypedExprPtr remaining_filter)
+  const axiom::connector::TableLayout& layout,
+  std::vector<SpecificPoint> points, velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
@@ -245,7 +245,6 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                              ->Id();
   }
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
-
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
     _table_column_map.emplace(orig_name,
@@ -277,7 +276,9 @@ SereneDBTableLayout::createTableHandle(
             index.GetColumnIds().end()) {
           return SearchColumnInfo{
             .info = *serene_column,
-            .analyzer = index.GetColumnAnalyzer(serene_column->Id()),
+            .analyzer = index.GetColumnAnalyzer(
+              inv_index->GetTransaction().EnsureCatalogSnapshot(),
+              serene_column->Id()),
           };
         }
       }
@@ -310,8 +311,21 @@ SereneDBTableLayout::createTableHandle(
         {.index = snapshot.reader, .scorer = scorer.get()});
     }
 
+    const auto& col_map = inv_index->columnMap();
+    auto column_id_to_name =
+      [&](sdb::catalog::Column::Id id) -> std::string_view {
+      for (const auto& [name, col_ptr] : col_map) {
+        if (basics::downCast<const SereneDBColumn>(col_ptr)->Id() == id) {
+          return name;
+        }
+      }
+      SDB_ASSERT(false, "Unknown column id");
+      return "unknown";
+    };
+
     return std::make_shared<InvertedIndexTableHandle>(
-      *inv_index, index.GetId(), std::move(prepared), scorer);
+      *inv_index, index.GetId(), std::move(prepared), scorer,
+      irs::ToStringDemangled(conjunct_root, column_id_to_name));
   }
 
   if (const auto* read_file_table = dynamic_cast<const ReadFileTable*>(table)) {
@@ -372,19 +386,25 @@ SereneDBTableLayout::createTableHandle(
       velox::BOOLEAN(), filters, velox::expression::kAnd);
   }
 
-  std::vector<Point> points;
+  std::vector<SpecificPoint> points;
   if (remaining_filter) {
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
 
     if (!res.points.empty()) {
-      points = std::move(res.points);
-      SortPoints(points, *pk_type);
+      points = ToSpecificPoints(res.points, *pk_type);
+      SortPoints(points);
       remaining_filter = std::move(res.remaining_filter);
     }
   }
 
   if (!kExecuteFiltersInTableScan && remaining_filter) {
-    rejected_filters = {std::move(remaining_filter)};
+    if (const auto* call = dynamic_cast<const velox::core::CallTypedExpr*>(
+          remaining_filter.get());
+        call && call->name() == velox::expression::kAnd) {
+      rejected_filters.assign(call->inputs().begin(), call->inputs().end());
+    } else {
+      rejected_filters = {std::move(remaining_filter)};
+    }
     remaining_filter.reset();
   }
 
@@ -393,6 +413,31 @@ SereneDBTableLayout::createTableHandle(
   return std::make_shared<SereneDBConnectorTableHandle>(
     session, *table->layouts().front(), std::move(points),
     std::move(remaining_filter));
+}
+
+std::string SereneDBConnectorTableHandle::toString() const {
+  const std::string filter_str =
+    _remaining_filter ? absl::StrCat(", filter=", _remaining_filter->toString())
+                      : "";
+  if (!_points.empty()) {
+    const auto& names = _pk_type->names();
+    const auto& types = _pk_type->children();
+    std::string points_str = absl::StrJoin(
+      _points, ", ", [&](std::string* out, const SpecificPoint& point) {
+        SDB_ASSERT(types.size() == point.size());
+        absl::StrAppend(out, "(");
+        for (size_t i = 0; i < point.size(); ++i) {
+          if (i > 0) {
+            absl::StrAppend(out, ", ");
+          }
+          absl::StrAppend(out, names[i], "=", point[i].toString(types[i]));
+        }
+        absl::StrAppend(out, ")");
+      });
+    return absl::StrCat(_name, ", type=rocksdb_point_lookup, points=[",
+                        points_str, "]", filter_str);
+  }
+  return absl::StrCat(_name, ", type=rocksdb_full_scan", filter_str);
 }
 
 }  // namespace sdb::connector

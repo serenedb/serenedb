@@ -454,7 +454,7 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
 
   auto [b, features] =
-    std::move(CreateTSDictionaryOptions{catalogs.Global().GetSnapshot(), db,
+    std::move(CreateTSDictionaryOptions{conn_ctx.EnsureCatalogSnapshot(), db,
                                         current_schema, stmt.definition})
       .Result();
 

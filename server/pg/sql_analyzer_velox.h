@@ -27,6 +27,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "pg/copy_messages_queue.h"
+#include "pg/progress_tracker.h"
 #include "pg/sql_utils.h"
 #include "query/context.h"
 #include "query/utils.h"
@@ -71,6 +72,8 @@ struct VeloxQuery {
   const Node* pgsql_node = nullptr;
 
   SqlCommandType type = SqlCommandType::Unknown;
+
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> progress_reporters;
 };
 
 class Objects;

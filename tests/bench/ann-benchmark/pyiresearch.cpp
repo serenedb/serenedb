@@ -1,11 +1,8 @@
-#include <faiss/utils/distances.h>
-#include <pybind11/numpy.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/stl/string.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
+#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -13,10 +10,6 @@
 #include <optional>
 
 #include "basics/resource_manager.hpp"
-
-namespace py = pybind11;
-
-// ── helpers ────────────────────────────────────────────────────────────────
 
 static constexpr std::string_view kVectorField = "vector";
 static constexpr std::string_view kIdField = "label";
@@ -29,8 +22,6 @@ static void ensure_init() {
     done = true;
   }
 }
-
-// ── VectorIndex ────────────────────────────────────────────────────────────
 
 class VectorIndex {
  public:
@@ -66,11 +57,8 @@ class VectorIndex {
 
   // Insert a single vector with an associated integer id.
   // vec must be a 1-D float32 numpy array of length `dim`.
-  void insert(
-    int64_t id,
-    py::array_t<float, py::array::c_style | py::array::forcecast> vec) {
-    auto buf = vec.request();
-    if (buf.size != static_cast<ssize_t>(_dim)) {
+  void insert(int64_t id, const std::vector<float>& vec) {
+    if (vec.size() != static_cast<ssize_t>(_dim)) {
       throw std::runtime_error("vector length mismatch");
     }
 
@@ -82,7 +70,7 @@ class VectorIndex {
         _txn.Insert(false, _max_seg));
     }
 
-    const float* data = static_cast<const float*>(buf.ptr);
+    const float* data = vec.data();
 
     struct IdField {
       int64_t data;
@@ -120,11 +108,9 @@ class VectorIndex {
   }
 
   // Search: returns list of (id, distance) pairs
-  std::vector<std::pair<int64_t, float>> search(
-    py::array_t<float, py::array::c_style | py::array::forcecast> query,
-    int top_k, int ef_search = 64) {
-    auto buf = query.request();
-    if (buf.size != static_cast<ssize_t>(_dim)) {
+  std::vector<std::pair<int64_t, float>> search(const std::vector<float>& query,
+                                                int top_k, int ef_search = 64) {
+    if (query.size() != static_cast<ssize_t>(_dim)) {
       throw std::runtime_error("query length mismatch");
     }
     if (!_reader) {
@@ -135,7 +121,7 @@ class VectorIndex {
     params.efSearch = ef_search;
 
     irs::HNSWSearchInfo info{
-      reinterpret_cast<const irs::byte_type*>(buf.ptr),
+      reinterpret_cast<const irs::byte_type*>(query.data()),
       static_cast<size_t>(top_k),
       params,
     };
@@ -190,19 +176,14 @@ class VectorIndex {
   std::optional<irs::DirectoryReader> _reader;
 };
 
-// ── module ─────────────────────────────────────────────────────────────────
-
-PYBIND11_MODULE(pyiresearch, m) {
-  m.doc() = "Python bindings for iresearch vector (HNSW) search";
-
-  py::class_<VectorIndex>(m, "VectorIndex")
-    .def(py::init<const std::string&, int, size_t>(), py::arg("index_dir"),
-         py::arg("dim"), py::arg("segment_max_size"),
-         "Create (or open) a vector index at *index_dir*.")
-    .def("insert", &VectorIndex::insert, py::arg("id"), py::arg("vec"),
-         "Insert a float32 vector with the given integer id.")
-    .def("commit", &VectorIndex::commit, "Flush all pending inserts to disk.")
-    .def("search", &VectorIndex::search, py::arg("query"), py::arg("top_k"),
-         py::arg("ef_search") = 64,
-         "Return list of (id, distance) for the top_k nearest neighbours.");
+NB_MODULE(pyiresearch, m) {
+  nanobind::class_<VectorIndex>(m, "VectorIndex")
+    .def(nanobind::init<const std::string&, int, size_t>(),
+         nanobind::arg("index_dir"), nanobind::arg("dim"),
+         nanobind::arg("segment_max_size") = 10000)
+    .def("insert", &VectorIndex::insert, nanobind::arg("id"),
+         nanobind::arg("vector"))
+    .def("commit", &VectorIndex::commit)
+    .def("search", &VectorIndex::search, nanobind::arg("query"),
+         nanobind::arg("top_k"), nanobind::arg("ef_search") = 64);
 }

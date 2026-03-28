@@ -609,17 +609,15 @@ YES
 
 
 # Primary key columns should be listed
-query error
+query
 SELECT constraint_name, column_name, ordinal_position FROM information_schema.key_column_usage WHERE table_name = 'pg_cat_t1' ORDER BY ordinal_position
 ----
-db error: ERROR: relation "information_schema.key_column_usage" does not exist
+constraint_name	column_name	ordinal_position
 
-
-query error
+query
 SELECT constraint_name, column_name FROM information_schema.key_column_usage WHERE table_name = 'pg_cat_t2'
 ----
-db error: ERROR: relation "information_schema.key_column_usage" does not exist
-
+constraint_name	column_name
 
 # ============================================================
 # information_schema.routines

@@ -1688,3 +1688,10 @@ SELECT quote_nullable('it''s');
 ----
 quote_nullable
 'it''s'
+
+
+query
+SELECT ARRAY(SELECT * FROM (VALUES (1), (2), (3)));
+----
+array
+{1,2,3}

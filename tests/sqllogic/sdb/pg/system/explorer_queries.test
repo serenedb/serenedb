@@ -167,8 +167,7 @@ LEFT JOIN pg_attribute a
 WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'explorer_t1')
 ORDER BY i.indexrelid, gs.i
 ----
-db error: ERROR: column "i.indkey" cannot be referenced in this context
-HINT: LATERAL references are not yet supported
+db error: ERROR: column "i.indkey" does not exist
 
 
 query

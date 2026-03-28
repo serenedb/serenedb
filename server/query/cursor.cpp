@@ -53,8 +53,10 @@ Cursor::Process Cursor::NextImpl(velox::RowVectorPtr& batch) {
       continue;
     }
 
-    if (f.TryDetachInline(
-          [user_task = _user_task](auto r) { user_task(std::move(r)); })) {
+    // !f.Ready() is just performance optimization.
+    if (!f.Ready() && f.TryDetachInline([user_task = _user_task](auto r) {
+          user_task(std::move(r));
+        })) {
       return Process::Wait;
     }
 

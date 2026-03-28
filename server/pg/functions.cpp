@@ -2685,9 +2685,9 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<NullBigintFunction1Oid, int64_t, int64_t>(
     {prefix + "sequence_last_value"});
 
-  // getdatabaseencoding() -> text
+  // pg_getdatabaseencoding() -> text
   velox::registerFunction<GetDatabaseEncodingFunction, velox::Varchar>(
-    {"getdatabaseencoding"});
+    {"pg_getdatabaseencoding"});
 
   // pg_get_function_arg_default(oid, int) -> text (NULL)
   velox::registerFunction<NullVarcharFunction1OidInt, velox::Varchar, int64_t,

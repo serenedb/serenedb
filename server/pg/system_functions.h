@@ -28,6 +28,7 @@ namespace sdb::pg {
 // TODO(mkornaukhov) write queries in separate sql file
 inline constexpr auto kSystemFunctionsQueries = std::to_array<
   std::string_view>({
+  // clang-format off
   R"(CREATE FUNCTION pg_show_all_settings()
   RETURNS TABLE( name TEXT,
                  setting TEXT,
@@ -109,9 +110,8 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
 
   // Expand any 1-D array into a set with integers 1..N
 
-  // TODO(mbkkt) Enable when implement UNNEST with ORDINALITY
-  // R"(CREATE FUNCTION _pg_expandarray(IN anyarray, OUT x anyelement, OUT n
-  // int)
+  // TODO(mbkkt) Enable when implement proper SETOF functions support.
+  // R"(CREATE FUNCTION _pg_expandarray(IN anyarray, OUT x anyelement, OUT n int)
   //     RETURNS SETOF RECORD
   //     LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE
   //     ROWS 100 SUPPORT pg_catalog.array_unnest_support
@@ -120,15 +120,12 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   // Given an index's OID and an underlying-table column number, return the
   // column's position in the index (NULL if not there)
 
-  // TODO(mbkkt) Enable when implement UNNEST with ORDINALITY
-  // R"(CREATE FUNCTION _pg_index_position(oid, smallint) RETURNS int
-  //     LANGUAGE sql STRICT STABLE
-  // BEGIN ATOMIC
-  // SELECT (ss.a).n FROM
-  //   (SELECT information_schema._pg_expandarray(indkey) AS a
-  //    FROM pg_catalog.pg_index WHERE indexrelid = $1) ss
-  //   WHERE (ss.a).x = $2;
-  // END;)",
+  // TODO(mbkkt) Use original text when implement LATERAL references.
+  R"(CREATE FUNCTION _pg_index_position(oid, smallint) RETURNS int
+      LANGUAGE sql STRICT STABLE
+    RETURN NULLIF(
+      (SELECT array_position(indkey, $2) FROM pg_catalog.pg_index WHERE indexrelid = $1),
+      0)::int;)",
 
   R"(CREATE FUNCTION _pg_truetypid(pg_attribute, pg_type) RETURNS oid
       LANGUAGE sql

@@ -1136,8 +1136,10 @@ std::shared_ptr<View> GetView(std::string_view name) {
 void RegisterSystemViews() {
   for (const auto system_view_query : kSystemViewsQueries) {
     const auto* raw_stmt = ParseSystemObject(system_view_query);
+    SDB_ASSERT(raw_stmt);
+    SDB_ASSERT(raw_stmt->stmt);
+    SDB_ASSERT(IsA(raw_stmt->stmt, ViewStmt));
     const auto* view_stmt = castNode(ViewStmt, raw_stmt->stmt);
-    SDB_ASSERT(view_stmt);
     auto system_view = CreateSystemView(*view_stmt);
     auto name = system_view->GetName();
     if (name.starts_with("pg_")) {
@@ -1151,8 +1153,10 @@ void RegisterSystemViews() {
 void RegisterSystemFunctions() {
   for (const auto system_func_query : kSystemFunctionsQueries) {
     const auto* raw_stmt = ParseSystemObject(system_func_query);
+    SDB_ASSERT(raw_stmt);
+    SDB_ASSERT(raw_stmt->stmt);
+    SDB_ASSERT(IsA(raw_stmt->stmt, CreateFunctionStmt));
     const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);
-    SDB_ASSERT(create_func_stmt);
     auto func = CreateSystemFunction(*create_func_stmt);
     auto name = func->GetName();
     if (name.starts_with("_pg_")) {

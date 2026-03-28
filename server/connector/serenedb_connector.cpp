@@ -360,7 +360,7 @@ SereneDBTableLayout::createTableHandle(
         std::string{table->name()}, rocksdb_table.TableId(),
         rocksdb_table.GetTransaction(), match->effective_column_id,
         match->shard_id, std::move(match->scan_prefix), match->value_key_size,
-        table);
+        *table);
     }
   }
 

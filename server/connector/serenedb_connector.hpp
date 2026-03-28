@@ -629,7 +629,7 @@ class SecondaryIndexTableHandle final
                             catalog::Column::Id effective_column_id,
                             ObjectId shard_id, std::string scan_prefix,
                             size_t value_key_size,
-                            const axiom::connector::Table* underlying_table)
+                            const axiom::connector::Table& underlying_table)
     : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
       _name{std::move(name)},
       _table_id{table_id},
@@ -638,7 +638,7 @@ class SecondaryIndexTableHandle final
       _shard_id{shard_id},
       _scan_prefix{std::move(scan_prefix)},
       _value_key_size{value_key_size},
-      _underlying_table{underlying_table} {}
+      _underlying_table{&underlying_table} {}
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -662,9 +662,7 @@ class SecondaryIndexTableHandle final
 
   size_t GetValueKeySize() const noexcept { return _value_key_size; }
 
-  const axiom::connector::Table* GetUnderlyingTable() const noexcept {
-    return _underlying_table;
-  }
+  const auto& GetUnderlyingTable() const noexcept { return *_underlying_table; }
 
  private:
   std::string _name;
@@ -930,46 +928,16 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     if (const auto* sec_handle =
           dynamic_cast<const SecondaryIndexTableHandle*>(table_handle.get())) {
-      if (column_oids.empty()) {
-        SDB_ASSERT(output_type->size() == 0);
-        column_oids.push_back(sec_handle->GetEffectiveColumnId());
-      }
-      auto& transaction = sec_handle->GetTransaction();
-      const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
-      auto& pool = *connector_query_ctx->memoryPool();
-
-      const auto* underlying = sec_handle->GetUnderlyingTable();
-      if (const auto* file_table =
-            underlying ? dynamic_cast<const ReadFileTable*>(underlying)
-                       : nullptr) {
-        SDB_ASSERT(file_table->GetOptions()->Reader()->fileFormat() ==
-                     velox::dwio::common::FileFormat::PARQUET,
-                   "Only parquet is supported for secondary index search");
-        auto [source, reader, row_reader] = FileDataSource::CreateReader(
-          *file_table->GetOptions(), pool, output_type, column_handles, {},
-          nullptr, nullptr);
-        return std::make_unique<SecondaryIndexDataSource<ParquetMaterializer>>(
-          pool,
-          ParquetMaterializer(pool, std::move(source), std::move(reader),
-                              std::move(row_reader), output_type),
-          _db, _cf, snapshot, sec_handle->GetScanPrefix(),
-          sec_handle->GetValueKeySize());
-      }
-
-      return std::make_unique<SecondaryIndexDataSource<RocksDBMaterializer>>(
-        pool,
-        RocksDBMaterializer(pool, snapshot, &_db, nullptr, _cf, output_type,
-                            column_oids, sec_handle->GetEffectiveColumnId(),
-                            sec_handle->TableId()),
-        _db, _cf, snapshot, sec_handle->GetScanPrefix(),
-        sec_handle->GetValueKeySize());
+      return CreateSecondaryIndexDataSource(
+        output_type, *sec_handle, std::move(column_oids), column_handles,
+        connector_query_ctx);
     }
 
     if (const auto* inv_handle =
           dynamic_cast<const InvertedIndexTableHandle*>(table_handle.get())) {
-      return createSearchDataSource(output_type, *inv_handle,
-                                    std::move(column_oids), column_handles,
-                                    connector_query_ctx);
+      return CreateSearchInvertedIndexDataSource(
+        output_type, *inv_handle, std::move(column_oids), column_handles,
+        connector_query_ctx);
     }
 
     const auto& serene_table_handle =
@@ -1311,7 +1279,46 @@ class SereneDBConnector final : public velox::connector::Connector {
 
   folly::Executor* ioExecutor() const final { return nullptr; }
 
-  std::unique_ptr<velox::connector::DataSource> createSearchDataSource(
+  std::unique_ptr<velox::connector::DataSource> CreateSecondaryIndexDataSource(
+    const velox::RowTypePtr& output_type,
+    const SecondaryIndexTableHandle& handle,
+    std::vector<catalog::Column::Id> column_oids,
+    const velox::connector::ColumnHandleMap& column_handles,
+    velox::connector::ConnectorQueryCtx* connector_query_ctx) {
+    if (column_oids.empty()) {
+      SDB_ASSERT(output_type->size() == 0);
+      column_oids.push_back(handle.GetEffectiveColumnId());
+    }
+    auto& transaction = handle.GetTransaction();
+    const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
+    auto& pool = *connector_query_ctx->memoryPool();
+
+    const auto& underlying_table = handle.GetUnderlyingTable();
+    if (const auto* file_table =
+          dynamic_cast<const ReadFileTable*>(&underlying_table)) {
+      SDB_ASSERT(file_table->GetOptions()->Reader()->fileFormat() ==
+                   velox::dwio::common::FileFormat::PARQUET,
+                 "Only parquet is supported for secondary index search");
+      auto [source, reader, row_reader] = FileDataSource::CreateReader(
+        *file_table->GetOptions(), pool, output_type, column_handles, {},
+        nullptr, nullptr);
+      return std::make_unique<SecondaryIndexDataSource<ParquetMaterializer>>(
+        pool,
+        ParquetMaterializer(pool, std::move(source), std::move(reader),
+                            std::move(row_reader), output_type),
+        _db, _cf, snapshot, handle.GetScanPrefix(), handle.GetValueKeySize());
+    }
+
+    return std::make_unique<SecondaryIndexDataSource<RocksDBMaterializer>>(
+      pool,
+      RocksDBMaterializer(pool, snapshot, &_db, nullptr, _cf, output_type,
+                          column_oids, handle.GetEffectiveColumnId(),
+                          handle.TableId()),
+      _db, _cf, snapshot, handle.GetScanPrefix(), handle.GetValueKeySize());
+  }
+
+  std::unique_ptr<velox::connector::DataSource>
+  CreateSearchInvertedIndexDataSource(
     const velox::RowTypePtr& output_type,
     const InvertedIndexTableHandle& handle,
     std::vector<catalog::Column::Id> column_oids,

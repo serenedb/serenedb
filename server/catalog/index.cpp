@@ -181,12 +181,6 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
             std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
             " has non primitive type and can not be indexed"};
         }
-        if (c.catalog_column->type->kind() == velox::TypeKind::TIMESTAMP ||
-            c.catalog_column->type->kind() == velox::TypeKind::HUGEINT) {
-          return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
-            " has unsupported kind and can not be indexed"};
-        }
       }
       SecondaryIndexOptionsWrapper impl_options(std::move(options));
       return std::make_shared<SecondaryIndex>(

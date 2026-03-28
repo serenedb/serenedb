@@ -126,7 +126,6 @@ struct CosineSimilarity {
     result = lr / denom;
     return true;
   }
-
 };
 
 }  // namespace sdb::pg

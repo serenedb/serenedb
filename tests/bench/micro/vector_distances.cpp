@@ -27,6 +27,7 @@
 #include <velox/type/CppToType.h>
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
+
 #include "pg/functions/vector.h"
 
 #ifdef VELOX_ENABLE_FAISS
@@ -38,7 +39,8 @@
 #include <vector>
 
 // Benchmarks comparing:
-//   - sdb::pg UDF structs from server/pg/functions/vector.h (full wrapper incl. flat-check)
+//   - sdb::pg UDF structs from server/pg/functions/vector.h (full wrapper incl.
+//   flat-check)
 //   - Velox UDF structs from velox/functions/prestosql/DistanceFunctions.h
 //     (only available with VELOX_ENABLE_FAISS; backed by FAISS)
 //   - Plain C++ loop equivalents (mirrors velox non-FAISS path)
@@ -73,7 +75,8 @@ std::vector<float> MakeFloatData(int dim, float start, float step = 0.01f) {
 // Owns a FlatVector<float>, its DecodedVector and VectorReader, and exposes an
 // ArrayView<false, float> suitable for passing to Velox UDF call/callNullFree.
 //
-// All internal pointers are stable once constructed; must not be moved or copied.
+// All internal pointers are stable once constructed; must not be moved or
+// copied.
 struct VeloxFloatArray {
   std::shared_ptr<FlatVector<float>> vec;
   DecodedVector decoded;
@@ -81,19 +84,18 @@ struct VeloxFloatArray {
   ArrayView<false, float> view;
 
   explicit VeloxFloatArray(const std::vector<float>& data)
-      : vec{BaseVector::create<FlatVector<float>>(
-          CppToType<float>::create(),
-          static_cast<vector_size_t>(data.size()),
-          pool())},
-        view{nullptr, 0, 0} {
+    : vec{BaseVector::create<FlatVector<float>>(
+        CppToType<float>::create(), static_cast<vector_size_t>(data.size()),
+        pool())},
+      view{nullptr, 0, 0} {
     for (vector_size_t i = 0; i < static_cast<vector_size_t>(data.size());
          ++i) {
       vec->set(i, data[i]);
     }
     decoded.decode(*vec);
     reader = std::make_unique<VectorReader<float>>(&decoded);
-    view = ArrayView<false, float>{
-      reader.get(), 0, static_cast<vector_size_t>(data.size())};
+    view = ArrayView<false, float>{reader.get(), 0,
+                                   static_cast<vector_size_t>(data.size())};
   }
 
   VeloxFloatArray(const VeloxFloatArray&) = delete;
@@ -138,7 +140,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, SdbL2Squared)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 BENCHMARK_DEFINE_F(DistanceFixture, PlainL2Squared)(benchmark::State& state) {
   const int dim = state.range(0);
@@ -152,7 +158,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainL2Squared)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, PlainL2Squared)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
@@ -164,7 +174,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxL2Squared)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -180,7 +194,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, SdbL1Distance)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 BENCHMARK_DEFINE_F(DistanceFixture, PlainL1Distance)(benchmark::State& state) {
   const int dim = state.range(0);
@@ -193,7 +211,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainL1Distance)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, PlainL1Distance)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
@@ -205,7 +227,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxL1Distance)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -223,7 +249,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainDotProduct)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, PlainDotProduct)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
@@ -235,7 +265,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxDotProduct)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -251,9 +285,14 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, SdbCosine)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
-// Mirrors the velox non-FAISS cosine path (plain C++ loops with double accumulation).
+// Mirrors the velox non-FAISS cosine path (plain C++ loops with double
+// accumulation).
 BENCHMARK_DEFINE_F(DistanceFixture, PlainCosine)(benchmark::State& state) {
   const int dim = state.range(0);
   for (auto _ : state) {
@@ -270,7 +309,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainCosine)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, PlainCosine)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
@@ -282,7 +325,11 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
   }
 }
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxCosine)
-  ->Arg(64)->Arg(128)->Arg(256)->Arg(512)->Arg(1024);
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 #endif
 
 }  // namespace

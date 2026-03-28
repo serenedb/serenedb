@@ -805,6 +805,90 @@ DEFINE_NOT_SUPPORTED_FUNC(NotSupported3TextTextArrayTextArray,
 
 #undef DEFINE_NOT_SUPPORTED_FUNC
 
+// Stub functions returning 0 or NULL, used by pg_stat_* views
+
+template<typename T>
+struct ZeroBigintFunction0 {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& out) { out = 0; }
+};
+
+template<typename T>
+struct ZeroBigintFunction1Oid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& out,
+                                const arg_type<int64_t>&) {
+    out = 0;
+  }
+};
+
+template<typename T>
+struct ZeroDoubleFunction1Oid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<double>& out,
+                                const arg_type<int64_t>&) {
+    out = 0.0;
+  }
+};
+
+template<typename T>
+struct ZeroDoubleFunction0 {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<double>& out) { out = 0.0; }
+};
+
+template<typename T>
+struct NullTimestampFunction1Oid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Timestamp>&,
+                                const arg_type<int64_t>&) {
+    return false;  // returns NULL
+  }
+};
+
+template<typename T>
+struct NullTimestampFunction0 {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Timestamp>&) {
+    return false;  // returns NULL
+  }
+};
+
+template<typename T>
+struct NullBigintFunction1Oid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&, const arg_type<int64_t>&) {
+    return false;  // returns NULL
+  }
+};
+
+template<typename T>
+struct NullVarcharFunction1OidInt {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    return false;  // returns NULL
+  }
+};
+
+template<typename T>
+struct GetDatabaseEncodingFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result) {
+    result = "UTF8";
+  }
+};
+
 template<typename T>
 struct AlwaysTrueFunction1Text {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -2461,6 +2545,153 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "get_wal_summarizer_state"});
 
   registerExtractFunctions(prefix);
+
+  // pg_stat_get_* scalar stub functions (used by pg_stat_* views)
+  // These return 0 or NULL as stubs.
+
+  // Functions taking OID, returning bigint (0)
+  for (const auto& name : {
+         "stat_get_numscans",
+         "stat_get_tuples_returned",
+         "stat_get_tuples_fetched",
+         "stat_get_tuples_inserted",
+         "stat_get_tuples_updated",
+         "stat_get_tuples_deleted",
+         "stat_get_tuples_hot_updated",
+         "stat_get_tuples_newpage_updated",
+         "stat_get_live_tuples",
+         "stat_get_dead_tuples",
+         "stat_get_mod_since_analyze",
+         "stat_get_ins_since_vacuum",
+         "stat_get_vacuum_count",
+         "stat_get_autovacuum_count",
+         "stat_get_analyze_count",
+         "stat_get_autoanalyze_count",
+         "stat_get_blocks_fetched",
+         "stat_get_blocks_hit",
+         "stat_get_xact_numscans",
+         "stat_get_xact_tuples_returned",
+         "stat_get_xact_tuples_fetched",
+         "stat_get_xact_tuples_inserted",
+         "stat_get_xact_tuples_updated",
+         "stat_get_xact_tuples_deleted",
+         "stat_get_xact_tuples_hot_updated",
+         "stat_get_xact_tuples_newpage_updated",
+         "stat_get_function_calls",
+         "stat_get_xact_function_calls",
+         "stat_get_db_numbackends",
+         "stat_get_db_xact_commit",
+         "stat_get_db_xact_rollback",
+         "stat_get_db_blocks_fetched",
+         "stat_get_db_blocks_hit",
+         "stat_get_db_tuples_returned",
+         "stat_get_db_tuples_fetched",
+         "stat_get_db_tuples_inserted",
+         "stat_get_db_tuples_updated",
+         "stat_get_db_tuples_deleted",
+         "stat_get_db_conflict_all",
+         "stat_get_db_temp_files",
+         "stat_get_db_temp_bytes",
+         "stat_get_db_deadlocks",
+         "stat_get_db_checksum_failures",
+         "stat_get_db_sessions",
+         "stat_get_db_sessions_abandoned",
+         "stat_get_db_sessions_fatal",
+         "stat_get_db_sessions_killed",
+         "stat_get_db_parallel_workers_to_launch",
+         "stat_get_db_parallel_workers_launched",
+         "stat_get_db_conflict_tablespace",
+         "stat_get_db_conflict_lock",
+         "stat_get_db_conflict_snapshot",
+         "stat_get_db_conflict_bufferpin",
+         "stat_get_db_conflict_startup_deadlock",
+         "stat_get_db_conflict_logicalslot",
+       }) {
+    velox::registerFunction<ZeroBigintFunction1Oid, int64_t, int64_t>(
+      {prefix + name});
+  }
+
+  // Functions taking OID, returning double precision (0.0)
+  for (const auto& name : {
+         "stat_get_total_vacuum_time",
+         "stat_get_total_autovacuum_time",
+         "stat_get_total_analyze_time",
+         "stat_get_total_autoanalyze_time",
+         "stat_get_function_total_time",
+         "stat_get_function_self_time",
+         "stat_get_xact_function_total_time",
+         "stat_get_xact_function_self_time",
+         "stat_get_db_blk_read_time",
+         "stat_get_db_blk_write_time",
+         "stat_get_db_session_time",
+         "stat_get_db_active_time",
+         "stat_get_db_idle_in_transaction_time",
+       }) {
+    velox::registerFunction<ZeroDoubleFunction1Oid, double, int64_t>(
+      {prefix + name});
+  }
+
+  // Functions taking OID, returning timestamp (NULL)
+  for (const auto& name : {
+         "stat_get_lastscan",
+         "stat_get_last_vacuum_time",
+         "stat_get_last_autovacuum_time",
+         "stat_get_last_analyze_time",
+         "stat_get_last_autoanalyze_time",
+         "stat_get_stat_reset_time",
+         "stat_get_function_stat_reset_time",
+         "stat_get_db_stat_reset_time",
+         "stat_get_db_checksum_last_failure",
+       }) {
+    velox::registerFunction<NullTimestampFunction1Oid, velox::Timestamp,
+                            int64_t>({prefix + name});
+  }
+
+  // Parameterless functions returning bigint (0)
+  for (const auto& name : {
+         "stat_get_bgwriter_buf_written_clean",
+         "stat_get_bgwriter_maxwritten_clean",
+         "stat_get_buf_alloc",
+         "stat_get_checkpointer_num_timed",
+         "stat_get_checkpointer_num_requested",
+         "stat_get_checkpointer_num_performed",
+         "stat_get_checkpointer_restartpoints_timed",
+         "stat_get_checkpointer_restartpoints_requested",
+         "stat_get_checkpointer_restartpoints_performed",
+         "stat_get_checkpointer_buffers_written",
+         "stat_get_checkpointer_slru_written",
+       }) {
+    velox::registerFunction<ZeroBigintFunction0, int64_t>({prefix + name});
+  }
+
+  // Parameterless functions returning double precision (0.0)
+  for (const auto& name : {
+         "stat_get_checkpointer_write_time",
+         "stat_get_checkpointer_sync_time",
+       }) {
+    velox::registerFunction<ZeroDoubleFunction0, double>({prefix + name});
+  }
+
+  // Parameterless functions returning timestamp (NULL)
+  for (const auto& name : {
+         "stat_get_bgwriter_stat_reset_time",
+         "stat_get_checkpointer_stat_reset_time",
+       }) {
+    velox::registerFunction<NullTimestampFunction0, velox::Timestamp>(
+      {prefix + name});
+  }
+
+  // pg_sequence_last_value(oid) -> bigint (NULL)
+  velox::registerFunction<NullBigintFunction1Oid, int64_t, int64_t>(
+    {prefix + "sequence_last_value"});
+
+  // getdatabaseencoding() -> text
+  velox::registerFunction<GetDatabaseEncodingFunction, velox::Varchar>(
+    {"getdatabaseencoding"});
+
+  // pg_get_function_arg_default(oid, int) -> text (NULL)
+  velox::registerFunction<NullVarcharFunction1OidInt, velox::Varchar, int64_t,
+                          int64_t>({prefix + "get_function_arg_default"});
 }
 
 }  // namespace sdb::pg::functions

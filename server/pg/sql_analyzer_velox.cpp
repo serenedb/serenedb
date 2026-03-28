@@ -4315,12 +4315,21 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
     }
   });
 
+  std::optional<std::string> ordinality_name;
+  if (node->ordinality && !unnest_exprs.empty()) {
+    ordinality_name = _id_generator.NextColumnName("ordinality");
+    project_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+      velox::BIGINT(), *ordinality_name));
+    project_names.emplace_back(*ordinality_name);
+  }
+
   EnsureRoot(functions_state);
 
   if (!unnest_exprs.empty()) {
     functions_state.root = std::make_shared<lp::UnnestNode>(
       _id_generator.NextPlanId(), std::move(functions_state.root),
-      std::move(unnest_exprs), std::move(unnested_names), std::nullopt);
+      std::move(unnest_exprs), std::move(unnested_names),
+      std::move(ordinality_name));
   }
 
   if (!project_exprs.empty()) {
@@ -6082,7 +6091,29 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
         velox::BOOLEAN(), lp::SpecialForm::kIn, std::move(test_expr),
         std::move(subquery_expr));
     }
-    case ARRAY_SUBLINK:
+    case ARRAY_SUBLINK: {
+      if (subquery_output.size() != 1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("subquery must return only one column"),
+                        CURSOR_POS(ErrorPosition(expr.location)));
+      }
+      auto elem_type = subquery_output.childAt(0);
+      auto array_type = velox::ARRAY(elem_type);
+      auto col_name = subquery_output.nameOf(0);
+      auto input_ref =
+        std::make_shared<lp::InputReferenceExpr>(elem_type, col_name);
+      auto agg_expr = std::make_shared<lp::AggregateExpr>(
+        array_type, "presto_array_agg",
+        std::vector<lp::ExprPtr>{std::move(input_ref)});
+      auto output_name = _id_generator.NextColumnName("array");
+      child_state.root = std::make_shared<lp::AggregateNode>(
+        _id_generator.NextPlanId(), std::move(child_state.root),
+        std::vector<lp::ExprPtr>{},
+        std::vector<lp::AggregateNode::GroupingSet>{},
+        std::vector<lp::AggregateExprPtr>{std::move(agg_expr)},
+        std::vector<std::string>{output_name});
+      return std::make_shared<lp::SubqueryExpr>(std::move(child_state.root));
+    }
     case ALL_SUBLINK:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

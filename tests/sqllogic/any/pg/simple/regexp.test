@@ -141,3 +141,45 @@ SELECT regexp_substr('hello world hello', 'hello', 2);
 ----
 regexp_substr
 hello
+
+
+# regexp_instr with UTF-8 multi-byte strings
+
+query
+SELECT regexp_instr('абвгд', 'вг');
+----
+regexp_instr
+3
+
+query
+SELECT regexp_instr('hello мир world', 'мир');
+----
+regexp_instr
+7
+
+
+# regexp_instr4 with UTF-8 start position
+
+query
+SELECT regexp_instr('абвгд абвгд', 'абв', 3, 1);
+----
+regexp_instr
+7
+
+
+# regexp_count with UTF-8 start position
+
+query
+SELECT regexp_count('абв абв абв', 'абв', 5);
+----
+regexp_count
+2
+
+
+# regexp_substr with UTF-8 start position
+
+query
+SELECT regexp_substr('абв деф абв', 'абв', 2);
+----
+regexp_substr
+абв

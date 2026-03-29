@@ -56,6 +56,7 @@
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
+#include "common/keywords.h"
 #include "utils/errcodes.h"
 LIBPG_QUERY_INCLUDES_END
 
@@ -1192,6 +1193,18 @@ struct ConcatWsFunction {
   }
 };
 
+// octet_length(text) -> integer
+// Returns the number of bytes in the string (not characters).
+template<typename T>
+struct PgOctetLength {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(int64_t& result,
+                                const arg_type<velox::Varchar>& input) {
+    result = static_cast<int64_t>(input.size());
+  }
+};
+
 template<typename T>
 struct QuoteIdentFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -1206,6 +1219,16 @@ struct QuoteIdentFunction {
           needs_quoting = true;
           break;
         }
+      }
+    }
+    // Check if the identifier is a reserved keyword in PostgreSQL.
+    if (!needs_quoting) {
+      // ScanKeywordLookup expects a null-terminated lowercase string.
+      // Our str is already lowercase (passed the char check above).
+      std::string null_terminated{str};
+      int kwnum = ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
+      if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
+        needs_quoting = true;
       }
     }
     if (!needs_quoting) {
@@ -1945,6 +1968,9 @@ void registerFunctions(const std::string& prefix) {
                           Interval, velox::Timestamp>({prefix + "time_plus"});
   velox::registerFunction<TimestampMinusIntervalFunction, velox::Timestamp,
                           velox::Timestamp, Interval>({prefix + "time_minus"});
+
+  velox::registerFunction<PgOctetLength, int64_t, velox::Varchar>(
+    {prefix + "octet_length"});
 
   velox::registerFunction<QuoteIdentFunction, velox::Varchar, velox::Varchar>(
     {prefix + "quote_ident"});

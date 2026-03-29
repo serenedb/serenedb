@@ -494,3 +494,63 @@ SELECT current_setting('application_name');
 ----
 current_setting
 test_app
+
+
+# octet_length: ASCII string (bytes == chars)
+
+query
+SELECT octet_length('hello');
+----
+octet_length
+5
+
+# octet_length: multi-byte UTF-8 string (bytes > chars)
+
+query
+SELECT octet_length('мир');
+----
+octet_length
+6
+
+query
+SELECT length('мир');
+----
+length
+3
+
+
+# quote_ident: reserved words must be quoted
+
+query
+SELECT quote_ident('select');
+----
+quote_ident
+"select"
+
+
+query
+SELECT quote_ident('table');
+----
+quote_ident
+"table"
+
+
+query
+SELECT quote_ident('normal_ident');
+----
+quote_ident
+normal_ident
+
+
+query
+SELECT quote_ident('MixedCase');
+----
+quote_ident
+"MixedCase"
+
+
+query
+SELECT quote_ident('has space');
+----
+quote_ident
+"has space"

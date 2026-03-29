@@ -23,9 +23,7 @@ statement ok
 CREATE FUNCTION pg_cat_add(a INT, b INT) RETURNS INT LANGUAGE SQL AS 'SELECT a + b'
 
 
-# ============================================================
 # pg_database
-# ============================================================
 
 
 # Should list databases with correct metadata
@@ -52,9 +50,7 @@ datcollate	datctype
 en_US.UTF-8	en_US.UTF-8
 
 
-# ============================================================
 # pg_namespace
-# ============================================================
 
 
 # Should have pg_catalog and public schemas
@@ -72,9 +68,7 @@ SELECT count(*) > 0 FROM pg_catalog.pg_namespace WHERE nspname = 'public'
 t
 
 
-# ============================================================
 # pg_class
-# ============================================================
 
 
 # User tables should appear with correct relkind and relnatts
@@ -148,9 +142,7 @@ SELECT relnatts > 0 FROM pg_catalog.pg_class WHERE relname = 'pg_type'
 t
 
 
-# ============================================================
 # pg_attribute
-# ============================================================
 
 
 # Columns for pg_cat_t1 (id, name, value)
@@ -159,7 +151,7 @@ SELECT attname, attnum, attnotnull FROM pg_catalog.pg_attribute WHERE attrelid =
 ----
 attname	attnum	attnotnull
 id	1	t
-name	2	f
+name	2	t
 value	3	f
 
 
@@ -218,9 +210,7 @@ count
 3
 
 
-# ============================================================
 # pg_type
-# ============================================================
 
 
 # Common PG types should exist
@@ -245,9 +235,7 @@ SELECT count(*) > 0 FROM pg_catalog.pg_type WHERE typname = 'bool'
 t
 
 
-# ============================================================
 # pg_index
-# ============================================================
 
 
 # Index on single column
@@ -282,9 +270,7 @@ indisprimary
 f
 
 
-# ============================================================
 # pg_am (access methods)
-# ============================================================
 
 
 # Should have at least heap and btree
@@ -309,9 +295,7 @@ count
 0
 
 
-# ============================================================
 # pg_language
-# ============================================================
 
 
 # Should have internal, c, and sql
@@ -331,9 +315,7 @@ lanpltrusted
 t
 
 
-# ============================================================
 # pg_tablespace
-# ============================================================
 
 
 # Should have pg_default and pg_global
@@ -350,9 +332,7 @@ count
 0
 
 
-# ============================================================
 # pg_proc (functions)
-# ============================================================
 
 
 # Should list user-defined functions (if any) or at least not error
@@ -386,9 +366,7 @@ SELECT count(*) > 0 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON 
 t
 
 
-# ============================================================
 # pg_constraint (constraints)
-# ============================================================
 
 
 # Primary key constraints should be listed
@@ -425,9 +403,7 @@ conenforced
 t
 
 
-# ============================================================
 # pg_authid (roles)
-# ============================================================
 
 
 # Should list at least one role
@@ -454,9 +430,7 @@ rolsuper
 t
 
 
-# ============================================================
 # pg_ts_dict (text search dictionaries / tokenizers)
-# ============================================================
 
 
 # Should not error even if no tokenizers exist
@@ -467,9 +441,7 @@ SELECT count(*) >= 0 FROM pg_catalog.pg_ts_dict
 t
 
 
-# ============================================================
 # information_schema.schemata
-# ============================================================
 
 
 # Should list schemas for the current database
@@ -495,9 +467,7 @@ SELECT count(*) > 0 FROM information_schema.schemata WHERE catalog_name IS NOT N
 t
 
 
-# ============================================================
 # information_schema.tables
-# ============================================================
 
 
 # Should list our test tables
@@ -531,9 +501,7 @@ table_schema
 public
 
 
-# ============================================================
 # information_schema.columns
-# ============================================================
 
 
 # Should list columns for our test tables
@@ -542,7 +510,7 @@ SELECT column_name, ordinal_position, is_nullable, data_type FROM information_sc
 ----
 column_name	ordinal_position	is_nullable	data_type
 id	1	NO	NULL
-name	2	YES	NULL
+name	2	NO	NULL
 value	3	YES	NULL
 
 
@@ -561,7 +529,7 @@ query
 SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'pg_cat_t1' AND column_name = 'name'
 ----
 column_name	is_nullable
-name	YES
+name	NO
 
 
 # data_type should be set
@@ -572,9 +540,7 @@ count
 0
 
 
-# ============================================================
 # information_schema.table_constraints
-# ============================================================
 
 
 # Primary key constraints should appear
@@ -603,9 +569,7 @@ enforced
 YES
 
 
-# ============================================================
 # information_schema.key_column_usage
-# ============================================================
 
 
 # Primary key columns should be listed
@@ -621,9 +585,7 @@ SELECT constraint_name, column_name FROM information_schema.key_column_usage WHE
 constraint_name	column_name
 pg_cat_t2_pkey	a
 
-# ============================================================
 # information_schema.routines
-# ============================================================
 
 
 # Should list our test function
@@ -642,9 +604,7 @@ data_type
 NULL
 
 
-# ============================================================
 # System views (pg_tables, pg_views, pg_roles)
-# ============================================================
 
 
 # pg_tables should list our test tables
@@ -671,9 +631,7 @@ SELECT count(*) > 0 FROM pg_settings
 t
 
 
-# ============================================================
 # Cross-table joins (integration)
-# ============================================================
 
 
 # Join pg_class with pg_namespace to get schema-qualified table names
@@ -708,7 +666,7 @@ SELECT c.relname, a.attname, a.atttypid, a.attnum, a.attnotnull FROM pg_catalog.
 ----
 relname	attname	atttypid	attnum	attnotnull
 pg_cat_t1	id	23	1	t
-pg_cat_t1	name	25	2	f
+pg_cat_t1	name	25	2	t
 pg_cat_t1	value	701	3	f
 
 
@@ -740,9 +698,7 @@ pg_cat_t2_a_not_null	pg_cat_t2	c
 pg_cat_t2_pkey	pg_cat_t2	p
 
 
-# ============================================================
 # Cleanup
-# ============================================================
 
 
 statement ok
@@ -752,6 +708,47 @@ DROP FUNCTION pg_cat_add
 statement ok
 DROP INDEX pg_cat_idx2
 
+
+# pg_attribute: attnotnull for NOT NULL columns
+
+# pg_cat_t1 has: id INT PRIMARY KEY (notnull), name TEXT NOT NULL (notnull), value FLOAT8 (nullable)
+query
+SELECT attname, attnotnull
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'pg_cat_t1')
+ORDER BY attnum;
+----
+attname	attnotnull
+id	t
+name	t
+value	f
+
+
+# pg_constraint: OIDs should be non-zero
+
+query
+SELECT conname, oid <> 0 AS has_oid
+FROM pg_constraint
+WHERE conrelid = (SELECT oid FROM pg_class WHERE relname = 'pg_cat_t1')
+ORDER BY conname;
+----
+conname	has_oid
+pg_cat_t1_id_not_null	t
+pg_cat_t1_name_not_null	t
+pg_cat_t1_pkey	t
+
+
+# pg_proc: provolatile and proparallel return char values
+
+query
+SELECT proname, provolatile, proparallel
+FROM pg_proc
+WHERE proname = 'pg_cat_add';
+----
+proname	provolatile	proparallel
+
+
+# Cleanup
 
 statement ok
 DROP INDEX pg_cat_idx1

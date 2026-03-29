@@ -16,9 +16,7 @@ statement ok
 CREATE INDEX explorer_idx1 ON explorer_t1 USING inverted (name)
 
 
-# ============================================================
 # connection: list databases
-# ============================================================
 
 query T
 SELECT COUNT(*) > 0 FROM
@@ -28,9 +26,7 @@ SELECT COUNT(*) > 0 FROM
 t
 
 
-# ============================================================
 # schemas: list user schemas
-# ============================================================
 
 query IT
 SELECT
@@ -47,9 +43,7 @@ id	name
 <slt:ignore>	public
 
 
-# ============================================================
 # catalogs: list catalog schemas
-# ============================================================
 
 query IT
 SELECT
@@ -67,9 +61,7 @@ id	name
 1000003	information_schema
 
 
-# ============================================================
 # tables: list tables in a schema
-# ============================================================
 
 query IT
 select count(*) > 0 from (SELECT
@@ -87,9 +79,7 @@ WHERE c.relkind IN ('r', 'p')
 t
 
 
-# ============================================================
 # columns: list columns for a table
-# ============================================================
 
 query TTTT
 SELECT
@@ -122,9 +112,7 @@ name	text	NO	NULL
 value	float8(53)	NO	NULL
 
 
-# ============================================================
 # views: list views in a schema
-# ============================================================
 
 query ITT
 SELECT
@@ -146,9 +134,7 @@ ORDER BY v.table_schema, v.table_name
 schema_oid	id	name
 
 
-# ============================================================
 # indexes: list indexes for a table
-# ============================================================
 
 query error
 SELECT

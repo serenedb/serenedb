@@ -86,6 +86,20 @@ SELECT date_bin('1 month'::interval, '2024-01-15 12:00:00'::timestamp, '2024-01-
 db error: ERROR: timestamps cannot be binned into intervals containing months or years
 
 
+# get_byte / get_bit on empty data
+
+statement error
+SELECT get_byte(''::bytea, 0);
+----
+db error: ERROR: index 0 out of valid range, 0..-1
+
+
+statement error
+SELECT get_bit(''::bytea, 0);
+----
+db error: ERROR: index 0 out of valid range, 0..-1
+
+
 # current_setting unknown parameter
 
 statement error

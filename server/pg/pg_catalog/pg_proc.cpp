@@ -120,8 +120,16 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
         .proleakproof = false,
         .proisstrict = opts.strict,
         .proretset = opts.table,
-        .provolatile = opts.state != catalog::FunctionState::Immutable,
-        .proparallel = opts.parallel == catalog::FunctionParallel::Safe,
+        .provolatile = opts.state == catalog::FunctionState::Immutable
+                         ? PgProc::Provolatile::Immutable
+                       : opts.state == catalog::FunctionState::Stable
+                         ? PgProc::Provolatile::Stable
+                         : PgProc::Provolatile::Volatile,
+        .proparallel = opts.parallel == catalog::FunctionParallel::Safe
+                         ? PgProc::Proparallel::Safe
+                       : opts.parallel == catalog::FunctionParallel::Restricted
+                         ? PgProc::Proparallel::Restricted
+                         : PgProc::Proparallel::Unsafe,
         .pronargs = pronargs,
         .pronargdefaults = 0,
         .prorettype = rettype,

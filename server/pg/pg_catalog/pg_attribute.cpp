@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_attribute.h"
 
+#include <absl/container/flat_hash_set.h>
+
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
@@ -28,6 +30,7 @@
 #include "catalog/object.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -105,6 +108,15 @@ void EmitColumnsForTable(const catalog::Table& table,
   auto& columns = table.Columns();
   auto& pk_columns = table.PKColumns();
 
+  // Collect NOT NULL column names from check constraints
+  absl::flat_hash_set<std::string_view> notnull_cols;
+  for (const auto& check : table.CheckConstraints()) {
+    auto [is_notnull, col_name] = check.IsNotNull();
+    if (is_notnull) {
+      notnull_cols.insert(col_name);
+    }
+  }
+
   for (size_t i = 0; i < columns.size(); ++i) {
     auto& col = columns[i];
     auto type_oid = GetTypeOID(col.type);
@@ -137,7 +149,7 @@ void EmitColumnsForTable(const catalog::Table& table,
       .attalign = phys.attalign,
       .attstorage = phys.attstorage,
       .attcompression = PgAttribute::Attcompression::None,
-      .attnotnull = is_pk,
+      .attnotnull = is_pk || notnull_cols.contains(col.name),
       .atthasdef = col.expr != nullptr,
       .atthasmissing = false,
       .attidentity = PgAttribute::Attidentity::None,

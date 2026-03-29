@@ -89,7 +89,7 @@ ORDER BY ordinal_position
 ----
 column_name	is_nullable	ordinal_position	column_default	data_type
 id	NO	1	NULL	int4(32,0)
-nickname	YES	2	NULL	text
+nickname	NO	2	NULL	text
 score	YES	3	NULL	float8(53)
 
 
@@ -238,7 +238,7 @@ ORDER BY a.attnum
 ----
 nspname	relname	attname	data_type	attnotnull
 public	vedernikoff	id	integer	t
-public	vedernikoff	nickname	text	f
+public	vedernikoff	nickname	text	t
 public	vedernikoff	score	double precision	f
 
 

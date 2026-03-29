@@ -276,7 +276,7 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("ascii", VeloxFunction{"spark_ascii", false})
     .Case("left", VeloxFunction{"spark_left", false})
     .Case("overlay", VeloxFunction{"spark_overlay", false})
-    .Case("octet_length", VeloxFunction{"presto_length", false})
+    .Case("octet_length", VeloxFunction{"pg_octet_length", false})
     .Case("regexp_like", VeloxFunction{"presto_regexp_like", false})
     .Case("md5", VeloxFunction{"pg_md5", false})
     .Case("to_hex", VeloxFunction{"pg_to_hex", false})

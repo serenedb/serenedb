@@ -26,6 +26,7 @@
 #include <velox/type/SimpleFunctionApi.h>
 
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <random>
 
@@ -47,6 +48,26 @@ struct PgLogBase {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(double& result, double base, double value) {
+    if (value == 0.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                      ERR_MSG("cannot take logarithm of zero"));
+    }
+    if (value < 0.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                      ERR_MSG("cannot take logarithm of a negative number"));
+    }
+    if (base == 0.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                      ERR_MSG("cannot take logarithm of zero"));
+    }
+    if (base < 0.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                      ERR_MSG("cannot take logarithm of a negative number"));
+    }
+    if (base == 1.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                      ERR_MSG("division by zero"));
+    }
     result = std::log(value) / std::log(base);
   }
 };
@@ -60,6 +81,10 @@ struct PgDiv {
     if (x == 0) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
                       ERR_MSG("division by zero"));
+    }
+    if (y == std::numeric_limits<int64_t>::min() && x == -1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("bigint out of range"));
     }
     result = y / x;
   }
@@ -78,10 +103,20 @@ struct PgGcd {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(int32_t& result, int32_t a, int32_t b) {
+    if (a == std::numeric_limits<int32_t>::min() ||
+        b == std::numeric_limits<int32_t>::min()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("integer out of range"));
+    }
     result = static_cast<int32_t>(std::gcd(a, b));
   }
 
   FOLLY_ALWAYS_INLINE void call(int64_t& result, int64_t a, int64_t b) {
+    if (a == std::numeric_limits<int64_t>::min() ||
+        b == std::numeric_limits<int64_t>::min()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("bigint out of range"));
+    }
     result = std::gcd(a, b);
   }
 };
@@ -91,11 +126,41 @@ struct PgLcm {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(int32_t& result, int32_t a, int32_t b) {
-    result = static_cast<int32_t>(std::lcm(a, b));
+    CallImpl(result, a, b, "integer out of range");
   }
 
   FOLLY_ALWAYS_INLINE void call(int64_t& result, int64_t a, int64_t b) {
-    result = std::lcm(a, b);
+    CallImpl(result, a, b, "bigint out of range");
+  }
+
+ private:
+  template<typename S>
+  FOLLY_ALWAYS_INLINE static std::make_unsigned_t<S> AbsImpl(S s) {
+    if (s >= 0) {
+      return s;
+    }
+    if (s == std::numeric_limits<S>::min()) {
+      return -static_cast<std::make_unsigned_t<S>>(s);
+    }
+    return -s;
+  }
+
+  template<typename S>
+  FOLLY_ALWAYS_INLINE static void CallImpl(S& sr, S s1, S s2, const char* msg) {
+    if (s1 == 0 || s2 == 0) {
+      sr = 0;
+      return;
+    }
+    using U = std::make_unsigned_t<S>;
+    U u1 = AbsImpl(s1) / std::gcd(s1, s2);
+    U u2 = AbsImpl(s2);
+    U ur;
+    if (__builtin_mul_overflow(u1, u2, &ur) ||
+        ur > static_cast<U>(std::numeric_limits<S>::max())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG(msg));
+    }
+    sr = static_cast<S>(ur);
   }
 };
 
@@ -128,7 +193,10 @@ struct PgRandomNormal {
 
   FOLLY_ALWAYS_INLINE void call(double& result, double mean, double stddev) {
     // Box-Muller transform using folly::Random.
-    double u1 = folly::Random::randDouble01();
+    double u1;
+    do {
+      u1 = folly::Random::randDouble01();
+    } while (u1 == 0.0);
     double u2 = folly::Random::randDouble01();
     double z = std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
     result = mean + stddev * z;
@@ -171,7 +239,12 @@ struct PgCotD {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(double& result, double x) {
-    result = 1.0 / std::tan(x * kDegreesToRadians);
+    double t = std::tan(x * kDegreesToRadians);
+    if (t == 0.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                      ERR_MSG("division by zero"));
+    }
+    result = 1.0 / t;
   }
 };
 

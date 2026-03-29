@@ -27,6 +27,7 @@
 #include <velox/type/SimpleFunctionApi.h>
 
 #include "basics/fwd.h"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -37,6 +38,30 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 namespace {
+
+// Count UTF-8 characters in [begin, begin + byte_len).
+size_t Utf8CharCount(const char* begin, size_t byte_len) {
+  auto* it = reinterpret_cast<const irs::byte_type*>(begin);
+  auto* end = it + byte_len;
+  size_t count = 0;
+  while (it < end) {
+    it = irs::utf8_utils::Next(it, end);
+    ++count;
+  }
+  return count;
+}
+
+// Advance n UTF-8 characters from begin, return byte offset from begin.
+// Does not advance past byte_len.
+size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
+  auto* it = reinterpret_cast<const irs::byte_type*>(begin);
+  auto* end = it + byte_len;
+  for (size_t i = 0; i < n && it < end; ++i) {
+    it = irs::utf8_utils::Next(it, end);
+  }
+  return static_cast<size_t>(it -
+                             reinterpret_cast<const irs::byte_type*>(begin));
+}
 
 // Returns capture groups from the first match. If no capture groups,
 // returns the full match. Returns NULL if no match.
@@ -199,8 +224,9 @@ struct PgRegexpInstr {
       result = 0;
       return;
     }
-    // 1-based character position
-    result = static_cast<int64_t>(match.data() - input.data()) + 1;
+    // 1-based character position (count UTF-8 chars up to match start)
+    size_t byte_offset = match.data() - input.data();
+    result = static_cast<int64_t>(Utf8CharCount(text.data(), byte_offset)) + 1;
   }
 
  private:
@@ -248,14 +274,18 @@ struct PgRegexpInstr4 {
     re2::StringPiece input(text.data(), text.size());
     re2::StringPiece match;
 
-    // Convert 1-based start to 0-based byte offset.
-    size_t pos = start > 1 ? static_cast<size_t>(start - 1) : 0;
+    // Convert 1-based character start to 0-based byte offset.
+    size_t pos = start > 1 ? Utf8Advance(text.data(), text.size(),
+                                         static_cast<size_t>(start - 1))
+                           : 0;
     int64_t count = 0;
 
     while (re.Match(input, pos, text.size(), RE2::UNANCHORED, &match, 1)) {
       ++count;
       if (count == n) {
-        result = static_cast<int64_t>(match.data() - input.data()) + 1;
+        size_t byte_offset = match.data() - input.data();
+        result =
+          static_cast<int64_t>(Utf8CharCount(text.data(), byte_offset)) + 1;
         return;
       }
       pos = match.data() + match.size() - input.data();
@@ -355,7 +385,10 @@ struct PgRegexpCount3 {
     re2::StringPiece input(text.data(), text.size());
     re2::StringPiece match;
     int64_t count = 0;
-    size_t pos = start > 1 ? static_cast<size_t>(start - 1) : 0;
+    // Convert 1-based character start to 0-based byte offset.
+    size_t pos = start > 1 ? Utf8Advance(text.data(), text.size(),
+                                         static_cast<size_t>(start - 1))
+                           : 0;
 
     while (re.Match(input, pos, text.size(), RE2::UNANCHORED, &match, 1)) {
       ++count;
@@ -397,7 +430,10 @@ struct PgRegexpSubstr3 {
       *_cache.findOrCompile(velox::StringView(pattern.data(), pattern.size()));
     re2::StringPiece input(text.data(), text.size());
     re2::StringPiece match;
-    size_t pos = start > 1 ? static_cast<size_t>(start - 1) : 0;
+    // Convert 1-based character start to 0-based byte offset.
+    size_t pos = start > 1 ? Utf8Advance(text.data(), text.size(),
+                                         static_cast<size_t>(start - 1))
+                           : 0;
 
     if (!re.Match(input, pos, text.size(), RE2::UNANCHORED, &match, 1)) {
       return false;

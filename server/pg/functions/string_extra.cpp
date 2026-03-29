@@ -217,6 +217,8 @@ template<typename T>
 struct PgStringToArray {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<velox::Varchar>>& result,
                                 const arg_type<velox::Varchar>& input,
                                 const arg_type<velox::Varchar>& delimiter) {
@@ -337,12 +339,17 @@ struct PgDecode {
           if (data.data()[i + 1] == '\\') {
             out += '\\';
             ++i;
-          } else if (i + 3 < data.size()) {
+          } else if (i + 3 < data.size() && data.data()[i + 1] >= '0' &&
+                     data.data()[i + 1] <= '7' && data.data()[i + 2] >= '0' &&
+                     data.data()[i + 2] <= '7' && data.data()[i + 3] >= '0' &&
+                     data.data()[i + 3] <= '7') {
             auto c = static_cast<uint8_t>((data.data()[i + 1] - '0') * 64 +
                                           (data.data()[i + 2] - '0') * 8 +
                                           (data.data()[i + 3] - '0'));
             out += static_cast<char>(c);
             i += 3;
+          } else {
+            out += data.data()[i];
           }
         } else {
           out += data.data()[i];
@@ -365,9 +372,9 @@ struct PgGetByte {
                                 const arg_type<velox::Varbinary>& data,
                                 int32_t offset) {
     if (offset < 0 || offset >= static_cast<int32_t>(data.size())) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-        ERR_MSG("index ", offset, " out of valid range, 0..", data.size() - 1));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("index ", offset, " out of valid range, 0..",
+                              static_cast<int64_t>(data.size()) - 1));
     }
     result = static_cast<uint8_t>(data.data()[offset]);
   }
@@ -381,9 +388,9 @@ struct PgSetByte {
                                 const arg_type<velox::Varbinary>& data,
                                 int32_t offset, int32_t value) {
     if (offset < 0 || offset >= static_cast<int32_t>(data.size())) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-        ERR_MSG("index ", offset, " out of valid range, 0..", data.size() - 1));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("index ", offset, " out of valid range, 0..",
+                              static_cast<int64_t>(data.size()) - 1));
     }
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());
@@ -403,7 +410,7 @@ struct PgGetBit {
     if (byte_idx < 0 || byte_idx >= static_cast<int64_t>(data.size())) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                       ERR_MSG("index ", bit_offset, " out of valid range, 0..",
-                              data.size() * 8 - 1));
+                              static_cast<int64_t>(data.size()) * 8 - 1));
     }
     result = (static_cast<uint8_t>(data.data()[byte_idx]) >> (7 - bit_idx)) & 1;
   }
@@ -421,7 +428,7 @@ struct PgSetBit {
     if (byte_idx < 0 || byte_idx >= static_cast<int64_t>(data.size())) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                       ERR_MSG("index ", bit_offset, " out of valid range, 0..",
-                              data.size() * 8 - 1));
+                              static_cast<int64_t>(data.size()) * 8 - 1));
     }
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());

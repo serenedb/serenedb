@@ -224,3 +224,42 @@ SELECT random_normal(0.0, 1.0) IS NOT NULL AS ok;
 ----
 ok
 t
+
+
+# log with valid inputs
+
+query
+SELECT log(10.0, 100.0) + 0.01;
+----
+?column?
+2.<slt:ignore>
+
+query
+SELECT log(2.0, 8.0) + 0.01;
+----
+?column?
+3.<slt:ignore>
+
+
+# gcd / lcm basic tests
+
+query
+SELECT gcd(12, 8);
+----
+gcd
+4
+
+query
+SELECT lcm(12, 8);
+----
+lcm
+24
+
+
+# cotd with non-zero inputs
+
+query
+SELECT cotd(45) + 0.01;
+----
+?column?
+1.<slt:ignore>

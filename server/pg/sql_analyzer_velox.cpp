@@ -5153,7 +5153,7 @@ velox::TypePtr ResolveWindowFunction(
   if (!signatures) {
     return nullptr;
   }
-  // TODO(mbkkt) mvoe this to velox
+  // TODO(mbkkt) move this to velox
   std::vector<velox::Coercion> selected_coercions;
   auto selected_priority = velox::kImpossibleCoercionCost;
   velox::TypePtr selected_type;
@@ -5887,8 +5887,16 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
       total_composite_fields += param.type->size();
     }
   }
+  // Count named params for reserve (positional + named + composite fields).
+  size_t named_param_count = 0;
+  for (const auto& p : params) {
+    if (!p.name.empty()) {
+      ++named_param_count;
+    }
+  }
   std::vector<std::string> param_keys;
-  param_keys.reserve(total_composite_fields + params.size());
+  param_keys.reserve(total_composite_fields + params.size() +
+                     named_param_count);
   State::FuncParamToExpr param2expr;
   for (size_t i = 0; i < params.size(); ++i) {
     const auto& param = params[i];
@@ -5921,18 +5929,30 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
                                  col_type, std::string{col_name}));
       }
     } else {
-      // Scalar parameter: process the argument normally.
+      // Scalar parameter: process the argument and coerce to parameter type.
       auto arg_expr = ProcessExprNodeImpl(state, arg_node);
-      param2expr.try_emplace(positional_name, std::move(arg_expr));
+      if (param.type && param.type != arg_expr->type()) {
+        arg_expr = MakeCast(param.type, std::move(arg_expr));
+      }
+      param2expr.try_emplace(positional_name, arg_expr);
+      // Also register by named parameter so that function bodies using
+      // named references (e.g. SELECT a + b) can resolve them.
+      if (!param.name.empty()) {
+        param_keys.push_back(param.name);
+        param2expr.try_emplace(std::string_view{param_keys.back()},
+                               std::move(arg_expr));
+      }
     }
   }
 
   // Extract the body expression from the function's SELECT statement and
   // process it inline in the caller's state with the expanded param mappings.
   const auto& function_body = *sql_function.GetStatement()->stmt;
-  SDB_ASSERT(IsA(&function_body, SelectStmt));
+  SDB_ENSURE(IsA(&function_body, SelectStmt), ERROR_BAD_PARAMETER,
+             "SQL function body must be a SELECT statement");
   const auto* select_stmt = castNode(SelectStmt, &function_body);
-  SDB_ASSERT(list_length(select_stmt->targetList) == 1);
+  SDB_ENSURE(list_length(select_stmt->targetList) == 1, ERROR_BAD_PARAMETER,
+             "SQL function body must return exactly one expression");
   const auto* res_target = list_nth_node(ResTarget, select_stmt->targetList, 0);
 
   auto* prev_func_params = state.func_params;
@@ -6108,6 +6128,8 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
         std::move(subquery_expr));
     }
     case ARRAY_SUBLINK: {
+      // TODO(mbkkt) presto_array_agg may not preserve subquery ORDER BY,
+      // but PostgreSQL's ARRAY(SELECT ... ORDER BY) guarantees ordering.
       if (subquery_output.size() != 1) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("subquery must return only one column"),
@@ -6225,6 +6247,9 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
   auto result = MakeCast(std::move(type), std::move(arg));
 
   // varchar(n) cast: truncate to n characters
+  // TODO(mbkkt) PostgreSQL only allows truncation when excess characters are
+  // all spaces, and raises ERRCODE_STRING_DATA_RIGHT_TRUNCATION otherwise.
+  // Currently we silently truncate any characters.
   if (result->type() == velox::VARCHAR()) {
     std::string_view target_name = strVal(llast(type_name.names));
     if (target_name == "varchar" && list_length(type_name.typmods) == 1) {

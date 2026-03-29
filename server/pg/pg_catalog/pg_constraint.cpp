@@ -71,7 +71,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
         conname_storage.push_back(std::string{table->GetName()} + "_pkey");
         conkey_storage.push_back(std::move(conkey));
         values.push_back({
-          .oid = 0,
+          .oid = table->GetId().id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::PrimaryKey,
@@ -100,7 +100,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
         conname_storage.push_back(check.name);
         conkey_storage.emplace_back();
         values.push_back({
-          .oid = 0,
+          .oid = check.id.id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::Check,

@@ -1695,3 +1695,85 @@ SELECT ARRAY(SELECT * FROM (VALUES (1), (2), (3)));
 ----
 array
 {1,2,3}
+
+
+# SQL function with implicit type coercion of arguments ($1/$2 syntax)
+
+statement ok
+CREATE FUNCTION test_coerce_pos(bigint, bigint) RETURNS bigint LANGUAGE SQL AS 'SELECT $1 + $2'
+
+
+query
+SELECT test_coerce_pos(1, 2);
+----
+test_coerce_pos
+3
+
+
+query
+SELECT pg_typeof(test_coerce_pos(1, 2));
+----
+pg_typeof
+bigint
+
+
+statement ok
+DROP FUNCTION test_coerce_pos
+
+
+# SQL function with named parameters and type coercion
+
+statement ok
+CREATE FUNCTION test_coerce_named(a bigint, b bigint) RETURNS bigint LANGUAGE SQL AS 'SELECT a + b'
+
+
+query
+SELECT test_coerce_named(1, 2);
+----
+test_coerce_named
+3
+
+
+query
+SELECT pg_typeof(test_coerce_named(1, 2));
+----
+pg_typeof
+bigint
+
+
+statement ok
+DROP FUNCTION test_coerce_named
+
+
+# Verify coerced argument type inside function body ($1 syntax)
+
+statement ok
+CREATE FUNCTION test_coerce_pos_typeof(bigint) RETURNS text LANGUAGE SQL AS 'SELECT pg_typeof($1)::text'
+
+
+query
+SELECT test_coerce_pos_typeof(1);
+----
+test_coerce_pos_typeof
+bigint
+
+
+statement ok
+DROP FUNCTION test_coerce_pos_typeof
+
+
+# Verify coerced argument type inside function body (named syntax)
+
+statement ok
+CREATE FUNCTION test_coerce_named_typeof(a bigint) RETURNS text LANGUAGE SQL AS 'SELECT pg_typeof(a)::text'
+
+
+query
+SELECT test_coerce_named_typeof(1);
+----
+test_coerce_named_typeof
+bigint
+
+
+statement ok
+DROP FUNCTION test_coerce_named_typeof

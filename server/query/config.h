@@ -208,7 +208,7 @@ class Config : public velox::config::IConfig {
     return Get(key);
   }
 
-  // This is tread unsafe, but I don't want to make it thread safe.
+  // This is thread unsafe, but I don't want to make it thread safe.
   // Instead we should implement thread unsafe functions.
   void SetSetting(std::string_view key, std::string value,
                   bool is_local) const {

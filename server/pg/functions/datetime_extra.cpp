@@ -84,6 +84,10 @@ struct PgMakeTimestamp {
     int64_t total_seconds =
       days * 86400LL + hour * 3600LL + min * 60LL + whole_sec;
     int64_t nanos = static_cast<int64_t>(frac * 1'000'000'000);
+    if (nanos < 0) {
+      --total_seconds;
+      nanos += 1'000'000'000;
+    }
     result = velox::Timestamp(total_seconds, static_cast<uint64_t>(nanos));
   }
 };
@@ -97,9 +101,13 @@ struct PgToTimestampEpoch {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
                                 double epoch_seconds) {
     int64_t secs = static_cast<int64_t>(epoch_seconds);
-    double frac = epoch_seconds - secs;
-    int64_t nanos = static_cast<int64_t>(frac * 1'000'000'000);
-    result = velox::Timestamp(secs, nanos);
+    int64_t nanos =
+      static_cast<int64_t>((epoch_seconds - secs) * 1'000'000'000);
+    if (nanos < 0) {
+      --secs;
+      nanos += 1'000'000'000;
+    }
+    result = velox::Timestamp(secs, static_cast<uint64_t>(nanos));
   }
 };
 
@@ -164,21 +172,24 @@ template<typename T>
 struct PgAge {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<Interval>& result,
-                                const arg_type<velox::Timestamp>& ts1,
-                                const arg_type<velox::Timestamp>& ts2) {
-    // Convert timestamps to tm structs.
-    auto tm1 = velox::functions::getDateTime(ts1, nullptr);
-    auto tm2 = velox::functions::getDateTime(ts2, nullptr);
-
+  FOLLY_ALWAYS_INLINE void compute_age(out_type<Interval>& result,
+                                       const std::tm& tm1, const std::tm& tm2,
+                                       int64_t time_us1, int64_t time_us2) {
     int32_t years = (1900 + tm1.tm_year) - (1900 + tm2.tm_year);
     int32_t months = tm1.tm_mon - tm2.tm_mon;
     int32_t days = tm1.tm_mday - tm2.tm_mday;
 
+    int64_t time_diff = time_us1 - time_us2;
+
+    // Normalize time: borrow from days if time is negative.
+    if (time_diff < 0) {
+      days -= 1;
+      time_diff += 86400'000'000LL;
+    }
+
     // Normalize: borrow from months if days < 0.
     if (days < 0) {
       months -= 1;
-      // Add days in the month of the earlier timestamp (ts2).
       int mon2 = tm2.tm_mon;
       int year2 = 1900 + tm2.tm_year;
       static constexpr int kDaysInMonth[] = {
@@ -198,28 +209,44 @@ struct PgAge {
       months += 12;
     }
 
-    // Calculate time difference (within-day portion).
-    int64_t time_us1 = static_cast<int64_t>(tm1.tm_hour) * 3600'000'000LL +
-                       static_cast<int64_t>(tm1.tm_min) * 60'000'000LL +
-                       static_cast<int64_t>(tm1.tm_sec) * 1'000'000LL;
-    int64_t time_us2 = static_cast<int64_t>(tm2.tm_hour) * 3600'000'000LL +
-                       static_cast<int64_t>(tm2.tm_min) * 60'000'000LL +
-                       static_cast<int64_t>(tm2.tm_sec) * 1'000'000LL;
-    int64_t time_diff = time_us1 - time_us2;
-
-    if (time_diff < 0 && days > 0) {
-      days -= 1;
-      time_diff += 86400'000'000LL;
-    } else if (time_diff > 0 && days < 0) {
-      days += 1;
-      time_diff -= 86400'000'000LL;
-    }
-
     pg::UnpackedInterval iv{};
     iv.month = years * 12 + months;
     iv.day = days;
     iv.time = time_diff;
     result = pg::PackInterval(iv);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<Interval>& result,
+                                const arg_type<velox::Timestamp>& ts1,
+                                const arg_type<velox::Timestamp>& ts2) {
+    // PostgreSQL computes age for the positive direction and negates for
+    // negative intervals to avoid mixed-sign normalization issues.
+    bool negate = (ts1.getSeconds() < ts2.getSeconds() ||
+                   (ts1.getSeconds() == ts2.getSeconds() &&
+                    ts1.getNanos() < ts2.getNanos()));
+
+    const auto& a = negate ? ts2 : ts1;
+    const auto& b = negate ? ts1 : ts2;
+
+    auto tm_a = velox::functions::getDateTime(a, nullptr);
+    auto tm_b = velox::functions::getDateTime(b, nullptr);
+
+    int64_t time_us_a = static_cast<int64_t>(tm_a.tm_hour) * 3600'000'000LL +
+                        static_cast<int64_t>(tm_a.tm_min) * 60'000'000LL +
+                        static_cast<int64_t>(tm_a.tm_sec) * 1'000'000LL;
+    int64_t time_us_b = static_cast<int64_t>(tm_b.tm_hour) * 3600'000'000LL +
+                        static_cast<int64_t>(tm_b.tm_min) * 60'000'000LL +
+                        static_cast<int64_t>(tm_b.tm_sec) * 1'000'000LL;
+
+    compute_age(result, tm_a, tm_b, time_us_a, time_us_b);
+
+    if (negate) {
+      auto iv = pg::UnpackInterval(result);
+      iv.month = -iv.month;
+      iv.day = -iv.day;
+      iv.time = -iv.time;
+      result = pg::PackInterval(iv);
+    }
   }
 };
 
@@ -266,8 +293,14 @@ struct PgDateBin {
                             : ((diff - stride_us + 1) / stride_us) * stride_us;
     int64_t result_us = orig_us + bin;
 
-    result = velox::Timestamp(result_us / 1'000'000LL,
-                              (result_us % 1'000'000LL) * 1000LL);
+    int64_t result_s = result_us / 1'000'000LL;
+    int64_t result_us_rem = result_us % 1'000'000LL;
+    if (result_us_rem < 0) {
+      --result_s;
+      result_us_rem += 1'000'000LL;
+    }
+    result =
+      velox::Timestamp(result_s, static_cast<uint64_t>(result_us_rem * 1000LL));
   }
 };
 

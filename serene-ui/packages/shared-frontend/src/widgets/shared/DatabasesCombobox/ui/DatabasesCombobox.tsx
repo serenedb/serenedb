@@ -13,6 +13,7 @@ import {
     DatabaseIcon,
     ArrowDownIcon,
     Skeleton,
+    LoaderIcon,
 } from "@serene-ui/shared-frontend/shared";
 
 interface DatabasesComboboxProps {
@@ -40,6 +41,9 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
 
     const isLoading =
         isDatabasesLoading || (isConnectionsLoading && !isConnectionsFetched);
+    const [isLoadingAfterConnectionSwitch, setIsLoadingAfterConnectionSwitch] =
+        React.useState(false);
+    const previousConnectionIdRef = React.useRef<number | undefined>(undefined);
 
     const [open, setOpen] = React.useState(false);
 
@@ -64,6 +68,26 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
             label: database,
         }));
     }, [databases]);
+
+    useEffect(() => {
+        const previousConnectionId = previousConnectionIdRef.current;
+        const nextConnectionId = currentConnection.connectionId;
+
+        if (
+            previousConnectionId !== undefined &&
+            previousConnectionId !== nextConnectionId
+        ) {
+            setIsLoadingAfterConnectionSwitch(true);
+        }
+
+        previousConnectionIdRef.current = nextConnectionId;
+    }, [currentConnection.connectionId]);
+
+    useEffect(() => {
+        if (!isDatabasesLoading) {
+            setIsLoadingAfterConnectionSwitch(false);
+        }
+    }, [isDatabasesLoading]);
 
     const panel = (
         <ComboboxPanel
@@ -90,8 +114,19 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
         />
     );
 
+    const panelWithLoader = (
+        <div className="relative">
+            {panel}
+            {isLoadingAfterConnectionSwitch && isDatabasesLoading ? (
+                <div className="bg-background/70 absolute inset-0 z-10 flex items-center justify-center">
+                    <LoaderIcon className="size-5 animate-spin" />
+                </div>
+            ) : null}
+        </div>
+    );
+
     if (variant === "inline") {
-        return panel;
+        return panelWithLoader;
     }
 
     return (
@@ -121,7 +156,7 @@ export const DatabasesCombobox: React.FC<DatabasesComboboxProps> = ({
                 sideOffset={5}
                 variant="secondary"
                 className="w-full p-0">
-                {panel}
+                {panelWithLoader}
             </PopoverContent>
         </Popover>
     );

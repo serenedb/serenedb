@@ -81,7 +81,7 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
                 </div>
 
                 {currentConnection.connectionId === -1 ? (
-                    <ComboboxBanner className="min-h-[258px]">
+                    <ComboboxBanner className="min-h-[188px]">
                         Select database
                     </ComboboxBanner>
                 ) : (

@@ -26,6 +26,8 @@ interface ConnectionsComboboxProps {
     listClassName?: string;
 }
 
+const ADD_CONNECTION_OPTION_VALUE = "__add_connection__";
+
 export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
     currentConnectionId,
     setCurrentConnectionId,
@@ -55,12 +57,19 @@ export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
     const { data: connections, isFetched, isLoading } = useGetConnections();
 
     const options = React.useMemo(() => {
-        return (
+        const connectionOptions =
             connections?.map((connection) => ({
                 value: connection.id.toString(),
                 label: connection.name,
-            })) ?? []
-        );
+            })) ?? [];
+
+        return [
+            ...connectionOptions,
+            {
+                value: ADD_CONNECTION_OPTION_VALUE,
+                label: "Add connection",
+            },
+        ];
     }, [connections]);
 
     const selectedConnectionName = React.useMemo(() => {
@@ -115,22 +124,17 @@ export const ConnectionsCombobox: React.FC<ConnectionsComboboxProps> = ({
             className={cn("bg-transparent", panelClassName)}
             listClassName={listClassName}
             onSelect={(value) => {
+                if (value === ADD_CONNECTION_OPTION_VALUE) {
+                    handleAddConnection();
+                    return;
+                }
+
                 handleSelectConnection(parseInt(value, 10));
 
                 if (variant === "popover") {
                     setOpen(false);
                 }
             }}
-            footer={
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="small"
-                    onClick={handleAddConnection}
-                    className="border-border h-8 w-full justify-start rounded-none border-t px-2 text-xs">
-                    Add connection
-                </Button>
-            }
         />
     );
 

@@ -1,0 +1,55 @@
+query
+SELECT * FROM UNNEST(ARRAY[10, 20, 30]) WITH ORDINALITY AS t(val, idx);
+----
+val	idx
+10	1
+20	2
+30	3
+
+
+query
+SELECT val, idx FROM UNNEST(ARRAY['a', 'b', 'c']) WITH ORDINALITY AS t(val, idx);
+----
+val	idx
+a	1
+b	2
+c	3
+
+
+query
+SELECT idx, val FROM UNNEST(ARRAY[100, 200]) WITH ORDINALITY AS t(val, idx) ORDER BY idx DESC;
+----
+idx	val
+2	200
+1	100
+
+
+query
+SELECT val FROM UNNEST(ARRAY[5, 6, 7]) WITH ORDINALITY AS t(val, idx) WHERE idx > 1;
+----
+val
+6
+7
+
+
+query
+SELECT x, n FROM UNNEST(ARRAY[42]) WITH ORDINALITY AS u(x, n);
+----
+x	n
+42	1
+
+
+query
+SELECT * FROM UNNEST(ARRAY[]::int[]) WITH ORDINALITY AS t(val, idx);
+----
+val	idx
+
+
+query
+SELECT a, b, ord
+FROM UNNEST(ARRAY[1, 2, 3], ARRAY[4, 5, 6]) WITH ORDINALITY AS t(a, b, ord);
+----
+a	b	ord
+1	4	1
+2	5	2
+3	6	3

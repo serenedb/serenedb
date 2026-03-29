@@ -72,7 +72,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-namespace {
 
 inline void ExtractInputFields(
   const velox::core::TypedExprPtr& expr,
@@ -196,8 +195,6 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
 #endif
   return writers;
 }
-
-}  // namespace
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
  public:
@@ -475,8 +472,9 @@ class InvertedIndexTable : public axiom::connector::Table {
       _index{index} {
     auto* source = _table->layouts().front();
     auto layout = std::make_unique<SereneDBTableLayout>(
-      name(), *this, *source->connector(), allColumns(), source->orderColumns(),
-      source->sortOrder());
+      name(), *this, *source->connector(), allColumns(),
+      std::vector<const axiom::connector::Column*>{},
+      std::vector<axiom::connector::SortOrder>{});
     _layouts.push_back(layout.get());
     _layout_handles.push_back(std::move(layout));
   }

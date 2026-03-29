@@ -1,0 +1,265 @@
+# Tests for additional math functions
+
+
+# Hyperbolic functions
+
+query
+SELECT cosh(0);
+----
+cosh
+1
+
+
+query
+SELECT sinh(0);
+----
+sinh
+0
+
+
+query
+SELECT tanh(0);
+----
+tanh
+0
+
+
+query
+SELECT acosh(1);
+----
+acosh
+0
+
+
+query
+SELECT asinh(0);
+----
+asinh
+0
+
+
+query
+SELECT atanh(0);
+----
+atanh
+0
+
+
+# log10
+
+query
+SELECT log10(1000);
+----
+log10
+3
+
+
+query
+SELECT log10(100);
+----
+log10
+2
+
+
+# log with base
+
+query
+SELECT log(2.0, 64.0);
+----
+log
+6<slt:ignore>
+
+
+# cot
+
+query
+SELECT cot(1);
+----
+cot
+0.6420926159343306
+
+
+# factorial
+
+query
+SELECT factorial(5);
+----
+factorial
+120
+
+
+query
+SELECT factorial(0);
+----
+factorial
+1
+
+
+# div
+
+query
+SELECT div(9, 4);
+----
+div
+2
+
+
+query
+SELECT div(-9, 4);
+----
+div
+-2
+
+
+# gcd
+
+query
+SELECT gcd(1071, 462);
+----
+gcd
+21
+
+
+query
+SELECT gcd(0, 5);
+----
+gcd
+5
+
+
+# lcm
+
+query
+SELECT lcm(1071, 462);
+----
+lcm
+23562
+
+
+query
+SELECT lcm(0, 5);
+----
+lcm
+0
+
+
+# Degree trig functions
+
+query
+SELECT sind(30) + 0.01;
+----
+?column?
+0.5<slt:ignore>
+
+
+query
+SELECT cosd(60);
+----
+cosd
+0.5<slt:ignore>
+
+
+query
+SELECT tand(45) + 0.01;
+----
+?column?
+1.<slt:ignore>
+
+
+query
+SELECT cotd(45) + 0.01;
+----
+?column?
+1.<slt:ignore>
+
+
+query
+SELECT asind(0.5) + 0.01;
+----
+?column?
+30.<slt:ignore>
+
+
+query
+SELECT acosd(0.5) + 0.01;
+----
+?column?
+60.<slt:ignore>
+
+
+query
+SELECT atand(1);
+----
+atand
+45
+
+
+query
+SELECT atan2d(1, 0);
+----
+atan2d
+90
+
+
+# erf / erfc
+
+query
+SELECT erf(1.0);
+----
+erf
+0.8427007929497149
+
+
+query
+SELECT erfc(1.0);
+----
+erfc
+0.15729920705028513
+
+
+# random_normal returns a value (non-deterministic, just check it runs)
+
+query
+SELECT random_normal(0.0, 1.0) IS NOT NULL AS ok;
+----
+ok
+t
+
+
+# log with valid inputs
+
+query
+SELECT log(10.0, 100.0) + 0.01;
+----
+?column?
+2.<slt:ignore>
+
+query
+SELECT log(2.0, 8.0) + 0.01;
+----
+?column?
+3.<slt:ignore>
+
+
+# gcd / lcm basic tests
+
+query
+SELECT gcd(12, 8);
+----
+gcd
+4
+
+query
+SELECT lcm(12, 8);
+----
+lcm
+24
+
+
+# cotd with non-zero inputs
+
+query
+SELECT cotd(45) + 0.01;
+----
+?column?
+1.<slt:ignore>

@@ -209,10 +209,12 @@ CREATE INDEX index_ts on tstest USING inverted(b);
 db error: ERROR: Column b has unsupported kind and can not be indexed
 
 
-statement error
+statement ok
 CREATE INDEX index_ts on tstest USING inverted(c);
-----
-db error: ERROR: Column c is VARCHAR but has no text dictionary defined
+
+
+statement ok
+DROP INDEX index_ts;
 
 
 statement error

@@ -33,8 +33,6 @@
 #include <variant>
 #include <vector>
 
-namespace {
-
 struct Dummy {
   int i{};
   double d{};
@@ -190,9 +188,6 @@ void VPackWrite(auto ctx, NonDefaultConstructibleIntLike v) {
   ctx.vpack().add(v.value);
 }
 
-}  // namespace
-namespace {
-
 struct ExplicitIgnore {
   std::string s;
 };
@@ -262,9 +257,6 @@ enum class MyStringEnum {
   Value3 = Value2,
 };
 
-}  // namespace
-namespace {
-
 enum class MyIntEnum {
   Value1 = 1,
   Value2,
@@ -306,7 +298,6 @@ void VPackRead(Context ctx, WithContext& v) {
   v.s = arg.default_string;
 }
 
-}  // namespace
 namespace magic_enum {
 
 template<>

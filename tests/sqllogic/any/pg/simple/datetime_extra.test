@@ -1,0 +1,182 @@
+# Tests for additional date/time functions
+
+
+# make_date
+
+query
+SELECT make_date(2013, 7, 15);
+----
+make_date
+2013-07-15
+
+
+query
+SELECT make_date(2000, 1, 1);
+----
+make_date
+2000-01-01
+
+
+# make_timestamp
+
+query
+SELECT make_timestamp(2013, 7, 15, 8, 15, 23.5);
+----
+make_timestamp
+2013-07-15 08:15:23.5<slt:ignore>
+
+
+query
+SELECT make_timestamp(2000, 1, 1, 0, 0, 0);
+----
+make_timestamp
+2000-01-01 00:00:00
+
+
+# to_timestamp (from unix epoch)
+
+query
+SELECT to_timestamp(0);
+----
+to_timestamp
+1970-01-01 00:00:00<slt:ignore>
+
+
+query
+SELECT to_timestamp(1284352323);
+----
+to_timestamp
+2010-09-13 04:32:03<slt:ignore>
+
+
+# isfinite
+
+query
+SELECT isfinite(date '2001-02-16');
+----
+isfinite
+t
+
+
+query
+SELECT isfinite(timestamp '2001-02-16 12:00:00');
+----
+isfinite
+t
+
+
+# age
+
+query
+SELECT age(timestamp '2001-04-10', timestamp '1957-06-13');
+----
+age
+43 years 9 mons 27 days
+
+
+# date_bin
+
+query
+SELECT date_bin(interval '15 minutes', timestamp '2001-02-16 20:38:40', timestamp '2001-02-16 20:05:00');
+----
+date_bin
+2001-02-16 20:35:00
+
+
+query
+SELECT date_bin(interval '1 hour', timestamp '2001-02-16 20:38:40', timestamp '2001-02-16 00:00:00');
+----
+date_bin
+2001-02-16 20:00:00
+
+
+# clock_timestamp returns non-null
+
+query
+SELECT clock_timestamp() IS NOT NULL AS ok;
+----
+ok
+t
+
+
+# timeofday returns non-empty string
+
+query
+SELECT length(timeofday()) > 0 AS ok;
+----
+ok
+t
+
+
+# to_timestamp with negative epoch (pre-1970)
+
+query
+SELECT to_timestamp(-0.5);
+----
+to_timestamp
+1969-12-31 23:59:59.5<slt:ignore>
+
+query
+SELECT to_timestamp(-86400.25);
+----
+to_timestamp
+1969-12-30 23:59:59.75<slt:ignore>
+
+query
+SELECT to_timestamp(0.0);
+----
+to_timestamp
+1970-01-01 00:00:00<slt:ignore>
+
+
+# make_timestamp with fractional seconds
+
+query
+SELECT make_timestamp(2024, 1, 1, 0, 0, 1.5);
+----
+make_timestamp
+2024-01-01 00:00:01.5<slt:ignore>
+
+query
+SELECT make_timestamp(1969, 12, 31, 23, 59, 59.5);
+----
+make_timestamp
+1969-12-31 23:59:59.5<slt:ignore>
+
+# make_timestamp with sec=60 (wraps to next minute)
+
+query
+SELECT make_timestamp(2024, 1, 1, 0, 0, 60);
+----
+make_timestamp
+2024-01-01 00:01:00<slt:ignore>
+
+
+# date_bin with pre-epoch timestamps
+
+query
+SELECT date_bin('1 hour'::interval, '1969-12-31 23:30:00'::timestamp, '1970-01-01 00:00:00'::timestamp);
+----
+date_bin
+1969-12-31 23:00:00
+
+
+# age with ts1 < ts2 (negative interval)
+
+query
+SELECT age('2000-01-15'::timestamp, '2001-03-20'::timestamp);
+----
+age
+-1 years -2 mons -5 days
+
+query
+SELECT age('2020-06-15'::timestamp, '2020-06-10'::timestamp);
+----
+age
+5 days
+
+query
+SELECT age('2020-01-01'::timestamp, '2020-01-01'::timestamp);
+----
+age
+00:00:00

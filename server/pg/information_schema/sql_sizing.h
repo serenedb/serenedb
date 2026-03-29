@@ -30,11 +30,15 @@ struct SqlSizing {
   static constexpr uint64_t kId = 168;
   static constexpr std::string_view kName = "sql_sizing";
 
-  CharacterData sizing_id;
+  CardinalNumber sizing_id;
   CharacterData sizing_name;
   CardinalNumber supported_value;
   CharacterData comments;
 };
 // NOLINTEND
+
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<SqlSizing>::GetTableData(
+  velox::memory::MemoryPool& pool);
 
 }  // namespace sdb::pg

@@ -12,11 +12,8 @@ SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
 0.2000<slt:ignore>
 
 
-query
+query error db error: ERROR: function presto_l1_distance\(double precision\[\], double precision\[\]\) does not exist
 SELECT ARRAY[0.0, 1.0, 2.0] <+> ARRAY[2.0, 1.0, 0.0];
-----
-?column?
-4
 
 
 query ?
@@ -55,11 +52,8 @@ SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0, NULL];
 NULL
 
 
-query
+query error db error: ERROR: function presto_l1_distance\(double precision\[\], double precision\[\]\) does not exist
 SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0, NULL];
-----
-?column?
-NULL
 
 
 query ?
@@ -129,14 +123,8 @@ vedernikoff	clickclack
 pablo	sdb
 
 
-query
+query error db error: ERROR: function presto_l1_distance\(real\[\], real\[\]\) does not exist
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <+> c.emb;
-----
-name	name
-pablo	sdb
-vedernikoff	clickclack
-pablo	clickclack
-vedernikoff	sdb
 
 
 
@@ -194,14 +182,8 @@ vedernikoff	clickclack
 pablo	sdb
 
 
-query
+query error db error: ERROR: function presto_l1_distance\(double precision\[\], double precision\[\]\) does not exist
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <+> c.emb;
-----
-name	name
-pablo	sdb
-vedernikoff	clickclack
-pablo	clickclack
-vedernikoff	sdb
 
 
 

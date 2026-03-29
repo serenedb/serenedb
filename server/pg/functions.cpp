@@ -1240,16 +1240,19 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
     context.applyToSelectedNoThrow(rows, [&](auto row) {
       auto start = start_vector->valueAt<int64_t>(row);
       auto stop = stop_vector->valueAt<int64_t>(row);
-      int64_t step = step_vector ? step_vector->valueAt<int64_t>(row)
-                                 : (stop >= start ? 1 : -1);
+      int64_t step = step_vector ? step_vector->valueAt<int64_t>(row) : 1;
 
-      VELOX_USER_CHECK_NE(step, 0, "step must not be zero");
-      VELOX_USER_CHECK(step > 0 ? stop >= start : stop <= start,
-                       "step size must be positive for increasing series and "
-                       "negative for decreasing series");
+      if (step == 0) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("step size cannot equal zero"));
+      }
 
-      auto count = static_cast<__int128>(stop - start) / step + 1;
-      VELOX_USER_CHECK_GE(count, 0, "invalid generate_series bounds");
+      // PG returns empty set for invalid bounds, no error.
+      int64_t count = 0;
+      if ((step > 0 && stop >= start) || (step < 0 && stop <= start)) {
+        count =
+          static_cast<int64_t>(static_cast<__int128>(stop - start) / step + 1);
+      }
 
       raw_offsets[row] = total_elements;
       raw_sizes[row] = static_cast<velox::vector_size_t>(count);
@@ -1258,9 +1261,8 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
     });
 
     auto range_vector = std::make_shared<velox::RangeVector>(
-      pool, velox::TypePtr{output_type},
-      /*nulls=*/nullptr, num_rows, std::move(offsets), std::move(sizes),
-      std::move(metas));
+      pool, velox::TypePtr{output_type}, nullptr, num_rows, std::move(offsets),
+      std::move(sizes), std::move(metas));
 
     context.moveOrCopyResult(std::move(range_vector), rows, result);
   }

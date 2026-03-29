@@ -423,3 +423,33 @@ gs	name	sum
 
 statement ok
 DROP TABLE clickclack;
+
+
+query error
+SELECT * FROM generate_series(1, 10, 0);
+----
+db error: ERROR: step size cannot equal zero
+
+
+query
+SELECT * FROM generate_series(5, 1);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_series(1, -5);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_series(5, 1, 1);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_series(1, 5, -1);
+----
+generate_series

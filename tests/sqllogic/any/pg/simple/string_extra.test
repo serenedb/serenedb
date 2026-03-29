@@ -297,6 +297,43 @@ string_to_array
 {one}
 
 
+# string_to_array with null_string (3-arg form)
+
+query
+SELECT string_to_array('a,,b,c', ',', '');
+----
+string_to_array
+{a,NULL,b,c}
+
+
+query
+SELECT string_to_array('a,NULL,b', ',', 'NULL');
+----
+string_to_array
+{a,NULL,b}
+
+
+query
+SELECT string_to_array('a,b,c', ',', 'b');
+----
+string_to_array
+{a,NULL,c}
+
+
+query
+SELECT string_to_array('abc', ',', NULL);
+----
+string_to_array
+{abc}
+
+
+query
+SELECT string_to_array('a,b,c', ',', 'x');
+----
+string_to_array
+{a,b,c}
+
+
 # regexp_like
 
 query

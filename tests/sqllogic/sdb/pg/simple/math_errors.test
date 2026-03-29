@@ -93,7 +93,7 @@ db error: ERROR: date/time field value out of range
 
 
 statement error
-SELECT make_timestamp(2024, 1, 1, 0, 0, 60);
+SELECT make_timestamp(2024, 1, 1, 0, 0, 61);
 ----
 db error: ERROR: date/time field value out of range
 

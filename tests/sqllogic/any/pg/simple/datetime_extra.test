@@ -143,6 +143,14 @@ SELECT make_timestamp(1969, 12, 31, 23, 59, 59.5);
 make_timestamp
 1969-12-31 23:59:59.5<slt:ignore>
 
+# make_timestamp with sec=60 (wraps to next minute)
+
+query
+SELECT make_timestamp(2024, 1, 1, 0, 0, 60);
+----
+make_timestamp
+2024-01-01 00:01:00<slt:ignore>
+
 
 # date_bin with pre-epoch timestamps
 

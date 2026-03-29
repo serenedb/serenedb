@@ -5951,6 +5951,16 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
   SDB_ENSURE(IsA(&function_body, SelectStmt), ERROR_BAD_PARAMETER,
              "SQL function body must be a SELECT statement");
   const auto* select_stmt = castNode(SelectStmt, &function_body);
+  if (select_stmt->fromClause || select_stmt->whereClause ||
+      select_stmt->groupClause || select_stmt->havingClause ||
+      select_stmt->windowClause || select_stmt->distinctClause ||
+      select_stmt->sortClause || select_stmt->limitOffset ||
+      select_stmt->limitCount || select_stmt->op != SETOP_NONE) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("SQL function with FROM/WHERE/GROUP BY/ORDER BY/LIMIT clauses "
+              "is not supported as a scalar expression"));
+  }
   SDB_ENSURE(list_length(select_stmt->targetList) == 1, ERROR_BAD_PARAMETER,
              "SQL function body must return exactly one expression");
   const auto* res_target = list_nth_node(ResTarget, select_stmt->targetList, 0);

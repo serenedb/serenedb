@@ -79,7 +79,7 @@ struct PgMakeTimestamp {
                               absl::Dec(day, absl::kZeroPad2)));
     }
     if (hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0.0 ||
-        sec >= 60.0) {
+        sec > 60.0) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
                       ERR_MSG("date/time field value out of range"));
     }

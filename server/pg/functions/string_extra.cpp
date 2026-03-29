@@ -284,6 +284,86 @@ struct PgStringToArray {
   }
 };
 
+// string_to_array(text, delimiter, null_string) -> text[]
+// Splits text by delimiter; elements equal to null_string become NULL.
+template<typename T>
+struct PgStringToArray3 {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  FOLLY_ALWAYS_INLINE bool callNullable(
+    out_type<velox::Array<velox::Varchar>>& result,
+    const arg_type<velox::Varchar>* input,
+    const arg_type<velox::Varchar>* delimiter,
+    const arg_type<velox::Varchar>* null_string) {
+    // NULL input -> NULL result
+    if (!input) {
+      return false;
+    }
+
+    const char* data = input->data();
+    size_t size = input->size();
+
+    auto add_element = [&](const char* elem_data, size_t elem_len) {
+      if (null_string && elem_len == null_string->size() &&
+          (elem_len == 0 ||
+           std::memcmp(elem_data, null_string->data(), elem_len) == 0)) {
+        result.add_null();
+      } else {
+        result.add_item().setNoCopy(velox::StringView(elem_data, elem_len));
+      }
+    };
+
+    // NULL delimiter: split into individual UTF-8 characters
+    if (!delimiter) {
+      auto* it = reinterpret_cast<const irs::byte_type*>(data);
+      auto* end = it + size;
+      while (it < end) {
+        auto* next = irs::utf8_utils::Next(it, end);
+        auto char_len = static_cast<size_t>(next - it);
+        add_element(reinterpret_cast<const char*>(it), char_len);
+        it = next;
+      }
+      return true;
+    }
+
+    // Empty delimiter: return single-element array (or empty for empty input)
+    if (delimiter->size() == 0) {
+      if (size > 0) {
+        add_element(data, size);
+      }
+      return true;
+    }
+
+    size_t dlen = delimiter->size();
+    size_t pos = 0;
+
+    while (pos <= size) {
+      const char* found = nullptr;
+      if (pos + dlen <= size) {
+        for (size_t i = pos; i + dlen <= size; ++i) {
+          if (std::memcmp(data + i, delimiter->data(), dlen) == 0) {
+            found = data + i;
+            break;
+          }
+        }
+      }
+
+      if (found) {
+        size_t elem_len = found - (data + pos);
+        add_element(data + pos, elem_len);
+        pos = (found - data) + dlen;
+      } else {
+        add_element(data + pos, size - pos);
+        break;
+      }
+    }
+    return true;
+  }
+};
+
 // encode(bytea, format) -> text
 // Supported formats: 'base64', 'hex', 'escape'
 template<typename T>
@@ -559,6 +639,9 @@ void registerStringExtraFunctions(const std::string& prefix) {
     {prefix + "right"});
   velox::registerFunction<PgStringToArray, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(
+    {prefix + "string_to_array"});
+  velox::registerFunction<PgStringToArray3, velox::Array<velox::Varchar>,
+                          velox::Varchar, velox::Varchar, velox::Varchar>(
     {prefix + "string_to_array"});
   velox::registerFunction<PgEncode, velox::Varchar, velox::Varbinary,
                           velox::Varchar>({prefix + "encode"});

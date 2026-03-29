@@ -4501,6 +4501,11 @@ const OpToFuncMap kOpToFunc{
   {"is", "presto_is"},
   {"IS DISTINCT FROM", "presto_distinct_from"},
   {"count_star", "presto_count"},
+  // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
+  {"<->", "presto_l2_squared"},
+  {"<#>", "presto_dot_product"},
+  {"<=>", "presto_cosine_similarity"},
+  {"<+>", "presto_l1_distance"},
 };
 
 const OpToFuncMap kDateIntervalOp{
@@ -5230,7 +5235,9 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
 lp::ExprPtr SqlAnalyzer::ProcessColumnRef(State& state, const ColumnRef& expr) {
   std::string name = NameToStr(expr.fields);
 
-  SDB_ASSERT(state.root);
+  if (!state.root) {
+    ErrorColumnDoesNotExist(name, ExprLocation(&expr));
+  }
 
   if (state.expr_kind == ExprKind::ColumnDefault) {
     THROW_SQL_ERROR(

@@ -50,6 +50,14 @@ VACUUM (UPDATE_INDEXES) t;
 
 statement error
 VACUUM (UPDATE_INDEXES) wrong_t_name;
+----
+db error: ERROR: relation 'wrong_t_name' not found.
+
+
+statement error
+VACUUM (UPDATE_INDEXES) index_t;
+----
+db error: ERROR: relation 'index_t' not found.
 
 
 query

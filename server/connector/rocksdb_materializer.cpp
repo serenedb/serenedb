@@ -30,6 +30,58 @@
 
 namespace sdb::connector {
 
+namespace {
+
+// TODO(mbkkt) benchmark and choose best threshold
+constexpr size_t kMultiGetThreshold = 1;
+constexpr size_t kSeekThreshold = 100;
+
+template<typename DataSource>
+class MultiGetContext {
+ public:
+  static constexpr size_t kBatchSize = 32;  // copied from rocksdb
+
+  MultiGetContext(rocksdb::ColumnFamilyHandle& cf, DataSource& data_source,
+                  const rocksdb::ReadOptions& options)
+    : _cf{cf}, _data_source{data_source}, _read_options{options} {}
+
+  // keys must be sorted by the same order as the rocksdb comparator produces
+  template<typename ValueProcessor>
+  void multiGet(std::span<const rocksdb::Slice> keys,
+                ValueProcessor&& value_processor) {
+    const auto n = keys.size();
+    for (size_t start = 0; start < n; start += kBatchSize) {
+      const auto batch = std::min(kBatchSize, n - start);
+      if (batch <= kMultiGetThreshold) {
+        for (size_t i = 0; i < batch; ++i) {
+          _statuses[i] = _data_source.Get(_read_options, &_cf,
+                                          keys[start + i], &_values[i]);
+        }
+      } else {
+        _data_source.MultiGet(_read_options, &_cf, batch, keys.data() + start,
+                              _values.data(), _statuses.data(),
+                              /*sorted_input=*/true);
+      }
+      for (size_t c = 0; c < batch; ++c) {
+        if (!_statuses[c].ok()) {
+          continue;
+        }
+        value_processor(keys[start + c], _values[c]);
+        _values[c].Reset();
+      }
+    }
+  }
+
+ private:
+  std::array<rocksdb::Status, kBatchSize> _statuses;
+  std::array<rocksdb::PinnableSlice, kBatchSize> _values;
+  rocksdb::ColumnFamilyHandle& _cf;
+  DataSource& _data_source;
+  const rocksdb::ReadOptions& _read_options;
+};
+
+}
+
 RocksDBMaterializer::RocksDBMaterializer(
   velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
   rocksdb::DB* db, rocksdb::Transaction* transaction,
@@ -44,6 +96,8 @@ RocksDBMaterializer::RocksDBMaterializer(
     _column_ids(std::move(column_oids)),
     _effective_column_id(std::move(effective_column_id)),
     _object_key{object_key} {
+  _multiget_buffer_allocator =
+    std::make_unique<facebook::velox::HashStringAllocator>(&_memory_pool);
   SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
              "Only one data source should be specified");
   _read_options.async_io = IsIOUringEnabled();
@@ -68,6 +122,7 @@ const std::string& RocksDBMaterializer::ReadValue(std::string_view full_key) {
 velox::RowVectorPtr RocksDBMaterializer::ReadRows(
   std::span<const std::string> row_keys, velox::VectorPtr scores) {
   std::vector<velox::VectorPtr> columns;
+  _new_batch = true;
   const auto num_columns = _row_type->size();
   if (!num_columns) {
     return velox::BaseVector::create<velox::RowVector>(
@@ -127,6 +182,151 @@ void RocksDBMaterializer::IterateColumnKeys(
   }
 }
 
+template<typename Decoder, typename MultiGetSource>
+void RocksDBMaterializer::MultiGetIterateColumnKeys(
+  std::string_view column_key, std::span<const std::string> row_keys,
+  MultiGetSource& src, const Decoder& func) {
+  constexpr size_t kColumnKeySize =
+    sizeof(ObjectId) + sizeof(catalog::Column::Id);
+
+  MultiGetContext<MultiGetSource> ctx(_cf, src, _read_options);
+  if (_new_batch) {
+    _read_idxs.resize(row_keys.size());
+    absl::c_iota(_read_idxs, 0);
+    absl::c_sort(_read_idxs, [&](size_t lhs, size_t rhs) {
+      return row_keys[lhs] < row_keys[rhs];
+    });
+    _new_batch = false;
+    size_t required_size = kColumnKeySize * row_keys.size();
+    required_size = absl::c_accumulate(
+      row_keys, required_size,
+      [](auto init, const auto& rk) { return init + rk.size(); });
+    SDB_ASSERT(required_size < std::numeric_limits<uint32_t>::max());
+    if (!_multi_get_buffer || _multi_get_buffer->size() < required_size) {
+      if (_multi_get_buffer) {
+        _multiget_buffer_allocator->free(_multi_get_buffer);
+      }
+      _multi_get_buffer = _multiget_buffer_allocator->allocate(
+        static_cast<uint32_t>(required_size));
+    }
+
+    _key_slices.resize(row_keys.size());
+    size_t offset = kColumnKeySize;
+    for (auto idx : _read_idxs) {
+      const auto& key = row_keys[idx];
+      memcpy(_multi_get_buffer->begin() + offset, key.data(), key.size());
+      offset += key.size() + kColumnKeySize;
+    }
+  }
+#ifdef SDB_DEV
+  {
+    SDB_ASSERT(_multi_get_buffer);
+    size_t required_size = kColumnKeySize * row_keys.size();
+    required_size = absl::c_accumulate(
+      row_keys, required_size,
+      [](auto init, const auto& rk) { return init + rk.size(); });
+    SDB_ASSERT(_multi_get_buffer->size() >= required_size);
+  }
+#endif
+  SDB_ASSERT(column_key.size() == kColumnKeySize);
+  size_t offset = 0;
+  for (size_t i = 0; i < _read_idxs.size(); ++i) {
+    memcpy(_multi_get_buffer->begin() + offset, column_key.data(),
+           kColumnKeySize);
+    const auto full_key_size = kColumnKeySize + row_keys[_read_idxs[i]].size();
+    _key_slices[i] = {_multi_get_buffer->begin() + offset, full_key_size};
+    offset += full_key_size;
+  }
+  ctx.multiGet(_key_slices, [&](rocksdb::Slice key,
+                                const rocksdb::PinnableSlice& value) {
+    func(key.ToStringView(), value.ToStringView());
+  });
+}
+
+template<typename Decoder, typename MultiGetSource>
+void RocksDBMaterializer::SeekIterateColumnKeys(
+  std::string_view column_key, catalog::Column::Id column_id,
+  std::span<const std::string> row_keys, MultiGetSource& src,
+  const Decoder& func) {
+  constexpr size_t ColumnKeySize =
+    sizeof(ObjectId) + sizeof(catalog::Column::Id);
+
+  if (_new_batch) {
+    _read_idxs.resize(row_keys.size());
+    absl::c_iota(_read_idxs, 0);
+    absl::c_sort(_read_idxs, [&](size_t lhs, size_t rhs) {
+      return row_keys[lhs] < row_keys[rhs];
+    });
+    size_t required_size = ColumnKeySize * row_keys.size();
+    required_size = absl::c_accumulate(
+      row_keys, required_size,
+      [](auto init, const auto& rk) { return init + rk.size(); });
+    SDB_ASSERT(required_size < std::numeric_limits<uint32_t>::max());
+    if (!_multi_get_buffer || _multi_get_buffer->size() < required_size) {
+      if (_multi_get_buffer) {
+        _multiget_buffer_allocator->free(_multi_get_buffer);
+      }
+      _multi_get_buffer = _multiget_buffer_allocator->allocate(
+        static_cast<uint32_t>(required_size));
+    }
+
+    size_t offset = 0;
+    for (auto idx : _read_idxs) {
+      const auto& key = row_keys[idx];
+      offset += ColumnKeySize;
+      memcpy(_multi_get_buffer->begin() + offset, key.data(), key.size());
+      offset += key.size();
+    }
+    _new_batch = false;
+  }
+  rocksdb::Iterator* column_iterator = nullptr;
+  auto it = _iterators.find(column_id);
+
+  auto make_iterator = [&] {
+    auto it_options = _read_options;
+    it_options.adaptive_readahead = true;
+    it_options.auto_prefix_mode = true;
+    if constexpr (std::is_same_v<MultiGetSource, rocksdb::Transaction>) {
+      return std::unique_ptr<rocksdb::Iterator>(src.GetIterator(it_options, &_cf));
+    } else {
+      return std::unique_ptr<rocksdb::Iterator>(src.NewIterator(it_options, &_cf));
+    }
+  };
+
+  if (it == _iterators.end()) {
+    column_iterator =
+      _iterators
+        .emplace(column_id, make_iterator())
+        .first->second.get();
+  } else {
+    column_iterator = it->second.get();
+  }
+  SDB_ASSERT(column_iterator);
+
+  size_t offset = 0;
+  for (auto idx : _read_idxs) {
+    const auto& key = row_keys[idx];
+    memcpy(_multi_get_buffer->begin() + offset, column_key.data(),
+           ColumnKeySize);
+    SDB_ASSERT(memcmp(_multi_get_buffer->begin() + offset + ColumnKeySize,
+                      key.data(), key.size()) == 0);
+    column_iterator->Seek(rocksdb::Slice(_multi_get_buffer->begin() + offset,
+                                         ColumnKeySize + key.size()));
+    if (!column_iterator->Valid()) {
+      SDB_THROW(ERROR_INTERNAL, "Invalid iterator read sate");
+    }
+    if (column_iterator->key() !=
+        rocksdb::Slice(_multi_get_buffer->begin() + offset,
+                       ColumnKeySize + key.size())) {
+      SDB_THROW(ERROR_INTERNAL, "Missing key");
+    }
+    rocksutils::CheckIteratorStatus(*column_iterator);
+    func(column_iterator->key().ToStringView(),
+         column_iterator->value().ToStringView());
+    offset += ColumnKeySize + key.size();
+  }
+}
+
 velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
   std::span<const std::string> row_keys, catalog::Column::Id column_id,
   velox::TypeKind kind, std::string_view column_key) {
@@ -137,7 +337,7 @@ velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
     return ReadUnknownColumnKeys(row_keys);
   }
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumnKeys, kind,
-                                            row_keys, column_key);
+                                            row_keys, column_key, column_id);
 }
 
 velox::VectorPtr RocksDBMaterializer::ReadGeneratedColumnKeys(
@@ -162,16 +362,33 @@ velox::VectorPtr RocksDBMaterializer::ReadUnknownColumnKeys(
 
 template<velox::TypeKind Kind>
 velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
-  std::span<const std::string> row_keys, std::string_view column_key) {
+  std::span<const std::string> row_keys, std::string_view column_key, catalog::Column::Id column_id) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
   velox::vector_size_t vector_idx = 0;
-  IterateColumnKeys(
-    column_key, row_keys,
-    [&]([[maybe_unused]] std::string_view key, std::string_view value) {
-      ReadScalarType(value, vector_idx++, *result);
-    });
+  auto decoder_func = [&]([[maybe_unused]] std::string_view key,
+                          std::string_view value) {
+    ReadScalarType(value, vector_idx++, *result);
+  };
+  if (row_keys.size() > kSeekThreshold) {
+    if (_db) {
+      SeekIterateColumnKeys(column_key, column_id, row_keys, *_db,
+                            decoder_func);
+    } else {
+      SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction,
+                            decoder_func);
+    }
+  } else if (row_keys.size() > kMultiGetThreshold) {
+    if (_db) {
+      MultiGetIterateColumnKeys(column_key, row_keys, *_db, decoder_func);
+    } else {
+      MultiGetIterateColumnKeys(column_key, row_keys, *_transaction,
+                                decoder_func);
+    }
+  } else {
+    IterateColumnKeys(column_key, row_keys, decoder_func);
+  }
   return result;
 }
 

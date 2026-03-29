@@ -61,6 +61,17 @@ class RocksDBMaterializer {
                          std::span<const std::string> row_keys,
                          const Decoder& func);
 
+  template<typename Decoder, typename MultiGetSource>
+  void MultiGetIterateColumnKeys(std::string_view column_key,
+                                 std::span<const std::string> row_keys,
+                                 MultiGetSource& src, const Decoder& func);
+
+  template<typename Decoder, typename MultiGetSource>
+  void SeekIterateColumnKeys(std::string_view column_key,
+                             catalog::Column::Id column_id,
+                             std::span<const std::string> row_keys,
+                             MultiGetSource& src, const Decoder& func);
+
   velox::VectorPtr ReadGeneratedColumnKeys(
     std::span<const std::string> row_keys);
 
@@ -68,7 +79,7 @@ class RocksDBMaterializer {
 
   template<velox::TypeKind Kind>
   velox::VectorPtr ReadScalarColumnKeys(std::span<const std::string> row_keys,
-                                        std::string_view column_key);
+                                        std::string_view column_key,  catalog::Column::Id column_id);
 
   template<typename T>
   static void ReadScalarType(std::string_view value, velox::vector_size_t idx,
@@ -93,6 +104,14 @@ class RocksDBMaterializer {
   size_t _produced = 0;
   std::string _value_buffer;
   rocksdb::ReadOptions _read_options;
+  std::unique_ptr<velox::HashStringAllocator> _multiget_buffer_allocator;
+  velox::HashStringAllocator::Header* _multi_get_buffer = nullptr;
+  containers::FlatHashMap<catalog::Column::Id,
+                          std::unique_ptr<rocksdb::Iterator>>
+    _iterators;
+  bool _new_batch = true;
+  std::vector<size_t> _read_idxs;
+  std::vector<rocksdb::Slice> _key_slices;
 };
 
 }  // namespace sdb::connector

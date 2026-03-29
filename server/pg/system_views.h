@@ -1508,12 +1508,12 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                AS data_type,
 
              CAST(
-               _pg_char_max_length(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_char_max_length(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS character_maximum_length,
 
              CAST(
-               _pg_char_octet_length(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_char_octet_length(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS character_octet_length,
 
@@ -1526,27 +1526,27 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(co.collname AS sql_identifier) AS collation_name,
 
              CAST(
-               _pg_numeric_precision(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_numeric_precision(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_precision,
 
              CAST(
-               _pg_numeric_precision_radix(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_numeric_precision_radix(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_precision_radix,
 
              CAST(
-               _pg_numeric_scale(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_numeric_scale(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_scale,
 
              CAST(
-               _pg_datetime_precision(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_datetime_precision(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS datetime_precision,
 
              CAST(
-               _pg_interval_type(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_interval_type(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS character_data)
                AS interval_type,
              CAST(null AS cardinal_number) AS interval_precision,
@@ -1810,37 +1810,37 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                AS data_type,
 
              CAST(
-               _pg_char_max_length(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_char_max_length(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS character_maximum_length,
 
              CAST(
-               _pg_char_octet_length(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_char_octet_length(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS character_octet_length,
 
              CAST(
-               _pg_numeric_precision(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_numeric_precision(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_precision,
 
              CAST(
-               _pg_numeric_precision_radix(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_numeric_precision_radix(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_precision_radix,
 
              CAST(
-               _pg_numeric_scale(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_numeric_scale(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_scale,
 
              CAST(
-               _pg_datetime_precision(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_datetime_precision(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS datetime_precision,
 
              CAST(
-               _pg_interval_type(_pg_truetypid(a, t), _pg_truetypmod(a, t))
+               information_schema._pg_interval_type(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS character_data)
                AS interval_type,
              CAST(null AS cardinal_number) AS interval_precision,
@@ -2057,12 +2057,12 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                AS data_type,
 
              CAST(
-               _pg_char_max_length(t.typbasetype, t.typtypmod)
+               information_schema._pg_char_max_length(t.typbasetype, t.typtypmod)
                AS cardinal_number)
                AS character_maximum_length,
 
              CAST(
-               _pg_char_octet_length(t.typbasetype, t.typtypmod)
+               information_schema._pg_char_octet_length(t.typbasetype, t.typtypmod)
                AS cardinal_number)
                AS character_octet_length,
 
@@ -2075,27 +2075,27 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(co.collname AS sql_identifier) AS collation_name,
 
              CAST(
-               _pg_numeric_precision(t.typbasetype, t.typtypmod)
+               information_schema._pg_numeric_precision(t.typbasetype, t.typtypmod)
                AS cardinal_number)
                AS numeric_precision,
 
              CAST(
-               _pg_numeric_precision_radix(t.typbasetype, t.typtypmod)
+               information_schema._pg_numeric_precision_radix(t.typbasetype, t.typtypmod)
                AS cardinal_number)
                AS numeric_precision_radix,
 
              CAST(
-               _pg_numeric_scale(t.typbasetype, t.typtypmod)
+               information_schema._pg_numeric_scale(t.typbasetype, t.typtypmod)
                AS cardinal_number)
                AS numeric_scale,
 
              CAST(
-               _pg_datetime_precision(t.typbasetype, t.typtypmod)
+               information_schema._pg_datetime_precision(t.typbasetype, t.typtypmod)
                AS cardinal_number)
                AS datetime_precision,
 
              CAST(
-               _pg_interval_type(t.typbasetype, t.typtypmod)
+               information_schema._pg_interval_type(t.typbasetype, t.typtypmod)
                AS character_data)
                AS interval_type,
              CAST(null AS cardinal_number) AS interval_precision,
@@ -2147,9 +2147,9 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(nr.nspname AS sql_identifier) AS table_schema,
              CAST(r.relname AS sql_identifier) AS table_name,
              CAST(a.attname AS sql_identifier) AS column_name,
-             CAST(nullif(array_position(c.conkey, a.attnum), 0) AS cardinal_number) AS ordinal_position,
+             CAST(array_position(c.conkey, a.attnum) AS cardinal_number) AS ordinal_position,
              CAST(CASE WHEN c.contype = 'f' THEN
-                    nullif(array_position(i.indkey, c.confkey[array_position(c.conkey, a.attnum)]), 0)
+                    array_position(i.indkey, c.confkey[array_position(c.conkey, a.attnum)])
                   ELSE NULL
                   END AS cardinal_number)
                AS position_in_unique_constraint
@@ -2158,7 +2158,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       INNER JOIN pg_namespace nr ON nr.oid = r.relnamespace
       INNER JOIN pg_namespace nc ON nc.oid = c.connamespace
       INNER JOIN pg_attribute a ON a.attrelid = r.oid
-                                   AND nullif(array_position(c.conkey, a.attnum), 0) IS NOT NULL
+                                   AND array_position(c.conkey, a.attnum) IS NOT NULL
                                    AND NOT a.attisdropped
       LEFT JOIN pg_index i ON i.indexrelid = c.conindid
       WHERE c.contype IN ('p', 'u', 'f')
@@ -2595,7 +2595,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(nc.nspname AS sql_identifier) AS sequence_schema,
              CAST(c.relname AS sql_identifier) AS sequence_name,
              CAST(format_type(s.seqtypid, null) AS character_data) AS data_type,
-             CAST(_pg_numeric_precision(s.seqtypid, -1) AS cardinal_number) AS numeric_precision,
+             CAST(information_schema._pg_numeric_precision(s.seqtypid, -1) AS cardinal_number) AS numeric_precision,
              CAST(2 AS cardinal_number) AS numeric_precision_radix,
              CAST(0 AS cardinal_number) AS numeric_scale,
              CAST(s.seqstart AS character_data) AS start_value,
@@ -3423,7 +3423,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              authorization_identifier,
              CAST(NULL AS character_data) AS library_name,
              foreign_data_wrapper_language
-      FROM _pg_foreign_data_wrappers w;)",
+      FROM information_schema._pg_foreign_data_wrappers w;)",
 
   // R"(GRANT SELECT ON foreign_data_wrappers TO PUBLIC;)",
 
@@ -3469,7 +3469,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              foreign_server_type,
              foreign_server_version,
              authorization_identifier
-      FROM _pg_foreign_servers;)",
+      FROM information_schema._pg_foreign_servers;)",
 
   // R"(GRANT SELECT ON foreign_servers TO PUBLIC;)",
 
@@ -3519,7 +3519,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              foreign_table_name,
              foreign_server_catalog,
              foreign_server_name
-      FROM _pg_foreign_tables;)",
+      FROM information_schema._pg_foreign_tables;)",
 
   // R"(GRANT SELECT ON foreign_tables TO PUBLIC;)",
 
@@ -3534,7 +3534,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              s.foreign_server_name,
              s.authorization_identifier AS srvowner
       FROM pg_user_mapping um LEFT JOIN pg_authid u ON (u.oid = um.umuser),
-           _pg_foreign_servers s
+           information_schema._pg_foreign_servers s
       WHERE s.oid = um.umserver;)",
 
   // 24.13
@@ -3558,7 +3558,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       SELECT authorization_identifier,
              foreign_server_catalog,
              foreign_server_name
-      FROM _pg_user_mappings;)",
+      FROM information_schema._pg_user_mappings;)",
 
   // R"(GRANT SELECT ON user_mappings TO PUBLIC;)",
   // clang-format on

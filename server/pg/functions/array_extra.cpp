@@ -29,6 +29,38 @@
 namespace sdb::pg::functions {
 namespace {
 
+// array_position(anyarray, element) -> bigint
+// Returns the 1-based position of the first occurrence, or NULL if not found.
+template<typename T>
+struct PgArrayPosition {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result,
+                                const arg_type<velox::Array<velox::Varchar>>& arr,
+                                const arg_type<velox::Varchar>& elem) {
+    for (auto i = 0; i < arr.size(); ++i) {
+      if (arr[i].has_value() && arr[i].value() == elem) {
+        result = i + 1;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result,
+                                const arg_type<velox::Array<int64_t>>& arr,
+                                const int64_t& elem) {
+    for (auto i = 0; i < arr.size(); ++i) {
+      if (arr[i].has_value() && arr[i].value() == elem) {
+        result = i + 1;
+        return true;
+      }
+    }
+    return false;
+  }
+};
+
+// array_positions(anyarray, element) -> int[]
 // Returns an array of the 1-based positions of all occurrences of the element.
 template<typename T>
 struct PgArrayPositions {
@@ -45,12 +77,6 @@ struct PgArrayPositions {
     }
     return true;
   }
-};
-
-// int64 overload
-template<typename T>
-struct PgArrayPositionsInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<int32_t>>& result,
                                 const arg_type<velox::Array<int64_t>>& arr,
@@ -88,11 +114,6 @@ struct PgArrayReplace {
     }
     return true;
   }
-};
-
-template<typename T>
-struct PgArrayReplaceInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<int64_t>>& result,
                                 const arg_type<velox::Array<int64_t>>& arr,
@@ -110,124 +131,26 @@ struct PgArrayReplaceInt {
   }
 };
 
-// Concatenate two arrays.
-template<typename T>
-struct PgArrayCat {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(
-    out_type<velox::Array<velox::Varchar>>& result,
-    const arg_type<velox::Array<velox::Varchar>>& a,
-    const arg_type<velox::Array<velox::Varchar>>& b) {
-    for (auto i = 0; i < a.size(); ++i) {
-      if (a[i].has_value()) {
-        result.add_item().copy_from(a[i].value());
-      } else {
-        result.add_null();
-      }
-    }
-    for (auto i = 0; i < b.size(); ++i) {
-      if (b[i].has_value()) {
-        result.add_item().copy_from(b[i].value());
-      } else {
-        result.add_null();
-      }
-    }
-    return true;
-  }
-};
-
-template<typename T>
-struct PgArrayCatInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<int64_t>>& result,
-                                const arg_type<velox::Array<int64_t>>& a,
-                                const arg_type<velox::Array<int64_t>>& b) {
-    for (auto i = 0; i < a.size(); ++i) {
-      if (a[i].has_value()) {
-        result.add_item() = a[i].value();
-      } else {
-        result.add_null();
-      }
-    }
-    for (auto i = 0; i < b.size(); ++i) {
-      if (b[i].has_value()) {
-        result.add_item() = b[i].value();
-      } else {
-        result.add_null();
-      }
-    }
-    return true;
-  }
-};
-
-// array_prepend(element, anyarray) -> anyarray
-template<typename T>
-struct PgArrayPrepend {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(
-    out_type<velox::Array<velox::Varchar>>& result,
-    const arg_type<velox::Varchar>& elem,
-    const arg_type<velox::Array<velox::Varchar>>& arr) {
-    result.add_item().copy_from(elem);
-    for (auto i = 0; i < arr.size(); ++i) {
-      if (arr[i].has_value()) {
-        result.add_item().copy_from(arr[i].value());
-      } else {
-        result.add_null();
-      }
-    }
-    return true;
-  }
-};
-
-template<typename T>
-struct PgArrayPrependInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<int64_t>>& result,
-                                const int64_t& elem,
-                                const arg_type<velox::Array<int64_t>>& arr) {
-    result.add_item() = elem;
-    for (auto i = 0; i < arr.size(); ++i) {
-      if (arr[i].has_value()) {
-        result.add_item() = arr[i].value();
-      } else {
-        result.add_null();
-      }
-    }
-    return true;
-  }
-};
-
 }  // namespace
 
 void registerArrayExtraFunctions(const std::string& prefix) {
+  velox::registerFunction<PgArrayPosition, int64_t,
+                          velox::Array<velox::Varchar>, velox::Varchar>(
+    {prefix + "array_position"});
+  velox::registerFunction<PgArrayPosition, int64_t, velox::Array<int64_t>,
+                          int64_t>({prefix + "array_position"});
   velox::registerFunction<PgArrayPositions, velox::Array<int32_t>,
                           velox::Array<velox::Varchar>, velox::Varchar>(
     {prefix + "array_positions"});
-  velox::registerFunction<PgArrayPositionsInt, velox::Array<int32_t>,
+  velox::registerFunction<PgArrayPositions, velox::Array<int32_t>,
                           velox::Array<int64_t>, int64_t>(
     {prefix + "array_positions"});
   velox::registerFunction<PgArrayReplace, velox::Array<velox::Varchar>,
                           velox::Array<velox::Varchar>, velox::Varchar,
                           velox::Varchar>({prefix + "array_replace"});
-  velox::registerFunction<PgArrayReplaceInt, velox::Array<int64_t>,
+  velox::registerFunction<PgArrayReplace, velox::Array<int64_t>,
                           velox::Array<int64_t>, int64_t, int64_t>(
     {prefix + "array_replace"});
-  velox::registerFunction<PgArrayCat, velox::Array<velox::Varchar>,
-                          velox::Array<velox::Varchar>,
-                          velox::Array<velox::Varchar>>({prefix + "array_cat"});
-  velox::registerFunction<PgArrayCatInt, velox::Array<int64_t>,
-                          velox::Array<int64_t>, velox::Array<int64_t>>(
-    {prefix + "array_cat"});
-  velox::registerFunction<PgArrayPrepend, velox::Array<velox::Varchar>,
-                          velox::Varchar, velox::Array<velox::Varchar>>(
-    {prefix + "array_prepend"});
-  velox::registerFunction<PgArrayPrependInt, velox::Array<int64_t>, int64_t,
-                          velox::Array<int64_t>>({prefix + "array_prepend"});
 }
 
 }  // namespace sdb::pg::functions

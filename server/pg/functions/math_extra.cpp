@@ -46,18 +46,13 @@ struct PgLogBase {
 
 // Integer quotient of y/x (truncates towards zero).
 template<typename T>
-struct PgDivInt {
+struct PgDiv {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(int64_t& result, int64_t y, int64_t x) {
     VELOX_USER_CHECK(x != 0, "division by zero");
     result = y / x;
   }
-};
-
-template<typename T>
-struct PgDivDouble {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(int64_t& result, double y, double x) {
     VELOX_USER_CHECK(x != 0.0, "division by zero");
@@ -219,9 +214,9 @@ struct PgSetSeed {
 void registerMathExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgLogBase, double, double, double>({prefix + "log"});
 
-  velox::registerFunction<PgDivInt, int64_t, int64_t, int64_t>(
+  velox::registerFunction<PgDiv, int64_t, int64_t, int64_t>(
     {prefix + "div"});
-  velox::registerFunction<PgDivDouble, int64_t, double, double>(
+  velox::registerFunction<PgDiv, int64_t, double, double>(
     {prefix + "div"});
 
   velox::registerFunction<PgGcd, int32_t, int32_t, int32_t>({prefix + "gcd"});

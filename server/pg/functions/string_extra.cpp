@@ -20,10 +20,10 @@
 
 #include "pg/functions/string_extra.h"
 
+#include <absl/strings/escaping.h>
 #include <openssl/evp.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
-#include <velox/common/encode/Base64.h>
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/type/SimpleFunctionApi.h>
@@ -273,21 +273,16 @@ struct PgEncode {
                                 const arg_type<velox::Varchar>& format) {
     std::string_view fmt(format.data(), format.size());
     if (fmt == "hex") {
-      static constexpr char kHex[] = "0123456789abcdef";
-      result.resize(data.size() * 2);
-      auto* out = result.data();
-      for (size_t i = 0; i < data.size(); ++i) {
-        auto byte = static_cast<uint8_t>(data.data()[i]);
-        out[i * 2] = kHex[byte >> 4];
-        out[i * 2 + 1] = kHex[byte & 0xf];
-      }
+      auto encoded =
+        absl::BytesToHexString(absl::string_view(data.data(), data.size()));
+      result.resize(encoded.size());
+      std::memcpy(result.data(), encoded.data(), encoded.size());
     } else if (fmt == "base64") {
-      auto encoded = velox::encoding::Base64::encode(
-        folly::StringPiece(data.data(), data.size()));
+      auto encoded =
+        absl::Base64Escape(absl::string_view(data.data(), data.size()));
       result.resize(encoded.size());
       std::memcpy(result.data(), encoded.data(), encoded.size());
     } else if (fmt == "escape") {
-      // Escape encoding: non-printable bytes as octal, backslash doubled.
       std::string out;
       out.reserve(data.size());
       for (size_t i = 0; i < data.size(); ++i) {
@@ -321,17 +316,19 @@ struct PgDecode {
                                 const arg_type<velox::Varchar>& format) {
     std::string_view fmt(format.data(), format.size());
     if (fmt == "hex") {
-      VELOX_USER_CHECK(data.size() % 2 == 0, "invalid hexadecimal data");
-      result.resize(data.size() / 2);
-      auto* out = result.data();
-      for (size_t i = 0; i < data.size(); i += 2) {
-        auto hi = hexVal(data.data()[i]);
-        auto lo = hexVal(data.data()[i + 1]);
-        out[i / 2] = static_cast<char>((hi << 4) | lo);
-      }
+      std::string decoded;
+      VELOX_USER_CHECK(
+        absl::HexStringToBytes(absl::string_view(data.data(), data.size()),
+                                &decoded),
+        "invalid hexadecimal data");
+      result.resize(decoded.size());
+      std::memcpy(result.data(), decoded.data(), decoded.size());
     } else if (fmt == "base64") {
-      auto decoded = velox::encoding::Base64::decode(
-        folly::StringPiece(data.data(), data.size()));
+      std::string decoded;
+      VELOX_USER_CHECK(
+        absl::Base64Unescape(absl::string_view(data.data(), data.size()),
+                              &decoded),
+        "invalid base64 data");
       result.resize(decoded.size());
       std::memcpy(result.data(), decoded.data(), decoded.size());
     } else if (fmt == "escape") {
@@ -358,21 +355,6 @@ struct PgDecode {
     } else {
       VELOX_USER_CHECK(false, "unrecognized encoding: {}", fmt);
     }
-  }
-
- private:
-  static uint8_t hexVal(char c) {
-    if (c >= '0' && c <= '9') {
-      return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-      return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F') {
-      return c - 'A' + 10;
-    }
-    VELOX_USER_CHECK(false, "invalid hexadecimal digit: {}", c);
-    return 0;
   }
 };
 

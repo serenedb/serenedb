@@ -131,8 +131,7 @@ void ResolveFunction(ObjectId database,
 
   // information_schema functions (explicitly qualified or by unqualified name
   // for _pg_* helpers used by information_schema views)
-  if (name.schema == StaticStrings::kInformationSchema ||
-      name.relation.starts_with("_pg_")) {
+  if (name.schema == StaticStrings::kInformationSchema) {
     if (auto object = pg::GetInfoSchemaFunction(name.relation)) {
       const auto* func = object.get();
       data.object = std::move(object);
@@ -186,8 +185,7 @@ void ResolveRelation(ObjectId database,
   }
 
   // information_schema views/tables (explicitly qualified or _pg_* helpers)
-  if (name.schema == StaticStrings::kInformationSchema ||
-      name.relation.starts_with("_pg_")) {
+  if (name.schema == StaticStrings::kInformationSchema) {
     ResolveInformationSchema(database, name.relation, data, config);
     if (data.object) {
       if (data.object->GetType() == catalog::ObjectType::View) {

@@ -370,7 +370,7 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("date_bin", VeloxFunction{"pg_date_bin", false})
     .Case("gen_random_uuid", VeloxFunction{"presto_uuid", false})
     // Array functions
-    .Case("array_position", VeloxFunction{"presto_array_position", false})
+    .Case("array_position", VeloxFunction{"pg_array_position", false})
     .Case("cardinality", VeloxFunction{"presto_cardinality", false})
     .Case("array_length", VeloxFunction{"pg_array_length", false})
     .Case("array_to_string",
@@ -383,8 +383,8 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("array_append", VeloxFunction{"spark_array_append", false})
     .Case("array_positions", VeloxFunction{"pg_array_positions", false})
     .Case("array_replace", VeloxFunction{"pg_array_replace", false})
-    .Case("array_cat", VeloxFunction{"pg_array_cat", false})
-    .Case("array_prepend", VeloxFunction{"pg_array_prepend", false})
+    .Case("array_cat", VeloxFunction{"presto_concat", false})
+    .Case("array_prepend", VeloxFunction{"spark_array_prepend", false})
     .Case("array_ndims", VeloxFunction{"pg_array_ndims", false})
     .Case("array_lower", VeloxFunction{"pg_array_lower", false})
     .Case("array_upper", VeloxFunction{"pg_array_upper", false})

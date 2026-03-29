@@ -27,6 +27,9 @@
 #include <velox/functions/prestosql/DateTimeImpl.h>
 #include <velox/type/SimpleFunctionApi.h>
 
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
+
 #include <chrono>
 
 #include "basics/fwd.h"
@@ -108,14 +111,10 @@ struct PgTimeofday {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result) {
-    auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    std::tm tm{};
-    gmtime_r(&time_t, &tm);
-    char buf[128];
-    auto len = strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y UTC", &tm);
-    result.resize(len);
-    std::memcpy(result.data(), buf, len);
+    auto formatted =
+      absl::FormatTime("%a %b %d %H:%M:%S %Y %Z", absl::Now(), absl::UTCTimeZone());
+    result.resize(formatted.size());
+    std::memcpy(result.data(), formatted.data(), formatted.size());
   }
 };
 

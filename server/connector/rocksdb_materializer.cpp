@@ -63,10 +63,7 @@ class MultiGetContext {
                               /*sorted_input=*/true);
       }
       for (size_t c = 0; c < batch; ++c) {
-        if (!_statuses[c].ok()) {
-          continue;
-        }
-        value_processor(keys[start + c], _values[c]);
+        value_processor(keys[start + c], _values[c], _statuses[c]);
         _values[c].Reset();
       }
     }
@@ -171,12 +168,10 @@ void RocksDBMaterializer::IterateColumnKeys(
   std::string_view column_key, std::span<const std::string> row_keys,
   const Decoder& func) {
   std::string buffer(column_key);
-  auto cur = row_keys.begin();
-  while (cur != row_keys.end()) {
+  for (size_t idx = 0; idx < row_keys.size(); ++idx) {
     buffer.resize(column_key.size());
-    buffer.append(*cur);
-    func(buffer, ReadValue(buffer));
-    ++cur;
+    buffer.append(row_keys[idx]);
+    func(idx, buffer, ReadValue(buffer));
   }
 }
 
@@ -235,10 +230,17 @@ void RocksDBMaterializer::MultiGetIterateColumnKeys(
     _key_slices[i] = {_multi_get_buffer->begin() + offset, full_key_size};
     offset += full_key_size;
   }
-  ctx.multiGet(_key_slices, [&](rocksdb::Slice key,
-                                const rocksdb::PinnableSlice& value) {
-    func(key.ToStringView(), value.ToStringView());
-  });
+  size_t sorted_pos = 0;
+  ctx.multiGet(
+    _key_slices, [&](rocksdb::Slice key, const rocksdb::PinnableSlice& value,
+                     rocksdb::Status status) {
+      if (!status.ok()) {
+        auto res = sdb::rocksutils::ConvertStatus(status);
+        SDB_THROW(res.errorNumber(),
+                  "Failed to read value by PK: ", res.errorMessage());
+      }
+      func(_read_idxs[sorted_pos++], key.ToStringView(), value.ToStringView());
+    });
 }
 
 template<typename Decoder, typename MultiGetSource>
@@ -319,7 +321,7 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
       SDB_THROW(ERROR_INTERNAL, "Missing key");
     }
     rocksutils::CheckIteratorStatus(*column_iterator);
-    func(column_iterator->key().ToStringView(),
+    func(idx, column_iterator->key().ToStringView(),
          column_iterator->value().ToStringView());
     offset += ColumnKeySize + key.size();
   }
@@ -364,10 +366,9 @@ velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
-  velox::vector_size_t vector_idx = 0;
-  auto decoder_func = [&]([[maybe_unused]] std::string_view key,
+  auto decoder_func = [&](size_t original_idx, [[maybe_unused]] std::string_view key,
                           std::string_view value) {
-    ReadScalarType(value, vector_idx++, *result);
+    ReadScalarType(value, static_cast<velox::vector_size_t>(original_idx), *result);
   };
   if (row_keys.size() > kSeekThreshold) {
     if (_db) {

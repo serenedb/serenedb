@@ -5130,6 +5130,25 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   }
 
   if (lang == catalog::FunctionLanguage::VeloxNative) {
+    // substring(string, pattern, escape) — SQL SIMILAR substring extraction.
+    // Rewrite to: regexp_extract(string, similar_to_escape(pattern, escape))
+    if (name == "presto_substring" && args.size() == 3 &&
+        args[1]->type()->isVarchar() && args[2]->type()->isVarchar()) {
+      auto pattern = ResolveVeloxFunctionAndInferArgsCommonType(
+        "pg_similar_to_escape", {std::move(args[1]), std::move(args[2])});
+      return ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_regexp_extract", {std::move(args[0]), std::move(pattern)});
+    }
+    // regexp_like(string, pattern, flags) -> boolean
+    // Rewrite to: regexp_like(string, concat('(?', flags, ')', pattern))
+    if (name == "presto_regexp_like" && args.size() == 3) {
+      auto pattern = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_concat",
+        {MakeConst("(?", velox::VARCHAR()), std::move(args[2]),
+         MakeConst(")", velox::VARCHAR()), std::move(args[1])});
+      return ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_regexp_like", {std::move(args[0]), std::move(pattern)});
+    }
     return ResolveVeloxFunctionAndInferArgsCommonType(std::string{name},
                                                       std::move(args));
   }
@@ -5422,6 +5441,17 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"regtype", pg::REGTYPE()},
   {"regclass", pg::REGCLASS()},
   {"regnamespace", pg::REGNAMESPACE()},
+  {"pg_attribute", SystemTable<PgAttribute>{}.RowType()},
+  {"pg_type", SystemTable<PgType>{}.RowType()},
+  // TODO(mbkkt) Think about it
+  {"oid", velox::BIGINT()},
+  {"name", velox::VARCHAR()},
+  // information_schema domains (simplified to base types, no constraints)
+  {"cardinal_number", velox::INTEGER()},
+  {"character_data", velox::VARCHAR()},
+  {"sql_identifier", velox::VARCHAR()},
+  {"time_stamp", velox::TIMESTAMP()},  // TODO(mbkkt timestamp with time zone
+  {"yes_or_no", velox::VARCHAR()},
 };
 
 lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,

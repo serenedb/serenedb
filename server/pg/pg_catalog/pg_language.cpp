@@ -33,7 +33,7 @@ constexpr auto kSampleData = std::to_array<PgLanguage>({
   {
     .oid = kLangInternalOid,
     .lanname = "internal",
-    .lanowner = 10,
+    .lanowner = id::kRootUser.id(),
     .lanispl = false,
     .lanpltrusted = false,
     .lanplcallfoid = 0,
@@ -43,7 +43,7 @@ constexpr auto kSampleData = std::to_array<PgLanguage>({
   {
     .oid = kLangSqlOid,
     .lanname = "sql",
-    .lanowner = 10,
+    .lanowner = id::kRootUser.id(),
     .lanispl = false,
     .lanpltrusted = true,
     .lanplcallfoid = 0,

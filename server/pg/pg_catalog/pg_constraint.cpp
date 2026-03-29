@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_constraint.h"
 
+#include <deque>
+
 #include "catalog/catalog.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -44,7 +46,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgConstraint> values;
-  std::vector<std::string> conname_storage;
+  std::deque<std::string> conname_storage;
   std::vector<std::vector<int16_t>> conkey_storage;
 
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {

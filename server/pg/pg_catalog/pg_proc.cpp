@@ -101,11 +101,15 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
       }
 
       argtypes_storage.push_back(std::move(argtypes));
+      auto owner = func->GetOwnerId().id();
+      if (!owner) {
+        owner = id::kRootUser.id();
+      }
       values.push_back({
         .oid = func->GetId().id(),
         .proname = func->GetName(),
         .pronamespace = schema->GetId().id(),
-        .proowner = func->GetOwnerId().id(),
+        .proowner = owner,
         .prolang = prolang,
         .procost = static_cast<float>(opts.cost),
         .prorows = static_cast<float>(opts.rows),

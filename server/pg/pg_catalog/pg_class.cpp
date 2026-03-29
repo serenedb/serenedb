@@ -23,7 +23,9 @@
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
+#include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
@@ -69,13 +71,17 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }  // namespace
 
 PgClass MakeBaseRow(ObjectId schema_id, const catalog::SchemaObject& object) {
+  auto owner = object.GetOwnerId();
+  if (!owner) {
+    owner = id::kRootUser;
+  }
   return {
     .oid = object.GetId().id(),
     .relname = object.GetName(),
     .relnamespace = schema_id.id(),
     .reltype = 0,
     .reloftype = 0,
-    .relowner = object.GetOwnerId().id(),
+    .relowner = owner.id(),
     .relam = 0,
     .relfilenode = 0,
     .reltablespace = 0,
@@ -155,7 +161,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
         .relnamespace = schema_oid,
         .reltype = 0,
         .reloftype = 0,
-        .relowner = 0,
+        .relowner = id::kRootUser.id(),
         .relam = 0,
         .relfilenode = 0,
         .reltablespace = 0,
@@ -169,6 +175,45 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
         .relpersistence = PgClass::Relpersistence::Permanent,
         .relkind = PgClass::Relkind::OrdinaryTable,
         .relnatts = natts,
+        .relchecks = 0,
+        .relhasrules = false,
+        .relhastriggers = false,
+        .relhassubclass = false,
+        .relrowsecurity = false,
+        .relforcerowsecurity = false,
+        .relispopulated = true,
+        .relreplident = PgClass::Relreplident::Default,
+        .relispartition = false,
+        .relrewrite = 0,
+        .relfrozenxid = 0,
+        .relminmxid = 0,
+      };
+      values.push_back(std::move(row));
+    });
+  }
+
+  {
+    VisitSystemViews([&](const catalog::View& view, Oid schema_oid) {
+      PgClass row{
+        .oid = view.GetId().id(),
+        .relname = view.GetName(),
+        .relnamespace = schema_oid,
+        .reltype = 0,
+        .reloftype = 0,
+        .relowner = id::kRootUser.id(),
+        .relam = 0,
+        .relfilenode = 0,
+        .reltablespace = 0,
+        .relpages = 0,
+        .reltuples = -1,
+        .relallvisible = 0,
+        .relallfrozen = 0,
+        .reltoastrelid = 0,
+        .relhasindex = false,
+        .relisshared = false,
+        .relpersistence = PgClass::Relpersistence::Permanent,
+        .relkind = PgClass::Relkind::View,
+        .relnatts = 0,
         .relchecks = 0,
         .relhasrules = false,
         .relhastriggers = false,

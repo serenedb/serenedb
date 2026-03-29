@@ -42,7 +42,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-namespace {
 
 template<typename T>
 bool ValidateJson(T& value) {
@@ -96,8 +95,6 @@ bool ValidateJson(T& value) {
       return false;
   }
 }
-
-}  // namespace
 
 class JsonParser {
  public:

@@ -43,24 +43,36 @@ namespace {
 int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
   if (type->isTimestamp()) {
     return in_array ? PgTypeOID::kTimestampArray : PgTypeOID::kTimestamp;
-  } else if (isJsonType(type)) {
+  }
+  if (isJsonType(type)) {
     return in_array ? PgTypeOID::kJsonArray : PgTypeOID::kJson;
-  } else if (isUuidType(type)) {
+  }
+  if (isUuidType(type)) {
     return in_array ? PgTypeOID::kUuidArray : PgTypeOID::kUuid;
-  } else if (type->isDecimal()) {
+  }
+  if (type->isDecimal()) {
     return in_array ? PgTypeOID::kNumericArray : PgTypeOID::kNumeric;
-  } else if (type->isArray()) {
+  }
+  if (type->isArray()) {
     return GetTypeOID(type->asArray().elementType(), true);
-  } else if (isTimestampWithTimeZoneType(type)) {
+  }
+  if (isTimestampWithTimeZoneType(type)) {
     return in_array ? PgTypeOID::kTimestampTzArray : PgTypeOID::kTimestampTz;
-  } else if (type->isDate()) {
+  }
+  if (type->isDate()) {
     return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
-  } else if (IsInterval(type)) {
+  }
+  if (IsInterval(type)) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
-  } else if (IsRegtype(type)) {
+  }
+  if (IsRegtype(type)) {
     return in_array ? PgTypeOID::kRegtypeArray : PgTypeOID::kRegtype;
-  } else if (IsRegclass(type)) {
+  }
+  if (IsRegclass(type)) {
     return in_array ? PgTypeOID::kRegclassArray : PgTypeOID::kRegclass;
+  }
+  if (IsRegnamespace(type)) {
+    return in_array ? PgTypeOID::kRegnamespaceArray : PgTypeOID::kRegnamespace;
   }
   return -1;
 }
@@ -100,6 +112,9 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
   if (IsRegclass(type)) {
     return "regclass";
+  }
+  if (IsRegnamespace(type)) {
+    return "regnamespace";
   }
   if (isUuidType(type)) {
     return "uuid";
@@ -144,7 +159,7 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
     case PgTypeOID::oid: return type_name;                 \
     case PgTypeOID::oid##Array: return type_name "[]";
 
-std::string RegtypeOut(int32_t oid) {
+std::string RegtypeOut(uint64_t oid) {
   switch (static_cast<PgTypeOID>(oid)) {
     REGTYPE_OUT(kBool, "boolean")
     REGTYPE_OUT(kBytea, "bytea")
@@ -165,6 +180,7 @@ std::string RegtypeOut(int32_t oid) {
     REGTYPE_OUT(kInterval, "interval")
     REGTYPE_OUT(kRegclass, "regclass")
     REGTYPE_OUT(kRegtype, "regtype")
+    REGTYPE_OUT(kRegnamespace, "regnamespace")
   }
   return absl::StrCat(oid);
 }
@@ -174,8 +190,8 @@ std::string RegtypeOut(int32_t oid) {
     {type_name, PgTypeOID::oid},               \
     {type_name "[]", PgTypeOID::oid##Array},
 
-int32_t RegtypeIn(std::string_view name) {
-  static const containers::FlatHashMap<std::string_view, int32_t>
+uint64_t RegtypeIn(std::string_view name) {
+  static const containers::FlatHashMap<std::string_view, uint64_t>
     kTypeNameToOid = {
       SDB_REGTYPE_IN(kBool, "boolean")
       SDB_REGTYPE_IN(kBool, "bool")
@@ -207,6 +223,7 @@ int32_t RegtypeIn(std::string_view name) {
       SDB_REGTYPE_IN(kInterval, "interval")
       SDB_REGTYPE_IN(kRegclass, "regclass")
       SDB_REGTYPE_IN(kRegtype, "regtype")
+      SDB_REGTYPE_IN(kRegnamespace, "regnamespace")
     };
   auto it = kTypeNameToOid.find(name);
   if (it != kTypeNameToOid.end()) {
@@ -487,9 +504,8 @@ std::expected<velox::Variant, DeserializeError> DeserializeParameter(
   SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported parameter format");
 }
 
-// TODO(codeworse): use snapshot from query
-std::string RegclassOut(const catalog::Snapshot& snapshot, int32_t oid) {
-  auto object = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
+std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {
+  auto object = snapshot.GetObject(ObjectId{oid});
   if (object) {
     return std::string{object->GetName()};
   }
@@ -505,8 +521,7 @@ std::string RegclassOut(const catalog::Snapshot& snapshot, int32_t oid) {
   return absl::StrCat(oid);
 }
 
-// TODO(codeworse): use snapshot from query
-int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
+uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   auto snapshot = ctx.EnsureCatalogSnapshot();
   auto current_schema = ctx.GetCurrentSchema();
   auto object_name = ParseObjectName(name, current_schema);
@@ -518,6 +533,35 @@ int32_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   auto* system_table = GetTable(object_name.relation);
   if (system_table) {
     return system_table->Id();
+  }
+  return kInvalidOid;
+}
+
+std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid) {
+  if (oid == id::kPgCatalogSchema.id()) {
+    return "pg_catalog";
+  }
+  if (oid == id::kPgInformationSchema.id()) {
+    return "information_schema";
+  }
+  auto object = snapshot.GetObject(ObjectId{oid});
+  if (object && object->GetType() == catalog::ObjectType::Schema) {
+    return std::string{object->GetName()};
+  }
+  return absl::StrCat(oid);
+}
+
+uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
+  if (name == "pg_catalog") {
+    return id::kPgCatalogSchema.id();
+  }
+  if (name == "information_schema") {
+    return id::kPgInformationSchema.id();
+  }
+  auto snapshot = ctx.EnsureCatalogSnapshot();
+  auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), name);
+  if (schema) {
+    return schema->GetId();
   }
   return kInvalidOid;
 }

@@ -3250,8 +3250,10 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
   }
 
   std::string aggr_func_name{logical_function.GetName()};
-  auto type = FixupReturnType(
-    ve::resolveResultType(aggr_func_name, GetExprsTypes(func_args)));
+  std::vector<velox::TypePtr> aggr_coercions;
+  auto type = FixupReturnType(ve::resolveResultTypeWithCoercions(
+    aggr_func_name, GetExprsTypes(func_args), aggr_coercions));
+  ApplyCoercions(func_args, aggr_coercions);
 
   auto filter_expr =
     ProcessExprNode(state, func_call.agg_filter, ExprKind::Filter);
@@ -5122,17 +5124,43 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
 
 velox::TypePtr ResolveWindowFunction(
   const std::string& function_name,
-  const std::vector<velox::TypePtr>& arg_types) {
-  // TODO: coercions
-  if (auto signatures = ve::getWindowFunctionSignatures(function_name)) {
-    for (const auto& signature : signatures.value()) {
-      ve::SignatureBinder binder(*signature, arg_types);
-      if (binder.tryBind()) {
-        return binder.tryResolveType(signature->returnType());
-      }
+  const std::vector<velox::TypePtr>& arg_types,
+  std::vector<velox::TypePtr>& coercions) {
+  auto signatures = ve::getWindowFunctionSignatures(function_name);
+  if (!signatures) {
+    return nullptr;
+  }
+  // TODO(mbkkt) mvoe this to velox
+  std::vector<velox::Coercion> selected_coercions;
+  auto selected_priority = velox::kImpossibleCoercionCost;
+  velox::TypePtr selected_type;
+  size_t selected_count = 0;
+  for (const auto& signature : signatures.value()) {
+    std::vector<velox::Coercion> required_coercions;
+    ve::SignatureBinder binder(*signature, arg_types);
+    if (!binder.tryBind(&required_coercions)) {
+      continue;
+    }
+    auto type = binder.tryResolveType(signature->returnType());
+    if (!type) {
+      continue;
+    }
+    const auto current_priority =
+      velox::Coercion::overallCost(required_coercions);
+    if (current_priority < selected_priority) {
+      std::swap(selected_coercions, required_coercions);
+      selected_type = std::move(type);
+      selected_priority = current_priority;
+      selected_count = 1;
+    } else if (current_priority == selected_priority) {
+      ++selected_count;
     }
   }
-  return nullptr;
+  if (selected_count != 1) {
+    return nullptr;
+  }
+  velox::Coercion::convert(selected_coercions, &coercions);
+  return selected_type;
 }
 
 lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
@@ -5262,14 +5290,18 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
   auto resolve_window_function = [&] -> velox::TypePtr {
     auto arg_types = GetExprsTypes(args);
     if (logical_function.Options().IsWindow()) {
-      if (auto type = ResolveWindowFunction(name, arg_types)) {
-        return type;
+      std::vector<velox::TypePtr> coercions;
+      if (auto type = ResolveWindowFunction(name, arg_types, coercions)) {
+        ApplyCoercions(args, coercions);
+        return FixupReturnType(type);
       }
     }
     if (logical_function.Options().IsAggregate()) {
-      // TODO: resolveResultTypeWithCoercions
-      if (auto type = ve::resolveResultType(name, arg_types)) {
-        return type;
+      std::vector<velox::TypePtr> coercions;
+      if (auto type =
+            ve::resolveResultTypeWithCoercions(name, arg_types, coercions)) {
+        ApplyCoercions(args, coercions);
+        return FixupReturnType(type);
       }
     }
 

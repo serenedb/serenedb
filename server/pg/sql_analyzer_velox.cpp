@@ -882,6 +882,9 @@ class SqlAnalyzer {
   lp::ExprPtr ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
                               lp::ExprPtr rhs, int location);
 
+  lp::ExprPtr ProcessAExprOp(State& state, std::string_view name,
+                             const A_Expr& expr);
+
   lp::ExprPtr ProcessLikeOp(std::string_view type, lp::ExprPtr input,
                             lp::ExprPtr pattern);
 
@@ -4792,6 +4795,7 @@ lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
             ToPgOperatorString(name, {std::move(lhs), std::move(rhs)})));
 }
 
+// TODO(Pasha) good name instead of x.
 // x -> lhs op x
 lp::ExprPtr SqlAnalyzer::MakeComparator(std::string_view op, lp::ExprPtr lhs,
                                         velox::TypePtr rhs_type, int location) {
@@ -4803,81 +4807,85 @@ lp::ExprPtr SqlAnalyzer::MakeComparator(std::string_view op, lp::ExprPtr lhs,
                                           std::move(compare_body));
 }
 
+lp::ExprPtr SqlAnalyzer::ProcessAExprOp(State& state, std::string_view name,
+                                        const A_Expr& expr) {
+  const int location = ExprLocation(&expr);
+
+  // Row comparison: (x1, x2) op (y1, y2)
+  if (expr.lexpr && expr.rexpr && IsA(expr.lexpr, RowExpr) &&
+      IsA(expr.rexpr, RowExpr)) {
+    auto largs =
+      ProcessExprListImpl(state, castNode(RowExpr, expr.lexpr)->args);
+    auto rargs =
+      ProcessExprListImpl(state, castNode(RowExpr, expr.rexpr)->args);
+    SDB_ENSURE(largs.size() == rargs.size(), ERROR_INTERNAL,
+               "row comparison requires equal number of columns");
+    const auto n = largs.size();
+    SDB_ENSURE(n != 0, ERROR_INTERNAL,
+               "row comparison requires at least one column");
+    // (x1, x2) = (y1, y2) -> x1 = y1 AND x2 = y2
+    // (x1, x2) <> (y1, y2) -> x1 <> y1 OR x2 <> y2
+    if (name == "=" || name == "<>" || name == "!=") {
+      std::vector<lp::ExprPtr> comparisons;
+      comparisons.reserve(largs.size());
+      for (size_t i = 0; i != n; ++i) {
+        comparisons.push_back(ProcessBinaryOp(name, std::move(largs[i]),
+                                              std::move(rargs[i]), location));
+      }
+      return name == "=" ? MakeAnd(std::move(comparisons))
+                         : MakeOr(std::move(comparisons));
+    }
+    // (x1, x2) < (y1, y2) -> x1 < y1 OR (x1 = y1 AND x2 < y2)
+    // (x1, x2) <= (y1, y2) -> NOT((x1, x2) > (y1, y2))
+    auto build_lexicographic = [&](std::string_view op) {
+      auto result = ProcessBinaryOp(op, std::move(largs[n - 1]),
+                                    std::move(rargs[n - 1]), location);
+      for (size_t i = 1; i != n; ++i) {
+        const auto j = n - 1 - i;
+        auto cmp = ProcessBinaryOp(op, largs[j], rargs[j], location);
+        auto eq = ProcessBinaryOp("=", std::move(largs[j]), std::move(rargs[j]),
+                                  location);
+        result =
+          MakeOr({std::move(cmp), MakeAnd({std::move(eq), std::move(result)})});
+      }
+      return result;
+    };
+    if (name == "<" || name == ">") {
+      return build_lexicographic(name);
+    }
+    if (name == "<=" || name == ">=") {
+      auto negated_op = name == "<=" ? ">" : "<";
+      return ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_not", {build_lexicographic(negated_op)});
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      CURSOR_POS(ErrorPosition(location)),
+      ERR_MSG("row comparison operator \"", name, "\" is not supported"));
+  }
+
+  auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
+  auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
+  if (!lhs && !rhs) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    CURSOR_POS(ErrorPosition(location)),
+                    ERR_MSG("expression must have both left and right "
+                            "arguments"));
+  } else if (!lhs) {
+    return ProcessPrefixUnaryOp(name, std::move(rhs), location);
+  } else if (!rhs) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    CURSOR_POS(ErrorPosition(location)),
+                    ERR_MSG("expression must have right argument"));
+  }
+  return ProcessBinaryOp(name, std::move(lhs), std::move(rhs), location);
+}
+
 lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
   std::string_view name = strVal(llast(expr.name));
   switch (expr.kind) {
-    case AEXPR_OP: {
-      const int location = ExprLocation(&expr);
-
-      // Row comparison: (x1, x2) op (y1, y2)
-      if (expr.lexpr && expr.rexpr && IsA(expr.lexpr, RowExpr) &&
-          IsA(expr.rexpr, RowExpr)) {
-        auto* lrow = castNode(RowExpr, expr.lexpr);
-        auto* rrow = castNode(RowExpr, expr.rexpr);
-        auto largs = ProcessExprListImpl(state, lrow->args);
-        auto rargs = ProcessExprListImpl(state, rrow->args);
-        SDB_ENSURE(largs.size() == rargs.size(), ERROR_INTERNAL,
-                   "row comparison requires equal number of columns");
-        const auto n = largs.size();
-        SDB_ENSURE(n != 0, ERROR_INTERNAL,
-                   "row comparison requires at least one column");
-        // (x1, x2) = (y1, y2) -> x1 = y1 AND x2 = y2
-        // (x1, x2) <> (y1, y2) -> x1 <> y1 OR x2 <> y2
-        if (name == "=" || name == "<>" || name == "!=") {
-          std::vector<lp::ExprPtr> comparisons;
-          comparisons.reserve(largs.size());
-          for (size_t i = 0; i != n; ++i) {
-            comparisons.push_back(ProcessBinaryOp(
-              name, std::move(largs[i]), std::move(rargs[i]), location));
-          }
-          return name == "=" ? MakeAnd(std::move(comparisons))
-                             : MakeOr(std::move(comparisons));
-        }
-        // (x1, x2) < (y1, y2) -> x1 < y1 OR (x1 = y1 AND x2 < y2)
-        // (x1, x2) <= (y1, y2) -> NOT((x1, x2) > (y1, y2))
-        auto build_lexicographic = [&](std::string_view op) {
-          auto result = ProcessBinaryOp(op, std::move(largs[n - 1]),
-                                        std::move(rargs[n - 1]), location);
-          for (size_t i = 1; i != n; ++i) {
-            const auto j = n - 1 - i;
-            auto cmp = ProcessBinaryOp(op, largs[j], rargs[j], location);
-            auto eq = ProcessBinaryOp("=", std::move(largs[j]),
-                                      std::move(rargs[j]), location);
-            result = MakeOr(
-              {std::move(cmp), MakeAnd({std::move(eq), std::move(result)})});
-          }
-          return result;
-        };
-        if (name == "<" || name == ">") {
-          return build_lexicographic(name);
-        }
-        if (name == "<=" || name == ">=") {
-          auto negated_op = name == "<=" ? ">" : "<";
-          return ResolveVeloxFunctionAndInferArgsCommonType(
-            "presto_not", {build_lexicographic(negated_op)});
-        }
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          CURSOR_POS(ErrorPosition(location)),
-          ERR_MSG("row comparison operator \"", name, "\" is not supported"));
-      }
-
-      auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
-      auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
-      if (!lhs && !rhs) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        CURSOR_POS(ErrorPosition(location)),
-                        ERR_MSG("expression must have both left and right "
-                                "arguments"));
-      } else if (!lhs) {
-        return ProcessPrefixUnaryOp(name, std::move(rhs), location);
-      } else if (!rhs) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        CURSOR_POS(ErrorPosition(location)),
-                        ERR_MSG("expression must have right argument"));
-      }
-      return ProcessBinaryOp(name, std::move(lhs), std::move(rhs), location);
-    }
+    case AEXPR_OP:
+      return ProcessAExprOp(state, name, expr);
     case AEXPR_NULLIF: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
@@ -5130,25 +5138,6 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   }
 
   if (lang == catalog::FunctionLanguage::VeloxNative) {
-    // substring(string, pattern, escape) — SQL SIMILAR substring extraction.
-    // Rewrite to: regexp_extract(string, similar_to_escape(pattern, escape))
-    if (name == "presto_substring" && args.size() == 3 &&
-        args[1]->type()->isVarchar() && args[2]->type()->isVarchar()) {
-      auto pattern = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_similar_to_escape", {std::move(args[1]), std::move(args[2])});
-      return ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_regexp_extract", {std::move(args[0]), std::move(pattern)});
-    }
-    // regexp_like(string, pattern, flags) -> boolean
-    // Rewrite to: regexp_like(string, concat('(?', flags, ')', pattern))
-    if (name == "presto_regexp_like" && args.size() == 3) {
-      auto pattern = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_concat",
-        {MakeConst("(?", velox::VARCHAR()), std::move(args[2]),
-         MakeConst(")", velox::VARCHAR()), std::move(args[1])});
-      return ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_regexp_like", {std::move(args[0]), std::move(pattern)});
-    }
     return ResolveVeloxFunctionAndInferArgsCommonType(std::string{name},
                                                       std::move(args));
   }
@@ -5786,8 +5775,32 @@ lp::ExprPtr SqlAnalyzer::ResolveExtract(std::vector<lp::ExprPtr> args) {
 
 lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
   std::string name, std::vector<lp::ExprPtr> args) {
+  // TODO(Pasha): Rewrite this, you smart enough but I'm not
   if (name == "pg_extract") {
     return ResolveExtract(std::move(args));
+  }
+  // substring(string, pattern, escape) — SQL SIMILAR substring extraction.
+  // Rewrite to: regexp_extract(string, similar_to_escape(pattern, escape))
+  if (name == "presto_substring" && args.size() == 3 &&
+      args[1]->type()->isVarchar() && args[2]->type()->isVarchar()) {
+    auto pattern = ResolveVeloxFunctionAndInferArgsCommonType(
+      "pg_similar_to_escape", {std::move(args[1]), std::move(args[2])});
+    return ResolveVeloxFunctionAndInferArgsCommonType(
+      "presto_regexp_extract", {std::move(args[0]), std::move(pattern)});
+  }
+  // regexp_like(string, pattern, flags) -> boolean
+  // Rewrite to: regexp_like(string, concat('(?', flags, ')', pattern))
+  if (name == "presto_regexp_like" && args.size() == 3) {
+    auto pattern = ResolveVeloxFunctionAndInferArgsCommonType(
+      "presto_concat", {MakeConst("(?", velox::VARCHAR()), std::move(args[2]),
+                        MakeConst(")", velox::VARCHAR()), std::move(args[1])});
+    return ResolveVeloxFunctionAndInferArgsCommonType(
+      "presto_regexp_like", {std::move(args[0]), std::move(pattern)});
+  }
+  // array_prepend(element, array) -> spark_array_prepend(array, element)
+  // PG has (element, array) order, Spark has (array, element) order.
+  if (name == "spark_array_prepend" && args.size() == 2) {
+    std::swap(args[0], args[1]);
   }
 
   std::vector<velox::TypePtr> coercions;

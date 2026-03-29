@@ -35,9 +35,9 @@ template<typename T>
 struct PgArrayPosition {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(int64_t& result,
-                                const arg_type<velox::Array<velox::Varchar>>& arr,
-                                const arg_type<velox::Varchar>& elem) {
+  FOLLY_ALWAYS_INLINE bool call(
+    int64_t& result, const arg_type<velox::Array<velox::Varchar>>& arr,
+    const arg_type<velox::Varchar>& elem) {
     for (auto i = 0; i < arr.size(); ++i) {
       if (arr[i].has_value() && arr[i].value() == elem) {
         result = i + 1;
@@ -101,13 +101,9 @@ struct PgArrayReplace {
     const arg_type<velox::Array<velox::Varchar>>& arr,
     const arg_type<velox::Varchar>& from_val,
     const arg_type<velox::Varchar>& to_val) {
-    for (auto i = 0; i < arr.size(); ++i) {
-      if (arr[i].has_value()) {
-        if (arr[i].value() == from_val) {
-          result.add_item().copy_from(to_val);
-        } else {
-          result.add_item().copy_from(arr[i].value());
-        }
+    for (const auto& item : arr) {
+      if (item) {
+        result.add_item().copy_from(*item == from_val ? to_val : *item);
       } else {
         result.add_null();
       }
@@ -119,10 +115,9 @@ struct PgArrayReplace {
                                 const arg_type<velox::Array<int64_t>>& arr,
                                 const int64_t& from_val,
                                 const int64_t& to_val) {
-    for (auto i = 0; i < arr.size(); ++i) {
-      if (arr[i].has_value()) {
-        result.add_item() =
-          (arr[i].value() == from_val) ? to_val : arr[i].value();
+    for (const auto& item : arr) {
+      if (item) {
+        result.add_item() = (*item == from_val) ? to_val : *item;
       } else {
         result.add_null();
       }

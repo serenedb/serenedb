@@ -389,9 +389,6 @@ struct PgJsonTypeof {
       case simdjson::ondemand::json_type::boolean:
         result.copy_from("boolean");
         break;
-      case simdjson::ondemand::json_type::null:
-        result.copy_from("null");
-        break;
       default:
         result.copy_from("null");
         break;

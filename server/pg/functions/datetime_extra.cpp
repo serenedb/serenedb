@@ -20,15 +20,14 @@
 
 #include "pg/functions/datetime_extra.h"
 
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/functions/lib/DateTimeFormatter.h>
 #include <velox/functions/lib/TimeUtils.h>
 #include <velox/functions/prestosql/DateTimeImpl.h>
 #include <velox/type/SimpleFunctionApi.h>
-
-#include <absl/time/clock.h>
-#include <absl/time/time.h>
 
 #include <chrono>
 
@@ -111,8 +110,8 @@ struct PgTimeofday {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result) {
-    auto formatted =
-      absl::FormatTime("%a %b %d %H:%M:%S %Y %Z", absl::Now(), absl::UTCTimeZone());
+    auto formatted = absl::FormatTime("%a %b %d %H:%M:%S %Y %Z", absl::Now(),
+                                      absl::UTCTimeZone());
     result.resize(formatted.size());
     std::memcpy(result.data(), formatted.data(), formatted.size());
   }

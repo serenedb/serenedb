@@ -184,6 +184,62 @@ to_hex
 0
 
 
+query
+SELECT to_hex(1);
+----
+to_hex
+1
+
+
+query
+SELECT to_hex(10);
+----
+to_hex
+a
+
+
+query
+SELECT to_hex(100);
+----
+to_hex
+64
+
+
+query
+SELECT to_hex(-1);
+----
+to_hex
+ffffffff
+
+
+query
+SELECT to_hex(0::bigint);
+----
+to_hex
+0
+
+
+query
+SELECT to_hex(1::bigint);
+----
+to_hex
+1
+
+
+query
+SELECT to_hex(100::bigint);
+----
+to_hex
+64
+
+
+query
+SELECT to_hex(-1::bigint);
+----
+to_hex
+ffffffffffffffff
+
+
 # bit_length
 
 query

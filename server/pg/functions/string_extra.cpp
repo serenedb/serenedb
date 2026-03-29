@@ -21,6 +21,7 @@
 #include "pg/functions/string_extra.h"
 
 #include <absl/strings/escaping.h>
+#include <absl/strings/numbers.h>
 #include <openssl/evp.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
@@ -53,8 +54,7 @@ struct PgMd5 {
   }
 };
 
-// to_hex(integer) -> text
-// to_hex(bigint) -> text
+// to_hex(integer/bigint) -> text
 template<typename T>
 struct PgToHex {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -72,22 +72,10 @@ struct PgToHex {
  private:
   template<typename U>
   void toHex(out_type<velox::Varchar>& result, U uval) {
-    static constexpr char kHexDigits[] = "0123456789abcdef";
-    // Max hex digits: 8 for uint32, 16 for uint64.
-    char buf[sizeof(U) * 2];
-    int pos = sizeof(buf);
-    if (uval == 0) {
-      result.resize(1);
-      result.data()[0] = '0';
-      return;
-    }
-    while (uval > 0) {
-      buf[--pos] = kHexDigits[uval & 0xf];
-      uval >>= 4;
-    }
-    int len = sizeof(buf) - pos;
-    result.resize(len);
-    std::memcpy(result.data(), buf + pos, len);
+    char buf[16];
+    auto digits = absl::numbers_internal::FastHexToBufferZeroPad16(uval, buf);
+    result.resize(digits);
+    std::memcpy(result.data(), buf + 16 - digits, digits);
   }
 };
 
@@ -317,18 +305,16 @@ struct PgDecode {
     std::string_view fmt(format.data(), format.size());
     if (fmt == "hex") {
       std::string decoded;
-      VELOX_USER_CHECK(
-        absl::HexStringToBytes(absl::string_view(data.data(), data.size()),
-                                &decoded),
-        "invalid hexadecimal data");
+      VELOX_USER_CHECK(absl::HexStringToBytes(
+                         absl::string_view(data.data(), data.size()), &decoded),
+                       "invalid hexadecimal data");
       result.resize(decoded.size());
       std::memcpy(result.data(), decoded.data(), decoded.size());
     } else if (fmt == "base64") {
       std::string decoded;
-      VELOX_USER_CHECK(
-        absl::Base64Unescape(absl::string_view(data.data(), data.size()),
-                              &decoded),
-        "invalid base64 data");
+      VELOX_USER_CHECK(absl::Base64Unescape(
+                         absl::string_view(data.data(), data.size()), &decoded),
+                       "invalid base64 data");
       result.resize(decoded.size());
       std::memcpy(result.data(), decoded.data(), decoded.size());
     } else if (fmt == "escape") {

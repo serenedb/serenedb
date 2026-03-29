@@ -203,8 +203,7 @@ template<typename T>
 struct PgSetSeed {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result, double seed) {
-    std::srand(static_cast<unsigned>(seed * RAND_MAX));
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result, double) {
     result.resize(0);
   }
 };
@@ -214,10 +213,8 @@ struct PgSetSeed {
 void registerMathExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgLogBase, double, double, double>({prefix + "log"});
 
-  velox::registerFunction<PgDiv, int64_t, int64_t, int64_t>(
-    {prefix + "div"});
-  velox::registerFunction<PgDiv, int64_t, double, double>(
-    {prefix + "div"});
+  velox::registerFunction<PgDiv, int64_t, int64_t, int64_t>({prefix + "div"});
+  velox::registerFunction<PgDiv, int64_t, double, double>({prefix + "div"});
 
   velox::registerFunction<PgGcd, int32_t, int32_t, int32_t>({prefix + "gcd"});
   velox::registerFunction<PgGcd, int64_t, int64_t, int64_t>({prefix + "gcd"});

@@ -1689,16 +1689,15 @@ template<typename T>
 struct ArrayLengthFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  int32_t depth_ = 0;
-
   FOLLY_ALWAYS_INLINE void initialize(
     const std::vector<velox::TypePtr>& inputTypes,
     const velox::core::QueryConfig& /*config*/,
     const arg_type<velox::Array<velox::Generic<T1>>>* /*input*/,
     const arg_type<int32_t>* /*dim*/) {
+    SDB_ASSERT(_depth == 0, "initialize should be called only once");
     auto type = inputTypes[0];
     while (type->isArray()) {
-      ++depth_;
+      ++_depth;
       type = type->childAt(0);
     }
   }
@@ -1707,7 +1706,7 @@ struct ArrayLengthFunction {
     out_type<int32_t>& out,
     const arg_type<velox::Array<velox::Generic<T1>>>& input,
     const arg_type<int32_t>& dim) {
-    if (dim < 1 || dim > depth_ || input.size() == 0) {
+    if (dim < 1 || dim > _depth || input.size() == 0) {
       return false;
     }
     if (dim == 1) {
@@ -1739,6 +1738,9 @@ struct ArrayLengthFunction {
     }
     return false;
   }
+
+ private:
+  int32_t _depth = 0;
 };
 
 // array_ndims(anyarray) -> integer
@@ -1747,15 +1749,14 @@ template<typename T>
 struct ArrayNdimsFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  int32_t depth_ = 0;
-
   FOLLY_ALWAYS_INLINE void initialize(
     const std::vector<velox::TypePtr>& inputTypes,
     const velox::core::QueryConfig&,
     const arg_type<velox::Array<velox::Generic<T1>>>*) {
+    SDB_ASSERT(_depth == 0, "initialize should be called only once");
     auto type = inputTypes[0];
     while (type->isArray()) {
-      ++depth_;
+      ++_depth;
       type = type->childAt(0);
     }
   }
@@ -1766,27 +1767,28 @@ struct ArrayNdimsFunction {
     if (input.size() == 0) {
       return false;  // NULL for empty arrays
     }
-    out = depth_;
+    out = _depth;
     return true;
   }
+
+ private:
+  int32_t _depth = 0;
 };
 
-// array_lower(anyarray, integer) -> integer
 // Returns the lower bound of the requested dimension (always 1 in PG).
 template<typename T>
 struct ArrayLowerFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  int32_t depth_ = 0;
 
   FOLLY_ALWAYS_INLINE void initialize(
     const std::vector<velox::TypePtr>& inputTypes,
     const velox::core::QueryConfig&,
     const arg_type<velox::Array<velox::Generic<T1>>>*,
     const arg_type<int32_t>*) {
+    SDB_ASSERT(_depth == 0, "initialize should be called only once");
     auto type = inputTypes[0];
     while (type->isArray()) {
-      ++depth_;
+      ++_depth;
       type = type->childAt(0);
     }
   }
@@ -1795,12 +1797,15 @@ struct ArrayLowerFunction {
     out_type<int32_t>& out,
     const arg_type<velox::Array<velox::Generic<T1>>>& input,
     const arg_type<int32_t>& dim) {
-    if (dim < 1 || dim > depth_ || input.size() == 0) {
+    if (dim < 1 || dim > _depth || input.size() == 0) {
       return false;
     }
     out = 1;  // PG arrays are always 1-based
     return true;
   }
+
+ private:
+  int32_t _depth = 0;
 };
 
 // array_upper(anyarray, integer) -> integer
@@ -1809,16 +1814,15 @@ template<typename T>
 struct ArrayUpperFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  int32_t depth_ = 0;
-
   FOLLY_ALWAYS_INLINE void initialize(
     const std::vector<velox::TypePtr>& inputTypes,
     const velox::core::QueryConfig&,
     const arg_type<velox::Array<velox::Generic<T1>>>*,
     const arg_type<int32_t>*) {
+    SDB_ASSERT(_depth == 0, "initialize should be called only once");
     auto type = inputTypes[0];
     while (type->isArray()) {
-      ++depth_;
+      ++_depth;
       type = type->childAt(0);
     }
   }
@@ -1827,7 +1831,7 @@ struct ArrayUpperFunction {
     out_type<int32_t>& out,
     const arg_type<velox::Array<velox::Generic<T1>>>& input,
     const arg_type<int32_t>& dim) {
-    if (dim < 1 || dim > depth_ || input.size() == 0) {
+    if (dim < 1 || dim > _depth || input.size() == 0) {
       return false;
     }
     if (dim == 1) {
@@ -1859,6 +1863,9 @@ struct ArrayUpperFunction {
     }
     return false;
   }
+
+ private:
+  int32_t _depth = 0;
 };
 
 // array_dims(anyarray) -> text
@@ -1867,15 +1874,14 @@ template<typename T>
 struct ArrayDimsFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  int32_t depth_ = 0;
-
   FOLLY_ALWAYS_INLINE void initialize(
     const std::vector<velox::TypePtr>& inputTypes,
     const velox::core::QueryConfig&,
     const arg_type<velox::Array<velox::Generic<T1>>>*) {
+    SDB_ASSERT(_depth == 0, "initialize should be called only once");
     auto type = inputTypes[0];
     while (type->isArray()) {
-      ++depth_;
+      ++_depth;
       type = type->childAt(0);
     }
   }
@@ -1891,16 +1897,16 @@ struct ArrayDimsFunction {
     // First dimension.
     result += "[1:" + std::to_string(input.size()) + "]";
 
-    if (depth_ > 1 && input.size() > 0) {
+    if (_depth > 1 && input.size() > 0) {
       auto first = input.at(0);
       if (first.has_value()) {
         const auto* base = first->base();
         auto idx = first->decodedIndex();
-        for (int32_t d = 2; d <= depth_; ++d) {
+        for (int32_t d = 2; d <= _depth; ++d) {
           const auto* arr = base->template as<velox::ArrayVector>();
           auto size = arr->sizeAt(idx);
           result += "[1:" + std::to_string(size) + "]";
-          if (d < depth_ && size > 0) {
+          if (d < _depth && size > 0) {
             idx = arr->offsetAt(idx);
             base = arr->elements().get();
           }
@@ -1912,6 +1918,9 @@ struct ArrayDimsFunction {
     std::memcpy(out.data(), result.data(), result.size());
     return true;
   }
+
+ private:
+  int32_t _depth = 0;
 };
 
 }  // namespace

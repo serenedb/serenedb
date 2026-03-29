@@ -459,7 +459,7 @@ struct PgJsonStripNulls {
       }
       first = false;
       out += '"';
-      out += field.unescaped_key().value();
+      out += field.escaped_key().value();
       out += '"';
       out += ':';
       writeValue(val, out);

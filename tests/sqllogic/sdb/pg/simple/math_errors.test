@@ -70,3 +70,9 @@ statement error
 SELECT cotd(0);
 ----
 db error: ERROR: division by zero
+
+
+# Fix #8: div() with large doubles must error, not UB
+
+statement error
+SELECT div(1e300, 1.0);

@@ -41,7 +41,7 @@ namespace sdb::pg {
 
 using ParamIndex = int16_t;
 
-enum PgTypeOID : uint64_t {
+enum PgTypeOID : int32_t {
   kBool = 16,
   kChar = 18,
   kInt2 = 21,

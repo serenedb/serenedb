@@ -51,6 +51,18 @@ size_t Utf8CharCount(const char* begin, size_t byte_len) {
   return count;
 }
 
+// Advance pos by one UTF-8 character (for empty-match advancement).
+size_t Utf8NextCharPos(const char* begin, size_t byte_len, size_t pos) {
+  if (pos >= byte_len) {
+    return pos + 1;  // past end – just bump to terminate loop
+  }
+  auto* it = reinterpret_cast<const irs::byte_type*>(begin) + pos;
+  auto* end = reinterpret_cast<const irs::byte_type*>(begin) + byte_len;
+  it = irs::utf8_utils::Next(it, end);
+  return static_cast<size_t>(it -
+                             reinterpret_cast<const irs::byte_type*>(begin));
+}
+
 // Advance n UTF-8 characters from begin, return byte offset from begin.
 // Does not advance past byte_len.
 size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
@@ -172,7 +184,7 @@ struct PgRegexpCount {
       ++count;
       pos = match.data() + match.size() - input.data();
       if (FOLLY_UNLIKELY(match.size() == 0)) {
-        ++pos;
+        pos = Utf8NextCharPos(text.data(), text.size(), pos);
       }
     }
     result = count;
@@ -290,7 +302,7 @@ struct PgRegexpInstr4 {
       }
       pos = match.data() + match.size() - input.data();
       if (FOLLY_UNLIKELY(match.size() == 0)) {
-        ++pos;
+        pos = Utf8NextCharPos(text.data(), text.size(), pos);
       }
     }
     result = 0;
@@ -394,7 +406,7 @@ struct PgRegexpCount3 {
       ++count;
       pos = match.data() + match.size() - input.data();
       if (FOLLY_UNLIKELY(match.size() == 0)) {
-        ++pos;
+        pos = Utf8NextCharPos(text.data(), text.size(), pos);
       }
     }
     result = count;

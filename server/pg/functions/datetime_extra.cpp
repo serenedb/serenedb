@@ -233,10 +233,12 @@ struct PgAge {
 
     int64_t time_us_a = static_cast<int64_t>(tm_a.tm_hour) * 3600'000'000LL +
                         static_cast<int64_t>(tm_a.tm_min) * 60'000'000LL +
-                        static_cast<int64_t>(tm_a.tm_sec) * 1'000'000LL;
+                        static_cast<int64_t>(tm_a.tm_sec) * 1'000'000LL +
+                        a.getNanos() / 1000LL;
     int64_t time_us_b = static_cast<int64_t>(tm_b.tm_hour) * 3600'000'000LL +
                         static_cast<int64_t>(tm_b.tm_min) * 60'000'000LL +
-                        static_cast<int64_t>(tm_b.tm_sec) * 1'000'000LL;
+                        static_cast<int64_t>(tm_b.tm_sec) * 1'000'000LL +
+                        b.getNanos() / 1000LL;
 
     compute_age(result, tm_a, tm_b, time_us_a, time_us_b);
 

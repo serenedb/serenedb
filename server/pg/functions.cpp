@@ -1260,7 +1260,7 @@ struct QuoteLiteralFunction {
     bool has_backslash = str.find('\\') != std::string_view::npos;
     result.reserve(str.size() + 2);
     if (has_backslash) {
-      result.append(" E'");
+      result.append("E'");
     } else {
       result.append("'");
     }
@@ -1280,6 +1280,8 @@ struct QuoteLiteralFunction {
 template<typename T>
 struct QuoteNullableFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
 
   FOLLY_ALWAYS_INLINE bool callNullable(out_type<velox::Varchar>& result,
                                         const arg_type<velox::Varchar>* input) {

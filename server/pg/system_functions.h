@@ -609,7 +609,7 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
       WHERE false;
   END;)",
 
-  R"(CREATE FUNCTION pg_stat_get_subscription(subid BIGINT)
+  R"(CREATE FUNCTION pg_stat_get_subscription(subid OID)
   RETURNS TABLE( subid BIGINT,
                  relid BIGINT,
                  pid INTEGER,
@@ -752,7 +752,7 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
       WHERE false;
   END;)",
 
-  R"(CREATE FUNCTION pg_stat_get_subscription_stats(subid BIGINT)
+  R"(CREATE FUNCTION pg_stat_get_subscription_stats(subid OID)
   RETURNS TABLE( subid BIGINT,
                  apply_error_count BIGINT,
                  sync_error_count BIGINT,

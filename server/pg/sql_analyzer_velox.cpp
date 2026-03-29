@@ -5957,9 +5957,8 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
 
   auto* prev_func_params = state.func_params;
   state.func_params = &param2expr;
-  auto result = ProcessExprNodeImpl(state, res_target->val);
-  state.func_params = prev_func_params;
-  return result;
+  irs::Finally restore = [&] noexcept { state.func_params = prev_func_params; };
+  return ProcessExprNodeImpl(state, res_target->val);
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessMinMaxExpr(State& state,

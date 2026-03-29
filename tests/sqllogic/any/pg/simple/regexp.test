@@ -183,3 +183,45 @@ SELECT regexp_substr('абв деф абв', 'абв', 2);
 ----
 regexp_substr
 абв
+
+
+# empty-match advancement must step by 1 UTF-8 character, not 1 byte
+
+# regexp_count with empty pattern on multi-byte UTF-8 string:
+# An empty pattern matches before every character and after the last one,
+# so the count should equal char_length + 1.
+query
+SELECT regexp_count('абв', '');
+----
+regexp_count
+4
+
+
+query
+SELECT regexp_count('café', '');
+----
+regexp_count
+5
+
+
+# regexp_instr with empty pattern: Nth empty match on a UTF-8 string
+# Empty pattern matches at positions 1, 2, 3, ... (before each character)
+query
+SELECT regexp_instr('абвгд', '', 1, 3);
+----
+regexp_instr
+3
+
+
+query
+SELECT regexp_instr('абвгд', '', 1, 5);
+----
+regexp_instr
+5
+
+# regexp_count with empty pattern and UTF-8 start position
+query
+SELECT regexp_count('абвгд', '', 3);
+----
+regexp_count
+4

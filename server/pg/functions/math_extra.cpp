@@ -94,7 +94,13 @@ struct PgDiv {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
                       ERR_MSG("division by zero"));
     }
-    result = static_cast<int64_t>(std::trunc(y / x));
+    double truncated = std::trunc(y / x);
+    if (truncated < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
+        truncated > static_cast<double>(std::numeric_limits<int64_t>::max())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("bigint out of range"));
+    }
+    result = static_cast<int64_t>(truncated);
   }
 };
 
@@ -152,7 +158,7 @@ struct PgLcm {
       return;
     }
     using U = std::make_unsigned_t<S>;
-    U u1 = AbsImpl(s1) / std::gcd(s1, s2);
+    U u1 = AbsImpl(s1) / std::gcd(AbsImpl(s1), AbsImpl(s2));
     U u2 = AbsImpl(s2);
     U ur;
     if (__builtin_mul_overflow(u1, u2, &ur) ||

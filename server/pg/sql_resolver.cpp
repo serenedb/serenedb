@@ -129,8 +129,7 @@ void ResolveFunction(ObjectId database,
     return;
   }
 
-  // information_schema functions (explicitly qualified or by unqualified name
-  // for _pg_* helpers used by information_schema views)
+  // information_schema functions
   if (name.schema == StaticStrings::kInformationSchema) {
     if (auto object = pg::GetInfoSchemaFunction(name.relation)) {
       const auto* func = object.get();
@@ -184,7 +183,7 @@ void ResolveRelation(ObjectId database,
     return;
   }
 
-  // information_schema views/tables (explicitly qualified or _pg_* helpers)
+  // information_schema views/tables
   if (name.schema == StaticStrings::kInformationSchema) {
     ResolveInformationSchema(database, name.relation, data, config);
     if (data.object) {

@@ -29,6 +29,8 @@
 #include <velox/functions/Registerer.h>
 #include <velox/type/SimpleFunctionApi.h>
 
+#include <iresearch/utils/utf8_utils.hpp>
+
 #include "basics/fwd.h"
 #include "pg/sql_exception_macro.h"
 
@@ -217,29 +219,52 @@ template<typename T>
 struct PgStringToArray {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  static constexpr bool is_default_null_behavior = false;
   static constexpr int32_t reuse_strings_from_arg = 0;
 
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<velox::Varchar>>& result,
-                                const arg_type<velox::Varchar>& input,
-                                const arg_type<velox::Varchar>& delimiter) {
-    if (delimiter.size() == 0) {
-      // Empty delimiter: return array of individual characters is PG behavior
-      // when delimiter is empty string. Actually PG returns NULL for empty
-      // delimiter. Let's return NULL.
+  FOLLY_ALWAYS_INLINE bool callNullable(
+    out_type<velox::Array<velox::Varchar>>& result,
+    const arg_type<velox::Varchar>* input,
+    const arg_type<velox::Varchar>* delimiter) {
+    // NULL input -> NULL result
+    if (!input) {
       return false;
     }
 
-    const char* data = input.data();
-    size_t size = input.size();
-    size_t dlen = delimiter.size();
+    const char* data = input->data();
+    size_t size = input->size();
+
+    // NULL delimiter: split into individual UTF-8 characters
+    if (!delimiter) {
+      auto* it = reinterpret_cast<const irs::byte_type*>(data);
+      auto* end = it + size;
+      while (it < end) {
+        auto* next = irs::utf8_utils::Next(it, end);
+        auto char_len = static_cast<size_t>(next - it);
+        result.add_item().setNoCopy(
+          velox::StringView(reinterpret_cast<const char*>(it), char_len));
+        it = next;
+      }
+      return true;
+    }
+
+    // Empty delimiter: return single-element array (or empty for empty input)
+    if (delimiter->size() == 0) {
+      if (size > 0) {
+        result.add_item().setNoCopy(velox::StringView(data, size));
+      }
+      return true;
+    }
+
+    size_t dlen = delimiter->size();
     size_t pos = 0;
 
     while (pos <= size) {
       // Find next occurrence of delimiter.
       const char* found = nullptr;
-      if (dlen > 0 && pos + dlen <= size) {
+      if (pos + dlen <= size) {
         for (size_t i = pos; i + dlen <= size; ++i) {
-          if (std::memcmp(data + i, delimiter.data(), dlen) == 0) {
+          if (std::memcmp(data + i, delimiter->data(), dlen) == 0) {
             found = data + i;
             break;
           }
@@ -405,14 +430,14 @@ struct PgGetBit {
   FOLLY_ALWAYS_INLINE void call(int32_t& result,
                                 const arg_type<velox::Varbinary>& data,
                                 int64_t bit_offset) {
-    int64_t byte_idx = bit_offset / 8;
-    int bit_idx = bit_offset % 8;
-    if (byte_idx < 0 || byte_idx >= static_cast<int64_t>(data.size())) {
+    if (bit_offset < 0 || bit_offset >= static_cast<int64_t>(data.size()) * 8) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                       ERR_MSG("index ", bit_offset, " out of valid range, 0..",
                               static_cast<int64_t>(data.size()) * 8 - 1));
     }
-    result = (static_cast<uint8_t>(data.data()[byte_idx]) >> (7 - bit_idx)) & 1;
+    int64_t byte_idx = bit_offset / 8;
+    int bit_idx = static_cast<int>(bit_offset % 8);
+    result = (static_cast<uint8_t>(data.data()[byte_idx]) >> bit_idx) & 1;
   }
 };
 
@@ -423,20 +448,20 @@ struct PgSetBit {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varbinary>& result,
                                 const arg_type<velox::Varbinary>& data,
                                 int64_t bit_offset, int32_t value) {
-    int64_t byte_idx = bit_offset / 8;
-    int bit_idx = bit_offset % 8;
-    if (byte_idx < 0 || byte_idx >= static_cast<int64_t>(data.size())) {
+    if (bit_offset < 0 || bit_offset >= static_cast<int64_t>(data.size()) * 8) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                       ERR_MSG("index ", bit_offset, " out of valid range, 0..",
                               static_cast<int64_t>(data.size()) * 8 - 1));
     }
+    int64_t byte_idx = bit_offset / 8;
+    int bit_idx = static_cast<int>(bit_offset % 8);
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());
     auto& byte = result.data()[byte_idx];
     if (value) {
-      byte |= (1 << (7 - bit_idx));
+      byte |= (1 << bit_idx);
     } else {
-      byte &= ~(1 << (7 - bit_idx));
+      byte &= ~(1 << bit_idx);
     }
   }
 };

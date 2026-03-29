@@ -112,7 +112,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                   'RESTRICTIVE'
           END AS permissive,
           CASE
-              WHEN pol.polroles = '{0}'::bigint[] THEN
+              WHEN pol.polroles = '{0}'::oid[] THEN
                   string_to_array('public', '')
               ELSE
                   ARRAY
@@ -960,7 +960,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               st.latest_end_lsn,
               st.latest_end_time
       FROM pg_subscription su
-              LEFT JOIN pg_stat_get_subscription(NULL::bigint) st
+              LEFT JOIN pg_stat_get_subscription(NULL::oid) st
                         ON (st.subid = su.oid);)",
 
   R"(CREATE VIEW pg_stat_ssl AS
@@ -1373,7 +1373,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           ss.confl_multiple_unique_conflicts,
           ss.stats_reset
       FROM pg_subscription as s,
-           pg_stat_get_subscription_stats(NULL::bigint) as ss
+           pg_stat_get_subscription_stats(NULL::oid) as ss
       WHERE ss.subid = s.oid;)",
 
   R"(CREATE VIEW pg_wait_events AS

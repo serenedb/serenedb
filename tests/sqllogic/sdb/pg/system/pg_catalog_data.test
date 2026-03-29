@@ -613,11 +613,13 @@ query
 SELECT constraint_name, column_name, ordinal_position FROM information_schema.key_column_usage WHERE table_name = 'pg_cat_t1' ORDER BY ordinal_position
 ----
 constraint_name	column_name	ordinal_position
+pg_cat_t1_pkey	id	1
 
 query
 SELECT constraint_name, column_name FROM information_schema.key_column_usage WHERE table_name = 'pg_cat_t2'
 ----
 constraint_name	column_name
+pg_cat_t2_pkey	a
 
 # ============================================================
 # information_schema.routines

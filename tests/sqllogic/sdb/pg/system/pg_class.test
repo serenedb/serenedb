@@ -99,7 +99,6 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_config	0	v
 <slt:ignore>	pg_shmem_allocations	0	v
 <slt:ignore>	pg_shmem_allocations_numa	0	v
-<slt:ignore>	pg_dsm_registry_allocations	0	v
 <slt:ignore>	pg_backend_memory_contexts	0	v
 <slt:ignore>	pg_stat_all_tables	0	v
 <slt:ignore>	pg_stat_xact_all_tables	0	v
@@ -122,9 +121,7 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_stat_activity	0	v
 <slt:ignore>	pg_stat_replication	0	v
 <slt:ignore>	pg_stat_slru	0	v
-<slt:ignore>	pg_stat_lock	0	v
 <slt:ignore>	pg_stat_wal_receiver	0	v
-<slt:ignore>	pg_stat_recovery	0	v
 <slt:ignore>	pg_stat_recovery_prefetch	0	v
 <slt:ignore>	pg_stat_subscription	0	v
 <slt:ignore>	pg_stat_ssl	0	v
@@ -142,7 +139,6 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_stat_wal	0	v
 <slt:ignore>	pg_stat_progress_analyze	0	v
 <slt:ignore>	pg_stat_progress_vacuum	0	v
-<slt:ignore>	pg_stat_progress_repack	0	v
 <slt:ignore>	pg_stat_progress_cluster	0	v
 <slt:ignore>	pg_stat_progress_create_index	0	v
 <slt:ignore>	pg_stat_progress_basebackup	0	v

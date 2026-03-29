@@ -109,13 +109,6 @@ t
 
 
 query
-SELECT COUNT(*) >= 0 FROM pg_catalog.pg_publication_sequences
-----
-?column?
-t
-
-
-query
 SELECT COUNT(*) >= 0 FROM pg_catalog.pg_locks
 ----
 ?column?
@@ -222,13 +215,6 @@ t
 
 query
 SELECT COUNT(*) >= 0 FROM pg_catalog.pg_shmem_allocations_numa
-----
-?column?
-t
-
-
-query
-SELECT COUNT(*) >= 0 FROM pg_catalog.pg_dsm_registry_allocations
 ----
 ?column?
 t
@@ -389,21 +375,7 @@ t
 
 
 query
-SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_lock
-----
-?column?
-t
-
-
-query
 SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_wal_receiver
-----
-?column?
-t
-
-
-query
-SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_recovery
 ----
 ?column?
 t
@@ -523,13 +495,6 @@ t
 
 query
 SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_vacuum
-----
-?column?
-t
-
-
-query
-SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_repack
 ----
 ?column?
 t

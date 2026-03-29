@@ -5444,10 +5444,12 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"pg_attribute", SystemTable<PgAttribute>{}.RowType()},
   {"pg_type", SystemTable<PgType>{}.RowType()},
   // information_schema domains (simplified to base types, no constraints)
+  {"name", velox::VARCHAR()},
   {"cardinal_number", velox::INTEGER()},
   {"character_data", velox::VARCHAR()},
   {"sql_identifier", velox::VARCHAR()},
-  {"time_stamp", velox::TIMESTAMP_WITH_TIME_ZONE()},
+  // TODO(mbkkt) should be timestamp with time zone
+  {"time_stamp", velox::TIMESTAMP()},
   {"yes_or_no", velox::VARCHAR()},
 };
 

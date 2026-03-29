@@ -791,7 +791,7 @@ DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Int, out_type<int32_t>&,
                           const arg_type<int64_t>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Text, out_type<int32_t>&,
                           const arg_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported2CharInt, out_type<velox::Varchar>&,
+DEFINE_NOT_SUPPORTED_FUNC(NotSupported2CharInt, out_type<velox::Array<velox::Varchar>>&,
                           const arg_type<int8_t>&, const arg_type<int64_t>&)
 DEFINE_NOT_SUPPORTED_FUNC(NotSupported1TextArray, out_type<velox::Varchar>&,
                           const arg_type<velox::Array<velox::Varchar>>&)
@@ -875,6 +875,16 @@ struct NullVarcharFunction1OidInt {
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
                                 const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    return false;  // returns NULL
+  }
+};
+
+template<typename T>
+struct NullTextArrayFunction1Oid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<velox::Varchar>>&,
                                 const arg_type<int64_t>&) {
     return false;  // returns NULL
   }
@@ -2260,10 +2270,12 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
     {prefix + "row_security_active"});
 
-  velox::registerFunction<NotSupported2CharInt, velox::Varchar, int8_t,
-                          int64_t>({prefix + "acldefault"});
+  velox::registerFunction<NotSupported2CharInt, velox::Array<velox::Varchar>,
+                          int8_t, int64_t>({prefix + "acldefault"});
   velox::registerFunction<NotSupported1IntArray, velox::Varchar,
                           velox::Array<int64_t>>({prefix + "aclexplode"});
+  velox::registerFunction<NotSupported1TextArray, velox::Varchar,
+                          velox::Array<velox::Varchar>>({prefix + "aclexplode"});
   velox::registerFunction<NotSupported4OidOidTextBool, velox::Varchar, int64_t,
                           int64_t, velox::Varchar, bool>(
     {prefix + "makeaclitem"});
@@ -2692,6 +2704,11 @@ void registerFunctions(const std::string& prefix) {
   // pg_get_function_arg_default(oid, int) -> text (NULL)
   velox::registerFunction<NullVarcharFunction1OidInt, velox::Varchar, int64_t,
                           int64_t>({prefix + "get_function_arg_default"});
+
+  // pg_get_statisticsobjdef_expressions(oid) -> text[] (NULL)
+  velox::registerFunction<NullTextArrayFunction1Oid,
+                          velox::Array<velox::Varchar>, int64_t>(
+    {prefix + "get_statisticsobjdef_expressions"});
 }
 
 }  // namespace sdb::pg::functions

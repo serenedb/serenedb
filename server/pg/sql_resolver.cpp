@@ -112,11 +112,11 @@ void ResolveFunction(ObjectId database,
 
   auto resolve_sql_func = [&](const catalog::Function* func) {
     if (func->Options().language == catalog::FunctionLanguage::SQL) {
-      bool changed = disallowed.emplace(name).second;
+      bool changed = disallowed.functions.emplace(name).second;
       SDB_ASSERT(changed);
       ResolveSqlFunction(database, search_path, objects, disallowed,
                          func->SqlFunction().GetObjects(), config);
-      changed = disallowed.erase(name) != 0;
+      changed = disallowed.functions.erase(name) != 0;
       SDB_ASSERT(changed);
     }
   };
@@ -169,12 +169,12 @@ void ResolveRelation(ObjectId database,
   }
 
   auto resolve_view = [&] {
-    bool changed = disallowed.emplace(name).second;
+    bool changed = disallowed.relations.emplace(name).second;
     SDB_ASSERT(changed);
     auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
     ResolveQueryView(database, search_path, objects, disallowed, state->objects,
                      config);
-    changed = disallowed.erase(name) != 0;
+    changed = disallowed.relations.erase(name) != 0;
     SDB_ASSERT(changed);
   };
 
@@ -283,7 +283,7 @@ void ResolveQueryView(ObjectId database,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query, const Config& config) {
   for (const auto& [name, old_data] : query.getRelations()) {
-    if (disallowed.contains(name)) {
+    if (disallowed.relations.contains(name)) {
       SDB_THROW(ERROR_BAD_PARAMETER,
                 "view doesn't support recursive references");
     }
@@ -301,7 +301,7 @@ void ResolveSqlFunction(ObjectId database,
                         const Objects& query, const Config& config) {
   ResolveRelations(database, search_path, objects, disallowed, query, config);
   for (const auto& [name, old_data] : query.getFunctions()) {
-    if (disallowed.contains(name)) {
+    if (disallowed.functions.contains(name)) {
       SDB_THROW(ERROR_BAD_PARAMETER,
                 "function doesn't support recursive references");
     }

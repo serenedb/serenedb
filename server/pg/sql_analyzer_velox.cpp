@@ -6085,7 +6085,21 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           std::move(arg));
   }
 
-  return MakeCast(std::move(type), std::move(arg));
+  auto result = MakeCast(std::move(type), std::move(arg));
+
+  // varchar(n) cast: truncate to n characters
+  if (result->type() == velox::VARCHAR()) {
+    std::string_view target_name = strVal(llast(type_name.names));
+    if (target_name == "varchar" && list_length(type_name.typmods) == 1) {
+      if (auto max_len = TryGet<int>(type_name.typmods, 0)) {
+        result = std::make_shared<lp::CallExpr>(
+          velox::VARCHAR(), "presto_substr", std::move(result), MakeConst(1),
+          MakeConst(*max_len));
+      }
+    }
+  }
+
+  return result;
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessSQLValueFunction(State& state,
@@ -6249,6 +6263,9 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   }
 
   // particular cases because mods_size can be != 0
+  if (name == "varchar" || name == "text") {
+    return wrap_in_array(velox::VARCHAR());
+  }
   if (name == "bpchar") {
     return wrap_in_array(velox::TINYINT());
   }

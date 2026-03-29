@@ -49,6 +49,26 @@ class RocksDBMaterializer {
                                velox::VectorPtr scores);
 
  protected:
+  class MultiGetContext {
+   public:
+    static constexpr size_t kBatchSize = 32;  // copied from rocksdb
+
+    MultiGetContext(rocksdb::ColumnFamilyHandle& cf,
+                    const rocksdb::ReadOptions& read_options)
+      : _cf{cf}, _read_options{read_options} {}
+
+    // keys must be sorted by the same order as the rocksdb comparator produces
+    template<typename DataSource, typename ValueProcessor>
+    void MultiGet(DataSource& data_source, std::span<const rocksdb::Slice> keys,
+                  ValueProcessor&& value_processor);
+
+   private:
+    std::array<rocksdb::Status, kBatchSize> _statuses;
+    std::array<rocksdb::PinnableSlice, kBatchSize> _values;
+    rocksdb::ColumnFamilyHandle& _cf;
+    const rocksdb::ReadOptions& _read_options;
+  };
+
   const std::string& ReadValue(std::string_view full_key);
 
   velox::VectorPtr ReadColumnKeys(std::span<const std::string> row_keys,
@@ -112,6 +132,7 @@ class RocksDBMaterializer {
   size_t _produced = 0;
   std::string _value_buffer;
   rocksdb::ReadOptions _read_options;
+  MultiGetContext _multiget_ctx;
   std::unique_ptr<velox::HashStringAllocator> _multiget_buffer_allocator;
   velox::HashStringAllocator::Header* _multi_get_buffer = nullptr;
   containers::FlatHashMap<catalog::Column::Id,

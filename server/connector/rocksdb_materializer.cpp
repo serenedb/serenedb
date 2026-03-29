@@ -37,47 +37,30 @@ constexpr size_t kMultiGetThreshold = 1;
 constexpr size_t kSeekThreshold = 100;
 constexpr size_t kColumnKeySize = sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
-template<typename DataSource>
-class MultiGetContext {
- public:
-  static constexpr size_t kBatchSize = 32;  // copied from rocksdb
+}
 
-  MultiGetContext(rocksdb::ColumnFamilyHandle& cf, DataSource& data_source,
-                  const rocksdb::ReadOptions& options)
-    : _cf{cf}, _data_source{data_source}, _read_options{options} {}
-
-  // keys must be sorted by the same order as the rocksdb comparator produces
-  template<typename ValueProcessor>
-  void multiGet(std::span<const rocksdb::Slice> keys,
-                ValueProcessor&& value_processor) {
-    const auto n = keys.size();
-    for (size_t start = 0; start < n; start += kBatchSize) {
-      const auto batch = std::min(kBatchSize, n - start);
-      if (batch <= kMultiGetThreshold) {
-        for (size_t i = 0; i < batch; ++i) {
-          _statuses[i] = _data_source.Get(_read_options, &_cf,
-                                          keys[start + i], &_values[i]);
-        }
-      } else {
-        _data_source.MultiGet(_read_options, &_cf, batch, keys.data() + start,
-                              _values.data(), _statuses.data(),
-                              /*sorted_input=*/true);
+template<typename DataSource, typename ValueProcessor>
+void RocksDBMaterializer::MultiGetContext::MultiGet(
+  DataSource& data_source, std::span<const rocksdb::Slice> keys,
+  ValueProcessor&& value_processor) {
+  const auto n = keys.size();
+  for (size_t start = 0; start < n; start += kBatchSize) {
+    const auto batch = std::min(kBatchSize, n - start);
+    if (batch <= kMultiGetThreshold) {
+      for (size_t i = 0; i < batch; ++i) {
+        _statuses[i] =
+          data_source.Get(_read_options, &_cf, keys[start + i], &_values[i]);
       }
-      for (size_t c = 0; c < batch; ++c) {
-        value_processor(keys[start + c], _values[c], _statuses[c]);
-        _values[c].Reset();
-      }
+    } else {
+      data_source.MultiGet(_read_options, &_cf, batch, keys.data() + start,
+                           _values.data(), _statuses.data(),
+                           /*sorted_input=*/true);
+    }
+    for (size_t c = 0; c < batch; ++c) {
+      value_processor(keys[start + c], _values[c], _statuses[c]);
+      _values[c].Reset();
     }
   }
-
- private:
-  std::array<rocksdb::Status, kBatchSize> _statuses;
-  std::array<rocksdb::PinnableSlice, kBatchSize> _values;
-  rocksdb::ColumnFamilyHandle& _cf;
-  DataSource& _data_source;
-  const rocksdb::ReadOptions& _read_options;
-};
-
 }
 
 RocksDBMaterializer::RocksDBMaterializer(
@@ -93,7 +76,8 @@ RocksDBMaterializer::RocksDBMaterializer(
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
     _effective_column_id(std::move(effective_column_id)),
-    _object_key{object_key} {
+    _object_key{object_key},
+    _multiget_ctx{_cf, _read_options} {
   _multiget_buffer_allocator =
     std::make_unique<facebook::velox::HashStringAllocator>(&_memory_pool);
   SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
@@ -222,7 +206,6 @@ void RocksDBMaterializer::MultiGetIterateColumnKeys(
   MultiGetSource& src, const Decoder& func) {
   PrepareSortedBatch(row_keys);
   _key_slices.resize(row_keys.size());
-  MultiGetContext<MultiGetSource> ctx(_cf, src, _read_options);
   SDB_ASSERT(column_key.size() == kColumnKeySize);
   size_t offset = 0;
   for (size_t i = 0; i < _read_idxs.size(); ++i) {
@@ -233,9 +216,10 @@ void RocksDBMaterializer::MultiGetIterateColumnKeys(
     offset += full_key_size;
   }
   size_t sorted_pos = 0;
-  ctx.multiGet(
-    _key_slices, [&](rocksdb::Slice key, const rocksdb::PinnableSlice& value,
-                     rocksdb::Status status) {
+  _multiget_ctx.MultiGet(
+    src, _key_slices,
+    [&](rocksdb::Slice key, const rocksdb::PinnableSlice& value,
+        rocksdb::Status status) {
       if (!status.ok()) {
         auto res = sdb::rocksutils::ConvertStatus(status);
         SDB_THROW(res.errorNumber(),

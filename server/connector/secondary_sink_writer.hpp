@@ -57,23 +57,27 @@ inline void AppendNotNullMarker(std::string& key) { key.push_back(kNotNull); }
 // Build a secondary index key: <null_marker><encoded_value><PK_bytes>.
 // For generated PK (key_childs empty), reads PK from the last input column.
 // Append <null_marker><encoded_value> for the indexed column.
-inline void AppendValue(std::string& key, const velox::BaseVector& col,
-                        velox::vector_size_t row_idx) {
-  if (col.isNullAt(row_idx)) {
-    AppendNullMarker(key);
-  } else {
-    AppendNotNullMarker(key);
-    primary_key::AppendKeyValue(key, col, row_idx);
+inline void AppendSKValue(std::string& key, const velox::RowVector& input,
+                          std::span<const velox::column_index_t> sk_children,
+                          velox::vector_size_t row_idx) {
+  for (const auto sk_child : sk_children) {
+    const velox::BaseVector& col = *input.childAt(sk_child);
+    if (col.isNullAt(row_idx)) {
+      AppendNullMarker(key);
+    } else {
+      AppendNotNullMarker(key);
+      primary_key::AppendKeyValue(key, col, row_idx);
+    }
   }
 }
 
 inline void Create(const velox::RowVector& input,
-                   std::span<const velox::column_index_t> key_childs,
-                   velox::column_index_t indexed_col_idx,
+                   std::span<const velox::column_index_t> pk_children,
+                   std::span<const velox::column_index_t> sk_children,
                    velox::vector_size_t row_idx, std::string& key) {
-  AppendValue(key, *input.childAt(indexed_col_idx), row_idx);
-  if (!key_childs.empty()) {
-    primary_key::Create(input, key_childs, row_idx, key);
+  AppendSKValue(key, input, sk_children, row_idx);
+  if (!pk_children.empty()) {
+    primary_key::Create(input, pk_children, row_idx, key);
   } else {
     // Generated PK is the last column (same convention as MakeColumnKey)
     primary_key::AppendKeyValue(key, *input.childAt(input.childrenSize() - 1),
@@ -90,11 +94,11 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
  public:
   SecondarySinkWriteBase(rocksdb::Transaction& trx, ObjectId shard_id,
                          std::span<const catalog::Column::Id> columns,
-                         std::string indexed_col_name)
+                         std::vector<velox::column_index_t> sk_children)
     : ColumnSinkWriterImplBase{columns},
       _trx{trx},
       _shard_id{shard_id},
-      _indexed_col_name{std::move(indexed_col_name)} {}
+      _sk_children{std::move(sk_children)} {}
 
   bool SwitchColumn(const velox::Type&, bool,
                     catalog::Column::Id column_id) final {
@@ -106,99 +110,97 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
 
  protected:
   void InitBase(const velox::RowVectorPtr& input) {
-    _input = input;
+    _input = input.get();
     _row_idx = 0;
-    auto maybe = input->type()->asRow().getChildIdxIfExists(_indexed_col_name);
-    _indexed_col_idx = maybe.value_or(0);
+    _del_row_idx = 0;
   }
 
-  void BuildKeyFromVector(std::string_view full_key) {
-    auto pk_bytes = key_utils::ExtractRowKey(full_key);
+  std::string_view BuildSK(std::string_view full_pk) {
+    auto pk_bytes = key_utils::ExtractRowKey(full_pk);
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
-    secondary_key::AppendValue(_key_buffer, *_input->childAt(_indexed_col_idx),
-                               _row_idx);
+    secondary_key::AppendSKValue(_key_buffer, *_input, _sk_children, _row_idx);
     _key_buffer.append(pk_bytes.data(), pk_bytes.size());
     ++_row_idx;
+    return _key_buffer;
+  }
+
+  std::string_view BuildDeleteSK(
+    std::string_view encoded_pk,
+    std::span<const velox::column_index_t> sk_children) {
+    _key_buffer.clear();
+    secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
+    secondary_key::AppendSKValue(_key_buffer, *_input, sk_children,
+                                 _del_row_idx);
+    _key_buffer.append(encoded_pk.data(), encoded_pk.size());
+    ++_del_row_idx;
+    return _key_buffer;
   }
 
   rocksdb::Transaction& _trx;
   ObjectId _shard_id;
-  velox::RowVectorPtr _input;
-  std::string _indexed_col_name;
-  velox::column_index_t _indexed_col_idx{0};
-  velox::vector_size_t _row_idx{0};
+  std::vector<velox::column_index_t> _sk_children;
+  const velox::RowVector* _input;
+  velox::vector_size_t _row_idx;
+  velox::vector_size_t _del_row_idx;
   std::string _key_buffer;
 };
 
-// INSERT writer
 class SecondarySinkInsertWriter final : public SecondarySinkWriteBase {
  public:
   using SecondarySinkWriteBase::SecondarySinkWriteBase;
 
-  void Init(size_t, const velox::RowVectorPtr& input) final { InitBase(input); }
+  void Init(size_t batch_size, const velox::RowVectorPtr& input) final {
+    InitBase(input);
+  }
 
-  void Write(std::span<const rocksdb::Slice>, std::string_view full_key) final {
-    BuildKeyFromVector(full_key);
-    auto s = _trx.Put(_key_buffer, rocksdb::Slice{});
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_pk) final {
+    auto s = _trx.Put(BuildSK(full_pk), rocksdb::Slice{});
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 };
 
-// DELETE writer — indexed column is in the input (added by sql analyzer).
 class SecondarySinkDeleteWriter final : public SecondarySinkWriteBase {
  public:
   using SecondarySinkWriteBase::SecondarySinkWriteBase;
 
-  void Init(size_t, const velox::RowVectorPtr& input) final { InitBase(input); }
+  void Init(size_t batch_size, const velox::RowVectorPtr& input) final {
+    InitBase(input);
+  }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    _key_buffer.clear();
-    secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
-    secondary_key::AppendValue(_key_buffer, *_input->childAt(_indexed_col_idx),
-                               _row_idx);
-    _key_buffer.append(encoded_pk.data(), encoded_pk.size());
-    ++_row_idx;
-    _trx.Delete(_key_buffer);
+    auto s = _trx.Delete(BuildDeleteSK(encoded_pk, _sk_children));
+    SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 };
 
-// UPDATE writer — old value is in the input as _sdb_old_<name> (added by
-// sql analyzer). DeleteRow uses old value, Write uses new value.
 class SecondarySinkUpdateWriter final : public SecondarySinkWriteBase {
  public:
-  using SecondarySinkWriteBase::SecondarySinkWriteBase;
+  SecondarySinkUpdateWriter(rocksdb::Transaction& trx, ObjectId shard_id,
+                            std::span<const catalog::Column::Id> columns,
+                            std::vector<velox::column_index_t> sk_children,
+                            std::vector<velox::column_index_t> old_sk_children)
+    : SecondarySinkWriteBase{trx, shard_id, columns, std::move(sk_children)},
+      _old_sk_children{std::move(old_sk_children)} {}
 
-  void Init(size_t, const velox::RowVectorPtr& input) final {
+  void Init(size_t batch_size, const velox::RowVectorPtr& input) final {
     InitBase(input);
-    auto old_name = "_sdb_old_" + _indexed_col_name;
-    auto maybe = input->type()->asRow().getChildIdxIfExists(old_name);
-    _old_col_idx = maybe.value_or(_indexed_col_idx);
-    _del_row_idx = 0;
   }
 
-  void Write(std::span<const rocksdb::Slice>, std::string_view full_key) final {
-    BuildKeyFromVector(full_key);
-    auto s = _trx.Put(_key_buffer, rocksdb::Slice{});
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) final {
+    auto s = _trx.Put(BuildSK(full_key), rocksdb::Slice{});
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    _key_buffer.clear();
-    secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
-    secondary_key::AppendValue(_key_buffer, *_input->childAt(_old_col_idx),
-                               _del_row_idx);
-
-    _key_buffer.append(encoded_pk.data(), encoded_pk.size());
-    ++_del_row_idx;
-    _trx.Delete(_key_buffer);
+    auto s = _trx.Delete(BuildDeleteSK(encoded_pk, _old_sk_children));
+    SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 
  private:
-  velox::column_index_t _old_col_idx{0};
-  velox::vector_size_t _del_row_idx{0};
+  std::vector<velox::column_index_t> _old_sk_children;
 };
-
-// Secondary index backfill is handled by SSTInsertDataSink<false, true>.
 
 }  // namespace sdb::connector

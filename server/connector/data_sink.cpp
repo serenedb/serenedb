@@ -267,7 +267,7 @@ SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::SSTInsertDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock, velox::column_index_t indexed_column_input_idx)
+  absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
   : Base(
       SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>{
         object_key, db, cf,
@@ -277,7 +277,7 @@ SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::SSTInsertDataSink(
       memory_pool, object_key, key_childs, std::move(columns),
       std::move(index_writers)),
     _table_lock_guard{table_lock},
-    _indexed_column_input_idx{indexed_column_input_idx} {}
+    _sk_children{std::move(sk_children)} {}
 
 template<bool IsGeneratedPK, bool IsSecondaryIndex>
 void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::appendData(
@@ -294,8 +294,8 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::appendData(
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key = this->_store_keys_buffers.emplace_back();
     if constexpr (IsSecondaryIndex) {
-      secondary_key::Create(*input, this->_key_childs,
-                            _indexed_column_input_idx, row_idx, key);
+      secondary_key::Create(*input, this->_key_childs, _sk_children, row_idx,
+                            key);
     } else {
       if (!this->_key_childs.empty()) {
         primary_key::Create(*input, this->_key_childs, row_idx, key);
@@ -482,8 +482,6 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                 _object_key.id(), " error: ", result.errorMessage());
     }
     if constexpr (DoDelete) {
-      // For now all index writers work by row.
-      // Later by cell processing might be added.
       auto encoded_pk = row_key.substr(sizeof(ObjectId));
       for (const auto& writer : _index_writers) {
         writer->DeleteRow(encoded_pk);
@@ -2708,8 +2706,6 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
                     "Failed to acquire row lock for table ", _object_key.id(),
                     " error: ", result.errorMessage());
         }
-        // For now all index writers work by row.
-        // Later by cell processing might be added below.
         auto encoded_pk = row_key.substr(sizeof(ObjectId));
         for (const auto& writer : _index_writers) {
           writer->DeleteRow(encoded_pk);

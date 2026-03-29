@@ -42,123 +42,110 @@ namespace {
 // execution graph may change).
 constexpr bool kExecuteFiltersInTableScan = false;
 
-// Try to extract an equality predicate (col = const) from a filter expression
-// where col matches a secondary index column. Returns true if found and fills
-// out_prefix / out_value_key_size.
 struct SecondaryIndexMatch {
   ObjectId shard_id;
-  std::string scan_prefix;
-  size_t value_key_size = 0;
+  std::vector<velox::variant> values;
+  velox::TypePtr value_type;
   catalog::Column::Id effective_column_id;
 };
 
-// Encode a Velox constant into the sortable index key format.
-bool EncodeConstantToSortableKey(std::string& key, const velox::variant& value,
-                                 velox::TypeKind kind) {
-  switch (kind) {
-    case velox::TypeKind::BOOLEAN: {
-      key.push_back(value.value<bool>() ? '\x01' : '\x00');
-      return true;
-    }
-    case velox::TypeKind::TINYINT: {
-      primary_key::AppendSigned(key,
-                                static_cast<int8_t>(value.value<int8_t>()));
-      return true;
-    }
-    case velox::TypeKind::SMALLINT: {
-      primary_key::AppendSigned(key,
-                                static_cast<int16_t>(value.value<int16_t>()));
-      return true;
-    }
-    case velox::TypeKind::INTEGER: {
-      primary_key::AppendSigned(key, value.value<int32_t>());
-      return true;
-    }
-    case velox::TypeKind::BIGINT: {
-      primary_key::AppendSigned(key, value.value<int64_t>());
-      return true;
-    }
-    case velox::TypeKind::REAL: {
-      float v = value.value<float>();
-      auto bits = std::bit_cast<uint32_t>(v);
-      if (bits & 0x80000000u) {
-        bits = ~bits;
-      } else {
-        bits ^= 0x80000000u;
-      }
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(uint32_t));
-      absl::big_endian::Store32(key.data() + base, bits);
-      return true;
-    }
-    case velox::TypeKind::DOUBLE: {
-      double v = value.value<double>();
-      auto bits = std::bit_cast<uint64_t>(v);
-      if (bits & 0x8000000000000000ull) {
-        bits = ~bits;
-      } else {
-        bits ^= 0x8000000000000000ull;
-      }
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(uint64_t));
-      absl::big_endian::Store64(key.data() + base, bits);
-      return true;
-    }
-    case velox::TypeKind::VARCHAR:
-    case velox::TypeKind::VARBINARY: {
-      auto sv = value.value<velox::StringView>();
-      for (size_t i = 0; i < sv.size(); ++i) {
-        char c = sv.data()[i];
-        if (c == '\x00') {
-          key.push_back('\x00');
-          key.push_back('\x01');
-        } else {
-          key.push_back(c);
-        }
-      }
-      key.push_back('\x00');
-      key.push_back('\x00');
-      return true;
-    }
-    default:
-      return false;
-  }
-}
+// Extract field name and constant values from an eq or in filter expression.
+// Returns the field name and collected variant values, or nullopt if the
+// expression doesn't match the expected pattern.
+struct FilterValues {
+  std::string field_name;
+  velox::TypePtr field_type;
+  std::vector<velox::variant> values;
+};
 
-// Try to match a single filter expression against a secondary index.
-// Looks for: eq(field_access("col"), constant) where "col" is an indexed
-// column.
-std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
-  const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
-  query::Transaction& transaction) {
-  // Must be a function call
+std::optional<FilterValues> ExtractEqOrInValues(
+  const velox::core::TypedExprPtr& filter) {
   const auto* call =
     dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
-  if (!call || (call->name() != "eq" && !call->name().ends_with("_eq")) ||
-      call->inputs().size() != 2) {
+  if (!call || call->inputs().size() != 2) {
     return std::nullopt;
   }
 
-  // One input must be field access, other must be constant
-  const velox::core::FieldAccessTypedExpr* field = nullptr;
-  const velox::core::ConstantTypedExpr* constant = nullptr;
-
-  for (const auto& input : call->inputs()) {
-    if (auto* f =
-          dynamic_cast<const velox::core::FieldAccessTypedExpr*>(input.get())) {
-      field = f;
-    } else if (auto* c = dynamic_cast<const velox::core::ConstantTypedExpr*>(
-                 input.get())) {
-      constant = c;
+  if (IsCallOf(call, "_eq")) {
+    const auto* field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
+      call->inputs()[0].get());
+    const auto* constant = dynamic_cast<const velox::core::ConstantTypedExpr*>(
+      call->inputs()[1].get());
+    // Try swapped order
+    if (!field) {
+      field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
+        call->inputs()[1].get());
+      constant = dynamic_cast<const velox::core::ConstantTypedExpr*>(
+        call->inputs()[0].get());
     }
+    if (!field || !constant || constant->hasValueVector() ||
+        constant->value().isNull()) {
+      return std::nullopt;
+    }
+    return FilterValues{
+      .field_name = field->name(),
+      .field_type = field->type(),
+      .values = {constant->value()},
+    };
   }
 
-  if (!field || !constant || constant->hasValueVector()) {
+  if (IsCallOf(call, "_in")) {
+    if (!call->inputs()[0]->isFieldAccessKind() ||
+        !call->inputs()[1]->isConstantKind()) {
+      return std::nullopt;
+    }
+    auto field =
+      basics::downCast<velox::core::FieldAccessTypedExpr>(call->inputs()[0]);
+    auto array_const =
+      basics::downCast<velox::core::ConstantTypedExpr>(call->inputs()[1]);
+    if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
+      return std::nullopt;
+    }
+
+    auto const_vec =
+      basics::downCast<velox::ConstantVector<velox::ComplexType>>(
+        array_const->valueVector());
+    auto array_vec =
+      basics::downCast<velox::ArrayVector>(const_vec->valueVector());
+    const auto offset = array_vec->offsetAt(const_vec->index());
+    const auto size = array_vec->sizeAt(const_vec->index());
+    const auto& elements = array_vec->elements();
+
+    auto all_variants = elements->toVariants();
+    std::vector<velox::variant> values;
+    values.reserve(size);
+    for (velox::vector_size_t i = 0; i < size; ++i) {
+      auto& v = all_variants[offset + i];
+      if (v.isNull()) {
+        continue;  // Skip NULLs — col = NULL is always unknown
+      }
+      values.push_back(std::move(v));
+    }
+    if (values.empty()) {
+      return std::nullopt;
+    }
+    return FilterValues{
+      .field_name = field->name(),
+      .field_type = field->type(),
+      .values = std::move(values),
+    };
+  }
+
+  return std::nullopt;
+}
+
+// Try to match a filter expression against a secondary index.
+// Handles eq(col, constant) and in(col, [c1, ..., cN]).
+std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
+  const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
+  query::Transaction& transaction) {
+  auto extracted = ExtractEqOrInValues(filter);
+  if (!extracted) {
     return std::nullopt;
   }
 
   // Find the column in the table
-  const auto* col_ptr = table.findColumn(field->name());
+  const auto* col_ptr = table.findColumn(extracted->field_name);
   if (!col_ptr) {
     return std::nullopt;
   }
@@ -187,17 +174,6 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
       continue;
     }
 
-    // Build scan prefix: <shard_id> <0x01 (not null)> <encoded_value>
-    std::string prefix;
-    secondary_key::AppendShardPrefix(prefix, index_shard->GetId());
-    secondary_key::AppendNotNullMarker(prefix);
-
-    if (!EncodeConstantToSortableKey(prefix, constant->value(),
-                                     field->type()->kind())) {
-      continue;
-    }
-    size_t value_key_size = prefix.size() - sizeof(ObjectId);
-
     // Find effective column id for materialization
     const auto& column_map = table.columnMap();
     SDB_ASSERT(!column_map.empty());
@@ -206,8 +182,8 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
 
     return SecondaryIndexMatch{
       .shard_id = index_shard->GetId(),
-      .scan_prefix = std::move(prefix),
-      .value_key_size = value_key_size,
+      .values = std::move(extracted->values),
+      .value_type = extracted->field_type,
       .effective_column_id = eff_col_id,
     };
   }
@@ -373,7 +349,7 @@ SereneDBTableLayout::createTableHandle(
       return std::make_shared<SecondaryIndexTableHandle>(
         std::string{table->name()}, rocksdb_table.TableId(),
         rocksdb_table.GetTransaction(), match->effective_column_id,
-        match->shard_id, std::move(match->scan_prefix), match->value_key_size,
+        match->shard_id, std::move(match->values), std::move(match->value_type),
         *table);
     }
   }

@@ -100,18 +100,21 @@ inline bool HasColumnOverlap(
 template<axiom::connector::WriteKind Kind>
 std::unique_ptr<SinkIndexWriter> MakeSecondaryIndexWriter(
   rocksdb::Transaction& transaction, ObjectId shard_id,
-  std::span<const catalog::Column::Id> columns, std::string indexed_col_name) {
+  std::span<const catalog::Column::Id> columns,
+  std::vector<velox::column_index_t> sk_children,
+  std::vector<velox::column_index_t> old_sk_children) {
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<SecondarySinkInsertWriter>(
-      transaction, shard_id, columns, std::string{indexed_col_name});
+      transaction, shard_id, columns, std::move(sk_children));
   } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<SecondarySinkUpdateWriter>(
-      transaction, shard_id, columns, std::string{indexed_col_name});
+      transaction, shard_id, columns, std::move(sk_children),
+      std::move(old_sk_children));
   } else {
     static_assert(Kind == axiom::connector::WriteKind::kDelete,
                   "Unexpected WriteKind");
     return std::make_unique<SecondarySinkDeleteWriter>(
-      transaction, shard_id, columns, std::move(indexed_col_name));
+      transaction, shard_id, columns, std::move(sk_children));
   }
 }
 
@@ -148,15 +151,15 @@ inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
   auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
   auto& inverted_index = basics::downCast<const catalog::InvertedIndex>(*index);
   return std::make_unique<SearchSinkBackfillWriter>(
-    inverted_shard,
-    MakeAnalyzerProvider(snapshot, inverted_index),
+    inverted_shard, MakeAnalyzerProvider(snapshot, inverted_index),
     inverted_index.GetColumnIds());
 }
 
 template<axiom::connector::WriteKind Kind>
 std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   ObjectId table_id, query::Transaction& transaction,
-  std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
+  std::span<const ColumnInfo> updated_columns, bool pk_updated,
+  const velox::RowType* input_type) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
   auto resolve_index_writer = [&](auto& index_transaction,
@@ -168,26 +171,36 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
       auto snapshot = transaction.EnsureCatalogSnapshot();
       writers.push_back(MakeInvertedIndexWriter<Kind>(
         index_transaction, snapshot, inverted_index));
-    } else if constexpr (std::is_same_v<std::decay_t<decltype(index_transaction)>,
-                                        rocksdb::Transaction>) {
+    } else if constexpr (std::is_same_v<
+                           std::decay_t<decltype(index_transaction)>,
+                           rocksdb::Transaction>) {
       auto snapshot = transaction.EnsureCatalogSnapshot();
       auto shard = snapshot->GetIndexShard(index.GetId());
       SDB_ASSERT(shard);
-      std::string indexed_col_name;
-      auto idx_table =
+      auto table =
         snapshot->template GetObject<catalog::Table>(index.GetRelationId());
-      if (idx_table && !index.GetColumnIds().empty()) {
-        auto idx_col_id = index.GetColumnIds()[0];
-        for (const auto& col : idx_table->Columns()) {
-          if (col.id == idx_col_id) {
-            indexed_col_name = col.name;
-            break;
-          }
+      SDB_ASSERT(table);
+      SDB_ASSERT(input_type);
+      const auto& id2col = table->IdToColumn();
+      std::vector<velox::column_index_t> sk_children;
+      std::vector<velox::column_index_t> old_sk_children;
+      sk_children.reserve(index.GetColumnIds().size());
+      for (auto col_id : index.GetColumnIds()) {
+        auto it = id2col.find(col_id);
+        SDB_ASSERT(it != id2col.end());
+        const auto& name = it->second->name;
+        if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
+          auto old_name = catalog::Column::GenerateOldValueName(name);
+          old_sk_children.push_back(input_type->getChildIdx(old_name));
+          auto maybe = input_type->getChildIdxIfExists(name);
+          sk_children.push_back(maybe.value_or(old_sk_children.back()));
+        } else {
+          sk_children.push_back(input_type->getChildIdx(name));
         }
       }
       writers.push_back(MakeSecondaryIndexWriter<Kind>(
         index_transaction, shard->GetId(), index.GetColumnIds(),
-        std::move(indexed_col_name)));
+        std::move(sk_children), std::move(old_sk_children)));
     } else {
       SDB_UNREACHABLE();
     }
@@ -401,7 +414,8 @@ class RocksDBTable : public axiom::connector::Table {
       _pk_type{std::move(init.pk_type)},
       _table_id{init.collection.GetId()},
       _transaction{transaction},
-      _stats{transaction.GetTableStats(_table_id)} {
+      _stats{transaction.GetTableStats(_table_id)},
+      _catalog_table{init.collection} {
     std::vector<const axiom::connector::Column*> order_columns;
     std::vector<axiom::connector::SortOrder> sort_order;
     order_columns.reserve(_pk_type->size());
@@ -457,9 +471,11 @@ class RocksDBTable : public axiom::connector::Table {
 
   const ObjectId& TableId() const noexcept { return _table_id; }
 
-  const velox::RowTypePtr& PKType() const noexcept { return _pk_type; }
+  const auto& PKType() const noexcept { return _pk_type; }
 
-  query::Transaction& GetTransaction() const noexcept { return _transaction; }
+  const auto& CatalogTable() const noexcept { return _catalog_table; }
+
+  auto& GetTransaction() const noexcept { return _transaction; }
 
   decltype(auto) WriteConflictPolicy(this auto&& self) noexcept {
     return (self._write_conflict_policy);
@@ -484,6 +500,7 @@ class RocksDBTable : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
+  const catalog::Table& _catalog_table;
   enum WriteConflictPolicy _write_conflict_policy =
     WriteConflictPolicy::EmitError;
   bool _update_pk = false;
@@ -639,8 +656,9 @@ class SecondaryIndexTableHandle final
   SecondaryIndexTableHandle(std::string name, ObjectId table_id,
                             query::Transaction& transaction,
                             catalog::Column::Id effective_column_id,
-                            ObjectId shard_id, std::string scan_prefix,
-                            size_t value_key_size,
+                            ObjectId shard_id,
+                            std::vector<velox::variant> values,
+                            velox::TypePtr value_type,
                             const axiom::connector::Table& underlying_table)
     : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
       _name{std::move(name)},
@@ -648,8 +666,8 @@ class SecondaryIndexTableHandle final
       _transaction{transaction},
       _effective_column_id{effective_column_id},
       _shard_id{shard_id},
-      _scan_prefix{std::move(scan_prefix)},
-      _value_key_size{value_key_size},
+      _values{std::move(values)},
+      _value_type{std::move(value_type)},
       _underlying_table{&underlying_table} {}
 
   bool supportsIndexLookup() const final { return false; }
@@ -670,9 +688,9 @@ class SecondaryIndexTableHandle final
 
   ObjectId GetShardId() const noexcept { return _shard_id; }
 
-  const std::string& GetScanPrefix() const noexcept { return _scan_prefix; }
+  const auto& GetValues() const noexcept { return _values; }
 
-  size_t GetValueKeySize() const noexcept { return _value_key_size; }
+  const auto& GetValueType() const noexcept { return _value_type; }
 
   const auto& GetUnderlyingTable() const noexcept { return *_underlying_table; }
 
@@ -682,8 +700,8 @@ class SecondaryIndexTableHandle final
   query::Transaction& _transaction;
   catalog::Column::Id _effective_column_id;
   ObjectId _shard_id;
-  std::string _scan_prefix;
-  size_t _value_key_size;
+  std::vector<velox::variant> _values;
+  velox::TypePtr _value_type;
   const axiom::connector::Table* _underlying_table;
 };
 
@@ -1166,7 +1184,7 @@ class SereneDBConnector final : public velox::connector::Connector {
                 object_key, transaction,
                 std::span{columns.begin() + table.PKType()->size(),
                           columns.end()},
-                table.UsedForUpdatePK());
+                table.UsedForUpdatePK(), &input_type->asRow());
             if (table.UsedForUpdatePK() || !update_sinks.empty()) {
               all_column_oids.reserve(table.type()->size());
               for (auto& col : table.type()->names()) {
@@ -1189,29 +1207,35 @@ class SereneDBConnector final : public velox::connector::Connector {
             auto shard = snapshot->GetIndexShard(cis->index_id);
             SDB_ASSERT(shard);
 
-            if (shard->GetType() == IndexType::Secondary) {
-              auto index = snapshot->template GetObject<catalog::Index>(
-                shard->GetIndexId());
-              SDB_ASSERT(index);
-              auto indexed_col_id = index->GetColumnIds()[0];
+            auto id2column = table.CatalogTable().IdToColumn();
+            auto index =
+              snapshot->GetObject<catalog::Index>(shard->GetIndexId());
 
-              // Find indexed column's input index
-              velox::column_index_t indexed_input_idx = 0;
-              for (size_t i = 0; i < columns.size(); ++i) {
-                if (columns[i].id == indexed_col_id) {
-                  indexed_input_idx = i;
-                  break;
-                }
+            containers::FlatHashMap<catalog::Column::Id, const ColumnInfo*>
+              id2colinfo;
+            id2colinfo.reserve(columns.size());
+            for (auto& col : columns) {
+              id2colinfo.emplace(col.id, &col);
+            }
+
+            if (shard->GetType() == IndexType::Secondary) {
+              SDB_ASSERT(index);
+
+              // Build SK column indices into the input RowVector
+              std::vector<velox::column_index_t> sk_children;
+              sk_children.reserve(index->GetColumnIds().size());
+              for (auto col_id : index->GetColumnIds()) {
+                auto it = id2colinfo.find(col_id);
+                SDB_ASSERT(it != id2colinfo.end());
+                sk_children.push_back(it->second - columns.data());
               }
 
               // For generated-PK tables, include generated PK in key_childs
               auto backfill_pk_indices = pk_indices;
               if (backfill_pk_indices.empty()) {
-                for (size_t i = 0; i < columns.size(); ++i) {
-                  if (columns[i].id == catalog::Column::kGeneratedPKId) {
-                    backfill_pk_indices.push_back(i);
-                    break;
-                  }
+                auto it = id2colinfo.find(catalog::Column::kGeneratedPKId);
+                if (it != id2colinfo.end()) {
+                  backfill_pk_indices.push_back(it->second - columns.data());
                 }
               }
 
@@ -1219,9 +1243,10 @@ class SereneDBConnector final : public velox::connector::Connector {
                 _db, _cf, *connector_query_ctx->memoryPool(), shard->GetId(),
                 backfill_pk_indices, columns,
                 std::vector<std::unique_ptr<SinkIndexWriter>>{}, table_lock,
-                indexed_input_idx);
+                std::move(sk_children));
             }
 
+            SDB_ASSERT(shard->GetType() == IndexType::Inverted);
             auto backfill_writer =
               CreateBackfillIndexWriter(cis->index_id, transaction);
             return std::make_unique<RocksDBIndexBackfillDataSink>(
@@ -1230,17 +1255,19 @@ class SereneDBConnector final : public velox::connector::Connector {
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(
-                object_key, transaction);
+                object_key, transaction, {}, false, &input_type->asRow());
             if (table.BulkInsert()) {
               const bool is_generated_pk = pk_indices.empty();
               if (is_generated_pk) {
                 return std::make_unique<SSTInsertDataSink<true>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                  pk_indices, columns, std::move(insert_sinks), table_lock);
+                  pk_indices, columns, std::move(insert_sinks), table_lock,
+                  std::vector<velox::column_index_t>{});
               } else {
                 return std::make_unique<SSTInsertDataSink<false>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                  pk_indices, columns, std::move(insert_sinks), table_lock);
+                  pk_indices, columns, std::move(insert_sinks), table_lock,
+                  std::vector<velox::column_index_t>{});
               }
             }
 
@@ -1266,8 +1293,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
       auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
       auto delete_sinks =
-        CreateIndexWriters<axiom::connector::WriteKind::kDelete>(object_key,
-                                                                 transaction);
+        CreateIndexWriters<axiom::connector::WriteKind::kDelete>(
+          object_key, transaction, {}, false, &input_type->asRow());
       // PK columns are first in the input. For generated PK,
       // FillColumnsInfo adds the generated PK as column 0.
       size_t pk_count = table.PKType()->size();
@@ -1314,7 +1341,8 @@ class SereneDBConnector final : public velox::connector::Connector {
         pool,
         ParquetMaterializer(pool, std::move(source), std::move(reader),
                             std::move(row_reader), output_type, column_oids),
-        _db, _cf, snapshot, handle.GetScanPrefix(), handle.GetValueKeySize());
+        _db, _cf, snapshot, handle.GetShardId(), handle.GetValues(),
+        handle.GetValueType());
     }
 
     return std::make_unique<SecondaryIndexDataSource<RocksDBMaterializer>>(
@@ -1322,7 +1350,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       RocksDBMaterializer(pool, snapshot, &_db, nullptr, _cf, output_type,
                           column_oids, handle.GetEffectiveColumnId(),
                           handle.TableId()),
-      _db, _cf, snapshot, handle.GetScanPrefix(), handle.GetValueKeySize());
+      _db, _cf, snapshot, handle.GetShardId(), handle.GetValues(),
+      handle.GetValueType());
   }
 
   std::unique_ptr<velox::connector::DataSource>

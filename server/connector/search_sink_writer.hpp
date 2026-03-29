@@ -209,7 +209,9 @@ class SearchSinkDeleteWriter final : public SinkIndexWriter,
     InitImpl(batch_size);
   }
 
-  void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
+  void DeleteRow(std::string_view encoded_pk) final {
+    DeleteRowImpl(encoded_pk);
+  }
 
   void Finish() final { FinishImpl(); }
 
@@ -253,7 +255,9 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
     SearchSinkDeleteBaseImpl::AbortImpl();
   }
 
-  void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
+  void DeleteRow(std::string_view encoded_pk) final {
+    DeleteRowImpl(encoded_pk);
+  }
 };
 
 // SearchSinkInsertBaseImpl stores a reference to the transaction, so the

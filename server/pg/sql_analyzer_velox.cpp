@@ -199,26 +199,6 @@ const containers::FlatHashMap<std::string_view, lp::SpecialForm> kSpecialForms{
   {"in", lp::SpecialForm::kIn},
 };
 
-using NameToColumnMap =
-  std::unordered_map<std::string_view, const catalog::Column*>;
-NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
-  return columns | std::views::transform([](const catalog::Column& column) {
-           return std::pair<std::string_view, const catalog::Column*>{
-             column.name, &column};
-         }) |
-         std::ranges::to<NameToColumnMap>();
-}
-
-using IdToColumnMap =
-  containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
-IdToColumnMap GetIdToColumn(std::span<const catalog::Column> columns) {
-  return columns | std::views::transform([](const catalog::Column& column) {
-           return std::pair<catalog::Column::Id, const catalog::Column*>{
-             column.id, &column};
-         }) |
-         std::ranges::to<IdToColumnMap>();
-}
-
 std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
   return absl::StrCat(
     "This operation is not supported for ",
@@ -1527,14 +1507,14 @@ void SqlAnalyzer::AddIndexColumns(State& state, const Node& stmt,
                                   const catalog::Table& table,
                                   std::vector<std::string>& column_names,
                                   std::vector<lp::ExprPtr>& column_exprs) {
-  // Output type is aligned with table's RowType, may have one extra column
+  // output type is aligned with table's RowType, may have one extra column
   // at the end for generated PK (which is never part of a secondary index).
   const auto& output_names = state.root->outputType()->names();
   const auto& row_names = table.RowType()->names();
   SDB_ASSERT(output_names.size() - row_names.size() <= 1);
   SDB_ASSERT(std::ranges::starts_with(ToAliases(output_names), row_names));
 
-  auto id2column = GetIdToColumn(table.Columns());
+  const auto& id2column = table.IdToColumn();
   for (auto& index : object.Indexes()) {
     if (index->GetIndexType() != IndexType::Secondary) {
       continue;
@@ -1547,7 +1527,7 @@ void SqlAnalyzer::AddIndexColumns(State& state, const Node& stmt,
 
       std::string name;
       if (stmt.type == T_UpdateStmt) {
-        name = "_sdb_old_" + col.name;
+        name = catalog::Column::GenerateOldValueName(col.name);
       } else {
         name = col.name;
       }
@@ -1764,7 +1744,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   containers::FlatHashSet<std::string_view> target_column_names;
   bool update_pk = false;
-  auto name_to_column = GetNameToColumn(table.Columns());
+  const auto& name2column = table.NameToColumn();
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1779,8 +1759,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
         ERR_MSG("multiple assignments to same column \"", target.name, "\""));
     }
 
-    auto it = name_to_column.find(target_name);
-    if (it == name_to_column.end()) {
+    auto it = name2column.find(target_name);
+    if (it == name2column.end()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       CURSOR_POS(ErrorPosition(ExprLocation(&target))),
                       ERR_MSG("column \"", target.name, "\" of relation \"",
@@ -2204,10 +2184,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     if (attlist_length > 0) {
       names.reserve(attlist_length);
       types.reserve(attlist_length);
-      auto name_to_column = GetNameToColumn(table.Columns());
+      const auto& name2column = table.NameToColumn();
       for (const auto& column_name : PgStrListWrapper{stmt.attlist}) {
-        auto it = name_to_column.find(column_name);
-        if (it == name_to_column.end() || it->second->IsGeneratedPK()) {
+        auto it = name2column.find(column_name);
+        if (it == name2column.end() || it->second->IsGeneratedPK()) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                           CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
                           ERR_MSG("column \"", column_name, "\" of relation \"",

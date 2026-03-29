@@ -22,7 +22,9 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include "app/app_server.h"
 #include "basics/down_cast.h"
+#include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/native_functions.h"
 #include "catalog/sql_function_impl.h"

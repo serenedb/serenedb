@@ -319,14 +319,13 @@ class SSTInsertDataSink final
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    absl::Mutex& table_lock,
-    velox::column_index_t indexed_column_input_idx = 0);
+    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::ReaderMutexLock _table_lock_guard;
-  velox::column_index_t _indexed_column_input_idx{0};
+  std::vector<velox::column_index_t> _sk_children;
 };
 
 extern template class SSTInsertDataSink<true>;

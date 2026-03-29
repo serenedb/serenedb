@@ -23,10 +23,14 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
+#include <velox/expression/DecodedArgs.h>
+#include <velox/expression/FunctionMetadata.h>
+#include <velox/expression/VectorFunction.h>
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/functions/prestosql/DateTimeImpl.h>
 #include <velox/type/SimpleFunctionApi.h>
+#include <velox/vector/RangeVector.h>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -1208,6 +1212,60 @@ struct PgErrorFunction {
   }
 };
 
+class GenerateSeriesFunction : public velox::exec::VectorFunction {
+ public:
+  void apply(const velox::SelectivityVector& rows,
+             std::vector<velox::VectorPtr>& args,
+             const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
+             velox::VectorPtr& result) const override {
+    velox::exec::DecodedArgs decoded_args(rows, args, context);
+    auto* start_vector = decoded_args.at(0);
+    auto* stop_vector = decoded_args.at(1);
+    velox::DecodedVector* step_vector = nullptr;
+    if (args.size() == 3) {
+      step_vector = decoded_args.at(2);
+    }
+
+    const auto num_rows = rows.end();
+    auto* pool = context.pool();
+
+    velox::BufferPtr sizes = velox::allocateSizes(num_rows, pool);
+    velox::BufferPtr offsets = velox::allocateOffsets(num_rows, pool);
+    auto* raw_sizes = sizes->asMutable<velox::vector_size_t>();
+    auto* raw_offsets = offsets->asMutable<velox::vector_size_t>();
+
+    std::vector<velox::RangeVector::RowMeta> metas(num_rows);
+    velox::vector_size_t total_elements = 0;
+
+    context.applyToSelectedNoThrow(rows, [&](auto row) {
+      auto start = start_vector->valueAt<int64_t>(row);
+      auto stop = stop_vector->valueAt<int64_t>(row);
+      int64_t step = step_vector ? step_vector->valueAt<int64_t>(row)
+                                 : (stop >= start ? 1 : -1);
+
+      VELOX_USER_CHECK_NE(step, 0, "step must not be zero");
+      VELOX_USER_CHECK(step > 0 ? stop >= start : stop <= start,
+                       "step size must be positive for increasing series and "
+                       "negative for decreasing series");
+
+      auto count = static_cast<__int128>(stop - start) / step + 1;
+      VELOX_USER_CHECK_GE(count, 0, "invalid generate_series bounds");
+
+      raw_offsets[row] = total_elements;
+      raw_sizes[row] = static_cast<velox::vector_size_t>(count);
+      metas[row] = {start, step};
+      total_elements += raw_sizes[row];
+    });
+
+    auto range_vector = std::make_shared<velox::RangeVector>(
+      pool, velox::TypePtr{output_type},
+      /*nulls=*/nullptr, num_rows, std::move(offsets), std::move(sizes),
+      std::move(metas));
+
+    context.moveOrCopyResult(std::move(range_vector), rows, result);
+  }
+};
+
 }  // namespace
 
 void registerFunctions(const std::string& prefix) {
@@ -1781,6 +1839,26 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "get_wal_summarizer_state"});
 
   registerExtractFunctions(prefix);
+
+  velox::exec::registerStatefulVectorFunction(
+    prefix + "generate_series",
+    {velox::exec::FunctionSignatureBuilder()
+       .returnType("array(bigint)")
+       .argumentType("bigint")
+       .argumentType("bigint")
+       .build(),
+     velox::exec::FunctionSignatureBuilder()
+       .returnType("array(bigint)")
+       .argumentType("bigint")
+       .argumentType("bigint")
+       .argumentType("bigint")
+       .build()},
+    [](const std::string&, const std::vector<velox::exec::VectorFunctionArg>&,
+       const velox::core::QueryConfig&)
+      -> std::shared_ptr<velox::exec::VectorFunction> {
+      return std::make_shared<GenerateSeriesFunction>();
+    },
+    velox::exec::VectorFunctionMetadataBuilder().deterministic(false).build());
 }
 
 }  // namespace sdb::pg::functions

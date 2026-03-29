@@ -5406,6 +5406,7 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"void", pg::VOID()},
   {"regtype", pg::REGTYPE()},
   {"regclass", pg::REGCLASS()},
+  {"regnamespace", pg::REGNAMESPACE()},
 };
 
 lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,
@@ -6070,6 +6071,17 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   if (pg::IsRegclass(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_regclassout",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::VARCHAR() && pg::IsRegnamespace(type)) {
+    return std::make_shared<lp::CallExpr>(
+      std::move(type), "pg_regnamespacein", std::move(arg),
+      MakeConst(ErrorPosition(expr.location)));
+  }
+
+  if (pg::IsRegnamespace(arg->type()) && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_regnamespaceout",
                                           std::move(arg));
   }
 

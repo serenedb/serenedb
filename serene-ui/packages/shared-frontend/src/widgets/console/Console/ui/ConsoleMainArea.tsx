@@ -38,7 +38,7 @@ const ensureRightSidebarPanel = (event: GridviewReadyEvent) => {
         id: CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
         component: "rightSidebar",
         size: CONSOLE_RIGHT_SIDEBAR_SIZE,
-        minimumWidth: 1,
+        minimumWidth: 300,
         position: {
             referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
             direction: "right",
@@ -70,7 +70,9 @@ export const ConsoleMainArea: React.FC = () => {
             return;
         }
 
-        const rightPanel = event.api.getPanel(CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID);
+        const rightPanel = event.api.getPanel(
+            CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
+        );
 
         if (!isRightSidebarVisible) {
             if (rightPanel) {
@@ -102,11 +104,17 @@ export const ConsoleMainArea: React.FC = () => {
             return;
         }
 
-        const rightPanel = event.api.getPanel(CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID);
+        const rightPanel = event.api.getPanel(
+            CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
+        );
         if (rightPanel && rightPanel.width > 1) {
             rightSidebarWidthRef.current = rightPanel.width;
         }
-    }, [settingsSidebarCollapsed, executionHistorySidebarCollapsed, isRightSidebarVisible]);
+    }, [
+        settingsSidebarCollapsed,
+        executionHistorySidebarCollapsed,
+        isRightSidebarVisible,
+    ]);
 
     return (
         <GridviewReact

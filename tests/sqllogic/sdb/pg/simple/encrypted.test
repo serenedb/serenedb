@@ -1,4 +1,4 @@
-connection ssl-tls sslmode=prefer
+connection ssl-tls sslmode=prefer port=plain
 skipif postgres-extended
 query
 select 1234567890123456::numeric;
@@ -18,11 +18,14 @@ numeric
 
 connection ssl-tls3 sslmode=require port=ssl
 skipif postgres-extended
-query error error performing TLS handshake: server does not support TLS
+query
 select 1234567890123456::numeric;
+----
+numeric
+1234567890123456.0000000000000000000
 
 
-connection ssl-tls4 sslmode=require
+connection ssl-tls4 sslmode=require port=plain
 skipif postgres-extended
 query error
 select 1234567890123456::numeric;
@@ -30,10 +33,9 @@ select 1234567890123456::numeric;
 error performing TLS handshake: server does not support TLS
 
 
-connection ssl-tls5 port=ssl
+connection ssl-tls5 sslmode=disable port=ssl
 skipif postgres-extended
-query ?
+query error
 select 1234567890123456::numeric;
 ----
-numeric
-1234567890123456.0000000000000000000
+connection closed

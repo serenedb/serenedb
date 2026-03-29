@@ -49,8 +49,11 @@ void ResolveInformationSchema(ObjectId database, std::string_view relation,
   if (const auto* table =
         GetSystemTable(StaticStrings::kInformationSchema, relation)) {
     data.object = table->CreateSnapshot(database, config);
+    return;
   }
-  // TODO(codeworse): add views and functions from information_schema
+  if (auto view = GetInfoSchemaView(relation)) {
+    data.object = std::move(view);
+  }
 }
 
 void ResolveFunctions(ObjectId database,
@@ -107,26 +110,33 @@ void ResolveFunction(ObjectId database,
     return;
   }
 
-  // system functions
-  if (auto object = pg::GetFunction(name.relation)) {
-    const auto* func = object.get();
-    data.object = std::move(object);
+  auto resolve_sql_func = [&](const catalog::Function* func) {
     if (func->Options().language == catalog::FunctionLanguage::SQL) {
-      bool changed = disallowed.emplace(name).second;
+      bool changed = disallowed.functions.emplace(name).second;
       SDB_ASSERT(changed);
       ResolveSqlFunction(database, search_path, objects, disallowed,
                          func->SqlFunction().GetObjects(), config);
-      changed = disallowed.erase(name) != 0;
+      changed = disallowed.functions.erase(name) != 0;
       SDB_ASSERT(changed);
     }
+  };
+
+  // pg_catalog system functions
+  if (auto object = pg::GetFunction(name.relation)) {
+    const auto* func = object.get();
+    data.object = std::move(object);
+    resolve_sql_func(func);
     return;
   }
 
-  if (name.schema == StaticStrings::kInformationSchema) {
-    // information_schema must be explicitly defined
-    // (except the case it is in the search path)
-    ResolveInformationSchema(database, name.relation, data, config);
-    if (data.object) {
+  // information_schema functions (explicitly qualified or by unqualified name
+  // for _pg_* helpers used by information_schema views)
+  if (name.schema == StaticStrings::kInformationSchema ||
+      name.relation.starts_with("_pg_")) {
+    if (auto object = pg::GetInfoSchemaFunction(name.relation)) {
+      const auto* func = object.get();
+      data.object = std::move(object);
+      resolve_sql_func(func);
       return;
     }
   }
@@ -140,15 +150,7 @@ void ResolveFunction(ObjectId database,
   }
 
   SDB_ASSERT(data.object->GetType() == catalog::ObjectType::Function);
-  auto& func = basics::downCast<catalog::Function>(*data.object);
-  if (func.Options().language == catalog::FunctionLanguage::SQL) {
-    bool changed = disallowed.emplace(name).second;
-    SDB_ASSERT(changed);
-    ResolveSqlFunction(database, search_path, objects, disallowed,
-                       func.SqlFunction().GetObjects(), config);
-    changed = disallowed.erase(name) != 0;
-    SDB_ASSERT(changed);
-  }
+  resolve_sql_func(&basics::downCast<catalog::Function>(*data.object));
 }
 
 // view, table
@@ -166,30 +168,33 @@ void ResolveRelation(ObjectId database,
     return;
   }
 
-  if (name.schema == StaticStrings::kInformationSchema) {
-    // information_schema must be explicitly defined
-    // (except the case it is in the search path)
-    ResolveInformationSchema(database, name.relation, data, config);
-    if (data.object) {
-      return;
-    }
-  }
-
   auto resolve_view = [&] {
-    bool changed = disallowed.emplace(name).second;
+    bool changed = disallowed.relations.emplace(name).second;
     SDB_ASSERT(changed);
     auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
     ResolveQueryView(database, search_path, objects, disallowed, state->objects,
                      config);
-    changed = disallowed.erase(name) != 0;
+    changed = disallowed.relations.erase(name) != 0;
     SDB_ASSERT(changed);
   };
 
-  // system views
+  // pg_catalog system views
   if (const auto view = pg::GetView(name.relation)) {
     data.object = std::move(view);
     resolve_view();
     return;
+  }
+
+  // information_schema views/tables (explicitly qualified or _pg_* helpers)
+  if (name.schema == StaticStrings::kInformationSchema ||
+      name.relation.starts_with("_pg_")) {
+    ResolveInformationSchema(database, name.relation, data, config);
+    if (data.object) {
+      if (data.object->GetType() == catalog::ObjectType::View) {
+        resolve_view();
+      }
+      return;
+    }
   }
 
   ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
@@ -278,7 +283,7 @@ void ResolveQueryView(ObjectId database,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query, const Config& config) {
   for (const auto& [name, old_data] : query.getRelations()) {
-    if (disallowed.contains(name)) {
+    if (disallowed.relations.contains(name)) {
       SDB_THROW(ERROR_BAD_PARAMETER,
                 "view doesn't support recursive references");
     }
@@ -296,7 +301,7 @@ void ResolveSqlFunction(ObjectId database,
                         const Objects& query, const Config& config) {
   ResolveRelations(database, search_path, objects, disallowed, query, config);
   for (const auto& [name, old_data] : query.getFunctions()) {
-    if (disallowed.contains(name)) {
+    if (disallowed.functions.contains(name)) {
       SDB_THROW(ERROR_BAD_PARAMETER,
                 "function doesn't support recursive references");
     }

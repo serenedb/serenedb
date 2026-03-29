@@ -1218,7 +1218,7 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
              std::vector<velox::VectorPtr>& args,
              const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
              velox::VectorPtr& result) const override {
-    velox::exec::DecodedArgs decoded_args(rows, args, context);
+    velox::exec::DecodedArgs decoded_args{rows, args, context};
     auto* start_vector = decoded_args.at(0);
     auto* stop_vector = decoded_args.at(1);
     velox::DecodedVector* step_vector = nullptr;
@@ -1229,8 +1229,8 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
     const auto num_rows = rows.end();
     auto* pool = context.pool();
 
-    velox::BufferPtr sizes = velox::allocateSizes(num_rows, pool);
-    velox::BufferPtr offsets = velox::allocateOffsets(num_rows, pool);
+    auto sizes = velox::allocateSizes(num_rows, pool);
+    auto offsets = velox::allocateOffsets(num_rows, pool);
     auto* raw_sizes = sizes->asMutable<velox::vector_size_t>();
     auto* raw_offsets = offsets->asMutable<velox::vector_size_t>();
 
@@ -1260,7 +1260,7 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
     });
 
     auto range_vector = std::make_shared<velox::RangeVector>(
-      pool, velox::TypePtr{output_type}, nullptr, num_rows, std::move(offsets),
+      pool, output_type, nullptr, num_rows, std::move(offsets),
       std::move(sizes), std::move(metas));
 
     context.moveOrCopyResult(std::move(range_vector), rows, result);
@@ -1273,7 +1273,7 @@ class GenerateSubscriptsFunction : public velox::exec::VectorFunction {
              std::vector<velox::VectorPtr>& args,
              const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
              velox::VectorPtr& result) const override {
-    velox::exec::DecodedArgs decoded_args(rows, args, context);
+    velox::exec::DecodedArgs decoded_args{rows, args, context};
     auto* array_vector = decoded_args.at(0);
     auto* dim_vector = decoded_args.at(1);
     velox::DecodedVector* reverse_vector = nullptr;
@@ -1284,8 +1284,8 @@ class GenerateSubscriptsFunction : public velox::exec::VectorFunction {
     const auto num_rows = rows.end();
     auto* pool = context.pool();
 
-    velox::BufferPtr sizes = velox::allocateSizes(num_rows, pool);
-    velox::BufferPtr offsets = velox::allocateOffsets(num_rows, pool);
+    auto sizes = velox::allocateSizes(num_rows, pool);
+    auto offsets = velox::allocateOffsets(num_rows, pool);
     auto* raw_sizes = sizes->asMutable<velox::vector_size_t>();
     auto* raw_offsets = offsets->asMutable<velox::vector_size_t>();
 
@@ -1335,7 +1335,7 @@ class GenerateSubscriptsFunction : public velox::exec::VectorFunction {
     });
 
     auto range_vector = std::make_shared<velox::RangeVector>(
-      pool, velox::TypePtr{output_type}, nullptr, num_rows, std::move(offsets),
+      pool, output_type, nullptr, num_rows, std::move(offsets),
       std::move(sizes), std::move(metas));
 
     context.moveOrCopyResult(std::move(range_vector), rows, result);

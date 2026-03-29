@@ -5937,7 +5937,29 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
         velox::BOOLEAN(), lp::SpecialForm::kIn, std::move(test_expr),
         std::move(subquery_expr));
     }
-    case ARRAY_SUBLINK:
+    case ARRAY_SUBLINK: {
+      if (subquery_output.size() != 1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("subquery must return only one column"),
+                        CURSOR_POS(ErrorPosition(expr.location)));
+      }
+      const auto& elem_type = subquery_output.childAt(0);
+      auto array_type = velox::ARRAY(elem_type);
+      const auto& col_name = subquery_output.nameOf(0);
+      auto input =
+        std::make_shared<lp::InputReferenceExpr>(elem_type, col_name);
+      auto expr = std::make_shared<lp::AggregateExpr>(
+        array_type, "presto_array_agg",
+        std::vector<lp::ExprPtr>{std::move(input)});
+      auto output_name = _id_generator.NextColumnName("array");
+      child_state.root = std::make_shared<lp::AggregateNode>(
+        _id_generator.NextPlanId(), std::move(child_state.root),
+        std::vector<lp::ExprPtr>{},
+        std::vector<lp::AggregateNode::GroupingSet>{},
+        std::vector<lp::AggregateExprPtr>{std::move(expr)},
+        std::vector<std::string>{output_name});
+      return std::make_shared<lp::SubqueryExpr>(std::move(child_state.root));
+    }
     case ALL_SUBLINK:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

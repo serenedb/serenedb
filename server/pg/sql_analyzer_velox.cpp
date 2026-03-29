@@ -964,6 +964,10 @@ class SqlAnalyzer {
                            const Node& function_body,
                            const catalog::FunctionSignature& signature);
 
+  lp::ExprPtr InlineSQLFunctionExpr(State& state,
+                                    const catalog::Function& logical_function,
+                                    const FuncCall& expr);
+
   lp::ExprPtr MakeCast(velox::TypePtr to, lp::ExprPtr from) {
     if (auto it = _param_to_idx.find(from.get()); it != _param_to_idx.end()) {
       auto param_idx = it->second;
@@ -5099,6 +5103,20 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
 
   const auto lang = logical_function.Options().language;
   name = logical_function.GetName();
+
+  if (logical_function.Signature().IsProcedure()) {
+    auto args = ProcessExprListImpl(state, expr.args);
+    ErrorIsProcedure(name, args, ExprLocation(&expr));
+  }
+
+  // TODO(Pasha): Rewrite this, you smart enough but I'm not
+  // SQL functions with composite-type parameters are inlined as scalar
+  // expressions: the function body's expression is processed in the caller's
+  // state with composite param field accesses expanded to column references.
+  if (lang == catalog::FunctionLanguage::SQL) {
+    return InlineSQLFunctionExpr(state, logical_function, expr);
+  }
+
   auto args = ProcessExprListImpl(state, expr.args);
   if (lang == catalog::FunctionLanguage::Decorator) {
     if (args.size() != 1) {
@@ -5114,18 +5132,6 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   if (lang == catalog::FunctionLanguage::VeloxNative) {
     return ResolveVeloxFunctionAndInferArgsCommonType(std::string{name},
                                                       std::move(args));
-  }
-
-  if (logical_function.Signature().IsProcedure()) {
-    ErrorIsProcedure(name, args, ExprLocation(&expr));
-  }
-
-  if (lang == catalog::FunctionLanguage::SQL) {
-    // look at ResolveSQLFunctionAndInferArgsCommonType for TODO details.
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(
-        "User-defined SQL functions are only supported in a FROM clause"));
   }
 
   ErrorUnsupportedLanguage(lang, name, args, ExprLocation(&expr));
@@ -5814,6 +5820,85 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   return state;
 }
 
+lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
+  State& state, const catalog::Function& logical_function,
+  const FuncCall& expr) {
+  const auto& signature = logical_function.Signature();
+  const auto& sql_function = logical_function.SqlFunction();
+  const auto& params = signature.parameters;
+
+  const auto num_args = list_length(expr.args);
+  SDB_ENSURE(static_cast<size_t>(num_args) == params.size(),
+             ERROR_BAD_PARAMETER, "function ", logical_function.GetName(),
+             " expects ", params.size(), " arguments, got ", num_args);
+
+  const auto& lookup_columns =
+    state.lookup_columns ? state.lookup_columns : state.root->outputType();
+
+  // Pre-compute total field count to reserve param_keys, which owns the key
+  // strings (e.g. "$1", "$1.atttypid") so string_view keys in param2expr
+  // remain valid without reallocation.
+  size_t total_composite_fields = 0;
+  for (const auto& param : params) {
+    if (param.type && param.type->isRow()) {
+      total_composite_fields += param.type->size();
+    }
+  }
+  std::vector<std::string> param_keys;
+  param_keys.reserve(total_composite_fields + params.size());
+  State::FuncParamToExpr param2expr;
+  for (size_t i = 0; i < params.size(); ++i) {
+    const auto& param = params[i];
+    const auto* arg_node = list_nth_node(Node, expr.args, static_cast<int>(i));
+    // Use positional name ($N) since ProcessParamRef always looks up by $N.
+    param_keys.push_back(GetUnnamedFunctionArgumentName(i + 1));
+    const auto& positional_name = param_keys.back();
+
+    if (param.type && param.type->isRow()) {
+      // Composite parameter: the argument must be a table alias reference.
+      // Expand each field of the composite type into func_params so that
+      // ($N).field_name resolves to table_alias.field_name in the caller.
+      SDB_ENSURE(IsA(arg_node, ColumnRef), ERROR_BAD_PARAMETER,
+                 "composite-type parameter requires a table reference");
+      const auto* cref = castNode(ColumnRef, arg_node);
+      std::string table_alias = NameToStr(cref->fields);
+
+      const auto& row_type = param.type->asRow();
+      for (size_t j = 0; j < row_type.size(); ++j) {
+        auto field_name = row_type.nameOf(j);
+        auto qualified = absl::StrCat(table_alias, ".", field_name);
+        auto result = state.resolver.Resolve(lookup_columns, qualified);
+        SDB_ENSURE(result.IsFound(), ERROR_BAD_PARAMETER, "column ", qualified,
+                   " not found for composite parameter ", positional_name);
+        auto col_name = result.GetColumnName();
+        auto col_type = lookup_columns->findChild(col_name);
+        param_keys.push_back(absl::StrCat(positional_name, ".", field_name));
+        param2expr.try_emplace(param_keys.back(),
+                               std::make_shared<lp::InputReferenceExpr>(
+                                 col_type, std::string{col_name}));
+      }
+    } else {
+      // Scalar parameter: process the argument normally.
+      auto arg_expr = ProcessExprNodeImpl(state, arg_node);
+      param2expr.try_emplace(positional_name, std::move(arg_expr));
+    }
+  }
+
+  // Extract the body expression from the function's SELECT statement and
+  // process it inline in the caller's state with the expanded param mappings.
+  const auto& function_body = *sql_function.GetStatement()->stmt;
+  SDB_ASSERT(IsA(&function_body, SelectStmt));
+  const auto* select_stmt = castNode(SelectStmt, &function_body);
+  SDB_ASSERT(list_length(select_stmt->targetList) == 1);
+  const auto* res_target = list_nth_node(ResTarget, select_stmt->targetList, 0);
+
+  auto* prev_func_params = state.func_params;
+  state.func_params = &param2expr;
+  auto result = ProcessExprNodeImpl(state, res_target->val);
+  state.func_params = prev_func_params;
+  return result;
+}
+
 lp::ExprPtr SqlAnalyzer::ProcessMinMaxExpr(State& state,
                                            const MinMaxExpr& expr) {
   auto args = ProcessExprListImpl(state, expr.args);
@@ -6152,6 +6237,33 @@ lp::ExprPtr SqlAnalyzer::ProcessCollateClause(State& state,
 
 lp::ExprPtr SqlAnalyzer::ProcessAIndirection(State& state,
                                              const A_Indirection& expr) {
+  // TODO(Pasha) Maybe remove this?
+  // Composite param field access: ($N).field_name
+  // When a function param is a composite type (table alias), we store expanded
+  // field mappings like "$1.atttypid" in func_params. Resolve them here before
+  // processing the ParamRef (which has no standalone mapping).
+  if (IsA(expr.arg, ParamRef) && state.func_params) {
+    const auto& param_ref = *castNode(ParamRef, expr.arg);
+    std::string param_prefix = GetUnnamedFunctionArgumentName(param_ref.number);
+    lp::ExprPtr result;
+    VisitNodes(expr.indirection, [&](const Node& node) {
+      if (result) {
+        return;
+      }
+      if (IsA(&node, String)) {
+        std::string key =
+          absl::StrCat(param_prefix, ".", strVal(castNode(String, &node)));
+        if (auto it = state.func_params->find(key);
+            it != state.func_params->end()) {
+          result = it->second;
+        }
+      }
+    });
+    if (result) {
+      return result;
+    }
+  }
+
   auto arg = ProcessExprNodeImpl(state, castNode(Node, expr.arg));
   VisitNodes(expr.indirection, [&](const Node& node) {
     if (IsA(&node, A_Indices)) {

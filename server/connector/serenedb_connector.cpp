@@ -170,7 +170,7 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
 
   // Look up secondary indexes on this table
   auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
-  auto snapshot = transaction.GetCatalogSnapshot();
+  auto snapshot = transaction.EnsureCatalogSnapshot();
 
   for (auto index_shard :
        snapshot->GetIndexShardsByTable(rocksdb_table.TableId())) {

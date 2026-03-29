@@ -1313,7 +1313,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       return std::make_unique<SecondaryIndexDataSource<ParquetMaterializer>>(
         pool,
         ParquetMaterializer(pool, std::move(source), std::move(reader),
-                            std::move(row_reader), output_type),
+                            std::move(row_reader), output_type, column_oids),
         _db, _cf, snapshot, handle.GetScanPrefix(), handle.GetValueKeySize());
     }
 

@@ -22,9 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 
-#include "app/app_server.h"
 #include "basics/down_cast.h"
-#include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/native_functions.h"
 #include "catalog/sql_function_impl.h"
@@ -210,9 +208,7 @@ void ResolveRelation(ObjectId database,
                          default_value_objects, config);
       }
     }
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+    auto snapshot = config.EnsureCatalogSnapshot();
     auto impl = std::make_shared<Objects::ObjectData::CatalogDataImpl>();
     for (auto& shard : snapshot->GetIndexShardsByTable(table.GetId())) {
       auto index = snapshot->GetObject<catalog::Index>(shard->GetIndexId());

@@ -78,6 +78,11 @@ struct PgMakeTimestamp {
                               absl::Dec(month, absl::kZeroPad2), "-",
                               absl::Dec(day, absl::kZeroPad2)));
     }
+    if (hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0.0 ||
+        sec >= 60.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("date/time field value out of range"));
+    }
     int64_t days = expected.value();
     int32_t whole_sec = static_cast<int32_t>(sec);
     double frac = sec - whole_sec;

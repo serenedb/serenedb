@@ -76,3 +76,41 @@ db error: ERROR: division by zero
 
 statement error
 SELECT div(1e300, 1.0);
+
+
+# make_timestamp with invalid hour/minute/second
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 25, 0, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, 60, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, 0, 60);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, -1, 0, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, -1, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, 0, -1);
+----
+db error: ERROR: date/time field value out of range

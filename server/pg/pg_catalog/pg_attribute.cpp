@@ -84,6 +84,7 @@ PgTypePhysicalInfo GetPhysicalInfo(int32_t type_oid) {
               PgAttribute::Attstorage::Plain};
     case PgTypeOID::kRegtype:
     case PgTypeOID::kRegclass:
+    case PgTypeOID::kRegnamespace:
       return {4, true, PgType::Typalign::Int, PgAttribute::Attstorage::Plain};
     default:
       // Variable-length types (text, varchar, bytea, json, numeric, arrays)

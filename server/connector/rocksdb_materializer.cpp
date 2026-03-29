@@ -332,34 +332,41 @@ velox::VectorPtr RocksDBMaterializer::ReadUnknownColumnKeys(
                                                row_keys.size(), &_memory_pool);
 }
 
-template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
-  std::span<const std::string> row_keys, std::string_view column_key, catalog::Column::Id column_id) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
-  auto decoder_func = [&](size_t original_idx, [[maybe_unused]] std::string_view key,
-                          std::string_view value) {
-    ReadScalarType(value, static_cast<velox::vector_size_t>(original_idx), *result);
-  };
+template<typename Decoder>
+void RocksDBMaterializer::DispatchColumnRead(
+  std::string_view column_key, catalog::Column::Id column_id,
+  std::span<const std::string> row_keys, const Decoder& func) {
   if (row_keys.size() > kSeekThreshold) {
     if (_db) {
-      SeekIterateColumnKeys(column_key, column_id, row_keys, *_db,
-                            decoder_func);
+      SeekIterateColumnKeys(column_key, column_id, row_keys, *_db, func);
     } else {
-      SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction,
-                            decoder_func);
+      SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction, func);
     }
   } else if (row_keys.size() > kMultiGetThreshold) {
     if (_db) {
-      MultiGetIterateColumnKeys(column_key, row_keys, *_db, decoder_func);
+      MultiGetIterateColumnKeys(column_key, row_keys, *_db, func);
     } else {
-      MultiGetIterateColumnKeys(column_key, row_keys, *_transaction,
-                                decoder_func);
+      MultiGetIterateColumnKeys(column_key, row_keys, *_transaction, func);
     }
   } else {
-    IterateColumnKeys(column_key, row_keys, decoder_func);
+    IterateColumnKeys(column_key, row_keys, func);
   }
+}
+
+template<velox::TypeKind Kind>
+velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
+  std::span<const std::string> row_keys, std::string_view column_key,
+  catalog::Column::Id column_id) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
+    velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
+  DispatchColumnRead(column_key, column_id, row_keys,
+                     [&](size_t original_idx, [[maybe_unused]] std::string_view key,
+                         std::string_view value) {
+                       ReadScalarType(value,
+                                      static_cast<velox::vector_size_t>(original_idx),
+                                      *result);
+                     });
   return result;
 }
 

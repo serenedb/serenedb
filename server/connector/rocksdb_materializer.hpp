@@ -59,6 +59,12 @@ class RocksDBMaterializer {
   void PrepareSortedBatch(std::span<const std::string> row_keys);
 
   template<typename Decoder>
+  void DispatchColumnRead(std::string_view column_key,
+                          catalog::Column::Id column_id,
+                          std::span<const std::string> row_keys,
+                          const Decoder& func);
+
+  template<typename Decoder>
   void IterateColumnKeys(std::string_view column_key,
                          std::span<const std::string> row_keys,
                          const Decoder& func);

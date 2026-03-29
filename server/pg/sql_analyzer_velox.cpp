@@ -4311,12 +4311,21 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
     }
   });
 
+  std::optional<std::string> ordinality_name;
+  if (node->ordinality && !unnest_exprs.empty()) {
+    ordinality_name = _id_generator.NextColumnName("ordinality");
+    project_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+      velox::BIGINT(), *ordinality_name));
+    project_names.emplace_back(*ordinality_name);
+  }
+
   EnsureRoot(functions_state);
 
   if (!unnest_exprs.empty()) {
     functions_state.root = std::make_shared<lp::UnnestNode>(
       _id_generator.NextPlanId(), std::move(functions_state.root),
-      std::move(unnest_exprs), std::move(unnested_names), std::nullopt);
+      std::move(unnest_exprs), std::move(unnested_names),
+      std::move(ordinality_name));
   }
 
   if (!project_exprs.empty()) {

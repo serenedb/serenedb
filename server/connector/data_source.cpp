@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <velox/vector/ComplexVector.h>
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
 
@@ -30,6 +31,7 @@
 #include "catalog/table_options.h"
 #include "common.h"
 #include "connector/primary_key.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 
@@ -280,6 +282,10 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumn(
     return ReadUnknownColumn(it, max_size);
   }
 
+  if (type->kind() == velox::TypeKind::ARRAY) {
+    return ReadArrayColumn(it, max_size, type);
+  }
+
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumn, type->kind(), it,
                                             max_size);
 }
@@ -318,6 +324,161 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadUnknownColumn(
     it, max_size, [](uint64_t, std::string_view, std::string_view) {});
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
                                                &_memory_pool);
+}
+
+template<typename Source>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadArrayColumn(
+  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
+  const auto elem_kind = array_type->asArray().elementType()->kind();
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    ReadScalarArrayColumn, elem_kind, it, max_size, std::move(array_type));
+}
+
+template<typename Source>
+template<velox::TypeKind ElemKind>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
+  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
+  using ElemT = typename velox::TypeTraits<ElemKind>::NativeType;
+  static_assert(!std::is_same_v<ElemT, void>,
+                "Complex element types are not supported in array columns");
+
+  const auto& elem_type = array_type->asArray().elementType();
+
+  auto offsets_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
+    max_size, &_memory_pool);
+  auto sizes_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
+    max_size, &_memory_pool);
+  auto* raw_offsets = offsets_buf->template asMutable<velox::vector_size_t>();
+  auto* raw_sizes = sizes_buf->template asMutable<velox::vector_size_t>();
+
+  auto elements = velox::BaseVector::create<velox::FlatVector<ElemT>>(
+    elem_type, 0, &_memory_pool);
+
+  velox::BufferPtr null_buf;
+  velox::vector_size_t elem_offset = 0;
+
+  const auto vector_size = IterateColumn(
+    it, max_size,
+    [&](uint64_t value_idx, std::string_view, std::string_view value) {
+      if (value.empty()) {
+        // NULL array
+        if (!null_buf) {
+          null_buf = velox::allocateNulls(max_size, &_memory_pool);
+        }
+        velox::bits::setNull(null_buf->asMutable<uint64_t>(), value_idx);
+        return;
+      }
+
+      raw_offsets[value_idx] = elem_offset;
+      const auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
+      const uint32_t elem_count = irs::vread<uint32_t>(ptr);
+      raw_sizes[value_idx] = static_cast<velox::vector_size_t>(elem_count);
+
+      if (elem_count == 0) {
+        return;
+      }
+      elements->resize(elem_offset + elem_count, true);
+
+      const auto flags = static_cast<ValueFlags>(*ptr++);
+      const bool is_constant =
+        (flags & ValueFlags::Constant) != ValueFlags::None;
+      const bool have_nulls =
+        (flags & ValueFlags::HaveNulls) != ValueFlags::None;
+      const bool have_length =
+        (flags & ValueFlags::HaveLength) != ValueFlags::None;
+
+      uint32_t length_array_size = 0;
+      if (have_length) {
+        length_array_size = irs::vread<uint32_t>(ptr);
+      }
+
+      if (is_constant) {
+        SDB_ASSERT(!have_nulls);
+        // Remaining bytes are the single constant value (or none for null).
+        const auto remaining_size = static_cast<size_t>(
+          reinterpret_cast<const uint8_t*>(value.data()) + value.size() - ptr);
+        if (remaining_size == 0) {
+          for (uint32_t i = 0; i < elem_count; i++) {
+            elements->setNull(elem_offset + i, true);
+          }
+        } else {
+          const std::string_view constant_val{
+            reinterpret_cast<const char*>(ptr), remaining_size};
+          for (uint32_t i = 0; i < elem_count; i++) {
+            SetResultValue(constant_val, elem_offset + i, *elements);
+          }
+        }
+      } else {
+        // Read optional nulls bitmap.
+        const uint8_t* elem_nulls = nullptr;
+        if (have_nulls) {
+          elem_nulls = ptr;
+          ptr += velox::bits::nbytes(elem_count);
+        }
+
+        if constexpr (ElemKind == velox::TypeKind::BOOLEAN) {
+          // Boolean data is a packed bitset.
+          const auto bool_bytes = velox::bits::nbytes(elem_count);
+          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              if constexpr (HasNulls) {
+                if (!velox::bits::isBitSet(elem_nulls, i)) {
+                  elements->setNull(elem_offset + i, true);
+                  continue;
+                }
+              }
+              elements->set(elem_offset + i, velox::bits::isBitSet(ptr, i));
+            }
+          });
+          ptr += bool_bytes;
+        } else if constexpr (!velox::TypeTraits<ElemKind>::isFixedWidth) {
+          // Variable-length elements (e.g., VARCHAR).
+          // Layout: [length_array: length_array_size bytes][string data]
+          const uint8_t* lptr = ptr;
+          ptr += length_array_size;
+          const uint8_t* data_ptr = ptr;
+
+          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              const uint32_t len = irs::vread<uint32_t>(lptr);
+              if constexpr (HasNulls) {
+                if (!velox::bits::isBitSet(elem_nulls, i)) {
+                  elements->setNull(elem_offset + i, true);
+                  data_ptr += len;
+                  continue;
+                }
+              }
+              elements->set(elem_offset + i,
+                            velox::StringView(
+                              reinterpret_cast<const char*>(data_ptr), len));
+              data_ptr += len;
+            }
+          });
+        } else {
+          // Fixed-width scalar: packed array of count * sizeof(ElemT) bytes.
+          memcpy(elements->mutableRawValues() + elem_offset, ptr,
+                 elem_count * sizeof(ElemT));
+          ptr += elem_count * sizeof(ElemT);
+          if (have_nulls) {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              if (!velox::bits::isBitSet(elem_nulls, i)) {
+                elements->setNull(elem_offset + i, true);
+              }
+            }
+          }
+        }
+      }
+
+      elem_offset += elem_count;
+    });
+
+  SDB_ASSERT(vector_size <= max_size);
+
+  rocksutils::CheckIteratorStatus(it);
+
+  return std::make_shared<velox::ArrayVector>(
+    &_memory_pool, std::move(array_type), std::move(null_buf), vector_size,
+    std::move(offsets_buf), std::move(sizes_buf), std::move(elements));
 }
 
 template<typename Source>

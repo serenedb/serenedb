@@ -53,6 +53,7 @@ struct IndexBaseOptions {
   std::string name;
   IndexType type = IndexType::Unknown;
   std::vector<Column::Id> column_ids;
+  bool unique = false;
 };
 
 // polymorfic wrapper for concrete index wrappers

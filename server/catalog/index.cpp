@@ -182,7 +182,9 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
             " has non primitive type and can not be indexed"};
         }
       }
+      auto is_unique = options.unique;
       SecondaryIndexOptionsWrapper impl_options(std::move(options));
+      impl_options.impl.unique = is_unique;
       return std::make_shared<SecondaryIndex>(
         database_id, schema_id, id, relation_id, std::move(impl_options));
     }

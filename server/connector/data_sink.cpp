@@ -260,14 +260,15 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
     _number_of_rows_affected{number_of_rows_affected},
     _table_lock_guard{table_lock} {}
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex>
-SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::SSTInsertDataSink(
-  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-  std::span<const velox::column_index_t> key_childs,
-  std::vector<ColumnInfo> columns,
-  std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
+template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
+SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex, UniqueIndex>::
+  SSTInsertDataSink(
+    rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<ColumnInfo> columns,
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
   : Base(
       SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>{
         object_key, db, cf,
@@ -279,9 +280,9 @@ SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::SSTInsertDataSink(
     _table_lock_guard{table_lock},
     _sk_children{std::move(sk_children)} {}
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex>
-void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::appendData(
-  velox::RowVectorPtr input) {
+template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
+void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
+                       UniqueIndex>::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
@@ -290,30 +291,23 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::appendData(
   this->_store_keys_buffers.clear();
   this->_store_keys_buffers.reserve(num_rows);
 
-  // Build keys
-  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    auto& key = this->_store_keys_buffers.emplace_back();
-    if constexpr (IsSecondaryIndex) {
-      secondary_key::Create(*input, this->_key_childs, _sk_children, row_idx,
-                            key);
-    } else {
-      if (!this->_key_childs.empty()) {
-        primary_key::Create(*input, this->_key_childs, row_idx, key);
-      } else {
-        const auto generated_pk =
-          std::bit_cast<int64_t>(RevisionId::create().id());
-        primary_key::AppendSigned(key, generated_pk);
-      }
-    }
-  }
-
   if constexpr (IsSecondaryIndex) {
-    // Keys are sorted by the SQL analyzer ORDER BY (indexed_col, PK).
-    // The implicit PK is loaded via ProcessTable(..., true).
+    // Build key and write in one pass — reuse _sk_buffer/_pk_buffer.
     this->_data_writer.SetColumnIndex(0);
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-      rocksdb::Slice empty;
-      this->_data_writer.Write({&empty, 1}, this->_store_keys_buffers[row_idx]);
+      _sk_buffer.clear();
+      _pk_buffer.clear();
+      secondary_key::Create<UniqueIndex>(*input, this->_key_childs,
+                                         _sk_children, row_idx, _sk_buffer,
+                                         _pk_buffer);
+      if constexpr (UniqueIndex) {
+        rocksdb::Slice pk_slice{_pk_buffer};
+        this->_data_writer.Write({&pk_slice, 1}, _sk_buffer);
+      } else {
+        SDB_ASSERT(_pk_buffer.empty());
+        rocksdb::Slice empty;
+        this->_data_writer.Write({&empty, 1}, _sk_buffer);
+      }
     }
   } else {
     SDB_ASSERT(input->type()->size() == this->_columns_info.size());
@@ -328,9 +322,10 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex>::appendData(
   }
 }
 
-template class SSTInsertDataSink<true>;
-template class SSTInsertDataSink<false>;
-template class SSTInsertDataSink<false, true>;
+template class SSTInsertDataSink<true, false, false>;
+template class SSTInsertDataSink<false, false, false>;
+template class SSTInsertDataSink<false, true, false>;
+template class SSTInsertDataSink<false, true, true>;
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::string_view table_name, rocksdb::Transaction& transaction,

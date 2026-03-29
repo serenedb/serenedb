@@ -71,17 +71,21 @@ inline void AppendSKValue(std::string& key, const velox::RowVector& input,
   }
 }
 
+// Non-unique: appends SK values + PK to `key`.
+// Unique: appends SK values to `key`, PK to `value`.
+template<bool Unique>
 inline void Create(const velox::RowVector& input,
                    std::span<const velox::column_index_t> pk_children,
                    std::span<const velox::column_index_t> sk_children,
-                   velox::vector_size_t row_idx, std::string& key) {
-  AppendSKValue(key, input, sk_children, row_idx);
+                   velox::vector_size_t row_idx, std::string& sk_buffer,
+                   std::string& pk_buffer) {
+  AppendSKValue(sk_buffer, input, sk_children, row_idx);
+  auto& pk_target = Unique ? pk_buffer : sk_buffer;
   if (!pk_children.empty()) {
-    primary_key::Create(input, pk_children, row_idx, key);
-  } else {
-    // Generated PK is the last column (same convention as MakeColumnKey)
-    primary_key::AppendKeyValue(key, *input.childAt(input.childrenSize() - 1),
-                                row_idx);
+    primary_key::Create(input, pk_children, row_idx, pk_target);
+  } else {  // generated pk
+    const velox::BaseVector& pk_col = *input.childAt(input.childrenSize() - 1);
+    primary_key::AppendKeyValue(pk_target, pk_col, row_idx);
   }
 }
 
@@ -89,6 +93,7 @@ inline void Create(const velox::RowVector& input,
 
 // Base for secondary index writers. Stores the input RowVector from Init
 // and builds keys using primary_key::AppendKeyValue (no re-encoding needed).
+template<bool Unique>
 class SecondarySinkWriteBase : public SinkIndexWriter,
                                public ColumnSinkWriterImplBase {
  public:
@@ -115,12 +120,17 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     _del_row_idx = 0;
   }
 
-  std::string_view BuildSK(std::string_view full_pk) {
+  std::string_view BuildSK(std::string_view full_pk, rocksdb::Slice& value) {
     auto pk_bytes = key_utils::ExtractRowKey(full_pk);
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
     secondary_key::AppendSKValue(_key_buffer, *_input, _sk_children, _row_idx);
-    _key_buffer.append(pk_bytes.data(), pk_bytes.size());
+    if constexpr (Unique) {
+      value = rocksdb::Slice{pk_bytes.data(), pk_bytes.size()};
+    } else {
+      _key_buffer.append(pk_bytes.data(), pk_bytes.size());
+      value = rocksdb::Slice{};
+    }
     ++_row_idx;
     return _key_buffer;
   }
@@ -132,7 +142,9 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
     secondary_key::AppendSKValue(_key_buffer, *_input, sk_children,
                                  _del_row_idx);
-    _key_buffer.append(encoded_pk.data(), encoded_pk.size());
+    if constexpr (!Unique) {
+      _key_buffer.append(encoded_pk.data(), encoded_pk.size());
+    }
     ++_del_row_idx;
     return _key_buffer;
   }
@@ -146,56 +158,69 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
   std::string _key_buffer;
 };
 
-class SecondarySinkInsertWriter final : public SecondarySinkWriteBase {
+template<bool Unique>
+class SecondarySinkInsertWriter final : public SecondarySinkWriteBase<Unique> {
+  using Base = SecondarySinkWriteBase<Unique>;
+
  public:
-  using SecondarySinkWriteBase::SecondarySinkWriteBase;
+  using Base::Base;
 
   void Init(size_t batch_size, const velox::RowVectorPtr& input) final {
-    InitBase(input);
+    Base::InitBase(input);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_pk) final {
-    auto s = _trx.Put(BuildSK(full_pk), rocksdb::Slice{});
+    rocksdb::Slice value;
+    auto s = this->_trx.Put(this->BuildSK(full_pk, value), value);
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 };
 
-class SecondarySinkDeleteWriter final : public SecondarySinkWriteBase {
+template<bool Unique>
+class SecondarySinkDeleteWriter final : public SecondarySinkWriteBase<Unique> {
+  using Base = SecondarySinkWriteBase<Unique>;
+
  public:
-  using SecondarySinkWriteBase::SecondarySinkWriteBase;
+  using Base::Base;
 
   void Init(size_t batch_size, const velox::RowVectorPtr& input) final {
-    InitBase(input);
+    Base::InitBase(input);
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    auto s = _trx.Delete(BuildDeleteSK(encoded_pk, _sk_children));
+    auto s =
+      this->_trx.Delete(this->BuildDeleteSK(encoded_pk, this->_sk_children));
     SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 };
 
-class SecondarySinkUpdateWriter final : public SecondarySinkWriteBase {
+template<bool Unique>
+class SecondarySinkUpdateWriter final : public SecondarySinkWriteBase<Unique> {
+  using Base = SecondarySinkWriteBase<Unique>;
+
  public:
   SecondarySinkUpdateWriter(rocksdb::Transaction& trx, ObjectId shard_id,
                             std::span<const catalog::Column::Id> columns,
                             std::vector<velox::column_index_t> sk_children,
                             std::vector<velox::column_index_t> old_sk_children)
-    : SecondarySinkWriteBase{trx, shard_id, columns, std::move(sk_children)},
+    : Base{trx, shard_id, columns, std::move(sk_children)},
       _old_sk_children{std::move(old_sk_children)} {}
 
   void Init(size_t batch_size, const velox::RowVectorPtr& input) final {
-    InitBase(input);
+    Base::InitBase(input);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
-    auto s = _trx.Put(BuildSK(full_key), rocksdb::Slice{});
+    rocksdb::Slice value;
+    auto s = this->_trx.Put(this->BuildSK(full_key, value), value);
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    auto s = _trx.Delete(BuildDeleteSK(encoded_pk, _old_sk_children));
+    auto s =
+      this->_trx.Delete(this->BuildDeleteSK(encoded_pk, _old_sk_children));
     SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 

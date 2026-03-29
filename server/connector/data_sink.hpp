@@ -305,7 +305,7 @@ class RocksDBUpdateDataSink final
   absl::ReaderMutexLock _table_lock_guard;
 };
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex = false>
+template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
 class SSTInsertDataSink final
   : public RocksDBDataSinkBase<
       SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>> {
@@ -326,11 +326,14 @@ class SSTInsertDataSink final
  private:
   absl::ReaderMutexLock _table_lock_guard;
   std::vector<velox::column_index_t> _sk_children;
+  std::string _sk_buffer;
+  std::string _pk_buffer;
 };
 
-extern template class SSTInsertDataSink<true>;
-extern template class SSTInsertDataSink<false>;
-extern template class SSTInsertDataSink<false, true>;
+extern template class SSTInsertDataSink<true, false, false>;
+extern template class SSTInsertDataSink<false, false, false>;
+extern template class SSTInsertDataSink<false, true, false>;
+extern template class SSTInsertDataSink<false, true, true>;
 
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {

@@ -147,10 +147,8 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
       velox::BaseVector::create(_output_type, read_size, &_pool);
     parquet_reader.next(read_size, result, &mutation);
 
-    for (auto k = i; k < end; ++k) {
-      output->copy(result.get(), out_offset, row_idx[k] - rg_start, 1);
-      ++out_offset;
-    }
+    output->copy(result.get(), out_offset, 0, end - i);
+    out_offset += end - i;
 
     for (auto k = i; k < end; ++k) {
       velox::bits::setBit(bits, row_idx[k] - rg_start);

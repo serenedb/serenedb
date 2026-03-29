@@ -56,6 +56,8 @@ class RocksDBMaterializer {
                                   velox::TypeKind kind,
                                   std::string_view column_key);
 
+  void PrepareSortedBatch(std::span<const std::string> row_keys);
+
   template<typename Decoder>
   void IterateColumnKeys(std::string_view column_key,
                          std::span<const std::string> row_keys,

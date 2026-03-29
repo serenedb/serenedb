@@ -35,6 +35,7 @@ namespace {
 // TODO(mbkkt) benchmark and choose best threshold
 constexpr size_t kMultiGetThreshold = 1;
 constexpr size_t kSeekThreshold = 100;
+constexpr size_t kColumnKeySize = sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
 template<typename DataSource>
 class MultiGetContext {
@@ -175,21 +176,14 @@ void RocksDBMaterializer::IterateColumnKeys(
   }
 }
 
-template<typename Decoder, typename MultiGetSource>
-void RocksDBMaterializer::MultiGetIterateColumnKeys(
-  std::string_view column_key, std::span<const std::string> row_keys,
-  MultiGetSource& src, const Decoder& func) {
-  constexpr size_t kColumnKeySize =
-    sizeof(ObjectId) + sizeof(catalog::Column::Id);
-
-  MultiGetContext<MultiGetSource> ctx(_cf, src, _read_options);
+void RocksDBMaterializer::PrepareSortedBatch(
+  std::span<const std::string> row_keys) {
   if (_new_batch) {
     _read_idxs.resize(row_keys.size());
     absl::c_iota(_read_idxs, 0);
     absl::c_sort(_read_idxs, [&](size_t lhs, size_t rhs) {
       return row_keys[lhs] < row_keys[rhs];
     });
-    _new_batch = false;
     size_t required_size = kColumnKeySize * row_keys.size();
     required_size = absl::c_accumulate(
       row_keys, required_size,
@@ -202,14 +196,13 @@ void RocksDBMaterializer::MultiGetIterateColumnKeys(
       _multi_get_buffer = _multiget_buffer_allocator->allocate(
         static_cast<uint32_t>(required_size));
     }
-
-    _key_slices.resize(row_keys.size());
     size_t offset = kColumnKeySize;
     for (auto idx : _read_idxs) {
       const auto& key = row_keys[idx];
       memcpy(_multi_get_buffer->begin() + offset, key.data(), key.size());
       offset += key.size() + kColumnKeySize;
     }
+    _new_batch = false;
   }
 #ifdef SDB_DEV
   {
@@ -221,6 +214,15 @@ void RocksDBMaterializer::MultiGetIterateColumnKeys(
     SDB_ASSERT(_multi_get_buffer->size() >= required_size);
   }
 #endif
+}
+
+template<typename Decoder, typename MultiGetSource>
+void RocksDBMaterializer::MultiGetIterateColumnKeys(
+  std::string_view column_key, std::span<const std::string> row_keys,
+  MultiGetSource& src, const Decoder& func) {
+  PrepareSortedBatch(row_keys);
+  _key_slices.resize(row_keys.size());
+  MultiGetContext<MultiGetSource> ctx(_cf, src, _read_options);
   SDB_ASSERT(column_key.size() == kColumnKeySize);
   size_t offset = 0;
   for (size_t i = 0; i < _read_idxs.size(); ++i) {
@@ -248,37 +250,7 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
   std::string_view column_key, catalog::Column::Id column_id,
   std::span<const std::string> row_keys, MultiGetSource& src,
   const Decoder& func) {
-  constexpr size_t ColumnKeySize =
-    sizeof(ObjectId) + sizeof(catalog::Column::Id);
-
-  if (_new_batch) {
-    _read_idxs.resize(row_keys.size());
-    absl::c_iota(_read_idxs, 0);
-    absl::c_sort(_read_idxs, [&](size_t lhs, size_t rhs) {
-      return row_keys[lhs] < row_keys[rhs];
-    });
-    size_t required_size = ColumnKeySize * row_keys.size();
-    required_size = absl::c_accumulate(
-      row_keys, required_size,
-      [](auto init, const auto& rk) { return init + rk.size(); });
-    SDB_ASSERT(required_size < std::numeric_limits<uint32_t>::max());
-    if (!_multi_get_buffer || _multi_get_buffer->size() < required_size) {
-      if (_multi_get_buffer) {
-        _multiget_buffer_allocator->free(_multi_get_buffer);
-      }
-      _multi_get_buffer = _multiget_buffer_allocator->allocate(
-        static_cast<uint32_t>(required_size));
-    }
-
-    size_t offset = 0;
-    for (auto idx : _read_idxs) {
-      const auto& key = row_keys[idx];
-      offset += ColumnKeySize;
-      memcpy(_multi_get_buffer->begin() + offset, key.data(), key.size());
-      offset += key.size();
-    }
-    _new_batch = false;
-  }
+  PrepareSortedBatch(row_keys);
   rocksdb::Iterator* column_iterator = nullptr;
   auto it = _iterators.find(column_id);
 
@@ -307,23 +279,23 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
   for (auto idx : _read_idxs) {
     const auto& key = row_keys[idx];
     memcpy(_multi_get_buffer->begin() + offset, column_key.data(),
-           ColumnKeySize);
-    SDB_ASSERT(memcmp(_multi_get_buffer->begin() + offset + ColumnKeySize,
+           kColumnKeySize);
+    SDB_ASSERT(memcmp(_multi_get_buffer->begin() + offset + kColumnKeySize,
                       key.data(), key.size()) == 0);
     column_iterator->Seek(rocksdb::Slice(_multi_get_buffer->begin() + offset,
-                                         ColumnKeySize + key.size()));
+                                         kColumnKeySize + key.size()));
     if (!column_iterator->Valid()) {
       SDB_THROW(ERROR_INTERNAL, "Invalid iterator read sate");
     }
     if (column_iterator->key() !=
         rocksdb::Slice(_multi_get_buffer->begin() + offset,
-                       ColumnKeySize + key.size())) {
+                       kColumnKeySize + key.size())) {
       SDB_THROW(ERROR_INTERNAL, "Missing key");
     }
     rocksutils::CheckIteratorStatus(*column_iterator);
     func(idx, column_iterator->key().ToStringView(),
          column_iterator->value().ToStringView());
-    offset += ColumnKeySize + key.size();
+    offset += kColumnKeySize + key.size();
   }
 }
 

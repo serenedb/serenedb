@@ -398,6 +398,12 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("current_schemas",
           VeloxFunction{"pg_current_schemas", false,
                         FunctionLanguage::VeloxNative, FunctionKind::Scalar})
+    .Case("set_config",
+          VeloxFunction{"pg_set_config", false, FunctionLanguage::VeloxNative,
+                        FunctionKind::Scalar})
+    .Case("current_setting",
+          VeloxFunction{"pg_current_setting", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
     .Case("pg_get_userbyid",
           VeloxFunction{"pg_get_userbyid", false, FunctionLanguage::VeloxNative,
                         FunctionKind::Scalar})

@@ -305,6 +305,92 @@ struct CurrentDatabaseFunction {
 };
 
 template<typename T>
+struct CurrentSettingFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*) {
+    _cfg = basics::downCast<const Config>(config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& out,
+                                const arg_type<velox::Varchar>& name) {
+    std::string_view key(name.data(), name.size());
+    auto val = _cfg->GetSetting(key);
+    if (!val) {
+      VELOX_USER_CHECK(false, "unrecognized configuration parameter \"{}\"",
+                       key);
+      return false;
+    }
+    out = *val;
+    return true;
+  }
+
+ private:
+  std::shared_ptr<const Config> _cfg;
+};
+
+template<typename T>
+struct CurrentSettingMissingOkFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const bool*) {
+    _cfg = basics::downCast<const Config>(config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& out,
+                                const arg_type<velox::Varchar>& name,
+                                const bool& missing_ok) {
+    std::string_view key(name.data(), name.size());
+    auto val = _cfg->GetSetting(key);
+    if (!val) {
+      if (missing_ok) {
+        return false;  // NULL
+      }
+      VELOX_USER_CHECK(false, "unrecognized configuration parameter \"{}\"",
+                       key);
+      return false;
+    }
+    out = *val;
+    return true;
+  }
+
+ private:
+  std::shared_ptr<const Config> _cfg;
+};
+
+// Sets the parameter and returns the new value.
+template<typename T>
+struct SetConfigFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const arg_type<velox::Varchar>*,
+                                      const bool*) {
+    _cfg = basics::downCast<const Config>(config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out,
+                                const arg_type<velox::Varchar>& name,
+                                const arg_type<velox::Varchar>& value,
+                                const bool& is_local) {
+    std::string_view key(name.data(), name.size());
+    std::string val(value.data(), value.size());
+    _cfg->SetSetting(key, val, is_local);
+    out = val;
+  }
+
+ private:
+  std::shared_ptr<const Config> _cfg;
+};
+
+template<typename T>
 struct VersionFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -1395,6 +1481,12 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "current_user"});
   velox::registerFunction<CurrentDatabaseFunction, velox::Varchar>(
     {prefix + "current_database"});
+  velox::registerFunction<CurrentSettingFunction, velox::Varchar,
+                          velox::Varchar>({prefix + "current_setting"});
+  velox::registerFunction<CurrentSettingMissingOkFunction, velox::Varchar,
+                          velox::Varchar, bool>({prefix + "current_setting"});
+  velox::registerFunction<SetConfigFunction, velox::Varchar, velox::Varchar,
+                          velox::Varchar, bool>({prefix + "set_config"});
   velox::registerFunction<CurrentQueryFunction, velox::Varchar>(
     {prefix + "current_query"});
   velox::registerFunction<PgBackendPidFunction, int32_t>(

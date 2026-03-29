@@ -453,3 +453,58 @@ query
 SELECT * FROM generate_series(1, 5, -1);
 ----
 generate_series
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[10, 20, 30], 1);
+----
+generate_subscripts
+1
+2
+3
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY['a', 'b', 'c', 'd'], 1, true);
+----
+generate_subscripts
+4
+3
+2
+1
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[42], 1);
+----
+generate_subscripts
+1
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[ARRAY[1, 2, 3], ARRAY[4, 5, 6]], 1);
+----
+generate_subscripts
+1
+2
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[ARRAY[1, 2, 3], ARRAY[4, 5, 6]], 2);
+----
+generate_subscripts
+1
+2
+3
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[1, 2, 3], 2);
+----
+generate_subscripts
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[]::int[], 1);
+----
+generate_subscripts

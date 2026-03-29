@@ -185,7 +185,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         VariableType::String,
         "Shows the server version.",
-        "18.1",
+        "18.3",
       },
     },
     {
@@ -194,6 +194,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         VariableType::Bool,
         "Causes '...' strings to treat backslashes literally.",
         "on",
+      },
+    },
+    {
+      "client_min_messages",
+      {
+        VariableType::String,
+        "Sets the message levels that are sent to the client.",
+        "notice",
       },
     },
 };

@@ -55,13 +55,8 @@ Result ValidateInvertedIndexColumns(
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
               " has unsupported kind and can not be indexed"};
     }
-    // TODO(Dronplane): Remove when we have default text dictionary
-    if (c.catalog_column->type->kind() == velox::TypeKind::VARCHAR &&
-        c.opclass.empty()) {
-      return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " is VARCHAR but has no text dictionary defined"};
-    } else if (c.catalog_column->type->kind() != velox::TypeKind::VARCHAR &&
-               !c.opclass.empty()) {
+    if (c.catalog_column->type->kind() != velox::TypeKind::VARCHAR &&
+        !c.opclass.empty()) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
               " has text dictionary defined but is not VARCHAR"};
     }

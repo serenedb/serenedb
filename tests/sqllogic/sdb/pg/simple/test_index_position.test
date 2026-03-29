@@ -1,0 +1,98 @@
+# Test alternatives for _pg_index_position implementation
+# We need to find position of a value in an array without lateral refs
+
+
+# === Basic array_position tests ===
+
+# array_position finds element
+query
+SELECT array_position(ARRAY[10, 20, 30]::smallint[], 20::smallint)
+----
+array_position
+2
+
+
+query
+SELECT array_position(ARRAY[10, 20, 30]::smallint[], 99::smallint)
+----
+array_position
+NULL
+
+
+# unnest with ordinality on a literal array
+query
+SELECT u.n::int FROM
+  unnest(ARRAY[10, 20, 30]::smallint[]) WITH ORDINALITY AS u(x, n)
+  WHERE u.x = 20::smallint
+----
+n
+2
+
+
+# array_position on column from subquery
+query
+SELECT array_position(arr, 20::smallint) FROM
+  (SELECT ARRAY[10, 20, 30]::smallint[] AS arr) t
+----
+array_position
+2
+
+
+# === Table-based tests (simulating _pg_index_position usage) ===
+
+statement ok
+CREATE TABLE test_idx_pos (id INT PRIMARY KEY, a INT, b INT, c INT)
+
+statement ok
+CREATE INDEX test_idx_pos_abc ON test_idx_pos USING inverted (a, b, c)
+
+
+# array_position on indkey from pg_index
+query
+SELECT array_position(i.indkey, 2::smallint)::int
+  FROM pg_index i
+  JOIN pg_class c ON c.oid = i.indexrelid
+  WHERE c.relname = 'test_idx_pos_abc'
+----
+array_position
+1
+
+
+# Find position of column 'b' (attnum=3) in the index
+query
+SELECT array_position(i.indkey, 3::smallint)::int
+  FROM pg_index i
+  JOIN pg_class c ON c.oid = i.indexrelid
+  WHERE c.relname = 'test_idx_pos_abc'
+----
+array_position
+2
+
+
+# Column not in index returns NULL
+query
+SELECT array_position(i.indkey, 1::smallint)::int
+  FROM pg_index i
+  JOIN pg_class c ON c.oid = i.indexrelid
+  WHERE c.relname = 'test_idx_pos_abc'
+----
+array_position
+NULL
+
+
+# NULLIF to convert 0 to NULL (matching PG behavior of _pg_index_position)
+query
+SELECT NULLIF(array_position(i.indkey, 1::smallint), 0::smallint)::int
+  FROM pg_index i
+  JOIN pg_class c ON c.oid = i.indexrelid
+  WHERE c.relname = 'test_idx_pos_abc'
+----
+nullif
+NULL
+
+
+statement ok
+DROP INDEX test_idx_pos_abc
+
+statement ok
+DROP TABLE test_idx_pos

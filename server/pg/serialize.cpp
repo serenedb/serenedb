@@ -597,28 +597,39 @@ void SerializeDate(SerializationContext context,
   }
 }
 
-template<VarFormat Format>
-void SerializeRegtype(SerializationContext context,
-                      const velox::DecodedVector& decoded_vector,
-                      velox::vector_size_t row) {
-  const auto oid = decoded_vector.valueAt<int32_t>(row);
-  if constexpr (Format == VarFormat::Text) {
-    context.buffer->WriteUncommitted(RegtypeOut(oid));
-  } else {
-    absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
-  }
+void SerializeRegtypeText(SerializationContext context,
+                          const velox::DecodedVector& decoded_vector,
+                          velox::vector_size_t row) {
+  const auto oid = decoded_vector.valueAt<int64_t>(row);
+  context.buffer->WriteUncommitted(RegtypeOut(oid));
 }
 
-template<VarFormat Format>
-void SerializeRegclass(SerializationContext context,
-                       const velox::DecodedVector& decoded_vector,
-                       velox::vector_size_t row) {
-  const auto oid = decoded_vector.valueAt<int32_t>(row);
-  if constexpr (Format == VarFormat::Text) {
-    context.buffer->WriteUncommitted(RegclassOut(*context.snapshot, oid));
-  } else {
-    absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
+void SerializeRegclassText(SerializationContext context,
+                           const velox::DecodedVector& decoded_vector,
+                           velox::vector_size_t row) {
+  const auto oid = decoded_vector.valueAt<int64_t>(row);
+  context.buffer->WriteUncommitted(RegclassOut(*context.snapshot, oid));
+}
+
+void SerializeRegnamespaceText(SerializationContext context,
+                               const velox::DecodedVector& decoded_vector,
+                               velox::vector_size_t row) {
+  const auto oid = decoded_vector.valueAt<int64_t>(row);
+  context.buffer->WriteUncommitted(RegnamespaceOut(*context.snapshot, oid));
+}
+
+// Binary serialization for reg* types:
+// truncate 64-bit OID to 32-bit for PG wire protocol compatibility.
+void SerializeRegBinary(SerializationContext context,
+                        const velox::DecodedVector& decoded_vector,
+                        velox::vector_size_t row) {
+  const auto oid = decoded_vector.valueAt<int64_t>(row);
+  if (oid != static_cast<int32_t>(oid)) {
+    SDB_WARN("xxxxx", Logger::COMMUNICATION, "reg* OID ", oid,
+             " truncated to 32-bit for binary wire protocol");
   }
+  absl::big_endian::Store32(context.buffer->GetContiguousData(4),
+                            static_cast<int32_t>(oid));
 }
 
 template<VarFormat Format>
@@ -1008,13 +1019,13 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
   }
 
   if (pg::IsRegtype(type)) {
-    RETURN_SERIALIZATION(SerializeRegtype<VarFormat::Text>,
-                         SerializeRegtype<VarFormat::Binary>);
+    RETURN_SERIALIZATION(SerializeRegtypeText, SerializeRegBinary);
   }
-
   if (pg::IsRegclass(type)) {
-    RETURN_SERIALIZATION(SerializeRegclass<VarFormat::Text>,
-                         SerializeRegclass<VarFormat::Binary>);
+    RETURN_SERIALIZATION(SerializeRegclassText, SerializeRegBinary);
+  }
+  if (pg::IsRegnamespace(type)) {
+    RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeRegBinary);
   }
 
   switch (type->kind()) {

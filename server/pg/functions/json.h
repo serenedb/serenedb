@@ -407,8 +407,10 @@ struct PgJsonStripNulls {
     simdjson::ondemand::parser parser;
     simdjson::padded_string padded(sv);
     simdjson::ondemand::document doc;
-    VELOX_USER_CHECK(parser.iterate(padded).get(doc) == simdjson::SUCCESS,
-                     "invalid JSON");
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("invalid JSON"));
+    }
     std::string out;
     writeValue(doc, out);
     result.resize(out.size());

@@ -30,6 +30,13 @@
 #include <velox/type/SimpleFunctionApi.h>
 
 #include "basics/fwd.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 namespace {
@@ -289,7 +296,8 @@ struct PgEncode {
       result.resize(out.size());
       std::memcpy(result.data(), out.data(), out.size());
     } else {
-      VELOX_USER_CHECK(false, "unrecognized encoding: {}", fmt);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unrecognized encoding: \"", fmt, "\""));
     }
   }
 };
@@ -305,16 +313,20 @@ struct PgDecode {
     std::string_view fmt(format.data(), format.size());
     if (fmt == "hex") {
       std::string decoded;
-      VELOX_USER_CHECK(absl::HexStringToBytes(
-                         absl::string_view(data.data(), data.size()), &decoded),
-                       "invalid hexadecimal data");
+      if (!absl::HexStringToBytes(absl::string_view(data.data(), data.size()),
+                                  &decoded)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("invalid hexadecimal data"));
+      }
       result.resize(decoded.size());
       std::memcpy(result.data(), decoded.data(), decoded.size());
     } else if (fmt == "base64") {
       std::string decoded;
-      VELOX_USER_CHECK(absl::Base64Unescape(
-                         absl::string_view(data.data(), data.size()), &decoded),
-                       "invalid base64 data");
+      if (!absl::Base64Unescape(absl::string_view(data.data(), data.size()),
+                                &decoded)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("invalid input for base64 decoding"));
+      }
       result.resize(decoded.size());
       std::memcpy(result.data(), decoded.data(), decoded.size());
     } else if (fmt == "escape") {
@@ -339,7 +351,8 @@ struct PgDecode {
       result.resize(out.size());
       std::memcpy(result.data(), out.data(), out.size());
     } else {
-      VELOX_USER_CHECK(false, "unrecognized encoding: {}", fmt);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unrecognized encoding: \"", fmt, "\""));
     }
   }
 };
@@ -351,9 +364,11 @@ struct PgGetByte {
   FOLLY_ALWAYS_INLINE void call(int32_t& result,
                                 const arg_type<velox::Varbinary>& data,
                                 int32_t offset) {
-    VELOX_USER_CHECK(offset >= 0 && offset < static_cast<int32_t>(data.size()),
-                     "index {} out of valid range, 0..{}", offset,
-                     data.size() - 1);
+    if (offset < 0 || offset >= static_cast<int32_t>(data.size())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+        ERR_MSG("index ", offset, " out of valid range, 0..", data.size() - 1));
+    }
     result = static_cast<uint8_t>(data.data()[offset]);
   }
 };
@@ -365,9 +380,11 @@ struct PgSetByte {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varbinary>& result,
                                 const arg_type<velox::Varbinary>& data,
                                 int32_t offset, int32_t value) {
-    VELOX_USER_CHECK(offset >= 0 && offset < static_cast<int32_t>(data.size()),
-                     "index {} out of valid range, 0..{}", offset,
-                     data.size() - 1);
+    if (offset < 0 || offset >= static_cast<int32_t>(data.size())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+        ERR_MSG("index ", offset, " out of valid range, 0..", data.size() - 1));
+    }
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());
     result.data()[offset] = static_cast<char>(value & 0xff);
@@ -383,9 +400,11 @@ struct PgGetBit {
                                 int64_t bit_offset) {
     int64_t byte_idx = bit_offset / 8;
     int bit_idx = bit_offset % 8;
-    VELOX_USER_CHECK(
-      byte_idx >= 0 && byte_idx < static_cast<int64_t>(data.size()),
-      "index {} out of valid range", bit_offset);
+    if (byte_idx < 0 || byte_idx >= static_cast<int64_t>(data.size())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("index ", bit_offset, " out of valid range, 0..",
+                              data.size() * 8 - 1));
+    }
     result = (static_cast<uint8_t>(data.data()[byte_idx]) >> (7 - bit_idx)) & 1;
   }
 };
@@ -399,9 +418,11 @@ struct PgSetBit {
                                 int64_t bit_offset, int32_t value) {
     int64_t byte_idx = bit_offset / 8;
     int bit_idx = bit_offset % 8;
-    VELOX_USER_CHECK(
-      byte_idx >= 0 && byte_idx < static_cast<int64_t>(data.size()),
-      "index {} out of valid range", bit_offset);
+    if (byte_idx < 0 || byte_idx >= static_cast<int64_t>(data.size())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("index ", bit_offset, " out of valid range, 0..",
+                              data.size() * 8 - 1));
+    }
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());
     auto& byte = result.data()[byte_idx];
@@ -450,9 +471,10 @@ struct PgConvertFrom {
                                 const arg_type<velox::Varbinary>& data,
                                 const arg_type<velox::Varchar>& encoding) {
     std::string_view enc(encoding.data(), encoding.size());
-    VELOX_USER_CHECK(
-      enc == "UTF8" || enc == "UTF-8" || enc == "utf8" || enc == "utf-8",
-      "conversion from {} is not supported", enc);
+    if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("conversion from ", enc, " is not supported"));
+    }
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());
   }
@@ -466,9 +488,10 @@ struct PgConvertTo {
                                 const arg_type<velox::Varchar>& data,
                                 const arg_type<velox::Varchar>& encoding) {
     std::string_view enc(encoding.data(), encoding.size());
-    VELOX_USER_CHECK(
-      enc == "UTF8" || enc == "UTF-8" || enc == "utf8" || enc == "utf-8",
-      "conversion to {} is not supported", enc);
+    if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("conversion to ", enc, " is not supported"));
+    }
     result.resize(data.size());
     std::memcpy(result.data(), data.data(), data.size());
   }

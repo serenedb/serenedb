@@ -27,6 +27,13 @@
 #include <velox/type/SimpleFunctionApi.h>
 
 #include "basics/fwd.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 namespace {
@@ -48,8 +55,10 @@ struct PgRegexpMatch {
     if (pattern) {
       _re.emplace(re2::StringPiece(pattern->data(), pattern->size()),
                   RE2::Quiet);
-      VELOX_USER_CHECK(_re->ok(), "invalid regular expression: {}",
-                       _re->error());
+      if (!_re->ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                        ERR_MSG("invalid regular expression: ", _re->error()));
+      }
     }
     _cache.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
   }
@@ -117,8 +126,10 @@ struct PgRegexpCount {
     if (pattern) {
       _re.emplace(re2::StringPiece(pattern->data(), pattern->size()),
                   RE2::Quiet);
-      VELOX_USER_CHECK(_re->ok(), "invalid regular expression: {}",
-                       _re->error());
+      if (!_re->ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                        ERR_MSG("invalid regular expression: ", _re->error()));
+      }
     }
     _cache.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
   }
@@ -169,8 +180,10 @@ struct PgRegexpInstr {
     if (pattern) {
       _re.emplace(re2::StringPiece(pattern->data(), pattern->size()),
                   RE2::Quiet);
-      VELOX_USER_CHECK(_re->ok(), "invalid regular expression: {}",
-                       _re->error());
+      if (!_re->ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                        ERR_MSG("invalid regular expression: ", _re->error()));
+      }
     }
     _cache.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
   }
@@ -219,8 +232,10 @@ struct PgRegexpInstr4 {
     if (pattern) {
       _re.emplace(re2::StringPiece(pattern->data(), pattern->size()),
                   RE2::Quiet);
-      VELOX_USER_CHECK(_re->ok(), "invalid regular expression: {}",
-                       _re->error());
+      if (!_re->ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                        ERR_MSG("invalid regular expression: ", _re->error()));
+      }
     }
     _cache.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
   }
@@ -281,8 +296,10 @@ struct PgRegexpSubstr {
     if (pattern) {
       _re.emplace(re2::StringPiece(pattern->data(), pattern->size()),
                   RE2::Quiet);
-      VELOX_USER_CHECK(_re->ok(), "invalid regular expression: {}",
-                       _re->error());
+      if (!_re->ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                        ERR_MSG("invalid regular expression: ", _re->error()));
+      }
     }
     _cache.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
   }

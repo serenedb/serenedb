@@ -326,9 +326,9 @@ struct CurrentSettingFunction {
     std::string_view key(name.data(), name.size());
     auto val = _cfg->GetSetting(key);
     if (!val) {
-      VELOX_USER_CHECK(false, "unrecognized configuration parameter \"{}\"",
-                       key);
-      return false;
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("unrecognized configuration parameter \"", key, "\""));
     }
     out = *val;
     return true;
@@ -358,8 +358,9 @@ struct CurrentSettingMissingOkFunction {
       if (missing_ok) {
         return false;  // NULL
       }
-      VELOX_USER_CHECK(false, "unrecognized configuration parameter \"{}\"",
-                       key);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("unrecognized configuration parameter \"", key, "\""));
       return false;
     }
     out = *val;

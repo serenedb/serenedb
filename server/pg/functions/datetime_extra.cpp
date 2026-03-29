@@ -33,7 +33,14 @@
 
 #include "basics/fwd.h"
 #include "pg/functions/interval.h"
+#include "pg/sql_exception_macro.h"
 #include "query/types.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 namespace {
@@ -46,7 +53,12 @@ struct PgMakeDate {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Date>& result, int32_t year,
                                 int32_t month, int32_t day) {
     auto expected = velox::util::daysSinceEpochFromDate(year, month, day);
-    VELOX_USER_CHECK(expected.hasValue(), "date field value out of range");
+    if (!expected.hasValue()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("date field value out of range: ", year, "-",
+                              absl::Dec(month, absl::kZeroPad2), "-",
+                              absl::Dec(day, absl::kZeroPad2)));
+    }
     result = expected.value();
   }
 };
@@ -60,7 +72,12 @@ struct PgMakeTimestamp {
                                 int32_t year, int32_t month, int32_t day,
                                 int32_t hour, int32_t min, double sec) {
     auto expected = velox::util::daysSinceEpochFromDate(year, month, day);
-    VELOX_USER_CHECK(expected.hasValue(), "timestamp field value out of range");
+    if (!expected.hasValue()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("date field value out of range: ", year, "-",
+                              absl::Dec(month, absl::kZeroPad2), "-",
+                              absl::Dec(day, absl::kZeroPad2)));
+    }
     int64_t days = expected.value();
     int32_t whole_sec = static_cast<int32_t>(sec);
     double frac = sec - whole_sec;
@@ -218,16 +235,24 @@ struct PgDateBin {
                                 const arg_type<velox::Timestamp>& origin) {
     auto stride = pg::UnpackInterval(stride_packed);
 
-    VELOX_USER_CHECK(stride.time > 0 || stride.day > 0 || stride.month > 0,
-                     "stride must be greater than zero");
-    VELOX_USER_CHECK(
-      stride.month == 0,
-      "timestamps cannot be binned into intervals containing months or years");
+    if (stride.time <= 0 && stride.day <= 0 && stride.month <= 0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("stride must be greater than zero"));
+    }
+    if (stride.month != 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("timestamps cannot be binned into intervals containing "
+                "months or years"));
+    }
 
     // Total stride in microseconds.
     int64_t stride_us =
       stride.time + static_cast<int64_t>(stride.day) * 86400'000'000LL;
-    VELOX_USER_CHECK(stride_us > 0, "stride must be greater than zero");
+    if (stride_us <= 0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("stride must be greater than zero"));
+    }
 
     // Source and origin as microseconds since epoch.
     int64_t src_us =

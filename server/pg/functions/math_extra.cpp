@@ -30,6 +30,13 @@
 #include <random>
 
 #include "basics/fwd.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 namespace {
@@ -50,12 +57,18 @@ struct PgDiv {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(int64_t& result, int64_t y, int64_t x) {
-    VELOX_USER_CHECK(x != 0, "division by zero");
+    if (x == 0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                      ERR_MSG("division by zero"));
+    }
     result = y / x;
   }
 
   FOLLY_ALWAYS_INLINE void call(int64_t& result, double y, double x) {
-    VELOX_USER_CHECK(x != 0.0, "division by zero");
+    if (x == 0.0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                      ERR_MSG("division by zero"));
+    }
     result = static_cast<int64_t>(std::trunc(y / x));
   }
 };

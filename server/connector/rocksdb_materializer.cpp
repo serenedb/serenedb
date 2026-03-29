@@ -145,8 +145,7 @@ velox::RowVectorPtr RocksDBMaterializer::ReadRows(
     if (column_id == catalog::Column::kGeneratedPKId) {
       // TODO(Dronplane): optimize this case - if there is at least one
       // non-generated column we can read generated column in one pass with
-      // actually stored column. More to say  - we must do this to properly
-      // handle materialization failures. Same for UNKNOWN column.
+      // actually stored column. Same for UNKNOWN column.
       SDB_ASSERT(_effective_column_id != catalog::Column::kGeneratedPKId,
                  "DataSource: generated PK column is not an effective one");
       read_column_id = _effective_column_id;
@@ -171,7 +170,6 @@ template<typename Decoder>
 void RocksDBMaterializer::IterateColumnKeys(
   std::string_view column_key, std::span<const std::string> row_keys,
   const Decoder& func) {
-  // TODO(Dronplane): try use multiget
   std::string buffer(column_key);
   auto cur = row_keys.begin();
   while (cur != row_keys.end()) {

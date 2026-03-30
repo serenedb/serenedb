@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <velox/vector/ComplexVector.h>
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
 
@@ -30,6 +31,7 @@
 #include "catalog/table_options.h"
 #include "common.h"
 #include "connector/primary_key.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "serenedb_connector.hpp"
@@ -62,41 +64,34 @@ void SetResultValue(std::string_view value, size_t idx,
   }
 }
 
+// Allocate an output FlatVector for a column with `count` found rows.
 template<velox::TypeKind Kind>
-velox::VectorPtr ReadPointColumnValues(
-  size_t sort_rank, size_t read_points_count, size_t write_points_count,
-  const std::vector<rocksdb::Status>& statuses,
-  const std::vector<std::string>& values,
-  velox::memory::MemoryPool& memory_pool) {
+velox::VectorPtr CreatePointsColumnVector(size_t count,
+                                          velox::memory::MemoryPool& pool) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
+  return velox::BaseVector::create<velox::FlatVector<T>>(
+    velox::Type::create<Kind>(), count, &pool);
+}
 
-  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), write_points_count, &memory_pool);
-
-  size_t written = 0;
-  for (size_t read_idx = 0; read_idx < read_points_count; ++read_idx) {
-    const size_t idx = sort_rank * read_points_count + read_idx;
-    const auto& status = statuses[idx];
-    const auto& value = values[idx];
-
-    if (status.IsNotFound()) {
-      // Filtered point is not found, it's OK, just skip
-      continue;
-    }
-
-    SDB_ASSERT(!value.empty());
-    SDB_ENSURE(status.ok(), rocksutils::ConvertStatus(status));
-    SetResultValue(value, written++, *result);
+// Fill values[0..n) into result starting at offset, for already-present rows.
+template<velox::TypeKind Kind>
+void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
+                            std::span<const rocksdb::PinnableSlice> values) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  auto& flat = static_cast<velox::FlatVector<T>&>(result);
+  for (size_t i = 0; i < values.size(); ++i) {
+    SDB_ASSERT(!values[i].empty());
+    SetResultValue(values[i].ToStringView(), offset + i, flat);
   }
-  SDB_ASSERT(written == write_points_count);
-  return result;
 }
 
 }  // namespace
 
-RocksDBFullScanDataSource::RocksDBFullScanDataSource(
-  velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
-  velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_oids,
+template<typename Source>
+RocksDBFullScanDataSource<Source>::RocksDBFullScanDataSource(
+  velox::memory::MemoryPool& memory_pool, Source& source,
+  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
+  std::vector<catalog::Column::Id> column_oids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
   size_t output_column_count, const rocksdb::Snapshot* snapshot,
   velox::core::TypedExprPtr remaining_filter,
@@ -109,6 +104,7 @@ RocksDBFullScanDataSource::RocksDBFullScanDataSource(
                           output_column_count,
                           std::move(remaining_filter),
                           evaluator},
+    _source{source},
     _snapshot{snapshot},
     _effective_column_id(std::move(effective_column_id)) {
   SDB_ASSERT(_read_type, "RocksDBDataSource: row type is null");
@@ -268,7 +264,8 @@ void RocksDBSnapshotFullScanDataSource::addSplit(
   });
 }
 
-void RocksDBFullScanDataSource::addSplit(
+template<typename Source>
+void RocksDBFullScanDataSource<Source>::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
   if (_current_split) {
@@ -276,10 +273,22 @@ void RocksDBFullScanDataSource::addSplit(
               "RocksDBDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
+  if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
+    InitIterators([&](const rocksdb::ReadOptions& options) {
+      return std::unique_ptr<rocksdb::Iterator>(
+        _source.GetIterator(options, &_cf));
+    });
+  } else {
+    InitIterators([&](const rocksdb::ReadOptions& options) {
+      return std::unique_ptr<rocksdb::Iterator>(
+        _source.NewIterator(options, &_cf));
+    });
+  }
 }
 
+template<typename Source>
 template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
-void RocksDBFullScanDataSource::InitIterators(CreateFn&& create_iter) {
+void RocksDBFullScanDataSource<Source>::InitIterators(CreateFn&& create_iter) {
   // Creating iterator API expects options by const reference, but all
   // implementations copies this argument, so it should be safe.
   rocksdb::ReadOptions options;
@@ -298,7 +307,8 @@ void RocksDBFullScanDataSource::InitIterators(CreateFn&& create_iter) {
   }
 }
 
-std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
+template<typename Source>
+std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource<Source>::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
   if (!_current_split) {
@@ -351,30 +361,30 @@ std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource::next(
                                                      &_memory_pool);
 }
 
-void RocksDBFullScanDataSource::addDynamicFilter(
-  velox::column_index_t output_channel,
-  const std::shared_ptr<velox::common::Filter>& filter) {
+void RocksDBBaseDataSource::addDynamicFilter(
+  velox::column_index_t, const std::shared_ptr<velox::common::Filter>&) {
   VELOX_UNSUPPORTED();
 }
 
-uint64_t RocksDBFullScanDataSource::getCompletedBytes() {
+uint64_t RocksDBBaseDataSource::getCompletedBytes() {
   // TODO: implement completed bytes tracking
   return 0;
 }
 
-uint64_t RocksDBFullScanDataSource::getCompletedRows() { return _produced; }
+uint64_t RocksDBBaseDataSource::getCompletedRows() { return _produced; }
 
 std::unordered_map<std::string, velox::RuntimeMetric>
-RocksDBFullScanDataSource::getRuntimeStats() {
+RocksDBBaseDataSource::getRuntimeStats() {
   // TODO: implement runtime stats reporting
   return {};
 }
 
-void RocksDBFullScanDataSource::cancel() {
+void RocksDBBaseDataSource::cancel() {
   // TODO: implement cancellation logic
 }
 
-velox::VectorPtr RocksDBFullScanDataSource::ReadColumn(
+template<typename Source>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumn(
   velox::column_index_t col_idx, uint64_t max_size) {
   auto& it = *_iterators[col_idx];
   auto column_id = _column_ids[col_idx];
@@ -388,12 +398,17 @@ velox::VectorPtr RocksDBFullScanDataSource::ReadColumn(
     return ReadUnknownColumn(it, max_size);
   }
 
+  if (type->kind() == velox::TypeKind::ARRAY) {
+    return ReadArrayColumn(it, max_size, type);
+  }
+
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumn, type->kind(), it,
                                             max_size);
 }
 
+template<typename Source>
 template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBFullScanDataSource::ReadScalarColumn(
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarColumn(
   rocksdb::Iterator& it, uint64_t max_size) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
@@ -418,7 +433,8 @@ velox::VectorPtr RocksDBFullScanDataSource::ReadScalarColumn(
   return result;
 }
 
-velox::VectorPtr RocksDBFullScanDataSource::ReadUnknownColumn(
+template<typename Source>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadUnknownColumn(
   rocksdb::Iterator& it, uint64_t max_size) {
   uint64_t vector_size = IterateColumn(
     it, max_size, [](uint64_t, std::string_view, std::string_view) {});
@@ -426,7 +442,163 @@ velox::VectorPtr RocksDBFullScanDataSource::ReadUnknownColumn(
                                                &_memory_pool);
 }
 
-velox::VectorPtr RocksDBFullScanDataSource::ReadColumnFromKey(
+template<typename Source>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadArrayColumn(
+  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
+  const auto elem_kind = array_type->asArray().elementType()->kind();
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    ReadScalarArrayColumn, elem_kind, it, max_size, std::move(array_type));
+}
+
+template<typename Source>
+template<velox::TypeKind ElemKind>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
+  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
+  using ElemT = typename velox::TypeTraits<ElemKind>::NativeType;
+  static_assert(!std::is_same_v<ElemT, void>,
+                "Complex element types are not supported in array columns");
+
+  const auto& elem_type = array_type->asArray().elementType();
+
+  auto offsets_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
+    max_size, &_memory_pool);
+  auto sizes_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
+    max_size, &_memory_pool);
+  auto* raw_offsets = offsets_buf->template asMutable<velox::vector_size_t>();
+  auto* raw_sizes = sizes_buf->template asMutable<velox::vector_size_t>();
+
+  auto elements = velox::BaseVector::create<velox::FlatVector<ElemT>>(
+    elem_type, 0, &_memory_pool);
+
+  velox::BufferPtr null_buf;
+  velox::vector_size_t elem_offset = 0;
+
+  const auto vector_size = IterateColumn(
+    it, max_size,
+    [&](uint64_t value_idx, std::string_view, std::string_view value) {
+      if (value.empty()) {
+        // NULL array
+        if (!null_buf) {
+          null_buf = velox::allocateNulls(max_size, &_memory_pool);
+        }
+        velox::bits::setNull(null_buf->asMutable<uint64_t>(), value_idx);
+        return;
+      }
+
+      raw_offsets[value_idx] = elem_offset;
+      const auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
+      const uint32_t elem_count = irs::vread<uint32_t>(ptr);
+      raw_sizes[value_idx] = static_cast<velox::vector_size_t>(elem_count);
+
+      if (elem_count == 0) {
+        return;
+      }
+      elements->resize(elem_offset + elem_count, true);
+
+      const auto flags = static_cast<ValueFlags>(*ptr++);
+      const bool is_constant =
+        (flags & ValueFlags::Constant) != ValueFlags::None;
+      const bool have_nulls =
+        (flags & ValueFlags::HaveNulls) != ValueFlags::None;
+      const bool have_length =
+        (flags & ValueFlags::HaveLength) != ValueFlags::None;
+
+      uint32_t length_array_size = 0;
+      if (have_length) {
+        length_array_size = irs::vread<uint32_t>(ptr);
+      }
+
+      if (is_constant) {
+        SDB_ASSERT(!have_nulls);
+        // Remaining bytes are the single constant value (or none for null).
+        const auto remaining_size = static_cast<size_t>(
+          reinterpret_cast<const uint8_t*>(value.data()) + value.size() - ptr);
+        if (remaining_size == 0) {
+          for (uint32_t i = 0; i < elem_count; i++) {
+            elements->setNull(elem_offset + i, true);
+          }
+        } else {
+          const std::string_view constant_val{
+            reinterpret_cast<const char*>(ptr), remaining_size};
+          for (uint32_t i = 0; i < elem_count; i++) {
+            SetResultValue(constant_val, elem_offset + i, *elements);
+          }
+        }
+      } else {
+        // Read optional nulls bitmap.
+        const uint8_t* elem_nulls = nullptr;
+        if (have_nulls) {
+          elem_nulls = ptr;
+          ptr += velox::bits::nbytes(elem_count);
+        }
+
+        if constexpr (ElemKind == velox::TypeKind::BOOLEAN) {
+          // Boolean data is a packed bitset.
+          const auto bool_bytes = velox::bits::nbytes(elem_count);
+          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              if constexpr (HasNulls) {
+                if (!velox::bits::isBitSet(elem_nulls, i)) {
+                  elements->setNull(elem_offset + i, true);
+                  continue;
+                }
+              }
+              elements->set(elem_offset + i, velox::bits::isBitSet(ptr, i));
+            }
+          });
+          ptr += bool_bytes;
+        } else if constexpr (!velox::TypeTraits<ElemKind>::isFixedWidth) {
+          // Variable-length elements (e.g., VARCHAR).
+          // Layout: [length_array: length_array_size bytes][string data]
+          const uint8_t* lptr = ptr;
+          ptr += length_array_size;
+          const uint8_t* data_ptr = ptr;
+
+          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              const uint32_t len = irs::vread<uint32_t>(lptr);
+              if constexpr (HasNulls) {
+                if (!velox::bits::isBitSet(elem_nulls, i)) {
+                  elements->setNull(elem_offset + i, true);
+                  data_ptr += len;
+                  continue;
+                }
+              }
+              elements->set(elem_offset + i,
+                            velox::StringView(
+                              reinterpret_cast<const char*>(data_ptr), len));
+              data_ptr += len;
+            }
+          });
+        } else {
+          // Fixed-width scalar: packed array of count * sizeof(ElemT) bytes.
+          memcpy(elements->mutableRawValues() + elem_offset, ptr,
+                 elem_count * sizeof(ElemT));
+          ptr += elem_count * sizeof(ElemT);
+          if (have_nulls) {
+            for (uint32_t i = 0; i < elem_count; i++) {
+              if (!velox::bits::isBitSet(elem_nulls, i)) {
+                elements->setNull(elem_offset + i, true);
+              }
+            }
+          }
+        }
+      }
+
+      elem_offset += elem_count;
+    });
+
+  SDB_ASSERT(vector_size <= max_size);
+
+  rocksutils::CheckIteratorStatus(it);
+
+  return std::make_shared<velox::ArrayVector>(
+    &_memory_pool, std::move(array_type), std::move(null_buf), vector_size,
+    std::move(offsets_buf), std::move(sizes_buf), std::move(elements));
+}
+
+template<typename Source>
+velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumnFromKey(
   rocksdb::Iterator& it, uint64_t max_size) {
   // For now only generated PK column is supported
   auto result = velox::BaseVector::create<velox::FlatVector<int64_t>>(
@@ -449,10 +621,10 @@ velox::VectorPtr RocksDBFullScanDataSource::ReadColumnFromKey(
   return result;
 }
 
+template<typename Source>
 template<std::invocable<uint64_t, std::string_view, std::string_view> Callback>
-uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
-                                                  uint64_t max_size,
-                                                  const Callback& func) {
+uint64_t RocksDBFullScanDataSource<Source>::IterateColumn(
+  rocksdb::Iterator& it, uint64_t max_size, const Callback& func) {
   uint64_t vector_size = 0;
 
   while (it.Valid() && max_size > vector_size) {
@@ -467,41 +639,47 @@ uint64_t RocksDBFullScanDataSource::IterateColumn(rocksdb::Iterator& it,
 }
 
 template<typename Source>
-void RocksDBPointLookupDataSource<Source>::BuildKeys(size_t batch_size,
-                                                     size_t key_columns) {
-  const size_t total_keys = batch_size * key_columns;
-  const size_t old_size = _keys.size();
-  _keys.resize(total_keys);
-  if (old_size >= total_keys) {
-    for (size_t rank = 0; rank < key_columns; ++rank) {
-      for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-        auto& key = _keys[rank * batch_size + point_idx];
-        SDB_ASSERT(key.size() >= kKeyPrefixSize);
-        key.resize(kKeyPrefixSize);
-        primary_key::Create(*_values, _offset + point_idx, key);
-      }
-    }
-  } else {
-    for (size_t rank = 0; rank < key_columns; ++rank) {
-      const size_t col_idx = _sorted_col_indices[rank];
-      for (size_t point_idx = 0; point_idx < batch_size; ++point_idx) {
-        auto& key = _keys[rank * batch_size + point_idx];
-        key.clear();
-        key_utils::AppendTableKey(key, _object_key);
-        key_utils::AppendColumnKey(key, _column_ids[col_idx]);
-        primary_key::Create(*_values, _offset + point_idx, key);
-      }
-    }
+void RocksDBPointLookupDataSource<Source>::addSplit(
+  std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
+  if (_current_split) {
+    SDB_THROW(ERROR_INTERNAL,
+              "RocksDBDataSource: a split is already being processed");
+  }
+  _current_split = std::move(split);
+  _values_offset = 0;
+}
+
+template<typename Source>
+void RocksDBPointLookupDataSource<Source>::BuildBatchKeys(
+  catalog::Column::Id col_id, size_t start, size_t count) {
+  SDB_ASSERT(count <= kMultiGetChunkSize);
+  for (size_t i = 0; i < count; ++i) {
+    auto& key = _ctx.Key(i);
+    key.clear();
+    key_utils::AppendTableKey(key, _object_key);
+    key_utils::AppendColumnKey(key, col_id);
+    primary_key::Create(_values[start + i], *_pk_type, key);
   }
 }
 
 template<typename Source>
-void RocksDBPointLookupDataSource<Source>::PerformMultiGet(size_t total_keys) {
-  _key_slices.resize(total_keys);
-  for (size_t i = 0; i < total_keys; ++i) {
-    _key_slices[i] = _keys[i];
+size_t RocksDBPointLookupDataSource<Source>::BuildBatchKeysUsingMask(
+  catalog::Column::Id col_id, size_t batch_size) {
+  size_t key_idx = 0;
+  while (key_idx < batch_size &&
+         _in_batch_offset < _present_rows_batch.size()) {
+    if (_present_rows_batch.test(_in_batch_offset)) {
+      auto& key = _ctx.Key(key_idx++);
+      SDB_ASSERT(key.size() >= kTablePrefixSize,
+                 "Prepared keys should already start with table prefix");
+      key.resize(kTablePrefixSize);
+      key_utils::AppendColumnKey(key, col_id);
+      primary_key::Create(_values[_in_batch_offset], *_pk_type, key);
+    }
+    ++_in_batch_offset;
   }
-  _ctx.MultiGet(_cf, _key_slices, _raw_values, _statuses);
+  return key_idx;
 }
 
 velox::RowVectorPtr RocksDBBaseDataSource::ApplyRemainingFilter(
@@ -572,30 +750,6 @@ velox::RowVectorPtr RocksDBBaseDataSource::ApplyRemainingFilter(
 }
 
 template<typename Source>
-size_t RocksDBPointLookupDataSource<Source>::CheckAndCountFound(
-  size_t keys_count) const {
-  size_t found = 0;
-  for (size_t i = 0; i < keys_count; ++i) {
-    if (_statuses[i].ok()) {
-      ++found;
-    } else {
-      SDB_ENSURE(_statuses[i].IsNotFound(),
-                 rocksutils::ConvertStatus(_statuses[i]));
-    }
-  }
-  return found;
-}
-
-template<typename Source>
-void RocksDBPointLookupDataSource<Source>::FinalizeOffset(size_t batch_size) {
-  _offset += batch_size;
-  if (_offset >= _values->size()) {
-    _current_split.reset();
-    _offset = 0;
-  }
-}
-
-template<typename Source>
 std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
   uint64_t size, velox::ContinueFuture&) {
   SDB_ASSERT(size);
@@ -603,60 +757,116 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     return nullptr;
   }
 
-  SDB_ASSERT(_values);
-  SDB_ASSERT(_values->size() > 0,
+  SDB_ASSERT(!_values.empty(),
              "Case of empty filters should be processed in connector");
 
   const auto num_columns = _read_type->size();
-  const auto total_points = static_cast<size_t>(_values->size());
-  const auto batch_size =
-    std::min(static_cast<size_t>(size), total_points - _offset);
+  const size_t batch_size =
+    std::min(static_cast<size_t>(size), _values.size() - _values_offset);
   SDB_ASSERT(batch_size > 0);
 
+  // Step 1: fetch column 0 in sorted order to fill _present_rows_batch and,
+  // when num_columns >= 1, also populate the column 0 vector directly.
+  const size_t least_column_index = _sorted_col_indices[0];
+  const auto least_column_id = _column_ids[least_column_index];
+
   if (num_columns == 0) {
-    // count(*) path: no projected columns — issue one read per point using
-    // the effective column, count how many points exist, return a 0-column
-    // RowVector with that many rows.
+    // count(*) path: only need presence count, no column data or mask needed.
     SDB_ASSERT(_column_ids.size() == 1);
     SDB_ASSERT(!_remaining_expr_set);
-    BuildKeys(batch_size, 1);
-
-    for (size_t i = 1; i < batch_size; ++i) {
-      SDB_ASSERT(_keys[i] > _keys[i - 1], "Failed on ", i);
+    size_t found_count = 0;
+    for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
+      const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
+      BuildBatchKeys(least_column_id, _values_offset + start, chunk);
+      _ctx.Fetch(_cf, chunk);
+      for (size_t i = 0; i < chunk; ++i) {
+        if (_ctx.Status(i).ok()) {
+          ++found_count;
+        } else {
+          SDB_ENSURE(_ctx.Status(i).IsNotFound(),
+                     rocksutils::ConvertStatus(_ctx.Status(i)));
+        }
+      }
     }
-
-    PerformMultiGet(batch_size);
-    const size_t found_count = CheckAndCountFound(batch_size);
+    _values_offset += batch_size;
+    if (_values_offset >= _values.size()) {
+      _current_split.reset();
+    }
     _produced += found_count;
-    FinalizeOffset(batch_size);
-
     return velox::BaseVector::create<velox::RowVector>(_read_type, found_count,
                                                        &_memory_pool);
   }
 
-  // TODO(mkornaukhov) try to load only the first column and get mask of which
-  // rows are present. This may allow us to reduce number of multiget calls
-  BuildKeys(batch_size, num_columns);
-  PerformMultiGet(batch_size * num_columns);
-  size_t found_count = CheckAndCountFound(batch_size * num_columns);
-  SDB_ASSERT(found_count % num_columns == 0);
-  found_count /= num_columns;
+  _present_rows_batch.reset(batch_size);
 
-  std::vector<velox::VectorPtr> columns;
-  columns.reserve(num_columns);
-  for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
-    const auto& type = _read_type->childAt(column_idx);
-    columns.emplace_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      ReadPointColumnValues, type->kind(), _col_rank[column_idx], batch_size,
-      found_count, _statuses, _raw_values, _memory_pool));
+  // num_columns >= 1: fetch column 0 in sorted order, build presence mask and
+  // fill the column 0 vector simultaneously.
+  const auto& least_column_type = _read_type->childAt(least_column_index);
+  auto least_column_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    CreatePointsColumnVector, least_column_type->kind(), batch_size,
+    _memory_pool);
+
+  size_t found_count = 0;
+  for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
+    const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
+    BuildBatchKeys(least_column_id, _values_offset + start, chunk);
+    _ctx.Fetch(_cf, chunk);
+    const auto all_values = _ctx.Values(chunk);
+    for (size_t i = 0; i < chunk; ++i) {
+      if (_ctx.Status(i).ok()) {
+        _present_rows_batch.set(start + i);
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          FillPointsColumnValues, least_column_type->kind(), *least_column_vec,
+          found_count, all_values.subspan(i, 1));
+        ++found_count;
+      } else {
+        SDB_ENSURE(_ctx.Status(i).IsNotFound(),
+                   rocksutils::ConvertStatus(_ctx.Status(i)));
+      }
+    }
+  }
+  SDB_ASSERT(_present_rows_batch.count() == found_count);
+  least_column_vec->resize(found_count);
+
+  // Step 2: fill remaining columns using BuildBatchKeysUsingMask.
+  std::vector<velox::VectorPtr> columns(num_columns);
+  columns[least_column_index] = std::move(least_column_vec);
+  for (size_t col_idx :
+       std::span{_sorted_col_indices.begin() + 1, _sorted_col_indices.end()}) {
+    const auto col_id = _column_ids[col_idx];
+    const auto& type = _read_type->childAt(col_idx);
+
+    auto col_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      CreatePointsColumnVector, type->kind(), found_count, _memory_pool);
+
+    size_t collected = 0;
+    _in_batch_offset = 0;
+    while (collected < found_count) {
+      const size_t chunk_size =
+        BuildBatchKeysUsingMask(col_id, kMultiGetChunkSize);
+      _ctx.Fetch(_cf, chunk_size);
+      for (size_t i = 0; i < chunk_size; ++i) {
+        SDB_ENSURE(_ctx.Status(i).ok(),
+                   rocksutils::ConvertStatus(_ctx.Status(i)));
+      }
+      const auto chunk_values = _ctx.Values(chunk_size);
+      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillPointsColumnValues, type->kind(),
+                                         *col_vec, collected, chunk_values);
+      collected += chunk_size;
+    }
+
+    columns[col_idx] = std::move(col_vec);
+  }
+
+  _values_offset += batch_size;
+  if (_values_offset >= _values.size()) {
+    _current_split.reset();
   }
 
   SDB_ASSERT(
     absl::c_all_of(columns,
                    [&](const auto& col) { return col->size() == found_count; }),
     "RocksDBPointLookupDataSource: inconsistent columns");
-
-  FinalizeOffset(batch_size);
 
   auto batch = ApplyRemainingFilter(std::make_shared<velox::RowVector>(
     &_memory_pool, _read_type, nullptr, found_count, std::move(columns)));
@@ -665,6 +875,8 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
   return batch;
 }
 
+template class RocksDBFullScanDataSource<rocksdb::Transaction>;
+template class RocksDBFullScanDataSource<rocksdb::DB>;
 template class RocksDBPointLookupDataSource<rocksdb::Transaction>;
 template class RocksDBPointLookupDataSource<rocksdb::DB>;
 

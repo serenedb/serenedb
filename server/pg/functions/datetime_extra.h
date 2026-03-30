@@ -20,13 +20,10 @@
 
 #pragma once
 
-#include <iresearch/search/filter.hpp>
-#include <ostream>
 #include <string>
 
-namespace irs {
+namespace sdb::pg::functions {
 
-template<typename Sink>
-void AbslStringify(Sink& sink, const Filter& filter);
+void registerDatetimeExtraFunctions(const std::string& prefix);
 
-}  // namespace irs
+}  // namespace sdb::pg::functions

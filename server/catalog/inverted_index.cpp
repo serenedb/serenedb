@@ -21,6 +21,7 @@
 #include "catalog/inverted_index.h"
 
 #include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
@@ -45,6 +46,7 @@ void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
 }
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
+  const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
   auto it = _options.columns.find(column_id);
   if (it == _options.columns.end()) {
@@ -53,10 +55,10 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   }
 
   if (!it->second.text_dictionary.isSet()) {
-    return {};
+    auto analyzer = std::make_unique<irs::StringTokenizer>();
+    return {.analyzer = Tokenizer::AnalyzerWrapper{
+              analyzer.release(), Tokenizer::Deleter{nullptr}}};
   }
-
-  auto snapshot = GetCatalog().GetSnapshot();
 
   auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);
   SDB_ENSURE(dict, ERROR_INTERNAL,

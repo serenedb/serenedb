@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 
+#include "pg/progress_tracker.h"
 #include "query/executor.h"
 #include "utils/exec_context.h"
 
@@ -78,6 +79,8 @@ class CTASCreateTableExecutor final : public CommandExecutor {
 
 struct CreateIndexState {
   bool created = false;
+  ObjectId index_id;
+  IndexProgressReporter* progress = nullptr;
 };
 
 class CreateIndexExecutor final : public CommandExecutor {
@@ -97,13 +100,15 @@ class FinishCreateIndexExecutor final : public CommandExecutor {
  public:
   FinishCreateIndexExecutor(std::shared_ptr<ExecContext> context,
                             std::string_view schemaname,
-                            std::string_view index_name);
+                            std::string_view index_name,
+                            CreateIndexState& state);
 
   yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
 
  private:
   std::string_view _schemaname;
   std::string_view _index_name;
+  CreateIndexState& _state;
 };
 
 class RemoveTombstoneExecutor final : public CommandExecutor {

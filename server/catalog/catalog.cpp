@@ -66,6 +66,8 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "vpack/value.h"
+#include "vpack/value_type.h"
 
 namespace sdb::catalog {
 namespace {
@@ -92,6 +94,39 @@ ResultOr<CreateTableOptions> GetTableOptions(ObjectId db_id,
   return options;
 }
 
+// In case of recovery the ColumnExpr shouldn't be parsed
+struct DropTableOptions {
+  TableType type;
+  uint64_t columns;
+};
+
+ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
+  struct {
+    int type;
+    vpack::Slice columns;
+  } opts;
+  if (auto r = vpack::ReadObjectNothrow(slice, opts, {.skip_unknown = true});
+      !r.ok()) {
+    return std::unexpected<Result>{std::in_place, std::move(r)};
+  }
+  if (!opts.columns.isArray()) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
+      "\"columns\" variable should be an array in the table definition vpack"};
+  }
+  auto type = magic_enum::enum_cast<TableType>(opts.type);
+  if (!type) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
+      "Cannot parse \"type\" enum variable in the table definition vpack"};
+  }
+  DropTableOptions res{
+    .type = magic_enum::enum_cast<TableType>(opts.type).value(),
+    .columns = opts.columns.length(),
+  };
+  return {res};
+}
+
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
   ObjectId table_id, ObjectId index_id, vpack::Slice definition,
@@ -103,43 +138,42 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
       !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  auto drop = std::make_shared<IndexDrop>(db_id, schema_id, table_id, index_id,
-                                          options.type, is_root);
+  ObjectId shard_id;
   auto r = engine.VisitDefinitions(index_id, RocksDBEntryType::IndexShard,
                                    [&](DefinitionKey key, vpack::Slice) {
-                                     SDB_ASSERT(!drop->shard_id.isSet());
-                                     drop->shard_id = key.GetObjectId();
+                                     SDB_ASSERT(!shard_id.isSet());
+                                     shard_id = key.GetObjectId();
                                      return Result{};
                                    });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return drop;
+  return std::make_shared<IndexDrop>(index_id, options.type, db_id, schema_id,
+                                     table_id, shard_id, is_root);
 }
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, CreateTableOptions options, bool is_root = false) {
-  auto type = magic_enum::enum_cast<TableType>(options.type);
-  SDB_ASSERT(type);
-  auto drop = std::make_shared<TableDrop>(schema_id, table_id, *type, is_root);
+  ObjectId table_id, TableType type, uint64_t cols, bool is_root = false) {
+  ObjectId shard_id;
+  uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
   auto r = engine.VisitDefinitions(
     table_id, RocksDBEntryType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) {
-      SDB_ASSERT(!drop->shard_id.isSet());
-      drop->shard_id = key.GetObjectId();
+      SDB_ASSERT(!shard_id.isSet());
+      shard_id = key.GetObjectId();
       TableStats stats;
       if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
         return r;
       }
-      drop->table_size = stats.num_rows * options.columns.size();
-
+      table_size = stats.num_rows * cols;
       return Result{};
     });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
+  std::vector<std::shared_ptr<IndexDrop>> indexes;
   r = engine.VisitDefinitions(table_id, RocksDBEntryType::Index,
                               [&](DefinitionKey key, vpack::Slice slice) {
                                 auto index_drop = CreateIndexDrop(
@@ -148,56 +182,60 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
                                 if (!index_drop) {
                                   return std::move(index_drop.error());
                                 }
-                                drop->indexes.push_back(std::move(*index_drop));
+                                indexes.push_back(std::move(*index_drop));
                                 return Result{};
                               });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return drop;
+  return std::make_shared<TableDrop>(table_id, type, shard_id, table_size,
+                                     std::move(indexes), schema_id, is_root);
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
   bool is_root = false) {
-  auto drop = std::make_shared<SchemaDrop>(db_id, schema_id, is_root);
+  std::vector<std::shared_ptr<TableDrop>> tables;
   auto r = engine.VisitDefinitions(
     schema_id, RocksDBEntryType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto options = GetTableOptions(db_id, slice);
+      auto options = GetTableOptionsForDrop(slice);
       if (!options) {
         return std::move(options.error());
       }
-      auto table_drop = CreateTableDrop(engine, db_id, schema_id,
-                                        key.GetObjectId(), std::move(*options));
+      auto table_drop =
+        CreateTableDrop(engine, db_id, schema_id, key.GetObjectId(),
+                        options->type, options->columns);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
-      drop->tables.push_back(std::move(*table_drop));
+      tables.push_back(std::move(*table_drop));
       return Result{};
     });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return drop;
+
+  return std::make_shared<SchemaDrop>(schema_id, std::move(tables), db_id,
+                                      is_root);
 }
 
 ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id) {
-  auto drop = std::make_shared<DatabaseDrop>(db_id);
+  std::vector<std::shared_ptr<SchemaDrop>> schemas;
   auto r = engine.VisitDefinitions(
     db_id, RocksDBEntryType::Schema, [&](DefinitionKey key, vpack::Slice) {
       auto schema_drop = CreateSchemaDrop(engine, db_id, key.GetObjectId());
       if (!schema_drop) {
         return std::move(schema_drop.error());
       }
-      drop->schemas.push_back(std::move(*schema_drop));
+      schemas.push_back(std::move(*schema_drop));
       return Result{};
     });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return drop;
+  return std::make_shared<DatabaseDrop>(db_id, std::move(schemas));
 }
 
 class OpenDatabase {
@@ -441,15 +479,19 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
     schema_id, RocksDBEntryType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
-      auto options = GetTableOptions(db_id, slice);
+      if (!IsDeleted(table_id, DeletedScope::Schema)) {
+        auto options = GetTableOptions(db_id, slice);
+        if (!options) {
+          return std::move(options.error());
+        }
+        return AddTable(db_id, schema_id, table_id, std::move(*options));
+      }
+      auto options = GetTableOptionsForDrop(slice);
       if (!options) {
         return std::move(options.error());
       }
-      if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        return AddTable(db_id, schema_id, table_id, std::move(*options));
-      }
       auto drop = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                  std::move(*options), true);
+                                  options->type, options->columns, true);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -576,7 +618,7 @@ template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(key);
+  auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
                                    ERROR_SERVER_DATABASE_NOT_FOUND,

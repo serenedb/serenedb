@@ -1,9 +1,7 @@
 control substitution on
 
 
-# ===========================================================================
 # ERROR CASES
-# ===========================================================================
 
 # --- Missing required parameter: template ---
 
@@ -216,9 +214,7 @@ SELECT ts_lexize('other_tokenizer', 'a QUICK Brown Fox');
 db error: ERROR: text search dictionary "other_tokenizer" does not exist
 
 
-# ===========================================================================
 # TEXT TEMPLATE
-# ===========================================================================
 
 # --- Basics: default case (lower), default stemming (true) ---
 
@@ -438,9 +434,7 @@ ts_lexize
 {ru,run}
 
 
-# ===========================================================================
 # NGRAM TEMPLATE
-# ===========================================================================
 
 # --- Without preserveoriginal (default false) ---
 
@@ -494,9 +488,7 @@ ts_lexize
 {Qu,QuI,uI,uIc,Ic,IcK,cK}
 
 
-# ===========================================================================
 # STEM TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY t6(
@@ -512,9 +504,7 @@ ts_lexize
 {run}
 
 
-# ===========================================================================
 # NORM TEMPLATE
-# ===========================================================================
 
 # --- lowercase + strip accents: whole input as single token ---
 
@@ -588,9 +578,7 @@ ts_lexize
 {"Hello World"}
 
 
-# ===========================================================================
 # COLLATION TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY t10(
@@ -599,9 +587,7 @@ CREATE TEXT SEARCH DICTIONARY t10(
 )
 
 
-# ===========================================================================
 # DELIMITER TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY t11(
@@ -631,9 +617,7 @@ ts_lexize
 {foo,bar,baz}
 
 
-# ===========================================================================
 # MULTI-DELIMITER TEMPLATE
-# ===========================================================================
 
 # --- Single character delimiter (test_delimiter) ---
 
@@ -756,9 +740,7 @@ ts_lexize
 {abcf,bar}
 
 
-# ===========================================================================
 # MINHASH TEMPLATE
-# ===========================================================================
 
 # --- Inner delimiter analyzer, numhashes=2 ---
 
@@ -826,9 +808,7 @@ ts_lexize
 {3Nw3PlObK0w,c1vB9RXiIbY,qwHz3KHFrwA,Dd/LYPcsFJs,i9Kfo5CrjNs}
 
 
-# ===========================================================================
 # SEGMENTATION TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY seg_graphic_lower(
@@ -901,9 +881,7 @@ ts_lexize
 {Test,ReTeSt}
 
 
-# ===========================================================================
 # STOPWORDS TOKENIZER TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY stopwords_filter(
@@ -1020,9 +998,7 @@ ts_lexize
 {616263}
 
 
-# ===========================================================================
 # FEATURES (norm, frequency, position, offset)
-# ===========================================================================
 
 statement error
 CREATE TEXT SEARCH DICTIONARY text_norm_feature(
@@ -1064,9 +1040,7 @@ CREATE TEXT SEARCH DICTIONARY ngram_with_features(
 )
 
 
-# ===========================================================================
 # NEAREST NEIGHBORS TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY nearest_neighbors_topk2(
@@ -1091,9 +1065,7 @@ ts_lexize
 {homogenized,teach}
 
 
-# ===========================================================================
 # CLASSIFICATION TEMPLATE
-# ===========================================================================
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY classification(
@@ -1116,9 +1088,7 @@ ts_lexize
 {__label__knives}
 
 
-# ===========================================================================
 # PIPELINE TEMPLATE
-# ===========================================================================
 
 # --- Invalid step template ---
 statement error
@@ -1288,9 +1258,7 @@ ts_lexize
 {HELLO,WORLD,FOO,BAR}
 
 
-# ===========================================================================
 # COPY FROM TEMPLATE
-# ===========================================================================
 
 
 statement error
@@ -1445,9 +1413,7 @@ ts_lexize
 {CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
 
 
-# ===========================================================================
 # HELP
-# ===========================================================================
 
 statement error
 CREATE TEXT SEARCH DICTIONARY a(help);

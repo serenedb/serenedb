@@ -26,7 +26,11 @@
 
 namespace sdb::pg {
 
-using Disallowed = containers::FlatHashSet<Objects::ObjectName>;
+struct Disallowed {
+  using NameSet = containers::FlatHashSet<Objects::ObjectName>;
+  NameSet relations;
+  NameSet functions;
+};
 
 void ResolveQueryView(ObjectId database,
                       std::span<const std::string> search_path,
@@ -38,6 +42,6 @@ void ResolveSqlFunction(ObjectId database,
                         Objects& objects, Disallowed& disallowed,
                         const Objects& query, const Config& config);
 
-void Resolve(ObjectId database, Objects& objects, const Config& config);
+void Resolve(ObjectId database, Objects& objects, Config& config);
 
 }  // namespace sdb::pg

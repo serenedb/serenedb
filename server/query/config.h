@@ -38,6 +38,11 @@
 #include "catalog/types.h"
 
 namespace sdb {
+namespace catalog {
+
+struct Snapshot;
+
+}  // namespace catalog
 
 enum class VariableType {
   Bool = 0,
@@ -185,6 +190,10 @@ class Config : public velox::config::IConfig {
 
   void ResetAll();
 
+  void DropCatalogSnapshot() { _snapshot.reset(); }
+
+  std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
+
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
   // Visit all the settings and call function f(setting_name, value,
@@ -194,20 +203,42 @@ class Config : public velox::config::IConfig {
                            std::string_view)>
       f) const;
 
+  // Returns the current value of a setting, or std::nullopt if not found.
+  std::optional<std::string> GetSetting(std::string_view key) const {
+    return Get(key);
+  }
+
+  // This is thread unsafe, but I don't want to make it thread safe.
+  // Instead we should implement thread unsafe functions.
+  void SetSetting(std::string_view key, std::string value,
+                  bool is_local) const {
+    // Resolve to canonical static name so the map key doesn't dangle.
+    auto canonical = GetOriginalName(key);
+    if (!canonical.data()) {
+      return;
+    }
+    auto context = is_local ? VariableContext::Local : VariableContext::Session;
+    const_cast<Config*>(this)->Set(context, canonical, std::move(value));
+  }
+
  protected:
   // Used by TxnState(transaction state) to commit/rollback transaction
   // variables
   void CommitVariables() noexcept;
   void RollbackVariables() noexcept { _transaction.clear(); }
 
- private:
   std::optional<std::string> Get(std::string_view key) const;
+
+ private:
   std::optional<std::string> access(const std::string& key) const final;
 
   std::string_view GetNonDefault(std::string_view key) const;
 
   // Session variables
   containers::FlatHashMap<std::string_view, std::string> _session;
+
+  // Catalog snapshot
+  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
 
   // Transaction variable
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;

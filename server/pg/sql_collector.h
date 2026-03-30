@@ -37,6 +37,11 @@ namespace sdb::query {
 class Transaction;
 
 }  // namespace sdb::query
+namespace sdb::catalog {
+
+class Table;
+
+}  // namespace sdb::catalog
 
 struct RawStmt;
 struct List;
@@ -75,8 +80,9 @@ class Objects : public irs::memory::Managed {
   };
 
   struct ObjectData {
-    AccessType type = AccessType::None;
     std::shared_ptr<catalog::SchemaObject> object;
+    // TODO(mbkkt): remove it
+    std::shared_ptr<catalog::Table> catalog_table;
 
     // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
     // to implement connector::Table without allocation.

@@ -30,6 +30,12 @@
 
 #include <vector>
 
+namespace sdb::pg {
+
+class IndexProgressReporter;
+
+}  // namespace sdb::pg
+
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
@@ -329,11 +335,13 @@ class RocksDBIndexBackfillDataSink final
     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
-    std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock);
+    std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
+    pg::IndexProgressReporter* progress);
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::WriterMutexLock _table_lock_guard;
+  pg::IndexProgressReporter* _progress;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

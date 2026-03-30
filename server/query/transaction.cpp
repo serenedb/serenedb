@@ -31,6 +31,7 @@ namespace sdb::query {
 
 void Transaction::OnNewStatement() {
   if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
+    DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
   }
 }
@@ -99,8 +100,8 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
-    ApplyTableStatsDiffs();
   }
+  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
 
@@ -151,10 +152,9 @@ bool Transaction::HasTransactionBegin() const noexcept {
 
 const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
-  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
-    auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
+    auto index_shard = EnsureCatalogSnapshot()->GetIndexShard(index_id);
     SDB_ASSERT(index_shard);
     SDB_ASSERT(index_shard->GetType() == IndexType::Inverted,
                "Expected inverted index shard");
@@ -169,6 +169,7 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
 
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT(HasRocksDBRead());
+  EnsureCatalogSnapshot();
   if (!_rocksdb_snapshot) {
     if (HasRocksDBWrite() || HasTransactionBegin()) {
       EnsureRocksDBTransaction();
@@ -205,6 +206,7 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
 }
 
 void Transaction::Destroy() noexcept {
+  DropCatalogSnapshot();
   _state = State::None;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
@@ -216,7 +218,7 @@ void Transaction::Destroy() noexcept {
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   // TODO(codeworse): manage catalog snapshot in transaction
-  auto table_shard = GetCatalogSnapshot()->GetTableShard(table_id);
+  auto table_shard = EnsureCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,
               "Table shard not found for table id: ", table_id);
@@ -228,7 +230,7 @@ void Transaction::ApplyTableStatsDiffs() noexcept {
   if (_table_rows_deltas.empty()) {
     return;
   }
-  auto snapshot = GetCatalogSnapshot();
+  auto snapshot = EnsureCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
     auto table_shard = snapshot->GetTableShard(table_id);
     SDB_ASSERT(table_shard);

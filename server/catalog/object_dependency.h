@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <concepts>
 #include <memory>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
@@ -74,6 +76,28 @@ struct TokenizerDependency : public ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TokenizerDependency>(*this);
   }
+};
+
+class ObjectDependencies {
+ public:
+  std::shared_ptr<const ObjectDependencyBase> GetDependency(ObjectId id) const {
+    auto it = _object_dependencies.find(id);
+    SDB_ASSERT(it != _object_dependencies.end());
+    return it->second;
+  }
+
+  template<std::derived_from<ObjectDependencyBase> T>
+  bool AddDependency(ObjectId id,
+                     std::shared_ptr<T> dep = std::make_shared<T>()) {
+    auto [_, inserted] = _object_dependencies.insert_or_assign(id, dep);
+    return inserted;
+  }
+
+  void RemoveDependency(ObjectId id) { _object_dependencies.erase(id); }
+
+ private:
+  containers::FlatHashMap<ObjectId, std::shared_ptr<const ObjectDependencyBase>>
+    _object_dependencies;
 };
 
 }  // namespace sdb::catalog

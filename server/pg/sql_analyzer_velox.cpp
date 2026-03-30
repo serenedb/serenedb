@@ -181,6 +181,7 @@ enum class ExprKind {
   CycleMark = EXPR_KIND_CYCLE_MARK,  // cycle mark value
   AggregateOrder,                    // ORDER BY in aggregate function
   AggregateArgument,                 // arguments of aggregate function
+  WindowFunctionArgument,            // arguments of window function
   InsertSelect                       // SELECT in INSERT statement
 };
 
@@ -535,6 +536,13 @@ struct State {
     std::string name;
   };
   containers::FlatHashMap<const FuncCall*, Column> aggregate_or_window;
+
+  struct RowFromTableFuncEntry {
+    lp::ExprPtr expr;
+    std::vector<std::string> unnested_names;
+  };
+  std::vector<RowFromTableFuncEntry> target_list_rows_from;
+
   // str repr of groupby key -> Column
   containers::FlatHashMap<std::string, Column> grouped_columns;
 
@@ -814,6 +822,10 @@ class SqlAnalyzer {
                                                     const List* target_list);
   // make a projection with state.root and appended windows from target_list.
   void ProjectTargetListWindows(State& state, const List* target_list);
+
+  // select table_func1, table_func2 ==
+  // select * rows from table_func1, table_func2
+  void ProjectTargetListImplicitRowsFrom(State& state);
 
   // sometimes is used for lazy target list creation
   using TargetListGetter = absl::FunctionRef<const TargetList&()>;
@@ -3601,6 +3613,25 @@ SqlAnalyzer::DistinctType SqlAnalyzer::ProcessDistinctClause(
   return DistinctType::On;
 }
 
+void SqlAnalyzer::ProjectTargetListImplicitRowsFrom(State& state) {
+  if (state.target_list_rows_from.empty()) {
+    return;
+  }
+  std::vector<lp::ExprPtr> unnest_exprs;
+  std::vector<std::vector<std::string>> unnested_names;
+  const auto size = state.target_list_rows_from.size();
+  unnest_exprs.reserve(size);
+  unnested_names.reserve(size);
+  for (auto&& [expr, names] : state.target_list_rows_from) {
+    unnest_exprs.emplace_back(std::move(expr));
+    unnested_names.emplace_back(std::move(names));
+  }
+  state.target_list_rows_from.clear();
+  state.root = std::make_shared<lp::UnnestNode>(
+    _id_generator.NextPlanId(), std::move(state.root), std::move(unnest_exprs),
+    std::move(unnested_names), std::nullopt);
+}
+
 void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   irs::Finally _ = [&] noexcept {
     // we can't refer to child's scope in pg
@@ -3621,6 +3652,7 @@ void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   // before order by - because sort and project nodes are mixed up.
   ProjectTargetListWindows(state, stmt.targetList);
   auto target_list = ProcessTargetList(state, stmt.targetList);
+  ProjectTargetListImplicitRowsFrom(state);
   auto distinct_type = ProcessDistinctClause(state, stmt.distinctClause,
                                              stmt.sortClause, target_list);
   if (distinct_type == DistinctType::All) {
@@ -4283,9 +4315,15 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
 
         const auto* column_definitions = castNode(List, lsecond(&func_columns));
         const auto column_definitions_size = list_length(column_definitions);
+        // In PG, for single-column functions, the table alias also becomes
+        // the column name (e.g., generate_series(1,3) AS gs → column "gs").
+        const bool use_table_alias_as_colname =
+          node->alias && !node->alias->colnames && args.size() == 1;
         for (size_t i = 0; i < args.size(); ++i) {
           const int column = static_cast<int>(i);
-          auto alias = func_name;
+          auto alias = use_table_alias_as_colname
+                         ? std::string_view{node->alias->aliasname}
+                         : func_name;
           if (column < column_definitions_size) {
             const auto* column_definition =
               list_nth_node(ColumnDef, column_definitions, column);
@@ -5074,12 +5112,34 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   auto& logical_function =
     basics::downCast<catalog::Function>(*function->object);
 
-  if (logical_function.Options().table &&
-      state.expr_kind == ExprKind::AggregateArgument) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-                    ERR_MSG("aggregate function calls cannot contain "
-                            "set-returning function calls"));
+  if (logical_function.Options().table) {
+    if (state.expr_kind == ExprKind::AggregateArgument) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+                      ERR_MSG("aggregate function calls cannot contain "
+                              "set-returning function calls"));
+    }
+    if (state.expr_kind == ExprKind::WindowFunctionArgument ||
+        state.expr_kind == ExprKind::WindowPartition ||
+        state.expr_kind == ExprKind::WindowOrder ||
+        state.expr_kind == ExprKind::WindowFrameRange ||
+        state.expr_kind == ExprKind::WindowFrameRows ||
+        state.expr_kind == ExprKind::WindowFrameGroups) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG("window function calls cannot contain "
+                "set-returning function calls"),
+        ERR_HINT("You might be able to move the set-returning function "
+                 "into a LATERAL FROM item."));
+    }
+    if (state.expr_kind != ExprKind::SelectTarget &&
+        state.expr_kind != ExprKind::FromFunction) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG("set-returning functions are not allowed in this context"));
+    }
   }
 
   if (auto window = MaybeWindowFuncCall(state, logical_function, expr)) {
@@ -5138,6 +5198,31 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   }
 
   if (lang == catalog::FunctionLanguage::VeloxNative) {
+    // table funcs SELECT expand into rows (implicit ROWS FROM).
+    // collect them here and later process them (via unnest)
+    if (logical_function.Options().table &&
+        state.expr_kind == ExprKind::SelectTarget) {
+      auto func_expr = ResolveVeloxFunctionAndInferArgsCommonType(
+        std::string{name}, std::move(args));
+      const auto& type = *func_expr->type();
+      auto col_name = _id_generator.NextColumnName(name);
+      std::vector<std::string> unnested_names;
+      velox::TypePtr ref_type;
+      if (type.size() != 0) {
+        unnested_names.reserve(type.size());
+        ref_type = MakePtrView(type.childAt(0));
+        for (size_t j = 0; j != type.size(); ++j) {
+          unnested_names.emplace_back(_id_generator.NextColumnName(name));
+        }
+        col_name = unnested_names.front();
+      } else {
+        ref_type = MakePtrView(func_expr->type());
+        unnested_names.emplace_back(col_name);
+      }
+      state.target_list_rows_from.emplace_back(std::move(func_expr),
+                                               std::move(unnested_names));
+      return std::make_shared<lp::InputReferenceExpr>(ref_type, col_name);
+    }
     return ResolveVeloxFunctionAndInferArgsCommonType(std::string{name},
                                                       std::move(args));
   }
@@ -5239,7 +5324,8 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
   }
 
   std::string name{logical_function.GetName()};
-  auto args = ProcessExprListImpl(state, func_call.args);
+  auto args =
+    ProcessExprList(state, func_call.args, ExprKind::WindowFunctionArgument);
 
   const WindowDef* over = func_call.over;
   auto partition_keys =

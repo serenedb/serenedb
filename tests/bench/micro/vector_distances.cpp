@@ -19,14 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
-#include <velox/common/memory/Memory.h>
-#include <velox/expression/ComplexViewTypes.h>
-#include <velox/expression/UdfTypeResolver.h>
-#include <velox/expression/VectorReaders.h>
-#include <velox/functions/prestosql/DistanceFunctions.h>
-#include <velox/type/CppToType.h>
-#include <velox/vector/DecodedVector.h>
-#include <velox/vector/FlatVector.h>
+
+#include <iresearch/utils/vector.hpp>
 
 #include "pg/functions/vector.h"
 
@@ -50,20 +44,6 @@
 
 namespace {
 
-using namespace facebook::velox;
-using namespace facebook::velox::exec;
-using namespace facebook::velox::functions;
-
-memory::MemoryPool* pool() {
-  static auto leaf = []() {
-    if (!memory::MemoryManager::testInstance()) {
-      memory::MemoryManager::initialize({});
-    }
-    return memory::MemoryManager::getInstance()->addLeafPool();
-  }();
-  return leaf.get();
-}
-
 std::vector<float> MakeFloatData(int dim, float start, float step = 0.01f) {
   std::vector<float> v(dim);
   for (int i = 0; i < dim; ++i) {
@@ -72,59 +52,16 @@ std::vector<float> MakeFloatData(int dim, float start, float step = 0.01f) {
   return v;
 }
 
-// Owns a FlatVector<float>, its DecodedVector and VectorReader, and exposes an
-// ArrayView<false, float> suitable for passing to Velox UDF call/callNullFree.
-//
-// All internal pointers are stable once constructed; must not be moved or
-// copied.
-struct VeloxFloatArray {
-  std::shared_ptr<FlatVector<float>> vec;
-  DecodedVector decoded;
-  std::unique_ptr<VectorReader<float>> reader;
-  ArrayView<false, float> view;
-
-  explicit VeloxFloatArray(const std::vector<float>& data)
-    : vec{BaseVector::create<FlatVector<float>>(
-        CppToType<float>::create(), static_cast<vector_size_t>(data.size()),
-        pool())},
-      view{nullptr, 0, 0} {
-    for (vector_size_t i = 0; i < static_cast<vector_size_t>(data.size());
-         ++i) {
-      vec->set(i, data[i]);
-    }
-    decoded.decode(*vec);
-    reader = std::make_unique<VectorReader<float>>(&decoded);
-    view = ArrayView<false, float>{reader.get(), 0,
-                                   static_cast<vector_size_t>(data.size())};
-  }
-
-  VeloxFloatArray(const VeloxFloatArray&) = delete;
-  VeloxFloatArray& operator=(const VeloxFloatArray&) = delete;
-  VeloxFloatArray(VeloxFloatArray&&) = delete;
-  VeloxFloatArray& operator=(VeloxFloatArray&&) = delete;
-};
-
-// Fixture builds left/right float arrays once per benchmark registration
-// (i.e. once per dimension) before any timed iterations run.
 class DistanceFixture : public benchmark::Fixture {
  public:
   void SetUp(benchmark::State& state) override {
     const int dim = state.range(0);
     ldata = MakeFloatData(dim, 1.0f);
     rdata = MakeFloatData(dim, 2.0f);
-    l = std::make_unique<VeloxFloatArray>(ldata);
-    r = std::make_unique<VeloxFloatArray>(rdata);
-  }
-
-  void TearDown(benchmark::State& /*state*/) override {
-    l.reset();
-    r.reset();
   }
 
   std::vector<float> ldata;
   std::vector<float> rdata;
-  std::unique_ptr<VeloxFloatArray> l;
-  std::unique_ptr<VeloxFloatArray> r;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -132,13 +69,15 @@ class DistanceFixture : public benchmark::Fixture {
 ///////////////////////////////////////////////////////////////////////////////
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
-  sdb::pg::L2Squared<VectorExec> fn;
   for (auto _ : state) {
-    float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    float result = irs::vector::L2Space<float, float, float>::Dist(
+      reinterpret_cast<const irs::byte_type*>(ldata.data()),
+      reinterpret_cast<const irs::byte_type*>(rdata.data()),
+      static_cast<uint16_t>(ldata.size()));
     benchmark::DoNotOptimize(result);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, SdbL2Squared)
   ->Arg(64)
   ->Arg(128)
@@ -157,6 +96,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainL2Squared)(benchmark::State& state) {
     benchmark::DoNotOptimize(s);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, PlainL2Squared)
   ->Arg(64)
   ->Arg(128)
@@ -165,20 +105,23 @@ BENCHMARK_REGISTER_F(DistanceFixture, PlainL2Squared)
   ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
+
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
-  L2SquaredFunctionFloatArray<VectorExec> fn;
   for (auto _ : state) {
-    float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    float result = faiss::fvec_L2sqr(
+      reinterpret_cast<const float*>(ldata.data()),
+      reinterpret_cast<const float*>(rdata.data()), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxL2Squared)
   ->Arg(64)
   ->Arg(128)
   ->Arg(256)
   ->Arg(512)
   ->Arg(1024);
+
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -186,13 +129,15 @@ BENCHMARK_REGISTER_F(DistanceFixture, VeloxL2Squared)
 ///////////////////////////////////////////////////////////////////////////////
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
-  sdb::pg::L1Distance<VectorExec> fn;
   for (auto _ : state) {
-    float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    float result = irs::vector::L1Space<float, float, float>::Dist(
+      reinterpret_cast<const irs::byte_type*>(ldata.data()),
+      reinterpret_cast<const irs::byte_type*>(rdata.data()),
+      static_cast<uint16_t>(ldata.size()));
     benchmark::DoNotOptimize(result);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, SdbL1Distance)
   ->Arg(64)
   ->Arg(128)
@@ -210,6 +155,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainL1Distance)(benchmark::State& state) {
     benchmark::DoNotOptimize(s);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, PlainL1Distance)
   ->Arg(64)
   ->Arg(128)
@@ -218,25 +164,45 @@ BENCHMARK_REGISTER_F(DistanceFixture, PlainL1Distance)
   ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
+
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
-  L1FunctionFloatArray<VectorExec> fn;
   for (auto _ : state) {
-    float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    float result = faiss::fvec_L1(reinterpret_cast<const float*>(ldata.data()),
+                                  reinterpret_cast<const float*>(rdata.data()),
+                                  ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxL1Distance)
   ->Arg(64)
   ->Arg(128)
   ->Arg(256)
   ->Arg(512)
   ->Arg(1024);
+
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // Dot product
 ///////////////////////////////////////////////////////////////////////////////
+
+BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = irs::vector::DotProductImpl<float, float>::Compute(
+      reinterpret_cast<const irs::byte_type*>(ldata.data()),
+      reinterpret_cast<const irs::byte_type*>(rdata.data()),
+      static_cast<uint16_t>(ldata.size()));
+    benchmark::DoNotOptimize(result);
+  }
+}
+
+BENCHMARK_REGISTER_F(DistanceFixture, SdbDotProduct)
+  ->Arg(64)
+  ->Arg(128)
+  ->Arg(256)
+  ->Arg(512)
+  ->Arg(1024);
 
 BENCHMARK_DEFINE_F(DistanceFixture, PlainDotProduct)(benchmark::State& state) {
   const int dim = state.range(0);
@@ -248,6 +214,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainDotProduct)(benchmark::State& state) {
     benchmark::DoNotOptimize(s);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, PlainDotProduct)
   ->Arg(64)
   ->Arg(128)
@@ -256,20 +223,23 @@ BENCHMARK_REGISTER_F(DistanceFixture, PlainDotProduct)
   ->Arg(1024);
 
 #ifdef VELOX_ENABLE_FAISS
+
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
-  DotProductFloatArray<VectorExec> fn;
   for (auto _ : state) {
-    float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    float result = faiss::fvec_inner_product(
+      reinterpret_cast<const float*>(ldata.data()),
+      reinterpret_cast<const float*>(rdata.data()), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, VeloxDotProduct)
   ->Arg(64)
   ->Arg(128)
   ->Arg(256)
   ->Arg(512)
   ->Arg(1024);
+
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -277,10 +247,13 @@ BENCHMARK_REGISTER_F(DistanceFixture, VeloxDotProduct)
 ///////////////////////////////////////////////////////////////////////////////
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
-  sdb::pg::CosineSimilarity<VectorExec> fn;
   for (auto _ : state) {
-    float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    auto [ll, lr, rr] =
+      irs::vector::CosineDistanceImpl<float, float, float>::Compute(
+        reinterpret_cast<const irs::byte_type*>(ldata.data()),
+        reinterpret_cast<const irs::byte_type*>(rdata.data()),
+        static_cast<uint16_t>(ldata.size()));
+    float result = static_cast<float>(lr / std::sqrt(ll * rr));
     benchmark::DoNotOptimize(result);
   }
 }
@@ -308,6 +281,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, PlainCosine)(benchmark::State& state) {
     benchmark::DoNotOptimize(result);
   }
 }
+
 BENCHMARK_REGISTER_F(DistanceFixture, PlainCosine)
   ->Arg(64)
   ->Arg(128)
@@ -317,10 +291,14 @@ BENCHMARK_REGISTER_F(DistanceFixture, PlainCosine)
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
-  CosineSimilarityFunctionFloatArray<VectorExec> fn;
   for (auto _ : state) {
+    float norm_x = 0, norm_y = 0;
+    faiss::fvec_norms_L2(&norm_x, ldata.data(), ldata.size(), 1);
+    faiss::fvec_norms_L2(&norm_y, rdata.data(), rdata.size(), 1);
     float result = 0.0f;
-    fn.callNullFree(result, l->view, r->view);
+    float product =
+      faiss::fvec_inner_product(ldata.data(), rdata.data(), ldata.size());
+    result = static_cast<float>(product / (norm_x * norm_y));
     benchmark::DoNotOptimize(result);
   }
 }

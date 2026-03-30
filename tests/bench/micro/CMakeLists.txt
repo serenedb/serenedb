@@ -26,4 +26,27 @@ add_bench(fp_neg_zero_cmp)
 add_bench(uuid_print)
 add_bench(json_functions)
 add_bench(config_var_lookup)
-add_bench(vector_distances)
+
+# vector distances
+add_executable(vector-distances-bench vector_distances.cpp)
+target_compile_options(
+    vector-distances-bench
+    PRIVATE
+        -fapprox-func
+        -fno-math-errno
+        -fassociative-math
+        -freciprocal-math
+        -fno-signed-zeros
+        -fno-trapping-math
+        -fno-rounding-math
+        -ffp-contract=fast
+)
+
+target_link_libraries(vector-distances-bench PRIVATE sereneserver benchmark)
+if(VELOX_ENABLE_FAISS)
+    target_compile_definitions(
+        vector-distances-bench
+        PRIVATE VELOX_ENABLE_FAISS
+    )
+endif()
+add_dependencies(serenedb-bench-micro vector-distances-bench)

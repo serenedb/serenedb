@@ -673,8 +673,7 @@ class SereneDBConnectorSplitManager final
       bool is_ryow = transaction.HasRocksDBWrite() &&
                      transaction.Get<VariableType::Bool>(
                        "sdb_read_your_own_writes");
-      if (!is_ryow && serene_handle->GetPoints().empty() &&
-          !serene_handle->GetSearchQuery()) {
+      if (!is_ryow && serene_handle->GetPoints().empty()) {
         return std::make_shared<RocksDBSplitSource>(
           _db, _cf, serene_handle->TableId(),
           serene_handle->GetEffectiveColumnId(), options);

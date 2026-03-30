@@ -175,9 +175,6 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
 
   void ApplySplitRange(const std::string& pk_start, const std::string& pk_end);
 
-  const rocksdb::Snapshot* _snapshot;
-
- private:
   velox::VectorPtr ReadColumn(velox::column_index_t col_idx, uint64_t max_size);
 
   template<velox::TypeKind Kind>

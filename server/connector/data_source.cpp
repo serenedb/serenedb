@@ -149,47 +149,9 @@ RocksDBFullScanDataSource<Source>::RocksDBFullScanDataSource(
   }
 }
 
-RocksDBRYOWFullScanDataSource::RocksDBRYOWFullScanDataSource(
-  velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
-  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
-  std::vector<catalog::Column::Id> column_ids,
-  catalog::Column::Id effective_column_id, ObjectId object_key,
-  size_t output_column_count, velox::core::TypedExprPtr remaining_filter,
-  velox::core::ExpressionEvaluator* evaluator)
-  : RocksDBFullScanDataSource{memory_pool,
-                              cf,
-                              std::move(read_type),
-                              std::move(column_ids),
-                              effective_column_id,
-                              object_key,
-                              output_column_count,
-                              transaction.GetSnapshot(),
-                              std::move(remaining_filter),
-                              evaluator},
-    _transaction{transaction} {}
-
-RocksDBSnapshotFullScanDataSource::RocksDBSnapshotFullScanDataSource(
-  velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
-  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
-  std::vector<catalog::Column::Id> column_ids,
-  catalog::Column::Id effective_column_id, ObjectId object_key,
-  size_t output_column_count, const rocksdb::Snapshot* snapshot,
-  velox::core::TypedExprPtr remaining_filter,
-  velox::core::ExpressionEvaluator* evaluator)
-  : RocksDBFullScanDataSource{memory_pool,
-                              cf,
-                              std::move(read_type),
-                              std::move(column_ids),
-                              effective_column_id,
-                              object_key,
-                              output_column_count,
-                              snapshot,
-                              std::move(remaining_filter),
-                              evaluator},
-    _db{db} {}
-
-void RocksDBFullScanDataSource::ApplySplitRange(const std::string& pk_start,
-                                                const std::string& pk_end) {
+template<typename Source>
+void RocksDBFullScanDataSource<Source>::ApplySplitRange(
+  const std::string& pk_start, const std::string& pk_end) {
   const auto num_columns = _column_keys.size();
 
   // Always reset seek keys to column prefix, then append pk_start if present.
@@ -242,28 +204,6 @@ void RocksDBFullScanDataSource::ApplySplitRange(const std::string& pk_start,
   }
 }
 
-void RocksDBRYOWFullScanDataSource::addSplit(
-  std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  RocksDBFullScanDataSource::addSplit(std::move(split));
-  InitIterators([&](const rocksdb::ReadOptions& options) {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _transaction.GetIterator(options, &_cf));
-  });
-}
-
-void RocksDBSnapshotFullScanDataSource::addSplit(
-  std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  const auto* rocksdb_split =
-    dynamic_cast<const SereneDBConnectorSplit*>(split.get());
-  RocksDBFullScanDataSource::addSplit(std::move(split));
-  if (rocksdb_split && rocksdb_split->HasRange()) {
-    ApplySplitRange(rocksdb_split->PkStart(), rocksdb_split->PkEnd());
-  }
-  InitIterators([&](const rocksdb::ReadOptions& options) {
-    return std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(options, &_cf));
-  });
-}
-
 template<typename Source>
 void RocksDBFullScanDataSource<Source>::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
@@ -272,7 +212,16 @@ void RocksDBFullScanDataSource<Source>::addSplit(
     SDB_THROW(ERROR_INTERNAL,
               "RocksDBDataSource: a split is already being processed");
   }
-  _current_split = std::move(split);
+  if constexpr (std::is_same_v<Source, rocksdb::DB>) {
+    const auto* rocksdb_split =
+      dynamic_cast<const SereneDBConnectorSplit*>(split.get());
+    _current_split = std::move(split);
+    if (rocksdb_split && rocksdb_split->HasRange()) {
+      ApplySplitRange(rocksdb_split->PkStart(), rocksdb_split->PkEnd());
+    }
+  } else {
+    _current_split = std::move(split);
+  }
   if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
     InitIterators([&](const rocksdb::ReadOptions& options) {
       return std::unique_ptr<rocksdb::Iterator>(

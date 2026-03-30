@@ -1358,33 +1358,59 @@ class SereneDBConnector final : public velox::connector::Connector {
       bool has_null_filter = absl::c_any_of(
         handle.GetValues(), [](const auto& v) { return v.isNull(); });
       if (handle.IsUnique() && !has_null_filter) {
-        return std::make_unique<
-          UniqueSecondaryIndexPointDataSource<ParquetMaterializer>>(
+        return std::make_unique<UniqueSecondaryIndexPointDataSource<
+          ParquetMaterializer, rocksdb::DB>>(
           pool, std::move(parquet_mat), _db, _cf, snapshot, handle.GetShardId(),
           handle.GetValues(), handle.GetValueType());
       }
       return std::make_unique<
-        SecondaryIndexDataSource<ParquetMaterializer, false>>(
+        SecondaryIndexDataSource<ParquetMaterializer, false, rocksdb::DB>>(
         pool, std::move(parquet_mat), _db, _cf, snapshot, handle.GetShardId(),
         handle.GetValues(), handle.GetValueType());
+    }
+
+    const bool needs_ryow =
+      transaction.HasRocksDBWrite() &&
+      transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
+
+    bool has_null_filter = absl::c_any_of(
+      handle.GetValues(), [](const auto& v) { return v.isNull(); });
+
+    if (needs_ryow) {
+      auto& rocksdb_trx = transaction.GetRocksDBTransaction();
+      auto rocksdb_mat = RocksDBMaterializer(
+        pool, snapshot, nullptr, &rocksdb_trx, _cf, output_type, column_oids,
+        handle.GetEffectiveColumnId(), handle.TableId());
+      if (handle.IsUnique() && !has_null_filter) {
+        return std::make_unique<UniqueSecondaryIndexPointDataSource<
+          RocksDBMaterializer, rocksdb::Transaction>>(
+          pool, std::move(rocksdb_mat), rocksdb_trx, _cf, snapshot,
+          handle.GetShardId(), handle.GetValues(), handle.GetValueType());
+      }
+      return irs::ResolveBool(
+        handle.IsUnique(),
+        [&]<bool UniqueIdx>() -> std::unique_ptr<velox::connector::DataSource> {
+          return std::make_unique<SecondaryIndexDataSource<
+            RocksDBMaterializer, UniqueIdx, rocksdb::Transaction>>(
+            pool, std::move(rocksdb_mat), rocksdb_trx, _cf, snapshot,
+            handle.GetShardId(), handle.GetValues(), handle.GetValueType());
+        });
     }
 
     auto rocksdb_mat = RocksDBMaterializer(
       pool, snapshot, &_db, nullptr, _cf, output_type, column_oids,
       handle.GetEffectiveColumnId(), handle.TableId());
-    bool has_null_filter = absl::c_any_of(
-      handle.GetValues(), [](const auto& v) { return v.isNull(); });
     if (handle.IsUnique() && !has_null_filter) {
       return std::make_unique<
-        UniqueSecondaryIndexPointDataSource<RocksDBMaterializer>>(
+        UniqueSecondaryIndexPointDataSource<RocksDBMaterializer, rocksdb::DB>>(
         pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
         handle.GetValues(), handle.GetValueType());
     }
     return irs::ResolveBool(
       handle.IsUnique(),
       [&]<bool UniqueIdx>() -> std::unique_ptr<velox::connector::DataSource> {
-        return std::make_unique<
-          SecondaryIndexDataSource<RocksDBMaterializer, UniqueIdx>>(
+        return std::make_unique<SecondaryIndexDataSource<
+          RocksDBMaterializer, UniqueIdx, rocksdb::DB>>(
           pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
           handle.GetValues(), handle.GetValueType());
       });

@@ -645,3 +645,57 @@ pid
 
 statement ok
 DROP TABLE babsky_nullbulk;
+
+
+statement ok
+CREATE TABLE clickclack_ryow (pid INTEGER PRIMARY KEY, code INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_ryow_code_idx ON clickclack_ryow USING secondary(code);
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (1, 10), (2, 20);
+
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (3, 30);
+
+query
+SELECT pid FROM clickclack_ryow WHERE code = 30;
+----
+pid
+3
+
+statement ok
+COMMIT;
+
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (4, 40);
+
+query
+SELECT pid FROM clickclack_ryow WHERE code = 40;
+----
+pid
+
+statement ok
+COMMIT;
+
+query
+SELECT pid FROM clickclack_ryow WHERE code = 40;
+----
+pid
+4
+
+statement ok
+DROP TABLE clickclack_ryow;

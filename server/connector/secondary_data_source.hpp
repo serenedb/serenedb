@@ -25,11 +25,29 @@
 #include "basics/fwd.h"
 #include "connector/primary_key.hpp"
 #include "connector/secondary_sink_writer.hpp"
+#include "rocksdb/utilities/transaction.h"
 
+namespace sdb::connector::detail {
+
+inline std::unique_ptr<rocksdb::Iterator> CreateSecondaryIterator(
+  rocksdb::DB& source, const rocksdb::ReadOptions& ro,
+  rocksdb::ColumnFamilyHandle& cf) {
+  return std::unique_ptr<rocksdb::Iterator>(source.NewIterator(ro, &cf));
+}
+
+inline std::unique_ptr<rocksdb::Iterator> CreateSecondaryIterator(
+  rocksdb::Transaction& source, const rocksdb::ReadOptions& ro,
+  rocksdb::ColumnFamilyHandle& cf) {
+  return std::unique_ptr<rocksdb::Iterator>(source.GetIterator(ro, &cf));
+}
+
+}  // namespace sdb::connector::detail
 namespace sdb::connector {
 
 // Data source that reads from a secondary index via RocksDB iterator scan,
 // extracts PKs, then materializes rows via the Materializer.
+//
+// Source = rocksdb::DB for snapshot reads, rocksdb::Transaction for RYOW.
 //
 // Unique=false (non-unique index):
 //   Key: <shard (8B)> <SK values> <PK bytes>   Value: empty
@@ -41,18 +59,18 @@ namespace sdb::connector {
 //
 // For unique point lookups (eq/IN), use UniqueSecondaryIndexPointDataSource
 // which uses MultiGet instead of iteration.
-template<typename Materializer, bool Unique>
+template<typename Materializer, bool Unique, typename Source>
 class SecondaryIndexDataSource final : public velox::connector::DataSource {
  public:
   SecondaryIndexDataSource(velox::memory::MemoryPool& memory_pool,
-                           Materializer materializer, rocksdb::DB& db,
+                           Materializer materializer, Source& source,
                            rocksdb::ColumnFamilyHandle& cf,
                            const rocksdb::Snapshot* snapshot, ObjectId shard_id,
                            std::vector<velox::variant> values,
                            velox::TypePtr value_type)
     : _memory_pool{memory_pool},
       _materializer{std::move(materializer)},
-      _db{db},
+      _source{source},
       _cf{cf},
       _snapshot{snapshot},
       _shard_id{shard_id},
@@ -92,7 +110,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
         IncrementPrefix(_upper_bound);
         _upper_bound_slice = rocksdb::Slice{_upper_bound};
         ro.iterate_upper_bound = &_upper_bound_slice;
-        _iterator.reset(_db.NewIterator(ro, &_cf));
+        _iterator = detail::CreateSecondaryIterator(_source, ro, _cf);
         _iterator->Seek(_current_scan_prefix);
       }
 
@@ -106,18 +124,15 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
 
         if constexpr (Unique) {
           if (_current_value_is_null) {
-            // NULL entries: PK in key suffix (like non-unique)
             auto pk_start = sizeof(ObjectId) + _value_key_size;
             if (key_view.size() > pk_start) {
               row_keys.emplace_back(key_view.substr(pk_start));
             }
           } else {
-            // Non-NULL: PK stored as value
             auto val = _iterator->value();
             row_keys.emplace_back(val.data(), val.size());
           }
         } else {
-          // PK stored in key suffix after [shard][SK values]
           auto pk_start = sizeof(ObjectId) + _value_key_size;
           if (key_view.size() > pk_start) {
             row_keys.emplace_back(key_view.substr(pk_start));
@@ -127,7 +142,6 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
         _iterator->Next();
       }
 
-      // If iterator exhausted for this value, move to next
       if (!_iterator->Valid() ||
           !std::string_view{_iterator->key().data(), _iterator->key().size()}
              .starts_with(_current_scan_prefix)) {
@@ -189,7 +203,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
 
   velox::memory::MemoryPool& _memory_pool;
   Materializer _materializer;
-  rocksdb::DB& _db;
+  Source& _source;
   rocksdb::ColumnFamilyHandle& _cf;
   const rocksdb::Snapshot* _snapshot;
   ObjectId _shard_id;
@@ -207,21 +221,26 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
 };
 
 // Data source for UNIQUE secondary index point lookups (eq/IN predicates).
-// Uses MultiGet on index CF to map SK → PK, then materializes via Materializer.
+// Uses MultiGet on index CF to map SK -> PK, then materializes via
+// Materializer.
+//
+// Source = rocksdb::DB for snapshot reads, rocksdb::Transaction for RYOW.
 //
 // Index key: <shard (8B)> <SK values>   Value: <PK bytes>
-template<typename Materializer>
+template<typename Materializer, typename Source>
 class UniqueSecondaryIndexPointDataSource final
   : public velox::connector::DataSource {
  public:
-  UniqueSecondaryIndexPointDataSource(
-    velox::memory::MemoryPool& memory_pool, Materializer materializer,
-    rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-    const rocksdb::Snapshot* snapshot, ObjectId shard_id,
-    std::vector<velox::variant> values, velox::TypePtr value_type)
+  UniqueSecondaryIndexPointDataSource(velox::memory::MemoryPool& memory_pool,
+                                      Materializer materializer, Source& source,
+                                      rocksdb::ColumnFamilyHandle& cf,
+                                      const rocksdb::Snapshot* snapshot,
+                                      ObjectId shard_id,
+                                      std::vector<velox::variant> values,
+                                      velox::TypePtr value_type)
     : _memory_pool{memory_pool},
       _materializer{std::move(materializer)},
-      _db{db},
+      _source{source},
       _cf{cf},
       _snapshot{snapshot},
       _shard_id{shard_id},
@@ -254,7 +273,6 @@ class UniqueSecondaryIndexPointDataSource final
       return nullptr;
     }
 
-    // Build index keys: [shard][null_marker][encoded_SK_value]
     _index_keys.resize(count);
     _key_slices.resize(count);
     for (size_t i = 0; i < count; ++i) {
@@ -262,7 +280,6 @@ class UniqueSecondaryIndexPointDataSource final
       _key_slices[i] = _index_keys[i];
     }
 
-    // MultiGet on index CF
     _pinnable.resize(count);
     _statuses.resize(count);
     rocksdb::ReadOptions ro;
@@ -270,10 +287,9 @@ class UniqueSecondaryIndexPointDataSource final
     for (auto& p : _pinnable) {
       p.Reset();
     }
-    _db.MultiGet(ro, &_cf, count, _key_slices.data(), _pinnable.data(),
-                 _statuses.data(), /*sorted_input=*/false);
+    _source.MultiGet(ro, &_cf, count, _key_slices.data(), _pinnable.data(),
+                     _statuses.data(), /*sorted_input=*/false);
 
-    // Extract found PKs
     primary_key::Keys row_keys{_memory_pool};
     row_keys.reserve(count);
     for (size_t i = 0; i < count; ++i) {
@@ -324,7 +340,7 @@ class UniqueSecondaryIndexPointDataSource final
 
   velox::memory::MemoryPool& _memory_pool;
   Materializer _materializer;
-  rocksdb::DB& _db;
+  Source& _source;
   rocksdb::ColumnFamilyHandle& _cf;
   const rocksdb::Snapshot* _snapshot;
   ObjectId _shard_id;
@@ -333,7 +349,6 @@ class UniqueSecondaryIndexPointDataSource final
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   size_t _current_value_idx = 0;
   uint64_t _produced = 0;
-  // Reused across next() calls
   std::vector<std::string> _index_keys;
   std::vector<rocksdb::Slice> _key_slices;
   std::vector<rocksdb::PinnableSlice> _pinnable;

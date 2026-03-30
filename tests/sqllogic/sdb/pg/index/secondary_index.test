@@ -825,3 +825,62 @@ count
 
 statement ok
 DROP TABLE vedernikoff_nullbulk;
+
+
+statement ok
+CREATE TABLE clickclack_ryow (pid INTEGER PRIMARY KEY, score INTEGER);
+
+statement ok
+CREATE INDEX clickclack_ryow_score_idx ON clickclack_ryow USING secondary(score);
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (1, 10), (2, 20);
+
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (3, 10);
+
+query
+SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
+----
+pid
+1
+3
+
+statement ok
+COMMIT;
+
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (4, 10);
+
+query
+SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
+----
+pid
+1
+3
+
+statement ok
+COMMIT;
+
+query
+SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
+----
+pid
+1
+3
+4
+
+statement ok
+DROP TABLE clickclack_ryow;

@@ -144,8 +144,6 @@ inline void Create(const velox::RowVector& input,
 
 }  // namespace secondary_key
 
-// Base for secondary index writers. Stores the input RowVector from Init
-// and builds keys using primary_key::AppendKeyValue (no re-encoding needed).
 template<bool Unique>
 class SecondarySinkWriteBase : public SinkIndexWriter,
                                public ColumnSinkWriterImplBase {
@@ -174,8 +172,6 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     _del_row_idx = 0;
   }
 
-  // Returns true if the SK has a NULL column (for unique: PK in key, no
-  // uniqueness check).
   bool BuildSK(std::string_view full_pk, rocksdb::Slice& value) {
     auto pk_bytes = key_utils::ExtractRowKey(full_pk);
     _key_buffer.clear();

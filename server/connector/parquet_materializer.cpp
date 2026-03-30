@@ -87,7 +87,6 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
   }
   auto total = static_cast<velox::vector_size_t>(row_keys.size());
 
-  // Sort keys (and co-sort scores if present) for row-group batching.
   if (_score_column_idx >= 0) {
     SDB_ASSERT(scores);
     auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
@@ -110,19 +109,19 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
     basics::downCast<velox::parquet::ParquetRowReader>(*_row_reader);
 
   uint32_t last_rg = 0;
+  velox::vector_size_t out_offset = 0;
 
   std::span row_idx = _decoded_rows;
-  velox::dwio::common::Mutation mutation;
   for (velox::vector_size_t i = 0; i < total;) {
     auto rg = FindRowGroup(row_idx[i], last_rg);
     auto rg_start = _row_group_starts[rg];
     auto rg_end = RowGroupEnd(rg);
 
-    // Collect all row in this row group.
+    // collect all row in this row group.
     auto it = std::lower_bound(row_idx.begin() + i, row_idx.end(), rg_end);
     velox::vector_size_t end = it - row_idx.begin();
 
-    // Mark wanted row_idx as not-deleted in the pre-filled bitmap.
+    // mark wanted row_idx as not-deleted in the pre-filled bitmap.
     auto last_offset = row_idx[end - 1] - rg_start;
     uint64_t read_size = last_offset + 1;
     auto* bits = _bitmap_buf.data();
@@ -130,12 +129,18 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
       velox::bits::clearBit(bits, row_idx[k] - rg_start);
     }
 
+    velox::dwio::common::Mutation mutation{};
     mutation.deletedRows = bits;
 
     parquet_reader.seekToRowGroup(rg);
-    parquet_reader.nextAtOffset(read_size, i, output, &mutation);
 
-    // Restore cleared bits for next iteration.
+    velox::VectorPtr result =
+      velox::BaseVector::create(_output_type, read_size, &_pool);
+    parquet_reader.next(read_size, result, &mutation);
+
+    output->copy(result.get(), out_offset, 0, end - i);
+    out_offset += end - i;
+
     for (auto k = i; k < end; ++k) {
       velox::bits::setBit(bits, row_idx[k] - rg_start);
     }

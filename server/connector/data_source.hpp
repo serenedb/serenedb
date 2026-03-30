@@ -180,6 +180,14 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
 
   velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size);
 
+  velox::VectorPtr ReadArrayColumn(rocksdb::Iterator& it, uint64_t max_size,
+                                   velox::TypePtr array_type);
+
+  template<velox::TypeKind ElemKind>
+  velox::VectorPtr ReadScalarArrayColumn(rocksdb::Iterator& it,
+                                         uint64_t max_size,
+                                         velox::TypePtr array_type);
+
   velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
 
   template<

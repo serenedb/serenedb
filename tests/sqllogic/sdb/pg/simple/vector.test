@@ -1,0 +1,215 @@
+query
+SELECT ARRAY[0.0, 1.0, 2.0] <-> ARRAY[2.0, 1.0, 0.0];
+----
+?column?
+8
+
+
+query
+SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
+----
+?column?
+0.2000<slt:ignore>
+
+
+query
+SELECT ARRAY[0.0, 1.0, 2.0] <+> ARRAY[2.0, 1.0, 0.0];
+----
+?column?
+4
+
+
+query ?
+SELECT ARRAY[0.0, 1.0, 2.0] <#> ARRAY[2.0, 1.0, 0.0];
+----
+?column?
+1
+
+
+query error
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0];
+
+
+query error
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0];
+
+
+query error
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0];
+
+
+query error
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <#> ARRAY[2.0, 1.0, 0.0];
+
+
+query
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0, NULL];
+----
+?column?
+NULL
+
+query
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0, NULL];
+----
+?column?
+NULL
+
+
+query
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0, NULL];
+----
+?column?
+NULL
+
+
+query ?
+SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <#> ARRAY[2.0, 1.0, 0.0, NULL];
+----
+?column?
+NULL
+
+
+query error
+SELECT ARRAY[] <-> ARRAY[];
+
+
+query error
+SELECT ARRAY[] <=> ARRAY[];
+
+
+query error
+SELECT ARRAY[] <+> ARRAY[];
+
+
+query error
+SELECT ARRAY[] <#> ARRAY[];
+
+
+statement ok
+CREATE TABLE t(name TEXT, emb REAL[2]);
+
+
+statement error db error: ERROR: column "pablo" does not exist
+INSERT INTO t VALUES ("pablo", ARRAY[6.5, 1.101]), ("vedernikoff", ARRAY[1.002, 8.098]);
+
+
+statement ok
+INSERT INTO t VALUES ('pablo', ARRAY[6.5, 1.101]), ('vedernikoff', ARRAY[1.002, 8.098]);
+
+
+query error
+SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0];
+
+
+statement ok
+CREATE TABLE c(name TEXT, emb REAL ARRAY[2]);
+
+
+statement ok
+INSERT INTO c VALUES ('sdb', ARRAY[4.23, 3.007]), ('clickclack', ARRAY[4.078, 6.054]);
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <-> c.emb;
+----
+name	name
+pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
+----
+name	name
+vedernikoff	sdb
+pablo	clickclack
+vedernikoff	clickclack
+pablo	sdb
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <+> c.emb;
+----
+name	name
+pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
+
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <#> c.emb;
+----
+name	name
+vedernikoff	sdb
+pablo	sdb
+pablo	clickclack
+vedernikoff	clickclack
+
+
+statement ok
+DROP TABLE t;
+
+
+statement ok
+DROP TABLE c;
+
+
+statement ok
+CREATE TABLE t(name TEXT, emb DOUBLE PRECISION ARRAY);
+
+
+statement ok
+INSERT INTO t VALUES ('pablo', ARRAY[6.5, 1.101]), ('vedernikoff', ARRAY[1.002, 8.098]);
+
+
+statement ok
+CREATE TABLE c(name TEXT, emb DOUBLE PRECISION ARRAY);
+
+
+statement ok
+INSERT INTO c VALUES ('sdb', ARRAY[4.23, 3.007]), ('clickclack', ARRAY[4.078, 6.054]);
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <-> c.emb;
+----
+name	name
+pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
+----
+name	name
+vedernikoff	sdb
+pablo	clickclack
+vedernikoff	clickclack
+pablo	sdb
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <+> c.emb;
+----
+name	name
+pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
+
+
+
+query
+SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <#> c.emb;
+----
+name	name
+vedernikoff	sdb
+pablo	sdb
+pablo	clickclack
+vedernikoff	clickclack

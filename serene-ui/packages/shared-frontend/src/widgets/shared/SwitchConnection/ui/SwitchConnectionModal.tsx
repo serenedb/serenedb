@@ -59,10 +59,6 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
     return (
         <div ref={containerRef} className="grid min-w-0 grid-cols-2 gap-1">
             <div className="min-w-0 space-y-2">
-                <div className="pl-2 text-secondary-foreground/70 flex items-center gap-2 px-1 text-[11px] uppercase tracking-[0.08em]">
-                    <ConnectionIcon className="size-3.5" />
-                    Connection
-                </div>
                 <ConnectionsCombobox
                     variant="inline"
                     autoFocus
@@ -75,11 +71,6 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
             </div>
 
             <div className="min-w-0 space-y-2">
-                <div className="pl-2 text-secondary-foreground/70 flex items-center gap-2 px-1 text-[11px] uppercase tracking-[0.08em]">
-                    <DatabaseIcon className="size-3.5" />
-                    Database
-                </div>
-
                 {currentConnection.connectionId === -1 ? (
                     <ComboboxBanner className="min-h-[200px]">
                         Select database

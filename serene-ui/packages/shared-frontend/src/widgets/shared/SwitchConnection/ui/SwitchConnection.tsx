@@ -112,7 +112,7 @@ export const SwitchConnection: React.FC<SwitchConnectionProps> = () => {
                 </button>
             </PopoverTrigger>
             <PopoverContent
-                className="min-w-100 p-1 pt-2.5"
+                className="min-w-100 p-1"
                 onOpenAutoFocus={(event) => {
                     event.preventDefault();
                 }}

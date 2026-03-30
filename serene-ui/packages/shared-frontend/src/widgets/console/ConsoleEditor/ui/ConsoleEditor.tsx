@@ -1,10 +1,23 @@
-import { type FC, useEffect, useState } from "react";
-import { DockviewReact, type DockviewReadyEvent } from "dockview";
+import { type FC, type SVGProps, useEffect, useState } from "react";
+import {
+    DockviewReact,
+    type DockviewReadyEvent,
+    type IDockviewHeaderActionsProps,
+} from "dockview";
+import {
+    Button,
+    MaximizeIcon,
+    MinimizeIcon,
+    PlusIcon,
+} from "@serene-ui/shared-frontend";
 import {
     CONSOLE_EDITOR_PANEL_COMPONENT,
     CONSOLE_RESULTS_PANEL_COMPONENT,
     INITIAL_CONSOLE_EDITOR_PANELS,
     addEditorPanel,
+    createEditorPanelParams,
+    createPanelId,
+    createPanelTitle,
 } from "../model";
 import { EditorPanel } from "./EditorPanel";
 import { ConsoleEditorTopbar } from "./ConsoleEditorTopbar";
@@ -15,6 +28,72 @@ const CONSOLE_EDITOR_LAYOUT_STORAGE_KEY = "console:editor-layout";
 const components = {
     [CONSOLE_EDITOR_PANEL_COMPONENT]: EditorPanel,
     [CONSOLE_RESULTS_PANEL_COMPONENT]: ResultsPanel,
+};
+
+const HeaderActionButton: FC<{
+    title: string;
+    onClick: () => void;
+    icon: FC<SVGProps<SVGSVGElement>>;
+}> = ({ title, onClick, icon: Icon }) => (
+    <Button
+        size="iconSmall"
+        variant="ghost"
+        title={title}
+        onClick={onClick}
+        className="text-[var(--dv-activegroup-visiblepanel-tab-color)] hover:bg-accent/60">
+        <Icon className="size-3.5" />
+    </Button>
+);
+
+const LeftHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => (
+    <div className="flex h-full items-center px-1">
+        <HeaderActionButton
+            title="Add tab"
+            onClick={() => {
+                props.containerApi.addPanel({
+                    id: createPanelId(),
+                    component: CONSOLE_EDITOR_PANEL_COMPONENT,
+                    title: createPanelTitle(props.containerApi.totalPanels + 1),
+                    params: createEditorPanelParams(),
+                    position: {
+                        referenceGroup: props.group,
+                    },
+                });
+            }}
+            icon={PlusIcon}
+        />
+    </div>
+);
+
+const RightHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => {
+    const [isMaximized, setIsMaximized] = useState<boolean>(
+        props.containerApi.hasMaximizedGroup(),
+    );
+
+    useEffect(() => {
+        const disposable = props.containerApi.onDidMaximizedGroupChange(() => {
+            setIsMaximized(props.containerApi.hasMaximizedGroup());
+        });
+
+        return () => disposable.dispose();
+    }, [props.containerApi]);
+
+    return (
+        <div className="flex h-full items-center px-1">
+            <HeaderActionButton
+                title={isMaximized ? "Minimize view" : "Maximize view"}
+                onClick={() => {
+                    if (props.containerApi.hasMaximizedGroup()) {
+                        props.containerApi.exitMaximizedGroup();
+                        return;
+                    }
+
+                    props.activePanel?.api.maximize();
+                }}
+                icon={isMaximized ? MinimizeIcon : MaximizeIcon}
+            />
+        </div>
+    );
 };
 
 const sanitizeResultEntry = (entry: unknown) => {
@@ -129,7 +208,12 @@ export const ConsoleEditor: FC = () => {
         <div className="relative flex h-dvh w-full flex-col">
             <ConsoleEditorTopbar />
             <div className="flex-1 min-h-0">
-                <DockviewReact onReady={onReady} components={components} />
+                <DockviewReact
+                    onReady={onReady}
+                    components={components}
+                    leftHeaderActionsComponent={LeftHeaderActions}
+                    rightHeaderActionsComponent={RightHeaderActions}
+                />
             </div>
         </div>
     );

@@ -328,3 +328,29 @@ Fragment 0:  numWorkers=0:
 
 statement ok
 DROP TABLE t_not_all_pk;
+
+statement ok
+CREATE TABLE t_choice_nulls (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_choice_nulls VALUES (1, 10), (2, NULL), (3, 30);
+
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
+----
+QUERY PLAN
+<slt:ignore>[t_choice_nulls, type=rocksdb_point_lookup, points=[(id=2), (id=3)]]<slt:ignore>
+
+
+query
+SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
+----
+id	val
+2	NULL
+3	30
+
+
+statement ok
+DROP TABLE t_choice_nulls;

@@ -98,8 +98,6 @@ class Table : public SchemaObject {
   }
 #endif
 
-  // helpers
-
   const auto& PKType() const noexcept { return _lookup_cache.pk_type; }
   const auto& RowType() const noexcept { return _lookup_cache.row_type; }
 

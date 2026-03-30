@@ -87,15 +87,6 @@ export const ConsoleMainArea: React.FC = () => {
         if (!rightPanel) {
             ensureRightSidebarPanel(event);
         }
-
-        const addedOrExistingRightPanel = event.api.getPanel(
-            CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
-        );
-        if (addedOrExistingRightPanel) {
-            addedOrExistingRightPanel.api.setSize({
-                size: Math.max(rightSidebarWidthRef.current, 1),
-            });
-        }
     }, [isRightSidebarVisible]);
 
     useEffect(() => {

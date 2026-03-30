@@ -41,6 +41,7 @@
         "@serene-ui/shared-core": "*",
         "dockview": "^5.1.0",
         "dockview-core": "^5.1.0",
+        "echarts": "^6.0.0",
         "echarts-for-react": "^3.0.6",
         "lodash": "^4.17.23",
         "marked": "^17.0.5",

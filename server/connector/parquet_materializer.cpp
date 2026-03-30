@@ -90,7 +90,7 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
   if (_score_column_idx >= 0) {
     SDB_ASSERT(scores);
     auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
-    auto score_span = std::span{score_raw, row_keys.size()};
+    std::span score_span{score_raw, row_keys.size()};
     std::ranges::sort(std::views::zip(row_keys, score_span), std::less{},
                       [](const auto& p) { return std::get<0>(p); });
   } else {

@@ -80,6 +80,9 @@ pid	nickname	stocks
 statement ok
 INSERT INTO vedernikoff_crew VALUES (5, 'crookjunior', NULL);
 
+statement ok
+INSERT INTO vedernikoff_crew VALUES (6, 'stockpiler', NULL);
+
 query
 SELECT pid, nickname, stocks FROM vedernikoff_crew ORDER BY pid;
 ----
@@ -88,6 +91,23 @@ pid	nickname	stocks
 2	cutelooked	25
 4	bossmann	35
 5	crookjunior	NULL
+6	stockpiler	NULL
+
+query
+SELECT pid, nickname FROM vedernikoff_crew WHERE stocks IS NULL ORDER BY pid;
+----
+pid	nickname
+5	crookjunior
+6	stockpiler
+
+statement ok
+DELETE FROM vedernikoff_crew WHERE pid = 5;
+
+query
+SELECT pid, nickname FROM vedernikoff_crew WHERE stocks IS NULL;
+----
+pid	nickname
+6	stockpiler
 
 statement ok
 DROP TABLE vedernikoff_crew;

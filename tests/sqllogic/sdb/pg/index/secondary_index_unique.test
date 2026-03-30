@@ -114,7 +114,7 @@ INSERT INTO crew_nulls VALUES (1, 'vedernikoff', 100);
 statement ok
 INSERT INTO crew_nulls VALUES (2, 'cutelooked', NULL);
 
-5statement ok
+statement ok
 INSERT INTO crew_nulls VALUES (3, 'crookface', NULL);
 
 statement ok
@@ -131,6 +131,13 @@ pid	codename	score
 2	cutelooked	NULL
 3	crookface	NULL
 4	bossmann	200
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score IS NULL ORDER BY pid;
+----
+pid	codename
+2	cutelooked
+3	crookface
 
 query
 SELECT pid, codename FROM crew_nulls WHERE score = 100;
@@ -155,6 +162,13 @@ pid	codename
 
 statement ok
 UPDATE crew_nulls SET score = NULL WHERE pid = 1;
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score IS NULL ORDER BY pid;
+----
+pid	codename
+1	vedernikoff
+3	crookface
 
 query
 SELECT pid, codename FROM crew_nulls WHERE score = 100;
@@ -182,6 +196,12 @@ pid	codename	score
 
 statement ok
 DELETE FROM crew_nulls WHERE pid = 3;
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score IS NULL;
+----
+pid	codename
+1	vedernikoff
 
 query
 SELECT pid, codename, score FROM crew_nulls ORDER BY pid;

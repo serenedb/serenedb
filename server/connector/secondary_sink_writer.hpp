@@ -41,13 +41,26 @@ namespace sdb::connector {
 
 // Utilities for building secondary index keys.
 //
-// Key layout:
-//   <shard_ObjectId (8B)> <null_marker + sortable_encoded_value>... <PK bytes>
+// Secondary index key layout:
 //
-// Null marker: 0x00 = NULL (sorts first), 0x01 = NOT NULL.
-// Values are encoded in binary-sortable format (big-endian, sign-bit flipped
-// for signed integers) so that RocksDB's default byte-wise comparator produces
-// the correct ordering.
+// 1) Unique, non-NULL:
+//    Key:   <shard (8B)> <not-null marker (8B)> <encoded SK values>
+//    Value: <PK bytes>
+//    One entry per SK value. Uniqueness enforced via GetForUpdate.
+//
+// 2) Unique, NULL:
+//    Key:   <shard (8B)> <null marker (8B)> <PK bytes>
+//    Value: empty
+//    PK in key — multiple NULLs allowed (PostgreSQL semantics).
+//
+// 3) Non-unique (any value):
+//    Key:   <shard (8B)> <marker (8B)> <encoded SK values> <PK bytes>
+//    Value: empty
+//    PK always in key. Multiple rows per SK value.
+//
+// The marker occupies sizeof(Column::Id) bytes to match the primary table
+// convention: every key starts with ObjectId + Column::Id sized prefix.
+// Marker values (big-endian, 8 bytes): 0 = NULL, 1 = NOT NULL.
 namespace secondary_key {
 
 inline void AppendShardPrefix(std::string& key, ObjectId shard_id) {
@@ -56,44 +69,76 @@ inline void AppendShardPrefix(std::string& key, ObjectId shard_id) {
   absl::big_endian::Store64(key.data() + base, shard_id.id());
 }
 
-constexpr char kNull = '\x00';
-constexpr char kNotNull = '\x01';
+// Null/not-null markers are Column::Id-sized to match primary key convention.
+inline void AppendNullMarker(std::string& key) {
+  const auto base = key.size();
+  basics::StrAppend(key, sizeof(catalog::Column::Id));
+  absl::big_endian::Store64(key.data() + base, 0);
+}
 
-inline void AppendNullMarker(std::string& key) { key.push_back(kNull); }
-inline void AppendNotNullMarker(std::string& key) { key.push_back(kNotNull); }
+inline void AppendNotNullMarker(std::string& key) {
+  const auto base = key.size();
+  basics::StrAppend(key, sizeof(catalog::Column::Id));
+  absl::big_endian::Store64(key.data() + base, 1);
+}
 
-// Build a secondary index key: <null_marker><encoded_value><PK_bytes>.
-// For generated PK (key_childs empty), reads PK from the last input column.
-// Append <null_marker><encoded_value> for the indexed column.
-inline void AppendSKValue(std::string& key, const velox::RowVector& input,
+// Appends <marker><encoded_value> for each SK column.
+// Returns true if any SK column is NULL.
+inline bool AppendSKValue(std::string& key, const velox::RowVector& input,
                           std::span<const velox::column_index_t> sk_children,
                           velox::vector_size_t row_idx) {
+  bool has_null = false;
   for (const auto sk_child : sk_children) {
     const velox::BaseVector& col = *input.childAt(sk_child);
     if (col.isNullAt(row_idx)) {
       AppendNullMarker(key);
+      has_null = true;
     } else {
       AppendNotNullMarker(key);
       primary_key::AppendKeyValue(key, col, row_idx);
     }
   }
+  return has_null;
 }
 
-// Non-unique: appends SK values + PK to `key`.
-// Unique: appends SK values to `key`, PK to `value`.
+inline void AppendPK(const velox::RowVector& input,
+                     std::span<const velox::column_index_t> pk_children,
+                     velox::vector_size_t row_idx, std::string& target) {
+  if (!pk_children.empty()) {
+    primary_key::Create(input, pk_children, row_idx, target);
+  } else {
+    primary_key::AppendKeyValue(
+      target, *input.childAt(input.childrenSize() - 1), row_idx);
+  }
+}
+
+// Build secondary index key + value.
+//
+// Non-unique (any value):
+//   key = [shard][marker][SK values][PK]   value = empty
+//
+// Unique + NULL:
+//   key = [shard][marker][PK]              value = empty
+//   (PK in key — multiple NULLs allowed, like non-unique)
+//
+// Unique + non-NULL:
+//   key = [shard][marker][SK values]       value = [PK]
+//   (PK as value — uniqueness enforced)
 template<bool Unique>
 inline void Create(const velox::RowVector& input,
                    std::span<const velox::column_index_t> pk_children,
                    std::span<const velox::column_index_t> sk_children,
                    velox::vector_size_t row_idx, std::string& sk_buffer,
                    std::string& pk_buffer) {
-  AppendSKValue(sk_buffer, input, sk_children, row_idx);
-  auto& pk_target = Unique ? pk_buffer : sk_buffer;
-  if (!pk_children.empty()) {
-    primary_key::Create(input, pk_children, row_idx, pk_target);
-  } else {  // generated pk
-    const velox::BaseVector& pk_col = *input.childAt(input.childrenSize() - 1);
-    primary_key::AppendKeyValue(pk_target, pk_col, row_idx);
+  bool has_null = AppendSKValue(sk_buffer, input, sk_children, row_idx);
+  if constexpr (Unique) {
+    if (has_null) {
+      AppendPK(input, pk_children, row_idx, sk_buffer);
+    } else {
+      AppendPK(input, pk_children, row_idx, pk_buffer);
+    }
+  } else {
+    AppendPK(input, pk_children, row_idx, sk_buffer);
   }
 }
 
@@ -128,19 +173,27 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     _del_row_idx = 0;
   }
 
-  std::string_view BuildSK(std::string_view full_pk, rocksdb::Slice& value) {
+  // Returns true if the SK has a NULL column (for unique: PK in key, no
+  // uniqueness check).
+  bool BuildSK(std::string_view full_pk, rocksdb::Slice& value) {
     auto pk_bytes = key_utils::ExtractRowKey(full_pk);
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
-    secondary_key::AppendSKValue(_key_buffer, *_input, _sk_children, _row_idx);
+    bool has_null = secondary_key::AppendSKValue(_key_buffer, *_input,
+                                                 _sk_children, _row_idx);
     if constexpr (Unique) {
-      value = rocksdb::Slice{pk_bytes.data(), pk_bytes.size()};
+      if (has_null) {
+        _key_buffer.append(pk_bytes.data(), pk_bytes.size());
+        value = rocksdb::Slice{};
+      } else {
+        value = rocksdb::Slice{pk_bytes.data(), pk_bytes.size()};
+      }
     } else {
       _key_buffer.append(pk_bytes.data(), pk_bytes.size());
       value = rocksdb::Slice{};
     }
     ++_row_idx;
-    return _key_buffer;
+    return has_null;
   }
 
   std::string_view BuildDeleteSK(
@@ -148,9 +201,13 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     std::span<const velox::column_index_t> sk_children) {
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
-    secondary_key::AppendSKValue(_key_buffer, *_input, sk_children,
-                                 _del_row_idx);
-    if constexpr (!Unique) {
+    bool has_null = secondary_key::AppendSKValue(_key_buffer, *_input,
+                                                 sk_children, _del_row_idx);
+    if constexpr (Unique) {
+      if (has_null) {
+        _key_buffer.append(encoded_pk.data(), encoded_pk.size());
+      }
+    } else {
       _key_buffer.append(encoded_pk.data(), encoded_pk.size());
     }
     ++_del_row_idx;
@@ -180,20 +237,23 @@ class SecondarySinkInsertWriter final : public SecondarySinkWriteBase<Unique> {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_pk) final {
     rocksdb::Slice value;
-    auto sk = this->BuildSK(full_pk, value);
+    bool has_null = this->BuildSK(full_pk, value);
     if constexpr (Unique) {
-      rocksdb::PinnableSlice existing;
-      auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{}, sk, &existing);
-      if (gs.ok()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-          ERR_MSG("duplicate key value violates unique constraint on "
-                  "secondary index"),
-          ERR_DETAIL(BuildUniqueViolationDetail(
-            this->_sk_children, *this->_input, this->_row_idx - 1)));
+      if (!has_null) {
+        rocksdb::PinnableSlice existing;
+        auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{},
+                                          this->_key_buffer, &existing);
+        if (gs.ok()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+            ERR_MSG("duplicate key value violates unique constraint on "
+                    "secondary index"),
+            ERR_DETAIL(BuildUniqueViolationDetail(
+              this->_sk_children, *this->_input, this->_row_idx - 1)));
+        }
       }
     }
-    auto s = this->_trx.Put(sk, value);
+    auto s = this->_trx.Put(this->_key_buffer, value);
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 };
@@ -235,20 +295,23 @@ class SecondarySinkUpdateWriter final : public SecondarySinkWriteBase<Unique> {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     rocksdb::Slice value;
-    auto sk = this->BuildSK(full_key, value);
+    bool has_null = this->BuildSK(full_key, value);
     if constexpr (Unique) {
-      rocksdb::PinnableSlice existing;
-      auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{}, sk, &existing);
-      if (gs.ok()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-          ERR_MSG("duplicate key value violates unique constraint on "
-                  "secondary index"),
-          ERR_DETAIL(BuildUniqueViolationDetail(
-            this->_sk_children, *this->_input, this->_row_idx - 1)));
+      if (!has_null) {
+        rocksdb::PinnableSlice existing;
+        auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{},
+                                          this->_key_buffer, &existing);
+        if (gs.ok()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+            ERR_MSG("duplicate key value violates unique constraint on "
+                    "secondary index"),
+            ERR_DETAIL(BuildUniqueViolationDetail(
+              this->_sk_children, *this->_input, this->_row_idx - 1)));
+        }
       }
     }
-    auto s = this->_trx.Put(sk, value);
+    auto s = this->_trx.Put(this->_key_buffer, value);
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 

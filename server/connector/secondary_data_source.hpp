@@ -83,6 +83,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
       if (!_iterator) {
         _current_scan_prefix = BuildScanPrefix(_values[_current_value_idx]);
         _value_key_size = _current_scan_prefix.size() - sizeof(ObjectId);
+        _current_value_is_null = _values[_current_value_idx].isNull();
 
         rocksdb::ReadOptions ro;
         ro.snapshot = _snapshot;
@@ -104,9 +105,17 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
         }
 
         if constexpr (Unique) {
-          // PK stored as value
-          auto val = _iterator->value();
-          row_keys.emplace_back(val.data(), val.size());
+          if (_current_value_is_null) {
+            // NULL entries: PK in key suffix (like non-unique)
+            auto pk_start = sizeof(ObjectId) + _value_key_size;
+            if (key_view.size() > pk_start) {
+              row_keys.emplace_back(key_view.substr(pk_start));
+            }
+          } else {
+            // Non-NULL: PK stored as value
+            auto val = _iterator->value();
+            row_keys.emplace_back(val.data(), val.size());
+          }
         } else {
           // PK stored in key suffix after [shard][SK values]
           auto pk_start = sizeof(ObjectId) + _value_key_size;
@@ -156,9 +165,13 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   std::string BuildScanPrefix(const velox::variant& value) const {
     std::string prefix;
     secondary_key::AppendShardPrefix(prefix, _shard_id);
-    secondary_key::AppendNotNullMarker(prefix);
-    std::array<velox::variant, 1> point{value};
-    primary_key::Create(point, *_row_type, prefix);
+    if (value.isNull()) {
+      secondary_key::AppendNullMarker(prefix);
+    } else {
+      secondary_key::AppendNotNullMarker(prefix);
+      std::array<velox::variant, 1> point{value};
+      primary_key::Create(point, *_row_type, prefix);
+    }
     return prefix;
   }
 
@@ -189,6 +202,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   std::unique_ptr<rocksdb::Iterator> _iterator;
   size_t _current_value_idx = 0;
+  bool _current_value_is_null = false;
   uint64_t _produced = 0;
 };
 

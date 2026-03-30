@@ -135,12 +135,37 @@ std::optional<FilterValues> ExtractEqOrInValues(
   return std::nullopt;
 }
 
+std::optional<FilterValues> ExtractIsNull(
+  const velox::core::TypedExprPtr& filter) {
+  const auto* call =
+    dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
+  if (!call || call->inputs().size() != 1) {
+    return std::nullopt;
+  }
+  if (call->name() != "spark_isnull") {
+    return std::nullopt;
+  }
+  const auto* field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
+    call->inputs()[0].get());
+  if (!field) {
+    return std::nullopt;
+  }
+  return FilterValues{
+    .field_name = field->name(),
+    .field_type = field->type(),
+    .values = {velox::variant::null(field->type()->kind())},
+  };
+}
+
 // Try to match a filter expression against a secondary index.
 // Handles eq(col, constant) and in(col, [c1, ..., cN]).
 std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
   const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
   query::Transaction& transaction) {
   auto extracted = ExtractEqOrInValues(filter);
+  if (!extracted) {
+    extracted = ExtractIsNull(filter);
+  }
   if (!extracted) {
     return std::nullopt;
   }

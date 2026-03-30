@@ -1355,7 +1355,9 @@ class SereneDBConnector final : public velox::connector::Connector {
       auto parquet_mat =
         ParquetMaterializer(pool, std::move(source), std::move(reader),
                             std::move(row_reader), output_type, column_oids);
-      if (handle.IsUnique()) {
+      bool has_null_filter = absl::c_any_of(
+        handle.GetValues(), [](const auto& v) { return v.isNull(); });
+      if (handle.IsUnique() && !has_null_filter) {
         return std::make_unique<
           UniqueSecondaryIndexPointDataSource<ParquetMaterializer>>(
           pool, std::move(parquet_mat), _db, _cf, snapshot, handle.GetShardId(),
@@ -1370,16 +1372,22 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto rocksdb_mat = RocksDBMaterializer(
       pool, snapshot, &_db, nullptr, _cf, output_type, column_oids,
       handle.GetEffectiveColumnId(), handle.TableId());
-    if (handle.IsUnique()) {
+    bool has_null_filter = absl::c_any_of(
+      handle.GetValues(), [](const auto& v) { return v.isNull(); });
+    if (handle.IsUnique() && !has_null_filter) {
       return std::make_unique<
         UniqueSecondaryIndexPointDataSource<RocksDBMaterializer>>(
         pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
         handle.GetValues(), handle.GetValueType());
     }
-    return std::make_unique<
-      SecondaryIndexDataSource<RocksDBMaterializer, false>>(
-      pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
-      handle.GetValues(), handle.GetValueType());
+    return irs::ResolveBool(
+      handle.IsUnique(),
+      [&]<bool UniqueIdx>() -> std::unique_ptr<velox::connector::DataSource> {
+        return std::make_unique<
+          SecondaryIndexDataSource<RocksDBMaterializer, UniqueIdx>>(
+          pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
+          handle.GetValues(), handle.GetValueType());
+      });
   }
 
   std::unique_ptr<velox::connector::DataSource>

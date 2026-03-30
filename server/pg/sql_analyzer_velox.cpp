@@ -5202,8 +5202,8 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   }
 
   if (lang == catalog::FunctionLanguage::VeloxNative) {
-    // table funcs SELECT expand into rows (implicit ROWS FROM). Collect them
-    // here; ProcessPipeline creates the UnnestNode.
+    // table funcs SELECT expand into rows (implicit ROWS FROM).
+    // collect them here and later process them (via unnest)
     if (logical_function.Options().table &&
         state.expr_kind == ExprKind::SelectTarget) {
       auto func_expr = ResolveVeloxFunctionAndInferArgsCommonType(

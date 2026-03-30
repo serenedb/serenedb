@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     cn,
     ConnectionIcon,
@@ -19,14 +19,28 @@ interface SwitchConnectionProps {}
 
 export const SwitchConnection: React.FC<SwitchConnectionProps> = () => {
     const [open, setOpen] = useState(false);
+    const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
     const [connectionState, setConnectionState] = useState<
         "pending" | "success" | "failed"
     >("pending");
     const { currentConnection } = useConnection();
     const { data: connections } = useGetConnections();
 
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (nextOpen) {
+            const activeElement = document.activeElement;
+            previouslyFocusedElementRef.current =
+                activeElement instanceof HTMLElement ? activeElement : null;
+        }
+        setOpen(nextOpen);
+    };
+
+    const restorePreviousFocus = () => {
+        previouslyFocusedElementRef.current?.focus();
+    };
+
     useAppHotkey(DEFAULT_HOTKEYS.SWITCH_CONNECTION_TOGGLE, () => {
-        setOpen(true);
+        handleOpenChange(true);
     });
 
     const connectionName = useMemo(() => {
@@ -59,7 +73,7 @@ export const SwitchConnection: React.FC<SwitchConnectionProps> = () => {
     }, [currentConnection]);
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={handleOpenChange}>
             <PopoverTrigger asChild>
                 <button
                     type="button"
@@ -101,6 +115,10 @@ export const SwitchConnection: React.FC<SwitchConnectionProps> = () => {
                 className="min-w-100 p-1 pt-2.5"
                 onOpenAutoFocus={(event) => {
                     event.preventDefault();
+                }}
+                onCloseAutoFocus={(event) => {
+                    event.preventDefault();
+                    restorePreviousFocus();
                 }}>
                 <SwitchConnectionModal
                     open={open}

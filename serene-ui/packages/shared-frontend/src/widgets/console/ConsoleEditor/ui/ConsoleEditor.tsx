@@ -17,29 +17,19 @@ const components = {
     [CONSOLE_RESULTS_PANEL_COMPONENT]: ResultsPanel,
 };
 
-const INTERRUPTED_QUERY_ERROR = "Execution was interrupted. Run the query again.";
-
 const sanitizeResultEntry = (entry: unknown) => {
     if (!entry || typeof entry !== "object") {
-        return entry;
+        return null;
     }
 
     const result = entry as Record<string, unknown>;
     const status = result.status;
 
-    if (status !== "pending" && status !== "running") {
-        return result;
+    if (status === "pending" || status === "running") {
+        return null;
     }
 
-    return {
-        ...result,
-        status: "failed",
-        error:
-            typeof result.error === "string" && result.error.trim().length
-                ? result.error
-                : INTERRUPTED_QUERY_ERROR,
-        rows: [],
-    };
+    return result;
 };
 
 const sanitizeLayout = (value: unknown): unknown => {
@@ -54,9 +44,17 @@ const sanitizeLayout = (value: unknown): unknown => {
     const record = value as Record<string, unknown>;
     const sanitized: Record<string, unknown> = {};
 
+    const hasResults =
+        Object.prototype.hasOwnProperty.call(record, "results") &&
+        Array.isArray(record.results);
+    let sanitizedResults: unknown[] | null = null;
+
     Object.entries(record).forEach(([key, entry]) => {
         if (key === "results" && Array.isArray(entry)) {
-            sanitized[key] = entry.map((result) => sanitizeResultEntry(result));
+            sanitizedResults = entry
+                .map((result) => sanitizeResultEntry(result))
+                .filter((result) => result !== null);
+            sanitized[key] = sanitizedResults;
             return;
         }
 
@@ -66,6 +64,18 @@ const sanitizeLayout = (value: unknown): unknown => {
 
         sanitized[key] = sanitizeLayout(entry);
     });
+
+    if (hasResults) {
+        const selectedResultIndex = Number(sanitized.selectedResultIndex);
+        const resultsLength = sanitizedResults?.length ?? 0;
+
+        sanitized.selectedResultIndex =
+            resultsLength > 0
+                ? Number.isFinite(selectedResultIndex)
+                    ? Math.min(Math.max(0, selectedResultIndex), resultsLength - 1)
+                    : 0
+                : 0;
+    }
 
     return sanitized;
 };

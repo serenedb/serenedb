@@ -160,18 +160,31 @@ std::vector<KeyConstraint> ExtractFilterAnd(
   std::vector<KeyConstraint> result =
     ExtractFilterExpr(func_call->inputs()[0], pk_names);
   for (size_t i = 1; i < func_call->inputs().size(); ++i) {
+    // Propagate void: AND(void, anything) = void.
+    if (absl::c_any_of(
+          result, [](const KeyConstraint& c) { return c.IsContradictory(); })) {
+      return result;
+    }
     const auto rhs_pts = ExtractFilterExpr(func_call->inputs()[i], pk_names);
     std::vector<KeyConstraint> next;
     next.reserve(result.size() * rhs_pts.size());
+    bool had_contradiction = false;
     for (const auto& lhs : result) {
       for (const auto& rhs : rhs_pts) {
-        if (auto merged = KeyConstraint::Intersect(lhs, rhs);
-            merged && !merged->IsUnconstrained()) {
-          next.push_back(std::move(*merged));
+        if (auto merged = KeyConstraint::Intersect(lhs, rhs)) {
+          if (!merged->IsUnconstrained()) {
+            next.push_back(std::move(*merged));
+          }
+        } else {
+          had_contradiction = true;
         }
       }
     }
     result = std::move(next);
+    // All pairs were contradictions: this AND can never be satisfied.
+    if (result.empty() && had_contradiction) {
+      return {KeyConstraint::MakeContradictory(pk_names)};
+    }
   }
   return result;
 }
@@ -188,6 +201,11 @@ std::vector<KeyConstraint> ExtractFilterOr(
   std::vector<KeyConstraint> result;
   for (const auto& input : func_call->inputs()) {
     auto pts = ExtractFilterExpr(input, pk_names);
+    // Void branch (impossible sub-expression) contributes nothing to OR.
+    if (absl::c_all_of(
+          pts, [](const KeyConstraint& p) { return p.IsContradictory(); })) {
+      continue;
+    }
     // If any point in the child result is unconstrained, the OR is
     // unconstrained.
     if (absl::c_any_of(
@@ -196,6 +214,10 @@ std::vector<KeyConstraint> ExtractFilterOr(
     }
     result.insert(result.end(), std::make_move_iterator(pts.begin()),
                   std::make_move_iterator(pts.end()));
+  }
+  // All branches were void → OR is itself impossible.
+  if (result.empty()) {
+    return {KeyConstraint::MakeContradictory(pk_names)};
   }
   return MergeKeyConstraintsPrecise(std::move(result));
 }
@@ -918,6 +940,15 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr,
   std::span<const std::string> pk_names) {
   auto constraints = ExtractFilterExpr(expr, pk_names);
+
+  // Contradictory predicate (e.g. a < 1 AND a > 1): produce a range scan
+  // with zero ranges so no rows are returned without a full scan.
+  if (!constraints.empty() &&
+      absl::c_all_of(constraints, [](const KeyConstraint& c) {
+        return c.IsContradictory();
+      })) {
+    return {ConstraintKind::Ranges, {}, nullptr};
+  }
 
   if (absl::c_all_of(constraints,
                      [](const KeyConstraint& p) { return p.IsSpecific(); })) {

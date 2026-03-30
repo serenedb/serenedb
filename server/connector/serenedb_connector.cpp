@@ -47,7 +47,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout,
   std::vector<SpecificPoint> points, std::vector<SpecificRange> ranges,
-  velox::core::TypedExprPtr remaining_filter)
+  velox::core::TypedExprPtr remaining_filter, bool zero_ranges)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
@@ -55,6 +55,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
       basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
     _points{std::move(points)},
     _ranges{std::move(ranges)},
+    _zero_ranges{zero_ranges},
     _remaining_filter{std::move(remaining_filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
@@ -196,24 +197,21 @@ SereneDBTableLayout::createTableHandle(
 
   std::vector<SpecificPoint> points;
   std::vector<SpecificRange> ranges;
+  bool zero_ranges = false;
   if (remaining_filter) {
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
     [[maybe_unused]] size_t c_id = 0;
-    // SDB_PRINT("-----------------");
-    // SDB_PRINT("kind: ", res.kind);
-    // for (const auto& c : res.constraints) {
-    //   SDB_PRINT("  ", ++c_id, c.ToString());
-    // }
-    // SDB_PRINT("remaining: ",
-    //           res.remaining_filter ? res.remaining_filter->toString() :
-    //           "null");
 
     if (res.kind == ConstraintKind::Points && !res.constraints.empty()) {
       points = ToSpecificPoints(res.constraints, *pk_type);
       SortPoints(points);
       remaining_filter = std::move(res.remaining_filter);
-    } else if (res.kind == ConstraintKind::Ranges && !res.constraints.empty()) {
-      ranges = ToSpecificRanges(res.constraints, *pk_type);
+    } else if (res.kind == ConstraintKind::Ranges) {
+      if (!res.constraints.empty()) {
+        ranges = ToSpecificRanges(res.constraints, *pk_type);
+      } else {
+        zero_ranges = true;  // contradictory predicate → 0-range scan
+      }
       remaining_filter = std::move(res.remaining_filter);
     }
   }
@@ -233,7 +231,7 @@ SereneDBTableLayout::createTableHandle(
              "SereneDBFullScanTableHandle: need a column for count field");
   return std::make_shared<SereneDBConnectorTableHandle>(
     session, *table->layouts().front(), std::move(points), std::move(ranges),
-    std::move(remaining_filter));
+    std::move(remaining_filter), zero_ranges);
 }
 
 std::string SereneDBConnectorTableHandle::toString() const {
@@ -258,7 +256,7 @@ std::string SereneDBConnectorTableHandle::toString() const {
     return absl::StrCat(_name, ", type=rocksdb_point_lookup, points=[",
                         points_str, "]", filter_str);
   }
-  if (!_ranges.empty()) {
+  if (!_ranges.empty() || _zero_ranges) {
     const auto& names = _pk_type->names();
     const auto& types = _pk_type->children();
     std::string ranges_str = absl::StrJoin(

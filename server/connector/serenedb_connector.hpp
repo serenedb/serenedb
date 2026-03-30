@@ -222,7 +222,7 @@ class SereneDBConnectorTableHandle final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
     std::vector<SpecificPoint> points, std::vector<SpecificRange> ranges,
-    velox::core::TypedExprPtr remaining_filter);
+    velox::core::TypedExprPtr remaining_filter, bool zero_ranges = false);
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -250,6 +250,9 @@ class SereneDBConnectorTableHandle final
     return _ranges;
   }
 
+  // True when the predicate was contradictory: scan should return 0 rows.
+  bool IsZeroRanges() const noexcept { return _zero_ranges; }
+
   const containers::FlatHashMap<std::string, FilterColumn>& GetTableColumnMap()
     const noexcept {
     return _table_column_map;
@@ -263,6 +266,7 @@ class SereneDBConnectorTableHandle final
   velox::RowTypePtr _pk_type;
   std::vector<SpecificPoint> _points;
   std::vector<SpecificRange> _ranges;
+  bool _zero_ranges = false;  // true → contradictory predicate, 0-range scan
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
@@ -948,7 +952,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 
       const auto& ranges_ryow = serene_table_handle.GetRanges();
-      if (!ranges_ryow.empty()) {
+      if (!ranges_ryow.empty() || serene_table_handle.IsZeroRanges()) {
         return std::make_unique<RocksDBRYOWMultiRangeLookupDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
           read_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
@@ -974,7 +978,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
 
     const auto& ranges = serene_table_handle.GetRanges();
-    if (!ranges.empty()) {
+    if (!ranges.empty() || serene_table_handle.IsZeroRanges()) {
       return std::make_unique<RocksDBSnapshotMultiRangeLookupDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
         serene_table_handle.GetEffectiveColumnId(), object_key,

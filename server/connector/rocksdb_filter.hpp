@@ -72,7 +72,9 @@ class KeyConstraint {
     : _pk_names{pk_names} {}
 
   KeyConstraint(const KeyConstraint& other)
-    : _pk_names{other._pk_names}, _source_exprs{other._source_exprs} {
+    : _pk_names{other._pk_names},
+      _contradictory{other._contradictory},
+      _source_exprs{other._source_exprs} {
     for (const auto& [k, v] : other._column_filters) {
       _column_filters.emplace(k, std::make_unique<Range>(*v));
     }
@@ -81,6 +83,7 @@ class KeyConstraint {
   KeyConstraint& operator=(const KeyConstraint& other) {
     if (this != &other) {
       _pk_names = other._pk_names;
+      _contradictory = other._contradictory;
       _source_exprs = other._source_exprs;
       _column_filters.clear();
       for (const auto& [k, v] : other._column_filters) {
@@ -96,7 +99,19 @@ class KeyConstraint {
   [[nodiscard]] bool IsSpecific() const;
 
   [[nodiscard]] bool IsUnconstrained() const noexcept {
-    return _column_filters.empty();
+    return !_contradictory && _column_filters.empty();
+  }
+
+  // True when the constraint is contradictory (e.g. a < 1 AND a > 1) and
+  // can never be satisfied — the scan should produce zero rows.
+  [[nodiscard]] bool IsContradictory() const noexcept { return _contradictory; }
+
+  // Creates a void (impossible) constraint.
+  [[nodiscard]] static KeyConstraint MakeContradictory(
+    std::span<const std::string> pk_names) {
+    KeyConstraint kc{pk_names};
+    kc._contradictory = true;
+    return kc;
   }
 
   // Returns the number of PK columns covered by the constraint's leading
@@ -164,6 +179,8 @@ class KeyConstraint {
 
  private:
   std::span<const std::string> _pk_names;
+  bool _contradictory =
+    false;  // true → contradictory predicate, matches no rows
 
   // TODO(mkornaukhov)
   // Range should really be much smaller, for now it's 64 bytes

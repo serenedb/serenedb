@@ -699,7 +699,6 @@ EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
 QUERY PLAN
 <slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
 
-# TODO detect such cases and print empty
 # Impossible range (b > 9 AND b < 1) → contradiction → 0 rows, full scan.
 query
 SELECT * FROM t_range WHERE a = 1 AND b > 9 AND b < 1 ORDER BY b;
@@ -711,7 +710,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 9 AND b < 1 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_full_scan]<slt:ignore>
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
 
 # Boundary equality: b >= 5 AND b <= 5 is equivalent to b = 5 → point lookup.
 query
@@ -1265,3 +1264,79 @@ QUERY PLAN
 
 statement ok
 DROP TABLE t_complex;
+
+# Contradictory/void range tests — predicate can never be satisfied → 0 rows, range scan.
+statement ok
+CREATE TABLE t_void (a INT PRIMARY KEY, val INT);
+
+statement ok
+INSERT INTO t_void VALUES (1, 10), (3, 30), (5, 50);
+
+# a < 1 AND a > 1 → contradictory, 0 ranges → empty result.
+query
+SELECT * FROM t_void WHERE a < 1 AND a > 1;
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a < 1 AND a > 1;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# a > 5 AND a < 3 → contradictory.
+query
+SELECT * FROM t_void WHERE a > 5 AND a < 3;
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a > 5 AND a < 3;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# a = 3 AND a = 5 → point contradiction.
+query
+SELECT * FROM t_void WHERE a = 3 AND a = 5;
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a = 3 AND a = 5;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# OR where one branch is contradictory: (a < 1 AND a > 1) OR a = 3 → just a = 3.
+query
+SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
+----
+a	val
+3	30
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_point_lookup, points=[(a=3)]]<slt:ignore>
+
+# Both OR branches contradictory → 0 ranges.
+query
+SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+statement ok
+DROP TABLE t_void;

@@ -67,7 +67,7 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
                     variant="inline"
                     autoFocus
                     panelClassName="overflow-hidden rounded-md border border-border bg-transparent"
-                    listClassName="h-[188px]"
+                    listClassName="h-[200px]"
                     onSelect={() => {
                         setDatabaseSelectorVersion((version) => version + 1);
                     }}
@@ -81,7 +81,7 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
                 </div>
 
                 {currentConnection.connectionId === -1 ? (
-                    <ComboboxBanner className="min-h-[188px]">
+                    <ComboboxBanner className="min-h-[200px]">
                         Select database
                     </ComboboxBanner>
                 ) : (
@@ -90,7 +90,7 @@ export const SwitchConnectionModal: React.FC<SwitchConnectionModalProps> = ({
                         variant="inline"
                         autoFocus={false}
                         panelClassName="overflow-hidden rounded-md border border-border bg-transparent"
-                        listClassName="h-[220px]"
+                        listClassName="h-[200px]"
                         onSelect={() => {
                             onComplete?.();
                         }}

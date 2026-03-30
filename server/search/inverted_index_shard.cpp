@@ -548,4 +548,15 @@ void InvertedIndexShard::RecoveryCommit(Tick tick) {
   subscription.tick(_last_committed_tick);
 }
 
+InvertedIndexShard::Stats InvertedIndexShard::GetStats() const {
+  if (_metric_stats) {
+    return _metric_stats->load();
+  }
+  auto snapshot = GetInvertedIndexSnapshot();
+  if (!snapshot) {
+    return {};
+  }
+  return UpdateStatsUnsafe(std::move(snapshot));
+}
+
 }  // namespace sdb::search

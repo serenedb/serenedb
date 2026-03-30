@@ -6323,6 +6323,15 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
       MakeConst(ErrorPosition(expr.location)));
   }
 
+  if ((arg->type() == velox::INTEGER() || arg->type() == velox::BIGINT()) &&
+      pg::IsRegclass(type)) {
+    if (arg->type() == velox::INTEGER()) {
+      arg = MakeCast(velox::BIGINT(), std::move(arg));
+    }
+    return std::make_shared<lp::SpecialFormExpr>(
+      std::move(type), lp::SpecialForm::kCast, std::move(arg));
+  }
+
   if (pg::IsRegclass(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_regclassout",
                                           std::move(arg));

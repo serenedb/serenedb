@@ -46,6 +46,12 @@ constexpr size_t kKeyPrefixSize =
 template<typename T>
 void SetResultValue(std::string_view value, size_t idx,
                     velox::FlatVector<T>& result) {
+  // TODO(Dronplane): make this check assert if from catalog we know that column
+  // is NOT NULL
+  if (value.empty()) {
+    result.setNull(idx, true);
+    return;
+  }
   if constexpr (std::is_same_v<T, velox::StringView>) {
     const size_t offset = value[0] == 0 ? 1 : 0;
     result.set(idx,
@@ -79,7 +85,6 @@ void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto& flat = static_cast<velox::FlatVector<T>&>(result);
   for (size_t i = 0; i < values.size(); ++i) {
-    SDB_ASSERT(!values[i].empty());
     SetResultValue(values[i].ToStringView(), offset + i, flat);
   }
 }

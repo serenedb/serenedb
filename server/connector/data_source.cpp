@@ -825,6 +825,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
         // additional bytes after; for single-column PKs they are exactly
         // equal).
         const rocksdb::Slice lb{b.lower_key};
+        // TODO get rid of starts_with. We should use options upper/lower bound
         while (_iter->Valid() && _iter->key().starts_with(lb)) {
           _iter->Next();
         }
@@ -862,17 +863,6 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
   size_t _current = 0;
 };
 
-// Builds the encoded RocksDB key for a single PK column value appended to
-// the given column prefix.
-static std::string BuildBoundaryKey(const std::string& col_prefix,
-                                    const velox::variant& value,
-                                    const velox::RowType& first_col_type) {
-  std::string key = col_prefix;
-  const std::vector<velox::variant> single = {value};
-  primary_key::Create(single, first_col_type, key);
-  return key;
-}
-
 template<typename Source>
 RocksDBMultiRangeLookupDataSource<Source>::RocksDBMultiRangeLookupDataSource(
   velox::memory::MemoryPool& memory_pool, Source& source,
@@ -880,7 +870,7 @@ RocksDBMultiRangeLookupDataSource<Source>::RocksDBMultiRangeLookupDataSource(
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
   size_t output_column_count, const rocksdb::Snapshot* snapshot,
-  std::vector<KeyConstraint> ranges, velox::RowTypePtr pk_type,
+  std::vector<SpecificRange> ranges, velox::RowTypePtr pk_type,
   velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : RocksDBFullScanDataSource<Source>{memory_pool,
@@ -910,37 +900,59 @@ void RocksDBMultiRangeLookupDataSource<Source>::addSplit(
   SDB_ASSERT(!_pk_type->names().empty(),
              "RocksDBMultiRangeLookupDataSource: pk_type has no columns");
 
-  // Single-column RowType for encoding just the first PK column boundary.
-  const auto first_col_type =
-    velox::ROW({_pk_type->nameOf(0)}, {_pk_type->childAt(0)});
-  const std::string& first_pk_name = _pk_type->nameOf(0);
+  // Appends the encoded value for a single PK column to `key`.
+  auto append_col_value = [&](std::string& key, size_t col_idx,
+                              const velox::variant& value) {
+    const auto col_type =
+      velox::ROW({_pk_type->nameOf(col_idx)}, {_pk_type->childAt(col_idx)});
+    const std::vector<velox::variant> single = {value};
+    primary_key::Create(single, *col_type, key);
+  };
 
-  // Pre-build RangeBound for each KeyConstraint using the first PK column.
-  // _ranges must be pre-sorted (e.g. via MergeKeyConstraintsPrecise).
+  // Pre-build RangeBound for each SpecificRange.
+  // sr.prefix holds K exact values for PK columns 0..K-1; sr.range_col is the
+  // constraint on column K. The seek key encodes all K+1 columns.
+  // _ranges must be pre-sorted.
   auto build_bounds = [&](const std::string& col_prefix)
     -> std::vector<RocksDBMultiRangeIterator::RangeBound> {
     std::vector<RocksDBMultiRangeIterator::RangeBound> bounds;
     bounds.reserve(_ranges.size());
-    for (const auto& kc : _ranges) {
+    for (const auto& sr : _ranges) {
       RocksDBMultiRangeIterator::RangeBound b;
-      const Range* r = kc.FindFilter(first_pk_name);
+      const size_t k = sr.prefix.size();
 
-      // Lower bound: seek to col_prefix if unbounded, else encoded value.
+      // Helper: encode equality prefix cols 0..K-1 into `key`.
+      auto encode_eq_prefix = [&](std::string& key) {
+        for (size_t i = 0; i < k; ++i) {
+          append_col_value(key, i, sr.prefix[i]);
+        }
+      };
+
+      // Lower bound: equality prefix + range column's lower boundary (if any).
       b.lower_key = col_prefix;
       b.lower_exclusive = false;
-      if (r && r->left) {
-        b.lower_key =
-          BuildBoundaryKey(col_prefix, r->left->value, *first_col_type);
-        b.lower_exclusive = !r->left->inclusive;
+      encode_eq_prefix(b.lower_key);
+      if (sr.range_col.left) {
+        append_col_value(b.lower_key, k, sr.range_col.left->value);
+        b.lower_exclusive = !sr.range_col.left->inclusive;
       }
 
-      // Upper bound: empty string means use column's iterate_upper_bound.
-      b.upper_key.clear();
-      b.upper_inclusive = false;
-      if (r && r->right) {
-        b.upper_key =
-          BuildBoundaryKey(col_prefix, r->right->value, *first_col_type);
-        b.upper_inclusive = r->right->inclusive;
+      // Upper bound: equality prefix + range column's upper boundary (if any).
+      // If no right boundary, the equality prefix acts as the upper bound
+      // (inclusive via starts_with check).
+      // An upper_key equal to col_prefix means unbounded; clear it to use
+      // iterate_upper_bound (column natural bound) instead.
+      b.upper_key = col_prefix;
+      b.upper_inclusive = true;
+      encode_eq_prefix(b.upper_key);
+      if (sr.range_col.right) {
+        append_col_value(b.upper_key, k, sr.range_col.right->value);
+        b.upper_inclusive = sr.range_col.right->inclusive;
+      }
+      // else: upper_key stays at equality prefix (starts_with match covers all
+      // values of column K with the fixed prefix), upper_inclusive = true.
+      if (b.upper_key == col_prefix) {
+        b.upper_key.clear();  // unbounded: fall through to iterate_upper_bound
       }
 
       bounds.push_back(std::move(b));

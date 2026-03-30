@@ -51,6 +51,12 @@ enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 struct Range {
   std::optional<Boundary> left;
   std::optional<Boundary> right;
+
+  // Returns true when the range represents a single exact value [v, v].
+  [[nodiscard]] bool IsPoint() const noexcept {
+    return left.has_value() && right.has_value() &&
+           left->value == right->value && left->inclusive && right->inclusive;
+  }
 };
 
 // e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
@@ -92,6 +98,19 @@ class KeyConstraint {
   [[nodiscard]] bool IsUnconstrained() const noexcept {
     return _column_filters.empty();
   }
+
+  // Returns the number of PK columns covered by the constraint's leading
+  // prefix, or 0 if the constraint cannot drive a useful range scan. The prefix
+  // is: K equality-point columns followed by at most one range column. K must
+  // be ≥ 1 (a bare range on the first column with no equality prefix yields 0).
+  // Examples (PK = a, b, c):
+  //   b > 5              → 0  (a unconstrained → no usable prefix)
+  //   a > 5              → 0  (K=0, no equality prefix)
+  //   a = 1              → 1  (one equality, nothing after)
+  //   a = 1 AND b > 5    → 2  (a point, b range)
+  //   a = 1 AND b = 2    → 2  (both points; note: IsSpecific handles all-point)
+  //   a = 1 AND b = 2 AND c > 3 → 3
+  [[nodiscard]] size_t PrefixSize() const noexcept;
 
   // Returns nullptr if the column has no filter (matches any value).
   [[nodiscard]] const Range* FindFilter(std::string_view column_name) const;
@@ -162,6 +181,20 @@ using SpecificPoint = std::vector<velox::variant>;
 // ordered by pk_type column order.
 [[nodiscard]] std::vector<SpecificPoint> ToSpecificPoints(
   const std::vector<KeyConstraint>& points, const velox::RowType& pk_type);
+
+// A fully resolved range: first K exact PK column values (the equality prefix),
+// followed by a Range for the (K+1)-th column.
+// prefix.size() == K; K may be 0 if the range column is the first PK column.
+// Analogous to SpecificPoint but for range scans.
+struct SpecificRange {
+  std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
+  Range range_col;                     // constraint on column K
+};
+
+// Converts range KeyConstraints to SpecificRange, ordered by pk_type column
+// order. Each constraint must have PrefixSize() >= 1.
+[[nodiscard]] std::vector<SpecificRange> ToSpecificRanges(
+  const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type);
 
 [[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);

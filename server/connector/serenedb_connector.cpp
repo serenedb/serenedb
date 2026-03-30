@@ -46,7 +46,7 @@ constexpr bool kExecuteFiltersInTableScan = false;
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout,
-  std::vector<SpecificPoint> points, std::vector<KeyConstraint> ranges,
+  std::vector<SpecificPoint> points, std::vector<SpecificRange> ranges,
   velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
@@ -195,7 +195,7 @@ SereneDBTableLayout::createTableHandle(
   }
 
   std::vector<SpecificPoint> points;
-  std::vector<KeyConstraint> ranges;
+  std::vector<SpecificRange> ranges;
   if (remaining_filter) {
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
     [[maybe_unused]] size_t c_id = 0;
@@ -213,7 +213,7 @@ SereneDBTableLayout::createTableHandle(
       SortPoints(points);
       remaining_filter = std::move(res.remaining_filter);
     } else if (res.kind == ConstraintKind::Ranges && !res.constraints.empty()) {
-      ranges = std::move(res.constraints);
+      ranges = ToSpecificRanges(res.constraints, *pk_type);
       remaining_filter = std::move(res.remaining_filter);
     }
   }
@@ -259,9 +259,25 @@ std::string SereneDBConnectorTableHandle::toString() const {
                         points_str, "]", filter_str);
   }
   if (!_ranges.empty()) {
+    const auto& names = _pk_type->names();
+    const auto& types = _pk_type->children();
     std::string ranges_str = absl::StrJoin(
-      _ranges, ", ", [](std::string* out, const KeyConstraint& kc) {
-        absl::StrAppend(out, kc.ToString());
+      _ranges, ", ", [&](std::string* out, const SpecificRange& sr) {
+        absl::StrAppend(out, "{");
+        for (size_t i = 0; i < sr.prefix.size(); ++i) {
+          if (i > 0) {
+            absl::StrAppend(out, ", ");
+          }
+          absl::StrAppend(out, names[i], "=", sr.prefix[i].toString(types[i]));
+        }
+        const size_t k = sr.prefix.size();
+        if (k < names.size()) {
+          if (k > 0) {
+            absl::StrAppend(out, ", ");
+          }
+          absl::StrAppend(out, names[k], "=", ToString(sr.range_col));
+        }
+        absl::StrAppend(out, "}");
       });
     return absl::StrCat(_name, ", type=rocksdb_range_lookup, ranges=[",
                         ranges_str, "]", filter_str);

@@ -505,16 +505,31 @@ std::string KeyConstraint::ToString() const {
   return result;
 }
 
+size_t KeyConstraint::PrefixSize() const noexcept {
+  // Count K: leading exact-equality (point) columns.
+  size_t k = 0;
+  for (; k < _pk_names.size(); ++k) {
+    const Range* r = FindFilter(_pk_names[k]);
+    if (r == nullptr) {
+      return k;
+    }
+    if (!r->IsPoint()) {
+      // Range column at position k. Valid only if K ≥ 1 (equality prefix
+      // required); prefix covers k equality columns + this range column.
+      return k + 1;
+    }
+  }
+
+  return k;
+}
+
 bool KeyConstraint::IsSpecific() const {
   return absl::c_all_of(_pk_names, [&](std::string_view name) {
     auto it = _column_filters.find(name);
     if (it == _column_filters.end()) {
       return false;
     }
-    const Range& r = *it->second;
-    return r.left.has_value() && r.right.has_value() &&
-           r.left->value == r.right->value && r.left->inclusive &&
-           r.right->inclusive;
+    return it->second->IsPoint();
   });
 }
 
@@ -689,6 +704,50 @@ std::vector<SpecificPoint> ToSpecificPoints(
   return result;
 }
 
+std::vector<SpecificRange> ToSpecificRanges(
+  const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type) {
+  std::vector<SpecificRange> result;
+  result.reserve(ranges.size());
+  for (const auto& kc : ranges) {
+    const size_t prefix_size = kc.PrefixSize();
+    SDB_ASSERT(prefix_size > 0,
+               "ToSpecificRanges: constraint must have PrefixSize() >= 1");
+    SpecificRange sr;
+
+    // Find the index of the range column: walk leading equality columns until
+    // the first non-point column or the end. If all prefix_size columns are
+    // equalities, the last one becomes the range column (as a [v, v] point
+    // range), so the prefix contains only the columns before it.
+    size_t range_col_idx = 0;
+    for (; range_col_idx < prefix_size; ++range_col_idx) {
+      const Range* r = kc.FindFilter(pk_type.nameOf(range_col_idx));
+      SDB_ASSERT(r != nullptr);
+      if (!r->IsPoint()) {
+        break;
+      }
+    }
+    if (range_col_idx == prefix_size) {
+      // All prefix_size columns are equalities; use the last one as range_col.
+      range_col_idx = prefix_size - 1;
+    }
+
+    // Columns 0..range_col_idx-1 form the equality prefix.
+    for (size_t i = 0; i < range_col_idx; ++i) {
+      const Range* r = kc.FindFilter(pk_type.nameOf(i));
+      SDB_ASSERT(r != nullptr && r->left.has_value());
+      sr.prefix.push_back(r->left->value);
+    }
+
+    // Column range_col_idx is the range column.
+    const Range* r = kc.FindFilter(pk_type.nameOf(range_col_idx));
+    SDB_ASSERT(r != nullptr);
+    sr.range_col = *r;
+
+    result.push_back(std::move(sr));
+  }
+  return result;
+}
+
 std::vector<KeyConstraint> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr,
   std::span<const std::string> pk_names) {
@@ -741,21 +800,25 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {ConstraintKind::Empty, {}, expr};
   }
 
-  const std::string& first_pk = pk_names[0];
-
-  // If any constraint has no filter on the first PK column it covers the full
-  // range of that column (e.g. `b = 2` in PK (a, b) leaves `a` unconstrained).
-  // In that case we cannot build a useful range scan — fall back to full scan.
-  if (absl::c_any_of(constraints, [&](const KeyConstraint& c) {
-        return c.FindFilter(first_pk) == nullptr;
+  // Every constraint must form a valid key prefix: first K columns are exact
+  // points, the (K+1)-th is a range, and nothing is constrained after that.
+  // This excludes cases like `b > 5` (first PK column unconstrained) or
+  // `a > 3 AND c > 1` (gap on b) that cannot be represented as a range scan.
+  if (absl::c_any_of(constraints, [](const KeyConstraint& c) {
+        return c.PrefixSize() == 0;
       })) {
     return {ConstraintKind::Empty, {}, expr};
   }
 
+  // Collect rewrite sources from every column in each constraint's prefix
+  // (all K equality columns + the range column), not just the first PK column.
   containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
   for (const auto& c : constraints) {
-    const auto& col_exprs = c.GetSourceExprs(first_pk);
-    sources.insert(col_exprs.begin(), col_exprs.end());
+    const size_t prefix = c.PrefixSize();
+    for (size_t i = 0; i < prefix; ++i) {
+      const auto& col_exprs = c.GetSourceExprs(pk_names[i]);
+      sources.insert(col_exprs.begin(), col_exprs.end());
+    }
   }
 
   if (sources.empty()) {

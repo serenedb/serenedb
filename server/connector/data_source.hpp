@@ -293,15 +293,16 @@ class RocksDBMultiRangeLookupDataSource
     std::vector<catalog::Column::Id> column_ids,
     catalog::Column::Id effective_column_id, ObjectId object_key,
     size_t output_column_count, const rocksdb::Snapshot* snapshot,
-    std::vector<KeyConstraint> ranges, velox::RowTypePtr pk_type,
+    std::vector<SpecificRange> ranges, velox::RowTypePtr pk_type,
     velox::core::TypedExprPtr remaining_filter = nullptr,
     velox::core::ExpressionEvaluator* evaluator = nullptr);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
  private:
-  // Pre-sorted KeyConstraint ranges; only first PK column used for seek bounds.
-  std::vector<KeyConstraint> _ranges;
+  // Pre-sorted SpecificRange list; each entry has K equality prefix values and
+  // one range column constraint.
+  std::vector<SpecificRange> _ranges;
   velox::RowTypePtr _pk_type;
 };
 

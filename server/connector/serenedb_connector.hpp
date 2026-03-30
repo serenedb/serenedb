@@ -221,7 +221,7 @@ class SereneDBConnectorTableHandle final
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
-    std::vector<SpecificPoint> points, std::vector<KeyConstraint> ranges,
+    std::vector<SpecificPoint> points, std::vector<SpecificRange> ranges,
     velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
@@ -246,7 +246,7 @@ class SereneDBConnectorTableHandle final
     return _points;
   }
 
-  const std::vector<KeyConstraint>& GetRanges() const noexcept {
+  const std::vector<SpecificRange>& GetRanges() const noexcept {
     return _ranges;
   }
 
@@ -262,7 +262,7 @@ class SereneDBConnectorTableHandle final
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
   std::vector<SpecificPoint> _points;
-  std::vector<KeyConstraint> _ranges;
+  std::vector<SpecificRange> _ranges;
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };

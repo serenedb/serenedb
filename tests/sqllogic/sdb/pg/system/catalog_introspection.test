@@ -1,0 +1,276 @@
+# Tests for system catalog introspection queries used by SQL clients
+# (schema discovery, column metadata, triggers, routines, etc.)
+
+
+# Setup
+
+statement ok
+CREATE TABLE vedernikoff (id INT PRIMARY KEY, nickname TEXT NOT NULL, score FLOAT8)
+
+statement ok
+CREATE TABLE clickclack (grade BIGINT PRIMARY KEY, tag VARCHAR, active BOOLEAN, created_at TIMESTAMP)
+
+statement ok
+CREATE INDEX clickclack_inv ON clickclack USING inverted (grade)
+
+
+# pg_database: list non-template databases
+
+query
+SELECT COUNT(*) > 0 FROM (SELECT datname
+FROM pg_database
+WHERE datistemplate = false
+ORDER BY datname)
+----
+?column?
+t
+
+
+# information_schema.schemata: list schemas
+
+query
+SELECT schema_name
+FROM information_schema.schemata
+ORDER BY schema_name
+----
+schema_name
+information_schema
+pg_catalog
+public
+
+
+# information_schema.tables: list user tables
+
+query
+SELECT t.table_schema, t.table_name
+FROM information_schema.tables AS t
+WHERE t.table_type NOT LIKE '%VIEW%'
+  AND t.table_schema = 'public'
+ORDER BY t.table_name
+----
+table_schema	table_name
+public	clickclack
+public	vedernikoff
+
+
+# information_schema.views: no user views
+
+query
+SELECT table_schema, table_name
+FROM information_schema.views
+WHERE table_schema = 'public'
+ORDER BY table_name
+----
+table_schema	table_name
+
+
+# information_schema.columns: column metadata with type formatting
+
+query
+SELECT
+  column_name,
+  is_nullable,
+  ordinal_position,
+  column_default,
+  CASE
+    WHEN character_maximum_length IS NOT NULL AND udt_name != 'text'
+      THEN udt_name || '(' || character_maximum_length::varchar(255) || ')'
+    WHEN numeric_precision IS NOT NULL AND numeric_scale IS NOT NULL
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ',' || numeric_scale::varchar(255) || ')'
+    WHEN numeric_precision IS NOT NULL AND numeric_scale IS NULL
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ')'
+    WHEN datetime_precision IS NOT NULL AND udt_name != 'date'
+      THEN udt_name || '(' || datetime_precision::varchar(255) || ')'
+    ELSE udt_name
+  END AS data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'vedernikoff'
+ORDER BY ordinal_position
+----
+column_name	is_nullable	ordinal_position	column_default	data_type
+id	NO	1	NULL	int4(32,0)
+nickname	NO	2	NULL	text
+score	YES	3	NULL	float8(53)
+
+
+query
+SELECT
+  column_name,
+  is_nullable,
+  ordinal_position,
+  column_default,
+  CASE
+    WHEN character_maximum_length IS NOT NULL AND udt_name != 'text'
+      THEN udt_name || '(' || character_maximum_length::varchar(255) || ')'
+    WHEN numeric_precision IS NOT NULL AND numeric_scale IS NOT NULL
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ',' || numeric_scale::varchar(255) || ')'
+    WHEN numeric_precision IS NOT NULL AND numeric_scale IS NULL
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ')'
+    WHEN datetime_precision IS NOT NULL AND udt_name != 'date'
+      THEN udt_name || '(' || datetime_precision::varchar(255) || ')'
+    ELSE udt_name
+  END AS data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'clickclack'
+ORDER BY ordinal_position
+----
+column_name	is_nullable	ordinal_position	column_default	data_type
+grade	NO	1	NULL	int8(64,0)
+tag	YES	2	NULL	text
+active	YES	3	NULL	bool
+created_at	YES	4	NULL	timestamp(6)
+
+
+# information_schema.triggers: empty (no triggers defined)
+
+query
+SELECT
+  trigger_name,
+  action_timing AS timing,
+  event_manipulation AS manipulation,
+  action_statement AS action,
+  action_condition AS condition
+FROM information_schema.triggers
+WHERE event_object_schema = 'public'
+  AND event_object_table = 'vedernikoff'
+----
+trigger_name	timing	manipulation	action	condition
+
+
+# information_schema.routines: no user routines
+
+query
+SELECT
+  r.specific_name AS id,
+  r.routine_schema,
+  r.routine_name AS name,
+  r.routine_type,
+  r.data_type
+FROM information_schema.routines r
+WHERE r.routine_schema NOT IN ('sys', 'information_schema',
+                               'pg_catalog', 'performance_schema')
+ORDER BY r.routine_schema, r.routine_name
+----
+id	routine_schema	name	routine_type	data_type
+
+
+# quote_ident on table names
+
+query
+SELECT quote_ident(table_name) AS table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type NOT LIKE '%VIEW%'
+ORDER BY table_name
+----
+table_name
+clickclack
+vedernikoff
+
+
+# pg_index + pg_attribute: primary key columns
+
+query
+SELECT
+  a.attname AS column_name,
+  format_type(a.atttypid, a.atttypmod) AS data_type,
+  a.attnum AS position
+FROM pg_index i
+  JOIN pg_attribute a ON a.attrelid = i.indrelid
+    AND a.attnum = ANY(i.indkey)
+WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'vedernikoff')
+  AND i.indisprimary
+ORDER BY a.attnum
+----
+column_name	data_type	position
+
+
+query
+SELECT
+  a.attname AS column_name,
+  format_type(a.atttypid, a.atttypmod) AS data_type,
+  a.attnum AS position
+FROM pg_index i
+  JOIN pg_attribute a ON a.attrelid = i.indrelid
+    AND a.attnum = ANY(i.indkey)
+WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'clickclack')
+  AND i.indisprimary
+ORDER BY a.attnum
+----
+column_name	data_type	position
+
+
+# pg_tables: table owner
+
+query
+SELECT tableowner
+FROM pg_catalog.pg_tables
+WHERE tablename = 'vedernikoff' AND schemaname = 'public'
+----
+tableowner
+unknown (OID=1000000)
+
+
+# pg_class: approximate row count
+
+query
+SELECT reltuples AS total
+FROM pg_class
+WHERE relname = 'vedernikoff'
+----
+total
+0
+
+
+# pg_attribute + pg_class: column metadata via catalog directly
+
+query
+SELECT s.nspname, t.relname, a.attname,
+       pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+       a.attnotnull
+FROM pg_attribute a
+  JOIN pg_class t ON a.attrelid = t.oid
+  JOIN pg_namespace s ON t.relnamespace = s.oid
+WHERE a.attnum > 0
+  AND NOT a.attisdropped
+  AND s.nspname = 'public' AND t.relname = 'vedernikoff'
+ORDER BY a.attnum
+----
+nspname	relname	attname	data_type	attnotnull
+public	vedernikoff	id	integer	t
+public	vedernikoff	nickname	text	t
+public	vedernikoff	score	double precision	f
+
+
+# current_schema
+
+query
+SELECT CURRENT_SCHEMA() AS schema
+----
+schema
+public
+
+
+# pg_type: user-defined types (none expected)
+
+query
+SELECT n.nspname AS schema, t.typname AS typename, t.oid::integer AS typeid
+FROM pg_type t
+  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_type el WHERE el.oid = t.typelem AND el.typarray = t.oid)
+----
+schema	typename	typeid
+
+
+# Cleanup
+
+statement ok
+DROP INDEX clickclack_inv
+
+statement ok
+DROP TABLE clickclack
+
+statement ok
+DROP TABLE vedernikoff

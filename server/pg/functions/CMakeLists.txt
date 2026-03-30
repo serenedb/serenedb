@@ -1,1 +1,12 @@
-target_sources(sereneserver PRIVATE extract.cpp interval.cpp json.cpp)
+target_sources(
+    sereneserver
+    PRIVATE
+        array_extra.cpp
+        datetime_extra.cpp
+        extract.cpp
+        interval.cpp
+        json.cpp
+        math_extra.cpp
+        regexp.cpp
+        string_extra.cpp
+)

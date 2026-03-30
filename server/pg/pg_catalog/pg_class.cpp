@@ -22,12 +22,10 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
-#include "catalog/object.h"
-#include "catalog/schema.h"
+#include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
@@ -39,60 +37,109 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::oid),
   GetIndex(&PgClass::relname),
   GetIndex(&PgClass::relnamespace),
+  GetIndex(&PgClass::reltype),
+  GetIndex(&PgClass::reloftype),
+  GetIndex(&PgClass::relowner),
+  GetIndex(&PgClass::relam),
+  GetIndex(&PgClass::relfilenode),
   GetIndex(&PgClass::reltablespace),
+  GetIndex(&PgClass::relpages),
   GetIndex(&PgClass::reltuples),
+  GetIndex(&PgClass::relallvisible),
+  GetIndex(&PgClass::relallfrozen),
+  GetIndex(&PgClass::reltoastrelid),
+  GetIndex(&PgClass::relhasindex),
+  GetIndex(&PgClass::relisshared),
+  GetIndex(&PgClass::relpersistence),
   GetIndex(&PgClass::relkind),
+  GetIndex(&PgClass::relnatts),
+  GetIndex(&PgClass::relchecks),
+  GetIndex(&PgClass::relhasrules),
+  GetIndex(&PgClass::relhastriggers),
+  GetIndex(&PgClass::relhassubclass),
+  GetIndex(&PgClass::relrowsecurity),
+  GetIndex(&PgClass::relforcerowsecurity),
+  GetIndex(&PgClass::relispopulated),
+  GetIndex(&PgClass::relreplident),
+  GetIndex(&PgClass::relispartition),
+  GetIndex(&PgClass::relrewrite),
+  GetIndex(&PgClass::relfrozenxid),
+  GetIndex(&PgClass::relminmxid),
   GetIndex(&PgClass::reloptions),
 });
 
 }  // namespace
 
-void RetrieveObjects(ObjectId database_id,
-                     const catalog::LogicalCatalog& catalog,
-                     std::vector<PgClass>& values,
-                     const catalog::Snapshot& snapshot) {
-  auto insert_object = [&](ObjectId schema_id,
-                           const std::shared_ptr<catalog::Object>& object) {
-    PgClass::Relkind relkind;
-    switch (object->GetType()) {
-      case catalog::ObjectType::Table:
-        relkind = PgClass::Relkind::OrdinaryTable;
-        break;
-      case catalog::ObjectType::View:
-        relkind = PgClass::Relkind::View;
-        break;
-      case catalog::ObjectType::Index:
-        relkind = PgClass::Relkind::Index;
-        break;
-      default:
-        SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
-                  static_cast<uint8_t>(object->GetType()));
-    };
+PgClass MakeBaseRow(ObjectId schema_id, const catalog::SchemaObject& object) {
+  auto owner = object.GetOwnerId();
+  if (!owner) {
+    owner = id::kRootUser;
+  }
+  return {
+    .oid = object.GetId().id(),
+    .relname = object.GetName(),
+    .relnamespace = schema_id.id(),
+    .reltype = 0,
+    .reloftype = 0,
+    .relowner = owner.id(),
+    .relam = 0,
+    .relfilenode = 0,
+    .reltablespace = 0,
+    .relpages = 0,
+    .reltuples = -1,
+    .relallvisible = 0,
+    .relallfrozen = 0,
+    .reltoastrelid = 0,
+    .relhasindex = false,
+    .relisshared = false,
+    .relpersistence = PgClass::Relpersistence::Permanent,
+    .relkind = PgClass::Relkind::OrdinaryTable,
+    .relnatts = 0,
+    .relchecks = 0,
+    .relhasrules = false,
+    .relhastriggers = false,
+    .relhassubclass = false,
+    .relrowsecurity = false,
+    .relforcerowsecurity = false,
+    .relispopulated = true,
+    .relreplident = PgClass::Relreplident::Default,
+    .relispartition = false,
+    .relrewrite = 0,
+    .relfrozenxid = 0,
+    .relminmxid = 0,
+  };
+}
 
-    PgClass row{
-      .oid = object->GetId().id(),
-      .relname = object->GetName(),
-      .relnamespace = schema_id.id(),
-      .reltablespace = 0,
-      .reltuples = -1,
-      .relkind = relkind,
-    };
+void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
+                     const catalog::Snapshot& catalog) {
+  for (const auto& schema : catalog.GetSchemas(database_id)) {
+    const auto schema_id = schema->GetId();
 
-    if (relkind == PgClass::Relkind::OrdinaryTable) {
-      auto shard = snapshot.GetTableShard(object->GetId());
+    for (const auto& table :
+         catalog.GetTables(database_id, schema->GetName())) {
+      auto row = MakeBaseRow(schema_id, *table);
+      row.relkind = PgClass::Relkind::OrdinaryTable;
+      row.relnatts = static_cast<int16_t>(table->Columns().size());
+      row.relchecks = static_cast<int16_t>(table->CheckConstraints().size());
+      row.relhasindex = catalog.HasIndexes(table->GetId());
+      auto shard = catalog.GetTableShard(table->GetId());
       SDB_ASSERT(shard);
-      auto stats = shard->GetTableStats();
-      row.reltuples = static_cast<float>(stats.num_rows);
+      row.reltuples = static_cast<float>(shard->GetTableStats().num_rows);
+      values.push_back(std::move(row));
     }
 
-    // TODO(codeworse): fill other fields
-    values.push_back(std::move(row));
-  };
+    for (const auto& view : catalog.GetViews(database_id, schema->GetName())) {
+      auto row = MakeBaseRow(schema_id, *view);
+      row.relkind = PgClass::Relkind::View;
+      values.push_back(std::move(row));
+    }
 
-  for (const auto& schema : snapshot.GetSchemas(database_id)) {
-    for (const auto& relation :
-         snapshot.GetRelations(database_id, schema->GetName())) {
-      insert_object(schema->GetId(), relation);
+    for (const auto& index :
+         catalog.GetIndexes(database_id, schema->GetName())) {
+      auto row = MakeBaseRow(schema_id, *index);
+      row.relkind = PgClass::Relkind::Index;
+      row.relnatts = static_cast<int16_t>(index->GetColumnIds().size());
+      values.push_back(std::move(row));
     }
   }
 }
@@ -100,34 +147,91 @@ void RetrieveObjects(ObjectId database_id,
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   velox::memory::MemoryPool& pool) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<PgClass>);
   std::vector<PgClass> values;
-  auto snapshot = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), catalog, values, *snapshot);
+  auto catalog = _config.EnsureCatalogSnapshot();
+  RetrieveObjects(GetDatabaseId(), values, *catalog);
 
-  {  // get system tables
+  {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {
+      auto row_type = table.RowType();
+      int16_t natts = row_type ? static_cast<int16_t>(row_type->size()) : 0;
       PgClass row{
         .oid = table.Id().id(),
         .relname = table.Name(),
         .relnamespace = schema_oid,
+        .reltype = 0,
+        .reloftype = 0,
+        .relowner = id::kRootUser.id(),
+        .relam = 0,
+        .relfilenode = 0,
         .reltablespace = 0,
-        .reltuples = -1,  // TODO(codeworse): add numRows for system tables
+        .relpages = 0,
+        .reltuples = -1,
+        .relallvisible = 0,
+        .relallfrozen = 0,
+        .reltoastrelid = 0,
+        .relhasindex = false,
+        .relisshared = false,
+        .relpersistence = PgClass::Relpersistence::Permanent,
         .relkind = PgClass::Relkind::OrdinaryTable,
+        .relnatts = natts,
+        .relchecks = 0,
+        .relhasrules = false,
+        .relhastriggers = false,
+        .relhassubclass = false,
+        .relrowsecurity = false,
+        .relforcerowsecurity = false,
+        .relispopulated = true,
+        .relreplident = PgClass::Relreplident::Default,
+        .relispartition = false,
+        .relrewrite = 0,
+        .relfrozenxid = 0,
+        .relminmxid = 0,
       };
-      // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     });
   }
 
-  boost::pfr::for_each_field(
-    PgClass{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
+  {
+    VisitSystemViews([&](const catalog::View& view, Oid schema_oid) {
+      PgClass row{
+        .oid = view.GetId().id(),
+        .relname = view.GetName(),
+        .relnamespace = schema_oid,
+        .reltype = 0,
+        .reloftype = 0,
+        .relowner = id::kRootUser.id(),
+        .relam = 0,
+        .relfilenode = 0,
+        .reltablespace = 0,
+        .relpages = 0,
+        .reltuples = -1,
+        .relallvisible = 0,
+        .relallfrozen = 0,
+        .reltoastrelid = 0,
+        .relhasindex = false,
+        .relisshared = false,
+        .relpersistence = PgClass::Relpersistence::Permanent,
+        .relkind = PgClass::Relkind::View,
+        .relnatts = 0,
+        .relchecks = 0,
+        .relhasrules = false,
+        .relhastriggers = false,
+        .relhassubclass = false,
+        .relrowsecurity = false,
+        .relforcerowsecurity = false,
+        .relispopulated = true,
+        .relreplident = PgClass::Relreplident::Default,
+        .relispartition = false,
+        .relrewrite = 0,
+        .relfrozenxid = 0,
+        .relminmxid = 0,
+      };
+      values.push_back(std::move(row));
     });
+  }
+
+  auto result = CreateColumns<PgClass>(values, &pool);
 
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row, &pool);

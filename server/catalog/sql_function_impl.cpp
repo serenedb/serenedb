@@ -88,7 +88,8 @@ Result FunctionImpl::Init(ObjectId database, std::string_view name,
     auto search_path = config->Get<VariableType::PgSearchPath>("search_path");
     r = basics::SafeCall([&] {
       pg::Objects objects;
-      pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
+      pg::Disallowed disallowed;
+      disallowed.functions.emplace(pg::Objects::ObjectName{{}, name});
       pg::ResolveSqlFunction(database, search_path, objects, disallowed,
                              _objects, *config);
     });

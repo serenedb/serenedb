@@ -168,7 +168,7 @@ RawStmt* ParseSystemObject(std::string_view query) {
   auto* statements = pg::Parse(*gMemoryContext, query_string);
 
   // Assume that each system object is single statement
-  SDB_ASSERT(list_length(statements) == 1);
+  SDB_ASSERT(list_length(statements) == 1, query);
   return castNode(RawStmt, list_nth(statements, 0));
 }
 

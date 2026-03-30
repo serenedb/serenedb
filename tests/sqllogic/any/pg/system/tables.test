@@ -321,13 +321,13 @@ query
 SELECT oid, typname, typowner, typlen, typbyval, typtype, typcategory, typispreferred, typisdefined, typdelim, typrelid, typelem, typarray  FROM pg_type WHERE typname = 'bool' OR typname = 'int2' OR typname = 'int4' OR typname = 'int8' OR typname = 'text' OR typname = 'float4' OR typname = 'float8' ORDER BY oid
 ----
 oid	typname	typowner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typelem	typarray
-16	bool	10	1	t	b	B	t	t	,	0	0	1000
-20	int8	10	8	t	b	N	f	t	,	0	0	1016
-21	int2	10	2	t	b	N	f	t	,	0	0	1005
-23	int4	10	4	t	b	N	f	t	,	0	0	1007
-25	text	10	-1	f	b	S	t	t	,	0	0	1009
-700	float4	10	4	t	b	N	f	t	,	0	0	1021
-701	float8	10	8	t	b	N	t	t	,	0	0	1022
+16	bool	<slt:ignore>	1	t	b	B	t	t	,	0	0	1000
+20	int8	<slt:ignore>	8	t	b	N	f	t	,	0	0	1016
+21	int2	<slt:ignore>	2	t	b	N	f	t	,	0	0	1005
+23	int4	<slt:ignore>	4	t	b	N	f	t	,	0	0	1007
+25	text	<slt:ignore>	-1	f	b	S	t	t	,	0	0	1009
+700	float4	<slt:ignore>	4	t	b	N	f	t	,	0	0	1021
+701	float8	<slt:ignore>	8	t	b	N	t	t	,	0	0	1022
 
 query
 SELECT * FROM pg_user_mapping LIMIT 0

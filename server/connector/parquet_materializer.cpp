@@ -25,6 +25,7 @@
 #include <velox/dwio/parquet/reader/ParquetReader.h>
 
 #include <cstring>
+#include <ranges>
 
 #include "basics/down_cast.h"
 #include "connector/primary_key.hpp"
@@ -90,19 +91,9 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
   if (_score_column_idx >= 0) {
     SDB_ASSERT(scores);
     auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
-    std::vector<uint32_t> order(total);
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-      return row_keys[a] < row_keys[b];
-    });
-    for (uint32_t i = 0; i < total; ++i) {
-      while (order[i] != i) {
-        uint32_t j = order[i];
-        std::swap(row_keys[i], row_keys[j]);
-        std::swap(score_raw[i], score_raw[j]);
-        std::swap(order[i], order[j]);
-      }
-    }
+    auto score_span = std::span{score_raw, row_keys.size()};
+    std::ranges::sort(std::views::zip(row_keys, score_span), std::less{},
+                      [](const auto& p) { return std::get<0>(p); });
   } else {
     std::sort(row_keys.begin(), row_keys.end());
   }

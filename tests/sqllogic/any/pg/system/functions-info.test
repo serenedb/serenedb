@@ -134,7 +134,7 @@ query
 SELECT pg_is_other_temp_schema(0);
 ----
 pg_is_other_temp_schema
-t
+f
 
 
 onlyif serenedb

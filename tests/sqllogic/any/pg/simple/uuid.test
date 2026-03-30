@@ -12,3 +12,12 @@ SELECT '812e18cb-9e03-4fcb-92a0-a159cd7a513f'::uuid;
 ----
 uuid
 812e18cb-9e03-4fcb-92a0-a159cd7a513f
+
+
+# gen_random_uuid returns valid UUID
+
+query
+SELECT length(gen_random_uuid()::text) = 36 AS valid_length;
+----
+valid_length
+t

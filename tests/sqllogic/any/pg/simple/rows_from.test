@@ -1,0 +1,510 @@
+query
+SELECT * FROM generate_series(1, 5);
+----
+generate_series
+1
+2
+3
+4
+5
+
+
+query
+SELECT * FROM generate_series(1, 10, 3);
+----
+generate_series
+1
+4
+7
+10
+
+
+query
+SELECT * FROM generate_series(5, 1, -1);
+----
+generate_series
+5
+4
+3
+2
+1
+
+
+query
+SELECT * FROM generate_series(69, 69);
+----
+generate_series
+69
+
+
+query
+SELECT * FROM generate_series(420, 422), generate_series(1337, 1338) AS vedernikoff ORDER BY vedernikoff, generate_series;
+----
+generate_series	vedernikoff
+420	1337
+421	1337
+422	1337
+420	1338
+421	1338
+422	1338
+
+
+query
+SELECT generate_series(1, 3);
+----
+generate_series
+1
+2
+3
+
+
+query
+SELECT generate_series(1, 3), generate_series(1, 5);
+----
+generate_series	generate_series
+1	1
+2	2
+3	3
+NULL	4
+NULL	5
+
+
+query
+SELECT generate_series(42, 44) + generate_series(1, 3), generate_series(100, 104);
+----
+?column?	generate_series
+43	100
+45	101
+47	102
+NULL	103
+NULL	104
+
+
+query
+SELECT generate_series(1, 3), 'vedernikoff', 1337, row_number() over();
+----
+generate_series	?column?	?column?	row_number
+1	vedernikoff	1337	1
+2	vedernikoff	1337	1
+3	vedernikoff	1337	1
+
+
+query
+SELECT count(*) FROM generate_series(1, 100);
+----
+count
+100
+
+
+query
+SELECT sum(generate_series) FROM generate_series(1, 10);
+----
+sum
+55
+
+
+query
+SELECT max(gs), min(gs) FROM generate_series(69, 420) AS gs;
+----
+max	min
+420	69
+
+
+query
+SELECT gs % 3 AS bucket, count(*) FROM generate_series(1, 9) AS gs GROUP BY gs % 3 ORDER BY bucket;
+----
+bucket	count
+0	3
+1	3
+2	3
+
+
+query
+SELECT * FROM generate_series(1, 3) AS a, generate_series(10, 11) AS b ORDER BY a, b;
+----
+a	b
+1	10
+1	11
+2	10
+2	11
+3	10
+3	11
+
+
+query error
+SELECT generate_series(1, 3), count(*) over(), sum(generate_series(1, 3)) over();
+----
+db error: ERROR: window function calls cannot contain set-returning function calls
+HINT: You might be able to move the set-returning function into a LATERAL FROM item.
+
+
+query
+SELECT generate_series(1, 3), count(*) over(), sum(generate_series) over() FROM generate_series(1, 3);
+----
+generate_series	count	sum
+1	3	6
+2	3	6
+3	3	6
+1	3	6
+2	3	6
+3	3	6
+1	3	6
+2	3	6
+3	3	6
+
+
+query
+SELECT avg(gs)::float::text FROM generate_series(1, 10) AS gs;
+----
+avg
+5.5
+
+
+query
+SELECT gs / 10 AS decade, sum(gs), count(*) FROM generate_series(1, 30) AS gs GROUP BY gs / 10 ORDER BY decade;
+----
+decade	sum	count
+0	45	9
+1	145	10
+2	245	10
+3	30	1
+
+
+query
+SELECT gs, sum(gs) over(ORDER BY gs) AS running_sum FROM generate_series(1, 5) AS gs;
+----
+gs	running_sum
+1	1
+2	3
+3	6
+4	10
+5	15
+
+
+query
+SELECT a + b AS val FROM generate_series(100, 102) AS a, generate_series(1, 2) AS b ORDER BY val;
+----
+val
+101
+102
+102
+103
+103
+104
+
+
+query error db error: ERROR: column "gs" does not exist
+SELECT generate_series(1, 3) AS gs WHERE gs > 1;
+
+
+query
+SELECT * FROM generate_series(1, 5) AS gs WHERE gs BETWEEN 2 AND 4;
+----
+gs
+2
+3
+4
+
+
+query error db error: ERROR: column "gs" does not exist
+SELECT generate_series(1, 5) AS gs, generate_series(10, 14) AS vs WHERE gs + vs > 14;
+
+
+query
+SELECT gs, count(*) FROM generate_series(1, 6) AS gs GROUP BY gs HAVING gs % 2 = 0 ORDER BY gs;
+----
+gs	count
+2	1
+4	1
+6	1
+
+
+query
+SELECT DISTINCT gs % 3 AS r FROM generate_series(1, 9) AS gs ORDER BY r;
+----
+r
+0
+1
+2
+
+
+query
+SELECT * FROM generate_series(1, 3) AS gs LIMIT 2;
+----
+gs
+1
+2
+
+
+query
+SELECT * FROM generate_series(1, 10) AS gs ORDER BY gs DESC LIMIT 3;
+----
+gs
+10
+9
+8
+
+
+query
+SELECT generate_series(1, 3) + 1000;
+----
+?column?
+1001
+1002
+1003
+
+
+query
+SELECT -generate_series(1, 3);
+----
+?column?
+-1
+-2
+-3
+
+
+query
+SELECT generate_series(1, 3) * generate_series(10, 12);
+----
+?column?
+10
+22
+36
+
+
+statement ok
+CREATE TABLE clickclack(id BIGINT, name TEXT, score BIGINT);
+
+
+statement count 1
+INSERT INTO clickclack VALUES (1, 'vedernikoff', 100);
+
+
+statement count 1
+INSERT INTO clickclack VALUES (2, 'petrov', 200);
+
+
+statement count 1
+INSERT INTO clickclack VALUES (3, 'sidorov', 300);
+
+
+query
+SELECT * FROM clickclack ORDER BY id;
+----
+id	name	score
+1	vedernikoff	100
+2	petrov	200
+3	sidorov	300
+
+
+query
+SELECT c.name, gs FROM clickclack c, generate_series(1, 2) AS gs ORDER BY c.name, gs;
+----
+name	gs
+petrov	1
+petrov	2
+sidorov	1
+sidorov	2
+vedernikoff	1
+vedernikoff	2
+
+
+query
+SELECT c.name, c.score * gs AS multiplied FROM clickclack c, generate_series(1, 3) AS gs ORDER BY c.name, gs;
+----
+name	multiplied
+petrov	200
+petrov	400
+petrov	600
+sidorov	300
+sidorov	600
+sidorov	900
+vedernikoff	100
+vedernikoff	200
+vedernikoff	300
+
+
+query
+SELECT gs, sum(c.score) FROM clickclack c, generate_series(1, 2) AS gs GROUP BY gs ORDER BY gs;
+----
+gs	sum
+1	600
+2	600
+
+
+query
+SELECT c.name, count(*) FROM clickclack c, generate_series(1, 3) AS gs GROUP BY c.name ORDER BY c.name;
+----
+name	count
+petrov	3
+sidorov	3
+vedernikoff	3
+
+
+query
+SELECT c.name, gs, row_number() over(PARTITION BY c.name ORDER BY gs) FROM clickclack c, generate_series(10, 11) AS gs ORDER BY c.name, gs;
+----
+name	gs	row_number
+petrov	10	1
+petrov	11	2
+sidorov	10	1
+sidorov	11	2
+vedernikoff	10	1
+vedernikoff	11	2
+
+
+query
+SELECT c.id, c.name FROM clickclack c WHERE c.id IN (SELECT gs FROM generate_series(1, 2) AS gs) ORDER BY c.id;
+----
+id	name
+1	vedernikoff
+2	petrov
+
+
+query
+SELECT c.name, c.score + generate_series(0, 2) AS boosted FROM clickclack c WHERE c.name = 'vedernikoff';
+----
+name	boosted
+vedernikoff	100
+vedernikoff	101
+vedernikoff	102
+
+
+query
+SELECT name, score FROM clickclack WHERE score > (SELECT avg(gs) FROM generate_series(1, 250) AS gs) ORDER BY name;
+----
+name	score
+petrov	200
+sidorov	300
+
+
+query
+SELECT generate_series(1, 2), generate_series(10, 11), name FROM clickclack ORDER BY 3, 1, 2;
+----
+generate_series	generate_series	name
+1	10	petrov
+2	11	petrov
+1	10	sidorov
+2	11	sidorov
+1	10	vedernikoff
+2	11	vedernikoff
+
+
+query
+SELECT generate_series(1, 3), name, score FROM clickclack WHERE name = 'vedernikoff';
+----
+generate_series	name	score
+1	vedernikoff	100
+2	vedernikoff	100
+3	vedernikoff	100
+
+
+query
+SELECT generate_series(1, 2) AS gs, generate_series(10, 13) AS vs, name FROM clickclack WHERE name = 'sidorov';
+----
+gs	vs	name
+1	10	sidorov
+2	11	sidorov
+NULL	12	sidorov
+NULL	13	sidorov
+
+
+query
+SELECT generate_series(1, 2) AS gs, name, sum(score) over() FROM clickclack ORDER BY name, gs;
+----
+gs	name	sum
+1	petrov	600
+2	petrov	600
+1	sidorov	600
+2	sidorov	600
+1	vedernikoff	600
+2	vedernikoff	600
+
+
+statement ok
+DROP TABLE clickclack;
+
+
+query error
+SELECT * FROM generate_series(1, 10, 0);
+----
+db error: ERROR: step size cannot equal zero
+
+
+query
+SELECT * FROM generate_series(5, 1);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_series(1, -5);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_series(5, 1, 1);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_series(1, 5, -1);
+----
+generate_series
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[10, 20, 30], 1);
+----
+generate_subscripts
+1
+2
+3
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY['a', 'b', 'c', 'd'], 1, true);
+----
+generate_subscripts
+4
+3
+2
+1
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[42], 1);
+----
+generate_subscripts
+1
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[ARRAY[1, 2, 3], ARRAY[4, 5, 6]], 1);
+----
+generate_subscripts
+1
+2
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[ARRAY[1, 2, 3], ARRAY[4, 5, 6]], 2);
+----
+generate_subscripts
+1
+2
+3
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[1, 2, 3], 2);
+----
+generate_subscripts
+
+
+query
+SELECT * FROM generate_subscripts(ARRAY[]::int[], 1);
+----
+generate_subscripts

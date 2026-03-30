@@ -1,0 +1,139 @@
+# Tests for additional array functions
+
+
+# array_sort
+
+query
+SELECT array_sort(ARRAY[3, 1, 4, 1, 5]);
+----
+array_sort
+{1,1,3,4,5}
+
+
+# array_remove
+
+query
+SELECT array_remove(ARRAY[1, 2, 3, 2], 2);
+----
+array_remove
+{1,3}
+
+
+# trim_array
+
+query
+SELECT trim_array(ARRAY[1, 2, 3, 4, 5], 2);
+----
+trim_array
+{1,2,3}
+
+
+# string_to_array
+
+query
+SELECT string_to_array('a,b,c', ',');
+----
+string_to_array
+{a,b,c}
+
+
+query
+SELECT string_to_array('one', ',');
+----
+string_to_array
+{one}
+
+
+query
+SELECT string_to_array('xx~~yy~~zz', '~~');
+----
+string_to_array
+{xx,yy,zz}
+
+
+# array_positions
+
+query
+SELECT array_positions(ARRAY['A','A','B','A'], 'A');
+----
+array_positions
+{1,2,4}
+
+
+# array_replace
+
+query
+SELECT array_replace(ARRAY[1,2,5,4], 5, 3);
+----
+array_replace
+{1,2,3,4}
+
+
+# array_cat
+
+query
+SELECT array_cat(ARRAY[1,2,3], ARRAY[4,5]);
+----
+array_cat
+{1,2,3,4,5}
+
+
+# array_prepend
+
+query
+SELECT array_prepend(1, ARRAY[2,3]);
+----
+array_prepend
+{1,2,3}
+
+
+# array_append (mapped to spark)
+
+query
+SELECT array_append(ARRAY[1,2], 3);
+----
+array_append
+{1,2,3}
+
+
+# array_ndims
+
+query
+SELECT array_ndims(ARRAY[1,2,3]);
+----
+array_ndims
+1
+
+
+query
+SELECT array_ndims(ARRAY[[1,2],[3,4]]);
+----
+array_ndims
+2
+
+
+# array_lower
+
+query
+SELECT array_lower(ARRAY[1,2,3], 1);
+----
+array_lower
+1
+
+
+# array_upper
+
+query
+SELECT array_upper(ARRAY[1,8,3,7], 1);
+----
+array_upper
+4
+
+
+# array_dims
+
+query
+SELECT array_dims(ARRAY[[1,2,3],[4,5,6]]);
+----
+array_dims
+[1:2][1:3]

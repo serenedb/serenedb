@@ -20,46 +20,40 @@
 
 #include "pg/pg_catalog/pg_namespace.h"
 
-#include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb::pg {
 namespace {
 
-constexpr auto kPgCatalog = PgNamespace{
-  .oid = id::kPgCatalogSchema.id(),
-  .nspname = "pg_catalog",
-};
-
-// Actually information_schema oid is not fixed in postgres,
-// but we forbid to drop/create it, so we can use a fixed oid here.
-constexpr auto kPgInformationSchema = PgNamespace{
-  .oid = id::kPgInformationSchema.id(),
-  .nspname = "information_schema",
-};
-
 constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgNamespace::oid),
   GetIndex(&PgNamespace::nspname),
+  GetIndex(&PgNamespace::nspowner),
 });
 
-void RetrieveObjects(ObjectId database_id,
-                     const catalog::LogicalCatalog& catalog,
-                     std::vector<PgNamespace>& values,
+void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
                      const catalog::Snapshot& snapshot) {
-  auto schemas = snapshot.GetSchemas(database_id);
-
-  values.emplace_back(kPgCatalog);
-  values.emplace_back(kPgInformationSchema);
-  for (const auto& object : schemas) {
-    PgNamespace row{
-      .oid = object->GetId().id(),
-      .nspname = object->GetName(),
-    };
-
-    // TODO(codeworse): fill other fields
-    values.emplace_back(std::move(row));
+  values.push_back({
+    .oid = id::kPgCatalogSchema.id(),
+    .nspname = "pg_catalog",
+    .nspowner = id::kRootUser.id(),
+  });
+  values.push_back({
+    .oid = id::kPgInformationSchema.id(),
+    .nspname = "information_schema",
+    .nspowner = id::kRootUser.id(),
+  });
+  for (const auto& schema : snapshot.GetSchemas(database_id)) {
+    auto owner = schema->GetOwnerId();
+    if (!owner) {
+      owner = id::kRootUser;
+    }
+    values.push_back({
+      .oid = schema->GetId().id(),
+      .nspname = schema->GetName(),
+      .nspowner = owner,
+    });
   }
 }
 
@@ -68,12 +62,9 @@ void RetrieveObjects(ObjectId database_id,
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<PgNamespace>::GetTableData(
   velox::memory::MemoryPool& pool) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-
   std::vector<PgNamespace> values;
   auto snapshot = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), catalog, values, *snapshot);
+  RetrieveObjects(GetDatabaseId(), values, *snapshot);
 
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgNamespace>);

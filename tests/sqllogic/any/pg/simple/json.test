@@ -136,3 +136,79 @@ SELECT json_extract_path('{"a": {"b": [1, 2, 3]}}'::json, 'a', 'b') -> -1;
 ----
 ?column?
 3
+
+
+# json_typeof
+
+query
+SELECT json_typeof('123'::json);
+----
+json_typeof
+number
+
+
+query
+SELECT json_typeof('"hello"'::json);
+----
+json_typeof
+string
+
+
+query
+SELECT json_typeof('true'::json);
+----
+json_typeof
+boolean
+
+
+query
+SELECT json_typeof('null'::json);
+----
+json_typeof
+null
+
+
+query
+SELECT json_typeof('[1,2]'::json);
+----
+json_typeof
+array
+
+
+query
+SELECT json_typeof('{"a":1}'::json);
+----
+json_typeof
+object
+
+
+# json_array_length
+
+query
+SELECT json_array_length('[1,2,3,{"f1":1,"f2":[5,6]},4]'::json);
+----
+json_array_length
+5
+
+
+query
+SELECT json_array_length('[]'::json);
+----
+json_array_length
+0
+
+
+# json_strip_nulls
+
+query
+SELECT json_strip_nulls('[{"f1":1,"f2":null},2,null,3]'::json);
+----
+json_strip_nulls
+[{"f1":1},2,null,3]
+
+
+query
+SELECT json_strip_nulls('{"a":1,"b":null,"c":{"d":null,"e":2}}'::json);
+----
+json_strip_nulls
+{"a":1,"c":{"e":2}}

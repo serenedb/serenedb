@@ -76,14 +76,14 @@ TEST(collation_token_stream_test, empty_analyzer) {
 
 TEST(collation_token_stream_test, test_byte_encoder) {
   uint8_t target{0x0};
-  ASSERT_EQ(256, kRecalcMap.size());
+  ASSERT_EQ(256, irs::kRecalcMap.size());
   do {
     --target;
     const auto expected = Encode(target);
-    const auto actual = kRecalcMap[target];
+    const auto actual = irs::kRecalcMap[target];
     ASSERT_EQ(expected.size(), actual.second);
     for (size_t i = 0; i < expected.size(); ++i) {
-      ASSERT_EQ(expected[i], kBytesRecalcMap[actual.first + i]);
+      ASSERT_EQ(expected[i], irs::kBytesRecalcMap[actual.first + i]);
     }
   } while (target != 0);
 }

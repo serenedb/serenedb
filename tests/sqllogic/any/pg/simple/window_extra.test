@@ -1,0 +1,124 @@
+# Tests for additional window functions (lag, lead, first_value, last_value)
+
+
+# Setup
+
+statement ok
+CREATE TABLE win_data (id INT PRIMARY KEY, val TEXT, grp INT)
+
+
+statement ok
+INSERT INTO win_data VALUES (1, 'a', 1), (2, 'b', 1), (3, 'c', 2), (4, 'd', 2), (5, 'e', 2)
+
+
+# lag
+
+query
+SELECT id, val, lag(val) OVER (ORDER BY id) AS prev_val
+FROM win_data
+ORDER BY id
+----
+id	val	prev_val
+1	a	NULL
+2	b	a
+3	c	b
+4	d	c
+5	e	d
+
+
+# lag with offset
+
+query
+SELECT id, val, lag(val, 2) OVER (ORDER BY id) AS prev2
+FROM win_data
+ORDER BY id
+----
+id	val	prev2
+1	a	NULL
+2	b	NULL
+3	c	a
+4	d	b
+5	e	c
+
+
+# lag with default
+
+query
+SELECT id, lag(val, 1, 'none') OVER (ORDER BY id) AS prev_val
+FROM win_data
+ORDER BY id
+----
+id	prev_val
+1	none
+2	a
+3	b
+4	c
+5	d
+
+
+# lead
+
+query
+SELECT id, val, lead(val) OVER (ORDER BY id) AS next_val
+FROM win_data
+ORDER BY id
+----
+id	val	next_val
+1	a	b
+2	b	c
+3	c	d
+4	d	e
+5	e	NULL
+
+
+# lead with offset and default
+
+query
+SELECT id, lead(val, 2, 'end') OVER (ORDER BY id) AS next2
+FROM win_data
+ORDER BY id
+----
+id	next2
+1	c
+2	d
+3	e
+4	end
+5	end
+
+
+# first_value
+
+query
+SELECT id, val, first_value(val) OVER (PARTITION BY grp ORDER BY id) AS fv
+FROM win_data
+ORDER BY id
+----
+id	val	fv
+1	a	a
+2	b	a
+3	c	c
+4	d	c
+5	e	c
+
+
+# last_value (with proper frame)
+
+query
+SELECT id, val,
+  last_value(val) OVER (PARTITION BY grp ORDER BY id
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS lv
+FROM win_data
+ORDER BY id
+----
+id	val	lv
+1	a	b
+2	b	b
+3	c	e
+4	d	e
+5	e	e
+
+
+# Cleanup
+
+statement ok
+DROP TABLE win_data

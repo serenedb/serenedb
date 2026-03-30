@@ -100,72 +100,32 @@ class Table : public SchemaObject {
 
   // helpers
 
+  const auto& PKType() const noexcept { return _lookup_cache.pk_type; }
+  const auto& RowType() const noexcept { return _lookup_cache.row_type; }
+
   using NameToColumnMap =
     containers::FlatHashMap<std::string_view, const catalog::Column*>;
+
+  const auto& NameToColumn() const noexcept {
+    return _lookup_cache.name2column;
+  }
   using IdToColumnMap =
     containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
 
-  const auto& PKType() const noexcept { return _helpers.pk_type; }
-  const auto& RowType() const noexcept { return _helpers.row_type; }
-  const auto& NameToColumn() const noexcept { return _helpers.name2column; }
-  const auto& IdToColumn() const noexcept { return _helpers.id2column; }
+  const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
 
  private:
   struct TableOutput;
   TableOutput MakeTableOptions() const;
 
-  // Helpers that're supposed to be reset on each change and used for efficient
-  // lookups.
-  struct Helpers {
-    void Reset(std::span<const catalog::Column> columns,
-               std::span<const catalog::Column::Id> pk_columns) {
-      name2column.reserve(columns.size());
-      id2column.reserve(columns.size());
-      for (const auto& column : columns) {
-        name2column.emplace(column.name, &column);
-        id2column.emplace(column.id, &column);
-      }
-
-      pk_type = BuildPkType(columns, pk_columns);
-      row_type = BuildRowType(columns);
-    }
+  struct LookupCache {
+    LookupCache(std::span<const catalog::Column> columns,
+                std::span<const catalog::Column::Id> pk_columns);
 
     NameToColumnMap name2column;
     IdToColumnMap id2column;
     velox::RowTypePtr pk_type;
     velox::RowTypePtr row_type;
-
-   private:
-    velox::RowTypePtr BuildPkType(std::span<const Column> columns,
-                                  std::span<const Column::Id> pk_columns) {
-      std::vector<std::string> names;
-      std::vector<velox::TypePtr> types;
-      names.reserve(pk_columns.size());
-      types.reserve(pk_columns.size());
-
-      for (auto pk_col_id : pk_columns) {
-        auto it = absl::c_find_if(
-          columns, [&](const Column& col) { return col.id == pk_col_id; });
-        SDB_ASSERT(it != columns.end());
-        names.emplace_back(it->name);
-        types.emplace_back(it->type);
-      }
-
-      return velox::ROW(std::move(names), std::move(types));
-    }
-
-    velox::RowTypePtr BuildRowType(std::span<const Column> columns) {
-      std::vector<std::string> names;
-      std::vector<velox::TypePtr> types;
-      names.reserve(columns.size());
-      types.reserve(columns.size());
-      for (const auto& col : columns) {
-        names.emplace_back(col.name);
-        types.emplace_back(col.type);
-      }
-
-      return velox::ROW(std::move(names), std::move(types));
-    }
   };
 
   const TableType _type = TableType::Unknown;
@@ -191,7 +151,7 @@ class Table : public SchemaObject {
   uint32_t _write_concern = 1;
   FileInfo _file_info;
 
-  Helpers _helpers;
+  LookupCache _lookup_cache;
 };
 
 }  // namespace sdb::catalog

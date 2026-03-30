@@ -1,0 +1,116 @@
+# SereneDB-specific math error tests
+# (PG has different function signatures for some of these)
+
+
+# div overflow: INT64_MIN / -1
+
+statement error
+SELECT div('-9223372036854775808'::bigint, (-1)::bigint);
+----
+db error: ERROR: bigint out of range
+
+
+# gcd overflow: gcd(INT_MIN)
+
+statement error
+SELECT gcd('-2147483648'::int, 1);
+----
+db error: ERROR: integer out of range
+
+
+statement error
+SELECT gcd('-9223372036854775808'::bigint, 1::bigint);
+----
+db error: ERROR: bigint out of range
+
+
+# lcm overflow
+
+statement error
+SELECT lcm(2147483647, 2147483646);
+----
+db error: ERROR: integer out of range
+
+
+statement error
+SELECT lcm('9223372036854775807'::bigint, 2::bigint);
+----
+db error: ERROR: bigint out of range
+
+
+# log domain errors
+
+statement error
+SELECT log(10.0, -1.0);
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+statement error
+SELECT log(10.0, 0.0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+statement error
+SELECT log(-1.0, 10.0);
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+statement error
+SELECT log(1.0, 10.0);
+----
+db error: ERROR: division by zero
+
+
+# cotd division by zero
+
+statement error
+SELECT cotd(0);
+----
+db error: ERROR: division by zero
+
+
+# Fix #8: div() with large doubles must error, not UB
+
+statement error
+SELECT div(1e300, 1.0);
+
+
+# make_timestamp with invalid hour/minute/second
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 25, 0, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, 60, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, 0, 61);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, -1, 0, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, -1, 0);
+----
+db error: ERROR: date/time field value out of range
+
+
+statement error
+SELECT make_timestamp(2024, 1, 1, 0, 0, -1);
+----
+db error: ERROR: date/time field value out of range

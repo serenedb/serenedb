@@ -1,0 +1,108 @@
+statement error
+SELECT encode('\x00'::bytea, 'invalid_format');
+----
+db error: ERROR: unrecognized encoding: "invalid_format"
+
+
+statement error
+SELECT decode('data', 'invalid_format');
+----
+db error: ERROR: unrecognized encoding: "invalid_format"
+
+
+# get_byte / set_byte out of range
+
+statement error
+SELECT get_byte('\x01'::bytea, 5);
+----
+db error: ERROR: index 5 out of valid range, 0..0
+
+
+statement error
+SELECT get_byte('\x01'::bytea, -1);
+----
+db error: ERROR: index -1 out of valid range, 0..0
+
+
+statement error
+SELECT set_byte('\x01'::bytea, 5, 0);
+----
+db error: ERROR: index 5 out of valid range, 0..0
+
+
+# get_bit / set_bit out of range
+
+statement error
+SELECT get_bit('\x01'::bytea, 100);
+----
+db error: ERROR: index 100 out of valid range, 0..7
+
+
+statement error
+SELECT set_bit('\x01'::bytea, 100, 0);
+----
+db error: ERROR: index 100 out of valid range, 0..7
+
+
+# division by zero
+
+statement error
+SELECT div(10, 0);
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT div(10.0, 0.0);
+----
+db error: ERROR: division by zero
+
+
+# make_date / make_timestamp out of range
+
+statement error
+SELECT make_date(2024, 13, 1);
+----
+db error: ERROR: date field value out of range: 2024-13-01
+
+
+statement error
+SELECT make_timestamp(2024, 13, 1, 0, 0, 0);
+----
+db error: ERROR: date field value out of range: 2024-13-01
+
+
+# date_bin invalid stride
+
+statement error
+SELECT date_bin('0 seconds'::interval, '2024-01-15 12:00:00'::timestamp, '2024-01-01 00:00:00'::timestamp);
+----
+db error: ERROR: stride must be greater than zero
+
+
+statement error
+SELECT date_bin('1 month'::interval, '2024-01-15 12:00:00'::timestamp, '2024-01-01 00:00:00'::timestamp);
+----
+db error: ERROR: timestamps cannot be binned into intervals containing months or years
+
+
+# get_byte / get_bit on empty data
+
+statement error
+SELECT get_byte(''::bytea, 0);
+----
+db error: ERROR: index 0 out of valid range, 0..-1
+
+
+statement error
+SELECT get_bit(''::bytea, 0);
+----
+db error: ERROR: index 0 out of valid range, 0..-1
+
+
+# current_setting unknown parameter
+
+statement error
+SELECT current_setting('nonexistent_parameter');
+----
+db error: ERROR: unrecognized configuration parameter "nonexistent_parameter"

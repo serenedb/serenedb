@@ -313,6 +313,11 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
     _connection_ctx = std::make_shared<ConnectionContext>(
       UserName(), DatabaseName(), database->GetId(), &_send, &_copy_queue);
+    // TODO(codeworse): Move this to ctor and add more parameters there.
+    _connection_ctx->SetSetting("session_authorization",
+                                std::string{UserName()}, false);
+    _connection_ctx->SetSetting(
+      "is_superuser", _connection_ctx->isSuperuser() ? "on" : "off", false);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{
@@ -371,15 +376,18 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
           "in_hot_standby",
           "integer_datetimes",
           "IntervalStyle",
+          "is_superuser",
           "scram_iterations",
           "search_path",
           "server_encoding",
           "server_version",
+          "session_authorization",
           "standard_conforming_strings",
           "TimeZone",
         });
       for (const auto param : kParameterStatusVariables) {
-        SendParameterStatus(param, GetDefaultVariable(param));
+        // TODO(codeworse): Avoid copy string in GetSetting
+        SendParameterStatus(param, *_connection_ctx->GetSetting(param));
       }
 
       _send.Write(ToBuffer(kReadyForQuery), true);

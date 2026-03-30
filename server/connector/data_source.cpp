@@ -79,7 +79,10 @@ void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto& flat = static_cast<velox::FlatVector<T>&>(result);
   for (size_t i = 0; i < values.size(); ++i) {
-    SDB_ASSERT(!values[i].empty());
+    if (values[i].empty()) {
+      flat.setNull(offset + i, true);
+      continue;
+    }
     SetResultValue(values[i].ToStringView(), offset + i, flat);
   }
 }

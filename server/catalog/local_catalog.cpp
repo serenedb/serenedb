@@ -409,11 +409,43 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<SchemaObject>>{});
   }
 
+  std::vector<std::shared_ptr<Table>> GetTables(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        return schema_deps->tables |
+               std::views::transform([&](ObjectId table_id) {
+                 auto it = _objects.find(table_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<Table>(*it);
+               }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Table>>{});
+  }
+
+  std::vector<std::shared_ptr<View>> GetViews(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        return schema_deps->views |
+               std::views::transform([&](ObjectId view_id) {
+                 auto it = _objects.find(view_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<View>(*it);
+               }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<View>>{});
+  }
+
   std::vector<std::shared_ptr<Function>> GetFunctions(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
-        auto schema_deps = GetDependency<SchemaDependency>(schema_id);
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
         return schema_deps->functions |
                std::views::transform([&](ObjectId function_id) {
                  auto it = _objects.find(function_id);
@@ -423,6 +455,39 @@ class SnapshotImpl : public Snapshot {
                std::ranges::to<std::vector>();
       })
       .value_or(std::vector<std::shared_ptr<Function>>{});
+  }
+
+  std::vector<std::shared_ptr<Index>> GetIndexes(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        std::vector<std::shared_ptr<Index>> result;
+        const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
+        for (const auto table_id : schema_deps->tables) {
+          const auto& table_deps = GetDependency<TableDependency>(table_id);
+          for (const auto index_id : table_deps->indexes) {
+            auto it = _objects.find(index_id);
+            SDB_ASSERT(it != _objects.end());
+            result.push_back(basics::downCast<Index>(*it));
+          }
+        }
+        return result;
+      })
+      .value_or(std::vector<std::shared_ptr<Index>>{});
+  }
+
+  std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        return _resolution_table.GetTokenizerIds(schema_id) |
+               std::views::transform(
+                 [&](ObjectId tokenizer_id) -> std::shared_ptr<Tokenizer> {
+                   return GetObject<Tokenizer>(tokenizer_id);
+                 }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
   }
 
   std::shared_ptr<Database> GetDatabase(std::string_view database) const final {
@@ -502,6 +567,10 @@ class SnapshotImpl : public Snapshot {
       return nullptr;
     }
     return basics::downCast<Table>(rel);
+  }
+
+  bool HasIndexes(ObjectId table_id) const final {
+    return !GetDependency<TableDependency>(table_id)->indexes.empty();
   }
 
   std::shared_ptr<Object> GetObject(ObjectId id) const final {

@@ -42,7 +42,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-namespace {
 
 template<typename T>
 bool ValidateJson(T& value) {
@@ -96,8 +95,6 @@ bool ValidateJson(T& value) {
       return false;
   }
 }
-
-}  // namespace
 
 class JsonParser {
  public:
@@ -356,6 +353,131 @@ struct PgJsonOutFunction {
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<velox::Json>& input) {
     result.setNoCopy(input);
+  }
+};
+
+// Returns the type of the outermost JSON value as a text string:
+// object, array, string, number, boolean, or null.
+template<typename T>
+struct PgJsonTypeof {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<velox::Json>& input) {
+    std::string_view sv(input.data(), input.size());
+    simdjson::ondemand::parser parser;
+    simdjson::padded_string padded(sv);
+    auto doc = parser.iterate(padded);
+    auto tp = doc.type();
+    if (tp.error()) {
+      result.copy_from("null");
+      return;
+    }
+    switch (tp.value()) {
+      case simdjson::ondemand::json_type::object:
+        result.copy_from("object");
+        break;
+      case simdjson::ondemand::json_type::array:
+        result.copy_from("array");
+        break;
+      case simdjson::ondemand::json_type::string:
+        result.copy_from("string");
+        break;
+      case simdjson::ondemand::json_type::number:
+        result.copy_from("number");
+        break;
+      case simdjson::ondemand::json_type::boolean:
+        result.copy_from("boolean");
+        break;
+      default:
+        result.copy_from("null");
+        break;
+    }
+  }
+};
+
+// Recursively removes all object fields with null values.
+template<typename T>
+struct PgJsonStripNulls {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Json>& result, const arg_type<velox::Json>& input) {
+    std::string_view sv(input.data(), input.size());
+    simdjson::ondemand::parser parser;
+    simdjson::padded_string padded(sv);
+    simdjson::ondemand::document doc;
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("invalid JSON"));
+    }
+    std::string out;
+    writeValue(doc, out);
+    result.resize(out.size());
+    std::memcpy(result.data(), out.data(), out.size());
+  }
+
+ private:
+  void writeValue(simdjson::ondemand::value val, std::string& out) {
+    switch (val.type().value()) {
+      case simdjson::ondemand::json_type::object:
+        writeObject(val.get_object().value(), out);
+        break;
+      case simdjson::ondemand::json_type::array:
+        writeArray(val.get_array().value(), out);
+        break;
+      default:
+        out += val.raw_json_token();
+        break;
+    }
+  }
+
+  void writeValue(simdjson::ondemand::document& doc, std::string& out) {
+    switch (doc.type().value()) {
+      case simdjson::ondemand::json_type::object:
+        writeObject(doc.get_object().value(), out);
+        break;
+      case simdjson::ondemand::json_type::array:
+        writeArray(doc.get_array().value(), out);
+        break;
+      default:
+        out += doc.raw_json_token().value();
+        break;
+    }
+  }
+
+  void writeObject(simdjson::ondemand::object obj, std::string& out) {
+    out += '{';
+    bool first = true;
+    for (auto field : obj) {
+      simdjson::ondemand::value val = field.value();
+      if (val.type().value() == simdjson::ondemand::json_type::null) {
+        continue;  // Skip null fields
+      }
+      if (!first) {
+        out += ',';
+      }
+      first = false;
+      out += '"';
+      out += field.escaped_key().value();
+      out += '"';
+      out += ':';
+      writeValue(val, out);
+    }
+    out += '}';
+  }
+
+  void writeArray(simdjson::ondemand::array arr, std::string& out) {
+    out += '[';
+    bool first = true;
+    for (simdjson::ondemand::value elem : arr) {
+      if (!first) {
+        out += ',';
+      }
+      first = false;
+      writeValue(elem, out);
+    }
+    out += ']';
   }
 };
 

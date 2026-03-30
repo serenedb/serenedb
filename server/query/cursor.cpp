@@ -53,17 +53,17 @@ Cursor::Process Cursor::NextImpl(velox::RowVectorPtr& batch) {
       continue;
     }
 
-    if (f.Ready()) {
-      // for futures completed in this thread DetachInline would call user_task
-      // on this thread and would cause a deadlock - ProcessWakeup locks mtx
-      std::ignore = std::move(f).Touch().Ok();
-      continue;
+    // !f.Ready() is just performance optimization.
+    if (!f.Ready() && f.TryDetachInline([user_task = _user_task](auto r) {
+          user_task(std::move(r));
+        })) {
+      return Process::Wait;
     }
 
-    std::move(f).DetachInline([user_task = _user_task](yaclib::Result<> r) {
-      user_task(std::move(r));
-    });
-    return Process::Wait;
+    // Future completed before callback could be installed - consume inline.
+    // Because otherwise DetachInline would call user_task on this thread
+    // and would cause a deadlock - ProcessWakeup locks mtx.
+    std::ignore = std::move(f).Touch().Ok();
   }
 
   return Process::Done;

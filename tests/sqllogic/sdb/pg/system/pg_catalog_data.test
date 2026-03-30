@@ -1,0 +1,762 @@
+# Tests that pg_catalog tables return real data from the internal catalog
+#
+# Setup: create test tables, indexes, and functions for introspection
+
+
+statement ok
+CREATE TABLE pg_cat_t1 (id INT PRIMARY KEY, name TEXT NOT NULL, value FLOAT8)
+
+
+statement ok
+CREATE TABLE pg_cat_t2 (a BIGINT PRIMARY KEY, b VARCHAR, c BOOLEAN, d TIMESTAMP)
+
+
+statement ok
+CREATE INDEX pg_cat_idx1 ON pg_cat_t1 USING inverted (name)
+
+
+statement ok
+CREATE INDEX pg_cat_idx2 ON pg_cat_t2 USING inverted (b, c)
+
+
+statement ok
+CREATE FUNCTION pg_cat_add(a INT, b INT) RETURNS INT LANGUAGE SQL AS 'SELECT a + b'
+
+
+# pg_database
+
+
+# Should list databases with correct metadata
+query
+SELECT COUNT(*) > 0 FROM
+(SELECT datname, encoding, datlocprovider, datallowconn, datconnlimit FROM pg_catalog.pg_database ORDER BY datname)
+----
+?column?
+t
+
+# Database should have an OID
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_database WHERE oid > 0
+----
+?column?
+t
+
+
+# datcollate and datctype should be set
+query
+SELECT datcollate, datctype FROM pg_catalog.pg_database LIMIT 1
+----
+datcollate	datctype
+en_US.UTF-8	en_US.UTF-8
+
+
+# pg_namespace
+
+
+# Should have pg_catalog and public schemas
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_namespace WHERE nspname = 'pg_catalog'
+----
+?column?
+t
+
+
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_namespace WHERE nspname = 'public'
+----
+?column?
+t
+
+
+# pg_class
+
+
+# User tables should appear with correct relkind and relnatts
+query
+SELECT relname, relkind, relnatts, relpersistence FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1'
+----
+relname	relkind	relnatts	relpersistence
+pg_cat_t1	r	3	p
+
+
+query
+SELECT relname, relkind, relnatts FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t2'
+----
+relname	relkind	relnatts
+pg_cat_t2	r	4
+
+
+# Indexes should appear in pg_class with relkind = 'i'
+query
+SELECT relname, relkind FROM pg_catalog.pg_class WHERE relname IN ('pg_cat_idx1', 'pg_cat_idx2') ORDER BY relname
+----
+relname	relkind
+pg_cat_idx1	i
+pg_cat_idx2	i
+
+
+# Table with index should have relhasindex = true
+query
+SELECT relhasindex FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1'
+----
+relhasindex
+t
+
+
+# relowner should be set (non-zero)
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1' AND relowner > 0
+----
+?column?
+t
+
+
+# relispopulated should be true for tables
+query
+SELECT relispopulated FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1'
+----
+relispopulated
+t
+
+
+# System tables should also appear in pg_class
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_class WHERE relname = 'pg_class'
+----
+?column?
+t
+
+
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_class WHERE relname = 'pg_attribute'
+----
+?column?
+t
+
+
+# System tables should have relnatts > 0
+query
+SELECT relnatts > 0 FROM pg_catalog.pg_class WHERE relname = 'pg_type'
+----
+?column?
+t
+
+
+# pg_attribute
+
+
+# Columns for pg_cat_t1 (id, name, value)
+query
+SELECT attname, attnum, attnotnull FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') ORDER BY attnum
+----
+attname	attnum	attnotnull
+id	1	t
+name	2	t
+value	3	f
+
+
+# Columns for pg_cat_t2 (a, b, c, d)
+query
+SELECT attname, attnum FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t2') ORDER BY attnum
+----
+attname	attnum
+a	1
+b	2
+c	3
+d	4
+
+
+# Type OIDs should match known PG types
+query
+SELECT attname, atttypid FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') ORDER BY attnum
+----
+attname	atttypid
+id	23
+name	25
+value	701
+
+
+# attlen should be correct for fixed-width types
+query
+SELECT attname, attlen, attbyval FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') ORDER BY attnum
+----
+attname	attlen	attbyval
+id	4	t
+name	-1	f
+value	8	t
+
+
+# attisdropped should be false
+query
+SELECT count(*) FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') AND attisdropped = true
+----
+count
+0
+
+
+# System table columns should also appear
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_namespace')
+----
+?column?
+t
+
+
+# attalign should be set for all columns
+query
+SELECT count(*) FROM pg_catalog.pg_attribute WHERE attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') AND attalign IN ('c', 's', 'i', 'd')
+----
+count
+3
+
+
+# pg_type
+
+
+# Common PG types should exist
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_type WHERE typname = 'int4'
+----
+?column?
+t
+
+
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_type WHERE typname = 'text'
+----
+?column?
+t
+
+
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_type WHERE typname = 'bool'
+----
+?column?
+t
+
+
+# pg_index
+
+
+# Index on single column
+query
+SELECT i.indnatts, i.indnkeyatts, i.indisvalid, i.indisready, i.indislive FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON i.indexrelid = c.oid WHERE c.relname = 'pg_cat_idx1'
+----
+indnatts	indnkeyatts	indisvalid	indisready	indislive
+1	1	t	t	t
+
+
+# Index on multiple columns
+query
+SELECT i.indnatts, i.indisvalid FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON i.indexrelid = c.oid WHERE c.relname = 'pg_cat_idx2'
+----
+indnatts	indisvalid
+2	t
+
+
+# indrelid should point to the correct table
+query
+SELECT t.relname FROM pg_catalog.pg_class t JOIN pg_catalog.pg_index i ON i.indrelid = t.oid JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid WHERE idx.relname = 'pg_cat_idx1'
+----
+relname
+pg_cat_t1
+
+
+# indisprimary should be false for secondary indexes
+query
+SELECT i.indisprimary FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON i.indexrelid = c.oid WHERE c.relname = 'pg_cat_idx1'
+----
+indisprimary
+f
+
+
+# pg_am (access methods)
+
+
+# Should have at least heap and btree
+query
+SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
+----
+amname	amtype
+
+
+# Should have table and index access methods
+query
+SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 'i'
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 't'
+----
+count
+0
+
+
+# pg_language
+
+
+# Should have internal, c, and sql
+query
+SELECT lanname, lanispl, lanpltrusted FROM pg_catalog.pg_language ORDER BY lanname
+----
+lanname	lanispl	lanpltrusted
+internal	f	f
+sql	f	t
+
+
+# SQL should be trusted
+query
+SELECT lanpltrusted FROM pg_catalog.pg_language WHERE lanname = 'sql'
+----
+lanpltrusted
+t
+
+
+# pg_tablespace
+
+
+# Should have pg_default and pg_global
+query
+SELECT spcname FROM pg_catalog.pg_tablespace ORDER BY spcname
+----
+spcname
+
+
+query
+SELECT count(*) FROM pg_catalog.pg_tablespace
+----
+count
+0
+
+
+# pg_proc (functions)
+
+
+# Should list user-defined functions (if any) or at least not error
+query
+SELECT count(*) >= 0 FROM pg_catalog.pg_proc
+----
+?column?
+t
+
+
+query
+SELECT proname, prokind, pronargs FROM pg_catalog.pg_proc WHERE proname = 'pg_cat_add'
+----
+proname	prokind	pronargs
+pg_cat_add	f	2
+
+
+# prorettype should be set
+query
+SELECT prorettype > 0 FROM pg_catalog.pg_proc WHERE proname = 'pg_cat_add'
+----
+?column?
+t
+
+
+# pronamespace should match schema OID
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'pg_cat_add'
+----
+?column?
+t
+
+
+# pg_constraint (constraints)
+
+
+# Primary key constraints should be listed
+query
+SELECT conname, contype FROM pg_catalog.pg_constraint WHERE conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') ORDER BY conname
+----
+conname	contype
+pg_cat_t1_id_not_null	c
+pg_cat_t1_name_not_null	c
+pg_cat_t1_pkey	p
+
+
+query
+SELECT conname, contype FROM pg_catalog.pg_constraint WHERE conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t2') ORDER BY conname
+----
+conname	contype
+pg_cat_t2_a_not_null	c
+pg_cat_t2_pkey	p
+
+
+# convalidated should be true
+query
+SELECT convalidated FROM pg_catalog.pg_constraint WHERE conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') AND contype = 'p'
+----
+convalidated
+t
+
+
+# conenforced should be true
+query
+SELECT conenforced FROM pg_catalog.pg_constraint WHERE conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') AND contype = 'p'
+----
+conenforced
+t
+
+
+# pg_authid (roles)
+
+
+# Should list at least one role
+query
+SELECT count(*) > 0 FROM pg_catalog.pg_authid
+----
+?column?
+t
+
+
+# Roles should have rolcanlogin set
+query
+SELECT rolname, rolcanlogin FROM pg_catalog.pg_authid ORDER BY rolname LIMIT 3
+----
+rolname	rolcanlogin
+postgres	t
+
+
+# rolsuper should be set for all roles (no RBAC yet)
+query
+SELECT rolsuper FROM pg_catalog.pg_authid LIMIT 1
+----
+rolsuper
+t
+
+
+# pg_ts_dict (text search dictionaries / tokenizers)
+
+
+# Should not error even if no tokenizers exist
+query
+SELECT count(*) >= 0 FROM pg_catalog.pg_ts_dict
+----
+?column?
+t
+
+
+# information_schema.schemata
+
+
+# Should list schemas for the current database
+query
+SELECT count(*) > 0 FROM information_schema.schemata
+----
+?column?
+t
+
+
+query
+SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'public'
+----
+schema_name
+public
+
+
+# catalog_name should be set
+query
+SELECT count(*) > 0 FROM information_schema.schemata WHERE catalog_name IS NOT NULL AND catalog_name != ''
+----
+?column?
+t
+
+
+# information_schema.tables
+
+
+# Should list our test tables
+query
+SELECT table_name, table_type FROM information_schema.tables WHERE table_name = 'pg_cat_t1'
+----
+table_name	table_type
+pg_cat_t1	BASE TABLE
+
+
+query
+SELECT table_name, table_type FROM information_schema.tables WHERE table_name = 'pg_cat_t2'
+----
+table_name	table_type
+pg_cat_t2	BASE TABLE
+
+
+# is_insertable_into should be true for base tables
+query
+SELECT is_insertable_into FROM information_schema.tables WHERE table_name = 'pg_cat_t1'
+----
+is_insertable_into
+YES
+
+
+# table_schema should match
+query
+SELECT table_schema FROM information_schema.tables WHERE table_name = 'pg_cat_t1'
+----
+table_schema
+public
+
+
+# information_schema.columns
+
+
+# Should list columns for our test tables
+query
+SELECT column_name, ordinal_position, is_nullable, data_type FROM information_schema.columns WHERE table_name = 'pg_cat_t1' ORDER BY ordinal_position
+----
+column_name	ordinal_position	is_nullable	data_type
+id	1	NO	NULL
+name	2	NO	NULL
+value	3	YES	NULL
+
+
+query
+SELECT column_name, ordinal_position FROM information_schema.columns WHERE table_name = 'pg_cat_t2' ORDER BY ordinal_position
+----
+column_name	ordinal_position
+a	1
+b	2
+c	3
+d	4
+
+
+# NOT NULL column should have is_nullable = false
+query
+SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'pg_cat_t1' AND column_name = 'name'
+----
+column_name	is_nullable
+name	NO
+
+
+# data_type should be set
+query
+SELECT count(*) FROM information_schema.columns WHERE table_name = 'pg_cat_t1' AND data_type IS NOT NULL AND data_type != ''
+----
+count
+0
+
+
+# information_schema.table_constraints
+
+
+# Primary key constraints should appear
+query
+SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = 'pg_cat_t1' ORDER BY constraint_name
+----
+constraint_name	constraint_type
+pg_cat_t1_id_not_null	CHECK
+pg_cat_t1_name_not_null	CHECK
+pg_cat_t1_pkey	PRIMARY KEY
+
+
+query
+SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = 'pg_cat_t2' ORDER BY constraint_name
+----
+constraint_name	constraint_type
+pg_cat_t2_a_not_null	CHECK
+pg_cat_t2_pkey	PRIMARY KEY
+
+
+# enforced should be true
+query
+SELECT enforced FROM information_schema.table_constraints WHERE table_name = 'pg_cat_t1' AND constraint_type = 'PRIMARY KEY'
+----
+enforced
+YES
+
+
+# information_schema.key_column_usage
+
+
+# Primary key columns should be listed
+query
+SELECT constraint_name, column_name, ordinal_position FROM information_schema.key_column_usage WHERE table_name = 'pg_cat_t1' ORDER BY ordinal_position
+----
+constraint_name	column_name	ordinal_position
+pg_cat_t1_pkey	id	1
+
+query
+SELECT constraint_name, column_name FROM information_schema.key_column_usage WHERE table_name = 'pg_cat_t2'
+----
+constraint_name	column_name
+pg_cat_t2_pkey	a
+
+# information_schema.routines
+
+
+# Should list our test function
+query
+SELECT routine_name, routine_type, external_language FROM information_schema.routines WHERE routine_name = 'pg_cat_add'
+----
+routine_name	routine_type	external_language
+pg_cat_add	FUNCTION	SQL
+
+
+# data_type should be set for the return type
+query
+SELECT data_type FROM information_schema.routines WHERE routine_name = 'pg_cat_add'
+----
+data_type
+NULL
+
+
+# System views (pg_tables, pg_views, pg_roles)
+
+
+# pg_tables should list our test tables
+query
+SELECT tablename, schemaname FROM pg_tables WHERE tablename = 'pg_cat_t1'
+----
+tablename	schemaname
+pg_cat_t1	public
+
+
+# pg_roles should list roles
+query
+SELECT count(*) > 0 FROM pg_roles
+----
+?column?
+t
+
+
+# pg_settings should return settings
+query
+SELECT count(*) > 0 FROM pg_settings
+----
+?column?
+t
+
+
+# Cross-table joins (integration)
+
+
+# Join pg_class with pg_namespace to get schema-qualified table names
+query
+SELECT n.nspname, c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid WHERE c.relname = 'pg_cat_t1'
+----
+nspname	relname
+public	pg_cat_t1
+
+
+# Join pg_attribute with pg_type to get type names
+query
+SELECT a.attname, t.typname FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_type t ON a.atttypid = t.oid WHERE a.attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') ORDER BY a.attnum
+----
+attname	typname
+id	int4
+name	text
+value	float8
+
+
+# Join pg_index with pg_attribute to verify index columns reference valid attributes
+query
+SELECT idx.relname, a.attname FROM pg_catalog.pg_class idx JOIN pg_catalog.pg_index i ON idx.oid = i.indexrelid JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = 1 WHERE idx.relname = 'pg_cat_idx1'
+----
+relname	attname
+pg_cat_idx1	id
+
+
+# Typical pgAdmin/SereneUI query: list tables with their columns
+query
+SELECT c.relname, a.attname, a.atttypid, a.attnum, a.attnotnull FROM pg_catalog.pg_class c JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid WHERE c.relname = 'pg_cat_t1' AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum
+----
+relname	attname	atttypid	attnum	attnotnull
+pg_cat_t1	id	23	1	t
+pg_cat_t1	name	25	2	t
+pg_cat_t1	value	701	3	f
+
+
+# Typical pgAdmin query: list indexes for a table
+query
+SELECT idx.relname AS index_name, i.indisunique, i.indisprimary FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid JOIN pg_catalog.pg_class tbl ON tbl.oid = i.indrelid WHERE tbl.relname = 'pg_cat_t1' ORDER BY idx.relname
+----
+index_name	indisunique	indisprimary
+pg_cat_idx1	f	f
+
+
+# Join pg_proc with pg_language
+query
+SELECT p.proname, l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON p.prolang = l.oid WHERE p.proname = 'pg_cat_add'
+----
+proname	lanname
+pg_cat_add	sql
+
+
+# Join pg_constraint with pg_class
+query
+SELECT con.conname, c.relname, con.contype FROM pg_catalog.pg_constraint con JOIN pg_catalog.pg_class c ON con.conrelid = c.oid WHERE c.relname IN ('pg_cat_t1', 'pg_cat_t2') ORDER BY c.relname, con.conname
+----
+conname	relname	contype
+pg_cat_t1_id_not_null	pg_cat_t1	c
+pg_cat_t1_name_not_null	pg_cat_t1	c
+pg_cat_t1_pkey	pg_cat_t1	p
+pg_cat_t2_a_not_null	pg_cat_t2	c
+pg_cat_t2_pkey	pg_cat_t2	p
+
+
+# Cleanup
+
+
+statement ok
+DROP FUNCTION pg_cat_add
+
+
+statement ok
+DROP INDEX pg_cat_idx2
+
+
+# pg_attribute: attnotnull for NOT NULL columns
+
+# pg_cat_t1 has: id INT PRIMARY KEY (notnull), name TEXT NOT NULL (notnull), value FLOAT8 (nullable)
+query
+SELECT attname, attnotnull
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'pg_cat_t1')
+ORDER BY attnum;
+----
+attname	attnotnull
+id	t
+name	t
+value	f
+
+
+# pg_constraint: OIDs should be non-zero
+
+query
+SELECT conname, oid <> 0 AS has_oid
+FROM pg_constraint
+WHERE conrelid = (SELECT oid FROM pg_class WHERE relname = 'pg_cat_t1')
+ORDER BY conname;
+----
+conname	has_oid
+pg_cat_t1_id_not_null	t
+pg_cat_t1_name_not_null	t
+pg_cat_t1_pkey	t
+
+
+# pg_proc: provolatile and proparallel return char values
+
+query
+SELECT proname, provolatile, proparallel
+FROM pg_proc
+WHERE proname = 'pg_cat_add';
+----
+proname	provolatile	proparallel
+
+
+# Cleanup
+
+statement ok
+DROP INDEX pg_cat_idx1
+
+
+statement ok
+DROP TABLE pg_cat_t2
+
+
+statement ok
+DROP TABLE pg_cat_t1

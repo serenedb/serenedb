@@ -1,0 +1,188 @@
+# Queries used by serene-ui Explorer (const.tsx)
+# These verify that the UI's introspection queries work against SereneDB
+
+
+# Setup: create test tables for introspection
+
+statement ok
+CREATE TABLE explorer_t1 (id INT PRIMARY KEY, name TEXT NOT NULL, value FLOAT8)
+
+
+statement ok
+CREATE TABLE explorer_t2 (a BIGINT PRIMARY KEY, b VARCHAR, c BOOLEAN, d TIMESTAMP)
+
+
+statement ok
+CREATE INDEX explorer_idx1 ON explorer_t1 USING inverted (name)
+
+
+# connection: list databases
+
+query T
+SELECT COUNT(*) > 0 FROM
+(SELECT datname as name FROM pg_database WHERE datistemplate = false ORDER BY datname)
+----
+?column?
+t
+
+
+# schemas: list user schemas
+
+query IT
+SELECT
+    n.oid AS id,
+    s.schema_name as name
+FROM information_schema.schemata s
+JOIN pg_namespace n
+    ON n.nspname = s.schema_name
+WHERE s.schema_name NOT IN ('information_schema')
+  AND s.schema_name NOT LIKE 'pg_%'
+  AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+----
+id	name
+<slt:ignore>	public
+
+
+# catalogs: list catalog schemas
+
+query IT
+SELECT
+    n.oid AS id,
+    s.schema_name as name
+FROM information_schema.schemata s
+JOIN pg_namespace n
+    ON n.nspname = s.schema_name
+WHERE (s.schema_name IN ('information_schema')
+  OR s.schema_name LIKE 'pg_%')
+  AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+----
+id	name
+11	pg_catalog
+1000003	information_schema
+
+
+# tables: list tables in a schema
+
+query IT
+select count(*) > 0 from (SELECT
+    c.oid       AS id,
+    c.relname   AS name
+FROM pg_class c
+JOIN pg_namespace n
+    ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p')
+  AND has_schema_privilege(current_user, n.nspname, 'USAGE')
+  AND has_table_privilege(current_user, c.oid, 'SELECT')
+  AND n.nspname = 'public')
+----
+?column?
+t
+
+
+# columns: list columns for a table
+
+query TTTT
+SELECT
+    c.column_name AS name,
+    COALESCE(
+        NULLIF(c.udt_name || '(' || c.character_maximum_length::varchar || ')',
+               c.udt_name || '(NULL)'),
+        NULLIF(c.udt_name || '(' || c.numeric_precision::varchar || ',' || c.numeric_scale::varchar || ')',
+               c.udt_name || '(,)'),
+        NULLIF(c.udt_name || '(' || c.numeric_precision::varchar || ')',
+               c.udt_name || '(NULL)'),
+        NULLIF(c.udt_name || '(' || c.datetime_precision::varchar || ')',
+               c.udt_name || '(NULL)'),
+        c.udt_name
+    ) AS data_type,
+    CASE WHEN c.data_type = 'ARRAY' THEN 'YES' ELSE 'NO' END AS is_array,
+    pg_catalog.col_description(cls.oid, c.ordinal_position) AS column_comment
+FROM pg_class cls
+JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
+JOIN information_schema.columns c
+      ON c.table_schema = nsp.nspname
+     AND c.table_name = cls.relname
+WHERE cls.relname = 'explorer_t1'
+  AND nsp.nspname = 'public'
+ORDER BY c.ordinal_position
+----
+name	data_type	is_array	column_comment
+id	int4(32,0)	NO	NULL
+name	text	NO	NULL
+value	float8(53)	NO	NULL
+
+
+# views: list views in a schema
+
+query ITT
+SELECT
+    n.oid          AS schema_oid,
+    c.oid          AS id,
+    v.table_name   AS name
+FROM information_schema.views v
+JOIN pg_namespace n
+    ON n.nspname = v.table_schema
+JOIN pg_class c
+    ON c.relname = v.table_name
+   AND c.relnamespace = n.oid
+WHERE
+    n.nspname = 'public'
+    AND has_schema_privilege(current_user, v.table_schema, 'USAGE')
+    AND has_table_privilege(current_user, c.oid, 'SELECT')
+ORDER BY v.table_schema, v.table_name
+----
+schema_oid	id	name
+
+
+# indexes: list indexes for a table
+
+query error
+SELECT
+    (SELECT relname FROM pg_class c WHERE c.oid = i.indexrelid) AS name,
+    gs.i AS index_order,
+    i.indexrelid AS id,
+    i.indisunique,
+    i.indisprimary,
+    COALESCE(a.attname, pg_get_indexdef(i.indexrelid, gs.i, false)) AS index_column,
+    i.indoption[gs.i - 1] = 0 AS ascending
+FROM pg_index i
+JOIN generate_series(1, array_length(i.indkey, 1)) AS gs(i)
+    ON true
+LEFT JOIN pg_attribute a
+    ON i.indrelid = a.attrelid AND a.attnum = i.indkey[gs.i]
+WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'explorer_t1')
+ORDER BY i.indexrelid, gs.i
+----
+db error: ERROR: column "i.indkey" does not exist
+
+
+query
+SELECT COUNT(*) > 0 FROM (SELECT
+    c.relname AS name,
+    i.indexrelid AS id,
+    i.indisunique,
+    i.indisprimary,
+    pg_get_indexdef(i.indexrelid) AS index_def
+FROM pg_index i
+JOIN pg_class c 
+    ON c.oid = i.indexrelid
+WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'explorer_t1'));
+----
+?column?
+t
+
+
+query
+SELECT
+    n.oid AS id,
+        s.schema_name as name
+        FROM information_schema.schemata s
+        JOIN pg_namespace n
+            ON n.nspname = s.schema_name
+            WHERE (s.schema_name IN ('information_schema')
+              OR s.schema_name LIKE 'pg_%')
+                AND has_schema_privilege(current_user, s.schema_name, 'USAGE');
+----
+id	name
+11	pg_catalog
+1000003	information_schema

@@ -83,4 +83,8 @@ struct PgConstraint {
 };
 // NOLINTEND
 
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
+  velox::memory::MemoryPool& pool);
+
 }  // namespace sdb::pg

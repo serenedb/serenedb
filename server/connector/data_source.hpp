@@ -165,7 +165,8 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
     velox::core::TypedExprPtr remaining_filter = nullptr,
     velox::core::ExpressionEvaluator* evaluator = nullptr);
 
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+  void addSplit(
+    std::shared_ptr<velox::connector::ConnectorSplit> split) override;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
 
@@ -195,6 +196,7 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
                          const Callback& func);
 
+ protected:
   Source& _source;
   const rocksdb::Snapshot* _snapshot;
   std::vector<std::string> _column_keys;
@@ -275,15 +277,47 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   MultiGetContext<Source> _ctx;
 };
 
+// Scans a set of pre-sorted KeyConstraint ranges by driving a per-column
+// RocksDB iterator: Seek to each range's lower bound, read until the upper
+// bound, then Seek to the next range. Ranges must be non-overlapping and
+// sorted (e.g. produced by MergeKeyConstraintsPrecise). Only the first PK
+// column's boundary is used at the RocksDB iterator level; predicates on
+// additional PK columns are handled by the remaining_filter.
+template<typename Source>
+class RocksDBMultiRangeLookupDataSource
+  : public RocksDBFullScanDataSource<Source> {
+ public:
+  RocksDBMultiRangeLookupDataSource(
+    velox::memory::MemoryPool& memory_pool, Source& source,
+    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
+    std::vector<catalog::Column::Id> column_ids,
+    catalog::Column::Id effective_column_id, ObjectId object_key,
+    size_t output_column_count, const rocksdb::Snapshot* snapshot,
+    std::vector<KeyConstraint> ranges, velox::RowTypePtr pk_type,
+    velox::core::TypedExprPtr remaining_filter = nullptr,
+    velox::core::ExpressionEvaluator* evaluator = nullptr);
+
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+
+ private:
+  // Pre-sorted KeyConstraint ranges; only first PK column used for seek bounds.
+  std::vector<KeyConstraint> _ranges;
+  velox::RowTypePtr _pk_type;
+};
+
 // Read Your Own Writes
 using RocksDBRYOWFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::Transaction>;
 using RocksDBRYOWPointLookupDataSource =
   RocksDBPointLookupDataSource<rocksdb::Transaction>;
+using RocksDBRYOWMultiRangeLookupDataSource =
+  RocksDBMultiRangeLookupDataSource<rocksdb::Transaction>;
 
 using RocksDBSnapshotFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::DB>;
 using RocksDBSnapshotPointLookupDataSource =
   RocksDBPointLookupDataSource<rocksdb::DB>;
+using RocksDBSnapshotMultiRangeLookupDataSource =
+  RocksDBMultiRangeLookupDataSource<rocksdb::DB>;
 
 }  // namespace sdb::connector

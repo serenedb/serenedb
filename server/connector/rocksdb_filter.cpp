@@ -21,6 +21,7 @@
 #include "rocksdb_filter.hpp"
 
 #include <absl/container/flat_hash_set.h>
+#include <absl/strings/str_cat.h>
 #include <velox/expression/ExprConstants.h>
 #include <velox/vector/ConstantVector.h>
 
@@ -30,6 +31,11 @@
 
 namespace sdb::connector {
 namespace {
+
+std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
+  std::vector<KeyConstraint>);
+[[maybe_unused]] std::vector<KeyConstraint> MergeKeyConstraintsEager(
+  std::vector<KeyConstraint>);
 
 std::vector<KeyConstraint> AnyKeyConstraint(
   const std::span<const std::string> names) {
@@ -187,7 +193,7 @@ std::vector<KeyConstraint> ExtractFilterOr(
     result.insert(result.end(), std::make_move_iterator(pts.begin()),
                   std::make_move_iterator(pts.end()));
   }
-  return result;
+  return MergeKeyConstraintsPrecise(std::move(result));
 }
 
 // Recursively rewrites `expr`, replacing any node whose address appears in
@@ -228,9 +234,11 @@ velox::core::TypedExprPtr RewriteExpr(
   }
 
   if (call->name() == "or") {
-    SDB_ASSERT(
-      absl::c_all_of(new_inputs, [](auto expr) { return expr == nullptr; }));
-    return {};
+    // If any branch became true (null), the whole OR is trivially true.
+    if (absl::c_any_of(new_inputs,
+                       [](const auto& e) { return e == nullptr; })) {
+      return {};
+    }
   }
 
   return std::make_shared<velox::core::CallTypedExpr>(
@@ -291,6 +299,150 @@ std::optional<Range> IntersectRange(const Range& lhs, const Range& rhs) {
   return Range{std::move(new_left), std::move(new_right)};
 }
 
+// Less restrictive (smaller) lower bound — for union.
+std::optional<Boundary> MinLeft(const std::optional<Boundary>& a,
+                                const std::optional<Boundary>& b) {
+  if (!a || !b) {
+    return std::nullopt;
+  }
+  if (a->value < b->value) {
+    return a;
+  }
+  if (b->value < a->value) {
+    return b;
+  }
+  // Same value: inclusive is less restrictive for a left bound.
+  return a->inclusive ? a : b;
+}
+
+// Less restrictive (larger) upper bound — for union.
+std::optional<Boundary> MaxRight(const std::optional<Boundary>& a,
+                                 const std::optional<Boundary>& b) {
+  if (!a || !b) {
+    return std::nullopt;
+  }
+  if (b->value < a->value) {
+    return a;
+  }
+  if (a->value < b->value) {
+    return b;
+  }
+  // Same value: inclusive is less restrictive for a right bound.
+  return a->inclusive ? a : b;
+}
+
+bool BoundaryEqual(const std::optional<Boundary>& a,
+                   const std::optional<Boundary>& b) {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a->value == b->value && a->inclusive == b->inclusive;
+}
+
+bool RangesEqual(const Range& a, const Range& b) {
+  return BoundaryEqual(a.left, b.left) && BoundaryEqual(a.right, b.right);
+}
+
+// Unions two ranges if they overlap; returns nullopt if there is a gap.
+std::optional<Range> UnionRangeIfOverlapping(const Range& lhs,
+                                             const Range& rhs) {
+  if (!IntersectRange(lhs, rhs)) {
+    return std::nullopt;
+  }
+  return Range{MinLeft(lhs.left, rhs.left), MaxRight(lhs.right, rhs.right)};
+}
+
+// Lexicographic ordering on a column's left bound for sorting purposes.
+// Unbounded (-inf) sorts first; among bounded, lower value sorts first;
+// ties broken by inclusive < exclusive (inclusive starts earlier).
+bool LeftBoundLess(const std::optional<Boundary>& a,
+                   const std::optional<Boundary>& b) {
+  if (!a && !b) {
+    return false;
+  }
+  if (!a) {
+    return true;  // -inf < anything
+  }
+  if (!b) {
+    return false;  // anything >= -inf
+  }
+  if (a->value < b->value) {
+    return true;
+  }
+  if (b->value < a->value) {
+    return false;
+  }
+  // Same value: inclusive (starts earlier) sorts before exclusive.
+  return a->inclusive && !b->inclusive;
+}
+
+// Sorts constraints lexicographically by each PK column's left bound in order.
+// This groups constraints that share the same prefix columns and orders the
+// differing column so overlapping ranges become adjacent.
+bool KeyConstraintLess(const KeyConstraint& a, const KeyConstraint& b) {
+  for (std::string_view name : a.PkNames()) {
+    const Range* ra = a.FindFilter(name);
+    const Range* rb = b.FindFilter(name);
+    const auto& la = ra ? ra->left : std::optional<Boundary>{};
+    const auto& lb = rb ? rb->left : std::optional<Boundary>{};
+    if (LeftBoundLess(la, lb)) {
+      return true;
+    }
+    if (LeftBoundLess(lb, la)) {
+      return false;
+    }
+  }
+  return false;
+}
+
+// Reduces constraints by sorting then doing a single linear scan.
+// Leaves constraints with gaps between them as separate entries.
+std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
+  std::vector<KeyConstraint> constraints) {
+  if (constraints.size() <= 1) {
+    return constraints;
+  }
+
+  absl::c_sort(constraints, KeyConstraintLess);
+
+  std::vector<KeyConstraint> result;
+  result.push_back(std::move(constraints[0]));
+  for (size_t i = 1; i < constraints.size(); ++i) {
+    if (auto merged = KeyConstraint::TryUnion(result.back(), constraints[i])) {
+      result.back() = std::move(*merged);
+    } else {
+      result.push_back(std::move(constraints[i]));
+    }
+  }
+  return result;
+}
+
+// Merges all per-column source expression sets from `src` into `dst`.
+void MergeSourceExprs(KeyConstraint::SourceExprsMap& dst,
+                      const KeyConstraint::SourceExprsMap& src) {
+  for (const auto& [col, exprs] : src) {
+    auto& dst_set = dst[col];
+    dst_set.insert(exprs.begin(), exprs.end());
+  }
+}
+
+// Folds all constraints into one by taking the bounding range per column.
+// Always produces a single constraint; may over-approximate gaps.
+std::vector<KeyConstraint> MergeKeyConstraintsEager(
+  std::vector<KeyConstraint> constraints) {
+  if (constraints.size() <= 1) {
+    return constraints;
+  }
+  KeyConstraint merged = std::move(constraints[0]);
+  for (size_t i = 1; i < constraints.size(); ++i) {
+    merged = KeyConstraint::ForceUnion(merged, constraints[i]);
+  }
+  return {std::move(merged)};
+}
+
 }  // namespace
 
 template<velox::TypeKind Kind>
@@ -311,6 +463,48 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
+std::string ToString(const Range& range) {
+  std::string result;
+  auto variant_str = [](const velox::variant& v) {
+    return v.toString(velox::createScalarType(v.kind()));
+  };
+  if (!range.left) {
+    absl::StrAppend(&result, "(-inf");
+  } else {
+    absl::StrAppend(&result, range.left->inclusive ? "[" : "(",
+                    variant_str(range.left->value));
+  }
+  absl::StrAppend(&result, ", ");
+  if (!range.right) {
+    absl::StrAppend(&result, "+inf)");
+  } else {
+    absl::StrAppend(&result, variant_str(range.right->value),
+                    range.right->inclusive ? "]" : ")");
+  }
+  return result;
+}
+
+std::string KeyConstraint::ToString() const {
+  if (_column_filters.empty()) {
+    return "{}";
+  }
+  std::string result = "{";
+  bool first = true;
+  for (std::string_view name : _pk_names) {
+    auto it = _column_filters.find(name);
+    if (it == _column_filters.end()) {
+      continue;
+    }
+    if (!first) {
+      absl::StrAppend(&result, ", ");
+    }
+    first = false;
+    absl::StrAppend(&result, name, ": ", sdb::connector::ToString(*it->second));
+  }
+  absl::StrAppend(&result, "}");
+  return result;
+}
+
 bool KeyConstraint::IsSpecific() const {
   return absl::c_all_of(_pk_names, [&](std::string_view name) {
     auto it = _column_filters.find(name);
@@ -322,6 +516,13 @@ bool KeyConstraint::IsSpecific() const {
            r.left->value == r.right->value && r.left->inclusive &&
            r.right->inclusive;
   });
+}
+
+const containers::FlatHashSet<const velox::core::ITypedExpr*>&
+KeyConstraint::GetSourceExprs(std::string_view column_name) const noexcept {
+  static const containers::FlatHashSet<const velox::core::ITypedExpr*> kEmpty;
+  auto it = _source_exprs.find(column_name);
+  return it != _source_exprs.end() ? it->second : kEmpty;
 }
 
 const Range* KeyConstraint::FindFilter(std::string_view column_name) const {
@@ -337,7 +538,7 @@ void KeyConstraint::AddEqFilter(std::string_view column_name,
   _column_filters.emplace(
     column_name,
     std::make_unique<Range>(Range{Boundary{v, true}, Boundary{v, true}}));
-  _source_exprs.insert(source_expr);
+  _source_exprs[std::string(column_name)].insert(source_expr);
 }
 
 void KeyConstraint::AddComparisonFilter(
@@ -364,7 +565,7 @@ void KeyConstraint::AddComparisonFilter(
       break;
   }
   _column_filters.emplace(column_name, std::make_unique<Range>(range));
-  _source_exprs.insert(source_expr);
+  _source_exprs[std::string(column_name)].insert(source_expr);
 }
 
 std::optional<KeyConstraint> KeyConstraint::Intersect(
@@ -393,12 +594,80 @@ std::optional<KeyConstraint> KeyConstraint::Intersect(
     result._column_filters.emplace(pk_name,
                                    std::make_unique<Range>(*merged_range));
   }
-  result._source_exprs.insert(lhs._source_exprs.begin(),
-                              lhs._source_exprs.end());
+  MergeSourceExprs(result._source_exprs, lhs._source_exprs);
+  MergeSourceExprs(result._source_exprs, rhs._source_exprs);
+  return result;
+}
 
-  result._source_exprs.insert(rhs._source_exprs.begin(),
-                              rhs._source_exprs.end());
+std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
+                                                     const KeyConstraint& rhs) {
+  SDB_ASSERT(lhs._pk_names.data() == rhs._pk_names.data());
 
+  std::string_view differing_col;
+  int diff_count = 0;
+  for (std::string_view pk_name : lhs._pk_names) {
+    const Range* lf = lhs.FindFilter(pk_name);
+    const Range* rf = rhs.FindFilter(pk_name);
+    if (!lf && !rf) {
+      continue;
+    }
+    if (!lf || !rf || !RangesEqual(*lf, *rf)) {
+      if (++diff_count > 1) {
+        return std::nullopt;
+      }
+      differing_col = pk_name;
+    }
+  }
+
+  // Start from lhs and merge source exprs from rhs.
+  KeyConstraint result{lhs};
+  MergeSourceExprs(result._source_exprs, rhs._source_exprs);
+
+  if (diff_count == 0) {
+    return result;  // identical constraints
+  }
+
+  const Range* lf = lhs.FindFilter(differing_col);
+  const Range* rf = rhs.FindFilter(differing_col);
+
+  // One side unconstrained on this column → union removes the constraint.
+  if (!lf || !rf) {
+    result._column_filters.erase(differing_col);
+    return result;
+  }
+
+  // Both have a range → merge only if they overlap (no gap).
+  auto merged = UnionRangeIfOverlapping(*lf, *rf);
+  if (!merged) {
+    return std::nullopt;
+  }
+
+  auto it = result._column_filters.find(differing_col);
+  SDB_ASSERT(it != result._column_filters.end());
+  it->second = std::make_unique<Range>(*merged);
+  return result;
+}
+
+KeyConstraint KeyConstraint::ForceUnion(const KeyConstraint& lhs,
+                                        const KeyConstraint& rhs) {
+  SDB_ASSERT(lhs._pk_names.data() == rhs._pk_names.data());
+  KeyConstraint result{lhs._pk_names};
+  MergeSourceExprs(result._source_exprs, lhs._source_exprs);
+  MergeSourceExprs(result._source_exprs, rhs._source_exprs);
+  for (std::string_view pk_name : lhs._pk_names) {
+    const Range* lf = lhs.FindFilter(pk_name);
+    const Range* rf = rhs.FindFilter(pk_name);
+    if (!lf && !rf) {
+      continue;
+    }
+    // One side unconstrained → union is unconstrained; omit filter.
+    if (!lf || !rf) {
+      continue;
+    }
+    result._column_filters.emplace(
+      pk_name, std::make_unique<Range>(Range{MinLeft(lf->left, rf->left),
+                                             MaxRight(lf->right, rf->right)}));
+  }
   return result;
 }
 
@@ -449,20 +718,52 @@ std::vector<KeyConstraint> ExtractFilterExpr(
 ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr,
   std::span<const std::string> pk_names) {
-  auto pts = ExtractFilterExpr(expr, pk_names);
-  if (!absl::c_all_of(pts,
-                      [](const KeyConstraint& p) { return p.IsSpecific(); })) {
-    return {{}, expr};
-  }
-  // TODO extract ranges here
+  auto constraints = ExtractFilterExpr(expr, pk_names);
 
-  // Collect the unique source sub-expressions to get rid of them.
+  if (absl::c_all_of(constraints,
+                     [](const KeyConstraint& p) { return p.IsSpecific(); })) {
+    // All constraints are point lookups: rewrite all of their sources.
+    containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
+    for (const auto& p : constraints) {
+      for (const auto& [col, exprs] : p.GetSourceExprs()) {
+        sources.insert(exprs.begin(), exprs.end());
+      }
+    }
+    return {ConstraintKind::Points, std::move(constraints),
+            RewriteExpr(expr, sources)};
+  }
+
+  // Not all specific: fall back to range scan on the first PK column.
+  // Rewrite sources of every constraint that has a filter on pk_names[0].
+  // The returned constraints carry all filter info; remaining_filter covers
+  // predicates whose sources were not captured by any such constraint.
+  if (pk_names.empty()) {
+    return {ConstraintKind::Empty, {}, expr};
+  }
+
+  const std::string& first_pk = pk_names[0];
+
+  // If any constraint has no filter on the first PK column it covers the full
+  // range of that column (e.g. `b = 2` in PK (a, b) leaves `a` unconstrained).
+  // In that case we cannot build a useful range scan — fall back to full scan.
+  if (absl::c_any_of(constraints, [&](const KeyConstraint& c) {
+        return c.FindFilter(first_pk) == nullptr;
+      })) {
+    return {ConstraintKind::Empty, {}, expr};
+  }
+
   containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
-  for (const auto& p : pts) {
-    sources.insert(p.GetSourceExprs().begin(), p.GetSourceExprs().end());
+  for (const auto& c : constraints) {
+    const auto& col_exprs = c.GetSourceExprs(first_pk);
+    sources.insert(col_exprs.begin(), col_exprs.end());
   }
 
-  return {std::move(pts), RewriteExpr(expr, sources)};
+  if (sources.empty()) {
+    return {ConstraintKind::Empty, {}, expr};
+  }
+
+  return {ConstraintKind::Ranges, std::move(constraints),
+          RewriteExpr(expr, sources)};
 }
 
 void SortPoints(std::vector<SpecificPoint>& points) {

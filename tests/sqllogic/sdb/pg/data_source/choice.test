@@ -102,7 +102,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_full_scan]<slt:ignore>
+<slt:ignore>[t_choice_cpk, type=rocksdb_range_lookup, ranges=[{a: [3, 3]}]]<slt:ignore>
 
 
 # No filter -> full scan

@@ -53,6 +53,9 @@ struct Range {
   std::optional<Boundary> right;
 };
 
+// e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
+[[nodiscard]] std::string ToString(const Range& range);
+
 // A set of per-column range constraints over PK columns.
 // Absent column in _column_filters means "any value" (unconstrained).
 // A column with equal inclusive left/right bounds represents an equality
@@ -97,10 +100,21 @@ class KeyConstraint {
     return _pk_names;
   }
 
-  // The expression nodes that produced this constraint.
-  [[nodiscard]] const auto& GetSourceExprs() const noexcept {
+  using SourceExprsMap = containers::FlatHashMap<
+    std::string, containers::FlatHashSet<const velox::core::ITypedExpr*>>;
+
+  // Returns all source expressions grouped by the column they constrain.
+  [[nodiscard]] const SourceExprsMap& GetSourceExprs() const noexcept {
     return _source_exprs;
   }
+
+  // Returns source expressions for a single column (empty set if
+  // unconstrained).
+  [[nodiscard]] const containers::FlatHashSet<const velox::core::ITypedExpr*>&
+  GetSourceExprs(std::string_view column_name) const noexcept;
+
+  // e.g. "{a: [1, 5), b: (-inf, +inf)}" or "{}" when unconstrained.
+  [[nodiscard]] std::string ToString() const;
 
   void AddEqFilter(std::string_view column_name,
                    const velox::core::ConstantTypedExpr& value,
@@ -116,6 +130,19 @@ class KeyConstraint {
   [[nodiscard]] static std::optional<KeyConstraint> Intersect(
     const KeyConstraint& lhs, const KeyConstraint& rhs);
 
+  // Returns nullopt when the constraints cannot be merged into one — i.e. they
+  // differ on more than one column, or their ranges on the differing column
+  // have a gap. Otherwise returns a single constraint covering the union of
+  // both key-spaces.
+  [[nodiscard]] static std::optional<KeyConstraint> TryUnion(
+    const KeyConstraint& lhs, const KeyConstraint& rhs);
+
+  // Always merges two constraints into one by taking the widest bounding range
+  // per column. May over-approximate: the result can cover key-space not in
+  // either input (e.g. [2,10) ∪ (40,44] → [2,44]).
+  [[nodiscard]] static KeyConstraint ForceUnion(const KeyConstraint& lhs,
+                                                const KeyConstraint& rhs);
+
  private:
   std::span<const std::string> _pk_names;
 
@@ -124,7 +151,7 @@ class KeyConstraint {
   // But it should be just 2 varints + 4 bools -> 16 * 2 + 1 byte + alignment ->
   // 40 bytes. It should be OK to paste it into flat hash map
   containers::FlatHashMap<std::string, std::unique_ptr<Range>> _column_filters;
-  containers::FlatHashSet<const velox::core::ITypedExpr*> _source_exprs;
+  SourceExprsMap _source_exprs;
 };
 
 // A fully resolved point: one variant per PK column, ordered by pk_type.
@@ -139,9 +166,18 @@ using SpecificPoint = std::vector<velox::variant>;
 [[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
 
+enum class ConstraintKind {
+  // All constraints are fully-specified equality points; use point lookup.
+  Points,
+  // At least one constraint is a range; use range scan on the first PK column.
+  Ranges,
+  Empty
+};
+
 struct ExtractAndRewriteResult {
-  std::vector<KeyConstraint> points;
-  // Rewritten filter with PK predicates replaced by true; null if the entire
+  ConstraintKind kind;
+  std::vector<KeyConstraint> constraints;
+  // Rewritten filter with captured PK predicates removed; null if the entire
   // expression reduced to true.
   velox::core::TypedExprPtr remaining_filter;
 };

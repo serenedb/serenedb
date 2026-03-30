@@ -1717,8 +1717,8 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
              const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
              velox::VectorPtr& result) const override {
     velox::exec::DecodedArgs decoded_args{rows, args, context};
-    auto* start_vector = decoded_args.at(0);
-    auto* stop_vector = decoded_args.at(1);
+    const auto* start_vector = decoded_args.at(0);
+    const auto* stop_vector = decoded_args.at(1);
     velox::DecodedVector* step_vector = nullptr;
     if (args.size() == 3) {
       step_vector = decoded_args.at(2);

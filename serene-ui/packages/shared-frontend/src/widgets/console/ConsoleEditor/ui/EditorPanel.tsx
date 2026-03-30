@@ -1,17 +1,24 @@
-import { useMemo, type FC } from "react";
+import { useCallback, useMemo, type DragEvent, type FC } from "react";
 import { type IDockviewPanelProps } from "dockview";
 import { ExecuteQueryButton } from "../../../../features/executeQuery";
 import { useConsole } from "../../Console/model";
+import { DropZone } from "../../../shared/DropZone";
 import { PGSQLEditor } from "../../../shared/PGSQLEditor";
 import { useConnectionAutocomplete } from "../../../shared/PGSQLEditor/model";
 import {
+    getSavedQueryDragPayload,
+    hasSavedQueryDragData,
+} from "@serene-ui/shared-frontend/entities";
+import {
     type ConsoleResult,
     getSelectedResultIndex,
+    addEditorPanel,
     useConsoleQueryExecution,
     useEditorPanelState,
     useResultsPanelManager,
     type EditorPanelParams,
 } from "../model";
+import { toast } from "sonner";
 
 type StatementHighlightVariant = "success" | "warning" | "error";
 
@@ -141,29 +148,106 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
     const highlightVariant =
         getStatementHighlightVariant(activeResult?.status || "") || "default";
 
+    const handleSavedQueryDrop = useCallback(
+        (event: DragEvent<HTMLDivElement>) => {
+            if (!hasSavedQueryDragData(event.dataTransfer)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const payload = getSavedQueryDragPayload(event.dataTransfer);
+
+            if (!payload) {
+                return;
+            }
+
+            updatePanelParams({
+                query: payload.query,
+            });
+        },
+        [updatePanelParams],
+    );
+
+    const handleFilesDrop = useCallback(
+        (files: File[]) => {
+            void (async () => {
+                try {
+                    const fileContents = await Promise.all(
+                        files.map(async (file) => ({
+                            value: await file.text(),
+                        })),
+                    );
+
+                    if (!fileContents.length) {
+                        return;
+                    }
+
+                    updatePanelParams({
+                        query: fileContents[0].value,
+                    });
+
+                    fileContents.slice(1).forEach((fileContent) => {
+                        addEditorPanel(props.containerApi, {
+                            query: fileContent.value,
+                        });
+                    });
+                } catch (error) {
+                    console.error(error);
+                    toast.error("Failed to open SQL file", {
+                        description: "Please try dropping the file again.",
+                    });
+                }
+            })();
+        },
+        [props.containerApi, updatePanelParams],
+    );
+
+    const handleRejectedFiles = useCallback((files: File[]) => {
+        if (!files.length) {
+            return;
+        }
+
+        toast.error("Unsupported file type", {
+            description: "Only .sql files can be opened here.",
+        });
+    }, []);
+
     return (
-        <div className="relative h-full pt-4">
-            <PGSQLEditor
-                value={panelState.query}
-                autocomplete={autocomplete}
-                onChange={(query) => {
-                    updatePanelParams({ query });
-                }}
-                highlightRanges={highlightRanges}
-                highlightRange={highlightRange}
-                highlightVariant={highlightRange ? highlightVariant : undefined}
-                onExecute={handleExecute}
-                onExecuteInNewTab={handleExecuteInNewTab}
-            />
-            <div className="absolute right-5.5 bottom-2 flex gap-2">
-                <ExecuteQueryButton
-                    query={panelState.query}
-                    limit={limit}
-                    saveToHistory={true}
+        <DropZone
+            supportedExtensions={["sql"]}
+            onFilesDrop={handleFilesDrop}
+            onRejectedFiles={handleRejectedFiles}
+            isCustomDragEvent={(event) =>
+                hasSavedQueryDragData(event.dataTransfer)
+            }
+            onCustomDrop={handleSavedQueryDrop}
+            customDropLabel="Drop query here"
+            className="relative h-full pt-4">
+            <div className="relative h-full w-full">
+                <PGSQLEditor
+                    value={panelState.query}
+                    autocomplete={autocomplete}
+                    onChange={(query) => {
+                        updatePanelParams({ query });
+                    }}
+                    highlightRanges={highlightRanges}
+                    highlightRange={highlightRange}
+                    highlightVariant={highlightRange ? highlightVariant : undefined}
                     onExecute={handleExecute}
                     onExecuteInNewTab={handleExecuteInNewTab}
                 />
+                <div className="absolute right-5.5 bottom-2 flex gap-2">
+                    <ExecuteQueryButton
+                        query={panelState.query}
+                        limit={limit}
+                        saveToHistory={true}
+                        onExecute={handleExecute}
+                        onExecuteInNewTab={handleExecuteInNewTab}
+                    />
+                </div>
             </div>
-        </div>
+        </DropZone>
     );
 };

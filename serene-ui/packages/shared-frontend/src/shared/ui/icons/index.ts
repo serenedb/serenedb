@@ -13,6 +13,7 @@ export {
     RefreshCwIcon as RefreshIcon,
     BellIcon as NotificationsIcon,
     PieChartIcon,
+    PinIcon,
     SearchIcon,
     StarIcon,
     SettingsIcon,

@@ -3,10 +3,10 @@ import {
     DockviewIDisposable,
     PaneviewReact,
     PaneviewReadyEvent,
-    IPaneviewPanelProps,
 } from "dockview";
 import { ConsoleSidebarTopbar } from "./ConsoleSidebarTopbar";
 import { ConsoleSidebarHeader } from "./ConsoleSidebarHeader";
+import { ConsoleSidebarSavedQueries } from "./ConsoleSidebarSavedQueries";
 import {
     EntitiesIcon,
     SavedQueriesIcon,
@@ -24,7 +24,7 @@ const components = {
         return <></>;
     },
     savedQueries: () => {
-        return <></>;
+        return <ConsoleSidebarSavedQueries />;
     },
 };
 const headerComponents = {

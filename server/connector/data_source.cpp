@@ -766,39 +766,84 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
 // non-overlapping list of key ranges. On Next(), it advances the underlying
 // iterator and seeks to the next range when the current one is exhausted.
 // Only Valid()/key()/value()/Next()/status() are supported.
+// Iterates a single RocksDB column across multiple key ranges.
+// One underlying rocksdb::Iterator is created per range, each configured with
+// its own iterate_lower_bound / iterate_upper_bound in ReadOptions so RocksDB
+// enforces the bounds natively — no per-step upper-bound check in Next().
 class RocksDBMultiRangeIterator : public rocksdb::Iterator {
  public:
-  struct RangeBound {
-    std::string lower_key;  // column_prefix + encoded(left.value); seek target
-    bool lower_exclusive;   // skip entries where key starts with lower_key
-    std::string
-      upper_key;  // column_prefix + encoded(right.value); empty = unbounded
-    bool upper_inclusive;  // include entries that start with upper_key
-  };
+  using IteratorFactory =
+    std::function<std::unique_ptr<rocksdb::Iterator>(rocksdb::ReadOptions)>;
 
-  RocksDBMultiRangeIterator(std::unique_ptr<rocksdb::Iterator> iter,
-                            std::vector<RangeBound> bounds)
-    : _iter{std::move(iter)}, _bounds{std::move(bounds)} {
+  // col_prefix     : encoded object_id + column_id prefix for this column
+  // col_upper_bound: exclusive upper bound for the whole column (must outlive
+  //                  this iterator — typically _upper_bound_slices[i])
+  // ranges         : pre-sorted SpecificRange list for the query
+  // pk_type        : PK row type for encoding boundary values
+  // factory        : creates a rocksdb::Iterator given ReadOptions
+  RocksDBMultiRangeIterator(const std::string& col_prefix,
+                            const rocksdb::Slice& col_upper_bound,
+                            const std::vector<SpecificRange>& ranges,
+                            const velox::RowType& pk_type,
+                            const IteratorFactory& factory) {
+    SDB_ASSERT(absl::c_is_sorted(ranges));
+    // Two-pass construction: first populate bounds (strings + slices), then
+    // create iterators. The vector is reserved so no reallocation occurs
+    // between the two passes — &entry.upper_slice stays stable when the
+    // iterator is created with opts.iterate_upper_bound = &entry.upper_slice.
+    _entries.reserve(ranges.size());
+    for (const auto& sr : ranges) {
+      _entries.push_back(BuildBounds(col_prefix, col_upper_bound, sr, pk_type));
+      // BuildBounds set upper_slice to point into a temporary Entry's
+      // upper_key. After the move into _entries the string buffer may be at a
+      // new address (SSO). Re-point into the now-stable stored entry.
+      auto& stored = _entries.back();
+      if (!stored.upper_key.empty()) {
+        stored.upper_slice = rocksdb::Slice{stored.upper_key};
+      }
+    }
+    for (auto& e : _entries) {
+      rocksdb::ReadOptions opts;
+      opts.async_io = false;
+      opts.adaptive_readahead = true;
+      opts.auto_prefix_mode = true;
+      opts.iterate_upper_bound = &e.upper_slice;
+      e.iter = factory(opts);
+    }
+
+    // TODO: maybe make lazy and seek in next() only
     SeekToRange();
   }
 
   bool Valid() const override {
-    return _current < _bounds.size() && _iter->Valid();
+    return _current < _entries.size() && _entries[_current].iter->Valid();
   }
 
   void Next() override {
     SDB_ASSERT(Valid(),
                "RocksDBMultiRangeIterator::Next() called when invalid");
-    _iter->Next();
-    if (!_iter->Valid() || !IsWithinCurrentRange()) {
+    auto& e = _entries[_current];
+    e.iter->Next();
+    if (!e.iter->Valid()) {
       ++_current;
       SeekToRange();
     }
   }
 
-  rocksdb::Slice key() const override { return _iter->key(); }
-  rocksdb::Slice value() const override { return _iter->value(); }
-  rocksdb::Status status() const override { return _iter->status(); }
+  rocksdb::Slice key() const override { return _entries[_current].iter->key(); }
+  rocksdb::Slice value() const override {
+    return _entries[_current].iter->value();
+  }
+  rocksdb::Status status() const override {
+    // TODO check this again
+    if (_current < _entries.size()) {
+      return _entries[_current].iter->status();
+    }
+    // All ranges exhausted — return the last iterator's status (OK unless a
+    // RocksDB error occurred on the final range).
+    return _entries.empty() ? rocksdb::Status::OK()
+                            : _entries.back().iter->status();
+  }
 
   // Unsupported navigation — only forward iteration is needed.
   void SeekToFirst() override { SDB_ASSERT(false, "not supported"); }
@@ -812,54 +857,103 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
   void Prev() override { SDB_ASSERT(false, "not supported"); }
 
  private:
-  // Seeks to _bounds[_current], skipping empty ranges until a valid position
-  // is found or all ranges are exhausted.
-  void SeekToRange() {
-    while (_current < _bounds.size()) {
-      const auto& b = _bounds[_current];
-      _iter->Seek(b.lower_key);
+  struct Entry {
+    std::string lower_key;  // seek target (already accounts for exclusivity)
+    std::string upper_key;  // backing storage for iterate_upper_bound slice
+    rocksdb::Slice upper_slice;
+    std::unique_ptr<rocksdb::Iterator> iter;
+  };
 
-      if (b.lower_exclusive) {
-        // Skip all entries whose col0 value equals the lower boundary.
-        // Such keys start with lower_key (for multi-column PKs they have
-        // additional bytes after; for single-column PKs they are exactly
-        // equal).
-        const rocksdb::Slice lb{b.lower_key};
-        // TODO get rid of starts_with. We should use options upper/lower bound
-        while (_iter->Valid() && _iter->key().starts_with(lb)) {
-          _iter->Next();
-        }
-      }
+  // Appends the encoded value for a single PK column to `key`.
+  static void AppendColValue(std::string& key, size_t col_idx,
+                             const velox::variant& value,
+                             const velox::RowType& pk_type) {
+    const auto col_type =
+      velox::ROW({pk_type.nameOf(col_idx)}, {pk_type.childAt(col_idx)});
+    primary_key::Create({value}, *col_type, key);
+  }
 
-      if (_iter->Valid() && IsWithinCurrentRange()) {
+  // Advances the last byte of `key` to make it an exclusive upper bound that
+  // covers all keys sharing `key` as a prefix. Clears `key` to empty if all
+  // bytes are 0xff (meaning no per-range upper bound; caller falls back to the
+  // column-level bound).
+  static void MakeExclusiveUpperBound(std::string& key) {
+    for (int i = static_cast<int>(key.size()) - 1; i >= 0; --i) {
+      if (static_cast<unsigned char>(key[i]) < 0xff) {
+        ++reinterpret_cast<unsigned char&>(key[i]);
+        key.resize(static_cast<size_t>(i) + 1);
         return;
       }
+    }
+    key.clear();  // all 0xff — no upper bound
+  }
 
-      // Range is empty (seek landed past its upper bound); try the next one.
+  static Entry BuildBounds(const std::string& col_prefix,
+                           const rocksdb::Slice& col_upper_bound,
+                           const SpecificRange& sr,
+                           const velox::RowType& pk_type) {
+    Entry e;
+    const size_t k = sr.prefix.size();
+
+    auto encode_prefix = [&](std::string& key) {
+      for (size_t i = 0; i < k; ++i) {
+        AppendColValue(key, i, sr.prefix[i], pk_type);
+      }
+    };
+
+    // Lower bound: col_prefix + equality prefix + range col lower value.
+    // For an exclusive lower bound, byte-increment lower_key so the seek lands
+    // on the first key strictly after all keys sharing the lower prefix
+    // (same logic as MakeExclusiveUpperBound). This handles multi-column PKs
+    // correctly: e.g. a > 1 on PK(a,b) skips all (a=1, b=*) keys.
+    e.lower_key = col_prefix;
+    encode_prefix(e.lower_key);
+    if (sr.range_col.left) {
+      AppendColValue(e.lower_key, k, sr.range_col.left->value, pk_type);
+      if (!sr.range_col.left->inclusive) {
+        MakeExclusiveUpperBound(e.lower_key);
+      }
+    }
+
+    // Upper bound (exclusive for iterate_upper_bound).
+    // Exclusive right: encode value directly — RocksDB stops before it.
+    // Inclusive right or prefix-only: encode value/prefix then advance last
+    //   byte so all keys sharing that prefix (e.g. multi-col PK suffixes) are
+    //   included. Clears to empty if all 0xff → fall back to col_upper_bound.
+    if (sr.range_col.right) {
+      e.upper_key = col_prefix;
+      encode_prefix(e.upper_key);
+      AppendColValue(e.upper_key, k, sr.range_col.right->value, pk_type);
+      if (sr.range_col.right->inclusive) {
+        MakeExclusiveUpperBound(e.upper_key);
+      }
+    } else if (k > 0) {
+      // Equality prefix only, no range col right boundary: stay within the
+      // prefix group.
+      e.upper_key = col_prefix;
+      encode_prefix(e.upper_key);
+      MakeExclusiveUpperBound(e.upper_key);
+    }
+    // else k == 0 && no right boundary: fully unbounded, upper_key stays empty.
+
+    e.upper_slice = e.upper_key;
+    e.upper_slice =
+      e.upper_key.empty() ? col_upper_bound : rocksdb::Slice{e.upper_key};
+
+    return e;
+  }
+
+  void SeekToRange() {
+    while (_current < _entries.size()) {
+      _entries[_current].iter->Seek(_entries[_current].lower_key);
+      if (_entries[_current].iter->Valid()) {
+        return;
+      }
       ++_current;
     }
   }
 
-  // Returns true if the current iterator position is within _bounds[_current].
-  bool IsWithinCurrentRange() const {
-    const auto& b = _bounds[_current];
-    if (b.upper_key.empty()) {
-      return true;  // unbounded right: rely on iterate_upper_bound from
-                    // ReadOptions
-    }
-    const rocksdb::Slice ub{b.upper_key};
-    const int cmp = _iter->key().compare(ub);
-    if (b.upper_inclusive) {
-      // Valid if key < upper_key (col0 < right.value)
-      // OR key starts_with upper_key (col0 == right.value, multi-col PK).
-      return cmp < 0 || _iter->key().starts_with(ub);
-    }
-    // Exclusive: valid only if key < upper_key (col0 strictly less).
-    return cmp < 0;
-  }
-
-  std::unique_ptr<rocksdb::Iterator> _iter;
-  std::vector<RangeBound> _bounds;
+  std::vector<Entry> _entries;
   size_t _current = 0;
 };
 
@@ -900,91 +994,31 @@ void RocksDBMultiRangeLookupDataSource<Source>::addSplit(
   SDB_ASSERT(!_pk_type->names().empty(),
              "RocksDBMultiRangeLookupDataSource: pk_type has no columns");
 
-  // Appends the encoded value for a single PK column to `key`.
-  auto append_col_value = [&](std::string& key, size_t col_idx,
-                              const velox::variant& value) {
-    const auto col_type =
-      velox::ROW({_pk_type->nameOf(col_idx)}, {_pk_type->childAt(col_idx)});
-    const std::vector<velox::variant> single = {value};
-    primary_key::Create(single, *col_type, key);
-  };
-
-  // Pre-build RangeBound for each SpecificRange.
-  // sr.prefix holds K exact values for PK columns 0..K-1; sr.range_col is the
-  // constraint on column K. The seek key encodes all K+1 columns.
-  // _ranges must be pre-sorted.
-  auto build_bounds = [&](const std::string& col_prefix)
-    -> std::vector<RocksDBMultiRangeIterator::RangeBound> {
-    std::vector<RocksDBMultiRangeIterator::RangeBound> bounds;
-    bounds.reserve(_ranges.size());
-    for (const auto& sr : _ranges) {
-      RocksDBMultiRangeIterator::RangeBound b;
-      const size_t k = sr.prefix.size();
-
-      // Helper: encode equality prefix cols 0..K-1 into `key`.
-      auto encode_eq_prefix = [&](std::string& key) {
-        for (size_t i = 0; i < k; ++i) {
-          append_col_value(key, i, sr.prefix[i]);
-        }
-      };
-
-      // Lower bound: equality prefix + range column's lower boundary (if any).
-      b.lower_key = col_prefix;
-      b.lower_exclusive = false;
-      encode_eq_prefix(b.lower_key);
-      if (sr.range_col.left) {
-        append_col_value(b.lower_key, k, sr.range_col.left->value);
-        b.lower_exclusive = !sr.range_col.left->inclusive;
-      }
-
-      // Upper bound: equality prefix + range column's upper boundary (if any).
-      // If no right boundary, the equality prefix acts as the upper bound
-      // (inclusive via starts_with check).
-      // An upper_key equal to col_prefix means unbounded; clear it to use
-      // iterate_upper_bound (column natural bound) instead.
-      b.upper_key = col_prefix;
-      b.upper_inclusive = true;
-      encode_eq_prefix(b.upper_key);
-      if (sr.range_col.right) {
-        append_col_value(b.upper_key, k, sr.range_col.right->value);
-        b.upper_inclusive = sr.range_col.right->inclusive;
-      }
-      // else: upper_key stays at equality prefix (starts_with match covers all
-      // values of column K with the fixed prefix), upper_inclusive = true.
-      if (b.upper_key == col_prefix) {
-        b.upper_key.clear();  // unbounded: fall through to iterate_upper_bound
-      }
-
-      bounds.push_back(std::move(b));
-    }
-    return bounds;
-  };
-
-  rocksdb::ReadOptions options;
-  options.snapshot = this->_snapshot;
-  options.async_io = false;
-  options.adaptive_readahead = true;
-  options.auto_prefix_mode = true;
+  // Factory captures the source and CF; the snapshot is embedded in opts by
+  // BuildEntry so the caller does not need to know about it.
+  const rocksdb::Snapshot* snapshot = this->_snapshot;
+  RocksDBMultiRangeIterator::IteratorFactory factory;
+  if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
+    factory = [&, snapshot](rocksdb::ReadOptions opts) {
+      opts.snapshot = snapshot;
+      return std::unique_ptr<rocksdb::Iterator>(
+        this->_source.GetIterator(opts, &this->_cf));
+    };
+  } else {
+    factory = [&, snapshot](rocksdb::ReadOptions opts) {
+      opts.snapshot = snapshot;
+      return std::unique_ptr<rocksdb::Iterator>(
+        this->_source.NewIterator(opts, &this->_cf));
+    };
+  }
 
   this->_iterators.clear();
   this->_iterators.reserve(this->_column_keys.size());
 
   for (size_t i = 0; i < this->_column_keys.size(); ++i) {
-    // Keep the column-level upper bound to avoid escaping into the next column.
-    options.iterate_upper_bound = &this->_upper_bound_slices[i];
-
-    std::unique_ptr<rocksdb::Iterator> raw_iter;
-    if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
-      raw_iter = std::unique_ptr<rocksdb::Iterator>(
-        this->_source.GetIterator(options, &this->_cf));
-    } else {
-      raw_iter = std::unique_ptr<rocksdb::Iterator>(
-        this->_source.NewIterator(options, &this->_cf));
-    }
-
-    auto bounds = build_bounds(this->_column_keys[i]);
     this->_iterators.push_back(std::make_unique<RocksDBMultiRangeIterator>(
-      std::move(raw_iter), std::move(bounds)));
+      this->_column_keys[i], this->_upper_bound_slices[i], _ranges, *_pk_type,
+      factory));
   }
 }
 

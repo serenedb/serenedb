@@ -189,6 +189,51 @@ using SpecificPoint = std::vector<velox::variant>;
 struct SpecificRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
   Range range_col;                     // constraint on column K
+
+  // Ordering: compare the effective (K+1)-element sequence element by element.
+  // Each element is either a prefix value (exact) or, at position K, the
+  // range_col left boundary (nullopt = -inf, sorts before any concrete value).
+  // When two ranges share all elements of the shorter one → ranges overlap,
+  // which must not happen — asserts.
+  bool operator<(const SpecificRange& other) const {
+    // Value at position i: prefix[i] for i < K, or range_col.left for i == K.
+    auto val_at = [](const SpecificRange& sr,
+                     size_t i) -> const velox::variant* {
+      if (i < sr.prefix.size()) {
+        return &sr.prefix[i];
+      }
+      return sr.range_col.left ? &sr.range_col.left->value : nullptr;
+    };
+
+    const size_t len = prefix.size() + 1;  // this range's sequence length
+    const size_t other_len = other.prefix.size() + 1;
+    const size_t common = std::min(len, other_len);
+
+    for (size_t i = 0; i < common; ++i) {
+      const velox::variant* a = val_at(*this, i);
+      const velox::variant* b = val_at(other, i);
+      const bool a_inf = (a == nullptr);
+      const bool b_inf = (b == nullptr);
+      if (a_inf != b_inf) {
+        return a_inf;  // -inf < concrete value
+      }
+      if (a_inf) {
+        return false;  // both -inf at same pos: equal here
+      }
+      if (*a < *b) {
+        return true;
+      }
+      if (*b < *a) {
+        return false;
+      }
+    }
+
+    // All common elements equal — one range is a structural prefix of the
+    // other, meaning they overlap. This is an invalid sorted range list.
+    SDB_ASSERT(false,
+               "SpecificRange ordering: one range is a prefix of another");
+    return false;
+  }
 };
 
 // Converts range KeyConstraints to SpecificRange, ordered by pk_type column

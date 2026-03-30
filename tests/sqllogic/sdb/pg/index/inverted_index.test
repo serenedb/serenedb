@@ -557,3 +557,291 @@ a
 
 statement ok
 DROP TABLE multi_seg;
+
+
+statement ok
+CREATE TABLE dense_pq_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO dense_pq_src VALUES
+  (1, 'common word alpha here', 'group east side'),
+  (2, 'common word beta here', 'group west side'),
+  (3, 'common word gamma here', 'group east side'),
+  (4, 'common word delta here', 'group west side'),
+  (5, 'common word epsilon here', 'group east side'),
+  (6, 'common word zeta here', 'group west side'),
+  (7, 'common word eta here', 'group east side'),
+  (8, 'common word theta here', 'group west side');
+
+statement count 8
+COPY dense_pq_src TO '/tmp/${__DATABASE__}_dense_pq.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TABLE dense_pq_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_dense_pq.parquet'
+);
+
+statement ok
+CREATE INDEX dense_pq_idx ON dense_pq_ext USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+----
+a	b
+1	common word alpha here
+2	common word beta here
+3	common word gamma here
+4	common word delta here
+5	common word epsilon here
+6	common word zeta here
+7	common word eta here
+8	common word theta here
+
+query
+SELECT a, b, c FROM dense_pq_idx WHERE PHRASE(b, 'here') ORDER BY a;
+----
+a	b	c
+1	common word alpha here	group east side
+2	common word beta here	group west side
+3	common word gamma here	group east side
+4	common word delta here	group west side
+5	common word epsilon here	group east side
+6	common word zeta here	group west side
+7	common word eta here	group east side
+8	common word theta here	group west side
+
+query
+SELECT * FROM dense_pq_idx WHERE PHRASE(b, 'common') ORDER BY a;
+----
+a	b	c
+1	common word alpha here	group east side
+2	common word beta here	group west side
+3	common word gamma here	group east side
+4	common word delta here	group west side
+5	common word epsilon here	group east side
+6	common word zeta here	group west side
+7	common word eta here	group east side
+8	common word theta here	group west side
+
+query
+SELECT a FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+----
+a
+1
+2
+3
+4
+5
+6
+7
+8
+
+query
+SELECT a, c FROM dense_pq_idx WHERE PHRASE(c, 'group east side') ORDER BY a;
+----
+a	c
+1	group east side
+3	group east side
+5	group east side
+7	group east side
+
+query
+SELECT a, b FROM dense_pq_idx WHERE PHRASE(b, 'theta') ORDER BY a;
+----
+a	b
+8	common word theta here
+
+query
+SELECT a, b, c FROM dense_pq_idx WHERE PHRASE(b, 'common') AND PHRASE(c, 'group west side') ORDER BY a;
+----
+a	b	c
+2	common word beta here	group west side
+4	common word delta here	group west side
+6	common word zeta here	group west side
+8	common word theta here	group west side
+
+query
+SELECT a, b FROM dense_pq_idx WHERE PHRASE(b, 'alpha') OR PHRASE(b, 'theta') ORDER BY a;
+----
+a	b
+1	common word alpha here
+8	common word theta here
+
+query
+SELECT a, BM25() > 0 AS has_score FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+----
+a	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+6	t
+7	t
+8	t
+
+statement ok
+DROP TABLE dense_pq_ext;
+
+statement ok
+DROP TABLE dense_pq_src;
+
+
+statement ok
+CREATE TABLE dense_csv_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO dense_csv_src VALUES
+  (1, 'shared term alpha info', 'dept red color'),
+  (2, 'shared term beta info', 'dept blue color'),
+  (3, 'shared term gamma info', 'dept red color'),
+  (4, 'shared term delta info', 'dept blue color'),
+  (5, 'shared term epsilon info', 'dept red color');
+
+statement count 5
+COPY dense_csv_src TO '/tmp/${__DATABASE__}_dense_csv.csv';
+
+statement ok
+CREATE TABLE dense_csv_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+) USING EXTERNAL
+WITH (
+  PATH = '/tmp/${__DATABASE__}_dense_csv.csv'
+);
+
+statement ok
+CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+3	shared term gamma info
+4	shared term delta info
+5	shared term epsilon info
+
+query
+SELECT a, b, c FROM dense_csv_idx WHERE PHRASE(b, 'info') ORDER BY a;
+----
+a	b	c
+1	shared term alpha info	dept red color
+2	shared term beta info	dept blue color
+3	shared term gamma info	dept red color
+4	shared term delta info	dept blue color
+5	shared term epsilon info	dept red color
+
+query
+SELECT a, c FROM dense_csv_idx WHERE PHRASE(c, 'dept red color') ORDER BY a;
+----
+a	c
+1	dept red color
+3	dept red color
+5	dept red color
+
+query
+SELECT a, c FROM dense_csv_idx WHERE PHRASE(c, 'dept blue color') ORDER BY a;
+----
+a	c
+2	dept blue color
+4	dept blue color
+
+statement ok
+DROP TABLE dense_csv_ext;
+
+statement ok
+DROP TABLE dense_csv_src;
+
+
+statement ok
+CREATE TABLE dense_multi (a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO dense_multi VALUES
+  (1, 'universal token alpha'),
+  (2, 'universal token beta'),
+  (3, 'universal token gamma'),
+  (4, 'universal token delta');
+
+statement ok
+CREATE INDEX dense_multi_idx ON dense_multi USING inverted(a, b test_english);
+
+statement ok
+VACUUM (UPDATE_INDEXES) dense_multi;
+
+statement ok
+INSERT INTO dense_multi VALUES
+  (5, 'universal token epsilon'),
+  (6, 'universal token zeta'),
+  (7, 'universal token eta'),
+  (8, 'universal token theta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) dense_multi;
+
+query
+SELECT a, b FROM dense_multi_idx WHERE PHRASE(b, 'universal token') ORDER BY a;
+----
+a	b
+1	universal token alpha
+2	universal token beta
+3	universal token gamma
+4	universal token delta
+5	universal token epsilon
+6	universal token zeta
+7	universal token eta
+8	universal token theta
+
+query
+SELECT a, b FROM dense_multi_idx WHERE PHRASE(b, 'gamma') OR PHRASE(b, 'eta') ORDER BY a;
+----
+a	b
+3	universal token gamma
+7	universal token eta
+
+query
+SELECT a, BM25() > 0 AS has_score FROM dense_multi_idx WHERE PHRASE(b, 'universal') ORDER BY a;
+----
+a	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+6	t
+7	t
+8	t
+
+statement ok
+INSERT INTO dense_multi VALUES
+  (9, 'universal token iota'),
+  (10, 'universal token kappa');
+
+statement ok
+VACUUM (UPDATE_INDEXES) dense_multi;
+
+query
+SELECT a, b FROM dense_multi_idx WHERE PHRASE(b, 'universal token') ORDER BY a;
+----
+a	b
+1	universal token alpha
+2	universal token beta
+3	universal token gamma
+4	universal token delta
+5	universal token epsilon
+6	universal token zeta
+7	universal token eta
+8	universal token theta
+9	universal token iota
+10	universal token kappa
+
+statement ok
+DROP TABLE dense_multi;

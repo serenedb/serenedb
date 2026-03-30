@@ -23,11 +23,15 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
+#include <velox/expression/DecodedArgs.h>
+#include <velox/expression/FunctionMetadata.h>
+#include <velox/expression/VectorFunction.h>
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/functions/prestosql/DateTimeImpl.h>
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/vector/ComplexVector.h>
+#include <velox/vector/RangeVector.h>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -1706,6 +1710,135 @@ struct PgErrorFunction {
   }
 };
 
+class GenerateSeriesFunction : public velox::exec::VectorFunction {
+ public:
+  void apply(const velox::SelectivityVector& rows,
+             std::vector<velox::VectorPtr>& args,
+             const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
+             velox::VectorPtr& result) const final {
+    velox::exec::DecodedArgs decoded_args{rows, args, context};
+    const auto* start_vector = decoded_args.at(0);
+    const auto* stop_vector = decoded_args.at(1);
+    velox::DecodedVector* step_vector = nullptr;
+    if (args.size() == 3) {
+      step_vector = decoded_args.at(2);
+    }
+
+    const auto num_rows = rows.end();
+    auto* pool = context.pool();
+
+    auto sizes = velox::allocateSizes(num_rows, pool);
+    auto offsets = velox::allocateOffsets(num_rows, pool);
+    auto* raw_sizes = sizes->asMutable<velox::vector_size_t>();
+    auto* raw_offsets = offsets->asMutable<velox::vector_size_t>();
+
+    std::vector<velox::RangeVector::RowMeta> metas(num_rows);
+    velox::vector_size_t total_elements = 0;
+
+    context.applyToSelectedNoThrow(rows, [&](auto row) {
+      auto start = start_vector->valueAt<int64_t>(row);
+      auto stop = stop_vector->valueAt<int64_t>(row);
+      int64_t step = step_vector ? step_vector->valueAt<int64_t>(row) : 1;
+
+      if (step == 0) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("step size cannot equal zero"));
+      }
+
+      int64_t count = 0;
+      if ((step > 0 && stop >= start) || (step < 0 && stop <= start)) {
+        count = (stop - start) / step + 1;
+      }
+
+      raw_offsets[row] = total_elements;
+      raw_sizes[row] = static_cast<velox::vector_size_t>(count);
+      metas[row] = {start, step};
+      total_elements += raw_sizes[row];
+    });
+
+    auto range_vector = std::make_shared<velox::RangeVector>(
+      pool, output_type, nullptr, num_rows, std::move(offsets),
+      std::move(sizes), std::move(metas));
+
+    context.moveOrCopyResult(std::move(range_vector), rows, result);
+  }
+};
+
+class GenerateSubscriptsFunction : public velox::exec::VectorFunction {
+ public:
+  void apply(const velox::SelectivityVector& rows,
+             std::vector<velox::VectorPtr>& args,
+             const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
+             velox::VectorPtr& result) const override {
+    velox::exec::DecodedArgs decoded_args{rows, args, context};
+    auto* array_vector = decoded_args.at(0);
+    auto* dim_vector = decoded_args.at(1);
+    velox::DecodedVector* reverse_vector = nullptr;
+    if (args.size() == 3) {
+      reverse_vector = decoded_args.at(2);
+    }
+
+    const auto num_rows = rows.end();
+    auto* pool = context.pool();
+
+    auto sizes = velox::allocateSizes(num_rows, pool);
+    auto offsets = velox::allocateOffsets(num_rows, pool);
+    auto* raw_sizes = sizes->asMutable<velox::vector_size_t>();
+    auto* raw_offsets = offsets->asMutable<velox::vector_size_t>();
+
+    std::vector<velox::RangeVector::RowMeta> metas(num_rows);
+    velox::vector_size_t total_elements = 0;
+
+    context.applyToSelectedNoThrow(rows, [&](auto row) {
+      auto dim = dim_vector->valueAt<int64_t>(row);
+      bool reverse = reverse_vector && reverse_vector->valueAt<bool>(row);
+
+      int64_t count = 0;
+      if (dim >= 1 && !array_vector->isNullAt(row)) {
+        auto& base_array =
+          basics::downCast<velox::ArrayVector>(*array_vector->base());
+        auto* cur = &base_array;
+        auto idx = array_vector->index(row);
+        bool valid = true;
+
+        for (int64_t d = 1; d < dim; ++d) {
+          if (cur->sizeAt(idx) == 0) {
+            valid = false;
+            break;
+          }
+          auto* inner =
+            dynamic_cast<velox::ArrayVector*>(cur->elements().get());
+          if (!inner) {
+            valid = false;
+            break;
+          }
+          idx = cur->offsetAt(idx);
+          cur = inner;
+        }
+
+        if (valid) {
+          count = cur->sizeAt(idx);
+        }
+      }
+
+      raw_offsets[row] = total_elements;
+      raw_sizes[row] = static_cast<velox::vector_size_t>(count);
+      if (reverse) {
+        metas[row] = {count, -1};
+      } else {
+        metas[row] = {1, 1};
+      }
+      total_elements += raw_sizes[row];
+    });
+
+    auto range_vector = std::make_shared<velox::RangeVector>(
+      pool, output_type, nullptr, num_rows, std::move(offsets),
+      std::move(sizes), std::move(metas));
+
+    context.moveOrCopyResult(std::move(range_vector), rows, result);
+  }
+};
+
 using facebook::velox::T1;
 
 // array_length(anyarray, integer) → integer
@@ -2594,6 +2727,48 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "get_wal_summarizer_state"});
 
   registerExtractFunctions(prefix);
+
+  velox::exec::registerStatefulVectorFunction(
+    prefix + "generate_series",
+    {velox::exec::FunctionSignatureBuilder()
+       .returnType("array(bigint)")
+       .argumentType("bigint")
+       .argumentType("bigint")
+       .build(),
+     velox::exec::FunctionSignatureBuilder()
+       .returnType("array(bigint)")
+       .argumentType("bigint")
+       .argumentType("bigint")
+       .argumentType("bigint")
+       .build()},
+    [](const std::string&, const std::vector<velox::exec::VectorFunctionArg>&,
+       const velox::core::QueryConfig&)
+      -> std::shared_ptr<velox::exec::VectorFunction> {
+      return std::make_shared<GenerateSeriesFunction>();
+    },
+    velox::exec::VectorFunctionMetadataBuilder().deterministic(false).build());
+
+  velox::exec::registerStatefulVectorFunction(
+    prefix + "generate_subscripts",
+    {velox::exec::FunctionSignatureBuilder()
+       .typeVariable("T")
+       .returnType("array(bigint)")
+       .argumentType("array(T)")
+       .argumentType("bigint")
+       .build(),
+     velox::exec::FunctionSignatureBuilder()
+       .typeVariable("T")
+       .returnType("array(bigint)")
+       .argumentType("array(T)")
+       .argumentType("bigint")
+       .argumentType("boolean")
+       .build()},
+    [](const std::string&, const std::vector<velox::exec::VectorFunctionArg>&,
+       const velox::core::QueryConfig&)
+      -> std::shared_ptr<velox::exec::VectorFunction> {
+      return std::make_shared<GenerateSubscriptsFunction>();
+    },
+    velox::exec::VectorFunctionMetadataBuilder().deterministic(false).build());
 
   // pg_stat_get_* scalar stub functions (used by pg_stat_* views)
   // These return 0 or NULL as stubs.

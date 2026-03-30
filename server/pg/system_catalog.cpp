@@ -238,7 +238,8 @@ struct VeloxFunction {
 
 constexpr containers::TrivialBiMap kMapping = [](auto selector) {
   return selector()
-    .Case("generate_series", VeloxFunction{"presto_sequence", true})
+    .Case("generate_series", VeloxFunction{"pg_generate_series", true})
+    .Case("generate_subscripts", VeloxFunction{"pg_generate_subscripts", true})
     .Case("unnest", VeloxFunction{"unnest", true, FunctionLanguage::Decorator})
     // Scalars
     // String functions

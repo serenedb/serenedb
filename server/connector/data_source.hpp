@@ -219,7 +219,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   RocksDBPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
-    ObjectId object_key, const std::vector<SpecificPoint>& values,
+    ObjectId object_key, const std::vector<ResolvedPoint>& values,
     velox::RowTypePtr pk_type, size_t output_column_count,
     velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
@@ -265,7 +265,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   // end of bitset).
   size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
 
-  const std::vector<SpecificPoint>& _values;
+  const std::vector<ResolvedPoint>& _values;
   velox::RowTypePtr _pk_type;
   std::vector<size_t> _sorted_col_indices;
   // presence mask for the current batch window
@@ -293,7 +293,7 @@ class RocksDBMultiRangeLookupDataSource
     std::vector<catalog::Column::Id> column_ids,
     catalog::Column::Id effective_column_id, ObjectId object_key,
     size_t output_column_count, const rocksdb::Snapshot* snapshot,
-    std::vector<SpecificRange> ranges, velox::RowTypePtr pk_type,
+    std::vector<ResolvedRange> ranges, velox::RowTypePtr pk_type,
     velox::core::TypedExprPtr remaining_filter = nullptr,
     velox::core::ExpressionEvaluator* evaluator = nullptr);
 
@@ -302,7 +302,7 @@ class RocksDBMultiRangeLookupDataSource
  private:
   // Pre-sorted SpecificRange list; each entry has K equality prefix values and
   // one range column constraint.
-  std::vector<SpecificRange> _ranges;
+  std::vector<ResolvedRange> _ranges;
   velox::RowTypePtr _pk_type;
 };
 

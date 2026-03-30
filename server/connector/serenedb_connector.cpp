@@ -46,7 +46,7 @@ constexpr bool kExecuteFiltersInTableScan = false;
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout,
-  std::vector<SpecificPoint> points, std::vector<SpecificRange> ranges,
+  std::vector<ResolvedPoint> points, std::vector<ResolvedRange> ranges,
   velox::core::TypedExprPtr remaining_filter, bool zero_ranges)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
@@ -195,8 +195,8 @@ SereneDBTableLayout::createTableHandle(
       velox::BOOLEAN(), filters, velox::expression::kAnd);
   }
 
-  std::vector<SpecificPoint> points;
-  std::vector<SpecificRange> ranges;
+  std::vector<ResolvedPoint> points;
+  std::vector<ResolvedRange> ranges;
   bool zero_ranges = false;
   if (remaining_filter) {
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
@@ -242,7 +242,7 @@ std::string SereneDBConnectorTableHandle::toString() const {
     const auto& names = _pk_type->names();
     const auto& types = _pk_type->children();
     std::string points_str = absl::StrJoin(
-      _points, ", ", [&](std::string* out, const SpecificPoint& point) {
+      _points, ", ", [&](std::string* out, const ResolvedPoint& point) {
         SDB_ASSERT(types.size() == point.size());
         absl::StrAppend(out, "(");
         for (size_t i = 0; i < point.size(); ++i) {
@@ -260,7 +260,7 @@ std::string SereneDBConnectorTableHandle::toString() const {
     const auto& names = _pk_type->names();
     const auto& types = _pk_type->children();
     std::string ranges_str = absl::StrJoin(
-      _ranges, ", ", [&](std::string* out, const SpecificRange& sr) {
+      _ranges, ", ", [&](std::string* out, const ResolvedRange& sr) {
         absl::StrAppend(out, "{");
         for (size_t i = 0; i < sr.prefix.size(); ++i) {
           if (i > 0) {

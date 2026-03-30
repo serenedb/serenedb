@@ -181,9 +181,13 @@ std::vector<KeyConstraint> ExtractFilterAnd(
       }
     }
     result = std::move(next);
-    // All pairs were contradictions: this AND can never be satisfied.
-    if (result.empty() && had_contradiction) {
-      return {KeyConstraint::MakeContradictory(pk_names)};
+    if (result.empty()) {
+      if (had_contradiction) {
+        // All pairs were contradictions: this AND can never be satisfied.
+        return {KeyConstraint::MakeContradictory(pk_names)};
+      }
+      // All intersections produced unconstrained results: AND is unconstrained.
+      return AnyKeyConstraint(pk_names);
     }
   }
   return result;
@@ -200,20 +204,26 @@ std::vector<KeyConstraint> ExtractFilterOr(
 
   std::vector<KeyConstraint> result;
   for (const auto& input : func_call->inputs()) {
-    auto pts = ExtractFilterExpr(input, pk_names);
+    auto constraints = ExtractFilterExpr(input, pk_names);
     // Void branch (impossible sub-expression) contributes nothing to OR.
-    if (absl::c_all_of(
-          pts, [](const KeyConstraint& p) { return p.IsContradictory(); })) {
+    // Guard against empty pts: c_all_of on {} is vacuously true and would
+    // incorrectly treat an unconstrained (empty) result as contradictory.
+    if (!constraints.empty() &&
+        absl::c_all_of(constraints, [](const KeyConstraint& p) {
+          return p.IsContradictory();
+        })) {
       continue;
     }
-    // If any point in the child result is unconstrained, the OR is
-    // unconstrained.
-    if (absl::c_any_of(
-          pts, [](const KeyConstraint& p) { return p.IsUnconstrained(); })) {
+    // Empty pts means all intersections were unconstrained — treat as AnyKC.
+    // Also, any unconstrained constraint makes the whole OR unconstrained.
+    if (constraints.empty() ||
+        absl::c_any_of(constraints, [](const KeyConstraint& p) {
+          return p.IsUnconstrained();
+        })) {
       return AnyKeyConstraint(pk_names);
     }
-    result.insert(result.end(), std::make_move_iterator(pts.begin()),
-                  std::make_move_iterator(pts.end()));
+    result.insert(result.end(), std::make_move_iterator(constraints.begin()),
+                  std::make_move_iterator(constraints.end()));
   }
   // All branches were void → OR is itself impossible.
   if (result.empty()) {
@@ -665,7 +675,7 @@ std::string KeyConstraint::ToString() const {
   return result;
 }
 
-size_t KeyConstraint::PrefixSize() const noexcept {
+size_t KeyConstraint::RangePrefixSize() const noexcept {
   // Count K: leading exact-equality (point) columns.
   size_t k = 0;
   for (; k < _pk_names.size(); ++k) {
@@ -846,12 +856,12 @@ KeyConstraint KeyConstraint::ForceUnion(const KeyConstraint& lhs,
   return result;
 }
 
-std::vector<SpecificPoint> ToSpecificPoints(
+std::vector<ResolvedPoint> ToSpecificPoints(
   const std::vector<KeyConstraint>& points, const velox::RowType& pk_type) {
-  std::vector<SpecificPoint> result;
+  std::vector<ResolvedPoint> result;
   result.reserve(points.size());
   for (const auto& p : points) {
-    SpecificPoint sp;
+    ResolvedPoint sp;
     sp.reserve(pk_type.size());
     for (const auto& name : pk_type.names()) {
       const auto* filter = p.FindFilter(name);
@@ -864,15 +874,15 @@ std::vector<SpecificPoint> ToSpecificPoints(
   return result;
 }
 
-std::vector<SpecificRange> ToSpecificRanges(
+std::vector<ResolvedRange> ToSpecificRanges(
   const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type) {
-  std::vector<SpecificRange> result;
+  std::vector<ResolvedRange> result;
   result.reserve(ranges.size());
   for (const auto& kc : ranges) {
-    const size_t prefix_size = kc.PrefixSize();
+    const size_t prefix_size = kc.RangePrefixSize();
     SDB_ASSERT(prefix_size > 0,
                "ToSpecificRanges: constraint must have PrefixSize() >= 1");
-    SpecificRange sr;
+    ResolvedRange sr;
 
     // Find the index of the range column: walk leading equality columns until
     // the first non-point column or the end. If all prefix_size columns are
@@ -976,7 +986,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // This excludes cases like `b > 5` (first PK column unconstrained) or
   // `a > 3 AND c > 1` (gap on b) that cannot be represented as a range scan.
   if (absl::c_any_of(constraints, [](const KeyConstraint& c) {
-        return c.PrefixSize() == 0;
+        return c.RangePrefixSize() == 0;
       })) {
     return {ConstraintKind::Empty, {}, expr};
   }
@@ -985,7 +995,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // (all K equality columns + the range column), not just the first PK column.
   containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
   for (const auto& c : constraints) {
-    const size_t prefix = c.PrefixSize();
+    const size_t prefix = c.RangePrefixSize();
     for (size_t i = 0; i < prefix; ++i) {
       const auto& col_exprs = c.GetSourceExprs(pk_names[i]);
       sources.insert(col_exprs.begin(), col_exprs.end());
@@ -1000,8 +1010,8 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
           RewriteExpr(expr, sources)};
 }
 
-void SortPoints(std::vector<SpecificPoint>& points) {
-  absl::c_sort(points, [](const SpecificPoint& lhs, const SpecificPoint& rhs) {
+void SortPoints(std::vector<ResolvedPoint>& points) {
+  absl::c_sort(points, [](const ResolvedPoint& lhs, const ResolvedPoint& rhs) {
     for (size_t i = 0; i < lhs.size(); ++i) {
       if (lhs[i] != rhs[i]) {
         return lhs[i] < rhs[i];

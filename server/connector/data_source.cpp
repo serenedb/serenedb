@@ -783,7 +783,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
   // factory        : creates a rocksdb::Iterator given ReadOptions
   RocksDBMultiRangeIterator(const std::string& col_prefix,
                             const rocksdb::Slice& col_upper_bound,
-                            const std::vector<SpecificRange>& ranges,
+                            const std::vector<ResolvedRange>& ranges,
                             const velox::RowType& pk_type,
                             const IteratorFactory& factory) {
     SDB_ASSERT(absl::c_is_sorted(ranges));
@@ -890,7 +890,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
 
   static Entry BuildBounds(const std::string& col_prefix,
                            const rocksdb::Slice& col_upper_bound,
-                           const SpecificRange& sr,
+                           const ResolvedRange& sr,
                            const velox::RowType& pk_type) {
     Entry e;
     const size_t k = sr.prefix.size();
@@ -964,7 +964,7 @@ RocksDBMultiRangeLookupDataSource<Source>::RocksDBMultiRangeLookupDataSource(
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
   size_t output_column_count, const rocksdb::Snapshot* snapshot,
-  std::vector<SpecificRange> ranges, velox::RowTypePtr pk_type,
+  std::vector<ResolvedRange> ranges, velox::RowTypePtr pk_type,
   velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
   : RocksDBFullScanDataSource<Source>{memory_pool,

@@ -221,7 +221,7 @@ class SereneDBConnectorTableHandle final
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
-    std::vector<SpecificPoint> points, std::vector<SpecificRange> ranges,
+    std::vector<ResolvedPoint> points, std::vector<ResolvedRange> ranges,
     velox::core::TypedExprPtr remaining_filter, bool zero_ranges = false);
 
   bool supportsIndexLookup() const final { return false; }
@@ -242,11 +242,11 @@ class SereneDBConnectorTableHandle final
 
   auto& GetRemainingFilter() const noexcept { return _remaining_filter; }
 
-  const std::vector<SpecificPoint>& GetPoints() const noexcept {
+  const std::vector<ResolvedPoint>& GetPoints() const noexcept {
     return _points;
   }
 
-  const std::vector<SpecificRange>& GetRanges() const noexcept {
+  const std::vector<ResolvedRange>& GetRanges() const noexcept {
     return _ranges;
   }
 
@@ -264,8 +264,8 @@ class SereneDBConnectorTableHandle final
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
-  std::vector<SpecificPoint> _points;
-  std::vector<SpecificRange> _ranges;
+  std::vector<ResolvedPoint> _points;
+  std::vector<ResolvedRange> _ranges;
   bool _zero_ranges = false;  // true → contradictory predicate, 0-range scan
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;

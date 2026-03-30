@@ -37,6 +37,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/fwd.h"
+#include "basics/system-compiler.h"
 
 namespace sdb::connector {
 
@@ -106,7 +107,6 @@ class KeyConstraint {
   // can never be satisfied — the scan should produce zero rows.
   [[nodiscard]] bool IsContradictory() const noexcept { return _contradictory; }
 
-  // Creates a void (impossible) constraint.
   [[nodiscard]] static KeyConstraint MakeContradictory(
     std::span<const std::string> pk_names) {
     KeyConstraint kc{pk_names};
@@ -125,7 +125,7 @@ class KeyConstraint {
   //   a = 1 AND b > 5    → 2  (a point, b range)
   //   a = 1 AND b = 2    → 2  (both points; note: IsSpecific handles all-point)
   //   a = 1 AND b = 2 AND c > 3 → 3
-  [[nodiscard]] size_t PrefixSize() const noexcept;
+  [[nodiscard]] size_t RangePrefixSize() const noexcept;
 
   // Returns nullptr if the column has no filter (matches any value).
   [[nodiscard]] const Range* FindFilter(std::string_view column_name) const;
@@ -192,18 +192,18 @@ class KeyConstraint {
 
 // A fully resolved point: one variant per PK column, ordered by pk_type.
 // Used after filter extraction — no expression metadata, no names.
-using SpecificPoint = std::vector<velox::variant>;
+using ResolvedPoint = std::vector<velox::variant>;
 
 // Converts specific (fully constrained) KeyConstraints to SpecificPoint,
 // ordered by pk_type column order.
-[[nodiscard]] std::vector<SpecificPoint> ToSpecificPoints(
+[[nodiscard]] std::vector<ResolvedPoint> ToSpecificPoints(
   const std::vector<KeyConstraint>& points, const velox::RowType& pk_type);
 
 // A fully resolved range: first K exact PK column values (the equality prefix),
 // followed by a Range for the (K+1)-th column.
 // prefix.size() == K; K may be 0 if the range column is the first PK column.
 // Analogous to SpecificPoint but for range scans.
-struct SpecificRange {
+struct ResolvedRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
   Range range_col;                     // constraint on column K
 
@@ -212,13 +212,14 @@ struct SpecificRange {
   // range_col left boundary (nullopt = -inf, sorts before any concrete value).
   // When two ranges share all elements of the shorter one → ranges overlap,
   // which must not happen — asserts.
-  bool operator<(const SpecificRange& other) const {
+  bool operator<(const ResolvedRange& other) const {
     // Value at position i: prefix[i] for i < K, or range_col.left for i == K.
-    auto val_at = [](const SpecificRange& sr,
+    auto val_at = [](const ResolvedRange& sr,
                      size_t i) -> const velox::variant* {
       if (i < sr.prefix.size()) {
         return &sr.prefix[i];
       }
+      SDB_ASSERT(i == sr.prefix.size());
       return sr.range_col.left ? &sr.range_col.left->value : nullptr;
     };
 
@@ -245,17 +246,15 @@ struct SpecificRange {
       }
     }
 
-    // All common elements equal — one range is a structural prefix of the
+    // All common elements equal - one range is a structural prefix of the
     // other, meaning they overlap. This is an invalid sorted range list.
-    SDB_ASSERT(false,
-               "SpecificRange ordering: one range is a prefix of another");
-    return false;
+    SDB_UNREACHABLE();
   }
 };
 
 // Converts range KeyConstraints to SpecificRange, ordered by pk_type column
 // order. Each constraint must have PrefixSize() >= 1.
-[[nodiscard]] std::vector<SpecificRange> ToSpecificRanges(
+[[nodiscard]] std::vector<ResolvedRange> ToSpecificRanges(
   const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type);
 
 [[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
@@ -282,7 +281,7 @@ struct ExtractAndRewriteResult {
 
 // Sorts points in-place by PK key order. Column order matches the pk_type used
 // during ToSpecificPoints. Comparison uses velox::variant::operator<.
-void SortPoints(std::vector<SpecificPoint>& points);
+void SortPoints(std::vector<ResolvedPoint>& points);
 
 // Returns true if `call` matches a velox function named either `suffix[1:]`
 // (bare name, e.g. "eq") or anything ending with `suffix` (prefixed name, e.g.

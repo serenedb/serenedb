@@ -35,10 +35,14 @@ const catalog::VirtualTable* GetTable(std::string_view name);
 
 void VisitSystemTables(
   absl::FunctionRef<void(const catalog::VirtualTable&, Oid)> visitor);
+void VisitSystemViews(
+  absl::FunctionRef<void(const catalog::View&, Oid)> visitor);
 
 std::shared_ptr<catalog::Function> GetFunction(std::string_view name);
+std::shared_ptr<catalog::Function> GetInfoSchemaFunction(std::string_view name);
 
 std::shared_ptr<catalog::View> GetView(std::string_view name);
+std::shared_ptr<catalog::View> GetInfoSchemaView(std::string_view name);
 
 void RegisterSystemViews();
 void RegisterSystemFunctions();

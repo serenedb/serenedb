@@ -62,3 +62,8 @@ repos:
         language: python
         entry: python3 scripts/check_namespace_format.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: check-no-anon-namespace-in-headers
+        name: Check no anonymous namespace in headers
+        language: python
+        entry: python3 scripts/check_no_anon_namespace_in_headers.py
+        files: \.(hpp|hh|h)$

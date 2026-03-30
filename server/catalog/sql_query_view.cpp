@@ -102,7 +102,8 @@ Result SqlQueryViewImpl::Check(ObjectId database, std::string_view name,
 
   return basics::SafeCall([&] {
     pg::Objects objects;
-    pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
+    pg::Disallowed disallowed;
+    disallowed.relations.emplace(pg::Objects::ObjectName{{}, name});
     pg::ResolveQueryView(database, search_path, objects, disallowed,
                          state.objects, config);
   });

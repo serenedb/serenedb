@@ -544,9 +544,7 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
   }
 }
 
-// ============================================================================
 // Basic OR Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_SimpleDisjunction) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -587,9 +585,7 @@ TEST_F(SearchFilterBuilderTest, test_MultipleOr) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Basic AND Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_SimpleConjunction) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -621,9 +617,7 @@ TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // NOT Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_NotTerm) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -664,9 +658,7 @@ TEST_F(SearchFilterBuilderTest, test_NotAnd) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Less Than
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_LessThanInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -689,9 +681,7 @@ TEST_F(SearchFilterBuilderTest, test_LessThanString) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Less Than or Equal
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -723,9 +713,7 @@ TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualStringNotIdentity) {
                std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Greater Than
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -748,9 +736,7 @@ TEST_F(SearchFilterBuilderTest, test_GreaterThanString) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Greater Than or Equal
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -773,9 +759,7 @@ TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualString) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // BETWEEN Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_BetweenInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -827,9 +811,7 @@ TEST_F(SearchFilterBuilderTest, test_NotBetween) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Combined AND/OR Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_AndWithOr) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -867,9 +849,7 @@ TEST_F(SearchFilterBuilderTest, test_OrWithAnd) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Combined with Comparison Operators
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_AndWithComparison) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -919,9 +899,7 @@ TEST_F(SearchFilterBuilderTest, test_ComparisonNotConst) {
                std::move(columns), false);
 }
 
-// ============================================================================
 // Combined with NOT
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_NotWithComparison) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1013,9 +991,7 @@ TEST_F(SearchFilterBuilderTest, test_DoubleNegation) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Complex Nested Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_ComplexNested1) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1133,9 +1109,7 @@ TEST_F(SearchFilterBuilderTest, test_NestedNotWithOr) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Implicit Cast Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_ImplicitCastIntegerToString) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1168,9 +1142,7 @@ TEST_F(SearchFilterBuilderTest, test_ImplicitCastInBetween) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Multiple Comparisons on Same Field
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_MultipleComparisonsOnSameField) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1195,9 +1167,7 @@ TEST_F(SearchFilterBuilderTest, test_MixedOperatorsOnSameField) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // IN Operator Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorIntegers) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1395,9 +1365,7 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorOnlyNulls) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // IS NULL Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_IsNull) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;

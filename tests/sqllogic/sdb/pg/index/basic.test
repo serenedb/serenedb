@@ -50,6 +50,14 @@ VACUUM (UPDATE_INDEXES) t;
 
 statement error
 VACUUM (UPDATE_INDEXES) wrong_t_name;
+----
+db error: ERROR: relation 'wrong_t_name' not found.
+
+
+statement error
+VACUUM (UPDATE_INDEXES) index_t;
+----
+db error: ERROR: relation 'index_t' not found.
 
 
 query
@@ -201,10 +209,12 @@ CREATE INDEX index_ts on tstest USING inverted(b);
 db error: ERROR: Column b has unsupported kind and can not be indexed
 
 
-statement error
+statement ok
 CREATE INDEX index_ts on tstest USING inverted(c);
-----
-db error: ERROR: Column c is VARCHAR but has no text dictionary defined
+
+
+statement ok
+DROP INDEX index_ts;
 
 
 statement error

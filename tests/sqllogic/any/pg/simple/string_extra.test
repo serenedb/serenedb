@@ -1,0 +1,593 @@
+# Tests for additional string functions
+
+
+# starts_with
+
+query
+SELECT starts_with('alphabet', 'alph');
+----
+starts_with
+t
+
+
+query
+SELECT starts_with('alphabet', 'xyz');
+----
+starts_with
+f
+
+
+query
+SELECT starts_with('alphabet', '');
+----
+starts_with
+t
+
+
+query
+SELECT starts_with('', '');
+----
+starts_with
+t
+
+
+# concat_ws
+
+query
+SELECT concat_ws(',', 'a', 'b', 'c');
+----
+concat_ws
+a,b,c
+
+
+query
+SELECT concat_ws(',', 'a', NULL, 'c');
+----
+concat_ws
+a,c
+
+
+query
+SELECT concat_ws(' - ', 'hello', 'world');
+----
+concat_ws
+hello - world
+
+
+# initcap
+
+query
+SELECT initcap('hi THOMAS');
+----
+initcap
+Hi Thomas
+
+
+query
+SELECT initcap('hello world');
+----
+initcap
+Hello World
+
+
+# repeat
+
+query
+SELECT repeat('Pg', 4);
+----
+repeat
+PgPgPgPg
+
+
+query
+SELECT repeat('abc', 0);
+----
+repeat
+(empty)
+
+
+# translate
+
+query
+SELECT translate('12345', '143', 'ax');
+----
+translate
+a2x5
+
+
+# ascii
+
+query
+SELECT ascii('x');
+----
+ascii
+120
+
+
+query
+SELECT ascii('A');
+----
+ascii
+65
+
+
+# left
+
+query
+SELECT left('abcde', 2);
+----
+left
+ab
+
+
+query
+SELECT left('abcde', 10);
+----
+left
+abcde
+
+
+# right
+
+query
+SELECT right('abcde', 2);
+----
+right
+de
+
+
+query
+SELECT right('abcde', 10);
+----
+right
+abcde
+
+
+# overlay
+
+query
+SELECT overlay('Txxxxas' placing 'hom' from 2 for 4);
+----
+overlay
+Thomas
+
+
+# md5
+
+query
+SELECT md5('abc');
+----
+md5
+900150983cd24fb0d6963f7d28e17f72
+
+
+query
+SELECT md5('');
+----
+md5
+d41d8cd98f00b204e9800998ecf8427e
+
+
+# to_hex
+
+query
+SELECT to_hex(2147483647);
+----
+to_hex
+7fffffff
+
+
+query
+SELECT to_hex(0);
+----
+to_hex
+0
+
+
+query
+SELECT to_hex(1);
+----
+to_hex
+1
+
+
+query
+SELECT to_hex(10);
+----
+to_hex
+a
+
+
+query
+SELECT to_hex(100);
+----
+to_hex
+64
+
+
+query
+SELECT to_hex(-1);
+----
+to_hex
+ffffffff
+
+
+query
+SELECT to_hex(0::bigint);
+----
+to_hex
+0
+
+
+query
+SELECT to_hex(1::bigint);
+----
+to_hex
+1
+
+
+query
+SELECT to_hex(100::bigint);
+----
+to_hex
+64
+
+
+query
+SELECT to_hex(-1::bigint);
+----
+to_hex
+ffffffffffffffff
+
+
+# bit_length
+
+query
+SELECT bit_length('jose');
+----
+bit_length
+32
+
+
+# octet_length
+
+query
+SELECT octet_length('jose');
+----
+octet_length
+4
+
+
+# char_length / character_length
+
+query
+SELECT char_length('jose');
+----
+char_length
+4
+
+
+query
+SELECT character_length('hello');
+----
+character_length
+5
+
+
+# string_to_array
+
+query
+SELECT string_to_array('a,b,c', ',');
+----
+string_to_array
+{a,b,c}
+
+
+query
+SELECT string_to_array('xx~~yy~~zz', '~~');
+----
+string_to_array
+{xx,yy,zz}
+
+
+query
+SELECT string_to_array('one', ',');
+----
+string_to_array
+{one}
+
+
+# string_to_array with null_string (3-arg form)
+
+query
+SELECT string_to_array('a,,b,c', ',', '');
+----
+string_to_array
+{a,NULL,b,c}
+
+
+query
+SELECT string_to_array('a,NULL,b', ',', 'NULL');
+----
+string_to_array
+{a,NULL,b}
+
+
+query
+SELECT string_to_array('a,b,c', ',', 'b');
+----
+string_to_array
+{a,NULL,c}
+
+
+query
+SELECT string_to_array('abc', ',', NULL);
+----
+string_to_array
+{abc}
+
+
+query
+SELECT string_to_array('a,b,c', ',', 'x');
+----
+string_to_array
+{a,b,c}
+
+
+# regexp_like
+
+query
+SELECT regexp_like('Hello World', 'world$', 'i');
+----
+regexp_like
+t
+
+
+query
+SELECT regexp_like('hello', 'xyz');
+----
+regexp_like
+f
+
+
+# to_bin
+
+query
+SELECT to_bin(2147483647);
+----
+to_bin
+1111111111111111111111111111111
+
+
+query
+SELECT to_bin(0);
+----
+to_bin
+0
+
+
+# to_oct
+
+query
+SELECT to_oct(2147483647);
+----
+to_oct
+17777777777
+
+
+query
+SELECT to_oct(0);
+----
+to_oct
+0
+
+
+# encode / decode
+
+query
+SELECT encode('123\000\001'::bytea, 'base64');
+----
+encode
+MTIzAAE=
+
+
+query
+SELECT encode('\x1234'::bytea, 'hex');
+----
+encode
+1234
+
+
+query
+SELECT decode('MTIzAAE=', 'base64') = '123\000\001'::bytea AS ok;
+----
+ok
+t
+
+
+query
+SELECT decode('1234', 'hex') = '\x1234'::bytea AS ok;
+----
+ok
+t
+
+
+# get_byte / set_byte
+
+query
+SELECT get_byte('\x1234567890'::bytea, 0);
+----
+get_byte
+18
+
+
+query
+SELECT get_byte('\x1234567890'::bytea, 4);
+----
+get_byte
+144
+
+
+# pg_client_encoding
+
+query
+SELECT pg_client_encoding();
+----
+pg_client_encoding
+UTF8
+
+
+# convert_from
+
+query
+SELECT convert_from('hello'::bytea, 'UTF8');
+----
+convert_from
+hello
+
+
+# convert_to
+
+query
+SELECT convert_to('hello', 'UTF8') = 'hello'::bytea AS ok;
+----
+ok
+t
+
+
+# normalize
+
+query
+SELECT normalize('hello', NFC);
+----
+normalize
+hello
+
+
+# num_nonnulls / num_nulls
+
+query
+SELECT num_nonnulls(1, NULL, 2);
+----
+num_nonnulls
+2
+
+
+query
+SELECT num_nulls(1, NULL, 2);
+----
+num_nulls
+1
+
+
+query
+SELECT num_nonnulls(NULL, NULL, NULL);
+----
+num_nonnulls
+0
+
+
+query
+SELECT num_nulls(NULL, NULL, NULL);
+----
+num_nulls
+3
+
+
+# current_setting
+
+query
+SELECT current_setting('server_version');
+----
+current_setting
+18.3
+
+
+query
+SELECT current_setting('client_encoding');
+----
+current_setting
+UTF8
+
+
+query
+SELECT current_setting('nonexistent_param', true) IS NULL AS ok;
+----
+ok
+t
+
+
+# set_config
+
+query
+SELECT set_config('application_name', 'test_app', false);
+----
+set_config
+test_app
+
+
+query
+SELECT current_setting('application_name');
+----
+current_setting
+test_app
+
+
+# octet_length: ASCII string (bytes == chars)
+
+query
+SELECT octet_length('hello');
+----
+octet_length
+5
+
+# octet_length: multi-byte UTF-8 string (bytes > chars)
+
+query
+SELECT octet_length('мир');
+----
+octet_length
+6
+
+query
+SELECT length('мир');
+----
+length
+3
+
+
+# quote_ident: reserved words must be quoted
+
+query
+SELECT quote_ident('select');
+----
+quote_ident
+"select"
+
+
+query
+SELECT quote_ident('table');
+----
+quote_ident
+"table"
+
+
+query
+SELECT quote_ident('normal_ident');
+----
+quote_ident
+normal_ident
+
+
+query
+SELECT quote_ident('MixedCase');
+----
+quote_ident
+"MixedCase"
+
+
+query
+SELECT quote_ident('has space');
+----
+quote_ident
+"has space"

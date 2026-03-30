@@ -81,13 +81,15 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(const std::shared_ptr<InvertedIndexShard>& inverted_index_shard)
-    : Task{inverted_index_shard} {}
+  CommitTask(const std::shared_ptr<InvertedIndexShard>& inverted_index_shard,
+             bool wait)
+    : Task{inverted_index_shard}, _wait{wait} {}
 
   CommitTask GetContinuos() const {
     auto self = _inverted_index_shard.lock();
     SDB_ASSERT(self);
-    return CommitTask(self);
+    // continue is always no-wait as we rescheduling next background commit
+    return CommitTask(self, false);
   }
 
   void operator()();
@@ -100,6 +102,7 @@ class CommitTask : public Task {
   absl::Duration _consolidation_interval_msec;
   size_t _cleanup_interval_step;
   size_t _cleanup_interval_count;
+  bool _wait;
 };
 
 class ConsolidationTask : public Task {

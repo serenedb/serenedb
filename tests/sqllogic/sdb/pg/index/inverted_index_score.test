@@ -824,7 +824,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[4][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0))] -> "id":INTEGER, "has_score":BOOLEAN
   -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
-    -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL
+    -- HashJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL
       -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
       -- TableScan[1][docs2, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER
 
@@ -854,7 +854,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[4][expressions: (id:INTEGER, "id"), (has_score:BOOLEAN, presto_gt("sdb_inverted_index_score",0)), (tag:VARCHAR, "tag")] -> "id":INTEGER, "has_score":BOOLEAN, "tag":VARCHAR
   -- OrderBy[3][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
-    -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
+    -- HashJoin[2][INNER id=id] -> "id":INTEGER, "sdb_inverted_index_score":REAL, "tag":VARCHAR
       -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
       -- TableScan[1][meta, type=rocksdb_full_scan] -> "id":INTEGER, "tag":VARCHAR
 

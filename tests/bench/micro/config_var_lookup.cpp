@@ -334,9 +334,7 @@ static constexpr std::string_view kMissKeys[] = {
   "xyz",                     // short, len 3
 };
 
-// ===========================================================================
 // Approach 1 – frozen::unordered_map, lowercase keys  [#ifdef SDB_BENCH_FROZEN]
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 // clang-format off
@@ -450,10 +448,8 @@ constexpr auto kFrozenLower =
 // clang-format on
 #endif  // SDB_BENCH_FROZEN
 
-// ===========================================================================
 // Approach 2 – frozen::unordered_map, canonical keys, icase hash/equal
 //              [IcaseHash/IcaseEqual also used by approach 4]
-// ===========================================================================
 
 struct IcaseHash {
   constexpr std::size_t operator()(std::string_view v) const noexcept {
@@ -616,9 +612,7 @@ constexpr auto kFrozenIcase =
 // clang-format on
 #endif  // SDB_BENCH_FROZEN
 
-// ===========================================================================
 // Approach 3 – absl::flat_hash_map, lowercase keys
-// ===========================================================================
 
 const absl::flat_hash_map<std::string, Value> kAbslLower = [] {
   absl::flat_hash_map<std::string, Value> m;
@@ -629,9 +623,7 @@ const absl::flat_hash_map<std::string, Value> kAbslLower = [] {
   return m;
 }();
 
-// ===========================================================================
 // Approach 4 – absl::flat_hash_map, canonical keys, icase hash/equal
-// ===========================================================================
 
 const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
   kAbslIcase = [] {
@@ -643,9 +635,7 @@ const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
     return m;
   }();
 
-// ===========================================================================
 // Approach 6 – utils::TrivialBiMap, lowercase keys
-// ===========================================================================
 
 static constexpr Value kTrivialValues[] = {
   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,
@@ -664,9 +654,7 @@ static_assert(std::size(kTrivialValues) == kN);
 constexpr auto kTrivialMap =
   sdb::containers::MakeTrivialBiMap<kLowerKeys, kTrivialValues>();
 
-// ===========================================================================
 // Helpers
-// ===========================================================================
 
 template<typename Map>
 [[gnu::noinline]] static void LookupAll(benchmark::State& state, const Map& map,
@@ -716,9 +704,7 @@ template<typename Map>
   }
 }
 
-// ===========================================================================
 // Wire-protocol path (13 canonical-case keys, happens once per connection)
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 void BmFrozenLower_Wire(benchmark::State& s) {
@@ -750,9 +736,7 @@ BENCHMARK(BmAbslIcase_Wire);
 BENCHMARK(BmLinear_Wire);
 BENCHMARK(BmTrivial_Wire);
 
-// ===========================================================================
 // SQL SET/SHOW path (lowercase input)
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 void BmFrozenLower_Sql(benchmark::State& s) {
@@ -784,9 +768,7 @@ BENCHMARK(BmAbslIcase_Sql);
 BENCHMARK(BmLinear_Sql);
 BENCHMARK(BmTrivial_Sql);
 
-// ===========================================================================
 // Miss cases (varied key lengths to exercise length-dispatch fairly)
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 void BmFrozenLower_Miss(benchmark::State& s) {

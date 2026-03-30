@@ -25,11 +25,8 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/index.h"
 #include "catalog/local_catalog.h"
-#include "catalog/object.h"
-#include "catalog/schema.h"
+#include "catalog/table.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
@@ -40,57 +37,83 @@ namespace {
 constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgIndex::indexrelid),
   GetIndex(&PgIndex::indrelid),
+  GetIndex(&PgIndex::indnatts),
+  GetIndex(&PgIndex::indnkeyatts),
+  GetIndex(&PgIndex::indisunique),
+  GetIndex(&PgIndex::indnullsnotdistinct),
+  GetIndex(&PgIndex::indisprimary),
+  GetIndex(&PgIndex::indisexclusion),
+  GetIndex(&PgIndex::indimmediate),
+  GetIndex(&PgIndex::indisclustered),
+  GetIndex(&PgIndex::indisvalid),
+  GetIndex(&PgIndex::indcheckxmin),
+  GetIndex(&PgIndex::indisready),
+  GetIndex(&PgIndex::indislive),
+  GetIndex(&PgIndex::indisreplident),
+  GetIndex(&PgIndex::indkey),
 });
 
 }  // namespace
 
-void RetrieveObjects(ObjectId database_id,
-                     const catalog::LogicalCatalog& catalog,
-                     std::vector<PgIndex>& values,
-                     const catalog::Snapshot& snapshot) {
-  auto insert_object =
-    [&](const std::shared_ptr<catalog::SchemaObject>& object) {
-      if (object->GetType() != catalog::ObjectType::Index) {
-        return;
-      }
-
-      auto& index = basics::downCast<catalog::Index>(*object);
-
-      PgIndex row{
-        .indexrelid = index.GetId().id(),
-        .indrelid = index.GetRelationId().id(),
-      };
-
-      // TODO(codeworse): fill other fields
-      values.push_back(std::move(row));
-    };
-
-  for (const auto& schema : snapshot.GetSchemas(database_id)) {
-    SDB_ASSERT(schema);
-    for (const auto& relation :
-         snapshot.GetRelations(database_id, schema->GetName())) {
-      SDB_ASSERT(relation);
-      insert_object(relation);
-    }
-  }
-}
-
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<PgIndex>::GetTableData(
   velox::memory::MemoryPool& pool) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<PgIndex>);
-  std::vector<PgIndex> values;
-  auto snapshot = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), catalog, values, *snapshot);
+  auto catalog = _config.EnsureCatalogSnapshot();
 
-  boost::pfr::for_each_field(
-    PgIndex{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
-    });
+  std::vector<PgIndex> values;
+  std::vector<std::vector<int16_t>> indkey_storage;
+
+  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
+    SDB_ASSERT(schema);
+    for (const auto& index_ptr :
+         catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
+      SDB_ASSERT(index_ptr);
+      auto& index = *index_ptr;
+      auto column_ids = index.GetColumnIds();
+      auto natts = static_cast<int16_t>(column_ids.size());
+
+      // Build indkey: map column IDs to 1-based attnum in the parent table
+      std::vector<int16_t> indkey;
+      indkey.reserve(column_ids.size());
+
+      auto table_obj = catalog->GetObject(index.GetRelationId());
+      if (table_obj && table_obj->GetType() == catalog::ObjectType::Table) {
+        auto& table = basics::downCast<catalog::Table>(*table_obj);
+        auto& columns = table.Columns();
+        for (auto col_id : column_ids) {
+          int16_t attnum = 0;
+          for (size_t i = 0; i < columns.size(); ++i) {
+            if (columns[i].id == col_id) {
+              attnum = static_cast<int16_t>(i + 1);
+              break;
+            }
+          }
+          indkey.push_back(attnum);
+        }
+      }
+      indkey_storage.push_back(std::move(indkey));
+      values.push_back({
+        .indexrelid = index.GetId().id(),
+        .indrelid = index.GetRelationId().id(),
+        .indnatts = natts,
+        .indnkeyatts = natts,
+        .indisunique = false,
+        .indnullsnotdistinct = false,
+        .indisprimary = false,
+        .indisexclusion = false,
+        .indimmediate = true,
+        .indisclustered = false,
+        .indisvalid = true,
+        .indcheckxmin = false,
+        .indisready = true,
+        .indislive = true,
+        .indisreplident = false,
+        .indkey = indkey_storage.back(),
+      });
+    }
+  }
+
+  auto result = CreateColumns<PgIndex>(values, &pool);
 
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row, &pool);

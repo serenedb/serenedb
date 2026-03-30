@@ -91,7 +91,6 @@ jobs:
       statuses: write
       contents: write
     runs-on:
-      - X64
       - ${{ inputs.LOCATION }}
 
     steps:

@@ -584,7 +584,7 @@ class DirectFixedNormReader : public NormReader {
     auto* IRS_RESTRICT const values_data = values.data();
     const auto* IRS_RESTRICT const docs_data = docs.data();
 
-    for (size_t i = 0; i < docs.size(); ++i) {
+    for (size_t i = 0; i != docs.size(); ++i) {
       values_data[i] = ReadValue(origin, docs_data[i] - base);
     }
   }
@@ -597,30 +597,21 @@ class DirectFixedNormReader : public NormReader {
   void GetPostingBlock(
     std::span<const doc_id_t, kPostingBlock> docs,
     std::span<uint32_t, kPostingBlock> values) noexcept final {
-    static constexpr uint32_t kMask = [] -> uint32_t {
-      if constexpr (Encoding == NormEncoding::Byte) {
-        return std::numeric_limits<uint8_t>::max();
-      } else if constexpr (Encoding == NormEncoding::Short) {
-        return std::numeric_limits<uint16_t>::max();
-      } else {
-        return std::numeric_limits<uint32_t>::max();
-      }
-    }();
-    const auto base = _mm256_set1_epi32(_doc_base);
-    const auto mask = _mm256_set1_epi32(kMask);
-    const auto* IRS_RESTRICT docs_data = docs.data();
-    auto* IRS_RESTRICT values_data = values.data();
-    const auto* origin = _origin;
+    const auto* IRS_RESTRICT const origin = _origin;
+    auto* IRS_RESTRICT const values_data = values.data();
+    const auto* IRS_RESTRICT const docs_data = docs.data();
 
-    for (size_t i = 0; i < kPostingBlock; i += 8) {
-      auto indices =
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs_data + i));
-      indices = _mm256_sub_epi32(indices, base);
-      auto gathered =
-        _mm256_i32gather_epi32(origin, indices, std::to_underlying(Encoding));
-      gathered = _mm256_and_si256(gathered, mask);
-      _mm256_storeu_si256(reinterpret_cast<__m256i*>(values_data + i),
-                          gathered);
+    if (docs_data[kPostingBlock - 1] - docs_data[0] == kPostingBlock - 1) {
+      const auto first = docs_data[0] - _doc_base;
+      for (scores_size_t i = 0; i != kPostingBlock; ++i) {
+        values_data[i] = ReadValue(origin, first + i);
+      }
+    } else {
+      const auto base = _doc_base;
+#pragma clang loop unroll(full)
+      for (scores_size_t i = 0; i != kPostingBlock; ++i) {
+        values_data[i] = ReadValue(origin, docs_data[i] - base);
+      }
     }
   }
 

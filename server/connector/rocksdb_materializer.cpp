@@ -77,13 +77,17 @@ RocksDBMaterializer::RocksDBMaterializer(
     _column_ids(std::move(column_oids)),
     _effective_column_id(std::move(effective_column_id)),
     _object_key{object_key},
+    _read_options{[&] {
+      rocksdb::ReadOptions opts;
+      opts.async_io = IsIOUringEnabled();
+      opts.snapshot = snapshot;
+      return opts;
+    }()},
     _multiget_ctx{_cf, _read_options} {
   _multiget_buffer_allocator =
     std::make_unique<facebook::velox::HashStringAllocator>(&_memory_pool);
   SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
              "Only one data source should be specified");
-  _read_options.async_io = IsIOUringEnabled();
-  _read_options.snapshot = snapshot;
 }
 
 const std::string& RocksDBMaterializer::ReadValue(std::string_view full_key) {
@@ -320,7 +324,7 @@ template<typename Decoder>
 void RocksDBMaterializer::DispatchColumnRead(
   std::string_view column_key, catalog::Column::Id column_id,
   std::span<const std::string> row_keys, const Decoder& func) {
-  if (row_keys.size() > kSeekThreshold) {
+  if (row_keys.size() > kSeekThreshold || !_iterators.empty()) {
     if (_db) {
       SeekIterateColumnKeys(column_key, column_id, row_keys, *_db, func);
     } else {

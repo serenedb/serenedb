@@ -66,7 +66,7 @@ class RocksDBMaterializer {
     std::array<rocksdb::Status, kBatchSize> _statuses;
     std::array<rocksdb::PinnableSlice, kBatchSize> _values;
     rocksdb::ColumnFamilyHandle& _cf;
-    const rocksdb::ReadOptions& _read_options;
+    rocksdb::ReadOptions _read_options;
   };
 
   const std::string& ReadValue(std::string_view full_key);

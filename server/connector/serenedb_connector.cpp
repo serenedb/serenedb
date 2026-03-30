@@ -47,6 +47,7 @@ struct SecondaryIndexMatch {
   std::vector<velox::variant> values;
   velox::TypePtr value_type;
   catalog::Column::Id effective_column_id;
+  bool unique;
 };
 
 // Extract field name and constant values from an eq or in filter expression.
@@ -180,11 +181,14 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
     auto eff_col_id =
       basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
 
+    const auto& sec_index =
+      basics::downCast<const catalog::SecondaryIndex>(*index);
     return SecondaryIndexMatch{
       .shard_id = index_shard->GetId(),
       .values = std::move(extracted->values),
       .value_type = extracted->field_type,
       .effective_column_id = eff_col_id,
+      .unique = sec_index.IsUnique(),
     };
   }
 
@@ -350,7 +354,7 @@ SereneDBTableLayout::createTableHandle(
         std::string{table->name()}, rocksdb_table.TableId(),
         rocksdb_table.GetTransaction(), match->effective_column_id,
         match->shard_id, std::move(match->values), std::move(match->value_type),
-        *table);
+        *table, match->unique);
     }
   }
 

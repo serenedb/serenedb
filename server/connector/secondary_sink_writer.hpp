@@ -24,10 +24,18 @@
 #include <velox/type/Type.h>
 #include <velox/vector/ComplexVector.h>
 
+#include "common.h"
 #include "key_utils.hpp"
+#include "pg/sql_exception_macro.h"
 #include "primary_key.hpp"
 #include "rocksdb/utilities/transaction.h"
 #include "sink_writer_base.hpp"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 
@@ -172,7 +180,20 @@ class SecondarySinkInsertWriter final : public SecondarySinkWriteBase<Unique> {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_pk) final {
     rocksdb::Slice value;
-    auto s = this->_trx.Put(this->BuildSK(full_pk, value), value);
+    auto sk = this->BuildSK(full_pk, value);
+    if constexpr (Unique) {
+      rocksdb::PinnableSlice existing;
+      auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{}, sk, &existing);
+      if (gs.ok()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+          ERR_MSG("duplicate key value violates unique constraint on "
+                  "secondary index"),
+          ERR_DETAIL(BuildUniqueViolationDetail(
+            this->_sk_children, *this->_input, this->_row_idx - 1)));
+      }
+    }
+    auto s = this->_trx.Put(sk, value);
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 };
@@ -214,7 +235,20 @@ class SecondarySinkUpdateWriter final : public SecondarySinkWriteBase<Unique> {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     rocksdb::Slice value;
-    auto s = this->_trx.Put(this->BuildSK(full_key, value), value);
+    auto sk = this->BuildSK(full_key, value);
+    if constexpr (Unique) {
+      rocksdb::PinnableSlice existing;
+      auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{}, sk, &existing);
+      if (gs.ok()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+          ERR_MSG("duplicate key value violates unique constraint on "
+                  "secondary index"),
+          ERR_DETAIL(BuildUniqueViolationDetail(
+            this->_sk_children, *this->_input, this->_row_idx - 1)));
+      }
+    }
+    auto s = this->_trx.Put(sk, value);
     SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
   }
 

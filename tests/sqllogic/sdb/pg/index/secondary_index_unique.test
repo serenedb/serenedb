@@ -1,0 +1,247 @@
+hash-threshold 100
+
+
+statement ok
+CREATE TABLE crew_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX crew_unique_rank_idx ON crew_unique USING secondary(rank);
+
+statement ok
+INSERT INTO crew_unique VALUES (1, 'vedernikoff', 10);
+
+statement ok
+INSERT INTO crew_unique VALUES (2, 'cutelooked', 20);
+
+statement ok
+INSERT INTO crew_unique VALUES (3, 'crookface', 30);
+
+statement error
+INSERT INTO crew_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+query
+SELECT pid, nickname, rank FROM crew_unique ORDER BY pid;
+----
+pid	nickname	rank
+1	vedernikoff	10
+2	cutelooked	20
+3	crookface	30
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 10;
+----
+pid	nickname
+1	vedernikoff
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 20;
+----
+pid	nickname
+2	cutelooked
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 99;
+----
+pid	nickname
+
+statement ok
+UPDATE crew_unique SET rank = 15 WHERE pid = 1;
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 10;
+----
+pid	nickname
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 15;
+----
+pid	nickname
+1	vedernikoff
+
+statement error
+UPDATE crew_unique SET rank = 20 WHERE pid = 1;
+
+query
+SELECT pid, nickname, rank FROM crew_unique ORDER BY pid;
+----
+pid	nickname	rank
+1	vedernikoff	15
+2	cutelooked	20
+3	crookface	30
+
+statement ok
+DELETE FROM crew_unique WHERE pid = 2;
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 20;
+----
+pid	nickname
+
+statement ok
+INSERT INTO crew_unique VALUES (4, 'bossmann', 20);
+
+query
+SELECT pid, nickname FROM crew_unique WHERE rank = 20;
+----
+pid	nickname
+4	bossmann
+
+query
+SELECT pid, nickname, rank FROM crew_unique ORDER BY pid;
+----
+pid	nickname	rank
+1	vedernikoff	15
+3	crookface	30
+4	bossmann	20
+
+statement ok
+DROP TABLE crew_unique;
+
+
+statement ok
+CREATE TABLE crew_nulls (pid INTEGER PRIMARY KEY, codename VARCHAR, score INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX crew_nulls_score_idx ON crew_nulls USING secondary(score);
+
+statement ok
+INSERT INTO crew_nulls VALUES (1, 'vedernikoff', 100);
+
+statement ok
+INSERT INTO crew_nulls VALUES (2, 'cutelooked', NULL);
+
+5statement ok
+INSERT INTO crew_nulls VALUES (3, 'crookface', NULL);
+
+statement ok
+INSERT INTO crew_nulls VALUES (4, 'bossmann', 200);
+
+statement error
+INSERT INTO crew_nulls VALUES (5, 'stockpiler', 100);
+
+query
+SELECT pid, codename, score FROM crew_nulls ORDER BY pid;
+----
+pid	codename	score
+1	vedernikoff	100
+2	cutelooked	NULL
+3	crookface	NULL
+4	bossmann	200
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score = 100;
+----
+pid	codename
+1	vedernikoff
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score = 200;
+----
+pid	codename
+4	bossmann
+
+statement ok
+UPDATE crew_nulls SET score = 300 WHERE pid = 2;
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score = 300;
+----
+pid	codename
+2	cutelooked
+
+statement ok
+UPDATE crew_nulls SET score = NULL WHERE pid = 1;
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score = 100;
+----
+pid	codename
+
+statement ok
+INSERT INTO crew_nulls VALUES (5, 'stockpiler', 100);
+
+query
+SELECT pid, codename FROM crew_nulls WHERE score = 100;
+----
+pid	codename
+5	stockpiler
+
+query
+SELECT pid, codename, score FROM crew_nulls ORDER BY pid;
+----
+pid	codename	score
+1	vedernikoff	NULL
+2	cutelooked	300
+3	crookface	NULL
+4	bossmann	200
+5	stockpiler	100
+
+statement ok
+DELETE FROM crew_nulls WHERE pid = 3;
+
+query
+SELECT pid, codename, score FROM crew_nulls ORDER BY pid;
+----
+pid	codename	score
+1	vedernikoff	NULL
+2	cutelooked	300
+4	bossmann	200
+5	stockpiler	100
+
+statement ok
+DROP TABLE crew_nulls;
+
+
+statement ok
+CREATE TABLE crew_names (pid INTEGER PRIMARY KEY, callsign VARCHAR, dept INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX crew_names_callsign_idx ON crew_names USING secondary(callsign);
+
+statement ok
+INSERT INTO crew_names VALUES (1, 'alpha', 1), (2, 'bravo', 2), (3, 'charlie', 1);
+
+statement error
+INSERT INTO crew_names VALUES (4, 'alpha', 3);
+
+query
+SELECT pid, dept FROM crew_names WHERE callsign = 'alpha';
+----
+pid	dept
+1	1
+
+query
+SELECT pid, dept FROM crew_names WHERE callsign = 'bravo';
+----
+pid	dept
+2	2
+
+statement ok
+UPDATE crew_names SET callsign = 'delta' WHERE pid = 1;
+
+query
+SELECT pid, dept FROM crew_names WHERE callsign = 'alpha';
+----
+pid	dept
+
+query
+SELECT pid, dept FROM crew_names WHERE callsign = 'delta';
+----
+pid	dept
+1	1
+
+statement ok
+INSERT INTO crew_names VALUES (4, 'alpha', 3);
+
+query
+SELECT pid, dept FROM crew_names WHERE callsign = 'alpha';
+----
+pid	dept
+4	3
+
+statement ok
+DROP TABLE crew_names;

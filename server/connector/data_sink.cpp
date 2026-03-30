@@ -65,82 +65,6 @@ namespace {
 constexpr std::string_view kZeroLengthVector{"\0", 1};
 constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
-template<typename T>
-std::string VeloxValueToString(T val) {
-  if constexpr (type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
-    return static_cast<std::string>(val);
-  } else if constexpr (std::is_same_v<T, velox::int128_t>) {
-    std::string result;
-    basics::StrResize(result, absl::numbers_internal::kFastToBuffer128Size);
-    char* end = absl::numbers_internal::FastIntToBuffer(val, result.data());
-    result.resize(end - result.data());
-    return result;
-  } else {
-    return absl::StrCat(val);
-  }
-}
-
-template<velox::TypeKind Kind>
-std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx) {
-  SDB_ASSERT(!vec->isNullAt(idx));
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-
-  const auto* simple_vec = vec->as<velox::SimpleVector<T>>();
-  if (!simple_vec) {
-    // TODO(mkornaukhov) support not only simple vectors
-    return "<unsupported>";
-  }
-  return VeloxValueToString(simple_vec->valueAt(idx));
-}
-
-std::string FormatKeyValue(const velox::RowVectorPtr& input,
-                           velox::column_index_t key_idx,
-                           velox::vector_size_t row_idx) {
-  const auto& vector = input->childAt(key_idx);
-  const auto& type = input->rowType()->childAt(key_idx);
-
-  if (type->isPrimitiveType()) {
-    return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      GetPKVeloxValue, vector->typeKind(), vector, row_idx);
-  }
-
-  // TODO(mkornaukhov) find out do we need complex types here
-  // and implement in case of we do
-  return "<unsupported>";
-}
-
-std::string BuildUniqueViolationDetail(
-  std::span<const velox::column_index_t> key_indices,
-  std::span<const ColumnInfo> columns, const velox::RowVectorPtr& input,
-  velox::vector_size_t row_idx) {
-  static constexpr size_t kDetailReservedSize = 128;
-  std::string detail;
-  detail.reserve(kDetailReservedSize);
-
-  // Build "Key (col1, col2, ...)="
-  detail += "Key (";
-  for (size_t i = 0; i < key_indices.size(); ++i) {
-    if (i > 0) {
-      detail += ", ";
-    }
-    detail += columns[key_indices[i]].name;
-  }
-  detail += ")=(";
-
-  // Build "(val1, val2, ...) already exists."
-  if (input) {
-    for (size_t i = 0; i < key_indices.size(); ++i) {
-      if (i > 0) {
-        detail += ", ";
-      }
-      detail += FormatKeyValue(input, key_indices[i], row_idx);
-    }
-  }
-  detail += ") already exists.";
-
-  return detail;
-}
-
 }  // namespace
 
 WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
@@ -311,6 +235,15 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
     }
   } else {
     SDB_ASSERT(input->type()->size() == this->_columns_info.size());
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      auto& key = this->_store_keys_buffers.emplace_back();
+      if (!this->_key_childs.empty()) {
+        primary_key::Create(*input, this->_key_childs, row_idx, key);
+      } else {
+        auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
+        primary_key::AppendSigned(key, generated_pk);
+      }
+    }
     velox::IndexRange all_rows(0, num_rows);
     const folly::Range all_rows_range{&all_rows, 1};
     for (velox::column_index_t i = 0; i < input->childrenSize(); ++i) {

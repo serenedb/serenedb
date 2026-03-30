@@ -33,34 +33,9 @@ namespace sdb::connector {
 namespace {
 
 // TODO(mbkkt) benchmark and choose best threshold
-constexpr size_t kMultiGetThreshold = 1;
 constexpr size_t kSeekThreshold = 100;
 constexpr size_t kColumnKeySize = sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
-}
-
-template<typename DataSource, typename ValueProcessor>
-void RocksDBMaterializer::MultiGetContext::MultiGet(
-  DataSource& data_source, std::span<const rocksdb::Slice> keys,
-  ValueProcessor&& value_processor) {
-  const auto n = keys.size();
-  for (size_t start = 0; start < n; start += kBatchSize) {
-    const auto batch = std::min(kBatchSize, n - start);
-    if (batch <= kMultiGetThreshold) {
-      for (size_t i = 0; i < batch; ++i) {
-        _statuses[i] =
-          data_source.Get(_read_options, &_cf, keys[start + i], &_values[i]);
-      }
-    } else {
-      data_source.MultiGet(_read_options, &_cf, batch, keys.data() + start,
-                           _values.data(), _statuses.data(),
-                           /*sorted_input=*/true);
-    }
-    for (size_t c = 0; c < batch; ++c) {
-      value_processor(keys[start + c], _values[c], _statuses[c]);
-      _values[c].Reset();
-    }
-  }
 }
 
 RocksDBMaterializer::RocksDBMaterializer(
@@ -324,13 +299,13 @@ template<typename Decoder>
 void RocksDBMaterializer::DispatchColumnRead(
   std::string_view column_key, catalog::Column::Id column_id,
   std::span<const std::string> row_keys, const Decoder& func) {
-  if (row_keys.size() > kSeekThreshold || !_iterators.empty()) {
+  if (row_keys.size() > kSeekThreshold) {
     if (_db) {
       SeekIterateColumnKeys(column_key, column_id, row_keys, *_db, func);
     } else {
       SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction, func);
     }
-  } else if (row_keys.size() > kMultiGetThreshold) {
+  } else if (row_keys.size() > MultiGetContext::kMultiGetThreshold) {
     if (_db) {
       MultiGetIterateColumnKeys(column_key, row_keys, *_db, func);
     } else {

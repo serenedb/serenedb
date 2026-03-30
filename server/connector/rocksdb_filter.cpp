@@ -176,6 +176,10 @@ std::vector<KeyConstraint> ExtractFilterAnd(
   return result;
 }
 
+std::vector<KeyConstraint> ExtractFilterNot(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names);
+
 std::vector<KeyConstraint> ExtractFilterOr(
   const velox::core::CallTypedExpr* func_call,
   std::span<const std::string> pk_names) {
@@ -194,6 +198,134 @@ std::vector<KeyConstraint> ExtractFilterOr(
                   std::make_move_iterator(pts.end()));
   }
   return MergeKeyConstraintsPrecise(std::move(result));
+}
+
+// Negates a comparison op for NOT push-down.
+ComparisonOp NegateOp(ComparisonOp op) {
+  switch (op) {
+    case ComparisonOp::Gt:
+      return ComparisonOp::Le;
+    case ComparisonOp::Ge:
+      return ComparisonOp::Lt;
+    case ComparisonOp::Lt:
+      return ComparisonOp::Ge;
+    case ComparisonOp::Le:
+      return ComparisonOp::Gt;
+    case ComparisonOp::None:
+      return ComparisonOp::None;
+  }
+  SDB_ASSERT(false, "unreachable");
+}
+
+std::vector<KeyConstraint> ExtractFilterNot(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
+  SDB_ASSERT(func_call->inputs().size() == 1);
+  const auto& child_expr = func_call->inputs()[0];
+  if (!child_expr->isCallKind()) {
+    return AnyKeyConstraint(pk_names);
+  }
+  const auto* child = child_expr->asUnchecked<velox::core::CallTypedExpr>();
+
+  // not(not(x)) → x
+  if (IsCallOf(child, "_not")) {
+    auto inner = child->asUnchecked<velox::core::CallTypedExpr>();
+    SDB_ASSERT(inner->inputs().size() == 1);
+    return ExtractFilterExpr(inner->inputs()[0], pk_names);
+  }
+
+  // not(and(a, b)) → or(not(a), not(b))  — De Morgan
+  if (child->name() == velox::expression::kAnd) {
+    std::vector<KeyConstraint> result;
+    for (const auto& input : child->inputs()) {
+      auto negated_expr = std::make_shared<velox::core::CallTypedExpr>(
+        velox::BOOLEAN(), std::vector<velox::core::TypedExprPtr>{input}, "not");
+      auto negated = ExtractFilterNot(
+        negated_expr->asUnchecked<velox::core::CallTypedExpr>(), pk_names);
+      if (absl::c_any_of(negated, [](const KeyConstraint& p) {
+            return p.IsUnconstrained();
+          })) {
+        return AnyKeyConstraint(pk_names);
+      }
+      result.insert(result.end(), std::make_move_iterator(negated.begin()),
+                    std::make_move_iterator(negated.end()));
+    }
+    return MergeKeyConstraintsPrecise(std::move(result));
+  }
+
+  // not(or(a, b)) → and(not(a), not(b))  — De Morgan
+  if (child->name() == velox::expression::kOr) {
+    std::vector<KeyConstraint> result;
+    bool first = true;
+    for (const auto& input : child->inputs()) {
+      auto negated_expr = std::make_shared<velox::core::CallTypedExpr>(
+        velox::BOOLEAN(), std::vector<velox::core::TypedExprPtr>{input}, "not");
+      auto negated = ExtractFilterNot(
+        negated_expr->asUnchecked<velox::core::CallTypedExpr>(), pk_names);
+      if (first) {
+        result = std::move(negated);
+        first = false;
+        continue;
+      }
+      std::vector<KeyConstraint> next;
+      next.reserve(result.size() * negated.size());
+      for (const auto& lhs : result) {
+        for (const auto& rhs : negated) {
+          if (auto merged = KeyConstraint::Intersect(lhs, rhs);
+              merged && !merged->IsUnconstrained()) {
+            next.push_back(std::move(*merged));
+          }
+        }
+      }
+      result = std::move(next);
+    }
+    return result;
+  }
+
+  // not(a > v) → a <= v, etc.
+  if (IsCallOf(child, "_gt") || IsCallOf(child, "_gte") ||
+      IsCallOf(child, "_lt") || IsCallOf(child, "_lte")) {
+    if (child->inputs().size() != 2) {
+      return AnyKeyConstraint(pk_names);
+    }
+    const bool field_left = child->inputs()[0]->isFieldAccessKind() &&
+                            child->inputs()[1]->isConstantKind();
+    const bool field_right = child->inputs()[1]->isFieldAccessKind() &&
+                             child->inputs()[0]->isConstantKind();
+    if (!field_left && !field_right) {
+      return AnyKeyConstraint(pk_names);
+    }
+    const auto& field_input =
+      field_left ? child->inputs()[0] : child->inputs()[1];
+    const auto& const_input =
+      field_left ? child->inputs()[1] : child->inputs()[0];
+    auto field_access =
+      basics::downCast<velox::core::FieldAccessTypedExpr>(field_input);
+    auto const_val =
+      basics::downCast<velox::core::ConstantTypedExpr>(const_input);
+    if (!absl::c_linear_search(pk_names, field_access->name())) {
+      return AnyKeyConstraint(pk_names);
+    }
+
+    ComparisonOp op;
+    if (IsCallOf(child, "_gt")) {
+      op = field_left ? ComparisonOp::Gt : ComparisonOp::Lt;
+    } else if (IsCallOf(child, "_gte")) {
+      op = field_left ? ComparisonOp::Ge : ComparisonOp::Le;
+    } else if (IsCallOf(child, "_lt")) {
+      op = field_left ? ComparisonOp::Lt : ComparisonOp::Gt;
+    } else {
+      op = field_left ? ComparisonOp::Le : ComparisonOp::Ge;
+    }
+
+    KeyConstraint kc{pk_names};
+    kc.AddComparisonFilter(field_access->name(), *const_val, NegateOp(op),
+                           func_call);
+    return {std::move(kc)};
+  }
+
+  // not(a = v) and not(a in (...)) cannot be expressed as a useful range.
+  return AnyKeyConstraint(pk_names);
 }
 
 // Recursively rewrites `expr`, replacing any node whose address appears in
@@ -239,6 +371,12 @@ velox::core::TypedExprPtr RewriteExpr(
                        [](const auto& e) { return e == nullptr; })) {
       return {};
     }
+  }
+
+  // For any other call (e.g. "not"), if any input was rewritten to null (i.e.
+  // fully captured), treat the whole expression as captured too.
+  if (absl::c_any_of(new_inputs, [](const auto& e) { return e == nullptr; })) {
+    return {};
   }
 
   return std::make_shared<velox::core::CallTypedExpr>(
@@ -767,6 +905,8 @@ std::vector<KeyConstraint> ExtractFilterExpr(
       pts = ExtractFilterAnd(func_call, pk_names);
     } else if (func_call->name() == velox::expression::kOr) {
       pts = ExtractFilterOr(func_call, pk_names);
+    } else if (IsCallOf(func_call, "_not")) {
+      pts = ExtractFilterNot(func_call, pk_names);
     } else {
       pts = AnyKeyConstraint(pk_names);
     }

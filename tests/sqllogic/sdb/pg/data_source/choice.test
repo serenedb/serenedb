@@ -865,3 +865,403 @@ QUERY PLAN
 
 statement ok
 DROP TABLE t_range3;
+
+# NOT function handling tests — single PK column.
+statement ok
+CREATE TABLE t_not (a INT PRIMARY KEY, val INT);
+
+statement ok
+INSERT INTO t_not VALUES (1, 10), (3, 30), (5, 50), (7, 70), (9, 90);
+
+# NOT(a > v) → a <= v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
+----
+a	val
+1	10
+3	30
+5	50
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5]}]]<slt:ignore>
+
+# NOT(a >= v) → a < v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
+----
+a	val
+1	10
+3	30
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}]]<slt:ignore>
+
+# NOT(a < v) → a >= v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
+----
+a	val
+5	50
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=[5, +inf)}]]<slt:ignore>
+
+# NOT(a <= v) → a > v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
+----
+a	val
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(5, +inf)}]]<slt:ignore>
+
+# NOT(NOT(a > v)) → double negation → a > v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
+----
+a	val
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(5, +inf)}]]<slt:ignore>
+
+# NOT(a > x AND a < y) → De Morgan → a <= x OR a >= y  (two ranges)
+query
+SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
+----
+a	val
+1	10
+3	30
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3]}, {a=[7, +inf)}]]<slt:ignore>
+
+# NOT(a > x OR a < y) → De Morgan → a <= x AND a >= y  (single range)
+query
+SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
+----
+a	val
+3	30
+5	50
+7	70
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=[3, 7]}]]<slt:ignore>
+
+# NOT(a = v) → full scan (equality negation not pushed to range)
+query
+SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
+----
+a	val
+1	10
+3	30
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_full_scan]<slt:ignore>
+
+# NOT(a IN (...)) → full scan (IN negation not pushed to range)
+query
+SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
+----
+a	val
+1	10
+5	50
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_full_scan]<slt:ignore>
+
+statement ok
+DROP TABLE t_not;
+
+# NOT function handling tests — composite PK (a, b).
+statement ok
+CREATE TABLE t_not2 (a INT, b INT, val INT, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_not2 VALUES (1, 2, 12), (1, 5, 15), (3, 2, 32), (3, 8, 38), (5, 1, 51), (5, 9, 59);
+
+# NOT on first PK column: NOT(a > 3) → a <= 3  (range_lookup on first col)
+query
+SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
+----
+a	b	val
+1	2	12
+1	5	15
+3	2	32
+3	8	38
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3]}]]<slt:ignore>
+
+# NOT(NOT(a = 1 AND b > 2)) → double negation → a = 1 AND b > 2  (range_lookup with prefix)
+query
+SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
+----
+a	b	val
+1	5	15
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=1, b=(2, +inf)}]]<slt:ignore>
+
+# NOT(a > 4 OR a < 2) → De Morgan → a <= 4 AND a >= 2 → [2, 4]  (range_lookup)
+query
+SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
+----
+a	b	val
+3	2	32
+3	8	38
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=[2, 4]}]]<slt:ignore>
+
+# NOT(a > 1 AND a < 5) → De Morgan → a <= 1 OR a >= 5  (two ranges)
+query
+SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
+----
+a	b	val
+1	2	12
+1	5	15
+5	1	51
+5	9	59
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1]}, {a=[5, +inf)}]]<slt:ignore>
+
+# NOT(a = 1 AND b > 2) → De Morgan AND → a != 1 OR b <= 2 → full scan (OR loses prefix)
+query
+SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
+----
+a	b	val
+1	2	12
+3	2	32
+3	8	38
+5	1	51
+5	9	59
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_full_scan]<slt:ignore>
+
+statement ok
+DROP TABLE t_not2;
+
+# Complex tests — composite PK: BIGINT, INT, VARCHAR columns.
+statement ok
+CREATE TABLE t_complex (
+  region BIGINT,
+  priority INT,
+  name VARCHAR,
+  score INT,
+  PRIMARY KEY (region, priority, name)
+);
+
+statement ok
+INSERT INTO t_complex VALUES
+  (1, 10, 'alice', 100),
+  (1, 10, 'bob',   200),
+  (1, 20, 'alice', 300),
+  (1, 20, 'carol', 400),
+  (2, 10, 'alice', 500),
+  (2, 30, 'bob',   600),
+  (3,  5, 'dave',  700),
+  (3, 40, 'eve',   800);
+
+# Equality on all PK columns → point lookup.
+query
+SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
+----
+region	priority	name	score
+1	10	alice	100
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_point_lookup, points=[(region=1, priority=10, name=alice)]<slt:ignore>
+
+# Equality prefix + range on third column (name <= 'bob').
+query
+SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=10, name=(-inf, bob]}]]<slt:ignore>
+
+# Equality on first + range on second column (priority > 15).
+query
+SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
+----
+region	priority	name	score
+1	20	alice	300
+1	20	carol	400
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=(15, +inf)}]]<slt:ignore>
+
+# OR of two prefix ranges on first column.
+query
+SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+1	20	alice	300
+1	20	carol	400
+3	5	dave	700
+3	40	eve	800
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=(-inf, 1]}, {region=[3, +inf)}]]<slt:ignore>
+
+# NOT + AND: NOT(region > 1 AND priority < 20) → region <= 1 OR priority >= 20.
+# De Morgan yields an OR whose branches differ on column → full scan.
+query
+SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+1	20	alice	300
+1	20	carol	400
+2	30	bob	600
+3	40	eve	800
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_full_scan]<slt:ignore>
+
+# NOT + OR on first column: NOT(region < 1 OR region > 2) → 1 <= region <= 2.
+query
+SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+1	20	alice	300
+1	20	carol	400
+2	10	alice	500
+2	30	bob	600
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=[1, 2]}]]<slt:ignore>
+
+# AND of prefix equality + NOT on range: region = 2 AND NOT(priority > 20).
+query
+SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
+----
+region	priority	name	score
+2	10	alice	500
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=2, priority=(-inf, 20]}]]<slt:ignore>
+
+# Complex: (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10).
+query
+SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+3	5	dave	700
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=(-inf, 10]}, {region=3, priority=(-inf, 10]}]]<slt:ignore>
+
+statement ok
+DROP TABLE t_complex;

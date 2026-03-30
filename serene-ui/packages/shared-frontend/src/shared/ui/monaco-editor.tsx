@@ -171,7 +171,8 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                         e.key === "j" ||
                         e.key === "t" ||
                         e.key === "w" ||
-                        e.key === "e")
+                        e.key === "e" ||
+                        e.key === "k")
                 ) {
                     e.stopImmediatePropagation();
                     const newEvent = new KeyboardEvent("keydown", {

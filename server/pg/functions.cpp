@@ -1747,8 +1747,7 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
 
       int64_t count = 0;
       if ((step > 0 && stop >= start) || (step < 0 && stop <= start)) {
-        count =
-          static_cast<int64_t>(static_cast<__int128>(stop - start) / step + 1);
+        count = (stop - start) / step + 1;
       }
 
       raw_offsets[row] = total_elements;

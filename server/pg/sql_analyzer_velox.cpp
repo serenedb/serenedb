@@ -5197,10 +5197,6 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
     return std::move(args[0]);
   }
 
-  if (logical_function.Signature().IsProcedure()) {
-    ErrorIsProcedure(name, args, ExprLocation(&expr));
-  }
-
   if (lang == catalog::FunctionLanguage::VeloxNative) {
     // table funcs SELECT expand into rows (implicit ROWS FROM).
     // collect them here and later process them (via unnest)
@@ -5229,13 +5225,6 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
     }
     return ResolveVeloxFunctionAndInferArgsCommonType(std::string{name},
                                                       std::move(args));
-  }
-
-  if (lang == catalog::FunctionLanguage::SQL) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(
-        "User-defined SQL functions are only supported in a FROM clause"));
   }
 
   ErrorUnsupportedLanguage(lang, name, args, ExprLocation(&expr));

@@ -1715,7 +1715,7 @@ class GenerateSeriesFunction : public velox::exec::VectorFunction {
   void apply(const velox::SelectivityVector& rows,
              std::vector<velox::VectorPtr>& args,
              const velox::TypePtr& output_type, velox::exec::EvalCtx& context,
-             velox::VectorPtr& result) const override {
+             velox::VectorPtr& result) const final {
     velox::exec::DecodedArgs decoded_args{rows, args, context};
     const auto* start_vector = decoded_args.at(0);
     const auto* stop_vector = decoded_args.at(1);

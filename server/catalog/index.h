@@ -53,7 +53,6 @@ struct IndexBaseOptions {
   std::string name;
   IndexType type = IndexType::Unknown;
   std::vector<Column::Id> column_ids;
-  bool unique = false;
 };
 
 // polymorfic wrapper for concrete index wrappers
@@ -109,7 +108,8 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, IndexBaseOptions options,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot);
+  const std::shared_ptr<const Snapshot>& snapshot,
+  IndexShardOptions& shard_options);
 
 }  // namespace catalog
 }  // namespace sdb

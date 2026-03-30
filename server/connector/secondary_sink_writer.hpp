@@ -156,11 +156,12 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     : ColumnSinkWriterImplBase{columns},
       _trx{trx},
       _shard_id{shard_id},
-      _sk_children{std::move(sk_children)} {}
+      _sk_children{std::move(sk_children)},
+      _trigger_column_id{columns[0]} {}
 
   bool SwitchColumn(const velox::Type&, bool,
                     catalog::Column::Id column_id) final {
-    return IsIndexed(column_id);
+    return column_id == _trigger_column_id;
   }
 
   void Finish() final {}
@@ -217,6 +218,7 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
   rocksdb::Transaction& _trx;
   ObjectId _shard_id;
   std::vector<velox::column_index_t> _sk_children;
+  catalog::Column::Id _trigger_column_id;
   const velox::RowVector* _input;
   velox::vector_size_t _row_idx;
   velox::vector_size_t _del_row_idx;

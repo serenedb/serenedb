@@ -114,16 +114,16 @@ DROP TABLE vedernikoff_crew;
 
 
 statement ok
-CREATE TABLE cutelooked_vault (pid INTEGER PRIMARY KEY, loot INTEGER);
+CREATE TABLE babsky_vault (pid INTEGER PRIMARY KEY, loot INTEGER);
 
 statement ok
-INSERT INTO cutelooked_vault VALUES (1, 100), (2, 200), (3, 100), (4, 300), (5, 100);
+INSERT INTO babsky_vault VALUES (1, 100), (2, 200), (3, 100), (4, 300), (5, 100);
 
 statement ok
-CREATE INDEX cutelooked_vault_loot_idx ON cutelooked_vault USING secondary(loot);
+CREATE INDEX babsky_vault_loot_idx ON babsky_vault USING secondary(loot);
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
+SELECT pid, loot FROM babsky_vault WHERE loot = 100 ORDER BY pid;
 ----
 pid	loot
 1	100
@@ -131,16 +131,16 @@ pid	loot
 5	100
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 300;
+SELECT pid, loot FROM babsky_vault WHERE loot = 300;
 ----
 pid	loot
 4	300
 
 statement ok
-INSERT INTO cutelooked_vault VALUES (6, 100), (7, 200);
+INSERT INTO babsky_vault VALUES (6, 100), (7, 200);
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
+SELECT pid, loot FROM babsky_vault WHERE loot = 100 ORDER BY pid;
 ----
 pid	loot
 1	100
@@ -149,17 +149,17 @@ pid	loot
 6	100
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 200 ORDER BY pid;
+SELECT pid, loot FROM babsky_vault WHERE loot = 200 ORDER BY pid;
 ----
 pid	loot
 2	200
 7	200
 
 statement ok
-UPDATE cutelooked_vault SET loot = 999 WHERE pid = 1;
+UPDATE babsky_vault SET loot = 999 WHERE pid = 1;
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
+SELECT pid, loot FROM babsky_vault WHERE loot = 100 ORDER BY pid;
 ----
 pid	loot
 3	100
@@ -167,49 +167,49 @@ pid	loot
 6	100
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 999;
+SELECT pid, loot FROM babsky_vault WHERE loot = 999;
 ----
 pid	loot
 1	999
 
 statement ok
-DELETE FROM cutelooked_vault WHERE pid = 3;
+DELETE FROM babsky_vault WHERE pid = 3;
 
 query
-SELECT pid, loot FROM cutelooked_vault WHERE loot = 100 ORDER BY pid;
+SELECT pid, loot FROM babsky_vault WHERE loot = 100 ORDER BY pid;
 ----
 pid	loot
 5	100
 6	100
 
 statement ok
-DROP TABLE cutelooked_vault;
+DROP TABLE babsky_vault;
 
 
 statement ok
-CREATE TABLE crookface_ranks (pid INTEGER PRIMARY KEY, rank INTEGER);
+CREATE TABLE clickclack_ranks (pid INTEGER PRIMARY KEY, rank INTEGER);
 
 statement ok
-CREATE INDEX crookface_ranks_idx ON crookface_ranks USING secondary(rank);
+CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
 
 statement ok
-CREATE INDEX IF NOT EXISTS crookface_ranks_idx ON crookface_ranks USING secondary(rank);
+CREATE INDEX IF NOT EXISTS clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
 
 statement error
-CREATE INDEX crookface_ranks_idx ON crookface_ranks USING secondary(rank);
+CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
 
 statement ok
-DROP TABLE crookface_ranks;
+DROP TABLE clickclack_ranks;
 
 
 statement ok
-CREATE TABLE bossmann_division (pid INTEGER PRIMARY KEY, leader VARCHAR, team VARCHAR);
+CREATE TABLE babsky_division (pid INTEGER PRIMARY KEY, leader VARCHAR, team VARCHAR);
 
 statement ok
-CREATE INDEX bossmann_division_leader_idx ON bossmann_division USING secondary(leader);
+CREATE INDEX babsky_division_leader_idx ON babsky_division USING secondary(leader);
 
 statement ok
-INSERT INTO bossmann_division VALUES
+INSERT INTO babsky_division VALUES
   (1, 'vedernikoff', 'alpha'),
   (2, 'cutelooked', 'beta'),
   (3, 'crookface', 'alpha'),
@@ -219,70 +219,70 @@ INSERT INTO bossmann_division VALUES
   (7, 'stockpiler', 'beta');
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'vedernikoff' ORDER BY pid;
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'vedernikoff' ORDER BY pid;
 ----
 pid	leader	team
 1	vedernikoff	alpha
 4	vedernikoff	gamma
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'cutelooked' ORDER BY pid;
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'cutelooked' ORDER BY pid;
 ----
 pid	leader	team
 2	cutelooked	beta
 6	cutelooked	alpha
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'crookface';
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'crookface';
 ----
 pid	leader	team
 3	crookface	alpha
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'nobody';
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'nobody';
 ----
 pid	leader	team
 
 statement ok
-UPDATE bossmann_division SET leader = 'crookface' WHERE pid = 1;
+UPDATE babsky_division SET leader = 'crookface' WHERE pid = 1;
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'vedernikoff';
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'vedernikoff';
 ----
 pid	leader	team
 4	vedernikoff	gamma
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'crookface' ORDER BY pid;
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'crookface' ORDER BY pid;
 ----
 pid	leader	team
 1	crookface	alpha
 3	crookface	alpha
 
 statement ok
-DELETE FROM bossmann_division WHERE pid = 3;
+DELETE FROM babsky_division WHERE pid = 3;
 
 query
-SELECT pid, leader, team FROM bossmann_division WHERE leader = 'crookface';
+SELECT pid, leader, team FROM babsky_division WHERE leader = 'crookface';
 ----
 pid	leader	team
 1	crookface	alpha
 
 statement ok
-DROP TABLE bossmann_division;
+DROP TABLE babsky_division;
 
 
 statement ok
-CREATE TABLE stockpiler_stash (pid INTEGER PRIMARY KEY, amount BIGINT, active BOOLEAN);
+CREATE TABLE clickclack_stash (pid INTEGER PRIMARY KEY, amount BIGINT, active BOOLEAN);
 
 statement ok
-CREATE INDEX stockpiler_stash_amount_idx ON stockpiler_stash USING secondary(amount);
+CREATE INDEX clickclack_stash_amount_idx ON clickclack_stash USING secondary(amount);
 
 statement ok
-CREATE INDEX stockpiler_stash_active_idx ON stockpiler_stash USING secondary(active);
+CREATE INDEX clickclack_stash_active_idx ON clickclack_stash USING secondary(active);
 
 statement ok
-INSERT INTO stockpiler_stash VALUES
+INSERT INTO clickclack_stash VALUES
   (1, 1000000000000, true),
   (2, 2000000000000, false),
   (3, 1000000000000, true),
@@ -290,7 +290,7 @@ INSERT INTO stockpiler_stash VALUES
   (5, 1000000000000, false);
 
 query
-SELECT pid, amount FROM stockpiler_stash WHERE amount = 1000000000000 ORDER BY pid;
+SELECT pid, amount FROM clickclack_stash WHERE amount = 1000000000000 ORDER BY pid;
 ----
 pid	amount
 1	1000000000000
@@ -298,14 +298,14 @@ pid	amount
 5	1000000000000
 
 query
-SELECT pid, active FROM stockpiler_stash WHERE active = true ORDER BY pid;
+SELECT pid, active FROM clickclack_stash WHERE active = true ORDER BY pid;
 ----
 pid	active
 1	t
 3	t
 
 query
-SELECT pid, active FROM stockpiler_stash WHERE active = false ORDER BY pid;
+SELECT pid, active FROM clickclack_stash WHERE active = false ORDER BY pid;
 ----
 pid	active
 2	f
@@ -313,16 +313,16 @@ pid	active
 5	f
 
 statement ok
-UPDATE stockpiler_stash SET active = false WHERE pid = 1;
+UPDATE clickclack_stash SET active = false WHERE pid = 1;
 
 query
-SELECT pid, active FROM stockpiler_stash WHERE active = true;
+SELECT pid, active FROM clickclack_stash WHERE active = true;
 ----
 pid	active
 3	t
 
 statement ok
-DROP TABLE stockpiler_stash;
+DROP TABLE clickclack_stash;
 
 
 statement ok
@@ -392,38 +392,38 @@ DROP TABLE vedernikoff_empire;
 
 
 statement ok
-CREATE TABLE crookface_heist (pid INTEGER PRIMARY KEY, target VARCHAR, loot INTEGER);
+CREATE TABLE clickclack_heist (pid INTEGER PRIMARY KEY, target VARCHAR, loot INTEGER);
 
 statement ok
-CREATE INDEX crookface_heist_loot_idx ON crookface_heist USING secondary(loot);
+CREATE INDEX clickclack_heist_loot_idx ON clickclack_heist USING secondary(loot);
 
 statement ok
-INSERT INTO crookface_heist VALUES (1, 'bank', 1000), (2, 'museum', 2000);
+INSERT INTO clickclack_heist VALUES (1, 'bank', 1000), (2, 'museum', 2000);
 
 query
-EXPLAIN SELECT pid, target FROM crookface_heist WHERE loot = 1000;
+EXPLAIN SELECT pid, target FROM clickclack_heist WHERE loot = 1000;
 ----
 QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (target:VARCHAR, "target")] -> "pid":INTEGER, "target":VARCHAR
-  -- TableScan[0][crookface_heist, scan=secondary_index] -> "pid":INTEGER, "target":VARCHAR
+  -- TableScan[0][clickclack_heist, scan=secondary_index] -> "pid":INTEGER, "target":VARCHAR
 
 statement ok
-DROP TABLE crookface_heist;
+DROP TABLE clickclack_heist;
 
 
 statement ok
-CREATE TABLE bossmann_mafia (pid INTEGER PRIMARY KEY, hitman VARCHAR, bounty INTEGER);
+CREATE TABLE babsky_mafia (pid INTEGER PRIMARY KEY, hitman VARCHAR, bounty INTEGER);
 
 statement ok
-CREATE INDEX bossmann_mafia_bounty_idx ON bossmann_mafia USING secondary(bounty);
+CREATE INDEX babsky_mafia_bounty_idx ON babsky_mafia USING secondary(bounty);
 
 statement ok
-CREATE INDEX bossmann_mafia_hitman_idx ON bossmann_mafia USING secondary(hitman);
+CREATE INDEX babsky_mafia_hitman_idx ON babsky_mafia USING secondary(hitman);
 
 statement ok
-INSERT INTO bossmann_mafia VALUES
+INSERT INTO babsky_mafia VALUES
   (1, 'vedernikoff', 500),
   (2, 'cutelooked', 300),
   (3, 'crookface', 500),
@@ -434,7 +434,7 @@ INSERT INTO bossmann_mafia VALUES
   (8, 'cutelooked', 500);
 
 query
-SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 500 ORDER BY pid;
+SELECT pid, hitman FROM babsky_mafia WHERE bounty = 500 ORDER BY pid;
 ----
 pid	hitman
 1	vedernikoff
@@ -442,52 +442,52 @@ pid	hitman
 8	cutelooked
 
 query
-SELECT pid, bounty FROM bossmann_mafia WHERE hitman = 'vedernikoff' ORDER BY pid;
+SELECT pid, bounty FROM babsky_mafia WHERE hitman = 'vedernikoff' ORDER BY pid;
 ----
 pid	bounty
 1	500
 5	300
 
 query
-SELECT pid, bounty FROM bossmann_mafia WHERE hitman = 'crookface' ORDER BY pid;
+SELECT pid, bounty FROM babsky_mafia WHERE hitman = 'crookface' ORDER BY pid;
 ----
 pid	bounty
 3	500
 7	300
 
 statement ok
-UPDATE bossmann_mafia SET bounty = 900 WHERE hitman = 'crookface';
+UPDATE babsky_mafia SET bounty = 900 WHERE hitman = 'crookface';
 
 query
-SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 500 ORDER BY pid;
+SELECT pid, hitman FROM babsky_mafia WHERE bounty = 500 ORDER BY pid;
 ----
 pid	hitman
 1	vedernikoff
 8	cutelooked
 
 query
-SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 900 ORDER BY pid;
+SELECT pid, hitman FROM babsky_mafia WHERE bounty = 900 ORDER BY pid;
 ----
 pid	hitman
 3	crookface
 7	crookface
 
 statement ok
-DELETE FROM bossmann_mafia WHERE hitman = 'cutelooked';
+DELETE FROM babsky_mafia WHERE hitman = 'cutelooked';
 
 query
-SELECT pid, bounty FROM bossmann_mafia WHERE hitman = 'cutelooked';
+SELECT pid, bounty FROM babsky_mafia WHERE hitman = 'cutelooked';
 ----
 pid	bounty
 
 query
-SELECT pid, hitman FROM bossmann_mafia WHERE bounty = 300;
+SELECT pid, hitman FROM babsky_mafia WHERE bounty = 300;
 ----
 pid	hitman
 5	vedernikoff
 
 query
-SELECT pid, hitman, bounty FROM bossmann_mafia ORDER BY pid;
+SELECT pid, hitman, bounty FROM babsky_mafia ORDER BY pid;
 ----
 pid	hitman	bounty
 1	vedernikoff	500
@@ -498,4 +498,241 @@ pid	hitman	bounty
 7	crookface	900
 
 statement ok
-DROP TABLE bossmann_mafia;
+DROP TABLE babsky_mafia;
+
+
+statement ok
+CREATE TABLE vedernikoff_nullvault (pid INTEGER PRIMARY KEY, grade INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX vedernikoff_nullvault_grade_idx ON vedernikoff_nullvault USING secondary(grade);
+
+statement ok
+INSERT INTO vedernikoff_nullvault VALUES (1, 10, 'alpha'), (4, 20, 'delta'), (6, 10, 'zeta');
+
+statement ok
+INSERT INTO vedernikoff_nullvault VALUES (2, NULL, 'beta'), (3, NULL, 'gamma'), (5, NULL, 'epsilon');
+
+query
+SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 10 ORDER BY pid;
+----
+pid	tag
+1	alpha
+6	zeta
+
+statement ok
+UPDATE vedernikoff_nullvault SET grade = NULL WHERE pid = 1;
+
+query
+SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL ORDER BY pid;
+----
+pid	tag
+1	alpha
+2	beta
+3	gamma
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 10;
+----
+pid	tag
+6	zeta
+
+statement ok
+UPDATE vedernikoff_nullvault SET grade = 30 WHERE pid = 2;
+
+query
+SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 30;
+----
+pid	tag
+2	beta
+
+query
+EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
+  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
+
+query
+EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 10;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
+  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
+
+statement ok
+DROP TABLE vedernikoff_nullvault;
+
+
+statement ok
+CREATE TABLE clickclack_ops (pid INTEGER PRIMARY KEY, op_type VARCHAR, reward INTEGER);
+
+statement ok
+CREATE INDEX clickclack_ops_type_idx ON clickclack_ops USING secondary(op_type);
+
+statement ok
+INSERT INTO clickclack_ops VALUES (1, 'heist', 500), (2, 'recon', 100), (4, 'heist', 300), (6, 'sabotage', 800);
+
+statement ok
+INSERT INTO clickclack_ops VALUES (3, NULL, 0), (5, NULL, 0);
+
+query
+SELECT pid, reward FROM clickclack_ops WHERE op_type = 'heist' ORDER BY pid;
+----
+pid	reward
+1	500
+4	300
+
+query
+SELECT pid, reward FROM clickclack_ops WHERE op_type IS NULL ORDER BY pid;
+----
+pid	reward
+3	0
+5	0
+
+statement ok
+DELETE FROM clickclack_ops WHERE pid = 3;
+
+query
+SELECT pid, reward FROM clickclack_ops WHERE op_type IS NULL;
+----
+pid	reward
+5	0
+
+statement ok
+INSERT INTO clickclack_ops VALUES (7, NULL, 50);
+
+query
+SELECT pid, reward FROM clickclack_ops WHERE op_type IS NULL ORDER BY pid;
+----
+pid	reward
+5	0
+7	50
+
+statement ok
+UPDATE clickclack_ops SET op_type = 'heist' WHERE pid = 5;
+
+query
+SELECT pid, reward FROM clickclack_ops WHERE op_type IS NULL;
+----
+pid	reward
+7	50
+
+query
+SELECT pid, reward FROM clickclack_ops WHERE op_type = 'heist' ORDER BY pid;
+----
+pid	reward
+1	500
+4	300
+5	0
+
+statement ok
+DROP TABLE clickclack_ops;
+
+
+statement ok
+CREATE TABLE babsky_ledger (pid INTEGER PRIMARY KEY, region INTEGER, tier INTEGER, note VARCHAR);
+
+statement ok
+CREATE INDEX babsky_ledger_region_tier_idx ON babsky_ledger USING secondary(region, tier);
+
+statement ok
+INSERT INTO babsky_ledger VALUES
+  (1, 1, 10, 'alpha'),
+  (2, 1, 10, 'beta'),
+  (3, 1, 20, 'gamma'),
+  (4, 2, 10, 'delta'),
+  (5, 2, 10, 'epsilon');
+
+query
+SELECT pid, note FROM babsky_ledger WHERE region = 1 AND tier = 10 ORDER BY pid;
+----
+pid	note
+1	alpha
+2	beta
+
+query
+SELECT pid, note FROM babsky_ledger WHERE region = 2 AND tier = 10 ORDER BY pid;
+----
+pid	note
+4	delta
+5	epsilon
+
+statement ok
+UPDATE babsky_ledger SET tier = 30 WHERE pid = 1;
+
+query
+SELECT pid, note FROM babsky_ledger WHERE region = 1 AND tier = 10;
+----
+pid	note
+2	beta
+
+query
+SELECT pid, note FROM babsky_ledger WHERE region = 1 AND tier = 30;
+----
+pid	note
+1	alpha
+
+statement ok
+DELETE FROM babsky_ledger WHERE pid = 4;
+
+query
+SELECT pid, note FROM babsky_ledger WHERE region = 2 AND tier = 10;
+----
+pid	note
+5	epsilon
+
+statement ok
+INSERT INTO babsky_ledger VALUES (6, NULL, 10, 'zeta'), (7, NULL, 10, 'eta');
+
+statement ok
+INSERT INTO babsky_ledger VALUES (8, 1, NULL, 'theta');
+
+query
+SELECT pid, note FROM babsky_ledger WHERE region IS NULL ORDER BY pid;
+----
+pid	note
+6	zeta
+7	eta
+
+query
+SELECT pid, note FROM babsky_ledger WHERE tier IS NULL;
+----
+pid	note
+8	theta
+
+query
+SELECT pid, region, tier, note FROM babsky_ledger ORDER BY pid;
+----
+pid	region	tier	note
+1	1	30	alpha
+2	1	10	beta
+3	1	20	gamma
+5	2	10	epsilon
+6	NULL	10	zeta
+7	NULL	10	eta
+8	1	NULL	theta
+
+statement ok
+DROP TABLE babsky_ledger;

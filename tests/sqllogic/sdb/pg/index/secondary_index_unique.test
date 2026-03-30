@@ -2,29 +2,29 @@ hash-threshold 100
 
 
 statement ok
-CREATE TABLE crew_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+CREATE TABLE vedernikoff_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
 
 statement ok
-CREATE UNIQUE INDEX crew_unique_rank_idx ON crew_unique USING secondary(rank);
+CREATE UNIQUE INDEX vedernikoff_unique_rank_idx ON vedernikoff_unique USING secondary(rank);
 
 statement ok
-INSERT INTO crew_unique VALUES (1, 'vedernikoff', 10);
+INSERT INTO vedernikoff_unique VALUES (1, 'vedernikoff', 10);
 
 statement ok
-INSERT INTO crew_unique VALUES (2, 'cutelooked', 20);
+INSERT INTO vedernikoff_unique VALUES (2, 'cutelooked', 20);
 
 statement ok
-INSERT INTO crew_unique VALUES (3, 'crookface', 30);
+INSERT INTO vedernikoff_unique VALUES (3, 'crookface', 30);
 
 statement error
-INSERT INTO crew_unique VALUES (4, 'bossmann', 10);
+INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
 DETAIL: Key (rank)=(10) already exists.
 
 
 query
-SELECT pid, nickname, rank FROM crew_unique ORDER BY pid;
+SELECT pid, nickname, rank FROM vedernikoff_unique ORDER BY pid;
 ----
 pid	nickname	rank
 1	vedernikoff	10
@@ -32,41 +32,41 @@ pid	nickname	rank
 3	crookface	30
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 10;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 10;
 ----
 pid	nickname
 1	vedernikoff
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 20;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 20;
 ----
 pid	nickname
 2	cutelooked
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 99;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 99;
 ----
 pid	nickname
 
 statement ok
-UPDATE crew_unique SET rank = 15 WHERE pid = 1;
+UPDATE vedernikoff_unique SET rank = 15 WHERE pid = 1;
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 10;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 10;
 ----
 pid	nickname
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 15;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 15;
 ----
 pid	nickname
 1	vedernikoff
 
 statement error
-UPDATE crew_unique SET rank = 20 WHERE pid = 1;
+UPDATE vedernikoff_unique SET rank = 20 WHERE pid = 1;
 
 query
-SELECT pid, nickname, rank FROM crew_unique ORDER BY pid;
+SELECT pid, nickname, rank FROM vedernikoff_unique ORDER BY pid;
 ----
 pid	nickname	rank
 1	vedernikoff	15
@@ -74,24 +74,24 @@ pid	nickname	rank
 3	crookface	30
 
 statement ok
-DELETE FROM crew_unique WHERE pid = 2;
+DELETE FROM vedernikoff_unique WHERE pid = 2;
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 20;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 20;
 ----
 pid	nickname
 
 statement ok
-INSERT INTO crew_unique VALUES (4, 'bossmann', 20);
+INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 20);
 
 query
-SELECT pid, nickname FROM crew_unique WHERE rank = 20;
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 20;
 ----
 pid	nickname
 4	bossmann
 
 query
-SELECT pid, nickname, rank FROM crew_unique ORDER BY pid;
+SELECT pid, nickname, rank FROM vedernikoff_unique ORDER BY pid;
 ----
 pid	nickname	rank
 1	vedernikoff	15
@@ -99,32 +99,32 @@ pid	nickname	rank
 4	bossmann	20
 
 statement ok
-DROP TABLE crew_unique;
+DROP TABLE vedernikoff_unique;
 
 
 statement ok
-CREATE TABLE crew_nulls (pid INTEGER PRIMARY KEY, codename VARCHAR, score INTEGER);
+CREATE TABLE babsky_nulls (pid INTEGER PRIMARY KEY, codename VARCHAR, score INTEGER);
 
 statement ok
-CREATE UNIQUE INDEX crew_nulls_score_idx ON crew_nulls USING secondary(score);
+CREATE UNIQUE INDEX babsky_nulls_score_idx ON babsky_nulls USING secondary(score);
 
 statement ok
-INSERT INTO crew_nulls VALUES (1, 'vedernikoff', 100);
+INSERT INTO babsky_nulls VALUES (1, 'vedernikoff', 100);
 
 statement ok
-INSERT INTO crew_nulls VALUES (2, 'cutelooked', NULL);
+INSERT INTO babsky_nulls VALUES (2, 'cutelooked', NULL);
 
 statement ok
-INSERT INTO crew_nulls VALUES (3, 'crookface', NULL);
+INSERT INTO babsky_nulls VALUES (3, 'crookface', NULL);
 
 statement ok
-INSERT INTO crew_nulls VALUES (4, 'bossmann', 200);
+INSERT INTO babsky_nulls VALUES (4, 'bossmann', 200);
 
 statement error
-INSERT INTO crew_nulls VALUES (5, 'stockpiler', 100);
+INSERT INTO babsky_nulls VALUES (5, 'stockpiler', 100);
 
 query
-SELECT pid, codename, score FROM crew_nulls ORDER BY pid;
+SELECT pid, codename, score FROM babsky_nulls ORDER BY pid;
 ----
 pid	codename	score
 1	vedernikoff	100
@@ -133,59 +133,59 @@ pid	codename	score
 4	bossmann	200
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score IS NULL ORDER BY pid;
+SELECT pid, codename FROM babsky_nulls WHERE score IS NULL ORDER BY pid;
 ----
 pid	codename
 2	cutelooked
 3	crookface
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score = 100;
+SELECT pid, codename FROM babsky_nulls WHERE score = 100;
 ----
 pid	codename
 1	vedernikoff
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score = 200;
+SELECT pid, codename FROM babsky_nulls WHERE score = 200;
 ----
 pid	codename
 4	bossmann
 
 statement ok
-UPDATE crew_nulls SET score = 300 WHERE pid = 2;
+UPDATE babsky_nulls SET score = 300 WHERE pid = 2;
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score = 300;
+SELECT pid, codename FROM babsky_nulls WHERE score = 300;
 ----
 pid	codename
 2	cutelooked
 
 statement ok
-UPDATE crew_nulls SET score = NULL WHERE pid = 1;
+UPDATE babsky_nulls SET score = NULL WHERE pid = 1;
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score IS NULL ORDER BY pid;
+SELECT pid, codename FROM babsky_nulls WHERE score IS NULL ORDER BY pid;
 ----
 pid	codename
 1	vedernikoff
 3	crookface
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score = 100;
+SELECT pid, codename FROM babsky_nulls WHERE score = 100;
 ----
 pid	codename
 
 statement ok
-INSERT INTO crew_nulls VALUES (5, 'stockpiler', 100);
+INSERT INTO babsky_nulls VALUES (5, 'stockpiler', 100);
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score = 100;
+SELECT pid, codename FROM babsky_nulls WHERE score = 100;
 ----
 pid	codename
 5	stockpiler
 
 query
-SELECT pid, codename, score FROM crew_nulls ORDER BY pid;
+SELECT pid, codename, score FROM babsky_nulls ORDER BY pid;
 ----
 pid	codename	score
 1	vedernikoff	NULL
@@ -195,16 +195,16 @@ pid	codename	score
 5	stockpiler	100
 
 statement ok
-DELETE FROM crew_nulls WHERE pid = 3;
+DELETE FROM babsky_nulls WHERE pid = 3;
 
 query
-SELECT pid, codename FROM crew_nulls WHERE score IS NULL;
+SELECT pid, codename FROM babsky_nulls WHERE score IS NULL;
 ----
 pid	codename
 1	vedernikoff
 
 query
-SELECT pid, codename, score FROM crew_nulls ORDER BY pid;
+SELECT pid, codename, score FROM babsky_nulls ORDER BY pid;
 ----
 pid	codename	score
 1	vedernikoff	NULL
@@ -213,55 +213,332 @@ pid	codename	score
 5	stockpiler	100
 
 statement ok
-DROP TABLE crew_nulls;
+DROP TABLE babsky_nulls;
 
 
 statement ok
-CREATE TABLE crew_names (pid INTEGER PRIMARY KEY, callsign VARCHAR, dept INTEGER);
+CREATE TABLE clickclack_names (pid INTEGER PRIMARY KEY, callsign VARCHAR, dept INTEGER);
 
 statement ok
-CREATE UNIQUE INDEX crew_names_callsign_idx ON crew_names USING secondary(callsign);
+CREATE UNIQUE INDEX clickclack_names_callsign_idx ON clickclack_names USING secondary(callsign);
 
 statement ok
-INSERT INTO crew_names VALUES (1, 'alpha', 1), (2, 'bravo', 2), (3, 'charlie', 1);
+INSERT INTO clickclack_names VALUES (1, 'alpha', 1), (2, 'bravo', 2), (3, 'charlie', 1);
 
 statement error
-INSERT INTO crew_names VALUES (4, 'alpha', 3);
+INSERT INTO clickclack_names VALUES (4, 'alpha', 3);
 
 query
-SELECT pid, dept FROM crew_names WHERE callsign = 'alpha';
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'alpha';
 ----
 pid	dept
 1	1
 
 query
-SELECT pid, dept FROM crew_names WHERE callsign = 'bravo';
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'bravo';
 ----
 pid	dept
 2	2
 
 statement ok
-UPDATE crew_names SET callsign = 'delta' WHERE pid = 1;
+UPDATE clickclack_names SET callsign = 'delta' WHERE pid = 1;
 
 query
-SELECT pid, dept FROM crew_names WHERE callsign = 'alpha';
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'alpha';
 ----
 pid	dept
 
 query
-SELECT pid, dept FROM crew_names WHERE callsign = 'delta';
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'delta';
 ----
 pid	dept
 1	1
 
 statement ok
-INSERT INTO crew_names VALUES (4, 'alpha', 3);
+INSERT INTO clickclack_names VALUES (4, 'alpha', 3);
 
 query
-SELECT pid, dept FROM crew_names WHERE callsign = 'alpha';
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'alpha';
 ----
 pid	dept
 4	3
 
 statement ok
-DROP TABLE crew_names;
+DROP TABLE clickclack_names;
+
+
+statement ok
+CREATE TABLE vedernikoff_safehouse (pid INTEGER PRIMARY KEY, code INTEGER, district VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_safehouse_code_idx ON vedernikoff_safehouse USING secondary(code);
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (1, 100, 'north'), (2, 200, 'south'), (4, 300, 'west');
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (3, NULL, 'east');
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (5, NULL, 'central');
+
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
+  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index] -> "pid":INTEGER, "district":VARCHAR
+
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
+  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index] -> "pid":INTEGER, "district":VARCHAR
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+pid	district
+1	north
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+3	east
+5	central
+
+statement error
+INSERT INTO vedernikoff_safehouse VALUES (6, 100, 'downtown');
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (6, NULL, 'downtown');
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+3	east
+5	central
+6	downtown
+
+statement ok
+UPDATE vedernikoff_safehouse SET code = NULL WHERE pid = 1;
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+pid	district
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+1	north
+3	east
+5	central
+6	downtown
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (7, 100, 'uptown');
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+pid	district
+7	uptown
+
+statement ok
+DELETE FROM vedernikoff_safehouse WHERE pid = 5;
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+1	north
+3	east
+6	downtown
+
+statement error
+UPDATE vedernikoff_safehouse SET code = 200 WHERE pid = 7;
+
+query
+SELECT pid, district, code FROM vedernikoff_safehouse ORDER BY pid;
+----
+pid	district	code
+1	north	NULL
+2	south	200
+3	east	NULL
+4	west	300
+6	downtown	NULL
+7	uptown	100
+
+statement ok
+DROP TABLE vedernikoff_safehouse;
+
+
+statement ok
+CREATE TABLE babsky_contacts (pid INTEGER PRIMARY KEY, phone VARCHAR, alias VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX babsky_contacts_phone_idx ON babsky_contacts USING secondary(phone);
+
+statement ok
+INSERT INTO babsky_contacts VALUES (1, '555-0001', 'ghost'), (2, '555-0002', 'shadow');
+
+statement ok
+INSERT INTO babsky_contacts VALUES (3, NULL, 'phantom');
+
+statement ok
+INSERT INTO babsky_contacts VALUES (4, NULL, 'specter');
+
+statement error
+INSERT INTO babsky_contacts VALUES (5, '555-0001', 'wraith');
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone = '555-0001';
+----
+pid	alias
+1	ghost
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone IS NULL ORDER BY pid;
+----
+pid	alias
+3	phantom
+4	specter
+
+statement ok
+UPDATE babsky_contacts SET phone = '555-0003' WHERE pid = 3;
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone IS NULL;
+----
+pid	alias
+4	specter
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone = '555-0003';
+----
+pid	alias
+3	phantom
+
+statement ok
+DELETE FROM babsky_contacts WHERE pid = 1;
+
+statement ok
+INSERT INTO babsky_contacts VALUES (5, '555-0001', 'wraith');
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone = '555-0001';
+----
+pid	alias
+5	wraith
+
+query
+SELECT pid, alias, phone FROM babsky_contacts ORDER BY pid;
+----
+pid	alias	phone
+2	shadow	555-0002
+3	phantom	555-0003
+4	specter	NULL
+5	wraith	555-0001
+
+statement ok
+DROP TABLE babsky_contacts;
+
+
+statement ok
+CREATE TABLE vedernikoff_ledger (pid INTEGER PRIMARY KEY, region INTEGER, tier INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_ledger_region_tier_idx ON vedernikoff_ledger USING secondary(region, tier);
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES
+  (1, 1, 10, 'alpha'),
+  (2, 1, 20, 'beta'),
+  (3, 2, 10, 'gamma'),
+  (4, 2, 20, 'delta');
+
+statement error
+INSERT INTO vedernikoff_ledger VALUES (5, 1, 10, 'epsilon');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (5, 1, 30, 'epsilon');
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
+----
+pid	note
+1	alpha
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region = 2 AND tier = 20;
+----
+pid	note
+4	delta
+
+statement ok
+UPDATE vedernikoff_ledger SET tier = 40 WHERE pid = 1;
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (6, 1, 10, 'zeta');
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
+----
+pid	note
+6	zeta
+
+statement error
+UPDATE vedernikoff_ledger SET tier = 20 WHERE pid = 6;
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (7, NULL, 10, 'eta');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (8, NULL, 10, 'theta');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (9, 1, NULL, 'iota');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (10, 1, NULL, 'kappa');
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region IS NULL ORDER BY pid;
+----
+pid	note
+7	eta
+8	theta
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE tier IS NULL ORDER BY pid;
+----
+pid	note
+9	iota
+10	kappa
+
+query
+SELECT pid, region, tier, note FROM vedernikoff_ledger ORDER BY pid;
+----
+pid	region	tier	note
+1	1	40	alpha
+2	1	20	beta
+3	2	10	gamma
+4	2	20	delta
+5	1	30	epsilon
+6	1	10	zeta
+7	NULL	10	eta
+8	NULL	10	theta
+9	1	NULL	iota
+10	1	NULL	kappa
+
+statement ok
+DROP TABLE vedernikoff_ledger;

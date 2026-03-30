@@ -9,13 +9,21 @@ import {
 } from "../model/consts";
 import { ConsoleRightSidebar } from "./ConsoleRightSidebar";
 
-const components = {
-    editor: () => {
-        return <ConsoleEditor />;
-    },
-    rightSidebar: () => {
-        return <ConsoleRightSidebar />;
-    },
+const CONSOLE_MAIN_AREA_LAYOUT_STORAGE_KEY = "console:main-area-layout";
+
+const restoreLayout = (event: GridviewReadyEvent, storageKey: string) => {
+    const rawLayout = localStorage.getItem(storageKey);
+    if (!rawLayout) {
+        return false;
+    }
+
+    try {
+        event.api.fromJSON(JSON.parse(rawLayout));
+        return true;
+    } catch (error) {
+        console.warn("Failed to restore console main area layout:", error);
+        return false;
+    }
 };
 
 const ensureEditorPanel = (event: GridviewReadyEvent) => {
@@ -50,19 +58,57 @@ export const ConsoleMainArea: React.FC = () => {
     const { settingsSidebarCollapsed, executionHistorySidebarCollapsed } =
         useConsole();
     const gridEventRef = useRef<GridviewReadyEvent | null>(null);
+    const [api, setApi] = React.useState<GridviewReadyEvent["api"]>();
     const rightSidebarWidthRef = useRef(CONSOLE_RIGHT_SIDEBAR_SIZE);
 
     const isRightSidebarVisible =
         !settingsSidebarCollapsed || !executionHistorySidebarCollapsed;
+    const components = React.useMemo(() => {
+        return {
+            editor: () => {
+                return <ConsoleEditor />;
+            },
+            rightSidebar: () => {
+                return <ConsoleRightSidebar />;
+            },
+        };
+    }, []);
 
     const onReady = (event: GridviewReadyEvent) => {
         gridEventRef.current = event;
+        setApi(event.api);
+        const restored =
+            restoreLayout(event, CONSOLE_MAIN_AREA_LAYOUT_STORAGE_KEY);
+
         ensureEditorPanel(event);
+
+        if (restored) {
+            return;
+        }
 
         if (isRightSidebarVisible) {
             ensureRightSidebarPanel(event);
         }
     };
+
+    useEffect(() => {
+        if (!api) {
+            return;
+        }
+
+        const disposable = api.onDidLayoutChange(() => {
+            try {
+                localStorage.setItem(
+                    CONSOLE_MAIN_AREA_LAYOUT_STORAGE_KEY,
+                    JSON.stringify(api.toJSON()),
+                );
+            } catch (error) {
+                console.warn("Failed to save console main area layout:", error);
+            }
+        });
+
+        return () => disposable.dispose();
+    }, [api]);
 
     useEffect(() => {
         const event = gridEventRef.current;

@@ -542,3 +542,106 @@ pid	region	tier	note
 
 statement ok
 DROP TABLE vedernikoff_ledger;
+
+
+statement ok
+CREATE TABLE babsky_nullbulk (pid INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX babsky_nullbulk_val_idx ON babsky_nullbulk USING secondary(val);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (1, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (2, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (3, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (4, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (5, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (6, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (7, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (8, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (9, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (10, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (11, 42);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (12, 99);
+
+statement error
+INSERT INTO babsky_nullbulk VALUES (13, 42);
+
+query
+SELECT count(*) FROM babsky_nullbulk WHERE val IS NULL;
+----
+count
+10
+
+query
+SELECT pid FROM babsky_nullbulk WHERE val IS NULL ORDER BY pid;
+----
+pid
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+
+query
+SELECT pid FROM babsky_nullbulk WHERE val = 42;
+----
+pid
+11
+
+statement ok
+DELETE FROM babsky_nullbulk WHERE pid IN (3, 5, 7);
+
+query
+SELECT count(*) FROM babsky_nullbulk WHERE val IS NULL;
+----
+count
+7
+
+statement ok
+UPDATE babsky_nullbulk SET val = NULL WHERE pid = 11;
+
+query
+SELECT count(*) FROM babsky_nullbulk WHERE val IS NULL;
+----
+count
+8
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (13, 42);
+
+query
+SELECT pid FROM babsky_nullbulk WHERE val = 42;
+----
+pid
+13
+
+statement ok
+DROP TABLE babsky_nullbulk;

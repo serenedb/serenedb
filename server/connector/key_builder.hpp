@@ -126,16 +126,16 @@ class ColumnCollector {
   void Init(const velox::TypePtr& type, size_t capacity,
             velox::memory::MemoryPool& pool) {
     _type_kind = type->kind();
-    _vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(CreateColumnVector,
-                                              _type_kind, capacity, pool);
+    _vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(CreateColumnVector, _type_kind,
+                                              capacity, pool);
     _present_rows.reset(capacity);
   }
 
   void Fill(size_t batch_idx, size_t found_idx,
             std::span<const rocksdb::PinnableSlice> values) {
     _present_rows.set(batch_idx);
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillColumnValues, _type_kind,
-                                       *_vec, found_idx, values);
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillColumnValues, _type_kind, *_vec,
+                                       found_idx, values);
   }
 
   velox::VectorPtr Finish(size_t found_count) {

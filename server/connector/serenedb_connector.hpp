@@ -1331,6 +1331,70 @@ class SereneDBConnector final : public velox::connector::Connector {
 
   folly::Executor* ioExecutor() const final { return nullptr; }
 
+  template<typename Handle, typename Func>
+  auto CreateWithMaterializer(
+    const Handle& handle, const velox::RowTypePtr& output_type,
+    const velox::RowTypePtr& reader_type,
+    std::vector<catalog::Column::Id> column_oids,
+    const velox::connector::ColumnHandleMap& column_handles,
+    velox::memory::MemoryPool& pool, const rocksdb::Snapshot* snapshot,
+    Func&& func) {
+    const auto& underlying_table = handle.GetUnderlyingTable();
+    if (const auto* file_table =
+          dynamic_cast<const ReadFileTable*>(&underlying_table)) {
+      auto [source, reader, row_reader] = FileDataSource::CreateReader(
+        *file_table->GetOptions(), pool, reader_type, column_handles, {},
+        nullptr, nullptr);
+      auto format = file_table->GetOptions()->Reader()->fileFormat();
+      if (format == velox::dwio::common::FileFormat::TEXT) {
+        TextMaterializer mat{pool,
+                             std::move(source),
+                             std::move(reader),
+                             std::move(row_reader),
+                             output_type,
+                             std::move(column_oids)};
+        return func(std::move(mat), _db);
+      }
+      SDB_ASSERT(format == velox::dwio::common::FileFormat::PARQUET,
+                 "Only parquet and text formats are supported");
+      ParquetMaterializer mat{pool,
+                              std::move(source),
+                              std::move(reader),
+                              std::move(row_reader),
+                              output_type,
+                              std::move(column_oids)};
+      return func(std::move(mat), _db);
+    }
+
+    auto& transaction = handle.GetTransaction();
+    const bool needs_ryow =
+      transaction.HasRocksDBWrite() &&
+      transaction.template Get<VariableType::Bool>("sdb_read_your_own_writes");
+    if (needs_ryow) {
+      auto& trx = transaction.GetRocksDBTransaction();
+      RocksDBMaterializer mat{pool,
+                              snapshot,
+                              nullptr,
+                              &trx,
+                              _cf,
+                              output_type,
+                              std::move(column_oids),
+                              handle.GetEffectiveColumnId(),
+                              handle.TableId()};
+      return func(std::move(mat), trx);
+    }
+    RocksDBMaterializer mat{pool,
+                            snapshot,
+                            &_db,
+                            nullptr,
+                            _cf,
+                            output_type,
+                            std::move(column_oids),
+                            handle.GetEffectiveColumnId(),
+                            handle.TableId()};
+    return func(std::move(mat), _db);
+  }
+
   std::unique_ptr<velox::connector::DataSource> CreateSecondaryIndexDataSource(
     const velox::RowTypePtr& output_type,
     const SecondaryIndexTableHandle& handle,
@@ -1345,76 +1409,31 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     auto& pool = *connector_query_ctx->memoryPool();
 
-    const auto& underlying_table = handle.GetUnderlyingTable();
-    if (const auto* file_table =
-          dynamic_cast<const ReadFileTable*>(&underlying_table)) {
-      SDB_ASSERT(file_table->GetOptions()->Reader()->fileFormat() ==
-                   velox::dwio::common::FileFormat::PARQUET,
-                 "Only parquet is supported for secondary index search");
-      auto [source, reader, row_reader] = FileDataSource::CreateReader(
-        *file_table->GetOptions(), pool, output_type, column_handles, {},
-        nullptr, nullptr);
-      auto parquet_mat =
-        ParquetMaterializer(pool, std::move(source), std::move(reader),
-                            std::move(row_reader), output_type, column_oids);
-      bool has_null_filter = absl::c_any_of(
-        handle.GetValues(), [](const auto& v) { return v.isNull(); });
-      if (handle.IsUnique() && !has_null_filter) {
-        return std::make_unique<UniqueSecondaryIndexPointDataSource<
-          ParquetMaterializer, rocksdb::DB>>(
-          pool, std::move(parquet_mat), _db, _cf, snapshot, handle.GetShardId(),
-          handle.GetValues(), handle.GetValueType());
-      }
-      return std::make_unique<
-        SecondaryIndexDataSource<ParquetMaterializer, false, rocksdb::DB>>(
-        pool, std::move(parquet_mat), _db, _cf, snapshot, handle.GetShardId(),
-        handle.GetValues(), handle.GetValueType());
-    }
-
-    const bool needs_ryow =
-      transaction.HasRocksDBWrite() &&
-      transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
-
     bool has_null_filter = absl::c_any_of(
       handle.GetValues(), [](const auto& v) { return v.isNull(); });
 
-    if (needs_ryow) {
-      auto& rocksdb_trx = transaction.GetRocksDBTransaction();
-      auto rocksdb_mat = RocksDBMaterializer(
-        pool, snapshot, nullptr, &rocksdb_trx, _cf, output_type, column_oids,
-        handle.GetEffectiveColumnId(), handle.TableId());
-      if (handle.IsUnique() && !has_null_filter) {
-        return std::make_unique<UniqueSecondaryIndexPointDataSource<
-          RocksDBMaterializer, rocksdb::Transaction>>(
-          pool, std::move(rocksdb_mat), rocksdb_trx, _cf, snapshot,
-          handle.GetShardId(), handle.GetValues(), handle.GetValueType());
-      }
-      return irs::ResolveBool(
-        handle.IsUnique(),
-        [&]<bool UniqueIdx>() -> std::unique_ptr<velox::connector::DataSource> {
-          return std::make_unique<SecondaryIndexDataSource<
-            RocksDBMaterializer, UniqueIdx, rocksdb::Transaction>>(
-            pool, std::move(rocksdb_mat), rocksdb_trx, _cf, snapshot,
-            handle.GetShardId(), handle.GetValues(), handle.GetValueType());
-        });
-    }
-
-    auto rocksdb_mat = RocksDBMaterializer(
-      pool, snapshot, &_db, nullptr, _cf, output_type, column_oids,
-      handle.GetEffectiveColumnId(), handle.TableId());
-    if (handle.IsUnique() && !has_null_filter) {
-      return std::make_unique<
-        UniqueSecondaryIndexPointDataSource<RocksDBMaterializer, rocksdb::DB>>(
-        pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
-        handle.GetValues(), handle.GetValueType());
-    }
-    return irs::ResolveBool(
-      handle.IsUnique(),
-      [&]<bool UniqueIdx>() -> std::unique_ptr<velox::connector::DataSource> {
-        return std::make_unique<SecondaryIndexDataSource<
-          RocksDBMaterializer, UniqueIdx, rocksdb::DB>>(
-          pool, std::move(rocksdb_mat), _db, _cf, snapshot, handle.GetShardId(),
-          handle.GetValues(), handle.GetValueType());
+    return CreateWithMaterializer(
+      handle, output_type, output_type, column_oids, column_handles, pool,
+      snapshot,
+      [&](auto mat,
+          auto& source) -> std::unique_ptr<velox::connector::DataSource> {
+        using Mat = decltype(mat);
+        using Src = std::remove_reference_t<decltype(source)>;
+        if (handle.IsUnique() && !has_null_filter) {
+          return std::make_unique<
+            UniqueSecondaryIndexPointDataSource<Mat, Src>>(
+            pool, std::move(mat), source, _cf, snapshot, handle.GetShardId(),
+            handle.GetValues(), handle.GetValueType());
+        }
+        return irs::ResolveBool(
+          handle.IsUnique(),
+          [&]<bool UniqueIdx>()
+            -> std::unique_ptr<velox::connector::DataSource> {
+            return std::make_unique<
+              SecondaryIndexDataSource<Mat, UniqueIdx, Src>>(
+              pool, std::move(mat), source, _cf, snapshot, handle.GetShardId(),
+              handle.GetValues(), handle.GetValueType());
+          });
       });
   }
 
@@ -1443,48 +1462,30 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& pool = *connector_query_ctx->memoryPool();
     const auto& search_snapshot =
       transaction.EnsureSearchSnapshot(handle.GetIndexId());
-    const auto& underlying_table = handle.GetUnderlyingTable();
 
-    if (const auto* file_table =
-          dynamic_cast<const ReadFileTable*>(&underlying_table)) {
-      // TODO: teach ScanSpec to skip the score column instead of stripping it
-      // from the type.
-      std::vector<std::string> reader_names;
-      std::vector<velox::TypePtr> reader_types;
-      for (size_t i = 0; i < output_type->size(); ++i) {
-        if (column_oids[i] != catalog::Column::kInvertedIndexScoreId) {
-          reader_names.push_back(output_type->nameOf(i));
-          reader_types.push_back(output_type->childAt(i));
-        }
+    // TODO: teach ScanSpec to skip the score column instead of stripping it
+    // from the type.
+    std::vector<std::string> reader_names;
+    std::vector<velox::TypePtr> reader_types;
+    for (size_t i = 0; i < output_type->size(); ++i) {
+      if (column_oids[i] != catalog::Column::kInvertedIndexScoreId) {
+        reader_names.push_back(output_type->nameOf(i));
+        reader_types.push_back(output_type->childAt(i));
       }
-      auto reader_type =
-        velox::ROW(std::move(reader_names), std::move(reader_types));
-      auto [source, reader, row_reader] = FileDataSource::CreateReader(
-        *file_table->GetOptions(), pool, reader_type, column_handles, {},
-        nullptr, nullptr);
-      auto format = file_table->GetOptions()->Reader()->fileFormat();
-      if (format == velox::dwio::common::FileFormat::PARQUET) {
-        return std::make_unique<SearchDataSource<ParquetMaterializer>>(
-          pool,
-          ParquetMaterializer(pool, std::move(source), std::move(reader),
-                              std::move(row_reader), output_type, column_oids),
-          search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
-      }
-
-      SDB_ASSERT(format == velox::dwio::common::FileFormat::TEXT);
-      return std::make_unique<SearchDataSource<TextMaterializer>>(
-        pool,
-        TextMaterializer(pool, std::move(source), std::move(reader),
-                         std::move(row_reader), output_type, column_oids),
-        search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
     }
+    auto reader_type =
+      velox::ROW(std::move(reader_names), std::move(reader_types));
 
-    return std::make_unique<SearchDataSource<RocksDBMaterializer>>(
-      pool,
-      RocksDBMaterializer(pool, search_snapshot.snapshot->GetSnapshot(), &_db,
-                          nullptr, _cf, output_type, column_oids,
-                          handle.GetEffectiveColumnId(), handle.TableId()),
-      search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+    return CreateWithMaterializer(
+      handle, output_type, reader_type, column_oids, column_handles, pool,
+      search_snapshot.snapshot->GetSnapshot(),
+      [&](auto mat,
+          auto& source) -> std::unique_ptr<velox::connector::DataSource> {
+        using Mat = decltype(mat);
+        return std::make_unique<SearchDataSource<Mat>>(
+          pool, std::move(mat), search_snapshot.reader, handle.GetSearchQuery(),
+          handle.GetScorer());
+      });
   }
 
  private:

@@ -84,6 +84,29 @@ statement nowait ok
 VACUUM (UPDATE_INDEXES) t;
 
 
+statement nowait ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+statement nowait ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+query nowait
+SELECT COUNT(*) >= 3 FROM t;
+----
+?column?
+t
+
+
+statement nowait ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+statement nowait ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
 connection new2
 statement ok
 DROP TABLE t;

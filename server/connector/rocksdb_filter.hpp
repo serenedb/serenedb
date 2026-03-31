@@ -28,7 +28,6 @@
 #include <velox/vector/ComplexVector.h>
 
 #include <cassert>
-#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -43,6 +42,7 @@ namespace sdb::connector {
 
 enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
+// TODO make empty range transparent
 // A possibly-bounded interval on a single column value.
 struct ColumnRange {
   static constexpr uint8_t kZero = 0x0;
@@ -109,33 +109,42 @@ struct ColumnRange {
            left_value == right_value;
   }
 
+  // True iff both ranges represent the exact same interval.
+  [[nodiscard]] bool operator==(const ColumnRange& other) const noexcept;
+
+  // Tightest interval covering only keys in both ranges.
+  // Returns nullopt when the result is empty (e.g. [1,1] ∩ [2,2]).
+  [[nodiscard]] std::optional<ColumnRange> IntersectWith(
+    const ColumnRange& other) const;
+
+  // True iff the two ranges share at least one point.
+  [[nodiscard]] bool OverlapsWith(const ColumnRange& other) const;
+
+  // Smallest interval covering all keys in both ranges (may over-approximate
+  // gaps).
+  [[nodiscard]] ColumnRange UnionWith(const ColumnRange& other) const;
+
+  // True iff *this starts strictly before other by left bound.
+  // Unbounded left (-inf) sorts first; ties broken by inclusive < exclusive.
+  [[nodiscard]] bool LeftBoundLessThan(const ColumnRange& other) const noexcept;
+
   // e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
   // NOLINTNEXTLINE(readability-identifier-naming)
   [[nodiscard]] std::string toString() const;
 };
 
 // A set of per-column range constraints over PK columns.
-// Absent column in _column_filters means "any value" (unconstrained).
-// A column with equal inclusive left/right bounds represents an equality
-// predicate; asymmetric or half-open bounds represent range predicates.
 class KeyConstraint {
  public:
   explicit KeyConstraint(std::span<const std::string> pk_names)
     : _pk_names{pk_names} {}
 
-  KeyConstraint(const KeyConstraint&) = default;
-  KeyConstraint& operator=(const KeyConstraint&) = default;
-  KeyConstraint(KeyConstraint&&) = default;
-  KeyConstraint& operator=(KeyConstraint&&) = default;
-
-  [[nodiscard]] bool IsSpecific() const;
+  [[nodiscard]] bool IsSpecificPoint() const;
 
   [[nodiscard]] bool IsUnconstrained() const noexcept {
-    return !_contradictory && _column_filters.empty();
+    return !_contradictory && _column_ranges.empty();
   }
 
-  // True when the constraint is contradictory (e.g. a < 1 AND a > 1) and
-  // can never be satisfied — the scan should produce zero rows.
   [[nodiscard]] bool IsContradictory() const noexcept { return _contradictory; }
 
   [[nodiscard]] static KeyConstraint MakeContradictory(
@@ -146,20 +155,11 @@ class KeyConstraint {
   }
 
   // Returns the number of PK columns covered by the constraint's leading
-  // prefix, or 0 if the constraint cannot drive a useful range scan. The prefix
-  // is: K equality-point columns followed by at most one range column. K must
-  // be ≥ 1 (a bare range on the first column with no equality prefix yields 0).
-  // Examples (PK = a, b, c):
-  //   b > 5              → 0  (a unconstrained → no usable prefix)
-  //   a > 5              → 0  (K=0, no equality prefix)
-  //   a = 1              → 1  (one equality, nothing after)
-  //   a = 1 AND b > 5    → 2  (a point, b range)
-  //   a = 1 AND b = 2    → 2  (both points; note: IsSpecific handles all-point)
-  //   a = 1 AND b = 2 AND c > 3 → 3
+  // prefix, or 0 if the constraint cannot drive a useful range scan.
   [[nodiscard]] size_t RangePrefixSize() const noexcept;
 
-  // Returns nullptr if the column has no filter (matches any value).
-  [[nodiscard]] const ColumnRange* FindFilter(
+  // Returns nullptr if the column has no filter range (matches any value).
+  [[nodiscard]] const ColumnRange* FindColumnRange(
     std::string_view column_name) const;
 
   [[nodiscard]] std::span<const std::string> PkNames() const noexcept {
@@ -180,7 +180,8 @@ class KeyConstraint {
   GetSourceExprs(std::string_view column_name) const noexcept;
 
   // e.g. "{a: [1, 5), b: (-inf, +inf)}" or "{}" when unconstrained.
-  [[nodiscard]] std::string ToString() const;
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  [[nodiscard]] std::string toString() const;
 
   void AddEqFilter(std::string_view column_name,
                    const velox::core::ConstantTypedExpr& value,
@@ -203,18 +204,12 @@ class KeyConstraint {
   [[nodiscard]] static std::optional<KeyConstraint> TryUnion(
     const KeyConstraint& lhs, const KeyConstraint& rhs);
 
-  // Always merges two constraints into one by taking the widest bounding range
-  // per column. May over-approximate: the result can cover key-space not in
-  // either input (e.g. [2,10) ∪ (40,44] → [2,44]).
-  [[nodiscard]] static KeyConstraint ForceUnion(const KeyConstraint& lhs,
-                                                const KeyConstraint& rhs);
-
  private:
   std::span<const std::string> _pk_names;
   bool _contradictory =
     false;  // true → contradictory predicate, matches no rows
 
-  containers::FlatHashMap<std::string, ColumnRange> _column_filters;
+  containers::FlatHashMap<std::string, ColumnRange> _column_ranges;
   SourceExprsMap _source_exprs;
 };
 
@@ -224,13 +219,12 @@ using ResolvedPoint = std::vector<velox::variant>;
 
 // Converts specific (fully constrained) KeyConstraints to SpecificPoint,
 // ordered by pk_type column order.
-[[nodiscard]] std::vector<ResolvedPoint> ToSpecificPoints(
+[[nodiscard]] std::vector<ResolvedPoint> ToResolvedPoints(
   const std::vector<KeyConstraint>& points, const velox::RowType& pk_type);
 
 // A fully resolved range: first K exact PK column values (the equality prefix),
 // followed by a Range for the (K+1)-th column.
 // prefix.size() == K; K may be 0 if the range column is the first PK column.
-// Analogous to SpecificPoint but for range scans.
 struct ResolvedRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
   ColumnRange range_col;               // constraint on column K
@@ -280,9 +274,9 @@ struct ResolvedRange {
   }
 };
 
-// Converts range KeyConstraints to SpecificRange, ordered by pk_type column
+// Converts range KeyConstraints to ResolvedRange, ordered by pk_type column
 // order. Each constraint must have PrefixSize() >= 1.
-[[nodiscard]] std::vector<ResolvedRange> ToSpecificRanges(
+[[nodiscard]] std::vector<ResolvedRange> ToResolvedRanges(
   const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type);
 
 [[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
@@ -291,9 +285,10 @@ struct ResolvedRange {
 enum class ConstraintKind {
   // All constraints are fully-specified equality points; use point lookup.
   Points,
-  // At least one constraint is a range; use range scan on the first PK column.
+  // At least one constraint is a range; use range scan on the range prefix.
   Ranges,
-  Empty
+  // No constraints, use full scan.
+  None
 };
 
 struct ExtractAndRewriteResult {
@@ -306,10 +301,6 @@ struct ExtractAndRewriteResult {
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
-
-// Sorts points in-place by PK key order. Column order matches the pk_type used
-// during ToSpecificPoints. Comparison uses velox::variant::operator<.
-void SortPoints(std::vector<ResolvedPoint>& points);
 
 // Returns true if `call` matches a velox function named either `suffix[1:]`
 // (bare name, e.g. "eq") or anything ending with `suffix` (prefixed name, e.g.

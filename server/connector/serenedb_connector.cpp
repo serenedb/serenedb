@@ -203,12 +203,12 @@ SereneDBTableLayout::createTableHandle(
     [[maybe_unused]] size_t c_id = 0;
 
     if (res.kind == ConstraintKind::Points && !res.constraints.empty()) {
-      points = ToSpecificPoints(res.constraints, *pk_type);
-      SortPoints(points);
+      points = ToResolvedPoints(res.constraints, *pk_type);
+      absl::c_sort(points);
       remaining_filter = std::move(res.remaining_filter);
     } else if (res.kind == ConstraintKind::Ranges) {
       if (!res.constraints.empty()) {
-        ranges = ToSpecificRanges(res.constraints, *pk_type);
+        ranges = ToResolvedRanges(res.constraints, *pk_type);
       } else {
         zero_ranges = true;  // contradictory predicate → 0-range scan
       }

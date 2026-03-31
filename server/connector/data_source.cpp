@@ -680,10 +680,12 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Policy>::next(
     }
   }
 
-  _values_offset += batch_size;
-  if (_values_offset >= _values.size()) {
-    _current_split.reset();
-  }
+  irs::Finally _ = [&] noexcept {
+    _values_offset += batch_size;
+    if (_values_offset >= _values.size()) {
+      _current_split.reset();
+    }
+  };
 
   if (found_count == 0) {
     return nullptr;

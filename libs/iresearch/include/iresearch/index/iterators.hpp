@@ -23,7 +23,9 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#ifdef __AVX2__
 #include <immintrin.h>
+#endif
 
 #include <bit>
 
@@ -90,6 +92,8 @@ class ScoreCollector {
 
 using ScoreDoc = std::pair<score_t, doc_id_t>;
 
+// TODO(mbkkt) Try to make it autovectorized,
+// otherwise try to use xsimd/neon specific intrinsics
 class NthPartitionScoreCollector final : public ScoreCollector {
  public:
   explicit NthPartitionScoreCollector(score_t& score_threshold, size_t k,
@@ -111,10 +115,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
     ++_count;
-    if (score <= *_score_threshold) {
-      return;
-    }
-    AddImpl(score, doc);
+    TryPush(score, doc);
   }
 
   IRS_FORCE_INLINE uint64_t Finalize() {
@@ -127,7 +128,9 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
                                   doc_id_t min, size_t num_blocks,
                                   bool clear_score) noexcept final {
+#ifdef __AVX2__
     auto threshold = _mm256_set1_ps(*_score_threshold);
+#endif
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
       if (word == 0) [[likely]] {
@@ -137,16 +140,22 @@ class NthPartitionScoreCollector final : public ScoreCollector {
       _count += std::popcount(word);
       const score_t* IRS_RESTRICT const score_base =
         scores + i * BitsRequired<uint64_t>();
+#ifdef __AVX2__
       word &= GetScoreMask(score_base, threshold);
+#endif
       const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
 
       while (word != 0) {
         const doc_id_t bit = std::countr_zero(word);
         word = PopBit(word);
-        if (AddImpl(score_base[bit], doc_base + bit)) {
+#ifdef __AVX2__
+        if (Push(score_base[bit], doc_base + bit)) {
           threshold = _mm256_set1_ps(*_score_threshold);
           word &= GetScoreMask(score_base, threshold);
         }
+#else
+        TryPush(score_base[bit], doc_base + bit);
+#endif
       }
 
       if (clear_score) {
@@ -159,10 +168,10 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
                                 const score_t* scores) noexcept final {
     _count += count;
-    auto threshold = _mm256_set1_ps(*_score_threshold);
     size_t i = 0;
 
-    // Process groups of 8 with AVX2.
+#ifdef __AVX2__
+    auto threshold = _mm256_set1_ps(*_score_threshold);
     for (; i + 8 <= count; i += 8) {
       auto scores_vec = _mm256_loadu_ps(scores + i);
       auto cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
@@ -172,24 +181,28 @@ class NthPartitionScoreCollector final : public ScoreCollector {
         const int bit = std::countr_zero(pass);
         pass = PopBit(pass);
         const score_t score = scores[i + bit];
-        if (AddImpl(score, docs[i + bit])) {
+        if (Push(score, docs[i + bit])) {
           threshold = _mm256_set1_ps(*_score_threshold);
           cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
           pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
         }
       }
     }
+#endif
 
-    // Scalar tail.
     for (; i < count; ++i) {
-      if (scores[i] > *_score_threshold) {
-        AddImpl(scores[i], docs[i]);
-      }
+      TryPush(scores[i], docs[i]);
     }
   }
 
  private:
-  IRS_FORCE_INLINE bool AddImpl(score_t score, doc_id_t doc) noexcept {
+  IRS_FORCE_INLINE void TryPush(score_t score, doc_id_t doc) noexcept {
+    if (score > *_score_threshold) {
+      Push(score, doc);
+    }
+  }
+
+  IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(*_score_threshold < score);
     *_hits_it = {score, doc};
     ++_hits_it;
@@ -205,6 +218,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     return true;
   }
 
+#ifdef __AVX2__
   IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,
                                          __m256 threshold) const noexcept {
     uint64_t mask = 0;
@@ -215,6 +229,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     }
     return mask;
   }
+#endif
 
   uint64_t _count = 0;
   score_t* IRS_RESTRICT _score_threshold = nullptr;

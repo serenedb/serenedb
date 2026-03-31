@@ -2166,12 +2166,7 @@ void registerFunctions(const std::string& prefix) {
                           int32_t, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "error"});
 
-  velox::registerFunction<PgDatabaseSize, int64_t, velox::Varchar>(
-    {prefix + "database_size"});
-  velox::registerFunction<PgSchemaSize, int64_t, velox::Varchar>(
-    {prefix + "schema_size"});
-  velox::registerFunction<PgTableSize, int64_t, velox::Varchar>(
-    {prefix + "table_size"});
+  registerSizeFunctions(prefix);
 
   velox::registerFunction<PgTsLexize, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(

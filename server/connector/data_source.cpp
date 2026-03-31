@@ -26,6 +26,9 @@
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <algorithm>
+#include <numeric>
+
 #include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
@@ -34,6 +37,7 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -63,29 +67,6 @@ void SetResultValue(std::string_view value, size_t idx,
   }
 }
 
-// Allocate an output FlatVector for a column with `count` found rows.
-template<velox::TypeKind Kind>
-velox::VectorPtr CreatePointsColumnVector(size_t count,
-                                          velox::memory::MemoryPool& pool) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  return velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), count, &pool);
-}
-
-// Fill values[0..n) into result starting at offset, for already-present rows.
-template<velox::TypeKind Kind>
-void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
-                            std::span<const rocksdb::PinnableSlice> values) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto& flat = static_cast<velox::FlatVector<T>&>(result);
-  for (size_t i = 0; i < values.size(); ++i) {
-    if (values[i].empty()) {
-      flat.setNull(offset + i, true);
-      continue;
-    }
-    SetResultValue(values[i].ToStringView(), offset + i, flat);
-  }
-}
 
 }  // namespace
 
@@ -538,35 +519,124 @@ void RocksDBPointLookupDataSource<Source>::addSplit(
 }
 
 template<typename Source>
-void RocksDBPointLookupDataSource<Source>::BuildBatchKeys(
+RocksDBPointLookupDataSource<Source>::RocksDBPointLookupDataSource(
+  velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
+  velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
+  ObjectId object_key, const std::vector<SpecificPoint>& values,
+  velox::RowTypePtr pk_type, size_t output_column_count,
+  velox::core::TypedExprPtr remaining_filter,
+  const rocksdb::Snapshot* snapshot,
+  velox::core::ExpressionEvaluator* evaluator, Source& source)
+  : RocksDBBaseDataSource{memory_pool,
+                          cf,
+                          std::move(read_type),
+                          object_key,
+                          std::move(column_ids),
+                          output_column_count,
+                          std::move(remaining_filter),
+                          evaluator},
+    _values{values},
+    _pk_type{std::move(pk_type)},
+    _source{source},
+    _read_options{[&snapshot] {
+      rocksdb::ReadOptions ro;
+      ro.async_io = IsIOUringEnabled();
+      ro.snapshot = snapshot;
+      return ro;
+    }()},
+    _multiget_ctx{_cf, _read_options} {
+  _sorted_col_indices.resize(_column_ids.size());
+  std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
+  std::sort(_sorted_col_indices.begin(), _sorted_col_indices.end(),
+            [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
+}
+
+template<typename Source>
+void RocksDBPointLookupDataSource<Source>::PrepareBatchKeys(
   catalog::Column::Id col_id, size_t start, size_t count) {
-  SDB_ASSERT(count <= kMultiGetChunkSize);
+  _batch_keys.resize(count);
+  _key_slices.resize(count);
   for (size_t i = 0; i < count; ++i) {
-    auto& key = _ctx.Key(i);
+    auto& key = _batch_keys[i];
     key.clear();
     key_utils::AppendTableKey(key, _object_key);
     key_utils::AppendColumnKey(key, col_id);
     primary_key::Create(_values[start + i], *_pk_type, key);
+    _key_slices[i] = _batch_keys[i];
   }
 }
 
 template<typename Source>
-size_t RocksDBPointLookupDataSource<Source>::BuildBatchKeysUsingMask(
-  catalog::Column::Id col_id, size_t batch_size) {
-  size_t key_idx = 0;
-  while (key_idx < batch_size &&
-         _in_batch_offset < _present_rows_batch.size()) {
-    if (_present_rows_batch.test(_in_batch_offset)) {
-      auto& key = _ctx.Key(key_idx++);
-      SDB_ASSERT(key.size() >= kTablePrefixSize,
-                 "Prepared keys should already start with table prefix");
-      key.resize(kTablePrefixSize);
-      key_utils::AppendColumnKey(key, col_id);
-      primary_key::Create(_values[_in_batch_offset], *_pk_type, key);
-    }
-    ++_in_batch_offset;
+template<typename VectorType>
+void RocksDBPointLookupDataSource<Source>::ReadDispatch(std::string_view value,
+                                                        velox::vector_size_t idx,
+                                                        VectorType& result) {
+  if (value.empty()) {
+    result.setNull(idx, true);
+  } else {
+    SetResultValue(value, idx, result);
   }
-  return key_idx;
+}
+
+template<typename Source>
+template<velox::TypeKind Kind>
+velox::VectorPtr RocksDBPointLookupDataSource<Source>::ReadColumnMakeMask(
+  catalog::Column::Id col_id, size_t batch_size) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
+    velox::Type::create<Kind>(), batch_size, &_memory_pool);
+
+  // Build all keys for the full batch upfront so ReadColumnWithMask can reuse _batch_keys
+  PrepareBatchKeys(col_id, _values_offset, batch_size);
+
+  size_t found_count = 0;
+  size_t batch_i = 0;
+  _multiget_ctx.MultiGet(
+    _source, std::span<const rocksdb::Slice>{_key_slices.data(), batch_size},
+    [&](rocksdb::Slice, const rocksdb::PinnableSlice& value,
+        rocksdb::Status status) {
+      if (status.ok()) {
+        _present_rows_batch.set(batch_i);
+        ReadDispatch(value.ToStringView(), found_count++, *result);
+      } else {
+        SDB_ENSURE(status.IsNotFound(), rocksutils::ConvertStatus(status));
+      }
+      ++batch_i;
+    });
+  result->resize(static_cast<velox::vector_size_t>(found_count));
+  return result;
+}
+
+template<typename Source>
+template<velox::TypeKind Kind>
+velox::VectorPtr RocksDBPointLookupDataSource<Source>::ReadColumnWithMask(
+  catalog::Column::Id col_id, size_t found_count) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
+    velox::Type::create<Kind>(), found_count, &_memory_pool);
+
+  key_utils::AppendTableKey(_col_prefix, _object_key);
+  key_utils::AppendColumnKey(_col_prefix, col_id);
+  SDB_ASSERT(_col_prefix.size() == kKeyPrefixSize);
+
+  _key_slices.resize(found_count);
+  size_t slice_idx = 0;
+  for (size_t i = 0; slice_idx < found_count; ++i) {
+    SDB_ASSERT(i < _batch_keys.size());
+    if (_present_rows_batch.test(i)) {
+      memcpy(_batch_keys[i].data(), _col_prefix.data(), kKeyPrefixSize);
+      _key_slices[slice_idx++] = _batch_keys[i];
+    }
+  }
+  size_t out_idx = 0;
+  _multiget_ctx.MultiGet(
+    _source, std::span<const rocksdb::Slice>{_key_slices.data(), found_count},
+    [&](rocksdb::Slice, const rocksdb::PinnableSlice& value,
+        rocksdb::Status status) {
+      SDB_ENSURE(status.ok(), rocksutils::ConvertStatus(status));
+      ReadDispatch(value.ToStringView(), out_idx++, *result);
+    });
+  return result;
 }
 
 velox::RowVectorPtr RocksDBBaseDataSource::ApplyRemainingFilter(
@@ -652,29 +722,27 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
     std::min(static_cast<size_t>(size), _values.size() - _values_offset);
   SDB_ASSERT(batch_size > 0);
 
-  // Step 1: fetch column 0 in sorted order to fill _present_rows_batch and,
-  // when num_columns >= 1, also populate the column 0 vector directly.
+  // Step 1: fetch the cheapest column (lowest col_id) to build presence mask.
   const size_t least_column_index = _sorted_col_indices[0];
   const auto least_column_id = _column_ids[least_column_index];
 
   if (num_columns == 0) {
-    // count(*) path: only need presence count, no column data or mask needed.
+    // count(*) path: only need presence count, no column data.
     SDB_ASSERT(_column_ids.size() == 1);
     SDB_ASSERT(!_remaining_expr_set);
+    PrepareBatchKeys(least_column_id, _values_offset, batch_size);
+
     size_t found_count = 0;
-    for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
-      const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
-      BuildBatchKeys(least_column_id, _values_offset + start, chunk);
-      _ctx.Fetch(_cf, chunk);
-      for (size_t i = 0; i < chunk; ++i) {
-        if (_ctx.Status(i).ok()) {
+    _multiget_ctx.MultiGet(
+      _source, std::span<const rocksdb::Slice>{_key_slices.data(), batch_size},
+      [&](rocksdb::Slice, const rocksdb::PinnableSlice&,
+          rocksdb::Status status) {
+        if (status.ok()) {
           ++found_count;
         } else {
-          SDB_ENSURE(_ctx.Status(i).IsNotFound(),
-                     rocksutils::ConvertStatus(_ctx.Status(i)));
+          SDB_ENSURE(status.IsNotFound(), rocksutils::ConvertStatus(status));
         }
-      }
-    }
+      });
     _values_offset += batch_size;
     if (_values_offset >= _values.size()) {
       _current_split.reset();
@@ -686,63 +754,24 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
 
   _present_rows_batch.reset(batch_size);
 
-  // num_columns >= 1: fetch column 0 in sorted order, build presence mask and
-  // fill the column 0 vector simultaneously.
+  // Step 1 with column data: fetch least column, build presence mask, fill vec.
   const auto& least_column_type = _read_type->childAt(least_column_index);
-  auto least_column_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-    CreatePointsColumnVector, least_column_type->kind(), batch_size,
-    _memory_pool);
-
-  size_t found_count = 0;
-  for (size_t start = 0; start < batch_size; start += kMultiGetChunkSize) {
-    const size_t chunk = std::min(kMultiGetChunkSize, batch_size - start);
-    BuildBatchKeys(least_column_id, _values_offset + start, chunk);
-    _ctx.Fetch(_cf, chunk);
-    const auto all_values = _ctx.Values(chunk);
-    for (size_t i = 0; i < chunk; ++i) {
-      if (_ctx.Status(i).ok()) {
-        _present_rows_batch.set(start + i);
-        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-          FillPointsColumnValues, least_column_type->kind(), *least_column_vec,
-          found_count, all_values.subspan(i, 1));
-        ++found_count;
-      } else {
-        SDB_ENSURE(_ctx.Status(i).IsNotFound(),
-                   rocksutils::ConvertStatus(_ctx.Status(i)));
-      }
-    }
-  }
+  velox::VectorPtr least_column_vec =
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadColumnMakeMask, least_column_type->kind(),
+                                       least_column_id, batch_size);
+  const auto found_count = least_column_vec->size();
   SDB_ASSERT(_present_rows_batch.count() == found_count);
-  least_column_vec->resize(found_count);
 
-  // Step 2: fill remaining columns using BuildBatchKeysUsingMask.
+  // Step 2: fill remaining columns for present rows only.
   std::vector<velox::VectorPtr> columns(num_columns);
   columns[least_column_index] = std::move(least_column_vec);
   for (size_t col_idx :
        std::span{_sorted_col_indices.begin() + 1, _sorted_col_indices.end()}) {
     const auto col_id = _column_ids[col_idx];
     const auto& type = _read_type->childAt(col_idx);
-
-    auto col_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      CreatePointsColumnVector, type->kind(), found_count, _memory_pool);
-
-    size_t collected = 0;
-    _in_batch_offset = 0;
-    while (collected < found_count) {
-      const size_t chunk_size =
-        BuildBatchKeysUsingMask(col_id, kMultiGetChunkSize);
-      _ctx.Fetch(_cf, chunk_size);
-      for (size_t i = 0; i < chunk_size; ++i) {
-        SDB_ENSURE(_ctx.Status(i).ok(),
-                   rocksutils::ConvertStatus(_ctx.Status(i)));
-      }
-      const auto chunk_values = _ctx.Values(chunk_size);
-      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillPointsColumnValues, type->kind(),
-                                         *col_vec, collected, chunk_values);
-      collected += chunk_size;
-    }
-
-    columns[col_idx] = std::move(col_vec);
+    columns[col_idx] =
+      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadColumnWithMask, type->kind(),
+                                         col_id, found_count);
   }
 
   _values_offset += batch_size;

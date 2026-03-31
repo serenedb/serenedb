@@ -28,74 +28,17 @@
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>
 
-#include <algorithm>
-#include <numeric>
-#include <span>
-
 #include "basics/containers/bitset.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/multiget_context.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
-#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 namespace sdb::connector {
 
 class SereneDBConnectorSplit;
-
-template<typename Source>
-class MultiGetContext {
- public:
-  // TODO benchmark and choose best threshold
-  static constexpr size_t kThreshold = 1;
-  static constexpr size_t kBatchSize = 32;
-
-  MultiGetContext(Source& source, rocksdb::ReadOptions ro)
-    : _source{source}, _ro{std::move(ro)} {}
-
-  // Returns a writable reference to the i-th key slot for the caller to fill
-  // before calling Fetch.
-  std::string& Key(size_t i) {
-    SDB_ASSERT(i < kBatchSize);
-    return _keys[i];
-  }
-
-  // Performs RocksDB lookup for the first `count` key slots filled via Key().
-  // Results are available via Status() and Values() afterwards.
-  void Fetch(rocksdb::ColumnFamilyHandle& cf, size_t count) {
-    SDB_ASSERT(count <= kBatchSize);
-    for (size_t i = 0; i < count; ++i) {
-      _slices[i] = _keys[i];
-    }
-    if (count <= kThreshold) {
-      for (size_t i = 0; i < count; ++i) {
-        _pinnable[i].Reset();
-        _statuses[i] = _source.Get(_ro, &cf, _slices[i], &_pinnable[i]);
-      }
-      return;
-    }
-    for (size_t i = 0; i < count; ++i) {
-      _pinnable[i].Reset();
-    }
-    _source.MultiGet(_ro, &cf, count, _slices.data(), _pinnable.data(),
-                     _statuses.data(), /*sorted_input=*/true);
-  }
-
-  const rocksdb::Status& Status(size_t i) const { return _statuses[i]; }
-
-  std::span<const rocksdb::PinnableSlice> Values(size_t count) const {
-    return {_pinnable.data(), count};
-  }
-
- private:
-  Source& _source;
-  rocksdb::ReadOptions _ro;
-  std::array<rocksdb::PinnableSlice, kBatchSize> _pinnable;
-  std::array<std::string, kBatchSize> _keys;
-  std::array<rocksdb::Slice, kBatchSize> _slices;
-  std::array<rocksdb::Status, kBatchSize> _statuses;
-};
 
 class RocksDBBaseDataSource : public velox::connector::DataSource {
  public:
@@ -221,58 +164,41 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
     velox::RowTypePtr pk_type, size_t output_column_count,
     velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
-    velox::core::ExpressionEvaluator* evaluator, Source& source)
-    : RocksDBBaseDataSource{memory_pool,
-                            cf,
-                            std::move(read_type),
-                            object_key,
-                            std::move(column_ids),
-                            output_column_count,
-                            std::move(remaining_filter),
-                            evaluator},
-      _values{values},
-      _pk_type{std::move(pk_type)},
-      _ctx{source, [snapshot] {
-             rocksdb::ReadOptions ro;
-             ro.async_io = IsIOUringEnabled();
-             ro.snapshot = snapshot;
-             return ro;
-           }()} {
-    _sorted_col_indices.resize(_column_ids.size());
-    std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
-    std::sort(
-      _sorted_col_indices.begin(), _sorted_col_indices.end(),
-      [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
-  }
+    velox::core::ExpressionEvaluator* evaluator, Source& source);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
 
  private:
-  static constexpr size_t kMultiGetChunkSize =
-    MultiGetContext<Source>::kBatchSize;
 
-  // Fill _ctx.Key(0..count) for col_id at consecutive
-  // _values[start..start+count).
-  void BuildBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
+  void PrepareBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
 
-  // Fill _ctx keys for col_id by iterating set bits of _present_rows_batch
-  // from _ctx.cursor. Fills at most batch_size keys; advances _ctx.cursor past
-  // each visited bit. Returns the number of keys built (may be < batch_size at
-  // end of bitset).
-  size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
+  template<velox::TypeKind Kind>
+  velox::VectorPtr ReadColumnMakeMask(catalog::Column::Id col_id, size_t batch_size);
+
+  template<velox::TypeKind Kind>
+  velox::VectorPtr ReadColumnWithMask(catalog::Column::Id col_id,
+                                   size_t found_count);
+
+  template<typename VectorType>
+  void ReadDispatch(std::string_view value, velox::vector_size_t idx, VectorType& result);
 
   const std::vector<SpecificPoint>& _values;
   velox::RowTypePtr _pk_type;
+  Source& _source;
   std::vector<size_t> _sorted_col_indices;
   // presence mask for the current batch window
   irs::bitset _present_rows_batch;
-  // current position within _present_rows_batch for BuildBatchKeysUsingMask
-  size_t _in_batch_offset = 0;
   // index into _values for the start of the current batch
   size_t _values_offset = 0;
-  MultiGetContext<Source> _ctx;
+  rocksdb::ReadOptions _read_options;
+  MultiGetContext _multiget_ctx;
+  // full keys built in Step 1; reused across columns in Step 2
+  std::vector<std::string> _batch_keys;
+  std::vector<rocksdb::Slice> _key_slices;
+  // reused across ReadColumnWithMask calls; all col prefixes have same size
+  std::string _col_prefix;
 };
 
 // Read Your Own Writes

@@ -777,6 +777,17 @@ INSERT INTO vedernikoff_nullbulk VALUES (10, NULL);
 statement ok
 INSERT INTO vedernikoff_nullbulk VALUES (11, 42), (12, 42), (13, 99);
 
+
+query
+EXPLAIN SELECT count(*) FROM vedernikoff_nullbulk WHERE val IS NULL;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
+  -- TableScan[0][vedernikoff_nullbulk, scan=secondary_index] ->
+
+
 query
 SELECT count(*) FROM vedernikoff_nullbulk WHERE val IS NULL;
 ----

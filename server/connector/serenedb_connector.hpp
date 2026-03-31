@@ -661,7 +661,7 @@ class SecondaryIndexTableHandle final
   SecondaryIndexTableHandle(
     std::string name, ObjectId table_id, query::Transaction& transaction,
     catalog::Column::Id effective_column_id, ObjectId shard_id,
-    std::vector<velox::variant> values, velox::TypePtr value_type,
+    std::vector<SpecificPoint> points, velox::RowTypePtr sk_type,
     const axiom::connector::Table& underlying_table, bool unique)
     : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
       _name{std::move(name)},
@@ -669,8 +669,8 @@ class SecondaryIndexTableHandle final
       _transaction{transaction},
       _effective_column_id{effective_column_id},
       _shard_id{shard_id},
-      _values{std::move(values)},
-      _value_type{std::move(value_type)},
+      _points{std::move(points)},
+      _sk_type{std::move(sk_type)},
       _underlying_table{&underlying_table},
       _unique{unique} {}
 
@@ -692,9 +692,9 @@ class SecondaryIndexTableHandle final
 
   ObjectId GetShardId() const noexcept { return _shard_id; }
 
-  const auto& GetValues() const noexcept { return _values; }
+  const auto& GetPoints() const noexcept { return _points; }
 
-  const auto& GetValueType() const noexcept { return _value_type; }
+  const auto& GetSKType() const noexcept { return _sk_type; }
 
   const auto& GetUnderlyingTable() const noexcept { return *_underlying_table; }
 
@@ -706,8 +706,8 @@ class SecondaryIndexTableHandle final
   query::Transaction& _transaction;
   catalog::Column::Id _effective_column_id;
   ObjectId _shard_id;
-  std::vector<velox::variant> _values;
-  velox::TypePtr _value_type;
+  std::vector<SpecificPoint> _points;
+  velox::RowTypePtr _sk_type;
   const axiom::connector::Table* _underlying_table;
   bool _unique;
 };
@@ -1216,7 +1216,6 @@ class SereneDBConnector final : public velox::connector::Connector {
             auto shard = snapshot->GetIndexShard(cis->index_id);
             SDB_ASSERT(shard);
 
-            auto id2column = table.CatalogTable().IdToColumn();
             auto index =
               snapshot->GetObject<catalog::Index>(shard->GetIndexId());
 
@@ -1409,16 +1408,9 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     auto& pool = *connector_query_ctx->memoryPool();
 
-    bool has_null_filter = absl::c_any_of(
-      handle.GetValues(), [](const auto& v) { return v.isNull(); });
-
-    // Wrap each variant value into a SpecificPoint (single-element vector)
-    // so it can be used with RocksDBPointLookupDataSource's _values.
-    std::vector<SpecificPoint> points;
-    points.reserve(handle.GetValues().size());
-    for (const auto& v : handle.GetValues()) {
-      points.push_back({v});
-    }
+    const auto& points = handle.GetPoints();
+    bool has_null_filter =
+      absl::c_any_of(points, [](const auto& sp) { return sp[0].isNull(); });
 
     return CreateWithMaterializer(
       handle, output_type, output_type, column_oids, column_handles, pool,
@@ -1429,12 +1421,10 @@ class SereneDBConnector final : public velox::connector::Connector {
         using Src = std::remove_reference_t<decltype(source)>;
         constexpr bool kRYOW = std::is_same_v<Src, rocksdb::Transaction>;
         if (handle.IsUnique() && !has_null_filter) {
-          SecondaryKeyBuilder key_builder{
-            handle.GetShardId(),
-            velox::ROW({"v"}, {handle.GetValueType()})};
+          SecondaryKeyBuilder key_builder{handle.GetShardId(),
+                                          handle.GetSKType()};
           return std::make_unique<
-            RocksDBPointLookupDataSource<
-              SecondaryLookupPolicy<kRYOW, Mat>>>(
+            RocksDBPointLookupDataSource<SecondaryLookupPolicy<kRYOW, Mat>>>(
             pool, _cf, output_type, column_oids, handle.TableId(), points,
             output_type->size(), nullptr, snapshot, nullptr, source,
             std::move(key_builder),
@@ -1444,10 +1434,11 @@ class SereneDBConnector final : public velox::connector::Connector {
           handle.IsUnique(),
           [&]<bool UniqueIdx>()
             -> std::unique_ptr<velox::connector::DataSource> {
+            // Iterator scan path still uses variant values.
             return std::make_unique<
               SecondaryIndexDataSource<Mat, UniqueIdx, Src>>(
               pool, std::move(mat), source, _cf, snapshot, handle.GetShardId(),
-              handle.GetValues(), handle.GetValueType());
+              points, handle.GetSKType());
           });
       });
   }

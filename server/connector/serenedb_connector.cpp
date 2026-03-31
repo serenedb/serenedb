@@ -44,144 +44,15 @@ constexpr bool kExecuteFiltersInTableScan = false;
 
 struct SecondaryIndexMatch {
   ObjectId shard_id;
-  std::vector<velox::variant> values;
-  velox::TypePtr value_type;
+  std::vector<SpecificPoint> points;
+  velox::RowTypePtr sk_type;
   catalog::Column::Id effective_column_id;
   bool unique;
 };
 
-// Extract field name and constant values from an eq or in filter expression.
-// Returns the field name and collected variant values, or nullopt if the
-// expression doesn't match the expected pattern.
-struct FilterValues {
-  std::string field_name;
-  velox::TypePtr field_type;
-  std::vector<velox::variant> values;
-};
-
-std::optional<FilterValues> ExtractEqOrInValues(
-  const velox::core::TypedExprPtr& filter) {
-  const auto* call =
-    dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
-  if (!call || call->inputs().size() != 2) {
-    return std::nullopt;
-  }
-
-  if (IsCallOf(call, "_eq")) {
-    const auto* field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
-      call->inputs()[0].get());
-    const auto* constant = dynamic_cast<const velox::core::ConstantTypedExpr*>(
-      call->inputs()[1].get());
-    // Try swapped order
-    if (!field) {
-      field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
-        call->inputs()[1].get());
-      constant = dynamic_cast<const velox::core::ConstantTypedExpr*>(
-        call->inputs()[0].get());
-    }
-    if (!field || !constant || constant->hasValueVector() ||
-        constant->value().isNull()) {
-      return std::nullopt;
-    }
-    return FilterValues{
-      .field_name = field->name(),
-      .field_type = field->type(),
-      .values = {constant->value()},
-    };
-  }
-
-  if (IsCallOf(call, "_in")) {
-    if (!call->inputs()[0]->isFieldAccessKind() ||
-        !call->inputs()[1]->isConstantKind()) {
-      return std::nullopt;
-    }
-    auto field =
-      basics::downCast<velox::core::FieldAccessTypedExpr>(call->inputs()[0]);
-    auto array_const =
-      basics::downCast<velox::core::ConstantTypedExpr>(call->inputs()[1]);
-    if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
-      return std::nullopt;
-    }
-
-    auto const_vec =
-      basics::downCast<velox::ConstantVector<velox::ComplexType>>(
-        array_const->valueVector());
-    auto array_vec =
-      basics::downCast<velox::ArrayVector>(const_vec->valueVector());
-    const auto offset = array_vec->offsetAt(const_vec->index());
-    const auto size = array_vec->sizeAt(const_vec->index());
-    const auto& elements = array_vec->elements();
-
-    auto all_variants = elements->toVariants();
-    std::vector<velox::variant> values;
-    values.reserve(size);
-    for (velox::vector_size_t i = 0; i < size; ++i) {
-      auto& v = all_variants[offset + i];
-      if (v.isNull()) {
-        continue;  // Skip NULLs — col = NULL is always unknown
-      }
-      values.push_back(std::move(v));
-    }
-    if (values.empty()) {
-      return std::nullopt;
-    }
-    return FilterValues{
-      .field_name = field->name(),
-      .field_type = field->type(),
-      .values = std::move(values),
-    };
-  }
-
-  return std::nullopt;
-}
-
-std::optional<FilterValues> ExtractIsNull(
-  const velox::core::TypedExprPtr& filter) {
-  const auto* call =
-    dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
-  if (!call || call->inputs().size() != 1) {
-    return std::nullopt;
-  }
-  if (call->name() != "spark_isnull") {
-    return std::nullopt;
-  }
-  const auto* field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
-    call->inputs()[0].get());
-  if (!field) {
-    return std::nullopt;
-  }
-  return FilterValues{
-    .field_name = field->name(),
-    .field_type = field->type(),
-    .values = {velox::variant::null(field->type()->kind())},
-  };
-}
-
-// Try to match a filter expression against a secondary index.
-// Handles eq(col, constant) and in(col, [c1, ..., cN]).
 std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
   const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
   query::Transaction& transaction) {
-  auto extracted = ExtractEqOrInValues(filter);
-  if (!extracted) {
-    extracted = ExtractIsNull(filter);
-  }
-  if (!extracted) {
-    return std::nullopt;
-  }
-
-  // Find the column in the table
-  const auto* col_ptr = table.findColumn(extracted->field_name);
-  if (!col_ptr) {
-    return std::nullopt;
-  }
-  const auto* serene_col = dynamic_cast<const SereneDBColumn*>(col_ptr);
-  if (!serene_col) {
-    return std::nullopt;
-  }
-  auto column_id = serene_col->Id();
-
-  // Look up secondary indexes on this table
   auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
   auto snapshot = transaction.EnsureCatalogSnapshot();
 
@@ -194,24 +65,47 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
     if (!index) {
       continue;
     }
-    auto index_columns = index->GetColumnIds();
-    // For now, only single-column indexes with the matching column
-    if (index_columns.size() != 1 || index_columns[0] != column_id) {
+    auto index_col_ids = index->GetColumnIds();
+
+    std::vector<std::string> sk_names;
+    std::vector<velox::TypePtr> sk_types;
+    sk_names.reserve(index_col_ids.size());
+    sk_types.reserve(index_col_ids.size());
+    for (auto col_id : index_col_ids) {
+      for (const auto& [name, col_ptr] : table.columnMap()) {
+        const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
+        if (scol->Id() == col_id) {
+          sk_names.push_back(name);
+          sk_types.push_back(scol->type());
+          break;
+        }
+      }
+    }
+    if (sk_names.size() != index_col_ids.size()) {
       continue;
     }
 
-    // Find effective column id for materialization
+    auto res = ExtractAndRewriteFilterExpr(filter, sk_names);
+    if (res.points.empty() || !absl::c_all_of(res.points, [](const Point& p) {
+          return p.IsSpecific();
+        })) {
+      continue;
+    }
+
+    auto sk_type = velox::ROW(std::move(sk_names), std::move(sk_types));
+    auto points = ToSpecificPoints(res.points, *sk_type);
+
     const auto& column_map = table.columnMap();
     SDB_ASSERT(!column_map.empty());
     auto eff_col_id =
       basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
-
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(*index);
+
     return SecondaryIndexMatch{
       .shard_id = index_shard->GetId(),
-      .values = std::move(extracted->values),
-      .value_type = extracted->field_type,
+      .points = std::move(points),
+      .sk_type = std::move(sk_type),
       .effective_column_id = eff_col_id,
       .unique = sec_index.IsUnique(),
     };
@@ -364,25 +258,6 @@ SereneDBTableLayout::createTableHandle(
   const auto& rocksdb_table = basics::downCast<RocksDBTable>(*table);
   const auto& pk_type = rocksdb_table.PKType();
 
-  // Try secondary index pushdown for individual equality filters.
-  for (size_t i = 0; i < filters.size(); ++i) {
-    auto match = TryMatchSecondaryIndex(filters[i], *table,
-                                        rocksdb_table.GetTransaction());
-    if (match) {
-      // Reject all other filters for post-scan evaluation.
-      for (size_t j = 0; j < filters.size(); ++j) {
-        if (j != i) {
-          rejected_filters.push_back(std::move(filters[j]));
-        }
-      }
-      return std::make_shared<SecondaryIndexTableHandle>(
-        std::string{table->name()}, rocksdb_table.TableId(),
-        rocksdb_table.GetTransaction(), match->effective_column_id,
-        match->shard_id, std::move(match->values), std::move(match->value_type),
-        *table, match->unique);
-    }
-  }
-
   velox::core::TypedExprPtr remaining_filter;
   if (filters.size() == 1) {
     remaining_filter = filters[0];
@@ -393,12 +268,27 @@ SereneDBTableLayout::createTableHandle(
 
   std::vector<SpecificPoint> points;
   if (remaining_filter) {
+    // 1. Try PK point lookup.
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
-
-    if (!res.points.empty()) {
+    if (!res.points.empty() && absl::c_all_of(res.points, [](const Point& p) {
+          return p.IsSpecific();
+        })) {
       points = ToSpecificPoints(res.points, *pk_type);
       SortPoints(points);
       remaining_filter = std::move(res.remaining_filter);
+    }
+
+    // 2. No PK match — try secondary index.
+    if (points.empty()) {
+      auto match = TryMatchSecondaryIndex(remaining_filter, *table,
+                                          rocksdb_table.GetTransaction());
+      if (match) {
+        return std::make_shared<SecondaryIndexTableHandle>(
+          std::string{table->name()}, rocksdb_table.TableId(),
+          rocksdb_table.GetTransaction(), match->effective_column_id,
+          match->shard_id, std::move(match->points), std::move(match->sk_type),
+          *table, match->unique);
+      }
     }
   }
 

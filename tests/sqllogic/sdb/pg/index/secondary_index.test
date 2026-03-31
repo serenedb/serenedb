@@ -884,3 +884,60 @@ pid
 
 statement ok
 DROP TABLE clickclack_ryow;
+
+
+statement ok
+CREATE TABLE babsky_composite (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX babsky_composite_idx ON babsky_composite USING secondary(city, level);
+
+statement ok
+INSERT INTO babsky_composite VALUES
+  (1, 'berlin', 10, 'alpha'),
+  (2, 'moscow', 20, 'bravo'),
+  (3, 'berlin', 10, 'charlie'),
+  (4, 'tokyo', 30, 'delta'),
+  (5, 'berlin', 20, 'echo');
+
+query
+EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
+  -- TableScan[0][babsky_composite, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
+
+query
+SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	charlie
+
+query
+SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 20;
+----
+pid	tag
+5	echo
+
+query
+SELECT pid, tag FROM babsky_composite WHERE city = 'tokyo' AND level = 30;
+----
+pid	tag
+4	delta
+
+query
+SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 99;
+----
+pid	tag
+
+query
+SELECT COUNT(*) FROM babsky_composite WHERE city = 'berlin' AND level = 10;
+----
+count
+2
+
+statement ok
+DROP TABLE babsky_composite;

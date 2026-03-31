@@ -20,10 +20,12 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <velox/connectors/Connector.h>
 
 #include "basics/fwd.h"
 #include "connector/primary_key.hpp"
+#include "connector/rocksdb_filter.hpp"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/utilities/transaction.h"
 
@@ -66,8 +68,8 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
                            Materializer materializer, Source& source,
                            rocksdb::ColumnFamilyHandle& cf,
                            const rocksdb::Snapshot* snapshot, ObjectId shard_id,
-                           std::vector<velox::variant> values,
-                           velox::TypePtr value_type)
+                           std::vector<SpecificPoint> values,
+                           velox::RowTypePtr sk_type)
     : _memory_pool{memory_pool},
       _materializer{std::move(materializer)},
       _source{source},
@@ -75,7 +77,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
       _snapshot{snapshot},
       _shard_id{shard_id},
       _values{std::move(values)},
-      _row_type{velox::ROW({"v"}, {std::move(value_type)})} {}
+      _sk_type{std::move(sk_type)} {}
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
     SDB_ENSURE(split, ERROR_INTERNAL,
@@ -101,7 +103,6 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
       if (!_iterator) {
         _current_scan_prefix = BuildScanPrefix(_values[_current_value_idx]);
         _value_key_size = _current_scan_prefix.size() - sizeof(ObjectId);
-        _current_value_is_null = _values[_current_value_idx].isNull();
 
         rocksdb::ReadOptions ro;
         ro.snapshot = _snapshot;
@@ -123,7 +124,10 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
         }
 
         if constexpr (Unique) {
-          if (_current_value_is_null) {
+          bool has_null =
+            absl::c_any_of(_values[_current_value_idx],
+                           [](const velox::variant& v) { return v.isNull(); });
+          if (has_null) {
             auto pk_start = sizeof(ObjectId) + _value_key_size;
             if (key_view.size() > pk_start) {
               row_keys.emplace_back(key_view.substr(pk_start));
@@ -176,15 +180,16 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   void cancel() final { _iterator.reset(); }
 
  private:
-  std::string BuildScanPrefix(const velox::variant& value) const {
+  std::string BuildScanPrefix(const SpecificPoint& point) const {
     std::string prefix;
     secondary_key::AppendShardPrefix(prefix, _shard_id);
-    if (value.isNull()) {
-      secondary_key::AppendNullMarker(prefix);
-    } else {
-      secondary_key::AppendNotNullMarker(prefix);
-      std::array<velox::variant, 1> point{value};
-      primary_key::Create(point, *_row_type, prefix);
+    for (size_t i = 0; i < point.size(); ++i) {
+      if (point[i].isNull()) {
+        secondary_key::AppendNullMarker(prefix);
+      } else {
+        secondary_key::AppendNotNullMarker(prefix);
+        primary_key::AppendVariantValue(prefix, point[i], _sk_type->childAt(i));
+      }
     }
     return prefix;
   }
@@ -207,8 +212,8 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   rocksdb::ColumnFamilyHandle& _cf;
   const rocksdb::Snapshot* _snapshot;
   ObjectId _shard_id;
-  std::vector<velox::variant> _values;
-  velox::RowTypePtr _row_type;
+  std::vector<SpecificPoint> _values;
+  velox::RowTypePtr _sk_type;
   std::string _current_scan_prefix;
   size_t _value_key_size = 0;
   std::string _upper_bound;
@@ -216,7 +221,6 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   std::unique_ptr<rocksdb::Iterator> _iterator;
   size_t _current_value_idx = 0;
-  bool _current_value_is_null = false;
   uint64_t _produced = 0;
 };
 

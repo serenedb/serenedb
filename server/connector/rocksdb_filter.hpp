@@ -98,7 +98,8 @@ struct ExtractAndRewriteResult {
 };
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
-  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
+  const velox::core::TypedExprPtr& expr,
+  std::span<const std::string> column_names);
 
 // Sorts points in-place by PK key order. Column order matches the pk_type used
 // during ToSpecificPoints. Comparison uses velox::variant::operator<.

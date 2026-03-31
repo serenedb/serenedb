@@ -214,6 +214,48 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   catalog::Column::Id _effective_column_id;
 };
 
+template<typename T>
+void SetResultValue(std::string_view value, size_t idx,
+                    velox::FlatVector<T>& result) {
+  if constexpr (std::is_same_v<T, velox::StringView>) {
+    const size_t offset = value[0] == 0 ? 1 : 0;
+    result.set(idx,
+               velox::StringView(value.data() + offset, value.size() - offset));
+  } else if constexpr (std::is_same_v<T, bool>) {
+    SDB_ASSERT(value.size() == kTrueValue.size(),
+               "unexpected value size for bool column");
+    result.set(idx, value == kTrueValue);
+  } else {
+    SDB_ASSERT(value.size() == sizeof(T),
+               "unexpected value size for scalar column");
+    T tmp;
+    memcpy(&tmp, value.data(), sizeof(T));
+    result.set(idx, tmp);
+  }
+}
+
+template<velox::TypeKind Kind>
+velox::VectorPtr CreateColumnVector(size_t count,
+                                    velox::memory::MemoryPool& pool) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  return velox::BaseVector::create<velox::FlatVector<T>>(
+    velox::Type::create<Kind>(), count, &pool);
+}
+
+template<velox::TypeKind Kind>
+void FillColumnValues(velox::BaseVector& result, size_t offset,
+                      std::span<const rocksdb::PinnableSlice> values) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  auto& flat = static_cast<velox::FlatVector<T>&>(result);
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (values[i].empty()) {
+      flat.setNull(offset + i, true);
+    } else {
+      SetResultValue(values[i].ToStringView(), offset + i, flat);
+    }
+  }
+}
+
 class ColumnCollector {
  public:
   static constexpr bool kHasMaterializer = false;
@@ -242,48 +284,6 @@ class ColumnCollector {
   const irs::bitset& PresentRows() const { return _present_rows; }
 
  private:
-  template<typename T>
-  static void SetResultValue(std::string_view value, size_t idx,
-                             velox::FlatVector<T>& result) {
-    if constexpr (std::is_same_v<T, velox::StringView>) {
-      const size_t offset = value[0] == 0 ? 1 : 0;
-      result.set(
-        idx, velox::StringView(value.data() + offset, value.size() - offset));
-    } else if constexpr (std::is_same_v<T, bool>) {
-      SDB_ASSERT(value.size() == kTrueValue.size(),
-                 "unexpected value size for bool column");
-      result.set(idx, value == kTrueValue);
-    } else {
-      SDB_ASSERT(value.size() == sizeof(T),
-                 "unexpected value size for scalar column");
-      T tmp;
-      memcpy(&tmp, value.data(), sizeof(T));
-      result.set(idx, tmp);
-    }
-  }
-
-  template<velox::TypeKind Kind>
-  static velox::VectorPtr CreateColumnVector(size_t count,
-                                             velox::memory::MemoryPool& pool) {
-    using T = typename velox::TypeTraits<Kind>::NativeType;
-    return velox::BaseVector::create<velox::FlatVector<T>>(
-      velox::Type::create<Kind>(), count, &pool);
-  }
-
-  template<velox::TypeKind Kind>
-  static void FillColumnValues(velox::BaseVector& result, size_t offset,
-                               std::span<const rocksdb::PinnableSlice> values) {
-    using T = typename velox::TypeTraits<Kind>::NativeType;
-    auto& flat = static_cast<velox::FlatVector<T>&>(result);
-    for (size_t i = 0; i < values.size(); ++i) {
-      if (values[i].empty()) {
-        flat.setNull(offset + i, true);
-      } else {
-        SetResultValue(values[i].ToStringView(), offset + i, flat);
-      }
-    }
-  }
-
   velox::TypeKind _type_kind;
   velox::VectorPtr _vec;
   irs::bitset _present_rows;

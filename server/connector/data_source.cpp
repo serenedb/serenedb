@@ -43,29 +43,6 @@ constexpr size_t kTablePrefixSize = sizeof(ObjectId);
 constexpr size_t kKeyPrefixSize =
   kTablePrefixSize + sizeof(catalog::Column::Id);
 
-// Allocate an output FlatVector for a column with `count` found rows.
-template<velox::TypeKind Kind>
-velox::VectorPtr CreatePointsColumnVector(size_t count,
-                                          velox::memory::MemoryPool& pool) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  return velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), count, &pool);
-}
-
-// Fill values[0..n) into result starting at offset, for already-present rows.
-template<velox::TypeKind Kind>
-void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
-                            std::span<const rocksdb::PinnableSlice> values) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto& flat = static_cast<velox::FlatVector<T>&>(result);
-  for (size_t i = 0; i < values.size(); ++i) {
-    if (values[i].empty()) {
-      flat.setNull(offset + i, true);
-    } else {
-      SetResultValue(values[i].ToStringView(), offset + i, flat);
-    }
-  }
-}
 
 }  // namespace
 
@@ -709,7 +686,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Policy>::next(
     const auto& type = _read_type->childAt(col_idx);
 
     auto col_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      CreatePointsColumnVector, type->kind(), found_count, _memory_pool);
+      CreateColumnVector, type->kind(), found_count, _memory_pool);
 
     size_t collected = 0;
     _in_batch_offset = 0;
@@ -722,7 +699,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Policy>::next(
                    rocksutils::ConvertStatus(_ctx.Status(i)));
       }
       const auto chunk_values = _ctx.Values(chunk_size);
-      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillPointsColumnValues, type->kind(),
+      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillColumnValues, type->kind(),
                                          *col_vec, collected, chunk_values);
       collected += chunk_size;
     }

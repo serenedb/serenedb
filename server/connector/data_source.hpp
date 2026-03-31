@@ -324,7 +324,14 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   static constexpr size_t kMultiGetChunkSize =
     MultiGetContext<Source>::kBatchSize;
 
+  // Fill _ctx.Key(0..count) for col_id at consecutive
+  // _values[start..start+count).
   void BuildBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
+
+  // Fill _ctx keys for col_id by iterating set bits of _present_rows_batch
+  // from _ctx.cursor. Fills at most batch_size keys; advances _ctx.cursor past
+  // each visited bit. Returns the number of keys built (may be < batch_size at
+  // end of bitset).
   size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
 
   const std::vector<SpecificPoint>& _values;

@@ -61,7 +61,7 @@ on:
         description: 'JSON configuration for builds and job settings'
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+        default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
       SERENEDB_VERSION_PATCH:
         description: 'Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release.'
         required: false

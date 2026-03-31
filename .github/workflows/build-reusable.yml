@@ -47,7 +47,7 @@ on:
         description: "JSON configuration for builds and job settings"
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+        default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
       CREATE_GITHUB_RELEASE:
         description: 'Create a GitHub Release with packages'
         required: true
@@ -60,8 +60,6 @@ on:
         default: ""
     secrets:
       PAT_TOKEN:
-        required: true
-      SDB_CLUSTER_REPO:
         required: true
       TG_TOKEN:
         required: true
@@ -80,7 +78,6 @@ env:
   DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
   PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
-  CLUSTER_BRANCH: main
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   DEBUG_PRINT_ENV: "false"
 
@@ -119,7 +116,7 @@ jobs:
               echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
-              echo "SANITIZERS=Memory" >> $GITHUB_ENV
+              echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV
               echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
             ubsan)
@@ -198,32 +195,17 @@ jobs:
           submodules: true
           clean: true
 
-      - name: Checkout Cluster
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ secrets.SDB_CLUSTER_REPO }}
-          ref: ${{ env.CLUSTER_BRANCH }}
-          token: ${{ secrets.PAT_TOKEN }}
-          path: private
-          sparse-checkout: |
-            gh-ci
-          sparse-checkout-cone-mode: true
-
-      - name: Remap directories to legacy paths
-        run: |
-          mv private/gh-ci private/ci
-
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'
         run: printenv
 
       - name: Set sanitizer options
         if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
-        run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
+        run: ./scripts/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
         if: env.DOCKER_BUILD_IMAGES != 'true'
-        run: ./private/ci/steps/02-ci-build-docker-env-file.bash
+        run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
       # ==================== GTEST PARALLEL CACHE ====================
       - name: Restore gtest-parallel timing cache
@@ -249,31 +231,31 @@ jobs:
       - name: SereneDB build
         id: serenedb_build
         if: env.DOCKER_BUILD_IMAGES != 'true'
-        run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
+        run: ./scripts/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
       - name: Run tests
         id: run_tests
         if: steps.serenedb_build.outcome == 'success'
-        run: ./private/ci/steps/04-ci-run-tests.bash
+        run: ./scripts/ci/steps/04-ci-run-tests.bash
 
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
         if: steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
-        run: ./private/ci/steps/05-ci-in-docker-package.bash
+        run: ./scripts/ci/steps/05-ci-in-docker-package.bash
 
       # ==================== RELEASE TEST AUTOMATION ====================
       - name: Release Test Automation (RTA)
         id: rta
         if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
-        run: ./private/ci/steps/08-ci-rta.bash
+        run: ./scripts/ci/steps/08-ci-rta.bash
 
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
         if: steps.serenedb_build.outcome == 'success' && inputs.USE_COVERAGE != ''
-        run: ./private/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+        run: ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
       # ==================== BUILD DOCKER IMAGES ====================
       - name: Build Docker Images
@@ -291,13 +273,13 @@ jobs:
         if: steps.build_docker_images.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true && inputs.PUSH_IMAGES_2_REGISTRY == true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./private/ci/steps/09-ci-create-github-release.bash
+        run: ./scripts/ci/steps/09-ci-create-github-release.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
       - name: Produce Build Image
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
-        working-directory: ./private/ci
+        working-directory: ./scripts/ci
         env:
           DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
@@ -307,7 +289,7 @@ jobs:
       # ==================== UPDATE FILE OWNERSHIP ====================
       - name: Update file ownership
         if: always() && env.DOCKER_BUILD_IMAGES != 'true'
-        run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
+        run: ./scripts/ci/steps/07-ci-in-docker-update-file-ownership.bash
 
       # ==================== DETERMINE FINAL STATUS ====================
       - name: Determine final job status

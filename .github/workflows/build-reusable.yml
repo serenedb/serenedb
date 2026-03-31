@@ -18,41 +18,16 @@ on:
         type: string
         required: false
         default: ""
-      DOCKER_SERENEDB_IMAGE:
-        description: "Produce SereneDB Docker Images"
-        required: true
-        type: boolean
-        default: false
-      DOCKER_EXTRA_TAGS:
-        description: "(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE"
-        required: false
-        type: string
-        default: ""
-      PUSH_IMAGES_2_REGISTRY:
-        description: "Push images to Docker Hub"
-        required: true
-        type: boolean
-        default: false
       EXTRA_ARTIFACTS:
         description: "Keep these artifacts additionally"
         type: string
         required: false
         default: ""
-      DOCKER_BUILD_IMAGES:
-        description: "Produce SereneDB Build Images"
-        required: true
-        type: boolean
-        default: false
       BUILD_CONFIG:
         description: "JSON configuration for builds and job settings"
         type: string
         required: false
         default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
-      CREATE_GITHUB_RELEASE:
-        description: 'Create a GitHub Release with packages'
-        required: true
-        type: boolean
-        default: false
       SERENEDB_VERSION_PATCH:
         description: "Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release."
         required: false
@@ -67,16 +42,10 @@ on:
         required: true
       TG_USER_MAP:
         required: true
-      DOCKER_HUB_TOKEN:
-        required: false
 
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
-  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
-  DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
-  PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   DEBUG_PRINT_ENV: "false"
@@ -204,13 +173,11 @@ jobs:
         run: ./scripts/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
-        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
       # ==================== GTEST PARALLEL CACHE ====================
       - name: Restore gtest-parallel timing cache
         id: gtest-cache
-        if: env.DOCKER_BUILD_IMAGES != 'true'
         uses: actions/cache@v4
         with:
           path: .gtest-parallel-cache
@@ -221,16 +188,13 @@ jobs:
             gtest-times-${{ inputs.PRESET }}-
 
       - name: Prepare gtest-parallel cache directory
-        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: |
           mkdir -p .gtest-parallel-cache
           echo "GTEST_PARALLEL_CACHE_DIR=${WORKSPACE}/.gtest-parallel-cache" >> $GITHUB_ENV
 
       # ==================== BUILD ====================
-      # if selected, DOCKER_BUILD_IMAGES owns the build
       - name: SereneDB build
         id: serenedb_build
-        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: ./scripts/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
@@ -254,41 +218,21 @@ jobs:
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
-        if: steps.serenedb_build.outcome == 'success' && inputs.USE_COVERAGE != ''
+        if: steps.serenedb_build.outcome == 'success' && env.USE_COVERAGE != ''
         run: ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
-      # ==================== BUILD DOCKER IMAGES ====================
-      - name: Build Docker Images
-        id: build_docker_images
-        if: steps.serenedb_packages.outcome == 'success' && steps.rta.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
-        env:
-          DOCKER_REGISTRY: serenedb
-          DOCKER_USERNAME: serenedb
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-        run: ./packages/build_docker.bash
-
-      # ==================== CREATE GITHUB RELEASE ====================
-      - name: Create GitHub Release
-        id: create_release
-        if: steps.build_docker_images.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true && inputs.PUSH_IMAGES_2_REGISTRY == true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/ci/steps/09-ci-create-github-release.bash
-
-      # ==================== PRODUCE BUILD IMAGES ====================
-      - name: Produce Build Image
-        id: produce_build_images
-        if: env.DOCKER_BUILD_IMAGES == 'true'
-        working-directory: ./scripts/ci
-        env:
-          DOCKER_REGISTRY: serenedb
-          DOCKER_USERNAME: serenedb
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-        run: ./build_images.sh
+      # ==================== UPLOAD RELEASE TARBALL ====================
+      - name: Upload release tarball
+        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ inputs.LOCATION }}
+          path: packages/tarball/install-*.tar.gz
+          retention-days: 1
 
       # ==================== UPDATE FILE OWNERSHIP ====================
       - name: Update file ownership
-        if: always() && env.DOCKER_BUILD_IMAGES != 'true'
+        if: always()
         run: ./scripts/ci/steps/07-ci-in-docker-update-file-ownership.bash
 
       # ==================== DETERMINE FINAL STATUS ====================
@@ -318,23 +262,8 @@ jobs:
             HAS_FAILURES=true
           fi
 
-          if [[ "${{ steps.build_docker_images.outcome }}" == "failure" ]]; then
-            echo "Build Docker Images failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.produce_build_images.outcome }}" == "failure" ]]; then
-            echo "Produce Build Images failed"
-            HAS_FAILURES=true
-          fi
-
           if [[ "${{ steps.rta.outcome }}" == "failure" ]]; then
             echo "RTA failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.create_release.outcome }}" == "failure" ]]; then
-            echo "GitHub Release creation failed"
             HAS_FAILURES=true
           fi
 
@@ -345,7 +274,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ github.run_number }}
+          name: build-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             binaries.tar.gz
             build_description.txt
@@ -379,7 +308,7 @@ jobs:
         if: steps.serenedb_packages.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ github.run_number }}
+          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             *.deb
             *.tar.gz
@@ -389,7 +318,7 @@ jobs:
         if: always() && !cancelled() && inputs.EXTRA_ARTIFACTS != ''
         uses: actions/upload-artifact@v4
         with:
-          name: extra-artifacts-${{ github.run_number }}
+          name: extra-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: ${{ inputs.EXTRA_ARTIFACTS }}
           if-no-files-found: ignore
           retention-days: 30
@@ -398,7 +327,7 @@ jobs:
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ github.run_number }}
+          name: test-results-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             **/vpack-tests.xml
             **/iresearch-tests.xml
@@ -429,7 +358,7 @@ jobs:
           BRANCH: ${{ env.BRANCH }}
           JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
-          RUN_NAME: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
+          RUN_NAME: "SereneDB [${{ inputs.PRESET }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash

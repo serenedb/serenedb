@@ -75,7 +75,15 @@ if [[ "${DEBUG_SYMBOLS:-false}" == "true" ]]; then
 	echo "Created: ${NAME}-dbgsym.tar.gz ($(du -h "${NAME}-dbgsym.tar.gz" | cut -f1))"
 fi
 
-# Create symlink for follow-up docker image production step
+# Create arch-specific symlink for multi-arch build_docker.bash
 mkdir -p "${PROJECT_ROOT}/packages/tarball"
 cd "${PROJECT_ROOT}/packages/tarball"
-ln -sf "../../${NAME}.tar.gz" "install.tar.gz"
+case "$ARCH" in
+x86_64) DOCKER_ARCH="amd64" ;;
+aarch64) DOCKER_ARCH="arm64" ;;
+*)
+	echo "fatal, unknown architecture $ARCH for Docker symlink"
+	exit 1
+	;;
+esac
+ln -sf "../../${NAME}.tar.gz" "install-${DOCKER_ARCH}.tar.gz"

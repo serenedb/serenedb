@@ -3,9 +3,8 @@
 # Environment Configuration:
 #   DOCKER_TAG               Set version (if unset, derived from find_version.bash)
 #   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
-#   PUSH_IMAGES_2_REGISTRY   'true' to push to registry after build
+#   PUSH_IMAGES_2_REGISTRY   'true' to push multi-arch to registry
 #   DOCKER_REGISTRY          Registry URL (default: serenedb)
-#   DOCKER_PLATFORM          Target platform (default: linux/amd64)
 #   DOCKER_USERNAME          Registry username (for push)
 #   DOCKER_PASSWORD          Registry password (for push)
 
@@ -17,12 +16,11 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKER_DIR="${SCRIPT_DIR}/docker"
 TARBALL_DIR="${SCRIPT_DIR}/tarball"
 IMAGE_NAME="serenedb"
+BUILDER_NAME="serenedb-image-builder"
 
 : "${DOCKER_REGISTRY:=serenedb}"
-: "${DOCKER_PLATFORM:=linux/amd64}"
 : "${PUSH_IMAGES_2_REGISTRY:=false}"
 
-# Parse DOCKER_EXTRA_TAGS into a bash array (handles commas and spaces)
 IFS=', ' read -r -a EXTRA_TAGS_ARRAY <<<"${DOCKER_EXTRA_TAGS:-}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -31,118 +29,175 @@ error() {
 	exit 1
 }
 
-# Determine version and Docker tag
+NEEDS_LOGOUT=""
+cleanup() {
+	rm -rf "${BUILD_DIR:-}"
+	docker buildx rm "${BUILDER_NAME}" 2>/dev/null || true
+	if [ -n "$NEEDS_LOGOUT" ]; then
+		if [ "$NEEDS_LOGOUT" = "hub" ]; then
+			docker logout 2>/dev/null || true
+		else
+			docker logout "$NEEDS_LOGOUT" 2>/dev/null || true
+		fi
+	fi
+}
+
+# --- Detect host architecture ---
+RAW_ARCH=$(uname -m)
+case $RAW_ARCH in
+x86_64) HOST_ARCH="amd64" ;;
+aarch64) HOST_ARCH="arm64" ;;
+*) error "Unsupported architecture: $RAW_ARCH" ;;
+esac
+
+# --- Determine version ---
 [ -z "${DOCKER_TAG:-}" ] && source "${SCRIPT_DIR}/find_version.bash"
 [ -z "${DOCKER_TAG:-}" ] && error "Failed to determine DOCKER_TAG"
 VERSION="$DOCKER_TAG"
-
 FULL_IMAGE_NAME="${DOCKER_REGISTRY}/${IMAGE_NAME}"
+
+# --- Detect available arch tarballs ---
+AVAILABLE_ARCHES=()
+for arch in amd64 arm64; do
+	tarball="${TARBALL_DIR}/install-${arch}.tar.gz"
+	if [ -f "$tarball" ] || [ -L "$tarball" ]; then
+		AVAILABLE_ARCHES+=("$arch")
+	fi
+done
+
+if [ ${#AVAILABLE_ARCHES[@]} -eq 0 ]; then
+	error "No install-{arch}.tar.gz found in ${TARBALL_DIR}. Run build_targz.bash first."
+fi
+
+# --- Prepare build context ---
 BUILD_DIR=$(mktemp -d)
-trap "rm -rf ${BUILD_DIR}" EXIT
+trap cleanup EXIT
 
 log "=== SereneDB Docker Build ==="
 log "Version:  ${VERSION}"
 log "Image:    ${FULL_IMAGE_NAME}"
-log "Platform: ${DOCKER_PLATFORM}"
-log "Build:    ${BUILD_DIR}"
-
-# Verify prerequisites
-log "Checking prerequisites..."
-
-# Check for tarball
-TARBALL="${TARBALL_DIR}/install.tar.gz"
-if [ ! -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; then
-	# Try alternative location
-	TARBALL="${PROJECT_ROOT}/package_all/install.tar.gz"
-fi
-
-if [ ! -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; then
-	error "install.tar.gz not found. Run build_targz.bash first."
-fi
-
-log "  Tarball: ${TARBALL} ($(du -h "$TARBALL" | cut -f1))"
-
-# Prepare build context
-log "Preparing build context..."
+log "Arches:   ${AVAILABLE_ARCHES[*]}"
 
 cp "${DOCKER_DIR}/Dockerfile" "${BUILD_DIR}/"
 cp "${DOCKER_DIR}/setup.sh" "${BUILD_DIR}/"
 cp "${DOCKER_DIR}/entrypoint.sh" "${BUILD_DIR}/"
-cp "${TARBALL}" "${BUILD_DIR}/install.tar.gz"
+
+for arch in "${AVAILABLE_ARCHES[@]}"; do
+	cp "${TARBALL_DIR}/install-${arch}.tar.gz" "${BUILD_DIR}/install-${arch}.tar.gz"
+	log "  Tarball (${arch}): $(du -h "${BUILD_DIR}/install-${arch}.tar.gz" | cut -f1)"
+done
 
 log "  Context size: $(du -sh "${BUILD_DIR}" | cut -f1)"
 
-# Build image
-log "Building Docker image..."
+# --- Setup buildx ---
+log "Configuring Docker Buildx..."
+if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+	docker buildx rm "$BUILDER_NAME" >/dev/null
+fi
+docker buildx create --name "$BUILDER_NAME" --use --driver-opt network=host >/dev/null
 
-BUILD_ARGS=(
-	--platform "${DOCKER_PLATFORM}"
-	--tag "${FULL_IMAGE_NAME}:${VERSION}"
+LABEL_ARGS=(
 	--label "org.opencontainers.image.version=${VERSION}"
 	--label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	--label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
-	--file "${BUILD_DIR}/Dockerfile"
-	--no-cache
 )
 
-# Add extra tags
-for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
-	if [ -n "$tag" ]; then
-		BUILD_ARGS+=(--tag "${FULL_IMAGE_NAME}:${tag}")
-	fi
-done
-
-docker build "${BUILD_ARGS[@]}" "${BUILD_DIR}"
-
-log "Build complete!"
-
-# Show image info
-log ""
-log "=== Image Info ==="
-docker images "${FULL_IMAGE_NAME}" --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
-
-# Test image
-log ""
-log "=== Testing Image ==="
-
-# Quick smoke test
-if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
-	log "  ✓ Version check passed"
-else
-	error "  ✗ Version check failed"
-fi
-
-# Push to registry
-if [ "${PUSH_IMAGES_2_REGISTRY:=false}" = true ]; then
-	log ""
-	log "=== Pushing to Registry ==="
-
-	# Login if credentials provided
-	if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
-		if [[ "${DOCKER_REGISTRY}" =~ [.:] ]]; then
-			log "Logging in to ${DOCKER_REGISTRY}..."
-			echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
-			trap "docker logout ${DOCKER_REGISTRY}; log 'Logged out from ${DOCKER_REGISTRY}'" EXIT
-		else
-			log "Logging in to Docker Hub..."
-			echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-			trap "docker logout; log 'Logged out from Docker Hub'" EXIT
-		fi
+# --- Build & Push ---
+if [ "${PUSH_IMAGES_2_REGISTRY}" = "true" ]; then
+	if [ -z "${DOCKER_USERNAME:-}" ] || [ -z "${DOCKER_PASSWORD:-}" ]; then
+		error "DOCKER_USERNAME and DOCKER_PASSWORD are required to push."
 	fi
 
-	# Push version tag
-	log "Pushing ${FULL_IMAGE_NAME}:${VERSION}..."
-	docker push "${FULL_IMAGE_NAME}:${VERSION}"
+	# Build each arch separately and export (anonymous pulls)
+	for arch in "${AVAILABLE_ARCHES[@]}"; do
+		log "Building linux/${arch}..."
+		docker buildx build \
+			--platform "linux/${arch}" \
+			-t "${FULL_IMAGE_NAME}:${VERSION}-${arch}" \
+			"${LABEL_ARGS[@]}" \
+			--output "type=docker,dest=/tmp/serenedb-${arch}.tar" \
+			--no-cache \
+			--file "${BUILD_DIR}/Dockerfile" \
+			"${BUILD_DIR}"
+	done
 
-	# Push extra tags
+	# Load into docker daemon
+	log "Loading images..."
+	for arch in "${AVAILABLE_ARCHES[@]}"; do
+		docker load </tmp/serenedb-${arch}.tar
+		rm -f "/tmp/serenedb-${arch}.tar"
+	done
+
+	# Smoke test
+	log "=== Smoke test ==="
+	if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}-${HOST_ARCH}" --version 2>/dev/null; then
+		log "  Version check passed"
+	else
+		error "  Version check failed"
+	fi
+
+	# Login and push
+	docker logout >/dev/null 2>&1 || true
+	log "Logging in to Docker Hub as ${DOCKER_USERNAME}..."
+	if [[ "${DOCKER_REGISTRY}" =~ [.:] ]]; then
+		echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+		NEEDS_LOGOUT="$DOCKER_REGISTRY"
+	else
+		echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+		NEEDS_LOGOUT="hub"
+	fi
+
+	for arch in "${AVAILABLE_ARCHES[@]}"; do
+		log "Pushing ${FULL_IMAGE_NAME}:${VERSION}-${arch}..."
+		docker push "${FULL_IMAGE_NAME}:${VERSION}-${arch}"
+	done
+
+	# Build manifest sources list
+	MANIFEST_SOURCES=()
+	for arch in "${AVAILABLE_ARCHES[@]}"; do
+		MANIFEST_SOURCES+=("${FULL_IMAGE_NAME}:${VERSION}-${arch}")
+	done
+
+	# Create and push multi-arch manifests
+	log "Creating multi-arch manifests..."
+	ALL_TAGS=("${VERSION}")
 	for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
-		if [ -n "$tag" ]; then
-			log "Pushing ${FULL_IMAGE_NAME}:${tag}..."
-			docker push "${FULL_IMAGE_NAME}:${tag}"
-		fi
+		[ -n "$tag" ] && ALL_TAGS+=("$tag")
+	done
+
+	for tag in "${ALL_TAGS[@]}"; do
+		docker manifest create --amend "${FULL_IMAGE_NAME}:${tag}" "${MANIFEST_SOURCES[@]}"
+		docker manifest push "${FULL_IMAGE_NAME}:${tag}"
+		log "  Pushed ${FULL_IMAGE_NAME}:${tag}"
+	done
+
+	# Cleanup arch-specific images
+	for arch in "${AVAILABLE_ARCHES[@]}"; do
+		docker rmi "${FULL_IMAGE_NAME}:${VERSION}-${arch}" >/dev/null 2>&1 || true
 	done
 
 	log "Push complete!"
+else
+	# Local build: single arch, --load
+	log "Building for local use (linux/${HOST_ARCH})..."
+	docker buildx build \
+		--load \
+		--platform "linux/${HOST_ARCH}" \
+		--tag "${FULL_IMAGE_NAME}:${VERSION}" \
+		"${LABEL_ARGS[@]}" \
+		--no-cache \
+		--file "${BUILD_DIR}/Dockerfile" \
+		"${BUILD_DIR}"
+
+	log "Build complete!"
+
+	# Smoke test
+	log "=== Testing Image ==="
+	if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
+		log "  Version check passed"
+	else
+		error "  Version check failed"
+	fi
 fi
 
 # Summary
@@ -152,6 +207,3 @@ log "Image: ${FULL_IMAGE_NAME}:${VERSION}"
 log ""
 log "Run with:"
 log "  docker run -d -p 8529:8529 ${FULL_IMAGE_NAME}:${VERSION}"
-log ""
-log "Or with docker-compose:"
-log "  See ${DOCKER_DIR}/docker-compose.yml"

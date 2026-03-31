@@ -754,8 +754,8 @@ class SqlAnalyzer {
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
                      bool load_implicit_pk = false);
-  State ProcessInvertedIndex(State* parent, const Objects::ObjectData& object,
-                             const RangeVar* node);
+  State ProcessIndex(State* parent, const Objects::ObjectData& object,
+                     const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -3864,12 +3864,11 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
   return {table_alias, std::move(column_names)};
 }
 
-State SqlAnalyzer::ProcessInvertedIndex(State* parent,
-                                        const Objects::ObjectData& object,
-                                        const RangeVar* node) {
+State SqlAnalyzer::ProcessIndex(State* parent,
+                                const Objects::ObjectData& object,
+                                const RangeVar* node) {
   SDB_ASSERT(object.object);
-  const auto& inverted_index =
-    basics::downCast<const catalog::InvertedIndex>(*object.object);
+  const auto& index = basics::downCast<const catalog::Index>(*object.object);
   const auto& table = object.CatalogTable();
   auto type = table.RowType();
 
@@ -3883,46 +3882,45 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   }
 
   if (!object.table) {
-    object.table = std::make_shared<connector::InvertedIndexTable>(
-      _transaction, std::move(scan_table), inverted_index);
+    object.table = std::make_shared<connector::IndexTable>(
+      _transaction, std::move(scan_table), index);
   } else {
-    auto table = object.table.get();
-    SDB_ASSERT(dynamic_cast<connector::InvertedIndexTable*>(table));
+    SDB_ASSERT(dynamic_cast<connector::IndexTable*>(object.table.get()));
   }
 
-  SDB_ASSERT(
-    !table.Columns().empty(),
-    "Column with inverted index should have at least one column to index");
+  if (index.GetIndexType() == IndexType::Inverted) {
+    SDB_ASSERT(!table.Columns().empty());
 
-  if (_expr_for_scorer) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("Only one inverted index scan can produce a score per query"));
+    if (_expr_for_scorer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Only one inverted index scan can produce a score per query"));
+    }
+
+    if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
+      basics::downCast<connector::IndexTable>(*object.table).SetScorer(scorer);
+
+      auto score_name = catalog::Column::GenerateScoreName(type->names());
+      auto unique_score_name = _id_generator.NextColumnName(score_name);
+
+      std::vector types = type->children();
+      std::vector type_names = type->names();
+      types.push_back(velox::REAL());
+      type_names.emplace_back(score_name);
+      type = velox::ROW(std::move(type_names), std::move(types));
+
+      column_names.emplace_back(std::move(unique_score_name));
+      _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
+        velox::REAL(), column_names.back());
+    }
   }
-
-  if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
-    basics::downCast<connector::InvertedIndexTable>(*object.table)
-      .SetScorer(scorer);
-
-    auto score_name = catalog::Column::GenerateScoreName(type->names());
-    auto unique_score_name = _id_generator.NextColumnName(score_name);
-
-    std::vector types = type->children();
-    std::vector type_names = type->names();
-    types.push_back(velox::REAL());
-    type_names.emplace_back(score_name);
-    type = velox::ROW(std::move(type_names), std::move(types));
-
-    column_names.emplace_back(std::move(unique_score_name));
-    _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
-      velox::REAL(), column_names.back());
-  }
+  scan_table = object.table;
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type->children()), object.table,
-    type->names());
+    velox::ROW(std::move(column_names), type->children()),
+    std::move(scan_table), type->names());
 
   state.resolver.CreateTable(table_alias,
                              MakePtrView(state.root->outputType()));
@@ -4022,15 +4020,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
   } else if (logical_object.GetType() == catalog::ObjectType::Index) {
-    const auto& index = basics::downCast<catalog::Index>(logical_object);
-    if (index.GetIndexType() != IndexType::Inverted) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      CURSOR_POS(ErrorPosition(ExprLocation(node))),
-                      ERR_MSG("Index '", name, "' of type '",
-                              magic_enum::enum_name(index.GetIndexType()),
-                              "' cannot be used in FROM clause"));
-    }
-    return ProcessInvertedIndex(parent, *object, node);
+    return ProcessIndex(parent, *object, node);
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -5053,7 +5043,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
 
   // bm25()/tfidf() are not registered catalog functions -- they are
   // scorer directives resolved during collection. Return the injected
-  // score column reference that was set up in ProcessInvertedIndex.
+  // score column reference that was set up in ProcessIndex.
   if (schema.empty() &&
       (name == irs::BM25::type_name() || name == irs::TFIDF::type_name())) {
     if (!_expr_for_scorer) {

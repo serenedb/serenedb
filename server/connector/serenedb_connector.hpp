@@ -528,10 +528,11 @@ class RocksDBTable : public axiom::connector::Table {
   pg::CreateIndexState* _create_index_state = nullptr;
 };
 
-class InvertedIndexTable : public axiom::connector::Table {
+class IndexTable : public axiom::connector::Table {
  public:
   static std::vector<std::unique_ptr<const axiom::connector::Column>>
-  CopyColumns(const axiom::connector::Table& table) {
+  CopyColumns(const axiom::connector::Table& table,
+              const catalog::Index& index) {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
     columns.reserve(table.allColumns().size() + 1);
     for (const auto* col : table.allColumns()) {
@@ -539,18 +540,20 @@ class InvertedIndexTable : public axiom::connector::Table {
       columns.push_back(std::make_unique<SereneDBColumn>(
         col->name(), col->type(), sdb_col->Id()));
     }
-    // Always add the score column so createColumnHandle can resolve it.
-    // It is only included in the output type when a scorer is active.
-    auto score_name = catalog::Column::GenerateScoreName(table.type()->names());
-    columns.push_back(std::make_unique<SereneDBColumn>(
-      score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
+    if (index.GetIndexType() == IndexType::Inverted) {
+      // Always add the score column so createColumnHandle can resolve it.
+      // It is only included in the output type when a scorer is active.
+      auto score_name =
+        catalog::Column::GenerateScoreName(table.type()->names());
+      columns.push_back(std::make_unique<SereneDBColumn>(
+        score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
+    }
     return columns;
   }
 
-  InvertedIndexTable(query::Transaction& transaction,
-                     axiom::connector::TablePtr table,
-                     const catalog::InvertedIndex& index)
-    : Table(table->name(), CopyColumns(*table)),
+  IndexTable(query::Transaction& transaction, axiom::connector::TablePtr table,
+             const catalog::Index& index)
+    : Table(table->name(), CopyColumns(*table, index)),
       _transaction{transaction},
       _table{std::move(table)},
       _index{index} {
@@ -579,17 +582,19 @@ class InvertedIndexTable : public axiom::connector::Table {
   }
 
   void SetScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
+    SDB_ASSERT(_index.GetIndexType() == IndexType::Inverted);
     _scorer = std::move(scorer);
   }
 
   const std::shared_ptr<const irs::Scorer>& GetScorerPtr() const noexcept {
+    SDB_ASSERT(_index.GetIndexType() == IndexType::Inverted);
     return _scorer;
   }
 
  private:
   query::Transaction& _transaction;
   axiom::connector::TablePtr _table;
-  const catalog::InvertedIndex& _index;
+  const catalog::Index& _index;
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
   std::shared_ptr<const irs::Scorer> _scorer;
@@ -600,7 +605,7 @@ class InvertedIndexTableHandle final
  public:
   using FilterColumn = SereneDBConnectorTableHandle::FilterColumn;
 
-  InvertedIndexTableHandle(const InvertedIndexTable& table, ObjectId index_id,
+  InvertedIndexTableHandle(const IndexTable& table, ObjectId index_id,
                            irs::Filter::Query::ptr search_query,
                            std::shared_ptr<const irs::Scorer> scorer,
                            std::string search_filter_str)
@@ -1424,8 +1429,9 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& pool = *connector_query_ctx->memoryPool();
 
     const auto& points = handle.GetPoints();
-    bool has_null_filter =
-      absl::c_any_of(points, [](const auto& sp) { return sp[0].isNull(); });
+    bool has_null_filter = absl::c_any_of(points, [](const auto& sp) {
+      return absl::c_any_of(sp, [](const auto& v) { return v.isNull(); });
+    });
 
     return CreateWithMaterializer(
       handle, output_type, output_type, column_oids, column_handles, pool,

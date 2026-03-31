@@ -136,9 +136,12 @@ SereneDBTableLayout::createTableHandle(
   std::vector<velox::core::TypedExprPtr> filters,
   std::vector<velox::core::TypedExprPtr>& rejected_filters) const {
   const auto* table = &this->table();
-  const auto* inv_index = dynamic_cast<const InvertedIndexTable*>(table);
-  if (inv_index) {
-    const auto& index = inv_index->GetIndex();
+  const auto* idx_table = dynamic_cast<const IndexTable*>(table);
+  if (idx_table &&
+      idx_table->GetIndex().GetIndexType() == IndexType::Inverted) {
+    const auto* inv_index = idx_table;
+    const auto& index =
+      basics::downCast<const catalog::InvertedIndex>(inv_index->GetIndex());
     auto column_getter =
       [&](std::string_view name) -> std::optional<SearchColumnInfo> {
       const auto* column = inv_index->findColumn(name);

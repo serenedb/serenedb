@@ -699,3 +699,463 @@ pid
 
 statement ok
 DROP TABLE clickclack_ryow;
+
+
+control substitution on
+
+statement ok
+CREATE TABLE vedernikoff_csv_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_csv_unique VALUES
+  (1, 'vedernikoff', 10),
+  (2, 'cutelooked', 20),
+  (3, 'crookface', 30);
+
+statement count 3
+COPY vedernikoff_csv_unique TO '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+DROP TABLE vedernikoff_csv_unique;
+
+statement ok
+CREATE TABLE vedernikoff_csv_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement count 3
+COPY vedernikoff_csv_unique FROM '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_csv_unique_rank_idx ON vedernikoff_csv_unique USING secondary(rank);
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 10;
+----
+pid	nickname
+1	vedernikoff
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 20;
+----
+pid	nickname
+2	cutelooked
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 99;
+----
+pid	nickname
+
+statement error
+INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+statement ok
+UPDATE vedernikoff_csv_unique SET rank = 15 WHERE pid = 1;
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 10;
+----
+pid	nickname
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 15;
+----
+pid	nickname
+1	vedernikoff
+
+statement ok
+DROP TABLE vedernikoff_csv_unique;
+
+
+statement ok
+CREATE TABLE babsky_csv_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement ok
+INSERT INTO babsky_csv_nulluniq VALUES
+  (1, 100, 'alpha'),
+  (2, NULL, 'beta'),
+  (3, NULL, 'gamma'),
+  (4, 200, 'delta');
+
+statement count 4
+COPY babsky_csv_nulluniq TO '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+DROP TABLE babsky_csv_nulluniq;
+
+statement ok
+CREATE TABLE babsky_csv_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement count 4
+COPY babsky_csv_nulluniq FROM '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE UNIQUE INDEX babsky_csv_nulluniq_code_idx ON babsky_csv_nulluniq USING secondary(code);
+
+query
+SELECT pid, tag FROM babsky_csv_nulluniq WHERE code = 100;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM babsky_csv_nulluniq WHERE code IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+
+statement error
+INSERT INTO babsky_csv_nulluniq VALUES (5, 100, 'epsilon');
+
+statement ok
+DROP TABLE babsky_csv_nulluniq;
+
+
+statement ok
+CREATE TABLE vedernikoff_pq_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_pq_unique VALUES
+  (1, 'vedernikoff', 10),
+  (2, 'cutelooked', 20),
+  (3, 'crookface', 30);
+
+statement count 3
+COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+DROP TABLE vedernikoff_pq_unique;
+
+statement ok
+CREATE TABLE vedernikoff_pq_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement count 3
+COPY vedernikoff_pq_unique FROM '/tmp/${__DATABASE__}_vedernikoff_pq_unique.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_pq_unique_rank_idx ON vedernikoff_pq_unique USING secondary(rank);
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 10;
+----
+pid	nickname
+1	vedernikoff
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 20;
+----
+pid	nickname
+2	cutelooked
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 99;
+----
+pid	nickname
+
+statement error
+INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+statement ok
+UPDATE vedernikoff_pq_unique SET rank = 15 WHERE pid = 1;
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 10;
+----
+pid	nickname
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 15;
+----
+pid	nickname
+1	vedernikoff
+
+statement ok
+DROP TABLE vedernikoff_pq_unique;
+
+
+statement ok
+CREATE TABLE babsky_pq_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement ok
+INSERT INTO babsky_pq_nulluniq VALUES
+  (1, 100, 'alpha'),
+  (2, NULL, 'beta'),
+  (3, NULL, 'gamma'),
+  (4, 200, 'delta');
+
+statement count 4
+COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+DROP TABLE babsky_pq_nulluniq;
+
+statement ok
+CREATE TABLE babsky_pq_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement count 4
+COPY babsky_pq_nulluniq FROM '/tmp/${__DATABASE__}_babsky_pq_nulluniq.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+CREATE UNIQUE INDEX babsky_pq_nulluniq_code_idx ON babsky_pq_nulluniq USING secondary(code);
+
+query
+SELECT pid, tag FROM babsky_pq_nulluniq WHERE code = 100;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM babsky_pq_nulluniq WHERE code IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+
+statement error
+INSERT INTO babsky_pq_nulluniq VALUES (5, 100, 'epsilon');
+
+statement ok
+DROP TABLE babsky_pq_nulluniq;
+
+
+statement ok
+CREATE TABLE vedernikoff_tri_uniq (pid INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_tri_uniq_idx ON vedernikoff_tri_uniq USING secondary(a, b, c);
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (1, 1, 1, 1, 'all_set');
+
+statement error
+INSERT INTO vedernikoff_tri_uniq VALUES (2, 1, 1, 1, 'all_set_dup');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (2, 1, 1, 2, 'diff_c');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (3, 1, 2, 1, 'diff_b');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (4, 2, 1, 1, 'diff_a');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+1	all_set
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 2;
+----
+pid	note
+2	diff_c
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 2 AND c = 1;
+----
+pid	note
+3	diff_b
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 2 AND b = 1 AND c = 1;
+----
+pid	note
+4	diff_a
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (10, NULL, 1, 1, 'a_null_1'),
+  (11, NULL, 1, 1, 'a_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (12, 1, NULL, 1, 'b_null_1'),
+  (13, 1, NULL, 1, 'b_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (14, 1, 1, NULL, 'c_null_1'),
+  (15, 1, 1, NULL, 'c_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (20, NULL, NULL, 1, 'ab_null_1'),
+  (21, NULL, NULL, 1, 'ab_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (22, NULL, 1, NULL, 'ac_null_1'),
+  (23, NULL, 1, NULL, 'ac_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (24, 1, NULL, NULL, 'bc_null_1'),
+  (25, 1, NULL, NULL, 'bc_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (30, NULL, NULL, NULL, 'all_null_1'),
+  (31, NULL, NULL, NULL, 'all_null_2');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c = 1 ORDER BY pid;
+----
+pid	note
+10	a_null_1
+11	a_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+12	b_null_1
+13	b_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c IS NULL ORDER BY pid;
+----
+pid	note
+14	c_null_1
+15	c_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+20	ab_null_1
+21	ab_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c IS NULL ORDER BY pid;
+----
+pid	note
+22	ac_null_1
+23	ac_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c IS NULL ORDER BY pid;
+----
+pid	note
+24	bc_null_1
+25	bc_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b IS NULL AND c IS NULL ORDER BY pid;
+----
+pid	note
+30	all_null_1
+31	all_null_2
+
+query
+SELECT pid, a, b, c, note FROM vedernikoff_tri_uniq ORDER BY pid;
+----
+pid	a	b	c	note
+1	1	1	1	all_set
+2	1	1	2	diff_c
+3	1	2	1	diff_b
+4	2	1	1	diff_a
+10	NULL	1	1	a_null_1
+11	NULL	1	1	a_null_2
+12	1	NULL	1	b_null_1
+13	1	NULL	1	b_null_2
+14	1	1	NULL	c_null_1
+15	1	1	NULL	c_null_2
+20	NULL	NULL	1	ab_null_1
+21	NULL	NULL	1	ab_null_2
+22	NULL	1	NULL	ac_null_1
+23	NULL	1	NULL	ac_null_2
+24	1	NULL	NULL	bc_null_1
+25	1	NULL	NULL	bc_null_2
+30	NULL	NULL	NULL	all_null_1
+31	NULL	NULL	NULL	all_null_2
+
+statement ok
+DELETE FROM vedernikoff_tri_uniq WHERE pid IN (11, 13, 15, 21, 23, 25, 31);
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c = 1;
+----
+pid	note
+10	a_null_1
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1;
+----
+pid	note
+12	b_null_1
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c IS NULL;
+----
+pid	note
+14	c_null_1
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b IS NULL AND c IS NULL;
+----
+pid	note
+30	all_null_1
+
+statement ok
+UPDATE vedernikoff_tri_uniq SET a = 3 WHERE pid = 10;
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c = 1;
+----
+pid	note
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 3 AND b = 1 AND c = 1;
+----
+pid	note
+10	a_null_1
+
+statement ok
+DELETE FROM vedernikoff_tri_uniq WHERE pid = 1;
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (40, 1, 1, 1, 'reuse_slot');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+40	reuse_slot
+
+statement error
+INSERT INTO vedernikoff_tri_uniq VALUES (41, 1, 1, 1, 'reuse_conflict');
+
+statement ok
+UPDATE vedernikoff_tri_uniq SET b = NULL WHERE pid = 40;
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1;
+----
+pid	note
+12	b_null_1
+40	reuse_slot
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (41, 1, 1, 1, 'freed_slot');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+41	freed_slot
+
+statement ok
+DROP TABLE vedernikoff_tri_uniq;

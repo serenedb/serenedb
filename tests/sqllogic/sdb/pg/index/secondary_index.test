@@ -952,3 +952,556 @@ count
 
 statement ok
 DROP TABLE babsky_composite;
+
+control substitution on
+
+statement ok
+CREATE TABLE vedernikoff_csv_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_csv_crew VALUES
+  (1, 'vedernikoff', 30),
+  (2, 'cutelooked', 25),
+  (3, 'crookface', 30),
+  (4, 'bossmann', 35);
+
+statement count 4
+COPY vedernikoff_csv_crew TO '/tmp/${__DATABASE__}_vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+DROP TABLE vedernikoff_csv_crew;
+
+statement ok
+CREATE TABLE vedernikoff_csv_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
+
+statement count 4
+COPY vedernikoff_csv_crew FROM '/tmp/${__DATABASE__}_vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE INDEX vedernikoff_csv_crew_stocks_idx ON vedernikoff_csv_crew USING secondary(stocks);
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 30 ORDER BY pid;
+----
+pid	nickname	stocks
+1	vedernikoff	30
+3	crookface	30
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 25;
+----
+pid	nickname	stocks
+2	cutelooked	25
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 99;
+----
+pid	nickname	stocks
+
+statement ok
+UPDATE vedernikoff_csv_crew SET stocks = 31 WHERE pid = 1;
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 30;
+----
+pid	nickname	stocks
+3	crookface	30
+
+statement ok
+DELETE FROM vedernikoff_csv_crew WHERE pid = 3;
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 30;
+----
+pid	nickname	stocks
+
+query
+EXPLAIN SELECT pid, nickname FROM vedernikoff_csv_crew WHERE stocks = 30;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (nickname:VARCHAR, "nickname")] -> "pid":INTEGER, "nickname":VARCHAR
+  -- TableScan[0][vedernikoff_csv_crew, scan=secondary_index] -> "pid":INTEGER, "nickname":VARCHAR
+
+statement ok
+DROP TABLE vedernikoff_csv_crew;
+
+
+statement ok
+CREATE TABLE babsky_csv_vault (pid INTEGER PRIMARY KEY, loot INTEGER, tag VARCHAR);
+
+statement count 5
+COPY
+  (SELECT * FROM (VALUES
+    (1, 100, 'alpha'),
+    (2, 200, 'beta'),
+    (3, 100, 'gamma'),
+    (4, 300, 'delta'),
+    (5, 100, 'epsilon')
+  ) AS t(pid, loot, tag))
+TO '/tmp/${__DATABASE__}_babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement count 5
+COPY babsky_csv_vault FROM '/tmp/${__DATABASE__}_babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE INDEX babsky_csv_vault_loot_idx ON babsky_csv_vault USING secondary(loot);
+
+query
+SELECT pid, tag FROM babsky_csv_vault WHERE loot = 100 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+5	epsilon
+
+query
+SELECT COUNT(*) FROM babsky_csv_vault WHERE loot = 100;
+----
+count
+3
+
+statement ok
+DROP TABLE babsky_csv_vault;
+
+
+statement ok
+CREATE TABLE clickclack_csv_ops (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, note VARCHAR);
+
+statement ok
+INSERT INTO clickclack_csv_ops VALUES
+  (1, 'berlin', 10, 'alpha'),
+  (2, 'moscow', 20, 'bravo'),
+  (3, 'berlin', 10, 'charlie'),
+  (4, NULL, 30, 'delta'),
+  (5, 'berlin', 20, 'echo');
+
+statement count 5
+COPY clickclack_csv_ops TO '/tmp/${__DATABASE__}_clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+DROP TABLE clickclack_csv_ops;
+
+statement ok
+CREATE TABLE clickclack_csv_ops (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, note VARCHAR);
+
+statement count 5
+COPY clickclack_csv_ops FROM '/tmp/${__DATABASE__}_clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE INDEX clickclack_csv_ops_idx ON clickclack_csv_ops USING secondary(city, level);
+
+query
+SELECT pid, note FROM clickclack_csv_ops WHERE city = 'berlin' AND level = 10 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	charlie
+
+query
+SELECT pid, note FROM clickclack_csv_ops WHERE city IS NULL ORDER BY pid;
+----
+pid	note
+4	delta
+
+statement ok
+DROP TABLE clickclack_csv_ops;
+
+
+statement ok
+CREATE TABLE vedernikoff_pq_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_pq_crew VALUES
+  (1, 'vedernikoff', 30),
+  (2, 'cutelooked', 25),
+  (3, 'crookface', 30),
+  (4, 'bossmann', 35);
+
+statement count 4
+COPY vedernikoff_pq_crew TO '/tmp/${__DATABASE__}_vedernikoff_pq_crew.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+DROP TABLE vedernikoff_pq_crew;
+
+statement ok
+CREATE TABLE vedernikoff_pq_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
+
+statement count 4
+COPY vedernikoff_pq_crew FROM '/tmp/${__DATABASE__}_vedernikoff_pq_crew.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+CREATE INDEX vedernikoff_pq_crew_stocks_idx ON vedernikoff_pq_crew USING secondary(stocks);
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 30 ORDER BY pid;
+----
+pid	nickname	stocks
+1	vedernikoff	30
+3	crookface	30
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 25;
+----
+pid	nickname	stocks
+2	cutelooked	25
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 99;
+----
+pid	nickname	stocks
+
+statement ok
+UPDATE vedernikoff_pq_crew SET stocks = 31 WHERE pid = 1;
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 30;
+----
+pid	nickname	stocks
+3	crookface	30
+
+statement ok
+DELETE FROM vedernikoff_pq_crew WHERE pid = 3;
+
+query
+SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 30;
+----
+pid	nickname	stocks
+
+query
+EXPLAIN SELECT pid, nickname FROM vedernikoff_pq_crew WHERE stocks = 30;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (nickname:VARCHAR, "nickname")] -> "pid":INTEGER, "nickname":VARCHAR
+  -- TableScan[0][vedernikoff_pq_crew, scan=secondary_index] -> "pid":INTEGER, "nickname":VARCHAR
+
+statement ok
+DROP TABLE vedernikoff_pq_crew;
+
+
+statement ok
+CREATE TABLE babsky_pq_vault (pid INTEGER PRIMARY KEY, loot INTEGER, tag VARCHAR);
+
+statement count 5
+COPY
+  (SELECT * FROM (VALUES
+    (1, 100, 'alpha'),
+    (2, 200, 'beta'),
+    (3, 100, 'gamma'),
+    (4, 300, 'delta'),
+    (5, 100, 'epsilon')
+  ) AS t(pid, loot, tag))
+TO '/tmp/${__DATABASE__}_babsky_pq_vault.parquet' WITH (FORMAT PARQUET);
+
+statement count 5
+COPY babsky_pq_vault FROM '/tmp/${__DATABASE__}_babsky_pq_vault.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+CREATE INDEX babsky_pq_vault_loot_idx ON babsky_pq_vault USING secondary(loot);
+
+query
+SELECT pid, tag FROM babsky_pq_vault WHERE loot = 100 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+5	epsilon
+
+query
+SELECT COUNT(*) FROM babsky_pq_vault WHERE loot = 100;
+----
+count
+3
+
+statement ok
+DROP TABLE babsky_pq_vault;
+
+
+statement ok
+CREATE TABLE clickclack_pq_ops (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, note VARCHAR);
+
+statement ok
+INSERT INTO clickclack_pq_ops VALUES
+  (1, 'berlin', 10, 'alpha'),
+  (2, 'moscow', 20, 'bravo'),
+  (3, 'berlin', 10, 'charlie'),
+  (4, NULL, 30, 'delta'),
+  (5, 'berlin', 20, 'echo');
+
+statement count 5
+COPY clickclack_pq_ops TO '/tmp/${__DATABASE__}_clickclack_pq_ops.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+DROP TABLE clickclack_pq_ops;
+
+statement ok
+CREATE TABLE clickclack_pq_ops (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, note VARCHAR);
+
+statement count 5
+COPY clickclack_pq_ops FROM '/tmp/${__DATABASE__}_clickclack_pq_ops.parquet' WITH (FORMAT PARQUET);
+
+statement ok
+CREATE INDEX clickclack_pq_ops_idx ON clickclack_pq_ops USING secondary(city, level);
+
+query
+SELECT pid, note FROM clickclack_pq_ops WHERE city = 'berlin' AND level = 10 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	charlie
+
+query
+SELECT pid, note FROM clickclack_pq_ops WHERE city IS NULL ORDER BY pid;
+----
+pid	note
+4	delta
+
+statement ok
+DROP TABLE clickclack_pq_ops;
+
+
+# statement ok
+# CREATE TABLE babsky_from_idx (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
+#
+# statement ok
+# CREATE INDEX babsky_from_idx_val_idx ON babsky_from_idx USING secondary(val);
+#
+# statement ok
+# INSERT INTO babsky_from_idx VALUES (1, 10, 'alpha'), (2, 20, 'beta'), (3, 10, 'gamma');
+#
+# query
+# SELECT * FROM babsky_from_idx_val_idx ORDER BY pid;
+# ----
+# pid	val	tag
+# 1	10	alpha
+# 2	20	beta
+# 3	10	gamma
+#
+# query
+# SELECT pid, tag FROM babsky_from_idx_val_idx WHERE val = 10 ORDER BY pid;
+# ----
+# pid	tag
+# 1	alpha
+# 3	gamma
+#
+# query
+# SELECT count(*) FROM babsky_from_idx_val_idx;
+# ----
+# count
+# 3
+#
+# query
+# EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
+# ----
+# QUERY PLAN
+# EXECUTION PLAN:
+# Fragment 0:  numWorkers=0:
+# -- TableScan[0][babsky_from_idx] -> "pid":INTEGER, "val":INTEGER, "tag":VARCHAR
+#
+# statement ok
+# DROP TABLE babsky_from_idx;
+
+
+statement ok
+CREATE TABLE babsky_tri_null (pid INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER, note VARCHAR);
+
+statement ok
+CREATE INDEX babsky_tri_null_idx ON babsky_tri_null USING secondary(a, b, c);
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (1,  1, 1, 1, 'all_set');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (2,  1, 1, 1, 'all_set_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (3,  NULL, 1, 1, 'a_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (4,  NULL, 1, 1, 'a_null_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (5,  1, NULL, 1, 'b_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (6,  1, NULL, 1, 'b_null_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (7,  1, 1, NULL, 'c_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (8,  1, 1, NULL, 'c_null_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (9,  NULL, NULL, 1, 'ab_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (10, NULL, NULL, 1, 'ab_null_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (11, NULL, 1, NULL, 'ac_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (12, NULL, 1, NULL, 'ac_null_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (13, 1, NULL, NULL, 'bc_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (14, 1, NULL, NULL, 'bc_null_dup');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (15, NULL, NULL, NULL, 'all_null');
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (16, NULL, NULL, NULL, 'all_null_dup');
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b = 1 AND c = 1 ORDER BY pid;
+----
+pid	note
+1	all_set
+2	all_set_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b = 1 AND c = 1 ORDER BY pid;
+----
+pid	note
+3	a_null
+4	a_null_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+5	b_null
+6	b_null_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b = 1 AND c IS NULL ORDER BY pid;
+----
+pid	note
+7	c_null
+8	c_null_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+9	ab_null
+10	ab_null_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b = 1 AND c IS NULL ORDER BY pid;
+----
+pid	note
+11	ac_null
+12	ac_null_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b IS NULL AND c IS NULL ORDER BY pid;
+----
+pid	note
+13	bc_null
+14	bc_null_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b IS NULL AND c IS NULL ORDER BY pid;
+----
+pid	note
+15	all_null
+16	all_null_dup
+
+query
+SELECT pid, a, b, c, note FROM babsky_tri_null ORDER BY pid;
+----
+pid	a	b	c	note
+1	1	1	1	all_set
+2	1	1	1	all_set_dup
+3	NULL	1	1	a_null
+4	NULL	1	1	a_null_dup
+5	1	NULL	1	b_null
+6	1	NULL	1	b_null_dup
+7	1	1	NULL	c_null
+8	1	1	NULL	c_null_dup
+9	NULL	NULL	1	ab_null
+10	NULL	NULL	1	ab_null_dup
+11	NULL	1	NULL	ac_null
+12	NULL	1	NULL	ac_null_dup
+13	1	NULL	NULL	bc_null
+14	1	NULL	NULL	bc_null_dup
+15	NULL	NULL	NULL	all_null
+16	NULL	NULL	NULL	all_null_dup
+
+statement ok
+DELETE FROM babsky_tri_null WHERE pid IN (4, 6, 8, 10, 12, 14, 16);
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b = 1 AND c = 1;
+----
+pid	note
+3	a_null
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b IS NULL AND c = 1;
+----
+pid	note
+5	b_null
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b = 1 AND c IS NULL;
+----
+pid	note
+7	c_null
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b IS NULL AND c IS NULL;
+----
+pid	note
+15	all_null
+
+statement ok
+UPDATE babsky_tri_null SET a = 2 WHERE pid = 3;
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b = 1 AND c = 1;
+----
+pid	note
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 2 AND b = 1 AND c = 1;
+----
+pid	note
+3	a_null
+
+statement ok
+UPDATE babsky_tri_null SET b = NULL WHERE pid = 1;
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+2	all_set_dup
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a = 1 AND b IS NULL AND c = 1;
+----
+pid	note
+1	all_set
+5	b_null
+
+statement ok
+INSERT INTO babsky_tri_null VALUES (17, NULL, NULL, 1, 'ab_null_new');
+
+query
+SELECT pid, note FROM babsky_tri_null WHERE a IS NULL AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+9	ab_null
+17	ab_null_new
+
+statement ok
+DROP TABLE babsky_tri_null;

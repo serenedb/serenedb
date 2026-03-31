@@ -415,138 +415,166 @@ velox::core::TypedExprPtr RewriteExpr(
     expr->type(), std::move(new_inputs), call->name());
 }
 
+// Lightweight non-owning view of one endpoint of a Range.
+// value == nullptr means unbounded (-inf for left, +inf for right).
+struct BoundView {
+  const velox::variant* value{nullptr};
+  bool inclusive{false};
+};
+
+BoundView LeftOf(const ColumnRange& r) {
+  return r.HasLeft() ? BoundView{&r.left_value, r.IsLeftInclusive()}
+                     : BoundView{};
+}
+BoundView RightOf(const ColumnRange& r) {
+  return r.HasRight() ? BoundView{&r.right_value, r.IsRightInclusive()}
+                      : BoundView{};
+}
+
+// Builds a Range from two BoundViews.
+ColumnRange MakeRange(BoundView l, BoundView r) {
+  ColumnRange result;
+  if (l.value) {
+    result.flags |= uint8_t(ColumnRange::kLeftBounded |
+                            (l.inclusive ? ColumnRange::kLeftInclusive : 0));
+    result.left_value = *l.value;
+  }
+  if (r.value) {
+    result.flags |= uint8_t(ColumnRange::kRightBounded |
+                            (r.inclusive ? ColumnRange::kRightInclusive : 0));
+    result.right_value = *r.value;
+  }
+  return result;
+}
+
 // Returns the more restrictive (greater) lower bound.
-std::optional<Boundary> MaxLeft(const std::optional<Boundary>& a,
-                                const std::optional<Boundary>& b) {
-  if (!a) {
+BoundView MaxLeft(BoundView a, BoundView b) {
+  if (!a.value) {
     return b;
   }
-  if (!b) {
+  if (!b.value) {
     return a;
   }
-  if (a->value < b->value) {
+  if (*a.value < *b.value) {
     return b;
   }
-  if (b->value < a->value) {
+  if (*b.value < *a.value) {
     return a;
   }
   // Same value: exclusive is more restrictive for a left bound.
-  return a->inclusive ? b : a;
+  return a.inclusive ? b : a;
 }
 
 // Returns the more restrictive (lesser) upper bound.
-std::optional<Boundary> MinRight(const std::optional<Boundary>& a,
-                                 const std::optional<Boundary>& b) {
-  if (!a) {
+BoundView MinRight(BoundView a, BoundView b) {
+  if (!a.value) {
     return b;
   }
-  if (!b) {
+  if (!b.value) {
     return a;
   }
-  if (a->value < b->value) {
+  if (*a.value < *b.value) {
     return a;
   }
-  if (b->value < a->value) {
+  if (*b.value < *a.value) {
     return b;
   }
   // Same value: exclusive is more restrictive for a right bound.
-  return a->inclusive ? b : a;
-}
-
-std::optional<Range> IntersectRange(const Range& lhs, const Range& rhs) {
-  auto new_left = MaxLeft(lhs.left, rhs.left);
-  auto new_right = MinRight(lhs.right, rhs.right);
-  if (new_left && new_right) {
-    if (new_right->value < new_left->value) {
-      return std::nullopt;
-    }
-    // Same boundary value but at least one side exclusive: empty interval.
-    if (new_left->value == new_right->value &&
-        (!new_left->inclusive || !new_right->inclusive)) {
-      return std::nullopt;
-    }
-  }
-  return Range{std::move(new_left), std::move(new_right)};
+  return a.inclusive ? b : a;
 }
 
 // Less restrictive (smaller) lower bound — for union.
-std::optional<Boundary> MinLeft(const std::optional<Boundary>& a,
-                                const std::optional<Boundary>& b) {
-  if (!a || !b) {
-    return std::nullopt;
+BoundView MinLeft(BoundView a, BoundView b) {
+  if (!a.value || !b.value) {
+    return BoundView{};  // unbounded wins
   }
-  if (a->value < b->value) {
+  if (*a.value < *b.value) {
     return a;
   }
-  if (b->value < a->value) {
+  if (*b.value < *a.value) {
     return b;
   }
   // Same value: inclusive is less restrictive for a left bound.
-  return a->inclusive ? a : b;
+  return a.inclusive ? a : b;
 }
 
 // Less restrictive (larger) upper bound — for union.
-std::optional<Boundary> MaxRight(const std::optional<Boundary>& a,
-                                 const std::optional<Boundary>& b) {
-  if (!a || !b) {
-    return std::nullopt;
+BoundView MaxRight(BoundView a, BoundView b) {
+  if (!a.value || !b.value) {
+    return BoundView{};  // unbounded wins
   }
-  if (b->value < a->value) {
+  if (*b.value < *a.value) {
     return a;
   }
-  if (a->value < b->value) {
+  if (*a.value < *b.value) {
     return b;
   }
   // Same value: inclusive is less restrictive for a right bound.
-  return a->inclusive ? a : b;
+  return a.inclusive ? a : b;
 }
 
-bool BoundaryEqual(const std::optional<Boundary>& a,
-                   const std::optional<Boundary>& b) {
-  if (!a && !b) {
+std::optional<ColumnRange> IntersectRange(const ColumnRange& lhs,
+                                          const ColumnRange& rhs) {
+  auto nl = MaxLeft(LeftOf(lhs), LeftOf(rhs));
+  auto nr = MinRight(RightOf(lhs), RightOf(rhs));
+  if (nl.value && nr.value) {
+    if (*nr.value < *nl.value) {
+      return std::nullopt;
+    }
+    // Same boundary value but at least one side exclusive: empty interval.
+    if (*nl.value == *nr.value && (!nl.inclusive || !nr.inclusive)) {
+      return std::nullopt;
+    }
+  }
+  return MakeRange(nl, nr);
+}
+
+bool BoundViewEqual(BoundView a, BoundView b) {
+  if (!a.value && !b.value) {
     return true;
   }
-  if (!a || !b) {
+  if (!a.value || !b.value) {
     return false;
   }
-  return a->value == b->value && a->inclusive == b->inclusive;
+  return *a.value == *b.value && a.inclusive == b.inclusive;
 }
 
-bool RangesEqual(const Range& a, const Range& b) {
-  return BoundaryEqual(a.left, b.left) && BoundaryEqual(a.right, b.right);
+bool RangesEqual(const ColumnRange& a, const ColumnRange& b) {
+  return BoundViewEqual(LeftOf(a), LeftOf(b)) &&
+         BoundViewEqual(RightOf(a), RightOf(b));
 }
 
 // Unions two ranges if they overlap; returns nullopt if there is a gap.
-std::optional<Range> UnionRangeIfOverlapping(const Range& lhs,
-                                             const Range& rhs) {
+std::optional<ColumnRange> UnionRangeIfOverlapping(const ColumnRange& lhs,
+                                                   const ColumnRange& rhs) {
   if (!IntersectRange(lhs, rhs)) {
     return std::nullopt;
   }
-  return Range{MinLeft(lhs.left, rhs.left), MaxRight(lhs.right, rhs.right)};
+  return MakeRange(MinLeft(LeftOf(lhs), LeftOf(rhs)),
+                   MaxRight(RightOf(lhs), RightOf(rhs)));
 }
 
 // Lexicographic ordering on a column's left bound for sorting purposes.
 // Unbounded (-inf) sorts first; among bounded, lower value sorts first;
 // ties broken by inclusive < exclusive (inclusive starts earlier).
-bool LeftBoundLess(const std::optional<Boundary>& a,
-                   const std::optional<Boundary>& b) {
-  if (!a && !b) {
+bool LeftBoundLess(BoundView a, BoundView b) {
+  if (!a.value && !b.value) {
     return false;
   }
-  if (!a) {
+  if (!a.value) {
     return true;  // -inf < anything
   }
-  if (!b) {
+  if (!b.value) {
     return false;  // anything >= -inf
   }
-  if (a->value < b->value) {
+  if (*a.value < *b.value) {
     return true;
   }
-  if (b->value < a->value) {
+  if (*b.value < *a.value) {
     return false;
   }
   // Same value: inclusive (starts earlier) sorts before exclusive.
-  return a->inclusive && !b->inclusive;
+  return a.inclusive && !b.inclusive;
 }
 
 // Sorts constraints lexicographically by each PK column's left bound in order.
@@ -554,10 +582,10 @@ bool LeftBoundLess(const std::optional<Boundary>& a,
 // differing column so overlapping ranges become adjacent.
 bool KeyConstraintLess(const KeyConstraint& a, const KeyConstraint& b) {
   for (std::string_view name : a.PkNames()) {
-    const Range* ra = a.FindFilter(name);
-    const Range* rb = b.FindFilter(name);
-    const auto& la = ra ? ra->left : std::optional<Boundary>{};
-    const auto& lb = rb ? rb->left : std::optional<Boundary>{};
+    const ColumnRange* ra = a.FindFilter(name);
+    const ColumnRange* rb = b.FindFilter(name);
+    auto la = ra ? LeftOf(*ra) : BoundView{};
+    auto lb = rb ? LeftOf(*rb) : BoundView{};
     if (LeftBoundLess(la, lb)) {
       return true;
     }
@@ -633,23 +661,23 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
-std::string ToString(const Range& range) {
+std::string ColumnRange::toString() const {
   std::string result;
   auto variant_str = [](const velox::variant& v) {
     return v.toString(velox::createScalarType(v.kind()));
   };
-  if (!range.left) {
+  if (!HasLeft()) {
     absl::StrAppend(&result, "(-inf");
   } else {
-    absl::StrAppend(&result, range.left->inclusive ? "[" : "(",
-                    variant_str(range.left->value));
+    absl::StrAppend(&result, IsLeftInclusive() ? "[" : "(",
+                    variant_str(left_value));
   }
   absl::StrAppend(&result, ", ");
-  if (!range.right) {
+  if (!HasRight()) {
     absl::StrAppend(&result, "+inf)");
   } else {
-    absl::StrAppend(&result, variant_str(range.right->value),
-                    range.right->inclusive ? "]" : ")");
+    absl::StrAppend(&result, variant_str(right_value),
+                    IsRightInclusive() ? "]" : ")");
   }
   return result;
 }
@@ -669,7 +697,7 @@ std::string KeyConstraint::ToString() const {
       absl::StrAppend(&result, ", ");
     }
     first = false;
-    absl::StrAppend(&result, name, ": ", sdb::connector::ToString(*it->second));
+    absl::StrAppend(&result, name, ": ", it->second.toString());
   }
   absl::StrAppend(&result, "}");
   return result;
@@ -679,7 +707,7 @@ size_t KeyConstraint::RangePrefixSize() const noexcept {
   // Count K: leading exact-equality (point) columns.
   size_t k = 0;
   for (; k < _pk_names.size(); ++k) {
-    const Range* r = FindFilter(_pk_names[k]);
+    const ColumnRange* r = FindFilter(_pk_names[k]);
     if (r == nullptr) {
       return k;
     }
@@ -699,7 +727,7 @@ bool KeyConstraint::IsSpecific() const {
     if (it == _column_filters.end()) {
       return false;
     }
-    return it->second->IsPoint();
+    return it->second.IsPoint();
   });
 }
 
@@ -710,9 +738,10 @@ KeyConstraint::GetSourceExprs(std::string_view column_name) const noexcept {
   return it != _source_exprs.end() ? it->second : kEmpty;
 }
 
-const Range* KeyConstraint::FindFilter(std::string_view column_name) const {
+const ColumnRange* KeyConstraint::FindFilter(
+  std::string_view column_name) const {
   auto it = _column_filters.find(column_name);
-  return it != _column_filters.end() ? it->second.get() : nullptr;
+  return it != _column_filters.end() ? &it->second : nullptr;
 }
 
 void KeyConstraint::AddEqFilter(std::string_view column_name,
@@ -720,9 +749,7 @@ void KeyConstraint::AddEqFilter(std::string_view column_name,
                                 const velox::core::ITypedExpr* source_expr) {
   SDB_ASSERT(!_column_filters.contains(column_name));
   auto v = ToVariant(value);
-  _column_filters.emplace(
-    column_name,
-    std::make_unique<Range>(Range{Boundary{v, true}, Boundary{v, true}}));
+  _column_filters.emplace(column_name, ColumnRange::Point(std::move(v)));
   _source_exprs[std::string(column_name)].insert(source_expr);
 }
 
@@ -731,25 +758,25 @@ void KeyConstraint::AddComparisonFilter(
   ComparisonOp op, const velox::core::ITypedExpr* source_expr) {
   SDB_ASSERT(!_column_filters.contains(column_name));
   auto v = ToVariant(value);
-  Range range;
+  ColumnRange range;
   switch (op) {
     case ComparisonOp::Gt:
-      range = Range{Boundary{v, false}, std::nullopt};
+      range = ColumnRange::LeftBound(v, false);
       break;
     case ComparisonOp::Ge:
-      range = Range{Boundary{v, true}, std::nullopt};
+      range = ColumnRange::LeftBound(v, true);
       break;
     case ComparisonOp::Lt:
-      range = Range{std::nullopt, Boundary{v, false}};
+      range = ColumnRange::RightBound(v, false);
       break;
     case ComparisonOp::Le:
-      range = Range{std::nullopt, Boundary{v, true}};
+      range = ColumnRange::RightBound(v, true);
       break;
     case ComparisonOp::None:
       SDB_ASSERT(false, "AddComparisonFilter called with ComparisonOp::None");
       break;
   }
-  _column_filters.emplace(column_name, std::make_unique<Range>(range));
+  _column_filters.emplace(column_name, std::move(range));
   _source_exprs[std::string(column_name)].insert(source_expr);
 }
 
@@ -764,11 +791,11 @@ std::optional<KeyConstraint> KeyConstraint::Intersect(
       continue;
     }
     if (!lhs_f) {
-      result._column_filters.emplace(pk_name, std::make_unique<Range>(*rhs_f));
+      result._column_filters.emplace(pk_name, *rhs_f);
       continue;
     }
     if (!rhs_f) {
-      result._column_filters.emplace(pk_name, std::make_unique<Range>(*lhs_f));
+      result._column_filters.emplace(pk_name, *lhs_f);
       continue;
     }
     auto merged_range = IntersectRange(*lhs_f, *rhs_f);
@@ -776,8 +803,7 @@ std::optional<KeyConstraint> KeyConstraint::Intersect(
       // e.g. [1,1] AND [2,2] -> contradiction
       return {};
     }
-    result._column_filters.emplace(pk_name,
-                                   std::make_unique<Range>(*merged_range));
+    result._column_filters.emplace(pk_name, *merged_range);
   }
   MergeSourceExprs(result._source_exprs, lhs._source_exprs);
   MergeSourceExprs(result._source_exprs, rhs._source_exprs);
@@ -791,8 +817,8 @@ std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
   std::string_view differing_col;
   int diff_count = 0;
   for (std::string_view pk_name : lhs._pk_names) {
-    const Range* lf = lhs.FindFilter(pk_name);
-    const Range* rf = rhs.FindFilter(pk_name);
+    const ColumnRange* lf = lhs.FindFilter(pk_name);
+    const ColumnRange* rf = rhs.FindFilter(pk_name);
     if (!lf && !rf) {
       continue;
     }
@@ -812,8 +838,8 @@ std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
     return result;  // identical constraints
   }
 
-  const Range* lf = lhs.FindFilter(differing_col);
-  const Range* rf = rhs.FindFilter(differing_col);
+  const ColumnRange* lf = lhs.FindFilter(differing_col);
+  const ColumnRange* rf = rhs.FindFilter(differing_col);
 
   // One side unconstrained on this column → union removes the constraint.
   if (!lf || !rf) {
@@ -829,7 +855,7 @@ std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
 
   auto it = result._column_filters.find(differing_col);
   SDB_ASSERT(it != result._column_filters.end());
-  it->second = std::make_unique<Range>(*merged);
+  it->second = *merged;
   return result;
 }
 
@@ -840,8 +866,8 @@ KeyConstraint KeyConstraint::ForceUnion(const KeyConstraint& lhs,
   MergeSourceExprs(result._source_exprs, lhs._source_exprs);
   MergeSourceExprs(result._source_exprs, rhs._source_exprs);
   for (std::string_view pk_name : lhs._pk_names) {
-    const Range* lf = lhs.FindFilter(pk_name);
-    const Range* rf = rhs.FindFilter(pk_name);
+    const ColumnRange* lf = lhs.FindFilter(pk_name);
+    const ColumnRange* rf = rhs.FindFilter(pk_name);
     if (!lf && !rf) {
       continue;
     }
@@ -850,8 +876,8 @@ KeyConstraint KeyConstraint::ForceUnion(const KeyConstraint& lhs,
       continue;
     }
     result._column_filters.emplace(
-      pk_name, std::make_unique<Range>(Range{MinLeft(lf->left, rf->left),
-                                             MaxRight(lf->right, rf->right)}));
+      pk_name, MakeRange(MinLeft(LeftOf(*lf), LeftOf(*rf)),
+                         MaxRight(RightOf(*lf), RightOf(*rf))));
   }
   return result;
 }
@@ -866,8 +892,8 @@ std::vector<ResolvedPoint> ToSpecificPoints(
     for (const auto& name : pk_type.names()) {
       const auto* filter = p.FindFilter(name);
       SDB_ASSERT(filter != nullptr, "pk column not found in specific point");
-      SDB_ASSERT(filter->left.has_value());
-      sp.push_back(filter->left->value);
+      SDB_ASSERT(filter->HasLeft());
+      sp.push_back(filter->left_value);
     }
     result.push_back(std::move(sp));
   }
@@ -890,7 +916,7 @@ std::vector<ResolvedRange> ToSpecificRanges(
     // range), so the prefix contains only the columns before it.
     size_t range_col_idx = 0;
     for (; range_col_idx < prefix_size; ++range_col_idx) {
-      const Range* r = kc.FindFilter(pk_type.nameOf(range_col_idx));
+      const ColumnRange* r = kc.FindFilter(pk_type.nameOf(range_col_idx));
       SDB_ASSERT(r != nullptr);
       if (!r->IsPoint()) {
         break;
@@ -903,13 +929,13 @@ std::vector<ResolvedRange> ToSpecificRanges(
 
     // Columns 0..range_col_idx-1 form the equality prefix.
     for (size_t i = 0; i < range_col_idx; ++i) {
-      const Range* r = kc.FindFilter(pk_type.nameOf(i));
-      SDB_ASSERT(r != nullptr && r->left.has_value());
-      sr.prefix.push_back(r->left->value);
+      const ColumnRange* r = kc.FindFilter(pk_type.nameOf(i));
+      SDB_ASSERT(r != nullptr && r->HasLeft());
+      sr.prefix.push_back(r->left_value);
     }
 
     // Column range_col_idx is the range column.
-    const Range* r = kc.FindFilter(pk_type.nameOf(range_col_idx));
+    const ColumnRange* r = kc.FindFilter(pk_type.nameOf(range_col_idx));
     SDB_ASSERT(r != nullptr);
     sr.range_col = *r;
 

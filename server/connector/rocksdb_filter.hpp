@@ -41,27 +41,78 @@
 
 namespace sdb::connector {
 
-struct Boundary {
-  velox::variant value;
-  bool inclusive;
-};
-
 enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
-// nullopt left/right means unbounded on that side.
-struct Range {
-  std::optional<Boundary> left;
-  std::optional<Boundary> right;
+// A possibly-bounded interval on a single column value.
+struct ColumnRange {
+  static constexpr uint8_t kZero = 0x0;
+  static constexpr uint8_t kLeftBounded = 0x1;
+  static constexpr uint8_t kLeftInclusive = 0x2;
+  static constexpr uint8_t kRightBounded = 0x4;
+  static constexpr uint8_t kRightInclusive = 0x8;
+
+  velox::variant left_value;   // valid iff HasLeft()
+  velox::variant right_value;  // valid iff HasRight()
+  uint8_t flags{kZero};
+
+  [[nodiscard]] bool HasLeft() const noexcept { return flags & kLeftBounded; }
+  [[nodiscard]] bool IsLeftInclusive() const noexcept {
+    return flags & kLeftInclusive;
+  }
+  [[nodiscard]] bool HasRight() const noexcept { return flags & kRightBounded; }
+  [[nodiscard]] bool IsRightInclusive() const noexcept {
+    return flags & kRightInclusive;
+  }
+
+  // [v, v]
+  [[nodiscard]] static ColumnRange Point(velox::variant v) {
+    ColumnRange r;
+    r.flags = kLeftBounded | kLeftInclusive | kRightBounded | kRightInclusive;
+    r.left_value = v;
+    r.right_value = std::move(v);
+    return r;
+  }
+
+  // (v, +inf) or [v, +inf)
+  [[nodiscard]] static ColumnRange LeftBound(velox::variant v, bool inclusive) {
+    ColumnRange r;
+    r.flags = kLeftBounded | (inclusive ? kLeftInclusive : kZero);
+    r.left_value = std::move(v);
+    return r;
+  }
+
+  // (-inf, v) or (-inf, v]
+  [[nodiscard]] static ColumnRange RightBound(velox::variant v,
+                                              bool inclusive) {
+    ColumnRange r;
+    r.flags = kRightBounded | (inclusive ? kRightInclusive : kZero);
+    r.right_value = std::move(v);
+    return r;
+  }
+
+  // Full two-sided interval
+  [[nodiscard]] static ColumnRange Bounded(velox::variant left_value,
+                                           bool left_inclusive,
+                                           velox::variant right_value,
+                                           bool right_inclusive) {
+    ColumnRange r;
+    r.flags = kLeftBounded | (left_inclusive ? kLeftInclusive : kZero) |
+              kRightBounded | (right_inclusive ? kRightInclusive : kZero);
+    r.left_value = std::move(left_value);
+    r.right_value = std::move(right_value);
+    return r;
+  }
 
   // Returns true when the range represents a single exact value [v, v].
   [[nodiscard]] bool IsPoint() const noexcept {
-    return left.has_value() && right.has_value() &&
-           left->value == right->value && left->inclusive && right->inclusive;
+    return HasLeft() && HasRight() && IsLeftInclusive() && IsRightInclusive() &&
+           left_value == right_value;
   }
-};
 
-// e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
-[[nodiscard]] std::string ToString(const Range& range);
+  // e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  [[nodiscard]] std::string toString() const;
+};
 
 // A set of per-column range constraints over PK columns.
 // Absent column in _column_filters means "any value" (unconstrained).
@@ -72,28 +123,8 @@ class KeyConstraint {
   explicit KeyConstraint(std::span<const std::string> pk_names)
     : _pk_names{pk_names} {}
 
-  KeyConstraint(const KeyConstraint& other)
-    : _pk_names{other._pk_names},
-      _contradictory{other._contradictory},
-      _source_exprs{other._source_exprs} {
-    for (const auto& [k, v] : other._column_filters) {
-      _column_filters.emplace(k, std::make_unique<Range>(*v));
-    }
-  }
-
-  KeyConstraint& operator=(const KeyConstraint& other) {
-    if (this != &other) {
-      _pk_names = other._pk_names;
-      _contradictory = other._contradictory;
-      _source_exprs = other._source_exprs;
-      _column_filters.clear();
-      for (const auto& [k, v] : other._column_filters) {
-        _column_filters.emplace(k, std::make_unique<Range>(*v));
-      }
-    }
-    return *this;
-  }
-
+  KeyConstraint(const KeyConstraint&) = default;
+  KeyConstraint& operator=(const KeyConstraint&) = default;
   KeyConstraint(KeyConstraint&&) = default;
   KeyConstraint& operator=(KeyConstraint&&) = default;
 
@@ -128,7 +159,8 @@ class KeyConstraint {
   [[nodiscard]] size_t RangePrefixSize() const noexcept;
 
   // Returns nullptr if the column has no filter (matches any value).
-  [[nodiscard]] const Range* FindFilter(std::string_view column_name) const;
+  [[nodiscard]] const ColumnRange* FindFilter(
+    std::string_view column_name) const;
 
   [[nodiscard]] std::span<const std::string> PkNames() const noexcept {
     return _pk_names;
@@ -182,11 +214,7 @@ class KeyConstraint {
   bool _contradictory =
     false;  // true → contradictory predicate, matches no rows
 
-  // TODO(mkornaukhov)
-  // Range should really be much smaller, for now it's 64 bytes
-  // But it should be just 2 varints + 4 bools -> 16 * 2 + 1 byte + alignment ->
-  // 40 bytes. It should be OK to paste it into flat hash map
-  containers::FlatHashMap<std::string, std::unique_ptr<Range>> _column_filters;
+  containers::FlatHashMap<std::string, ColumnRange> _column_filters;
   SourceExprsMap _source_exprs;
 };
 
@@ -205,7 +233,7 @@ using ResolvedPoint = std::vector<velox::variant>;
 // Analogous to SpecificPoint but for range scans.
 struct ResolvedRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
-  Range range_col;                     // constraint on column K
+  ColumnRange range_col;               // constraint on column K
 
   // Ordering: compare the effective (K+1)-element sequence element by element.
   // Each element is either a prefix value (exact) or, at position K, the
@@ -220,7 +248,7 @@ struct ResolvedRange {
         return &sr.prefix[i];
       }
       SDB_ASSERT(i == sr.prefix.size());
-      return sr.range_col.left ? &sr.range_col.left->value : nullptr;
+      return sr.range_col.HasLeft() ? &sr.range_col.left_value : nullptr;
     };
 
     const size_t len = prefix.size() + 1;  // this range's sequence length

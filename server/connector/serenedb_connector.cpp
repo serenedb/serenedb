@@ -273,7 +273,7 @@ std::string SereneDBConnectorTableHandle::toString() const {
           if (k > 0) {
             absl::StrAppend(out, ", ");
           }
-          absl::StrAppend(out, names[k], "=", ToString(sr.range_col));
+          absl::StrAppend(out, names[k], "=", sr.range_col.toString());
         }
         absl::StrAppend(out, "}");
       });

@@ -67,7 +67,6 @@ void SetResultValue(std::string_view value, size_t idx,
   }
 }
 
-
 }  // namespace
 
 template<typename Source>
@@ -524,8 +523,7 @@ RocksDBPointLookupDataSource<Source>::RocksDBPointLookupDataSource(
   velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
   ObjectId object_key, const std::vector<SpecificPoint>& values,
   velox::RowTypePtr pk_type, size_t output_column_count,
-  velox::core::TypedExprPtr remaining_filter,
-  const rocksdb::Snapshot* snapshot,
+  velox::core::TypedExprPtr remaining_filter, const rocksdb::Snapshot* snapshot,
   velox::core::ExpressionEvaluator* evaluator, Source& source)
   : RocksDBBaseDataSource{memory_pool,
                           cf,
@@ -547,8 +545,9 @@ RocksDBPointLookupDataSource<Source>::RocksDBPointLookupDataSource(
     _multiget_ctx{_cf, _read_options} {
   _sorted_col_indices.resize(_column_ids.size());
   std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
-  std::sort(_sorted_col_indices.begin(), _sorted_col_indices.end(),
-            [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
+  std::sort(
+    _sorted_col_indices.begin(), _sorted_col_indices.end(),
+    [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
 }
 
 template<typename Source>
@@ -568,9 +567,8 @@ void RocksDBPointLookupDataSource<Source>::PrepareBatchKeys(
 
 template<typename Source>
 template<typename VectorType>
-void RocksDBPointLookupDataSource<Source>::ReadDispatch(std::string_view value,
-                                                        velox::vector_size_t idx,
-                                                        VectorType& result) {
+void RocksDBPointLookupDataSource<Source>::ReadDispatch(
+  std::string_view value, velox::vector_size_t idx, VectorType& result) {
   if (value.empty()) {
     result.setNull(idx, true);
   } else {
@@ -586,7 +584,8 @@ velox::VectorPtr RocksDBPointLookupDataSource<Source>::ReadColumnMakeMask(
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), batch_size, &_memory_pool);
 
-  // Build all keys for the full batch upfront so ReadColumnWithMask can reuse _batch_keys
+  // Build all keys for the full batch upfront so ReadColumnWithMask can reuse
+  // _batch_keys
   PrepareBatchKeys(col_id, _values_offset, batch_size);
 
   size_t found_count = 0;
@@ -756,9 +755,8 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
 
   // Step 1 with column data: fetch least column, build presence mask, fill vec.
   const auto& least_column_type = _read_type->childAt(least_column_index);
-  velox::VectorPtr least_column_vec =
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadColumnMakeMask, least_column_type->kind(),
-                                       least_column_id, batch_size);
+  velox::VectorPtr least_column_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    ReadColumnMakeMask, least_column_type->kind(), least_column_id, batch_size);
   const auto found_count = least_column_vec->size();
   SDB_ASSERT(_present_rows_batch.count() == found_count);
 
@@ -769,9 +767,8 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
        std::span{_sorted_col_indices.begin() + 1, _sorted_col_indices.end()}) {
     const auto col_id = _column_ids[col_idx];
     const auto& type = _read_type->childAt(col_idx);
-    columns[col_idx] =
-      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadColumnWithMask, type->kind(),
-                                         col_id, found_count);
+    columns[col_idx] = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      ReadColumnWithMask, type->kind(), col_id, found_count);
   }
 
   _values_offset += batch_size;

@@ -34,9 +34,10 @@ namespace {
 
 // TODO(mbkkt) benchmark and choose best threshold
 constexpr size_t kSeekThreshold = 100;
-constexpr size_t kColumnKeySize = sizeof(ObjectId) + sizeof(catalog::Column::Id);
+constexpr size_t kColumnKeySize =
+  sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
-}
+}  // namespace
 
 RocksDBMaterializer::RocksDBMaterializer(
   velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
@@ -222,17 +223,17 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
     it_options.adaptive_readahead = true;
     it_options.auto_prefix_mode = true;
     if constexpr (std::is_same_v<MultiGetSource, rocksdb::Transaction>) {
-      return std::unique_ptr<rocksdb::Iterator>(src.GetIterator(it_options, &_cf));
+      return std::unique_ptr<rocksdb::Iterator>(
+        src.GetIterator(it_options, &_cf));
     } else {
-      return std::unique_ptr<rocksdb::Iterator>(src.NewIterator(it_options, &_cf));
+      return std::unique_ptr<rocksdb::Iterator>(
+        src.NewIterator(it_options, &_cf));
     }
   };
 
   if (it == _iterators.end()) {
     column_iterator =
-      _iterators
-        .emplace(column_id, make_iterator())
-        .first->second.get();
+      _iterators.emplace(column_id, make_iterator()).first->second.get();
   } else {
     column_iterator = it->second.get();
   }
@@ -303,7 +304,8 @@ void RocksDBMaterializer::DispatchColumnRead(
     if (_db) {
       SeekIterateColumnKeys(column_key, column_id, row_keys, *_db, func);
     } else {
-      SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction, func);
+      SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction,
+                            func);
     }
   } else if (row_keys.size() > MultiGetContext::kMultiGetThreshold) {
     if (_db) {
@@ -323,13 +325,13 @@ velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
-  DispatchColumnRead(column_key, column_id, row_keys,
-                     [&](size_t original_idx, [[maybe_unused]] std::string_view key,
-                         std::string_view value) {
-                       ReadScalarType(value,
-                                      static_cast<velox::vector_size_t>(original_idx),
-                                      *result);
-                     });
+  DispatchColumnRead(
+    column_key, column_id, row_keys,
+    [&](size_t original_idx, [[maybe_unused]] std::string_view key,
+        std::string_view value) {
+      ReadScalarType(value, static_cast<velox::vector_size_t>(original_idx),
+                     *result);
+    });
   return result;
 }
 

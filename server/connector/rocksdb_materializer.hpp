@@ -88,7 +88,8 @@ class RocksDBMaterializer {
 
   template<velox::TypeKind Kind>
   velox::VectorPtr ReadScalarColumnKeys(std::span<const std::string> row_keys,
-                                        std::string_view column_key,  catalog::Column::Id column_id);
+                                        std::string_view column_key,
+                                        catalog::Column::Id column_id);
 
   template<typename T>
   static void ReadScalarType(std::string_view value, velox::vector_size_t idx,

@@ -171,18 +171,19 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
                                           velox::ContinueFuture& future) final;
 
  private:
-
   void PrepareBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
 
   template<velox::TypeKind Kind>
-  velox::VectorPtr ReadColumnMakeMask(catalog::Column::Id col_id, size_t batch_size);
+  velox::VectorPtr ReadColumnMakeMask(catalog::Column::Id col_id,
+                                      size_t batch_size);
 
   template<velox::TypeKind Kind>
   velox::VectorPtr ReadColumnWithMask(catalog::Column::Id col_id,
-                                   size_t found_count);
+                                      size_t found_count);
 
   template<typename VectorType>
-  void ReadDispatch(std::string_view value, velox::vector_size_t idx, VectorType& result);
+  void ReadDispatch(std::string_view value, velox::vector_size_t idx,
+                    VectorType& result);
 
   const std::vector<SpecificPoint>& _values;
   velox::RowTypePtr _pk_type;
@@ -194,10 +195,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   size_t _values_offset = 0;
   rocksdb::ReadOptions _read_options;
   MultiGetContext _multiget_ctx;
-  // full keys built in Step 1; reused across columns in Step 2
+  // TODO(Dronplane): better to make it all flat buffer. But size calculation is
+  // complicated as we do not have all keys pre-encoded. So either growing
+  // buffer (like vector) or two-pass computation.
   std::vector<std::string> _batch_keys;
   std::vector<rocksdb::Slice> _key_slices;
-  // reused across ReadColumnWithMask calls; all col prefixes have same size
   std::string _col_prefix;
 };
 

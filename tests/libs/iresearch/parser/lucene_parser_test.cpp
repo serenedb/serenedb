@@ -682,7 +682,7 @@ TEST_F(LuceneParserTest, ParseError_BoostNonNumeric) {
 }
 
 TEST_F(LuceneParserTest, NotBetweenTerms) {
-  // guinea NOT pig → Optional[guinea], Required[Not(pig)]
+  // guinea NOT pig -> Optional[guinea], Required[Not(pig)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "guinea NOT pig").ok());
   ASSERT_EQ(1, RequiredRoot().size());
 
@@ -697,7 +697,7 @@ TEST_F(LuceneParserTest, NotBetweenTerms) {
 }
 
 TEST_F(LuceneParserTest, MinusBetweenTerms) {
-  // guinea -pig → Optional[guinea], Required[Not(pig)]
+  // guinea -pig -> Optional[guinea], Required[Not(pig)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "guinea -pig").ok());
   ASSERT_EQ(1, RequiredRoot().size());
 
@@ -712,7 +712,7 @@ TEST_F(LuceneParserTest, MinusBetweenTerms) {
 }
 
 TEST_F(LuceneParserTest, PlusBetweenTerms) {
-  // guinea +pig → Optional[guinea], Required[pig]
+  // guinea +pig -> Optional[guinea], Required[pig]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "guinea +pig").ok());
   ASSERT_EQ(1, RequiredRoot().size());
   AssertTerm(RequiredRoot()[0], "content", "pig");
@@ -722,7 +722,7 @@ TEST_F(LuceneParserTest, PlusBetweenTerms) {
 }
 
 TEST_F(LuceneParserTest, AndThenOr) {
-  // a AND b OR c → Required[a, b], Optional[c]
+  // a AND b OR c -> Required[a, b], Optional[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR c").ok());
   ASSERT_EQ(2, RequiredRoot().size());
   AssertTerm(RequiredRoot()[0], "content", "a");
@@ -733,7 +733,7 @@ TEST_F(LuceneParserTest, AndThenOr) {
 }
 
 TEST_F(LuceneParserTest, OrThenAnd) {
-  // a OR b AND c → Required[b, c], Optional[a]
+  // a OR b AND c -> Required[b, c], Optional[a]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR b AND c").ok());
   ASSERT_EQ(2, RequiredRoot().size());
   AssertTerm(RequiredRoot()[0], "content", "b");
@@ -744,7 +744,7 @@ TEST_F(LuceneParserTest, OrThenAnd) {
 }
 
 TEST_F(LuceneParserTest, FourChainedAnd) {
-  // a AND b AND c AND d → Required[a, b, c, d]
+  // a AND b AND c AND d -> Required[a, b, c, d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b AND c AND d").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(4, RequiredRoot().size());
@@ -755,7 +755,7 @@ TEST_F(LuceneParserTest, FourChainedAnd) {
 }
 
 TEST_F(LuceneParserTest, NotBeforeAnd) {
-  // NOT a AND b → Required[Not(a), b]
+  // NOT a AND b -> Required[Not(a), b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT a AND b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -770,7 +770,7 @@ TEST_F(LuceneParserTest, NotBeforeAnd) {
 }
 
 TEST_F(LuceneParserTest, AndBeforeNot) {
-  // a AND NOT b → Required[a, Not(b)]
+  // a AND NOT b -> Required[a, Not(b)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND NOT b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -785,7 +785,7 @@ TEST_F(LuceneParserTest, AndBeforeNot) {
 }
 
 TEST_F(LuceneParserTest, NotBetweenMultipleTerms) {
-  // a NOT b c → Optional[a, c], Required[Not(b)]
+  // a NOT b c -> Optional[a, c], Required[Not(b)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a NOT b c").ok());
   ASSERT_EQ(2, OptionalRoot().size());
   ASSERT_EQ(1, RequiredRoot().size());
@@ -801,7 +801,7 @@ TEST_F(LuceneParserTest, NotBetweenMultipleTerms) {
 }
 
 TEST_F(LuceneParserTest, AndWithMinusModifier) {
-  // a AND -b → Required[a, Not(b)]
+  // a AND -b -> Required[a, Not(b)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND -b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -816,7 +816,7 @@ TEST_F(LuceneParserTest, AndWithMinusModifier) {
 }
 
 TEST_F(LuceneParserTest, AndWithPlusModifier) {
-  // a AND +b → Required[a, b]
+  // a AND +b -> Required[a, b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND +b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -826,7 +826,7 @@ TEST_F(LuceneParserTest, AndWithPlusModifier) {
 }
 
 TEST_F(LuceneParserTest, ComplexAndNotChain) {
-  // a AND -b NOT c NOT d AND e → Required[a, Not(b), Not(c), Not(d), e]
+  // a AND -b NOT c NOT d AND e -> Required[a, Not(b), Not(c), Not(d), e]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND -b NOT c NOT d AND e").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(5, RequiredRoot().size());
@@ -855,7 +855,7 @@ TEST_F(LuceneParserTest, ComplexAndNotChain) {
 }
 
 TEST_F(LuceneParserTest, MinusAndChain) {
-  // -a AND -b AND -c → Required[Not(a), Not(b), Not(c)]
+  // -a AND -b AND -c -> Required[Not(a), Not(b), Not(c)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-a AND -b AND -c").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(3, RequiredRoot().size());
@@ -877,7 +877,7 @@ TEST_F(LuceneParserTest, MinusAndChain) {
 }
 
 TEST_F(LuceneParserTest, OrWithMinusModifier) {
-  // a OR -b → Optional[a], Required[Not(b)]
+  // a OR -b -> Optional[a], Required[Not(b)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR -b").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   ASSERT_EQ(1, RequiredRoot().size());
@@ -892,7 +892,7 @@ TEST_F(LuceneParserTest, OrWithMinusModifier) {
 }
 
 TEST_F(LuceneParserTest, OrWithPlusModifier) {
-  // a OR +b → Optional[a], Required[b]
+  // a OR +b -> Optional[a], Required[b]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR +b").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   ASSERT_EQ(1, RequiredRoot().size());
@@ -902,7 +902,7 @@ TEST_F(LuceneParserTest, OrWithPlusModifier) {
 }
 
 TEST_F(LuceneParserTest, MinusOrChain) {
-  // -a OR -b → Required[Not(a), Not(b)]
+  // -a OR -b -> Required[Not(a), Not(b)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-a OR -b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -921,7 +921,7 @@ TEST_F(LuceneParserTest, MinusOrChain) {
 }
 
 TEST_F(LuceneParserTest, OrWithMultipleMinusModifiers) {
-  // a OR -b OR -c → Optional[a], Required[Not(b), Not(c)]
+  // a OR -b OR -c -> Optional[a], Required[Not(b), Not(c)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR -b OR -c").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -942,7 +942,7 @@ TEST_F(LuceneParserTest, OrWithMultipleMinusModifiers) {
 }
 
 TEST_F(LuceneParserTest, MixedAndOrSimple) {
-  // a AND b OR c → Required[a, b], Optional[c]
+  // a AND b OR c -> Required[a, b], Optional[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR c").ok());
   ASSERT_EQ(2, RequiredRoot().size());
   ASSERT_EQ(1, OptionalRoot().size());
@@ -953,7 +953,7 @@ TEST_F(LuceneParserTest, MixedAndOrSimple) {
 }
 
 TEST_F(LuceneParserTest, MixedOrAndSimple) {
-  // a OR b AND c → Optional[a], Required[b, c]
+  // a OR b AND c -> Optional[a], Required[b, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR b AND c").ok());
   ASSERT_EQ(2, RequiredRoot().size());
   ASSERT_EQ(1, OptionalRoot().size());
@@ -964,7 +964,7 @@ TEST_F(LuceneParserTest, MixedOrAndSimple) {
 }
 
 TEST_F(LuceneParserTest, AndWithMinusThenOr) {
-  // a AND -b OR c → Required[a, Not(b)], Optional[c]
+  // a AND -b OR c -> Required[a, Not(b)], Optional[c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND -b OR c").ok());
   ASSERT_EQ(2, RequiredRoot().size());
   ASSERT_EQ(1, OptionalRoot().size());
@@ -981,7 +981,7 @@ TEST_F(LuceneParserTest, AndWithMinusThenOr) {
 }
 
 TEST_F(LuceneParserTest, OrWithMinusThenAnd) {
-  // a OR -b AND c → Required[Not(b), a, c]
+  // a OR -b AND c -> Required[Not(b), a, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a OR -b AND c").ok());
   ASSERT_EQ(3, RequiredRoot().size());
   ASSERT_TRUE(OptionalRoot().empty());
@@ -997,7 +997,7 @@ TEST_F(LuceneParserTest, OrWithMinusThenAnd) {
 }
 
 TEST_F(LuceneParserTest, ComplexMixedAndOrWithModifiers) {
-  // +a AND b OR -c AND d → Required[a, b, Not(c), d]
+  // +a AND b OR -c AND d -> Required[a, b, Not(c), d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+a AND b OR -c AND d").ok());
   ASSERT_EQ(4, RequiredRoot().size());
   ASSERT_TRUE(OptionalRoot().empty());
@@ -1015,7 +1015,7 @@ TEST_F(LuceneParserTest, ComplexMixedAndOrWithModifiers) {
 }
 
 TEST_F(LuceneParserTest, PlusOrMinusAnd) {
-  // +a OR -b AND c → Required[a, Not(b), c]
+  // +a OR -b AND c -> Required[a, Not(b), c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+a OR -b AND c").ok());
   ASSERT_EQ(3, RequiredRoot().size());
   ASSERT_TRUE(OptionalRoot().empty());
@@ -1032,7 +1032,7 @@ TEST_F(LuceneParserTest, PlusOrMinusAnd) {
 }
 
 TEST_F(LuceneParserTest, AndOrAndFlat) {
-  // a AND b OR -c AND d → Required[a, b, Not(c), d]
+  // a AND b OR -c AND d -> Required[a, b, Not(c), d]
   // Flat Lucene-like behavior: modifiers create MUST/MUST_NOT regardless of OR
   // This is NOT grouped as (a AND b) OR (-c AND d) - it's flat!
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR -c AND d").ok());
@@ -1052,7 +1052,7 @@ TEST_F(LuceneParserTest, AndOrAndFlat) {
 }
 
 TEST_F(LuceneParserTest, ManyImplicitOr) {
-  // a b c d e → Optional[a, b, c, d, e]
+  // a b c d e -> Optional[a, b, c, d, e]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a b c d e").ok());
   ASSERT_TRUE(RequiredRoot().empty());
   ASSERT_EQ(5, OptionalRoot().size());
@@ -1066,7 +1066,7 @@ TEST_F(LuceneParserTest, ManyImplicitOr) {
 }
 
 TEST_F(LuceneParserTest, AllExcluded) {
-  // -a -b → Required[Not(a), Not(b)]
+  // -a -b -> Required[Not(a), Not(b)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "-a -b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -1083,7 +1083,7 @@ TEST_F(LuceneParserTest, AllExcluded) {
 }
 
 TEST_F(LuceneParserTest, AllRequired) {
-  // +a +b +c → Required[a, b, c]
+  // +a +b +c -> Required[a, b, c]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+a +b +c").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(3, RequiredRoot().size());
@@ -1094,7 +1094,7 @@ TEST_F(LuceneParserTest, AllRequired) {
 }
 
 TEST_F(LuceneParserTest, BoostedPhrase) {
-  // "hello world"^2 → Optional[phrase^2]
+  // "hello world"^2 -> Optional[phrase^2]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"^2").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertPhrase(OptionalRoot()[0], "content", 2.0f);
@@ -1107,14 +1107,14 @@ TEST_F(LuceneParserTest, BoostedPhraseFloat) {
 }
 
 TEST_F(LuceneParserTest, FieldWithBoost) {
-  // title:hello^3 → Optional[title:hello^3]
+  // title:hello^3 -> Optional[title:hello^3]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hello^3").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertTerm(OptionalRoot()[0], "title", "hello", 3.0f);
 }
 
 TEST_F(LuceneParserTest, FieldWithRange) {
-  // date:[aaa TO zzz] → Optional[date:range]
+  // date:[aaa TO zzz] -> Optional[date:range]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "date:[aaa TO zzz]").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertRange(OptionalRoot()[0], "date", "aaa", irs::BoundType::Inclusive,
@@ -1122,7 +1122,7 @@ TEST_F(LuceneParserTest, FieldWithRange) {
 }
 
 TEST_F(LuceneParserTest, FieldWithExclusiveRange) {
-  // price:{low TO high} → Optional[price:range exclusive]
+  // price:{low TO high} -> Optional[price:range exclusive]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "price:{low TO high}").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertRange(OptionalRoot()[0], "price", "low", irs::BoundType::Exclusive,
@@ -1130,7 +1130,7 @@ TEST_F(LuceneParserTest, FieldWithExclusiveRange) {
 }
 
 TEST_F(LuceneParserTest, FieldWithGroupedAnd) {
-  // title:(a AND b) → Optional[group(Required[title:a, title:b])]
+  // title:(a AND b) -> Optional[group(Required[title:a, title:b])]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:(a AND b)").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   const auto& group =
@@ -1144,7 +1144,7 @@ TEST_F(LuceneParserTest, FieldWithGroupedAnd) {
 }
 
 TEST_F(LuceneParserTest, NotGroup) {
-  // NOT (a b) → Required[Not(group)]
+  // NOT (a b) -> Required[Not(group)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT (a b)").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(1, RequiredRoot().size());
@@ -1160,7 +1160,7 @@ TEST_F(LuceneParserTest, NotGroup) {
 }
 
 TEST_F(LuceneParserTest, BoostedFuzzy) {
-  // hello~2^3 → Optional[fuzzy(hello, dist=2, boost=3)]
+  // hello~2^3 -> Optional[fuzzy(hello, dist=2, boost=3)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~2^3").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertFuzzy(OptionalRoot()[0], "content", "hello", 2, 3.0f);
@@ -1173,21 +1173,21 @@ TEST_F(LuceneParserTest, BoostedFuzzyFloat) {
 }
 
 TEST_F(LuceneParserTest, FieldWithFuzzy) {
-  // title:hello~1 → Optional[title:fuzzy(hello, 1)]
+  // title:hello~1 -> Optional[title:fuzzy(hello, 1)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hello~1").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertFuzzy(OptionalRoot()[0], "title", "hello", 1);
 }
 
 TEST_F(LuceneParserTest, FieldWithPrefix) {
-  // title:hel* → Optional[title:prefix(hel)]
+  // title:hel* -> Optional[title:prefix(hel)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hel*").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertPrefix(OptionalRoot()[0], "title", "hel");
 }
 
 TEST_F(LuceneParserTest, BoostedPrefix) {
-  // hel*^2 → Optional[prefix(hel)^2]
+  // hel*^2 -> Optional[prefix(hel)^2]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hel*^2").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertPrefix(OptionalRoot()[0], "content", "hel", 2.0f);
@@ -1200,7 +1200,7 @@ TEST_F(LuceneParserTest, BoostedPrefixFloat) {
 }
 
 TEST_F(LuceneParserTest, MixedAndImplicitOrAnd) {
-  // a AND b c AND d → Required[a, b, c, d]
+  // a AND b c AND d -> Required[a, b, c, d]
   // AND grabs its immediate neighbors; second AND also promotes c
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b c AND d").ok());
   ASSERT_TRUE(OptionalRoot().empty());
@@ -1213,7 +1213,7 @@ TEST_F(LuceneParserTest, MixedAndImplicitOrAnd) {
 }
 
 TEST_F(LuceneParserTest, PlusAndMinusGroup) {
-  // +(a b) -(c d) → Required[group(a,b), Not(group(c,d))]
+  // +(a b) -(c d) -> Required[group(a,b), Not(group(c,d))]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+(a b) -(c d)").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -1232,14 +1232,14 @@ TEST_F(LuceneParserTest, PlusAndMinusGroup) {
 }
 
 TEST_F(LuceneParserTest, FieldWithWildcard) {
-  // title:h*llo → Optional[title:wildcard(h*llo)]
+  // title:h*llo -> Optional[title:wildcard(h*llo)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:h*llo").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertWildcard(OptionalRoot()[0], "title", "h*llo");
 }
 
 TEST_F(LuceneParserTest, RangeWithUnboundedMax) {
-  // [alpha TO *] → Optional[range(alpha, unbounded)]
+  // [alpha TO *] -> Optional[range(alpha, unbounded)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[alpha TO *]").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertRange(OptionalRoot()[0], "content", "alpha", irs::BoundType::Inclusive,
@@ -1247,7 +1247,7 @@ TEST_F(LuceneParserTest, RangeWithUnboundedMax) {
 }
 
 TEST_F(LuceneParserTest, RangeFullyUnbounded) {
-  // [* TO *] → Optional[range(unbounded, unbounded)]
+  // [* TO *] -> Optional[range(unbounded, unbounded)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "[* TO *]").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertRange(OptionalRoot()[0], "content", "", irs::BoundType::Unbounded, "",
@@ -1271,7 +1271,7 @@ TEST_F(LuceneParserTest, MultipleFieldQueries) {
 }
 
 TEST_F(LuceneParserTest, NestedGroupsWithModifiers) {
-  // +(a (b OR c)) -d → Required[group, Not(d)]
+  // +(a (b OR c)) -d -> Required[group, Not(d)]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+(a (b OR c)) -d").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -1293,28 +1293,28 @@ TEST_F(LuceneParserTest, NestedGroupsWithModifiers) {
 }
 
 TEST_F(LuceneParserTest, PhraseWithSlop) {
-  // "hello world"~3 → Optional[phrase with slop]
+  // "hello world"~3 -> Optional[phrase with slop]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~3").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertPhrase(OptionalRoot()[0], "content");
 }
 
 TEST_F(LuceneParserTest, PhraseWithSlopAndBoost) {
-  // "hello world"~3^2 → Optional[phrase with slop and boost]
+  // "hello world"~3^2 -> Optional[phrase with slop and boost]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~3^2").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertPhrase(OptionalRoot()[0], "content", 2.0f);
 }
 
 TEST_F(LuceneParserTest, FieldPhraseWithSlop) {
-  // title:"hello world"~4 → Optional[title:phrase with slop]
+  // title:"hello world"~4 -> Optional[title:phrase with slop]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:\"hello world\"~4").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   AssertPhrase(OptionalRoot()[0], "title");
 }
 
 TEST_F(LuceneParserTest, AndOrChain) {
-  // a AND b OR c AND d → Required[a, b, c, d]
+  // a AND b OR c AND d -> Required[a, b, c, d]
   // First AND promotes a,b; OR leaves c in Optional; second AND promotes c,d
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR c AND d").ok());
   // After "a AND b": Required[a, b], Optional[]
@@ -1515,7 +1515,7 @@ TEST_F(LuceneParserTest, ParseError_WhitespaceOnly) {
 }
 
 TEST_F(LuceneParserTest, FieldRestoresAfterSingleTerm) {
-  // title:hello world → hello=title, world=content (default)
+  // title:hello world -> hello=title, world=content (default)
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:hello world").ok());
   ASSERT_EQ(2, OptionalRoot().size());
   AssertTerm(OptionalRoot()[0], "title", "hello");
@@ -1524,7 +1524,7 @@ TEST_F(LuceneParserTest, FieldRestoresAfterSingleTerm) {
 }
 
 TEST_F(LuceneParserTest, FieldScopeWithAnd) {
-  // title:a AND b → a=title, b=content; both Required
+  // title:a AND b -> a=title, b=content; both Required
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:a AND b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -1535,7 +1535,7 @@ TEST_F(LuceneParserTest, FieldScopeWithAnd) {
 }
 
 TEST_F(LuceneParserTest, DifferentFieldsWithAnd) {
-  // title:a AND author:b → a=title, b=author; both Required
+  // title:a AND author:b -> a=title, b=author; both Required
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:a AND author:b").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(2, RequiredRoot().size());
@@ -1546,7 +1546,7 @@ TEST_F(LuceneParserTest, DifferentFieldsWithAnd) {
 }
 
 TEST_F(LuceneParserTest, TwoAndGroupsOrd) {
-  // (a AND b) OR (c AND d) → Optional[group(Req[a,b]), group(Req[c,d])]
+  // (a AND b) OR (c AND d) -> Optional[group(Req[a,b]), group(Req[c,d])]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(a AND b) OR (c AND d)").ok());
   ASSERT_EQ(2, OptionalRoot().size());
   const auto& g1 =
@@ -1565,7 +1565,7 @@ TEST_F(LuceneParserTest, TwoAndGroupsOrd) {
 }
 
 TEST_F(LuceneParserTest, NotAndGroup) {
-  // NOT (a AND b) → Required[Not(group(Req[a,b]))]
+  // NOT (a AND b) -> Required[Not(group(Req[a,b]))]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "NOT (a AND b)").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(1, RequiredRoot().size());
@@ -1582,7 +1582,7 @@ TEST_F(LuceneParserTest, NotAndGroup) {
 }
 
 TEST_F(LuceneParserTest, ModifiersInsideFieldGroup) {
-  // field:(+a -b c) → group with a=Required, Not(b)=Required, c=Optional
+  // field:(+a -b c) -> group with a=Required, Not(b)=Required, c=Optional
   ASSERT_TRUE(sdb::ParseQuery(ctx, "field:(+a -b c)").ok());
   ASSERT_EQ(1, OptionalRoot().size());
   const auto& group =
@@ -1602,7 +1602,7 @@ TEST_F(LuceneParserTest, ModifiersInsideFieldGroup) {
 }
 
 TEST_F(LuceneParserTest, AndWithGroupInMiddle) {
-  // a AND (b OR c) AND d → Required[a, group(Opt[b,c]), d]
+  // a AND (b OR c) AND d -> Required[a, group(Opt[b,c]), d]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND (b OR c) AND d").ok());
   ASSERT_TRUE(OptionalRoot().empty());
   ASSERT_EQ(3, RequiredRoot().size());
@@ -1668,7 +1668,7 @@ TEST_F(LuceneParserTest, ThreeLevelNestedGroups) {
 
 TEST_F(LuceneParserTest, NestedGroupsWithMixedOperators) {
   // (+(a b) AND (c OR d)) OR e
-  // Inner: +group(a,b) AND group(c,d) → all Required in outer group
+  // Inner: +group(a,b) AND group(c,d) -> all Required in outer group
   // Then OR e at top level
   ASSERT_TRUE(sdb::ParseQuery(ctx, "(+(a b) AND (c OR d)) OR e").ok());
   ASSERT_EQ(2, OptionalRoot().size());

@@ -96,7 +96,6 @@ PgTypePhysicalInfo GetPhysicalInfo(int32_t type_oid) {
 Oid GetCollationForType(int32_t type_oid) {
   switch (type_oid) {
     case PgTypeOID::kText:
-    case PgTypeOID::kVarchar:
     case PgTypeOID::kChar:
       return 100;  // default collation
     default:
@@ -120,7 +119,7 @@ void EmitColumnsForTable(const catalog::Table& table,
 
   for (size_t i = 0; i < columns.size(); ++i) {
     auto& col = columns[i];
-    auto type_oid = GetTypeOID(col.type);
+    auto type_oid = Type2Oid(col.type);
     auto phys = GetPhysicalInfo(type_oid);
 
     bool is_pk = false;
@@ -141,7 +140,7 @@ void EmitColumnsForTable(const catalog::Table& table,
     PgAttribute row{
       .attrelid = table.GetId().id(),
       .attname = col.name,
-      .atttypid = static_cast<Oid>(type_oid),
+      .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
       .atttypmod = -1,
@@ -173,13 +172,13 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
 
   for (size_t i = 0; i < row_type->size(); ++i) {
     auto child_type = row_type->childAt(i);
-    auto type_oid = GetTypeOID(child_type);
+    auto type_oid = Type2Oid(child_type);
     auto phys = GetPhysicalInfo(type_oid);
 
     PgAttribute row{
       .attrelid = table.Id().id(),
       .attname = row_type->nameOf(i),
-      .atttypid = static_cast<Oid>(type_oid),
+      .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
       .atttypmod = -1,

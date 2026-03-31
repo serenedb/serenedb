@@ -117,7 +117,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               ELSE
                   ARRAY
                   (
-                      SELECT rolname
+                      SELECT rolname::varchar
                       FROM pg_catalog.pg_authid
                       WHERE oid = ANY (pol.polroles) ORDER BY 1
                   )

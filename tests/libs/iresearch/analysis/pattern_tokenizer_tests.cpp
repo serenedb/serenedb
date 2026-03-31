@@ -275,7 +275,7 @@ TEST_F(PatternTokenizerTests, test_delimiter_at_boundaries) {
 }
 
 TEST_F(PatternTokenizerTests, test_utf8_split_comma_cyrillic) {
-  // "аба" = 6 UTF-8 bytes, comma, "цаба" = 8 bytes → total 15.
+  // "аба" = 6 UTF-8 bytes, comma, "цаба" = 8 bytes -> total 15.
   std::string_view data("аба,цаба");
   irs::analysis::PatternTokenizer stream(",", -1);
 

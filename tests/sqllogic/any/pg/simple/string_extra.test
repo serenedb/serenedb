@@ -591,3 +591,184 @@ SELECT quote_ident('has space');
 ----
 quote_ident
 "has space"
+
+
+# format
+
+query
+SELECT format('Hello %s', 'World');
+----
+format
+Hello World
+
+
+query
+SELECT format('Hello %s, %1$s', 'World');
+----
+format
+Hello World, World
+
+
+query
+SELECT format('Testing %%, Pro%sQL', 'gre');
+----
+format
+Testing %, ProgreQL
+
+
+query
+SELECT format('INSERT INTO %I VALUES(%L)', 'Foo bar', E'b\\a\'r');
+----
+format
+INSERT INTO "Foo bar" VALUES(E'b\\\\a''r')
+
+
+query
+SELECT format('|%10s|', 'foo');
+----
+format
+|       foo|
+
+
+query
+SELECT format('|%-10s|', 'foo');
+----
+format
+|foo       |
+
+
+query
+SELECT format('|%s|', 'foo');
+----
+format
+|foo|
+
+
+query
+SELECT format('%s %s', 'one', 'two');
+----
+format
+one two
+
+
+query
+SELECT format('%2$s %1$s', 'one', 'two');
+----
+format
+two one
+
+
+query
+SELECT format('%L', NULL::text);
+----
+format
+NULL
+
+
+query
+SELECT format('|%5s|', 'x');
+----
+format
+|    x|
+
+
+query
+SELECT format('|%-5s|', 'x');
+----
+format
+|x    |
+
+
+query
+SELECT format('%3$s %1$s %2$s', 'a', 'b', 'c');
+----
+format
+c a b
+
+
+query
+SELECT format('%1$s %1$s', 'repeat');
+----
+format
+repeat repeat
+
+
+query
+SELECT format('%s', NULL);
+----
+format
+(empty)
+
+
+query
+SELECT format('%I', 'simple');
+----
+format
+simple
+
+
+query
+SELECT format('%I', 'Hello World');
+----
+format
+"Hello World"
+
+
+query
+SELECT format('%I', 'with"quote');
+----
+format
+"with""quote"
+
+
+query
+SELECT format('%L', 'it''s');
+----
+format
+'it''s'
+
+
+query
+SELECT format('%L', E'back\\slash');
+----
+format
+E'back\\\\slash'
+
+
+query
+SELECT format('no args');
+----
+format
+no args
+
+
+query
+SELECT format('100%% done');
+----
+format
+100% done
+
+
+# PostgreSQL format() does not support '*' for dynamic width (unlike C printf).
+# '*' is treated as an unknown type specifier and produces an error.
+
+onlyif serenedb
+statement error
+SELECT format('%*s', 'foo');
+----
+db error: ERROR: unrecognized format() type specifier "*"
+
+
+onlyif serenedb
+statement error
+SELECT format('%*s', 5, 'foo');
+----
+db error: ERROR: function pg_format(unknown, integer, unknown) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+onlyif serenedb
+statement error
+SELECT format('hello %q world', 'x');
+----
+db error: ERROR: unrecognized format() type specifier "q"

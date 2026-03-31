@@ -52,7 +52,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
     values.push_back({
       .oid = schema->GetId().id(),
       .nspname = schema->GetName(),
-      .nspowner = owner,
+      .nspowner = owner.id(),
     });
   }
 }

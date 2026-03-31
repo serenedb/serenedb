@@ -1,0 +1,78 @@
+control substitution on
+
+statement ok
+CREATE TYPE address AS (
+  street VARCHAR,
+  city VARCHAR,
+  zip INTEGER
+);
+
+statement ok
+CREATE TABLE vedernikoff_locations (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  addr address
+);
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (1, 'psycho_hospital', ROW('ulica pushkina', 'moscow', 101010));
+
+query
+SELECT id, name FROM vedernikoff_locations ORDER BY id;
+----
+id	name
+1	psycho_hospital
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+query error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' AND typname = 'address';
+----
+typname	typtype
+address	c
+
+
+connection after_crash
+query
+SELECT id, name FROM vedernikoff_locations ORDER BY id;
+----
+id	name
+1	psycho_hospital
+
+
+connection after_crash
+statement ok
+CREATE TABLE addr_check (
+  id INTEGER PRIMARY KEY,
+  loc address
+);
+
+connection after_crash
+statement count 1
+INSERT INTO addr_check VALUES (1, ROW('test', 'city', 999));
+
+connection after_crash
+query
+SELECT id FROM addr_check;
+----
+id
+1
+
+
+connection after_crash
+statement ok
+DROP TABLE addr_check;
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_locations;
+
+connection after_crash
+statement ok
+DROP TYPE address;

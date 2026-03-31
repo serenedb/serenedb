@@ -311,10 +311,11 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
 
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
-      append_column(catalog::Column{.id = next_column_id++,
-                                    .type = pg::NameToType(*col_def.typeName),
-                                    .name = col_def.colname},
-                    ExprLocation(&col_def));
+      append_column(
+        catalog::Column{.id = next_column_id++,
+                        .type = pg::NameToType(*col_def.typeName, &context),
+                        .name = col_def.colname},
+        ExprLocation(&col_def));
       auto& col = request.columns.back();
       NullInfo null_info = NullInfo::NotStated;
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {

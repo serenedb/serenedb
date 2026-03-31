@@ -44,8 +44,10 @@
 #include "basics/misc.hpp"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
+#include "catalog/composite_type.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/enum_type.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/local_catalog.h"
@@ -265,6 +267,8 @@ class OpenDatabase {
   Result RegisterSchemas(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
+  Result RegisterEnumTypes(ObjectId database_id, ObjectId schema_id);
+  Result RegisterCompositeTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
@@ -398,6 +402,27 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
                     slice.byteSize()});
       SDB_ASSERT(tokenizer);
       return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
+    });
+}
+
+Result OpenDatabase::RegisterEnumTypes(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitDefinitions(
+    schema_id, RocksDBEntryType::EnumType,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto enum_type = EnumType::FromVPack(key.GetObjectId(), slice);
+      SDB_ASSERT(enum_type);
+      return _catalog.RegisterEnumType(db_id, schema_id, std::move(enum_type));
+    });
+}
+
+Result OpenDatabase::RegisterCompositeTypes(ObjectId db_id,
+                                            ObjectId schema_id) {
+  return GetServerEngine().VisitDefinitions(
+    schema_id, RocksDBEntryType::CompositeType,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto ct = CompositeType::FromVPack(key.GetObjectId(), slice);
+      SDB_ASSERT(ct);
+      return _catalog.RegisterCompositeType(db_id, schema_id, std::move(ct));
     });
 }
 
@@ -598,6 +623,12 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   };
 
   if (auto r = RegisterTokenizers(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterEnumTypes(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterCompositeTypes(db_id, schema_id); !r.ok()) {
     return r;
   }
   if (auto r = RegisterFunctions(db_id, schema_id); !r.ok()) {

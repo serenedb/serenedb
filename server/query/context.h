@@ -27,7 +27,6 @@
 #include <type_traits>
 #include <utility>
 
-#include "basics/fwd.h"
 #include "general_server/scheduler.h"
 #include "pg/sql_collector.h"
 #include "query/config.h"

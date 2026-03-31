@@ -1,0 +1,84 @@
+statement ok
+CREATE TYPE address AS (
+  street VARCHAR,
+  city VARCHAR,
+  zip INTEGER
+);
+
+
+query error
+CREATE TYPE address AS (x INTEGER);
+----
+db error: ERROR: type "address" already exists
+
+
+statement ok
+CREATE TYPE coordinates AS (
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_locations (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  addr address
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (1, 'psycho_hospital', ROW('ulica pushkina', 'moscow', 101010));
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (2, 'reabilitacia', ROW('dom kolotushkina', 'spb', 202020));
+
+
+query
+SELECT id, name FROM vedernikoff_locations ORDER BY id;
+----
+id	name
+1	psycho_hospital
+2	reabilitacia
+
+
+query
+SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' ORDER BY typname;
+----
+typname	typtype
+address	c
+coordinates	c
+
+
+statement ok
+DROP TABLE vedernikoff_locations;
+
+statement ok
+DROP TYPE coordinates;
+
+statement ok
+DROP TYPE address;
+
+
+query error
+DROP TYPE address;
+----
+db error: ERROR: type "address" does not exist
+
+
+statement ok
+DROP TYPE IF EXISTS address;
+
+
+query
+SELECT ROW(1, 'vedernikoff', true);
+----
+f1	f2	f3
+1	vedernikoff	true
+
+
+query
+SELECT ROW(42, 'bipolyarka');
+----
+f1	f2
+42	bipolyarka

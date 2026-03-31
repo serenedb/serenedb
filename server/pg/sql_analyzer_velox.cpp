@@ -69,6 +69,8 @@
 #include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
+#include "catalog/catalog.h"
+#include "catalog/composite_type.h"
 #include "catalog/function.h"
 #include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
@@ -78,6 +80,7 @@
 #include "catalog/virtual_table.h"
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
+#include "pg/connection_context.h"
 #include "pg/copy_file.h"
 #include "pg/create_index_options.h"
 #include "pg/explain_options.h"
@@ -924,6 +927,7 @@ class SqlAnalyzer {
   lp::ExprPtr ProcessTypeCast(State& state, const TypeCast& expr);
 
   lp::ExprPtr ProcessAArrayExpr(State& state, const A_ArrayExpr& expr);
+  lp::ExprPtr ProcessRowExpr(State& state, const RowExpr& expr);
 
   lp::ExprPtr ProcessBoolExpr(State& state, const BoolExpr& expr);
 
@@ -2365,7 +2369,9 @@ void SqlAnalyzer::ProcessCreateFunctionStmt(State& state,
 
       State::FuncParamToExpr dummy_args;
       dummy_args.reserve(list_length(stmt.parameters));
-      auto signature = pg::ToSignature(stmt.parameters, stmt.returnType);
+      auto signature = pg::ToSignature(
+        stmt.parameters, stmt.returnType,
+        &basics::downCast<const ConnectionContext>(_transaction));
       for (const auto& param : signature.parameters) {
         auto expr =
           std::make_shared<lp::InputReferenceExpr>(param.type, param.name);
@@ -2418,7 +2424,9 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       column_names.emplace_back(_id_generator.NextColumnName(col_def.colname));
-      column_types.emplace_back(NameToType(*col_def.typeName));
+      column_types.emplace_back(
+        NameToType(*col_def.typeName,
+                   &basics::downCast<const ConnectionContext>(_transaction)));
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
           case CONSTR_GENERATED: {
@@ -2474,7 +2482,9 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
         switch (constraint.contype) {
           case CONSTR_DEFAULT:
           case CONSTR_GENERATED: {
-            auto column_type = NameToType(*col_def.typeName);
+            auto column_type = NameToType(
+              *col_def.typeName,
+              &basics::downCast<const ConnectionContext>(_transaction));
             auto kind = constraint.contype == CONSTR_DEFAULT
                           ? ExprKind::ColumnDefault
                           : ExprKind::GeneratedColumn;
@@ -2827,6 +2837,11 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     case T_DefineStmt: {
       const auto& stmt = *castNode(DefineStmt, &node);
       ProcessDefineStmt(state, stmt);
+      return SqlCommandType::DDL;
+    }
+    case T_CreateEnumStmt:
+    case T_CompositeTypeStmt: {
+      state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
     default:
@@ -4467,10 +4482,12 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
         MakeConst<int32_t>(ERRCODE_SYNTAX_ERROR),
         MakeConst<int32_t>(ErrorPosition(ExprLocation(expr))),
         MakeConst("DEFAULT is not allowed in this context"));
+    case T_RowExpr:
+      res = ProcessRowExpr(state, *castNode(RowExpr, expr));
+      break;
     case T_MultiAssignRef:
     case T_GroupingFunc:
     case T_NamedArgExpr:
-    case T_RowExpr:
     case T_CurrentOfExpr:
     case T_JsonIsPredicate:
     case T_JsonObjectAgg:
@@ -5450,6 +5467,32 @@ lp::ExprPtr SqlAnalyzer::ProcessAArrayExpr(State& state,
                                                     std::move(elements));
 }
 
+lp::ExprPtr SqlAnalyzer::ProcessRowExpr(State& state, const RowExpr& expr) {
+  auto fields = ProcessExprListImpl(state, expr.args);
+
+  std::vector<std::string> names;
+  std::vector<velox::TypePtr> types;
+  names.reserve(fields.size());
+  types.reserve(fields.size());
+
+  const auto colsize = list_length(expr.colnames);
+  SDB_ASSERT(colsize <= fields.size());
+
+  size_t i = 0;
+  for (; i < colsize; ++i) {
+    types.emplace_back(fields[i]->type());
+    names.emplace_back(strVal(list_nth(expr.colnames, i)));
+  }
+  for (; i < fields.size(); ++i) {
+    types.emplace_back(fields[i]->type());
+    names.emplace_back(absl::StrCat("f", i + 1));
+  }
+
+  auto row_type = velox::ROW(std::move(names), std::move(types));
+  return std::make_shared<lp::CallExpr>(std::move(row_type), "row_constructor",
+                                        std::move(fields));
+}
+
 std::string ToString(BoolExprType type) {
   switch (type) {
     case AND_EXPR:
@@ -6175,7 +6218,8 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
   const auto& type_name = *expr.typeName;
-  auto type = NameToType(type_name);
+  auto type = NameToType(
+    type_name, &basics::downCast<const ConnectionContext>(_transaction));
   if (!type) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR), CURSOR_POS(ErrorPosition(expr.location)),
@@ -6417,7 +6461,7 @@ VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
   return query;
 }
 
-velox::TypePtr NameToType(const TypeName& type_name) {
+velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
   auto* names = type_name.names;
   std::string_view name = strVal(llast(names));
   const auto mods_size = list_length(type_name.typmods);
@@ -6469,6 +6513,26 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   }
   if (name == "interval") {
     return wrap_in_array(pg::INTERVAL());
+  }
+
+  // TODO : after refactoring with deleting sql_resolver / sql_collector -
+  // rewrite this
+  if (ctx) {
+    auto& conn_ctx = basics::downCast<const ConnectionContext>(*ctx);
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    auto db_id = ctx->GetDatabaseId();
+    std::string type_schema = conn_ctx.GetCurrentSchema();
+    if (list_length(names) >= 2) {
+      type_schema = strVal(linitial(names));
+    }
+    auto enum_type = snapshot->GetEnumType(db_id, type_schema, name);
+    if (enum_type) {
+      return wrap_in_array(velox::VARCHAR());
+    }
+    auto composite_type = snapshot->GetCompositeType(db_id, type_schema, name);
+    if (composite_type) {
+      return wrap_in_array(composite_type->GetRowType());
+    }
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

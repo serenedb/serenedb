@@ -20,25 +20,31 @@
 
 #pragma once
 
-#include "pg/system_table.h"
+#include <velox/type/Type.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
-namespace sdb::pg {
+#include <string>
+#include <vector>
 
-// https://www.postgresql.org/docs/18/catalog-pg-enum.html
-// NOLINTBEGIN
-struct PgEnum {
-  static constexpr uint64_t kId = 119;
-  static constexpr std::string_view kName = "pg_enum";
+#include "basics/fwd.h"
+#include "catalog/object.h"
 
-  Oid oid;
-  Oid enumtypid;
-  float enumsortorder;
-  Name enumlabel;
+namespace sdb::catalog {
+
+class CompositeType : public SchemaObject {
+ public:
+  CompositeType(ObjectId id, std::string_view name, velox::RowTypePtr row_type);
+
+  const velox::RowTypePtr& GetRowType() const noexcept { return _row_type; }
+
+  void WriteInternal(vpack::Builder& b) const final;
+
+  static std::shared_ptr<CompositeType> FromVPack(ObjectId id,
+                                                  vpack::Slice slice);
+
+ private:
+  velox::RowTypePtr _row_type;
 };
-// NOLINTEND
 
-template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgEnum>::GetTableData(
-  velox::memory::MemoryPool& pool);
-
-}  // namespace sdb::pg
+}  // namespace sdb::catalog

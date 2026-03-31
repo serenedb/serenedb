@@ -28,7 +28,9 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/composite_type.h"
 #include "catalog/database.h"
+#include "catalog/enum_type.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/object.h"
@@ -62,6 +64,10 @@ class LocalCatalog final : public LogicalCatalog,
                           std::shared_ptr<Function> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                            std::shared_ptr<Tokenizer> tokenizer) final;
+  Result RegisterEnumType(ObjectId database_id, ObjectId schema_id,
+                          std::shared_ptr<EnumType> enum_type) final;
+  Result RegisterCompositeType(ObjectId database_id, ObjectId schema_id,
+                               std::shared_ptr<CompositeType> ct) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
@@ -91,6 +97,10 @@ class LocalCatalog final : public LogicalCatalog,
 
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
+  Result CreateEnumType(ObjectId database_id, std::string_view schema,
+                        std::shared_ptr<EnumType> enum_type) final;
+  Result CreateCompositeType(ObjectId database_id, std::string_view schema,
+                             std::shared_ptr<CompositeType> ct) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -113,6 +123,10 @@ class LocalCatalog final : public LogicalCatalog,
                       std::string_view name) final;
   Result DropTokenizer(ObjectId database_id, std::string_view schema,
                        std::string_view name) final;
+  Result DropEnumType(ObjectId database_id, std::string_view schema,
+                      std::string_view name) final;
+  Result DropCompositeType(ObjectId database_id, std::string_view schema,
+                           std::string_view name) final;
 
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;

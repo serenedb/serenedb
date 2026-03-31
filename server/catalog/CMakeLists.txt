@@ -32,6 +32,8 @@ target_sources(
         analyzer.cpp
         mangling.cpp
         tokenizer.cpp
+        enum_type.cpp
+        composite_type.cpp
 )
 
 add_subdirectory(identifiers)

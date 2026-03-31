@@ -55,6 +55,9 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       auto* object_with_args =
         castNode(ObjectWithArgs, list_nth(stmt.objects, 0));
       return object_with_args->objname;
+    } else if (stmt.removeType == OBJECT_TYPE) {
+      auto* type_name = castNode(TypeName, list_nth(stmt.objects, 0));
+      return type_name->names;
     } else {
       return list_nth_node(List, stmt.objects, 0);
     }
@@ -103,6 +106,12 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
     case OBJECT_TSDICTIONARY: {
       r = catalog.DropTokenizer(db, schema, name);
     } break;
+    case OBJECT_TYPE: {
+      r = catalog.DropEnumType(db, schema, name);
+      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        r = catalog.DropCompositeType(db, schema, name);
+      }
+    } break;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("DROP for this object type is not implemented: ",
@@ -122,6 +131,8 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
         return "schema";
       case OBJECT_TSDICTIONARY:
         return "text search dictionary";
+      case OBJECT_TYPE:
+        return "type";
       default:
         SDB_ASSERT(false);  // it's better to specify the name
         return "object";

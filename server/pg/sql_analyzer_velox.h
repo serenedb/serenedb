@@ -32,6 +32,8 @@
 #include "query/context.h"
 #include "query/utils.h"
 
+class ExecContext;
+
 namespace sdb::message {
 
 class Buffer;
@@ -84,6 +86,6 @@ VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         message::Buffer* send_buffer,
                         CopyMessagesQueue* copy_queue);
 
-velox::TypePtr NameToType(const TypeName& type_name);
+velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx);
 
 }  // namespace sdb::pg

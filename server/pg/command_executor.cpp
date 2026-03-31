@@ -102,6 +102,14 @@ yaclib::Future<> DDLExecutor::Execute(velox::RowVectorPtr& batch) {
         const auto& stmt = *castNode(DefineStmt, &_node);
         return CreateTokenizer(*_context, stmt);
       }
+      case NodeTag::T_CreateEnumStmt: {
+        const auto& stmt = *castNode(CreateEnumStmt, &_node);
+        return CreateEnum(*_context, stmt);
+      }
+      case NodeTag::T_CompositeTypeStmt: {
+        const auto& stmt = *castNode(CompositeTypeStmt, &_node);
+        return CreateComposite(*_context, stmt);
+      }
       default:
         SDB_UNREACHABLE();
     }

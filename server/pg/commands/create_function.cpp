@@ -141,8 +141,9 @@ class CreateFunctionOptionsParser : public OptionsParser {
 }  // namespace
 
 std::shared_ptr<catalog::Function> CreateFunctionImpl(
-  const Config* config, ObjectId database_id, std::string_view database_name,
-  std::string_view current_schema, const CreateFunctionStmt& stmt) {
+  const Config* config, const ExecContext* ctx, ObjectId database_id,
+  std::string_view database_name, std::string_view current_schema,
+  const CreateFunctionStmt& stmt) {
   SDB_ASSERT(stmt.funcname);
 
   auto function_name =
@@ -179,7 +180,7 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
   }
 
   auto& signature = properties.signature;
-  signature = pg::ToSignature(stmt.parameters, stmt.returnType);
+  signature = pg::ToSignature(stmt.parameters, stmt.returnType, ctx);
   if (stmt.is_procedure) {
     SDB_ASSERT(!signature.return_type);
     signature.MarkAsProcedure();
@@ -215,7 +216,7 @@ yaclib::Future<> CreateFunction(ExecContext& context,
   auto schema =
     ParseObjectName(stmt.funcname, database_name, current_schema).schema;
 
-  auto function = CreateFunctionImpl(&connection_context, database_id,
+  auto function = CreateFunctionImpl(&connection_context, &context, database_id,
                                      database_name, current_schema, stmt);
 
   auto& catalog =
@@ -237,7 +238,7 @@ yaclib::Future<> CreateFunction(ExecContext& context,
 
 std::shared_ptr<catalog::Function> CreateSystemFunction(
   const CreateFunctionStmt& stmt) {
-  return CreateFunctionImpl(nullptr, id::kSystemDB, "", "", stmt);
+  return CreateFunctionImpl(nullptr, nullptr, id::kSystemDB, "", "", stmt);
 }
 
 }  // namespace sdb::pg

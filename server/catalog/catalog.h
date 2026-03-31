@@ -33,8 +33,10 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/result_or.h"
+#include "catalog/composite_type.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/enum_type.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -81,6 +83,10 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Index;
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     return ObjectType::Tokenizer;
+  } else if constexpr (std::is_same_v<T, EnumType>) {
+    return ObjectType::EnumType;
+  } else if constexpr (std::is_same_v<T, CompositeType>) {
+    return ObjectType::CompositeType;
   } else {
     static_assert(false);
   }
@@ -120,6 +126,16 @@ struct Snapshot {
   virtual std::shared_ptr<Tokenizer> GetTokenizer(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
+  virtual std::shared_ptr<EnumType> GetEnumType(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+  virtual std::vector<std::shared_ptr<EnumType>> GetEnumTypes(
+    ObjectId database, std::string_view schema) const = 0;
+  virtual std::shared_ptr<CompositeType> GetCompositeType(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+  virtual std::vector<std::shared_ptr<CompositeType>> GetCompositeTypes(
+    ObjectId database, std::string_view schema) const = 0;
   virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
                                           std::string_view schema,
                                           std::string_view name) const = 0;
@@ -181,6 +197,12 @@ struct LogicalCatalog {
   virtual Result RegisterTokenizer(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
+  virtual Result RegisterEnumType(
+    ObjectId database_id, ObjectId schema_id,
+    std::shared_ptr<catalog::EnumType> enum_type) = 0;
+  virtual Result RegisterCompositeType(
+    ObjectId database_id, ObjectId schema_id,
+    std::shared_ptr<catalog::CompositeType> composite_type) = 0;
   virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
     IndexImplOptionsBaseWrapper&& impl_options) = 0;
@@ -199,6 +221,11 @@ struct LogicalCatalog {
                                 bool replace) = 0;
   virtual Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                                  std::shared_ptr<Tokenizer> dict) = 0;
+  virtual Result CreateEnumType(ObjectId database_id, std::string_view schema,
+                                std::shared_ptr<EnumType> enum_type) = 0;
+  virtual Result CreateCompositeType(
+    ObjectId database_id, std::string_view schema,
+    std::shared_ptr<CompositeType> composite_type) = 0;
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
@@ -232,6 +259,10 @@ struct LogicalCatalog {
                               std::string_view name) = 0;
   virtual Result DropTokenizer(ObjectId database, std::string_view schema,
                                std::string_view name) = 0;
+  virtual Result DropEnumType(ObjectId database, std::string_view schema,
+                              std::string_view name) = 0;
+  virtual Result DropCompositeType(ObjectId database, std::string_view schema,
+                                   std::string_view name) = 0;
   virtual Result DropView(ObjectId database, std::string_view schema,
                           std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,

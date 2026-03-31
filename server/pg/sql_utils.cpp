@@ -210,13 +210,14 @@ std::string GetUnnamedFunctionArgumentName(size_t idx) {
 
 // TODO: use errorPosition in THROW_SQL_ERROR calls
 catalog::FunctionSignature ToSignature(const List* pg_parameters,
-                                       const TypeName* pg_return_type) {
+                                       const TypeName* pg_return_type,
+                                       const ExecContext* ctx) {
   catalog::FunctionSignature signature;
 
   containers::FlatHashSet<std::string_view> unique_names;
   unique_names.reserve(list_length(pg_parameters));
   auto to_sql_parameter =
-    [&unique_names](
+    [&unique_names, ctx](
       size_t idx,
       const ::FunctionParameter& pg_param) -> catalog::FunctionParameter {
     catalog::FunctionParameter param;
@@ -235,7 +236,7 @@ catalog::FunctionSignature ToSignature(const List* pg_parameters,
     }
 
     if (pg_param.argType) {
-      param.type = pg::NameToType(*pg_param.argType);
+      param.type = pg::NameToType(*pg_param.argType, ctx);
     }
 
     if (pg_param.defexpr) {
@@ -274,7 +275,7 @@ catalog::FunctionSignature ToSignature(const List* pg_parameters,
     if (param.mode != FUNC_PARAM_TABLE) {
       signature.parameters.emplace_back(to_sql_parameter(i, param));
     } else {
-      table_types.emplace_back(pg::NameToType(*param.argType));
+      table_types.emplace_back(pg::NameToType(*param.argType, ctx));
       SDB_ASSERT(table_types.back());
       SDB_ASSERT(param.name);
       table_names.emplace_back(param.name);
@@ -286,7 +287,7 @@ catalog::FunctionSignature ToSignature(const List* pg_parameters,
   if (!table_types.empty()) {
     return_type = velox::ROW(std::move(table_names), std::move(table_types));
   } else if (pg_return_type) {
-    return_type = pg::NameToType(*pg_return_type);
+    return_type = pg::NameToType(*pg_return_type, ctx);
     SDB_ASSERT(return_type);
   }
 

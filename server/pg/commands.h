@@ -82,4 +82,9 @@ yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);
 
+yaclib::Future<> CreateEnum(ExecContext& ctx, const CreateEnumStmt& stmt);
+
+yaclib::Future<> CreateComposite(ExecContext& ctx,
+                                 const CompositeTypeStmt& stmt);
+
 }  // namespace sdb::pg

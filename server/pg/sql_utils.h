@@ -67,6 +67,7 @@ struct CreateFunctionStmt;
 
 namespace sdb {
 
+class ExecContext;
 class QueryString;
 namespace pg {
 
@@ -77,7 +78,8 @@ int ExprLocation(const void* node) noexcept;
 std::string GetUnnamedFunctionArgumentName(size_t param_idx);
 
 catalog::FunctionSignature ToSignature(const List* pg_parameters,
-                                       const TypeName* pg_return_type);
+                                       const TypeName* pg_return_type,
+                                       const ExecContext* ctx);
 
 std::string DeparseStmt(Node* node);
 

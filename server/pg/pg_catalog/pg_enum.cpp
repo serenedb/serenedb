@@ -1,0 +1,69 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "pg/pg_catalog/pg_enum.h"
+
+#include "catalog/catalog.h"
+#include "catalog/enum_type.h"
+#include "catalog/schema.h"
+#include "pg/pg_catalog/fwd.h"
+
+namespace sdb::pg {
+
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgEnum>::GetTableData(
+  velox::memory::MemoryPool& pool) {
+  std::vector<PgEnum> values;
+  auto catalog = _config.EnsureCatalogSnapshot();
+  auto database_id = GetDatabaseId();
+
+  for (const auto& schema : catalog->GetSchemas(database_id)) {
+    for (const auto& et :
+         catalog->GetEnumTypes(database_id, schema->GetName())) {
+      auto type_oid = et->GetId().id();
+      const auto& labels = et->GetLabels();
+      for (size_t i = 0; i < labels.size(); ++i) {
+        values.push_back(PgEnum{
+          .oid = i + 1,
+          .enumtypid = type_oid,
+          .enumsortorder = static_cast<float>(i + 1),
+          .enumlabel = labels[i],
+        });
+      }
+    }
+  }
+
+  if (values.empty()) {
+    return std::vector<velox::VectorPtr>(boost::pfr::tuple_size_v<PgEnum>);
+  }
+
+  std::vector<velox::VectorPtr> result;
+  result.reserve(boost::pfr::tuple_size_v<PgEnum>);
+  boost::pfr::for_each_field(PgEnum{}, [&]<typename Field>(const Field& field) {
+    auto column = CreateColumn<Field>(values.size(), &pool);
+    result.push_back(std::move(column));
+  });
+  for (size_t row = 0; row < values.size(); ++row) {
+    WriteData(result, values[row], 0, row, &pool);
+  }
+  return result;
+}
+
+}  // namespace sdb::pg

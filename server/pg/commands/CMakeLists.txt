@@ -14,4 +14,6 @@ target_sources(
         remove_tombstone.cpp
         vacuum.cpp
         create_tsdictionary.cpp
+        create_enum.cpp
+        create_composite.cpp
 )

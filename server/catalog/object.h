@@ -45,6 +45,8 @@ enum class ObjectType : uint8_t {
   TableShard,
   IndexShard,
   Tokenizer,
+  EnumType,
+  CompositeType,
 };
 
 // https://www.postgresql.org/docs/current/sql-grant.html

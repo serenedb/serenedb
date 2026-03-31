@@ -20,6 +20,10 @@
 
 #include "pg/pg_catalog/pg_type.h"
 
+#include "catalog/catalog.h"
+#include "catalog/composite_type.h"
+#include "catalog/enum_type.h"
+#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -704,14 +708,100 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<PgType>::GetTableData(
   velox::memory::MemoryPool& pool) {
+  std::vector<PgType> udt_rows;
+  auto catalog = _config.EnsureCatalogSnapshot();
+  auto database_id = GetDatabaseId();
+  for (const auto& schema : catalog->GetSchemas(database_id)) {
+    auto schema_id = schema->GetId();
+    for (const auto& et :
+         catalog->GetEnumTypes(database_id, schema->GetName())) {
+      udt_rows.push_back(PgType{
+        .oid = et->GetId().id(),
+        .typname = et->GetName(),
+        .typnamespace = schema_id.id(),
+        .typowner = et->GetOwnerId().id(),
+        .typlen = -1,
+        .typbyval = false,
+        .typtype = PgType::Typetype::Enum,
+        .typcategory = PgType::Typcategory::Enum,
+        .typispreferred = false,
+        .typisdefined = true,
+        .typdelim = ',',
+        .typrelid = 0,
+        .typsubscript = 0,
+        .typelem = 0,
+        .typarray = 0,
+        .typinput = 3506,    // enum_in
+        .typoutput = 3507,   // enum_out
+        .typreceive = 3532,  // enum_recv
+        .typsend = 3533,     // enum_send
+        .typmodin = 0,
+        .typmodout = 0,
+        .typanalyze = 0,
+        .typalign = PgType::Typalign::Int,
+        .typstorage = PgType::Typstorage::Plain,
+        .typnotnull = false,
+        .typbasetype = 0,
+        .typtypmod = -1,
+        .typndims = 0,
+        .typcollation = 0,
+        .typdefaultbin = {},
+        .typdefault = {},
+        .typacl = {},
+      });
+    }
+    for (const auto& ct :
+         catalog->GetCompositeTypes(database_id, schema->GetName())) {
+      udt_rows.push_back(PgType{
+        .oid = ct->GetId().id(),
+        .typname = ct->GetName(),
+        .typnamespace = schema_id.id(),
+        .typowner = ct->GetOwnerId().id(),
+        .typlen = -1,
+        .typbyval = false,
+        .typtype = PgType::Typetype::Composite,
+        .typcategory = PgType::Typcategory::Composite,
+        .typispreferred = false,
+        .typisdefined = true,
+        .typdelim = ',',
+        .typrelid = 0,
+        .typsubscript = 0,
+        .typelem = 0,
+        .typarray = 0,
+        .typinput = 2290,    // record_in
+        .typoutput = 2291,   // record_out
+        .typreceive = 2402,  // record_recv
+        .typsend = 2403,     // record_send
+        .typmodin = 0,
+        .typmodout = 0,
+        .typanalyze = 0,
+        .typalign = PgType::Typalign::Double,
+        .typstorage = PgType::Typstorage::Extended,
+        .typnotnull = false,
+        .typbasetype = 0,
+        .typtypmod = -1,
+        .typndims = 0,
+        .typcollation = 0,
+        .typdefaultbin = {},
+        .typdefault = {},
+        .typacl = {},
+      });
+    }
+  }
+
+  const auto total_rows = kSampleData.size() + udt_rows.size();
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgType>);
   boost::pfr::for_each_field(PgType{}, [&]<typename Field>(const Field& field) {
-    auto column = CreateColumn<Field>(kSampleData.size(), &pool);
+    auto column = CreateColumn<Field>(total_rows, &pool);
     result.push_back(std::move(column));
   });
-  for (size_t row = 0; row < kSampleData.size(); ++row) {
+  size_t row = 0;
+  for (; row < kSampleData.size(); ++row) {
     WriteData(result, kSampleData[row], kNullMask, row, &pool);
+  }
+  for (const auto& udt_row : udt_rows) {
+    WriteData(result, udt_row, kNullMask, row++, &pool);
   }
   return result;
 }

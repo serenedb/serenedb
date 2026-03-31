@@ -58,8 +58,10 @@
 #include "basics/result_or.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/composite_type.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/enum_type.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -231,6 +233,20 @@ class SnapshotImpl : public Snapshot {
         return r;
       }
       return AddObjectDefinition<TokenizerDependency>(parent_id, object);
+    } else if constexpr (std::is_same_v<T, EnumType>) {
+      auto r = AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
+                                                  object->GetName(), replace);
+      if (!r.ok()) {
+        return r;
+      }
+      return AddObjectDefinition(parent_id, std::move(object));
+    } else if constexpr (std::is_same_v<T, CompositeType>) {
+      auto r = AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
+                                                  object->GetName(), replace);
+      if (!r.ok()) {
+        return r;
+      }
+      return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Table>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -275,6 +291,12 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Tokenizer>) {
       RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
                                                    maybe_not_found);
+    } else if constexpr (std::is_same_v<T, EnumType>) {
+      RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
+                                              maybe_not_found);
+    } else if constexpr (std::is_same_v<T, CompositeType>) {
+      RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
+                                              maybe_not_found);
     } else if constexpr (std::is_same_v<T, Table>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
@@ -334,6 +356,11 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Tokenizer: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tokenizers.insert(object->GetId());
+      } break;
+      case ObjectType::EnumType:
+      case ObjectType::CompositeType: {
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
+        schema_deps->enum_types.insert(object->GetId());
       } break;
       case ObjectType::View: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
@@ -560,6 +587,67 @@ class SnapshotImpl : public Snapshot {
     return GetObject<Tokenizer>(*id);
   }
 
+  std::shared_ptr<EnumType> GetEnumType(ObjectId db_id, std::string_view schema,
+                                        std::string_view name) const final {
+    auto schema_id =
+      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+    if (!schema_id) {
+      return nullptr;
+    }
+    auto id =
+      _resolution_table.ResolveObject<ResolveType::Type>(*schema_id, name);
+    if (!id) {
+      return nullptr;
+    }
+    return GetObject<EnumType>(*id);
+  }
+
+  std::vector<std::shared_ptr<EnumType>> GetEnumTypes(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        return _resolution_table.GetTypeIds(schema_id) |
+               std::views::transform(
+                 [&](ObjectId type_id) -> std::shared_ptr<EnumType> {
+                   return GetObject<EnumType>(type_id);
+                 }) |
+               std::views::filter([](const auto& p) { return p != nullptr; }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<EnumType>>{});
+  }
+
+  std::shared_ptr<CompositeType> GetCompositeType(
+    ObjectId db_id, std::string_view schema,
+    std::string_view name) const final {
+    auto schema_id =
+      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+    if (!schema_id) {
+      return nullptr;
+    }
+    auto id =
+      _resolution_table.ResolveObject<ResolveType::Type>(*schema_id, name);
+    if (!id) {
+      return nullptr;
+    }
+    return GetObject<CompositeType>(*id);
+  }
+
+  std::vector<std::shared_ptr<CompositeType>> GetCompositeTypes(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        return _resolution_table.GetTypeIds(schema_id) |
+               std::views::transform(
+                 [&](ObjectId type_id) -> std::shared_ptr<CompositeType> {
+                   return GetObject<CompositeType>(type_id);
+                 }) |
+               std::views::filter([](const auto& p) { return p != nullptr; }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<CompositeType>>{});
+  }
+
   std::shared_ptr<Table> GetTable(ObjectId db_id, std::string_view schema,
                                   std::string_view table) const final {
     auto rel = GetRelation(db_id, schema, table);
@@ -741,6 +829,12 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->tokenizers.erase(id);
         } break;
+        case ObjectType::EnumType:
+        case ObjectType::CompositeType: {
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
+          SDB_ASSERT(schema_deps);
+          schema_deps->enum_types.erase(id);
+        } break;
         case ObjectType::Table: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
@@ -797,6 +891,8 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Function:
       case ObjectType::View:
       case ObjectType::Tokenizer:
+      case ObjectType::EnumType:
+      case ObjectType::CompositeType:
         break;
       case ObjectType::TableShard:
       case ObjectType::IndexShard:
@@ -916,6 +1012,23 @@ Result LocalCatalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(tokenizer), schema_id, false);
+  });
+}
+
+Result LocalCatalog::RegisterEnumType(ObjectId database_id, ObjectId schema_id,
+                                      std::shared_ptr<EnumType> enum_type) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(enum_type), schema_id, false);
+  });
+}
+
+Result LocalCatalog::RegisterCompositeType(ObjectId database_id,
+                                           ObjectId schema_id,
+                                           std::shared_ptr<CompositeType> ct) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(ct), schema_id, false);
   });
 }
 
@@ -1330,6 +1443,121 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
     });
+}
+
+Result LocalCatalog::CreateEnumType(ObjectId database_id,
+                                    std::string_view schema,
+                                    std::shared_ptr<EnumType> enum_type) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(
+    _snapshot,
+    [&](std::shared_ptr<SnapshotImpl>& clone) {
+      auto r = clone->RegisterObject(enum_type, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+      vpack::Builder b;
+      b.openObject();
+      enum_type->WriteInternal(b);
+      b.close();
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::EnumType,
+                                       enum_type->GetId(),
+                                       [&](bool) { return b.slice(); });
+    },
+    [&](auto& clone) {
+      return clone->UnregisterObject(enum_type, *schema_id, true);
+    });
+}
+
+Result LocalCatalog::CreateCompositeType(ObjectId database_id,
+                                         std::string_view schema,
+                                         std::shared_ptr<CompositeType> ct) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(
+    _snapshot,
+    [&](std::shared_ptr<SnapshotImpl>& clone) {
+      auto r = clone->RegisterObject(ct, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+      vpack::Builder b;
+      b.openObject();
+      ct->WriteInternal(b);
+      b.close();
+      return _engine->CreateDefinition(
+        *schema_id, RocksDBEntryType::CompositeType, ct->GetId(),
+        [&](bool) { return b.slice(); });
+    },
+    [&](auto& clone) { return clone->UnregisterObject(ct, *schema_id, true); });
+}
+
+Result LocalCatalog::DropCompositeType(ObjectId database_id,
+                                       std::string_view schema,
+                                       std::string_view name) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+  if (!id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+    auto ct = clone->GetObject<CompositeType>(*id);
+    if (!ct) {
+      return Result{ERROR_SERVER_ILLEGAL_NAME};
+    }
+    auto r =
+      _engine->DropDefinition(*schema_id, RocksDBEntryType::CompositeType, *id);
+    if (!r.ok()) {
+      return r;
+    }
+    clone->UnregisterObject(std::move(ct), *schema_id);
+    return {};
+  });
+}
+
+Result LocalCatalog::DropEnumType(ObjectId database_id, std::string_view schema,
+                                  std::string_view name) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+  if (!id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+    auto et = clone->GetObject<EnumType>(*id);
+    if (!et) {
+      return Result{ERROR_SERVER_ILLEGAL_NAME};
+    }
+    auto r =
+      _engine->DropDefinition(*schema_id, RocksDBEntryType::EnumType, *id);
+    if (!r.ok()) {
+      return r;
+    }
+    clone->UnregisterObject(std::move(et), *schema_id);
+    return {};
+  });
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,

@@ -1070,10 +1070,11 @@ class SereneDBConnector final : public velox::connector::Connector {
       if (!points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
-          object_key, points, serene_table_handle.GetPKType(),
-          output_column_count, compiled_filter,
+          points, output_column_count, compiled_filter,
           rocksdb_transaction.GetSnapshot(),
-          connector_query_ctx->expressionEvaluator(), rocksdb_transaction);
+          connector_query_ctx->expressionEvaluator(), rocksdb_transaction,
+          PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
+          ColumnCollector{});
       }
 
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
@@ -1086,10 +1087,11 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& points = serene_table_handle.GetPoints();
     if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
-        *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
-        object_key, points, serene_table_handle.GetPKType(),
+        *connector_query_ctx->memoryPool(), _cf, read_type, column_oids, points,
         output_column_count, compiled_filter, snapshot,
-        connector_query_ctx->expressionEvaluator(), _db);
+        connector_query_ctx->expressionEvaluator(), _db,
+        PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
+        ColumnCollector{});
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

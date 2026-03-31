@@ -32,9 +32,9 @@
 #include <numeric>
 #include <span>
 
-#include "basics/containers/bitset.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/key_builder.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
@@ -211,27 +211,33 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   catalog::Column::Id _effective_column_id;
 };
 
-template<typename Source>
+template<typename Policy>
 class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
+  using Source = typename Policy::Source;
+  using KeyBuilder = typename Policy::KeyBuilder;
+  using ResultCollector = typename Policy::ResultCollector;
+  static constexpr bool kHasMaterializer = ResultCollector::kHasMaterializer;
+
  public:
   RocksDBPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
-    ObjectId object_key, const std::vector<SpecificPoint>& values,
-    velox::RowTypePtr pk_type, size_t output_column_count,
+    const std::vector<SpecificPoint>& values, size_t output_column_count,
     velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
-    velox::core::ExpressionEvaluator* evaluator, Source& source)
+    velox::core::ExpressionEvaluator* evaluator, Source& source,
+    KeyBuilder key_builder, ResultCollector collector)
     : RocksDBBaseDataSource{memory_pool,
                             cf,
                             std::move(read_type),
-                            object_key,
+                            key_builder._table_id,
                             std::move(column_ids),
                             output_column_count,
                             std::move(remaining_filter),
                             evaluator},
       _values{values},
-      _pk_type{std::move(pk_type)},
+      _key_builder{std::move(key_builder)},
+      _collector{std::move(collector)},
       _ctx{source, [snapshot] {
              rocksdb::ReadOptions ro;
              ro.async_io = IsIOUringEnabled();
@@ -240,9 +246,9 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
            }()} {
     _sorted_col_indices.resize(_column_ids.size());
     std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
-    std::sort(
-      _sorted_col_indices.begin(), _sorted_col_indices.end(),
-      [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
+    std::ranges::sort(_sorted_col_indices, [&](size_t a, size_t b) {
+      return _column_ids[a] < _column_ids[b];
+    });
   }
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
@@ -253,24 +259,14 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   static constexpr size_t kMultiGetChunkSize =
     MultiGetContext<Source>::kBatchSize;
 
-  // Fill _ctx.Key(0..count) for col_id at consecutive
-  // _values[start..start+count).
   void BuildBatchKeys(catalog::Column::Id col_id, size_t start, size_t count);
-
-  // Fill _ctx keys for col_id by iterating set bits of _present_rows_batch
-  // from _ctx.cursor. Fills at most batch_size keys; advances _ctx.cursor past
-  // each visited bit. Returns the number of keys built (may be < batch_size at
-  // end of bitset).
   size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
 
   const std::vector<SpecificPoint>& _values;
-  velox::RowTypePtr _pk_type;
+  KeyBuilder _key_builder;
+  ResultCollector _collector;
   std::vector<size_t> _sorted_col_indices;
-  // presence mask for the current batch window
-  irs::bitset _present_rows_batch;
-  // current position within _present_rows_batch for BuildBatchKeysUsingMask
   size_t _in_batch_offset = 0;
-  // index into _values for the start of the current batch
   size_t _values_offset = 0;
   MultiGetContext<Source> _ctx;
 };
@@ -279,11 +275,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
 using RocksDBRYOWFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::Transaction>;
 using RocksDBRYOWPointLookupDataSource =
-  RocksDBPointLookupDataSource<rocksdb::Transaction>;
+  RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
 
 using RocksDBSnapshotFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::DB>;
 using RocksDBSnapshotPointLookupDataSource =
-  RocksDBPointLookupDataSource<rocksdb::DB>;
+  RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
 
 }  // namespace sdb::connector

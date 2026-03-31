@@ -33,7 +33,9 @@
 #include "connector/primary_key.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
+#include "parquet_materializer.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "text_materializer.hpp"
 
 namespace sdb::connector {
 namespace {
@@ -787,5 +789,13 @@ template class RocksDBFullScanDataSource<rocksdb::Transaction>;
 template class RocksDBFullScanDataSource<rocksdb::DB>;
 template class RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
 template class RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
+template class RocksDBPointLookupDataSource<
+  SecondaryLookupPolicy<true, RocksDBMaterializer>>;
+template class RocksDBPointLookupDataSource<
+  SecondaryLookupPolicy<false, RocksDBMaterializer>>;
+template class RocksDBPointLookupDataSource<
+  SecondaryLookupPolicy<false, ParquetMaterializer>>;
+template class RocksDBPointLookupDataSource<
+  SecondaryLookupPolicy<false, TextMaterializer>>;
 
 }  // namespace sdb::connector

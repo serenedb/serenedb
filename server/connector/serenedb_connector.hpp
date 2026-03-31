@@ -1070,7 +1070,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       if (!points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
-          points, output_column_count, compiled_filter,
+          object_key, points, output_column_count, compiled_filter,
           rocksdb_transaction.GetSnapshot(),
           connector_query_ctx->expressionEvaluator(), rocksdb_transaction,
           PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
@@ -1087,8 +1087,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& points = serene_table_handle.GetPoints();
     if (!points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
-        *connector_query_ctx->memoryPool(), _cf, read_type, column_oids, points,
-        output_column_count, compiled_filter, snapshot,
+        *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
+        object_key, points, output_column_count, compiled_filter, snapshot,
         connector_query_ctx->expressionEvaluator(), _db,
         PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
         ColumnCollector{});
@@ -1412,6 +1412,14 @@ class SereneDBConnector final : public velox::connector::Connector {
     bool has_null_filter = absl::c_any_of(
       handle.GetValues(), [](const auto& v) { return v.isNull(); });
 
+    // Wrap each variant value into a SpecificPoint (single-element vector)
+    // so it can be used with RocksDBPointLookupDataSource's _values.
+    std::vector<SpecificPoint> points;
+    points.reserve(handle.GetValues().size());
+    for (const auto& v : handle.GetValues()) {
+      points.push_back({v});
+    }
+
     return CreateWithMaterializer(
       handle, output_type, output_type, column_oids, column_handles, pool,
       snapshot,
@@ -1419,11 +1427,18 @@ class SereneDBConnector final : public velox::connector::Connector {
           auto& source) -> std::unique_ptr<velox::connector::DataSource> {
         using Mat = decltype(mat);
         using Src = std::remove_reference_t<decltype(source)>;
+        constexpr bool kRYOW = std::is_same_v<Src, rocksdb::Transaction>;
         if (handle.IsUnique() && !has_null_filter) {
+          SecondaryKeyBuilder key_builder{
+            handle.GetShardId(),
+            velox::ROW({"v"}, {handle.GetValueType()})};
           return std::make_unique<
-            UniqueSecondaryIndexPointDataSource<Mat, Src>>(
-            pool, std::move(mat), source, _cf, snapshot, handle.GetShardId(),
-            handle.GetValues(), handle.GetValueType());
+            RocksDBPointLookupDataSource<
+              SecondaryLookupPolicy<kRYOW, Mat>>>(
+            pool, _cf, output_type, column_oids, handle.TableId(), points,
+            output_type->size(), nullptr, snapshot, nullptr, source,
+            std::move(key_builder),
+            MaterializerCollector<Mat>{std::move(mat), pool});
         }
         return irs::ResolveBool(
           handle.IsUnique(),

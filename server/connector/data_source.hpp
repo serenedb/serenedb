@@ -231,11 +231,12 @@ class ColumnCollector {
   irs::bitset _present_rows;
 };
 
+template<typename Materializer>
 class MaterializerCollector {
  public:
   static constexpr bool kHasMaterializer = true;
 
-  MaterializerCollector(RocksDBMaterializer materializer,
+  MaterializerCollector(Materializer materializer,
                         velox::memory::MemoryPool& pool)
     : _materializer{std::move(materializer)}, _row_keys{pool} {}
 
@@ -255,8 +256,11 @@ class MaterializerCollector {
     return _materializer.ReadRows(_row_keys, nullptr);
   }
 
+  const irs::bitset& PresentRows() const { return _dummy; }
+
  private:
-  RocksDBMaterializer _materializer;
+  irs::bitset _dummy;
+  Materializer _materializer;
   primary_key::Keys _row_keys;
 };
 
@@ -268,12 +272,12 @@ struct PrimaryLookupPolicy {
   using ResultCollector = ColumnCollector;
 };
 
-template<bool ReadYourOwnWrites>
+template<bool ReadYourOwnWrites, typename Materializer>
 struct SecondaryLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
   using KeyBuilder = SecondaryKeyBuilder;
-  using ResultCollector = MaterializerCollector;
+  using ResultCollector = MaterializerCollector<Materializer>;
 };
 
 template<typename Policy>
@@ -287,20 +291,20 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   RocksDBPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
-    const std::vector<SpecificPoint>& values, size_t output_column_count,
-    velox::core::TypedExprPtr remaining_filter,
+    ObjectId object_key, std::vector<SpecificPoint> values,
+    size_t output_column_count, velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
     velox::core::ExpressionEvaluator* evaluator, Source& source,
     KeyBuilder key_builder, ResultCollector collector)
     : RocksDBBaseDataSource{memory_pool,
                             cf,
                             std::move(read_type),
-                            key_builder._table_id,
+                            object_key,
                             std::move(column_ids),
                             output_column_count,
                             std::move(remaining_filter),
                             evaluator},
-      _values{values},
+      _values{std::move(values)},
       _key_builder{std::move(key_builder)},
       _collector{std::move(collector)},
       _ctx{source, [snapshot] {
@@ -334,7 +338,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   // end of bitset).
   size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
 
-  const std::vector<SpecificPoint>& _values;
+  std::vector<SpecificPoint> _values;
   KeyBuilder _key_builder;
   ResultCollector _collector;
   std::vector<size_t> _sorted_col_indices;

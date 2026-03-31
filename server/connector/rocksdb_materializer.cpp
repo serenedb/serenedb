@@ -29,7 +29,6 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
-
 namespace {
 
 // TODO(mbkkt) benchmark and choose best threshold

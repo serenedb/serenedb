@@ -353,5 +353,55 @@ SELECT a, b FROM dense_pk_slow_idx WHERE PHRASE(b, 'every') ORDER BY a;
 ----
 20000 values hashing to bb15b34d23227f0b20af3e480354a78a
 
+# query to make materializer use multiget strategy
+query
+SELECT * FROM dense_pk_slow WHERE a < 90 ORDER BY a;
+----
+178 values hashing to 49f3a491ae0ffef599062ea494cd2eb3
+
 statement ok
 DROP TABLE dense_pk_slow;
+
+statement ok
+CREATE TABLE dense_no_pk_slow (a INTEGER, b TEXT);
+
+statement count 150
+INSERT INTO dense_no_pk_slow
+SELECT n, 'every row shares universal phrase number ' || n::text
+FROM generate_series(51, 200) AS s(n);
+
+statement ok
+CREATE INDEX dense_no_pk_slow_idx ON dense_no_pk_slow USING inverted(a, b test_english);
+
+statement ok
+VACUUM (UPDATE_INDEXES) dense_no_pk_slow;
+
+# intentional insert out of order to test generated column reading
+statement count 50
+INSERT INTO dense_no_pk_slow
+SELECT n, 'every row shares universal phrase number ' || n::text
+FROM generate_series(1, 50) AS s(n);
+
+statement count 5000
+INSERT INTO dense_no_pk_slow
+SELECT n, 'every row shares universal phrase number ' || n::text
+FROM generate_series(5001, 10000) AS s(n);
+
+statement count 4800
+INSERT INTO dense_no_pk_slow
+SELECT n, 'every row shares universal phrase number ' || n::text
+FROM generate_series(201, 5000) AS s(n);
+
+statement ok
+VACUUM (UPDATE_INDEXES) dense_no_pk_slow;
+
+query
+SELECT a, b FROM dense_no_pk_slow_idx WHERE PHRASE(b, 'every') ORDER BY a;
+----
+20000 values hashing to bb15b34d23227f0b20af3e480354a78a
+
+# query to make materializer use multiget strategy
+query
+SELECT * FROM dense_no_pk_slow WHERE a < 90 ORDER BY a;
+----
+178 values hashing to 49f3a491ae0ffef599062ea494cd2eb3

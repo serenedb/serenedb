@@ -217,12 +217,6 @@ class InvertedIndexShard final
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
-  void MarkDeleted() { _is_deleted.store(true, std::memory_order_release); }
-
-  bool IsDeleted() const noexcept {
-    return _is_deleted.load(std::memory_order_acquire);
-  }
-
  private:
   Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
@@ -249,8 +243,6 @@ class InvertedIndexShard final
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
   bool _is_creation{true};
-
-  std::atomic_bool _is_deleted{false};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

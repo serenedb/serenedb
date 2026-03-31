@@ -1,0 +1,39 @@
+statement ok
+CREATE TABLE t(id TIMESTAMP);
+
+
+statement ok
+INSERT INTO t VALUES (NOW());
+
+
+statement nowait ok
+SELECT pg_sleep(2);
+
+
+statement nowait ok
+INSERT INTO t VALUES (NOW()), (NOW());
+
+
+statement nowait ok
+INSERT INTO t VALUES (NOW()), (NOW());
+
+
+statement nowait ok
+INSERT INTO t VALUES (NOW()), (NOW());
+
+
+sync
+
+
+query
+SELECT COUNT(*) FROM t;
+----
+count
+7
+
+
+query
+SELECT MAX(id) - MIN(id) < INTERVAL '2 seconds' FROM t;
+----
+?column?
+t

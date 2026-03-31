@@ -149,7 +149,7 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   return std::make_shared<IndexDrop>(index_id, options.type, db_id, schema_id,
-                                     table_id, shard_id, is_root);
+                                     table_id, is_root);
 }
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(

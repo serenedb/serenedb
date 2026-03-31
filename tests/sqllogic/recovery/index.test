@@ -63,3 +63,27 @@ count
 connection new2
 statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
+
+
+connection new2
+statement ok
+RESET sdb_faults;
+
+
+connection new2
+statement ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+connection new2
+statement ok
+SET sdb_fault_slow_search_task TO DEFAULT;
+
+
+statement nowait ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+connection new2
+statement ok
+DROP TABLE t;

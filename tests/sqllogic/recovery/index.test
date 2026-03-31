@@ -80,6 +80,102 @@ statement ok
 SET sdb_fault_slow_search_task TO DEFAULT;
 
 
+connection new2
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+statement nowait ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+connection new2
+query
+SELECT r FROM index_t WHERE PHRASE(r, 'one') LIMIT 1;
+----
+r
+one
+
+
+statement nowait ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+connection new2
+statement ok
+DROP INDEX index_t;
+
+
+sync
+
+
+connection new2
+statement ok
+RESET sdb_faults;
+
+
+connection new2
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'index_t';
+----
+count
+0
+
+
+connection new2
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 't';
+----
+count
+1
+
+connection new2
+statement ok
+CREATE INDEX index_t ON t USING inverted(r test_english);
+
+
+statement nowait ok
+INSERT INTO t VALUES ('foo'), ('bar');
+
+
+statement nowait ok
+INSERT INTO t VALUES ('baz'), ('qux');
+
+
+connection new2
+statement ok
+DROP INDEX index_t;
+
+
+connection new2
+statement ok
+CREATE INDEX index_t ON t USING inverted(r test_english);
+
+
+sync
+
+
+connection new2
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+connection new2
+query
+SELECT COUNT(*) >= 1 FROM t WHERE r = 'foo';
+----
+?column?
+t
+
+
+connection new2
+query
+SELECT COUNT(*) >= 1 FROM t WHERE r = 'baz';
+----
+?column?
+t
+
+
 statement nowait ok
 VACUUM (UPDATE_INDEXES) t;
 
@@ -93,7 +189,14 @@ INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
 query nowait
-SELECT COUNT(*) >= 3 FROM t;
+SELECT r FROM index_t WHERE PHRASE(r, 'one') LIMIT 1;
+----
+r
+one
+
+
+query nowait
+SELECT COUNT(*) >= 13 FROM t;
 ----
 ?column?
 t

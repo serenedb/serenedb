@@ -624,7 +624,13 @@ std::vector<SweepRange> MergeAlongDim0(
       const velox::variant& curr_start =
         curr.is_point ? curr.left
                       : (curr.has_left ? curr.left : velox::variant{});
-      const bool endpoints_touch = (prev.has_right == curr.has_left) &&
+      // In BuildAtoms the sequence strictly alternates open/point/open/…, so
+      // two open-interval atoms are never adjacent: there is always a point
+      // atom between them. If that point atom was skipped (not covered by any
+      // range) there is a gap at the shared boundary and we must NOT merge.
+      const bool alternating = (prev.is_point != curr.is_point);
+      const bool endpoints_touch = alternating &&
+                                   (prev.has_right == curr.has_left) &&
                                    (!prev.has_right || prev_end == curr_start);
       merge = endpoints_touch && EqualExceptDim(prev_sr, curr_sr, dim_col);
     }
@@ -1250,6 +1256,45 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
         return c.RangePrefixSize() == 0;
       })) {
     return {ConstraintKind::None, {}, expr};
+  }
+
+  // Normalize: the sweep may produce multiple KCs that share the same scan
+  // prefix (equality columns 0..K-1 plus the range column K) but differ only
+  // in trailing columns beyond K.  All such KCs map to the identical RocksDB
+  // range scan; keep one representative and let remaining_filter handle the
+  // rest.  Two KCs are "scan-equivalent" iff their RangePrefixSize() agrees
+  // and the ColumnRange for every column in 0..prefix_size-1 is equal.
+  {
+    static const ColumnRange kUnconstr{};
+    auto get_first_cr = [&](const KeyConstraint& c) -> const ColumnRange& {
+      const ColumnRange* p = c.FindColumnRange(pk_names[0]);
+      return p ? *p : kUnconstr;
+    };
+    // Sort so that scan-equivalent KCs (which always share the same first-col
+    // ColumnRange) end up adjacent.
+    absl::c_stable_sort(
+      constraints, [&](const KeyConstraint& a, const KeyConstraint& b) {
+        return get_first_cr(a).LeftBoundLessThan(get_first_cr(b));
+      });
+    auto scan_equivalent = [&](const KeyConstraint& a, const KeyConstraint& b) {
+      const size_t n = a.RangePrefixSize();
+      if (n != b.RangePrefixSize()) {
+        return false;
+      }
+      for (size_t i = 0; i < n; ++i) {
+        const ColumnRange* ca = a.FindColumnRange(pk_names[i]);
+        const ColumnRange* cb = b.FindColumnRange(pk_names[i]);
+        const ColumnRange& ra = ca ? *ca : kUnconstr;
+        const ColumnRange& rb = cb ? *cb : kUnconstr;
+        if (!(ra == rb)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    constraints.erase(
+      std::unique(constraints.begin(), constraints.end(), scan_equivalent),
+      constraints.end());
   }
 
   // If the constraints' first-column ranges together cover (-inf, +inf) with

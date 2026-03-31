@@ -7,6 +7,7 @@ import {
 import { ConsoleSidebar } from "../../ConsoleSidebar";
 import { ConsoleMainArea } from "./ConsoleMainArea";
 import {
+    CONSOLE_MAIN_AREA_MIN_WIDTH,
     CONSOLE_GRID_EDITOR_PANEL_ID,
     CONSOLE_GRID_SIDEBAR_PANEL_ID,
     CONSOLE_SIDEBAR_MIN_SIZE,
@@ -61,7 +62,7 @@ const ensureSidebarPanel = (event: GridviewReadyEvent) => {
 };
 
 const ConsoleLayout: React.FC = () => {
-    const { sidebarCollapsed } = useConsole();
+    const { sidebarCollapsed, setSidebarCollapsed } = useConsole();
     const gridEventRef = useRef<GridviewReadyEvent | null>(null);
     const [api, setApi] = React.useState<GridviewReadyEvent["api"]>();
     const components = React.useMemo(() => {
@@ -112,6 +113,28 @@ const ConsoleLayout: React.FC = () => {
     }, [api]);
 
     useEffect(() => {
+        if (!api || sidebarCollapsed) {
+            return;
+        }
+
+        const checkAvailableWidth = () => {
+            const mainAreaPanel = api.getPanel(CONSOLE_GRID_EDITOR_PANEL_ID);
+            if (!mainAreaPanel) {
+                return;
+            }
+
+            if (mainAreaPanel.width < CONSOLE_MAIN_AREA_MIN_WIDTH) {
+                setSidebarCollapsed(true);
+            }
+        };
+
+        checkAvailableWidth();
+        const disposable = api.onDidLayoutChange(checkAvailableWidth);
+
+        return () => disposable.dispose();
+    }, [api, sidebarCollapsed, setSidebarCollapsed]);
+
+    useEffect(() => {
         const event = gridEventRef.current;
         if (!event) {
             return;
@@ -130,11 +153,13 @@ const ConsoleLayout: React.FC = () => {
     }, [sidebarCollapsed]);
 
     return (
-        <GridviewReact
-            components={components}
-            onReady={onReady}
-            orientation={Orientation.HORIZONTAL}
-        />
+        <div className="h-full w-full min-h-0 min-w-0 overflow-hidden">
+            <GridviewReact
+                components={components}
+                onReady={onReady}
+                orientation={Orientation.HORIZONTAL}
+            />
+        </div>
     );
 };
 

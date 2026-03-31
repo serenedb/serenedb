@@ -209,6 +209,10 @@ dv-tabs-container > .dv-tab:focus::after {
     padding-right: 12px !important;
 }
 
+.dv-tab:last-child {
+    border-right: 0;
+}
+
 .dv-tabs-and-actions-container {
     height: 36.5px !important;
     border-bottom: 0.5px solid var(--color-border);

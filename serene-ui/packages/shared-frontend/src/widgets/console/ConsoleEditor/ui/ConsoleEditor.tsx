@@ -3,9 +3,11 @@ import {
     DockviewReact,
     type DockviewReadyEvent,
     type IDockviewHeaderActionsProps,
+    type SerializedDockview,
 } from "dockview";
 import {
     Button,
+    cn,
     MaximizeIcon,
     MinimizeIcon,
     PlusIcon,
@@ -34,19 +36,23 @@ const HeaderActionButton: FC<{
     title: string;
     onClick: () => void;
     icon: FC<SVGProps<SVGSVGElement>>;
-}> = ({ title, onClick, icon: Icon }) => (
+    className?: string;
+}> = ({ title, onClick, icon: Icon, className }) => (
     <Button
-        size="iconSmall"
+        size="icon"
         variant="ghost"
         title={title}
         onClick={onClick}
-        className="text-[var(--dv-activegroup-visiblepanel-tab-color)] hover:bg-accent/60">
-        <Icon className="size-3.5" />
+        className={cn(
+            "border-r-[0.5px] border-l-[0.5px] rounded-none size-9 text-foreground/50 hover:text-foreground",
+            className,
+        )}>
+        <Icon className="size-3" />
     </Button>
 );
 
 const LeftHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => (
-    <div className="flex h-full items-center px-1">
+    <div className="flex h-full items-center">
         <HeaderActionButton
             title="Add tab"
             onClick={() => {
@@ -79,9 +85,10 @@ const RightHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => {
     }, [props.containerApi]);
 
     return (
-        <div className="flex h-full items-center px-1">
+        <div className="flex h-full items-center">
             <HeaderActionButton
                 title={isMaximized ? "Minimize view" : "Maximize view"}
+                className="border-r-0"
                 onClick={() => {
                     if (props.containerApi.hasMaximizedGroup()) {
                         props.containerApi.exitMaximizedGroup();
@@ -146,12 +153,16 @@ const sanitizeLayout = (value: unknown): unknown => {
 
     if (hasResults) {
         const selectedResultIndex = Number(sanitized.selectedResultIndex);
-        const resultsLength = sanitizedResults?.length ?? 0;
+        const resultsLength =
+            (sanitizedResults as unknown[] | null)?.length ?? 0;
 
         sanitized.selectedResultIndex =
             resultsLength > 0
                 ? Number.isFinite(selectedResultIndex)
-                    ? Math.min(Math.max(0, selectedResultIndex), resultsLength - 1)
+                    ? Math.min(
+                          Math.max(0, selectedResultIndex),
+                          resultsLength - 1,
+                      )
                     : 0
                 : 0;
     }
@@ -166,10 +177,13 @@ export const ConsoleEditor: FC = () => {
         setApi(event.api);
 
         let restored = false;
-        const rawLayout = localStorage.getItem(CONSOLE_EDITOR_LAYOUT_STORAGE_KEY);
+        const rawLayout = localStorage.getItem(
+            CONSOLE_EDITOR_LAYOUT_STORAGE_KEY,
+        );
         if (rawLayout) {
             try {
-                event.api.fromJSON(sanitizeLayout(JSON.parse(rawLayout)));
+                const sanitizedLayout = sanitizeLayout(JSON.parse(rawLayout));
+                event.api.fromJSON(sanitizedLayout as SerializedDockview);
                 restored = true;
             } catch (error) {
                 console.warn("Failed to restore console editor layout:", error);

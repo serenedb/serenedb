@@ -61,12 +61,11 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
         api: props.api,
         params: props.params,
     });
-    const { notifyResultsReady, showResultsPanel } =
-        useResultsPanelManager({
-            api: props.api,
-            containerApi: props.containerApi,
-            getPanelState: () => paramsRef.current,
-        });
+    const { notifyResultsReady, showResultsPanel } = useResultsPanelManager({
+        api: props.api,
+        containerApi: props.containerApi,
+        getPanelState: () => paramsRef.current,
+    });
     const { handleExecute, handleExecuteInNewTab } = useConsoleQueryExecution({
         containerApi: props.containerApi,
         panelState,
@@ -224,7 +223,7 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
             }
             onCustomDrop={handleSavedQueryDrop}
             customDropLabel="Drop query here"
-            className="relative h-full pt-4">
+            className="relative h-full pt-4 ">
             <div className="relative h-full w-full">
                 <PGSQLEditor
                     value={panelState.query}
@@ -234,7 +233,9 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
                     }}
                     highlightRanges={highlightRanges}
                     highlightRange={highlightRange}
-                    highlightVariant={highlightRange ? highlightVariant : undefined}
+                    highlightVariant={
+                        highlightRange ? highlightVariant : undefined
+                    }
                     onExecute={handleExecute}
                     onExecuteInNewTab={handleExecuteInNewTab}
                 />

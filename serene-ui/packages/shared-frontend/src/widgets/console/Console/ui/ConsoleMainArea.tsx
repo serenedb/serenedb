@@ -3,8 +3,10 @@ import { GridviewReact, type GridviewReadyEvent, Orientation } from "dockview";
 import { ConsoleEditor } from "../../ConsoleEditor";
 import { useConsole } from "../model";
 import {
+    CONSOLE_EDITOR_MIN_WIDTH,
     CONSOLE_GRID_EDITOR_PANEL_ID,
     CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
+    CONSOLE_RIGHT_SIDEBAR_MIN_SIZE,
     CONSOLE_RIGHT_SIDEBAR_SIZE,
 } from "../model/consts";
 import { ConsoleRightSidebar } from "./ConsoleRightSidebar";
@@ -46,7 +48,7 @@ const ensureRightSidebarPanel = (event: GridviewReadyEvent) => {
         id: CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
         component: "rightSidebar",
         size: CONSOLE_RIGHT_SIDEBAR_SIZE,
-        minimumWidth: 300,
+        minimumWidth: CONSOLE_RIGHT_SIDEBAR_MIN_SIZE,
         position: {
             referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
             direction: "right",
@@ -55,8 +57,13 @@ const ensureRightSidebarPanel = (event: GridviewReadyEvent) => {
 };
 
 export const ConsoleMainArea: React.FC = () => {
-    const { settingsSidebarCollapsed, executionHistorySidebarCollapsed } =
-        useConsole();
+    const {
+        sidebarCollapsed,
+        settingsSidebarCollapsed,
+        executionHistorySidebarCollapsed,
+        setSettingsSidebarCollapsed,
+        setExecutionHistorySidebarCollapsed,
+    } = useConsole();
     const gridEventRef = useRef<GridviewReadyEvent | null>(null);
     const [api, setApi] = React.useState<GridviewReadyEvent["api"]>();
     const rightSidebarWidthRef = useRef(CONSOLE_RIGHT_SIDEBAR_SIZE);
@@ -153,11 +160,42 @@ export const ConsoleMainArea: React.FC = () => {
         isRightSidebarVisible,
     ]);
 
+    useEffect(() => {
+        if (!api || !sidebarCollapsed || !isRightSidebarVisible) {
+            return;
+        }
+
+        const checkAvailableWidth = () => {
+            const editorPanel = api.getPanel(CONSOLE_GRID_EDITOR_PANEL_ID);
+            if (!editorPanel) {
+                return;
+            }
+
+            if (editorPanel.width < CONSOLE_EDITOR_MIN_WIDTH) {
+                setSettingsSidebarCollapsed(true);
+                setExecutionHistorySidebarCollapsed(true);
+            }
+        };
+
+        checkAvailableWidth();
+        const disposable = api.onDidLayoutChange(checkAvailableWidth);
+
+        return () => disposable.dispose();
+    }, [
+        api,
+        sidebarCollapsed,
+        isRightSidebarVisible,
+        setSettingsSidebarCollapsed,
+        setExecutionHistorySidebarCollapsed,
+    ]);
+
     return (
-        <GridviewReact
-            components={components}
-            onReady={onReady}
-            orientation={Orientation.HORIZONTAL}
-        />
+        <div className="h-full w-full min-h-0 min-w-0 overflow-hidden">
+            <GridviewReact
+                components={components}
+                onReady={onReady}
+                orientation={Orientation.HORIZONTAL}
+            />
+        </div>
     );
 };

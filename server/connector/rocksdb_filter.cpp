@@ -430,6 +430,8 @@ struct Atom {
   bool has_right{false};
   velox::variant left;   // valid iff has_left
   velox::variant right;  // valid iff has_right (== left when is_point)
+
+  bool operator==(const Atom&) const = default;
 };
 
 // Lightweight constraint representation used during the recursive sweep.
@@ -509,10 +511,7 @@ ColumnRange AtomToColumnRange(const Atom& a) {
 // Left bound comes from the first atom, right bound from the last.
 // For a single-atom run (first == last), delegates to AtomToColumnRange.
 ColumnRange FuseAtomRange(const Atom& first, const Atom& last) {
-  if (first.is_point == last.is_point && first.has_left == last.has_left &&
-      first.has_right == last.has_right &&
-      (!first.has_left || first.left == last.left) &&
-      (!first.has_right || first.right == last.right)) {
+  if (first == last) {
     return AtomToColumnRange(first);
   }
 

@@ -12,6 +12,7 @@ import {
     MinimizeIcon,
     PlusIcon,
 } from "@serene-ui/shared-frontend";
+import { useDockviewLayoutSync } from "../../../../shared/hooks";
 import {
     CONSOLE_EDITOR_PANEL_COMPONENT,
     CONSOLE_RESULTS_PANEL_COMPONENT,
@@ -25,7 +26,7 @@ import { EditorPanel } from "./EditorPanel";
 import { ConsoleEditorTopbar } from "./ConsoleEditorTopbar";
 import { ResultsPanel } from "./ResultsPanel";
 
-const CONSOLE_EDITOR_LAYOUT_STORAGE_KEY = "console:editor-layout";
+const CONSOLE_EDITOR_LAYOUT_STORAGE_KEY = "console:editor-dock-layout";
 
 const components = {
     [CONSOLE_EDITOR_PANEL_COMPONENT]: EditorPanel,
@@ -172,6 +173,7 @@ const sanitizeLayout = (value: unknown): unknown => {
 
 export const ConsoleEditor: FC = () => {
     const [api, setApi] = useState<DockviewReadyEvent["api"]>();
+    const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
 
     const onReady = (event: DockviewReadyEvent) => {
         setApi(event.api);
@@ -219,7 +221,7 @@ export const ConsoleEditor: FC = () => {
     }, [api]);
 
     return (
-        <div className="relative flex h-dvh w-full flex-col">
+        <div ref={containerRef} className="relative flex h-dvh w-full flex-col">
             <ConsoleEditorTopbar />
             <div className="flex-1 min-h-0">
                 <DockviewReact

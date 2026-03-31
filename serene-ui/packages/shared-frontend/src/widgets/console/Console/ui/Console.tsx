@@ -1,10 +1,11 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef } from "react";
 import {
     GridviewReact,
     type GridviewReadyEvent,
     Orientation,
 } from "dockview";
 import { ConsoleSidebar } from "../../ConsoleSidebar";
+import { useDockviewLayoutSync } from "../../../../shared/hooks";
 import { ConsoleMainArea } from "./ConsoleMainArea";
 import {
     CONSOLE_MAIN_AREA_MIN_WIDTH,
@@ -16,7 +17,7 @@ import {
     useConsole,
 } from "../model";
 
-const CONSOLE_LAYOUT_STORAGE_KEY = "console:layout";
+const CONSOLE_LAYOUT_STORAGE_KEY = "console:grid-layout";
 
 const restoreLayout = (event: GridviewReadyEvent, storageKey: string) => {
     const rawLayout = localStorage.getItem(storageKey);
@@ -65,6 +66,7 @@ const ConsoleLayout: React.FC = () => {
     const { sidebarCollapsed, setSidebarCollapsed } = useConsole();
     const gridEventRef = useRef<GridviewReadyEvent | null>(null);
     const [api, setApi] = React.useState<GridviewReadyEvent["api"]>();
+    const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
     const components = React.useMemo(() => {
         return {
             sidebar: () => {
@@ -134,7 +136,7 @@ const ConsoleLayout: React.FC = () => {
         return () => disposable.dispose();
     }, [api, sidebarCollapsed, setSidebarCollapsed]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const event = gridEventRef.current;
         if (!event) {
             return;
@@ -153,7 +155,9 @@ const ConsoleLayout: React.FC = () => {
     }, [sidebarCollapsed]);
 
     return (
-        <div className="h-full w-full min-h-0 min-w-0 overflow-hidden">
+        <div
+            ref={containerRef}
+            className="h-full w-full min-h-0 min-w-0 overflow-hidden">
             <GridviewReact
                 components={components}
                 onReady={onReady}

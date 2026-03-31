@@ -13,6 +13,7 @@ import {
     StarIcon,
 } from "@serene-ui/shared-frontend";
 import { ConsoleExplorer } from "../../ConsoleExplorer";
+import { useDockviewLayoutSync } from "../../../../shared/hooks";
 
 interface ConsoleSidebarProps {}
 
@@ -32,6 +33,9 @@ const headerComponents = {
 };
 
 export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
+    const [api, setApi] = React.useState<PaneviewReadyEvent["api"]>();
+    const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
+
     const equalizeExpandedPanels = React.useCallback(
         (event: PaneviewReadyEvent) => {
             const expandedPanels = event.api.panels.filter(
@@ -63,6 +67,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
     );
 
     const onReady = (event: PaneviewReadyEvent) => {
+        setApi(event.api);
         const expansionListeners = new Map<string, DockviewIDisposable>();
         const bindPanelExpansionListener = (
             panel: (typeof event.api.panels)[number],
@@ -130,7 +135,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
     };
 
     return (
-        <div className="flex flex-col h-full w-full">
+        <div ref={containerRef} className="flex flex-col h-full w-full">
             <ConsoleSidebarTopbar />
             <PaneviewReact
                 onReady={onReady}

@@ -14,7 +14,7 @@ export const AppLayout = ({ children }: { children: React.ReactNode }) => {
                         <AppSidebar />
                         <div
                             key={location.pathname}
-                            className="h-dvh page-fade flex flex-1">
+                            className="h-dvh page-fade flex flex-1 min-h-0 min-w-0 overflow-hidden">
                             {children}
                         </div>
                     </div>

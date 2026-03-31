@@ -1464,16 +1464,16 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
 
     // tmp solution:
     // for bulk insert we use SST which requires sorted data by key
-    SDB_ASSERT(ToAliases(state.root->outputType()->names()) ==
-               catalog_table.RowType()->names());
     const auto& pk = *catalog_table.PKType();
     std::vector<lp::SortingField> sorted_by;
     sorted_by.reserve(pk.size());
     for (const auto& [name, type] :
          std::views::zip(pk.names(), pk.children())) {
-      auto col_idx = catalog_table.RowType()->getChildIdx(name);
-      auto expr = std::make_shared<lp::InputReferenceExpr>(
-        type, state.root->outputType()->nameOf(col_idx));
+      auto column = state.resolver.Resolve(state.root->outputType(), name);
+      SDB_ASSERT(column.IsFound());
+      std::string resolved{column.GetColumnName()};
+      auto expr =
+        std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
       sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
     }
 

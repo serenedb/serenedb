@@ -213,9 +213,8 @@ struct PgJsonExtractIndexBase {
     std::conditional_t<Output == JsonParser::OutputType::TEXT, velox::Varchar,
                        velox::Json>;
 
-  bool call(  // NOLINT
-    out_type<ResultVeloxType>& result, const arg_type<velox::Json>& json,
-    const arg_type<int64_t>& index) {
+  bool call(out_type<ResultVeloxType>& result,
+            const arg_type<velox::Json>& json, const arg_type<int64_t>& index) {
     _parser.PrepareJson({json});
     auto str = _parser.ExtractByIndex<Output>(index);
     if (!str.data()) {
@@ -246,9 +245,9 @@ struct PgJsonExtractFieldBase {
     std::conditional_t<Output == JsonParser::OutputType::TEXT, velox::Varchar,
                        velox::Json>;
 
-  bool call(  // NOLINT
-    out_type<ResultVeloxType>& result, const arg_type<velox::Json>& json,
-    const arg_type<velox::Varchar>& field) {
+  bool call(out_type<ResultVeloxType>& result,
+            const arg_type<velox::Json>& json,
+            const arg_type<velox::Varchar>& field) {
     _parser.PrepareJson({json});
     auto str = _parser.ExtractByField<Output>({field.data(), field.size()});
     if (!str.data()) {
@@ -324,8 +323,8 @@ struct PgJsonInFunction {
 
   static constexpr int32_t reuse_strings_from_arg = 0;
 
-  FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<velox::Json>& result, const arg_type<velox::Varchar>& input) {
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Json>& result,
+                                const arg_type<velox::Varchar>& input) {
     // Even though we need only validation here, we still parse the input:
     // https://github.com/simdjson/simdjson/discussions/1393
 
@@ -350,8 +349,8 @@ struct PgJsonOutFunction {
 
   static constexpr int32_t reuse_strings_from_arg = 0;
 
-  FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<velox::Varchar>& result, const arg_type<velox::Json>& input) {
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Json>& input) {
     result.setNoCopy(input);
   }
 };
@@ -362,8 +361,8 @@ template<typename T>
 struct PgJsonTypeof {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<velox::Varchar>& result, const arg_type<velox::Json>& input) {
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Json>& input) {
     std::string_view sv(input.data(), input.size());
     simdjson::ondemand::parser parser;
     simdjson::padded_string padded(sv);
@@ -401,8 +400,8 @@ template<typename T>
 struct PgJsonStripNulls {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(  // NOLINT
-    out_type<velox::Json>& result, const arg_type<velox::Json>& input) {
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Json>& result,
+                                const arg_type<velox::Json>& input) {
     std::string_view sv(input.data(), input.size());
     simdjson::ondemand::parser parser;
     simdjson::padded_string padded(sv);

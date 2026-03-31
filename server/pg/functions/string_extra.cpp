@@ -33,6 +33,7 @@
 
 #include "basics/fwd.h"
 #include "pg/sql_exception_macro.h"
+#include "query/types.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -663,7 +664,7 @@ void registerStringExtraFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "convert_from"});
   velox::registerFunction<PgConvertTo, velox::Varbinary, velox::Varchar,
                           velox::Varchar>({prefix + "convert_to"});
-  velox::registerFunction<PgClientEncoding, velox::Varchar>(
+  velox::registerFunction<PgClientEncoding, NameCustomType>(
     {prefix + "client_encoding"});
 }
 

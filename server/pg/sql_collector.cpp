@@ -504,6 +504,14 @@ void ObjectCollector::CollectWithClause(State& state,
   if (!with_clause) {
     return;
   }
+  // For recursive CTEs, register names first so self-references
+  // in the CTE body are recognized as CTEs, not real relations.
+  if (with_clause->recursive) {
+    VisitNodes(with_clause->ctes, [&](const CommonTableExpr& cte) {
+      SDB_ASSERT(cte.ctename);
+      state.ctes.emplace(cte.ctename);
+    });
+  }
   VisitNodes(with_clause->ctes, [&](const CommonTableExpr& cte) {
     const auto* ctequery = cte.ctequery;
     SDB_ASSERT(ctequery);

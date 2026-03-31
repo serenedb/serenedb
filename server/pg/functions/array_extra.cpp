@@ -25,6 +25,13 @@
 #include <velox/type/SimpleFunctionApi.h>
 
 #include "basics/fwd.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 namespace {
@@ -126,6 +133,121 @@ struct PgArrayReplace {
   }
 };
 
+// Parses a PostgreSQL array literal into ARRAY<VARCHAR>.
+// The caller casts the varchar elements to the target type via CAST.
+//
+// Format: {elem1,"elem 2",NULL,...}  (delimiter is ',' for all standard types)
+// Rules (from pg arrayfuncs.c / ReadArrayToken):
+//   - Unquoted: strip leading/trailing whitespace; backslash escapes apply;
+//     unescaped "NULL" (case-insensitive) -> SQL NULL.
+//   - Quoted ("..."): backslash escapes apply; never treated as NULL.
+template<typename T>
+struct PgArrayTextIn {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<velox::Varchar>>& result,
+                                const arg_type<velox::Varchar>& input) {
+    std::string_view sv{input.data(), input.size()};
+
+    while (!sv.empty() && std::isspace((unsigned char)sv.front())) {
+      sv.remove_prefix(1);
+    }
+    while (!sv.empty() && std::isspace((unsigned char)sv.back())) {
+      sv.remove_suffix(1);
+    }
+
+    if (sv.size() < 2 || sv.front() != '{' || sv.back() != '}') {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("malformed array literal: must be wrapped in {}"));
+    }
+    sv = sv.substr(1, sv.size() - 2);  // strip { }
+
+    size_t i = 0;
+    while (i < sv.size() && std::isspace((unsigned char)sv[i])) {
+      ++i;
+    }
+    if (i == sv.size()) {
+      return;  // empty array
+    }
+
+    while (true) {
+      while (i < sv.size() && std::isspace((unsigned char)sv[i])) {
+        ++i;
+      }
+
+      if (i >= sv.size()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+          ERR_MSG("malformed array literal: missing element after delimiter"));
+      }
+
+      if (sv[i] == '"') {
+        ++i;  // skip opening '"'
+        std::string elem;
+        while (i < sv.size() && sv[i] != '"') {
+          if (sv[i] == '\\') {
+            ++i;
+            if (i < sv.size()) {
+              elem += sv[i++];
+            }
+          } else {
+            elem += sv[i++];
+          }
+        }
+        if (i >= sv.size()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+            ERR_MSG("malformed array literal: unterminated quoted element"));
+        }
+        ++i;  // skip closing '"'
+        while (i < sv.size() && std::isspace((unsigned char)sv[i])) {
+          ++i;
+        }
+        result.add_item().copy_from(elem);
+      } else {
+        std::string elem;
+        bool has_escapes = false;
+        size_t non_ws_len = 0;
+        while (i < sv.size() && sv[i] != ',') {
+          if (sv[i] == '\\') {
+            ++i;
+            if (i < sv.size()) {
+              elem += sv[i++];
+              has_escapes = true;
+              non_ws_len = elem.size();
+            }
+          } else {
+            if (!std::isspace((unsigned char)sv[i])) {
+              non_ws_len = elem.size() + 1;
+            }
+            elem += sv[i++];
+          }
+        }
+        elem.resize(non_ws_len);
+
+        if (!has_escapes && absl::EqualsIgnoreCase(elem, "NULL")) {
+          result.add_null();
+        } else {
+          result.add_item().copy_from(elem);
+        }
+      }
+
+      if (i < sv.size()) {
+        if (sv[i] != ',') {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+            ERR_MSG(
+              "malformed array literal: unexpected character after element"));
+        }
+        ++i;  // skip comma
+      } else {
+        break;
+      }
+    }
+  }
+};
+
 }  // namespace
 
 void registerArrayExtraFunctions(const std::string& prefix) {
@@ -146,6 +268,10 @@ void registerArrayExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgArrayReplace, velox::Array<int64_t>,
                           velox::Array<int64_t>, int64_t, int64_t>(
     {prefix + "array_replace"});
+
+  // serenedb custom function
+  velox::registerFunction<PgArrayTextIn, velox::Array<velox::Varchar>,
+                          velox::Varchar>({prefix + "array_text_in"});
 }
 
 }  // namespace sdb::pg::functions

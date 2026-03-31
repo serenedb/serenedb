@@ -73,7 +73,7 @@ struct GetUserByIdFunction {
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<int64_t>& input) {
-    if (input == 10) {
+    if (input == id::kRootUser) {
       result = StaticStrings::kDefaultUser;
     } else {
       result = absl::StrCat("unknown (OID=", input, ")");
@@ -81,23 +81,74 @@ struct GetUserByIdFunction {
   }
 };
 
+// Single struct for all stub functions that return an empty string.
+// Multiple call() overloads cover all arg-type combinations in use.
 template<typename T>
-struct GetViewDef {
+struct EmptyStringFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>& input) {
-    result = "";
+  // 1-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&) {
+    r = "";
   }
-};
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<velox::Varchar>&) {
+    r = "";
+  }
 
-template<typename T>
-struct GetRuleDef {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
+  // 2-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&,
+                                const arg_type<bool>&) {
+    r = "";
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    r = "";
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<bool>&) {
+    r = "";
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&) {
+    r = "";
+  }
 
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>& input) {
-    result = "";
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&,
+                                const arg_type<int32_t>&) {
+    r = "";
+  }
+
+  // 3-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<bool>&) {
+    r = "";
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    r = "";
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int32_t>&) {
+    r = "";
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<bool>&) {
+    r = "";
   }
 };
 
@@ -105,10 +156,9 @@ template<typename T>
 struct ByteaOutFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<velox::Varbinary>* /*input*/) {
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varbinary>*) {
     auto cfg = basics::downCast<const Config>(config.config());
     auto bytea_output = cfg->Get<VariableType::PgByteaOutput>("bytea_output");
 
@@ -117,16 +167,15 @@ struct ByteaOutFunction {
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varbinary>& result,
                                 const arg_type<velox::Varchar>& input) {
-    auto value = std::string_view{input.begin(), input.end()};
     if (_bytea_output == ByteaOutput::Hex) {
       const auto required_size = 2 + 2 * input.size();
       result.resize(required_size);
-      ByteaOutHex<false>(result.data(), value);
+      ByteaOutHex<false>(result.data(), input);
     } else {
       SDB_ASSERT(_bytea_output == ByteaOutput::Escape);
-      const auto required_size = ByteaOutEscapeLength<false>(value);
+      const auto required_size = ByteaOutEscapeLength<false>(input);
       result.resize(required_size);
-      ByteaOutEscape<false>(result.data(), value);
+      ByteaOutEscape<false>(result.data(), input);
     }
   }
 
@@ -139,8 +188,9 @@ struct ByteaInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varbinary>& result,
-                                const arg_type<velox::Varchar>& input) {
-    if (std::string_view{input}.starts_with("\\x")) {
+                                const arg_type<velox::Varchar>& value) {
+    std::string_view input{value};
+    if (input.starts_with("\\x")) {
       std::string_view payload{input.begin() + 2, input.end()};
       result.resize(payload.size() / 2);
 
@@ -227,9 +277,8 @@ template<typename T>
 struct CurrentSchemaFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config) {
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config) {
     auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
     SDB_ASSERT(conn_ctx);
     _schema_name = conn_ctx->GetCurrentSchema();
@@ -247,10 +296,9 @@ template<typename T>
 struct CurrentSchemasFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<bool>& /*include_implicit*/) {
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<bool>&) {
     auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
     SDB_ASSERT(conn_ctx);
     auto database_id = conn_ctx->GetDatabaseId();
@@ -281,9 +329,8 @@ template<typename T>
 struct CurrentUserFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config) {
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config) {
     const auto& ctx =
       basics::downCast<const ConnectionContext>(config.config());
     SDB_ASSERT(ctx);
@@ -300,9 +347,8 @@ template<typename T>
 struct CurrentDatabaseFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config) {
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config) {
     auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
     SDB_ASSERT(conn_ctx);
     _database = conn_ctx->GetDatabase();
@@ -328,7 +374,7 @@ struct CurrentSettingFunction {
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& out,
                                 const arg_type<velox::Varchar>& name) {
-    std::string_view key(name.data(), name.size());
+    std::string_view key{name};
     auto val = _cfg->GetSetting(key);
     if (!val) {
       THROW_SQL_ERROR(
@@ -357,11 +403,11 @@ struct CurrentSettingMissingOkFunction {
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& out,
                                 const arg_type<velox::Varchar>& name,
                                 const bool& missing_ok) {
-    std::string_view key(name.data(), name.size());
+    std::string_view key{name};
     auto val = _cfg->GetSetting(key);
     if (!val) {
       if (missing_ok) {
-        return false;  // NULL
+        return false;
       }
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -393,9 +439,8 @@ struct SetConfigFunction {
                                 const arg_type<velox::Varchar>& name,
                                 const arg_type<velox::Varchar>& value,
                                 const bool& is_local) {
-    std::string_view key(name.data(), name.size());
-    std::string val(value.data(), value.size());
-    _cfg->SetSetting(key, val, is_local);
+    std::string val{value};
+    _cfg->SetSetting(name, val, is_local);
     out = val;
   }
 
@@ -522,15 +567,12 @@ struct PgPostmasterStartTimeFunction {
   }
 };
 
-// pg_current_logfile([text]) → text
-// Returns NULL (no log collector)
 template<typename T>
 struct PgCurrentLogfileFunction0 {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&) {
-    return false;  // NULL
-  }
+  // Returns NULL (no log collector)
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&) { return false; }
 };
 
 template<typename T>
@@ -539,7 +581,7 @@ struct PgCurrentLogfileFunction1 {
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
                                 const arg_type<velox::Varchar>&) {
-    return false;  // NULL
+    return false;
   }
 };
 
@@ -557,102 +599,53 @@ struct PgNotificationQueueUsageFunction {
   FOLLY_ALWAYS_INLINE void call(out_type<double>& out) { out = 0.0; }
 };
 
+// Single struct for all stub functions that return NULL (return false).
+// Multiple call() overloads cover every return/arg-type combination in use.
 template<typename T>
-struct EmptyStringOidBool {
+struct NullFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>&,
-                                const arg_type<bool>&) {
-    result = "";
-  }
-};
+  // 0-arg
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&) { return false; }
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Timestamp>&) { return false; }
+  FOLLY_ALWAYS_INLINE bool call(out_type<int32_t>&) { return false; }
 
-template<typename T>
-struct EmptyStringOidIntBool {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<bool>&) {
-    result = "";
-  }
-};
-
-template<typename T>
-struct EmptyStringOidInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>&,
+  // 1-arg
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
                                 const arg_type<int64_t>&) {
-    result = "";
+    return false;
   }
-};
-
-template<typename T>
-struct EmptyStringText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&,
                                 const arg_type<velox::Varchar>&) {
-    result = "";
+    return false;
   }
-};
-
-template<typename T>
-struct EmptyStringTextBool {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<bool>&) {
-    result = "";
-  }
-};
-
-template<typename T>
-struct EmptyStringTextOid {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<velox::Varchar>&,
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Timestamp>&,
                                 const arg_type<int64_t>&) {
-    result = "";
+    return false;
   }
-};
-
-template<typename T>
-struct EmptyStringTextOidBool {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<bool>&) {
-    result = "";
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&, const arg_type<int64_t>&) {
+    return false;
   }
-};
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<velox::Varchar>>&,
+                                const arg_type<int64_t>&) {
+    return false;
+  }
 
-template<typename T>
-struct NullVarcharTextText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
+  // 2-arg
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
                                 const arg_type<velox::Varchar>&,
                                 const arg_type<velox::Varchar>&) {
-    return false;  // NULL
+    return false;
   }
-};
-
-template<typename T>
-struct NullVarcharText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    return false;
+  }
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
                                 const arg_type<velox::Varchar>&) {
-    return false;  // NULL
+    return false;
   }
 };
 
@@ -677,30 +670,18 @@ struct PgEncodingToCharFunction {
 };
 
 template<typename T>
-struct AlwaysFalseFunction1Int {
+struct AlwaysFalseFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
                                 const arg_type<int64_t>&) {
     result = false;
   }
-};
-
-template<typename T>
-struct AlwaysFalseIntText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
   FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
                                 const arg_type<int64_t>&,
                                 const arg_type<velox::Varchar>&) {
     result = false;
   }
-};
-
-template<typename T>
-struct AlwaysFalseIntIntText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
   FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
                                 const arg_type<int64_t>&,
                                 const arg_type<int64_t>&,
@@ -716,18 +697,6 @@ struct EmptyTextArrayFromText {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<velox::Varchar>>& result,
                                 const arg_type<velox::Varchar>&) {
     // Return empty array
-  }
-};
-
-template<typename T>
-struct EmptyStringOidOidInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<int64_t>&) {
-    result = "";
   }
 };
 
@@ -758,56 +727,101 @@ struct IcuUnicodeVersionFunction {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) { out = "75.1"; }
 };
 
-#define DEFINE_NOT_SUPPORTED_FUNC(Name, ...)                             \
-  template<typename T>                                                   \
-  struct Name {                                                          \
-    VELOX_DEFINE_FUNCTION_TYPES(T);                                      \
-                                                                         \
-    FOLLY_ALWAYS_INLINE void call(__VA_ARGS__) {                         \
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),           \
-                      ERR_MSG("Function is not supported in SereneDB")); \
-    }                                                                    \
-  };
+[[noreturn]] inline void ThrowNotSupported() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("Function is not supported in SereneDB"));
+}
 
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported0Text, out_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported0Int, out_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported1Int, out_type<velox::Varchar>&,
-                          const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported1Text, out_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported2TextText, out_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported3OidOidInt, out_type<velox::Varchar>&,
-                          const arg_type<int64_t>&, const arg_type<int64_t>&,
-                          const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported1IntTimestamp,
-                          out_type<velox::Timestamp>&, const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupportedBool2IntInt, out_type<bool>&,
-                          const arg_type<int64_t>&, const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported4OidOidTextBool,
-                          out_type<velox::Varchar>&, const arg_type<int64_t>&,
-                          const arg_type<int64_t>&,
-                          const arg_type<velox::Varchar>&,
-                          const arg_type<bool>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Int, out_type<int32_t>&,
-                          const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupportedInt1Text, out_type<int32_t>&,
-                          const arg_type<velox::Varchar>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported2CharInt,
-                          out_type<velox::Array<velox::Varchar>>&,
-                          const arg_type<int8_t>&, const arg_type<int64_t>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported1TextArray, out_type<velox::Varchar>&,
-                          const arg_type<velox::Array<velox::Varchar>>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported1IntArray, out_type<velox::Varchar>&,
-                          const arg_type<velox::Array<int64_t>>&)
-DEFINE_NOT_SUPPORTED_FUNC(NotSupported3TextTextArrayTextArray,
-                          out_type<velox::Varchar>&,
-                          const arg_type<velox::Varchar>&,
-                          const arg_type<velox::Array<velox::Varchar>>&,
-                          const arg_type<velox::Array<velox::Varchar>>&)
+// Single struct for all stub "not supported" functions.
+// Multiple call() overloads cover every return/arg-type combination in use.
+template<typename T>
+struct NotSupportedFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
-#undef DEFINE_NOT_SUPPORTED_FUNC
+  // 0-arg
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>&) { ThrowNotSupported(); }
+
+  // 1-arg
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<velox::Array<velox::Varchar>>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<velox::Array<int64_t>>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>&,
+                                const arg_type<int64_t>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<int32_t>&, const arg_type<int64_t>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<int32_t>&,
+                                const arg_type<velox::Varchar>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<Interval>&,
+                                const arg_type<velox::Timestamp>&) {
+    ThrowNotSupported();
+  }
+
+  // 2-arg
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>&, const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<velox::Varchar>>&,
+                                const arg_type<int8_t>&,
+                                const arg_type<int64_t>&) {
+    ThrowNotSupported();
+  }
+
+  // 3-arg
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int32_t>&) {
+    ThrowNotSupported();
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Array<velox::Varchar>>&,
+                                const arg_type<velox::Array<velox::Varchar>>&) {
+    ThrowNotSupported();
+  }
+
+  // 4-arg
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<bool>&) {
+    ThrowNotSupported();
+  }
+};
 
 // Stub functions returning 0 or NULL, used by pg_stat_* views
 
@@ -846,55 +860,6 @@ struct ZeroDoubleFunction0 {
 };
 
 template<typename T>
-struct NullTimestampFunction1Oid {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Timestamp>&,
-                                const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct NullTimestampFunction0 {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Timestamp>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct NullBigintFunction1Oid {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&, const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct NullVarcharFunction1OidInt {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct NullTextArrayFunction1Oid {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<velox::Varchar>>&,
-                                const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
 struct GetDatabaseEncodingFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -903,34 +868,121 @@ struct GetDatabaseEncodingFunction {
   }
 };
 
+// Single struct for all always-true stub privilege/visibility checks.
+// Multiple call() overloads dispatch on argument types.
 template<typename T>
-struct AlwaysTrueFunction1Text {
+struct AlwaysTrueFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
+  // 1-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
                                 const arg_type<velox::Varchar>&) {
-    result = true;
+    r = true;
   }
-};
-
-template<typename T>
-struct AlwaysTrueFunction1Int {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<int64_t>&) {
-    result = true;
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&) {
+    r = true;
   }
-};
 
-template<typename T>
-struct AlwaysTrueFunction2Text {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
+  // 2-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
                                 const arg_type<velox::Varchar>&,
                                 const arg_type<velox::Varchar>&) {
-    result = true;
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+
+  // 3-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+
+  // 3-arg with int16_t (for has_column_privilege text-table, attnum, priv)
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+
+  // 4-arg overloads
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<velox::Varchar>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
+  }
+  FOLLY_ALWAYS_INLINE void call(out_type<bool>& r, const arg_type<int64_t>&,
+                                const arg_type<int64_t>&,
+                                const arg_type<int16_t>&,
+                                const arg_type<velox::Varchar>&) {
+    r = true;
   }
 };
 
@@ -970,135 +1022,6 @@ struct PgColumnIsUpdatable {
 };
 
 template<typename T>
-struct AlwaysTrueFunction2IntText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<int64_t>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct AlwaysTrueFunction3Text {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct AlwaysTrueFunction3TextIntText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct AlwaysTrueFunction4Text {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct AlwaysTrueFunction4TextIntTextText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct AlwaysTrueFunction4TextIntIntText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct AlwaysTrueFunction3IntSmallintText {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE void call(out_type<bool>& result,
-                                const arg_type<int64_t>&,
-                                const arg_type<int16_t>&,
-                                const arg_type<velox::Varchar>&) {
-    result = true;
-  }
-};
-
-template<typename T>
-struct ColDescriptionFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct ObjDescriptionFunction1 {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<int64_t>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct ObjDescriptionFunction2 {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<velox::Varchar>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct ShObjDescriptionFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
-                                const arg_type<int64_t>&,
-                                const arg_type<velox::Varchar>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
 struct NameConcatOidFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -1123,24 +1046,6 @@ struct FormatTypeFunction {
                                 const arg_type<int64_t>& type_oid,
                                 const arg_type<int64_t>&) {
     result = RegtypeOut(type_oid);
-  }
-};
-
-template<typename T>
-struct NullVarcharFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&) {
-    return false;  // returns NULL
-  }
-};
-
-template<typename T>
-struct NullIntFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  FOLLY_ALWAYS_INLINE bool call(out_type<int32_t>&) {
-    return false;  // returns NULL
   }
 };
 
@@ -1215,7 +1120,7 @@ struct QuoteIdentFunction {
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<velox::Varchar>& input) {
-    auto str = std::string_view{input.data(), input.size()};
+    std::string_view str{input};
     bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
     if (!needs_quoting) {
       for (auto c : str) {
@@ -1260,7 +1165,7 @@ struct QuoteLiteralFunction {
   // non-default-null functions)
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<velox::Varchar>& input) {
-    auto str = std::string_view{input.data(), input.size()};
+    std::string_view str{input};
     bool has_backslash = str.find('\\') != std::string_view::npos;
     result.reserve(str.size() + 2);
     if (has_backslash) {
@@ -1299,27 +1204,272 @@ struct QuoteNullableFunction {
   }
 };
 
+// PostgreSQL-compatible format function similar to C's sprintf.
+// Supports %s (string), %I (SQL identifier), %L (SQL literal),
+// %% (literal %), positional args (%n$s), width, and left-align (-).
+template<typename T>
+struct PgFormat {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE bool callNullable(
+    out_type<velox::Varchar>& result, const arg_type<velox::Varchar>* formatstr,
+    const arg_type<velox::Variadic<velox::Varchar>>* args) {
+    if (!formatstr) {
+      return false;
+    }
+
+    const char* fmt = formatstr->data();
+    size_t fmt_len = formatstr->size();
+    size_t next_arg = 0;
+
+    auto check_arg = [&](size_t idx) {
+      if (!args || idx >= args->size()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("too few arguments for format()"));
+      }
+    };
+
+    size_t i = 0;
+    while (i < fmt_len) {
+      if (fmt[i] != '%') {
+        size_t start = i;
+        while (i < fmt_len && fmt[i] != '%') {
+          ++i;
+        }
+        result.append(std::string_view{fmt + start, i - start});
+        continue;
+      }
+
+      ++i;  // skip '%'
+      if (i >= fmt_len) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() type specifier"));
+      }
+
+      if (fmt[i] == '%') {
+        result.append("%");
+        ++i;
+        continue;
+      }
+
+      // Parse optional position: digits followed by '$'
+      int arg_index = -1;
+      size_t num_start = i;
+      while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
+        ++i;
+      }
+      if (i < fmt_len && fmt[i] == '$' && i > num_start) {
+        int pos = 0;
+        for (size_t j = num_start; j < i; ++j) {
+          pos = pos * 10 + (fmt[j] - '0');
+        }
+        if (pos < 1) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("format specifies argument 0, but arguments are "
+                    "numbered from 1"));
+        }
+        arg_index = pos - 1;
+        ++i;  // skip '$'
+      } else {
+        i = num_start;
+      }
+
+      // Parse optional flags
+      bool left_align = false;
+      if (i < fmt_len && fmt[i] == '-') {
+        left_align = true;
+        ++i;
+      }
+
+      // Parse optional width
+      int width = 0;
+      if (i < fmt_len && fmt[i] == '*') {
+        ++i;
+        // Check for *n$ form
+        num_start = i;
+        while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
+          ++i;
+        }
+        size_t width_arg_idx;
+        if (i < fmt_len && fmt[i] == '$' && i > num_start) {
+          int pos = 0;
+          for (size_t j = num_start; j < i; ++j) {
+            pos = pos * 10 + (fmt[j] - '0');
+          }
+          width_arg_idx = pos - 1;
+          ++i;  // skip '$'
+        } else {
+          i = num_start;  // not *n$ form
+          width_arg_idx =
+            (arg_index >= 0) ? static_cast<size_t>(arg_index) : next_arg++;
+        }
+        check_arg(width_arg_idx);
+        if (const auto& wv = (*args)[width_arg_idx]) {
+          const auto wv_str = *wv;
+          std::string_view ws{wv_str};
+          for (size_t j = 0; j < ws.size(); ++j) {
+            char c = ws[j];
+            if (j == 0 && c == '-') {
+              left_align = true;
+              continue;
+            }
+            if (c < '0' || c > '9') {
+              break;
+            }
+            width = width * 10 + (c - '0');
+          }
+        }
+      } else {
+        while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
+          width = width * 10 + (fmt[i] - '0');
+          ++i;
+        }
+      }
+
+      if (i >= fmt_len) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() type specifier"));
+      }
+
+      char type = fmt[i];
+      ++i;
+
+      size_t ai =
+        (arg_index >= 0) ? static_cast<size_t>(arg_index) : next_arg++;
+      check_arg(ai);
+
+      switch (type) {
+        case 's': {
+          if (const auto& v = (*args)[ai]) {
+            AppendPadded(result, *v, width, left_align);
+          }
+        } break;
+        case 'I': {
+          if (const auto& v = (*args)[ai]) {
+            auto quoted = QuoteIdent(*v);
+            AppendPadded(result, quoted, width, left_align);
+          } else {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                            ERR_MSG("null values cannot be formatted as an SQL "
+                                    "identifier"));
+          }
+        } break;
+        case 'L': {
+          if (const auto& v = (*args)[ai]) {
+            auto quoted = QuoteLiteral(*v);
+            AppendPadded(result, quoted, width, left_align);
+          } else {
+            AppendPadded(result, "NULL", width, left_align);
+          }
+        } break;
+        default:
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("unrecognized format() type specifier \"",
+                                  std::string_view{&type, 1}, "\""));
+      }
+    }
+    return true;
+  }
+
+ private:
+  static void AppendPadded(out_type<velox::Varchar>& result, const auto& v,
+                           int width, bool left_align) {
+    std::string_view str{v};
+    int len = static_cast<int>(str.size());
+    int pad = (width > len) ? (width - len) : 0;
+    if (!left_align && pad > 0) {
+      for (int j = 0; j < pad; ++j) {
+        result.append(" ");
+      }
+    }
+    result.append(str);
+    if (left_align && pad > 0) {
+      for (int j = 0; j < pad; ++j) {
+        result.append(" ");
+      }
+    }
+  }
+
+  static std::string QuoteIdent(const auto& v) {
+    std::string_view str{v};
+    bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
+    if (!needs_quoting) {
+      for (auto c : str) {
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+          needs_quoting = true;
+          break;
+        }
+      }
+    }
+    if (!needs_quoting) {
+      std::string null_terminated{str};
+      int kwnum = ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
+      if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
+        needs_quoting = true;
+      }
+    }
+    if (!needs_quoting) {
+      return std::string{str};
+    }
+    std::string out;
+    out.reserve(str.size() + 2);
+    out += '"';
+    for (auto c : str) {
+      if (c == '"') {
+        out += "\"\"";
+      } else {
+        out += c;
+      }
+    }
+    out += '"';
+    return out;
+  }
+
+  static std::string QuoteLiteral(const auto& v) {
+    std::string_view str{v};
+    bool has_backslash = str.find('\\') != std::string_view::npos;
+    std::string out;
+    out.reserve(str.size() + 2);
+    if (has_backslash) {
+      out += "E'";
+    } else {
+      out += '\'';
+    }
+    for (auto c : str) {
+      if (c == '\'') {
+        out += "''";
+      } else if (c == '\\') {
+        out += "\\\\";
+      } else {
+        out += c;
+      }
+    }
+    out += '\'';
+    return out;
+  }
+};
+
 template<typename T>
 struct PgSimilarToEscape {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<velox::Varchar>& pattern) {
-    result =
-      EscapePattern(std::string_view{pattern.data(), pattern.size()}, '\\');
+    result = EscapePattern(pattern, '\\');
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<velox::Varchar>& pattern,
                                 const arg_type<velox::Varchar>& escape) {
-    std::string_view escape_sv{escape.data(), escape.size()};
-
-    if (escape_sv.size() != 1) {
+    if (escape.size() != 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
                       ERR_MSG("invalid escape string: must be one character"));
     }
 
-    result = EscapePattern({pattern.data(), pattern.size()}, escape_sv[0]);
+    result = EscapePattern({pattern.data(), pattern.size()}, escape.data()[0]);
   }
 
  private:
@@ -1447,20 +1597,16 @@ struct PgLikeEscape {
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<velox::Varchar>& pattern,
                                 const arg_type<velox::Varchar>& escape) {
-    std::string_view escape_sv{escape.data(), escape.size()};
-
-    if (escape_sv.size() != 1) {
+    if (escape.size() != 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
                       ERR_MSG("invalid escape string: must be one character"));
     }
-
-    result = EscapePattern({pattern.data(), pattern.size()}, escape_sv[0]);
+    result = EscapePattern({pattern.data(), pattern.size()}, escape.data()[0]);
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
                                 const arg_type<velox::Varchar>& pattern) {
-    result =
-      EscapePattern(std::string_view{pattern.data(), pattern.size()}, '\0');
+    result = EscapePattern(pattern, '\0');
   }
 
  private:
@@ -1569,7 +1715,7 @@ struct RegclassInFunction {
                                       const velox::core::QueryConfig& config,
                                       const arg_type<velox::Varchar>*,
                                       const arg_type<int32_t>*) {
-    _ctx = basics::downCast<const ConnectionContext>(config.config()).get();
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
@@ -1841,7 +1987,6 @@ class GenerateSubscriptsFunction : public velox::exec::VectorFunction {
 
 using facebook::velox::T1;
 
-// array_length(anyarray, integer) → integer
 // Returns the length of the requested array dimension.
 // Produces NULL for empty arrays or missing dimensions.
 template<typename T>
@@ -1850,9 +1995,9 @@ struct ArrayLengthFunction {
 
   FOLLY_ALWAYS_INLINE void initialize(
     const std::vector<velox::TypePtr>& inputTypes,
-    const velox::core::QueryConfig& /*config*/,
-    const arg_type<velox::Array<velox::Generic<T1>>>* /*input*/,
-    const arg_type<int32_t>* /*dim*/) {
+    const velox::core::QueryConfig&,
+    const arg_type<velox::Array<velox::Generic<T1>>>*,
+    const arg_type<int32_t>*) {
     SDB_ASSERT(_depth == 0, "initialize should be called only once");
     auto type = inputTypes[0];
     while (type->isArray()) {
@@ -1924,7 +2069,7 @@ struct ArrayNdimsFunction {
     out_type<int32_t>& out,
     const arg_type<velox::Array<velox::Generic<T1>>>& input) {
     if (input.size() == 0) {
-      return false;  // NULL for empty arrays
+      return false;
     }
     out = _depth;
     return true;
@@ -2194,13 +2339,13 @@ void registerFunctions(const std::string& prefix) {
 
   // 9.27.1 Session Information Functions
 
-  velox::registerFunction<CurrentSchemaFunction, velox::Varchar>(
+  velox::registerFunction<CurrentSchemaFunction, NameCustomType>(
     {prefix + "current_schema"});
   velox::registerFunction<CurrentSchemasFunction, velox::Array<velox::Varchar>,
                           bool>({prefix + "current_schemas"});
-  velox::registerFunction<CurrentUserFunction, velox::Varchar>(
+  velox::registerFunction<CurrentUserFunction, NameCustomType>(
     {prefix + "current_user"});
-  velox::registerFunction<CurrentDatabaseFunction, velox::Varchar>(
+  velox::registerFunction<CurrentDatabaseFunction, NameCustomType>(
     {prefix + "current_database"});
   velox::registerFunction<CurrentSettingFunction, velox::Varchar,
                           velox::Varchar>({prefix + "current_setting"});
@@ -2211,6 +2356,8 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<ConcatWsFunction, velox::Varchar, velox::Varchar,
                           velox::Variadic<velox::Varchar>>(
     {prefix + "concat_ws"});
+  velox::registerFunction<PgFormat, velox::Varchar, velox::Varchar,
+                          velox::Variadic<velox::Varchar>>({prefix + "format"});
   velox::registerFunction<NumNonNullsFunction, int32_t,
                           velox::Variadic<velox::Any>>(
     {prefix + "num_nonnulls"});
@@ -2228,15 +2375,15 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "current_logfile"});
   velox::registerFunction<PgCurrentLogfileFunction1, velox::Varchar,
                           velox::Varchar>({prefix + "current_logfile"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "get_loaded_modules"});
-  velox::registerFunction<PgMyTempSchemaFunction, int64_t>(
+  velox::registerFunction<PgMyTempSchemaFunction, OidCustomType>(
     {prefix + "my_temp_schema"});
-  velox::registerFunction<AlwaysFalseFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysFalseFunction, bool, OidCustomType>(
     {prefix + "is_other_temp_schema"});
   velox::registerFunction<PgJitAvailableFunction, bool>(
     {prefix + "jit_available"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "listening_channels"});
   velox::registerFunction<PgNotificationQueueUsageFunction, double>(
     {prefix + "notification_queue_usage"});
@@ -2248,245 +2395,336 @@ void registerFunctions(const std::string& prefix) {
                           int32_t>({prefix + "safe_snapshot_blocking_pids"});
   velox::registerFunction<PgTriggerDepthFunction, int32_t>(
     {prefix + "trigger_depth"});
-  velox::registerFunction<NullVarcharFunction, velox::Varchar>(
+  velox::registerFunction<NullFunction, velox::Varchar>(
     {prefix + "inet_client_addr"});
-  velox::registerFunction<NullIntFunction, int32_t>(
-    {prefix + "inet_client_port"});
-  velox::registerFunction<NullVarcharFunction, velox::Varchar>(
+  velox::registerFunction<NullFunction, int32_t>({prefix + "inet_client_port"});
+  velox::registerFunction<NullFunction, velox::Varchar>(
     {prefix + "inet_server_addr"});
-  velox::registerFunction<NullIntFunction, int32_t>(
-    {prefix + "inet_server_port"});
+  velox::registerFunction<NullFunction, int32_t>({prefix + "inet_server_port"});
   // system_user: not supported (parser lacks SVFOP_SYSTEM_USER)
 
   // 9.27.2 Access Privilege Inquiry Functions
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  // ([name/oid user] x text/oid table x text privilege)
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>(
     {prefix + "has_any_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>(
+    {prefix + "has_any_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_any_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_any_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_any_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_any_column_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  // ([name/oid user] x text/oid table x text/smallint column x text privilege)
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar, int16_t,
+                          velox::Varchar>({prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
     {prefix + "has_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction4Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType, int16_t,
+                          velox::Varchar>({prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar, velox::Varchar>(
     {prefix + "has_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction4TextIntTextText, bool,
-                          velox::Varchar, int64_t, velox::Varchar,
-                          velox::Varchar>({prefix + "has_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction4TextIntIntText, bool,
-                          velox::Varchar, int64_t, int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          velox::Varchar, int16_t, velox::Varchar>(
     {prefix + "has_column_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3IntSmallintText, bool, int64_t,
-                          int16_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar, velox::Varchar>(
+    {prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, int16_t, velox::Varchar>(
+    {prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar, velox::Varchar>(
+    {prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, int16_t, velox::Varchar>(
+    {prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar, velox::Varchar>(
+    {prefix + "has_column_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, int16_t, velox::Varchar>(
     {prefix + "has_column_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  // ([name/oid user] x text/oid database x text privilege)
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_database_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_database_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_database_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_database_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_database_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_database_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_database_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>(
     {prefix + "has_foreign_data_wrapper_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>(
+    {prefix + "has_foreign_data_wrapper_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_foreign_data_wrapper_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_foreign_data_wrapper_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_foreign_data_wrapper_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_foreign_data_wrapper_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_function_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_function_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_function_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_function_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_function_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_function_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_function_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_language_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_language_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_language_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_language_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_language_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_language_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_language_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
                           velox::Varchar>(
     {prefix + "has_largeobject_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_largeobject_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_largeobject_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_parameter_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_parameter_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_schema_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_schema_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_schema_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_schema_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_schema_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_schema_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_schema_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_sequence_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_sequence_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_sequence_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_sequence_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_sequence_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_sequence_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_sequence_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_server_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_server_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_server_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_server_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_server_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_server_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_server_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_table_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_table_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_table_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_table_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_table_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_table_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_table_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>(
     {prefix + "has_tablespace_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
-                          velox::Varchar, velox::Varchar>(
-    {prefix + "has_tablespace_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
                           velox::Varchar>(
     {prefix + "has_tablespace_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_tablespace_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_tablespace_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_tablespace_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_tablespace_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "has_type_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_type_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar, velox::Varchar>(
     {prefix + "has_type_privilege"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_type_privilege"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>(
+    {prefix + "has_type_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar, velox::Varchar>(
+    {prefix + "has_type_privilege"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>(
     {prefix + "has_type_privilege"});
 
-  velox::registerFunction<AlwaysTrueFunction2Text, bool, velox::Varchar,
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
                           velox::Varchar>({prefix + "has_role"});
-  velox::registerFunction<AlwaysTrueFunction3Text, bool, velox::Varchar,
-                          velox::Varchar, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "has_role"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          NameCustomType, velox::Varchar>(
     {prefix + "has_role"});
-  velox::registerFunction<AlwaysTrueFunction2IntText, bool, int64_t,
-                          velox::Varchar>({prefix + "has_role"});
-  velox::registerFunction<AlwaysTrueFunction3TextIntText, bool, velox::Varchar,
-                          int64_t, velox::Varchar>({prefix + "has_role"});
+  velox::registerFunction<AlwaysTrueFunction, bool, NameCustomType,
+                          OidCustomType, velox::Varchar>({prefix + "has_role"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          NameCustomType, velox::Varchar>(
+    {prefix + "has_role"});
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType,
+                          OidCustomType, velox::Varchar>({prefix + "has_role"});
 
-  velox::registerFunction<AlwaysTrueFunction1Text, bool, velox::Varchar>(
+  velox::registerFunction<AlwaysTrueFunction, bool, velox::Varchar>(
     {prefix + "row_security_active"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "row_security_active"});
 
-  velox::registerFunction<NotSupported2CharInt, velox::Array<velox::Varchar>,
-                          int8_t, int64_t>({prefix + "acldefault"});
-  velox::registerFunction<NotSupported1IntArray, velox::Varchar,
+  velox::registerFunction<NotSupportedFunction, velox::Array<velox::Varchar>,
+                          int8_t, OidCustomType>({prefix + "acldefault"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar,
                           velox::Array<int64_t>>({prefix + "aclexplode"});
-  velox::registerFunction<NotSupported1TextArray, velox::Varchar,
+  velox::registerFunction<NotSupportedFunction, velox::Varchar,
                           velox::Array<velox::Varchar>>(
     {prefix + "aclexplode"});
-  velox::registerFunction<NotSupported4OidOidTextBool, velox::Varchar, int64_t,
-                          int64_t, velox::Varchar, bool>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, OidCustomType,
+                          OidCustomType, velox::Varchar, bool>(
     {prefix + "makeaclitem"});
 
   // 9.27.3 Schema Visibility Inquiry Functions
 
-  velox::registerFunction<PgTableIsVisible, bool, int64_t>(
+  velox::registerFunction<PgTableIsVisible, bool, OidCustomType>(
     {prefix + "table_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "function_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "type_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "operator_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "opclass_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "opfamily_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "collation_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "conversion_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "statistics_obj_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "ts_config_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "ts_dict_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "ts_parser_is_visible"});
-  velox::registerFunction<AlwaysTrueFunction1Int, bool, int64_t>(
+  velox::registerFunction<AlwaysTrueFunction, bool, OidCustomType>(
     {prefix + "ts_template_is_visible"});
 
   velox::registerFunction<PgEncodingMaxLength, int32_t, int32_t>(
     {prefix + "encoding_max_length"});
-  velox::registerFunction<PgRelationIsUpdatable, int32_t, int64_t, bool>(
-    {prefix + "relation_is_updatable"});
-  velox::registerFunction<PgColumnIsUpdatable, bool, int64_t, int16_t, bool>(
-    {prefix + "column_is_updatable"});
+  velox::registerFunction<PgRelationIsUpdatable, int32_t, RegclassCustomType,
+                          bool>({prefix + "relation_is_updatable"});
+  velox::registerFunction<PgColumnIsUpdatable, bool, RegclassCustomType,
+                          int16_t, bool>({prefix + "column_is_updatable"});
 
   // 9.27.4 System Catalog Information Functions
 
-  velox::registerFunction<FormatTypeFunction, velox::Varchar, int64_t, int64_t>(
-    {prefix + "format_type"});
-  velox::registerFunction<NameConcatOidFunction, velox::Varchar, velox::Varchar,
-                          int64_t>({prefix + "nameconcatoid"});
+  velox::registerFunction<FormatTypeFunction, velox::Varchar, OidCustomType,
+                          int32_t>({prefix + "format_type"});
+  velox::registerFunction<NameConcatOidFunction, NameCustomType, NameCustomType,
+                          OidCustomType>({prefix + "nameconcatoid"});
   velox::registerFunction<ArrayLengthFunction, int32_t,
                           velox::Array<velox::Generic<T1>>, int32_t>(
     {prefix + "array_length"});
@@ -2502,205 +2740,201 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<ArrayDimsFunction, velox::Varchar,
                           velox::Array<velox::Generic<T1>>>(
     {prefix + "array_dims"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
-    {prefix + "basetype"});
-  velox::registerFunction<PgCharToEncodingFunction, int32_t, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar,
+                          RegtypeCustomType>({prefix + "basetype"});
+  velox::registerFunction<PgCharToEncodingFunction, int32_t, NameCustomType>(
     {prefix + "char_to_encoding"});
-  velox::registerFunction<PgEncodingToCharFunction, velox::Varchar, int32_t>(
+  velox::registerFunction<PgEncodingToCharFunction, NameCustomType, int32_t>(
     {prefix + "encoding_to_char"});
-  velox::registerFunction<EmptyStringTextOid, velox::Varchar, velox::Varchar,
-                          int64_t>({prefix + "get_expr"});
-  velox::registerFunction<EmptyStringTextOidBool, velox::Varchar,
-                          velox::Varchar, int64_t, bool>({prefix + "get_expr"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, velox::Varchar,
+                          OidCustomType>({prefix + "get_expr"});
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, velox::Varchar,
+                          OidCustomType, bool>({prefix + "get_expr"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "get_catalog_foreign_keys"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_constraintdef"});
-  velox::registerFunction<EmptyStringOidBool, velox::Varchar, int64_t, bool>(
-    {prefix + "get_constraintdef"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
+                          bool>({prefix + "get_constraintdef"});
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_functiondef"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_function_arguments"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_function_identity_arguments"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_function_result"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_indexdef"});
-  velox::registerFunction<EmptyStringOidIntBool, velox::Varchar, int64_t,
-                          int64_t, bool>({prefix + "get_indexdef"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
+                          int32_t, bool>({prefix + "get_indexdef"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "get_keywords"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_partition_constraintdef"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_partkeydef"});
-  velox::registerFunction<GetRuleDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_ruledef"});
-  velox::registerFunction<EmptyStringOidBool, velox::Varchar, int64_t, bool>(
-    {prefix + "get_ruledef"});
-  velox::registerFunction<NullVarcharTextText, velox::Varchar, velox::Varchar,
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
+                          bool>({prefix + "get_ruledef"});
+  velox::registerFunction<NullFunction, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "get_serial_sequence"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_statisticsobjdef"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_triggerdef"});
-  velox::registerFunction<EmptyStringOidBool, velox::Varchar, int64_t, bool>(
-    {prefix + "get_triggerdef"});
-  velox::registerFunction<GetUserByIdFunction, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
+                          bool>({prefix + "get_triggerdef"});
+  velox::registerFunction<GetUserByIdFunction, NameCustomType, OidCustomType>(
     {prefix + "get_userbyid"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "get_viewdef"});
-  velox::registerFunction<EmptyStringOidBool, velox::Varchar, int64_t, bool>(
-    {prefix + "get_viewdef"});
-  velox::registerFunction<EmptyStringOidInt, velox::Varchar, int64_t, int64_t>(
-    {prefix + "get_viewdef"});
-  velox::registerFunction<EmptyStringText, velox::Varchar, velox::Varchar>(
-    {prefix + "get_viewdef"});
-  velox::registerFunction<EmptyStringTextBool, velox::Varchar, velox::Varchar,
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
                           bool>({prefix + "get_viewdef"});
-  velox::registerFunction<AlwaysFalseIntIntText, bool, int64_t, int64_t,
-                          velox::Varchar>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
+                          int32_t>({prefix + "get_viewdef"});
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, velox::Varchar>(
+    {prefix + "get_viewdef"});
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, velox::Varchar,
+                          bool>({prefix + "get_viewdef"});
+  velox::registerFunction<AlwaysFalseFunction, bool, RegclassCustomType,
+                          int32_t, velox::Varchar>(
     {prefix + "index_column_has_property"});
-  velox::registerFunction<AlwaysFalseIntText, bool, int64_t, velox::Varchar>(
-    {prefix + "index_has_property"});
-  velox::registerFunction<AlwaysFalseIntText, bool, int64_t, velox::Varchar>(
-    {prefix + "indexam_has_property"});
-  velox::registerFunction<NotSupported1TextArray, velox::Varchar,
+  velox::registerFunction<AlwaysFalseFunction, bool, RegclassCustomType,
+                          velox::Varchar>({prefix + "index_has_property"});
+  velox::registerFunction<AlwaysFalseFunction, bool, OidCustomType,
+                          velox::Varchar>({prefix + "indexam_has_property"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar,
                           velox::Array<velox::Varchar>>(
     {prefix + "options_to_table"});
   velox::registerFunction<EmptyTextArrayFromText, velox::Array<velox::Varchar>,
                           velox::Varchar>({prefix + "settings_get_flags"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, OidCustomType>(
     {prefix + "tablespace_databases"});
-  velox::registerFunction<GetViewDef, velox::Varchar, int64_t>(
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType>(
     {prefix + "tablespace_location"});
   velox::registerFunction<PgTypeofFunction, RegtypeCustomType, velox::Any>(
     {prefix + "typeof"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegclassCustomType, velox::Varchar>(
     {prefix + "to_regclass"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegcollationCustomType, velox::Varchar>(
     {prefix + "to_regcollation"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegnamespaceCustomType, velox::Varchar>(
     {prefix + "to_regnamespace"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegoperCustomType, velox::Varchar>(
     {prefix + "to_regoper"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegoperatorCustomType, velox::Varchar>(
     {prefix + "to_regoperator"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegprocCustomType, velox::Varchar>(
     {prefix + "to_regproc"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegprocedureCustomType, velox::Varchar>(
     {prefix + "to_regprocedure"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegroleCustomType, velox::Varchar>(
     {prefix + "to_regrole"});
-  velox::registerFunction<NullVarcharText, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<NullFunction, RegtypeCustomType, velox::Varchar>(
     {prefix + "to_regtype"});
-  velox::registerFunction<NotSupportedInt1Text, int32_t, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, int32_t, velox::Varchar>(
     {prefix + "to_regtypemod"});
 
   // 9.27.5 Object Information and Addressing Functions
 
-  velox::registerFunction<NotSupported3OidOidInt, velox::Varchar, int64_t,
-                          int64_t, int64_t>({prefix + "get_acl"});
-  velox::registerFunction<EmptyStringOidOidInt, velox::Varchar, int64_t,
-                          int64_t, int64_t>({prefix + "describe_object"});
-  velox::registerFunction<NotSupported3OidOidInt, velox::Varchar, int64_t,
-                          int64_t, int64_t>({prefix + "identify_object"});
-  velox::registerFunction<NotSupported3OidOidInt, velox::Varchar, int64_t,
-                          int64_t, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, OidCustomType,
+                          OidCustomType, int32_t>({prefix + "get_acl"});
+  velox::registerFunction<EmptyStringFunction, velox::Varchar, OidCustomType,
+                          OidCustomType, int32_t>({prefix + "describe_object"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, OidCustomType,
+                          OidCustomType, int32_t>({prefix + "identify_object"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, OidCustomType,
+                          OidCustomType, int32_t>(
     {prefix + "identify_object_as_address"});
-  velox::registerFunction<NotSupported3TextTextArrayTextArray, velox::Varchar,
-                          velox::Varchar, velox::Array<velox::Varchar>,
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, velox::Varchar,
+                          velox::Array<velox::Varchar>,
                           velox::Array<velox::Varchar>>(
     {prefix + "get_object_address"});
 
   // 9.27.6 Comment Information Functions
 
-  velox::registerFunction<ColDescriptionFunction, velox::Varchar, int64_t,
-                          int64_t>({prefix + "col_description"});
-  velox::registerFunction<ObjDescriptionFunction2, velox::Varchar, int64_t,
-                          velox::Varchar>({prefix + "obj_description"});
-  velox::registerFunction<ObjDescriptionFunction1, velox::Varchar, int64_t>(
+  velox::registerFunction<NullFunction, velox::Varchar, OidCustomType, int32_t>(
+    {prefix + "col_description"});
+  velox::registerFunction<NullFunction, velox::Varchar, OidCustomType,
+                          NameCustomType>({prefix + "obj_description"});
+  velox::registerFunction<NullFunction, velox::Varchar, OidCustomType>(
     {prefix + "obj_description"});
-  velox::registerFunction<ShObjDescriptionFunction, velox::Varchar, int64_t,
-                          velox::Varchar>({prefix + "shobj_description"});
+  velox::registerFunction<NullFunction, velox::Varchar, OidCustomType,
+                          NameCustomType>({prefix + "shobj_description"});
 
   // 9.27.7 Data Validity Checking Functions
 
   velox::registerFunction<PgInputIsValidFunction, bool, velox::Varchar,
                           velox::Varchar>({prefix + "input_is_valid"});
-  velox::registerFunction<NotSupported2TextText, velox::Varchar, velox::Varchar,
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "input_error_info"});
-
-  // column_compression and column_size are not in 9.27 but related
-  velox::registerFunction<NotSupported1Text, velox::Varchar, velox::Varchar>(
-    {prefix + "column_compression"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
-    {prefix + "column_compression"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
-    {prefix + "column_size"});
 
   // 9.27.8 Transaction ID and Snapshot Information Functions
 
-  velox::registerFunction<NotSupportedInt1Int, int32_t, int64_t>(
-    {prefix + "age_xid"});
-  velox::registerFunction<NotSupportedInt1Int, int32_t, int64_t>(
+  velox::registerFunction<NotSupportedFunction, int32_t, XidCustomType>(
+    {prefix + "age"});
+  velox::registerFunction<NotSupportedFunction, Interval, velox::Timestamp>(
+    {prefix + "age"});
+  velox::registerFunction<NotSupportedFunction, int32_t, XidCustomType>(
     {prefix + "mxid_age"});
-  velox::registerFunction<NotSupported0Int, int64_t>(
+  velox::registerFunction<NotSupportedFunction, Xid8CustomType>(
     {prefix + "current_xact_id"});
-  velox::registerFunction<NotSupported0Int, int64_t>(
+  velox::registerFunction<NotSupportedFunction, Xid8CustomType>(
     {prefix + "current_xact_id_if_assigned"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "xact_status"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "current_snapshot"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "snapshot_xip"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "snapshot_xmax"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "snapshot_xmin"});
-  velox::registerFunction<NotSupportedBool2IntInt, bool, int64_t, int64_t>(
-    {prefix + "visible_in_snapshot"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, bool, Xid8CustomType,
+                          Xid8CustomType>({prefix + "visible_in_snapshot"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, XidCustomType>(
     {prefix + "get_multixact_members"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "get_multixact_stats"});
-  velox::registerFunction<NotSupported0Int, int64_t>({prefix + "txid_current"});
-  velox::registerFunction<NotSupported0Int, int64_t>(
+  velox::registerFunction<NotSupportedFunction, Xid8CustomType>(
+    {prefix + "txid_current"});
+  velox::registerFunction<NotSupportedFunction, Xid8CustomType>(
     {prefix + "txid_current_if_assigned"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "txid_current_snapshot"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "txid_snapshot_xip"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "txid_snapshot_xmax"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "txid_snapshot_xmin"});
-  velox::registerFunction<NotSupportedBool2IntInt, bool, int64_t, int64_t>(
+  velox::registerFunction<NotSupportedFunction, bool, Xid8CustomType,
+                          Xid8CustomType>(
     {prefix + "txid_visible_in_snapshot"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, Xid8CustomType>(
     {prefix + "txid_status"});
 
   // 9.27.9 Committed Transaction Information Functions
 
-  velox::registerFunction<NotSupported1IntTimestamp, velox::Timestamp, int64_t>(
-    {prefix + "xact_commit_timestamp"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
+  velox::registerFunction<NotSupportedFunction, velox::Timestamp,
+                          XidCustomType>({prefix + "xact_commit_timestamp"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, XidCustomType>(
     {prefix + "xact_commit_timestamp_origin"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "last_committed_xact"});
 
   // 9.27.10 Control Data Functions
 
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "control_checkpoint"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "control_system"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "control_init"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "control_recovery"});
 
   // 9.27.11 Version Information Functions
@@ -2714,11 +2948,11 @@ void registerFunctions(const std::string& prefix) {
 
   // 9.27.12 WAL Summarization Information Functions
 
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "available_wal_summaries"});
-  velox::registerFunction<NotSupported1Int, velox::Varchar, int64_t>(
-    {prefix + "wal_summary_contents"});
-  velox::registerFunction<NotSupported0Text, velox::Varchar>(
+  velox::registerFunction<NotSupportedFunction, velox::Varchar, int64_t,
+                          int64_t, int64_t>({prefix + "wal_summary_contents"});
+  velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "get_wal_summarizer_state"});
 
   registerExtractFunctions(prefix);
@@ -2765,10 +2999,22 @@ void registerFunctions(const std::string& prefix) {
     },
     velox::exec::VectorFunctionMetadataBuilder().deterministic(false).build());
 
+  velox::registerFunction<NullFunction, int64_t, RegclassCustomType>(
+    {prefix + "sequence_last_value"});
+
+  velox::registerFunction<GetDatabaseEncodingFunction, velox::Varchar>(
+    {prefix + "getdatabaseencoding"});
+
+  velox::registerFunction<NullFunction, velox::Varchar, OidCustomType, int32_t>(
+    {prefix + "get_function_arg_default"});
+
+  velox::registerFunction<NullFunction, velox::Array<velox::Varchar>,
+                          OidCustomType>(
+    {prefix + "get_statisticsobjdef_expressions"});
+
   // pg_stat_get_* scalar stub functions (used by pg_stat_* views)
   // These return 0 or NULL as stubs.
 
-  // Functions taking OID, returning bigint (0)
   for (const auto& name : {
          "stat_get_numscans",
          "stat_get_tuples_returned",
@@ -2826,7 +3072,7 @@ void registerFunctions(const std::string& prefix) {
          "stat_get_db_conflict_startup_deadlock",
          "stat_get_db_conflict_logicalslot",
        }) {
-    velox::registerFunction<ZeroBigintFunction1Oid, int64_t, int64_t>(
+    velox::registerFunction<ZeroBigintFunction1Oid, int64_t, OidCustomType>(
       {prefix + name});
   }
 
@@ -2846,11 +3092,10 @@ void registerFunctions(const std::string& prefix) {
          "stat_get_db_active_time",
          "stat_get_db_idle_in_transaction_time",
        }) {
-    velox::registerFunction<ZeroDoubleFunction1Oid, double, int64_t>(
+    velox::registerFunction<ZeroDoubleFunction1Oid, double, OidCustomType>(
       {prefix + name});
   }
 
-  // Functions taking OID, returning timestamp (NULL)
   for (const auto& name : {
          "stat_get_lastscan",
          "stat_get_last_vacuum_time",
@@ -2862,11 +3107,10 @@ void registerFunctions(const std::string& prefix) {
          "stat_get_db_stat_reset_time",
          "stat_get_db_checksum_last_failure",
        }) {
-    velox::registerFunction<NullTimestampFunction1Oid, velox::Timestamp,
-                            int64_t>({prefix + name});
+    velox::registerFunction<NullFunction, velox::Timestamp, OidCustomType>(
+      {prefix + name});
   }
 
-  // Parameterless functions returning bigint (0)
   for (const auto& name : {
          "stat_get_bgwriter_buf_written_clean",
          "stat_get_bgwriter_maxwritten_clean",
@@ -2883,7 +3127,6 @@ void registerFunctions(const std::string& prefix) {
     velox::registerFunction<ZeroBigintFunction0, int64_t>({prefix + name});
   }
 
-  // Parameterless functions returning double precision (0.0)
   for (const auto& name : {
          "stat_get_checkpointer_write_time",
          "stat_get_checkpointer_sync_time",
@@ -2891,31 +3134,12 @@ void registerFunctions(const std::string& prefix) {
     velox::registerFunction<ZeroDoubleFunction0, double>({prefix + name});
   }
 
-  // Parameterless functions returning timestamp (NULL)
   for (const auto& name : {
          "stat_get_bgwriter_stat_reset_time",
          "stat_get_checkpointer_stat_reset_time",
        }) {
-    velox::registerFunction<NullTimestampFunction0, velox::Timestamp>(
-      {prefix + name});
+    velox::registerFunction<NullFunction, velox::Timestamp>({prefix + name});
   }
-
-  // pg_sequence_last_value(oid) -> bigint (NULL)
-  velox::registerFunction<NullBigintFunction1Oid, int64_t, int64_t>(
-    {prefix + "sequence_last_value"});
-
-  // pg_getdatabaseencoding() -> text
-  velox::registerFunction<GetDatabaseEncodingFunction, velox::Varchar>(
-    {"pg_getdatabaseencoding"});
-
-  // pg_get_function_arg_default(oid, int) -> text (NULL)
-  velox::registerFunction<NullVarcharFunction1OidInt, velox::Varchar, int64_t,
-                          int64_t>({prefix + "get_function_arg_default"});
-
-  // pg_get_statisticsobjdef_expressions(oid) -> text[] (NULL)
-  velox::registerFunction<NullTextArrayFunction1Oid,
-                          velox::Array<velox::Varchar>, int64_t>(
-    {prefix + "get_statisticsobjdef_expressions"});
 }
 
 }  // namespace sdb::pg::functions

@@ -87,7 +87,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   //   doc A – "open"                  (required only)
   //   doc B – "open source"           (required + 1 optional)
   //   doc C – "open source software"  (required + 2 optionals)
-  //   doc D – "source software"       (no required term → must be excluded)
+  //   doc D – "source software"       (no required term -> must be excluded)
   irs::DirectoryReader CreateIndex() {
     auto writer = open_writer(irs::kOmCreate);
 

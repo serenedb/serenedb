@@ -65,6 +65,27 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
   if (IsInterval(type)) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
   }
+  if (IsOid(type)) {
+    return in_array ? PgTypeOID::kOidArray : PgTypeOID::kOid;
+  }
+  if (IsXid(type)) {
+    return in_array ? PgTypeOID::kXidArray : PgTypeOID::kXid;
+  }
+  if (IsCid(type)) {
+    return in_array ? PgTypeOID::kCidArray : PgTypeOID::kCid;
+  }
+  if (IsTid(type)) {
+    return in_array ? PgTypeOID::kTidArray : PgTypeOID::kTid;
+  }
+  if (IsXid8(type)) {
+    return in_array ? PgTypeOID::kXid8Array : PgTypeOID::kXid8;
+  }
+  if (IsName(type)) {
+    return in_array ? PgTypeOID::kNameArray : PgTypeOID::kName;
+  }
+  if (IsRegproc(type)) {
+    return in_array ? PgTypeOID::kRegprocArray : PgTypeOID::kRegproc;
+  }
   if (IsRegtype(type)) {
     return in_array ? PgTypeOID::kRegtypeArray : PgTypeOID::kRegtype;
   }
@@ -73,6 +94,28 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
   }
   if (IsRegnamespace(type)) {
     return in_array ? PgTypeOID::kRegnamespaceArray : PgTypeOID::kRegnamespace;
+  }
+  if (IsRegoper(type)) {
+    return in_array ? PgTypeOID::kRegoperArray : PgTypeOID::kRegoper;
+  }
+  if (IsRegoperator(type)) {
+    return in_array ? PgTypeOID::kRegoperatorArray : PgTypeOID::kRegoperator;
+  }
+  if (IsRegprocedure(type)) {
+    return in_array ? PgTypeOID::kRegprocedureArray : PgTypeOID::kRegprocedure;
+  }
+  if (IsRegrole(type)) {
+    return in_array ? PgTypeOID::kRegroleArray : PgTypeOID::kRegrole;
+  }
+  if (IsRegconfig(type)) {
+    return in_array ? PgTypeOID::kRegconfigArray : PgTypeOID::kRegconfig;
+  }
+  if (IsRegdictionary(type)) {
+    return in_array ? PgTypeOID::kRegdictionaryArray
+                    : PgTypeOID::kRegdictionary;
+  }
+  if (IsRegcollation(type)) {
+    return in_array ? PgTypeOID::kRegcollationArray : PgTypeOID::kRegcollation;
   }
   return -1;
 }
@@ -107,6 +150,27 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   if (IsInterval(type)) {
     return "interval";
   }
+  if (IsOid(type)) {
+    return "oid";
+  }
+  if (IsXid(type)) {
+    return "xid";
+  }
+  if (IsCid(type)) {
+    return "cid";
+  }
+  if (IsTid(type)) {
+    return "tid";
+  }
+  if (IsXid8(type)) {
+    return "xid8";
+  }
+  if (IsName(type)) {
+    return "name";
+  }
+  if (IsRegproc(type)) {
+    return "regproc";
+  }
   if (IsRegtype(type)) {
     return "regtype";
   }
@@ -116,6 +180,27 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   if (IsRegnamespace(type)) {
     return "regnamespace";
   }
+  if (IsRegoper(type)) {
+    return "regoper";
+  }
+  if (IsRegoperator(type)) {
+    return "regoperator";
+  }
+  if (IsRegprocedure(type)) {
+    return "regprocedure";
+  }
+  if (IsRegrole(type)) {
+    return "regrole";
+  }
+  if (IsRegconfig(type)) {
+    return "regconfig";
+  }
+  if (IsRegdictionary(type)) {
+    return "regdictionary";
+  }
+  if (IsRegcollation(type)) {
+    return "regcollation";
+  }
   if (isUuidType(type)) {
     return "uuid";
   }
@@ -124,6 +209,9 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
   if (isTimestampWithTimeZoneType(type)) {
     return "timestamp with time zone";
+  }
+  if (IsUnknown(type)) {
+    return "unknown";
   }
   switch (type->kind()) {
     case velox::TypeKind::BOOLEAN:
@@ -161,6 +249,13 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
 
 std::string RegtypeOut(uint64_t oid) {
   switch (static_cast<PgTypeOID>(oid)) {
+    REGTYPE_OUT(kRegproc, "regproc")
+    REGTYPE_OUT(kOid, "oid")
+    REGTYPE_OUT(kXid, "xid")
+    REGTYPE_OUT(kName, "name")
+    REGTYPE_OUT(kTid, "tid")
+    REGTYPE_OUT(kCid, "cid")
+    REGTYPE_OUT(kXid8, "xid8")
     REGTYPE_OUT(kBool, "boolean")
     REGTYPE_OUT(kBytea, "bytea")
     REGTYPE_OUT(kChar, "character")
@@ -178,9 +273,16 @@ std::string RegtypeOut(uint64_t oid) {
     REGTYPE_OUT(kTimestamp, "timestamp without time zone")
     REGTYPE_OUT(kTimestampTz, "timestamp with time zone")
     REGTYPE_OUT(kInterval, "interval")
+    REGTYPE_OUT(kRegprocedure, "regprocedure")
+    REGTYPE_OUT(kRegoper, "regoper")
+    REGTYPE_OUT(kRegoperator, "regoperator")
     REGTYPE_OUT(kRegclass, "regclass")
     REGTYPE_OUT(kRegtype, "regtype")
+    REGTYPE_OUT(kRegconfig, "regconfig")
+    REGTYPE_OUT(kRegdictionary, "regdictionary")
     REGTYPE_OUT(kRegnamespace, "regnamespace")
+    REGTYPE_OUT(kRegrole, "regrole")
+    REGTYPE_OUT(kRegcollation, "regcollation")
   }
   return absl::StrCat(oid);
 }
@@ -193,6 +295,9 @@ std::string RegtypeOut(uint64_t oid) {
 uint64_t RegtypeIn(std::string_view name) {
   static const containers::FlatHashMap<std::string_view, uint64_t>
     kTypeNameToOid = {
+      SDB_REGTYPE_IN(kRegproc, "regproc")
+      SDB_REGTYPE_IN(kOid, "oid")
+      SDB_REGTYPE_IN(kXid, "xid")
       SDB_REGTYPE_IN(kBool, "boolean")
       SDB_REGTYPE_IN(kBool, "bool")
       SDB_REGTYPE_IN(kBytea, "bytea")
@@ -221,9 +326,16 @@ uint64_t RegtypeIn(std::string_view name) {
       SDB_REGTYPE_IN(kTimestampTz, "timestamp with time zone")
       SDB_REGTYPE_IN(kTimestampTz, "timestamptz")
       SDB_REGTYPE_IN(kInterval, "interval")
+      SDB_REGTYPE_IN(kRegprocedure, "regprocedure")
+      SDB_REGTYPE_IN(kRegoper, "regoper")
+      SDB_REGTYPE_IN(kRegoperator, "regoperator")
       SDB_REGTYPE_IN(kRegclass, "regclass")
       SDB_REGTYPE_IN(kRegtype, "regtype")
+      SDB_REGTYPE_IN(kRegconfig, "regconfig")
+      SDB_REGTYPE_IN(kRegdictionary, "regdictionary")
       SDB_REGTYPE_IN(kRegnamespace, "regnamespace")
+      SDB_REGTYPE_IN(kRegrole, "regrole")
+      SDB_REGTYPE_IN(kRegcollation, "regcollation")
     };
   auto it = kTypeNameToOid.find(name);
   if (it != kTypeNameToOid.end()) {

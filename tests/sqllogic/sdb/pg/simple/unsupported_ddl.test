@@ -1,0 +1,19 @@
+# Tests for unsupported DDL statements returning proper errors
+
+
+query error
+TRUNCATE TABLE t;
+----
+db error: ERROR: unsupported statement type
+
+
+query error
+ALTER TABLE t RENAME TO t2;
+----
+db error: ERROR: unsupported statement type
+
+
+query error
+ALTER TABLE t RENAME COLUMN a TO b;
+----
+db error: ERROR: unsupported statement type

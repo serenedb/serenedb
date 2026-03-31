@@ -53,45 +53,39 @@ struct IntervalTrait {
 };
 using Interval = velox::CustomType<IntervalTrait>;
 
-velox::TypePtr PG_UNKNOWN();
-bool IsPgUnknown(const velox::TypePtr& type);
-bool IsPgUnknown(const velox::Type& type);
+#define SDB_DECLARE_PG_TYPE(base, func, name, lateral) \
+  velox::TypePtr func();                               \
+  bool Is##name(const velox::TypePtr& type);           \
+  bool Is##name(const velox::Type& type);              \
+  struct name##Trait {                                 \
+    using type = base;                                 \
+    static constexpr const char* typeName = lateral;   \
+  };                                                   \
+  using name##CustomType = velox::CustomType<name##Trait>
 
-struct PgUnknownTrait {
-  using type = velox::VarcharType;                       // NOLINT
-  static constexpr const char* typeName = "PG_UNKNOWN";  // NOLINT
-};
-using PgUnknown = velox::CustomType<PgUnknownTrait>;
+SDB_DECLARE_PG_TYPE(velox::Varchar, PGUNKNOWN, Unknown, "PG_UNKNOWN");
+SDB_DECLARE_PG_TYPE(velox::Varchar, PGNAME, Name, "PG_NAME");
 
-velox::TypePtr REGTYPE();
-bool IsRegtype(const velox::TypePtr& type);
-bool IsRegtype(const velox::Type& type);
+SDB_DECLARE_PG_TYPE(int64_t, PGOID, Oid, "PG_OID");
 
-struct RegtypeTrait {
-  using type = int64_t;                                  // NOLINT
-  static constexpr const char* typeName = "PG_REGTYPE";  // NOLINT
-};
-using RegtypeCustomType = velox::CustomType<RegtypeTrait>;
+SDB_DECLARE_PG_TYPE(int64_t, REGPROC, Regproc, "PG_REGPROC");
+SDB_DECLARE_PG_TYPE(int64_t, REGCLASS, Regclass, "PG_REGCLASS");
+SDB_DECLARE_PG_TYPE(int64_t, REGTYPE, Regtype, "PG_REGTYPE");
+SDB_DECLARE_PG_TYPE(int64_t, REGNAMESPACE, Regnamespace, "PG_REGNAMESPACE");
+SDB_DECLARE_PG_TYPE(int64_t, REGOPER, Regoper, "PG_REGOPER");
+SDB_DECLARE_PG_TYPE(int64_t, REGOPERATOR, Regoperator, "PG_REGOPERATOR");
+SDB_DECLARE_PG_TYPE(int64_t, REGPROCEDURE, Regprocedure, "PG_REGPROCEDURE");
+SDB_DECLARE_PG_TYPE(int64_t, REGROLE, Regrole, "PG_REGROLE");
+SDB_DECLARE_PG_TYPE(int64_t, REGCONFIG, Regconfig, "PG_REGCONFIG");
+SDB_DECLARE_PG_TYPE(int64_t, REGDICTIONARY, Regdictionary, "PG_REGDICTIONARY");
+SDB_DECLARE_PG_TYPE(int64_t, REGCOLLATION, Regcollation, "PG_REGCOLLATION");
 
-velox::TypePtr REGCLASS();
-bool IsRegclass(const velox::TypePtr& type);
-bool IsRegclass(const velox::Type& type);
+SDB_DECLARE_PG_TYPE(int64_t, PGTID, Tid, "PG_TID");
+SDB_DECLARE_PG_TYPE(int64_t, PGCID, Cid, "PG_CID");
+SDB_DECLARE_PG_TYPE(int64_t, PGXID, Xid, "PG_XID");
+SDB_DECLARE_PG_TYPE(int64_t, PGXID8, Xid8, "PG_XID8");
 
-struct RegclassTrait {
-  using type = int64_t;                                   // NOLINT
-  static constexpr const char* typeName = "PG_REGCLASS";  // NOLINT
-};
-using RegclassCustomType = velox::CustomType<RegclassTrait>;
-
-velox::TypePtr REGNAMESPACE();
-bool IsRegnamespace(const velox::TypePtr& type);
-bool IsRegnamespace(const velox::Type& type);
-
-struct RegnamespaceTrait {
-  using type = int64_t;                                       // NOLINT
-  static constexpr const char* typeName = "PG_REGNAMESPACE";  // NOLINT
-};
-using RegnamespaceCustomType = velox::CustomType<RegnamespaceTrait>;
+#undef SDB_DECLARE_PG_TYPE
 
 void RegisterTypes();
 

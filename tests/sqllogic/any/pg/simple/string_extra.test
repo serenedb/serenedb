@@ -591,3 +591,75 @@ SELECT quote_ident('has space');
 ----
 quote_ident
 "has space"
+
+
+# format
+
+query
+SELECT format('Hello %s', 'World');
+----
+format
+Hello World
+
+
+query
+SELECT format('Hello %s, %1$s', 'World');
+----
+format
+Hello World, World
+
+
+query
+SELECT format('Testing %%, Pro%sQL', 'gre');
+----
+format
+Testing %, ProgreQL
+
+
+query
+SELECT format('INSERT INTO %I VALUES(%L)', 'Foo bar', E'b\\a\'r');
+----
+format
+INSERT INTO "Foo bar" VALUES(E'b\\\\a''r')
+
+
+query
+SELECT format('|%10s|', 'foo');
+----
+format
+|       foo|
+
+
+query
+SELECT format('|%-10s|', 'foo');
+----
+format
+|foo       |
+
+
+query
+SELECT format('|%s|', 'foo');
+----
+format
+|foo|
+
+
+query
+SELECT format('%s %s', 'one', 'two');
+----
+format
+one two
+
+
+query
+SELECT format('%2$s %1$s', 'one', 'two');
+----
+format
+two one
+
+
+query
+SELECT format('%L', NULL::text);
+----
+format
+NULL

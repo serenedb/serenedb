@@ -8,6 +8,6 @@ target_sources(
         json.cpp
         math_extra.cpp
         regexp.cpp
-        string_extra.cpp
         size.cpp
+        string_extra.cpp
 )

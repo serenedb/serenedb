@@ -42,15 +42,7 @@ namespace {
 // execution graph may change).
 constexpr bool kExecuteFiltersInTableScan = false;
 
-struct SecondaryIndexMatch {
-  ObjectId shard_id;
-  std::vector<SpecificPoint> points;
-  velox::RowTypePtr sk_type;
-  catalog::Column::Id effective_column_id;
-  bool unique;
-};
-
-std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
+std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
   const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
   query::Transaction& transaction) {
   auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
@@ -95,23 +87,15 @@ std::optional<SecondaryIndexMatch> TryMatchSecondaryIndex(
     auto sk_type = velox::ROW(std::move(sk_names), std::move(sk_types));
     auto points = ToSpecificPoints(res.points, *sk_type);
 
-    const auto& column_map = table.columnMap();
-    SDB_ASSERT(!column_map.empty());
-    auto eff_col_id =
-      basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(*index);
 
-    return SecondaryIndexMatch{
-      .shard_id = index_shard->GetId(),
-      .points = std::move(points),
-      .sk_type = std::move(sk_type),
-      .effective_column_id = eff_col_id,
-      .unique = sec_index.IsUnique(),
-    };
+    return std::make_shared<SecondaryIndexTableHandle>(
+      table.name(), rocksdb_table.TableId(), transaction, index_shard->GetId(),
+      std::move(points), std::move(sk_type), table, sec_index.IsUnique());
   }
 
-  return std::nullopt;
+  return nullptr;
 }
 
 }  // namespace
@@ -133,16 +117,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
 
   // TODO(Dronplane): measure the performance! Maybe it's worth selecting the
   // smallest possible field as the effective column, not just the first
-  _effective_column_id =
-    basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
-  if (_effective_column_id == catalog::Column::kGeneratedPKId) {
-    // Iterating over generated primary key gives 0 rows,
-    // use another one
-    SDB_ASSERT(column_map.size() >= 2);
-    _effective_column_id = basics::downCast<const SereneDBColumn>(
-                             std::next(column_map.begin())->second)
-                             ->Id();
-  }
+  _effective_column_id = ComputeEffectiveColumnId(column_map);
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
@@ -280,14 +255,9 @@ SereneDBTableLayout::createTableHandle(
 
     // 2. No PK match — try secondary index.
     if (points.empty()) {
-      auto match = TryMatchSecondaryIndex(remaining_filter, *table,
-                                          rocksdb_table.GetTransaction());
-      if (match) {
-        return std::make_shared<SecondaryIndexTableHandle>(
-          std::string{table->name()}, rocksdb_table.TableId(),
-          rocksdb_table.GetTransaction(), match->effective_column_id,
-          match->shard_id, std::move(match->points), std::move(match->sk_type),
-          *table, match->unique);
+      if (auto handle = TryMatchSecondaryIndex(
+            remaining_filter, *table, rocksdb_table.GetTransaction())) {
+        return handle;
       }
     }
   }

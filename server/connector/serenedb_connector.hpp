@@ -339,6 +339,21 @@ class SereneDBColumn final : public axiom::connector::Column {
   catalog::Column::Id _id;
 };
 
+inline catalog::Column::Id ComputeEffectiveColumnId(
+  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
+    column_map) {
+  SDB_ASSERT(!column_map.empty());
+  auto id =
+    basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
+  if (id == catalog::Column::kGeneratedPKId) {
+    SDB_ASSERT(column_map.size() >= 2);
+    id = basics::downCast<const SereneDBColumn>(
+           std::next(column_map.begin())->second)
+           ->Id();
+  }
+  return id;
+}
+
 class SereneDBTableLayout final : public axiom::connector::TableLayout {
  public:
   explicit SereneDBTableLayout(
@@ -599,9 +614,7 @@ class InvertedIndexTableHandle final
       _underlying_table{table.GetTable()},
       _search_filter_str{std::move(search_filter_str)} {
     const auto& column_map = table.columnMap();
-    SDB_ASSERT(!column_map.empty());
-    _effective_column_id =
-      basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
+    _effective_column_id = ComputeEffectiveColumnId(column_map);
     for (const auto& [orig_name, col_ptr] : column_map) {
       const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
       _table_column_map.emplace(orig_name,
@@ -658,16 +671,18 @@ class SecondaryIndexTableHandle final
  public:
   using FilterColumn = SereneDBConnectorTableHandle::FilterColumn;
 
-  SecondaryIndexTableHandle(
-    std::string name, ObjectId table_id, query::Transaction& transaction,
-    catalog::Column::Id effective_column_id, ObjectId shard_id,
-    std::vector<SpecificPoint> points, velox::RowTypePtr sk_type,
-    const axiom::connector::Table& underlying_table, bool unique)
+  SecondaryIndexTableHandle(std::string name, ObjectId table_id,
+                            query::Transaction& transaction, ObjectId shard_id,
+                            std::vector<SpecificPoint> points,
+                            velox::RowTypePtr sk_type,
+                            const axiom::connector::Table& underlying_table,
+                            bool unique)
     : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
       _name{std::move(name)},
       _table_id{table_id},
       _transaction{transaction},
-      _effective_column_id{effective_column_id},
+      _effective_column_id{
+        ComputeEffectiveColumnId(underlying_table.columnMap())},
       _shard_id{shard_id},
       _points{std::move(points)},
       _sk_type{std::move(sk_type)},

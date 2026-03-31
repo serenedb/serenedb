@@ -447,9 +447,10 @@ class RocksDBTable : public axiom::connector::Table {
 class InvertedIndexTable : public axiom::connector::Table {
  public:
   static std::vector<std::unique_ptr<const axiom::connector::Column>>
-  CopyColumns(const axiom::connector::Table& table) {
+  CopyColumns(const axiom::connector::Table& table,
+              std::span<const catalog::Column::Id> offsets_column_ids) {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
-    columns.reserve(table.allColumns().size() + 1);
+    columns.reserve(table.allColumns().size() + 1 + offsets_column_ids.size());
     for (const auto* col : table.allColumns()) {
       auto* sdb_col = basics::downCast<const SereneDBColumn>(col);
       columns.push_back(std::make_unique<SereneDBColumn>(
@@ -460,13 +461,22 @@ class InvertedIndexTable : public axiom::connector::Table {
     auto score_name = catalog::Column::GenerateScoreName(table.type()->names());
     columns.push_back(std::make_unique<SereneDBColumn>(
       score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
+    // Add one virtual offsets column per requested field column ID.
+    // All share kInvertedIndexOffsetsId; they are distinguished by name.
+    auto offsets_type = catalog::Column::OffsetsType();
+    for (const auto col_id : offsets_column_ids) {
+      columns.push_back(std::make_unique<SereneDBColumn>(
+        catalog::Column::MakeOffsetsName(col_id), offsets_type,
+        catalog::Column::kInvertedIndexOffsetsId));
+    }
     return columns;
   }
 
   InvertedIndexTable(query::Transaction& transaction,
                      axiom::connector::TablePtr table,
-                     const catalog::InvertedIndex& index)
-    : Table(table->name(), CopyColumns(*table)),
+                     const catalog::InvertedIndex& index,
+                     std::span<const catalog::Column::Id> offsets_column_ids)
+    : Table(table->name(), CopyColumns(*table, offsets_column_ids)),
       _transaction{transaction},
       _table{std::move(table)},
       _index{index} {
@@ -1154,14 +1164,25 @@ class SereneDBConnector final : public velox::connector::Connector {
       transaction.EnsureSearchSnapshot(handle.GetIndexId());
     const auto& underlying_table = handle.GetUnderlyingTable();
 
+    // Extract the catalog column IDs for which offsets were requested.
+    // Each such virtual column is identified by IsOffsetsName() on its name.
+    std::vector<catalog::Column::Id> offsets_column_ids;
+    for (size_t i = 0; i < output_type->size(); ++i) {
+      if (catalog::Column::IsOffsetsName(output_type->nameOf(i))) {
+        offsets_column_ids.push_back(
+          catalog::Column::ExtractOffsetsColumnId(output_type->nameOf(i)));
+      }
+    }
+
     if (const auto* file_table =
           dynamic_cast<const ReadFileTable*>(&underlying_table)) {
-      // TODO: teach ScanSpec to skip the score column instead of stripping it
-      // from the type.
+      // TODO: teach ScanSpec to skip the score/offsets columns instead of
+      // stripping them from the type.
       std::vector<std::string> reader_names;
       std::vector<velox::TypePtr> reader_types;
       for (size_t i = 0; i < output_type->size(); ++i) {
-        if (column_oids[i] != catalog::Column::kInvertedIndexScoreId) {
+        if (column_oids[i] != catalog::Column::kInvertedIndexScoreId &&
+            column_oids[i] != catalog::Column::kInvertedIndexOffsetsId) {
           reader_names.push_back(output_type->nameOf(i));
           reader_types.push_back(output_type->childAt(i));
         }
@@ -1177,7 +1198,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           pool,
           ParquetMaterializer(pool, std::move(source), std::move(reader),
                               std::move(row_reader), output_type, column_oids),
-          search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+          search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer(),
+          offsets_column_ids);
       }
 
       SDB_ASSERT(format == velox::dwio::common::FileFormat::TEXT);
@@ -1185,7 +1207,8 @@ class SereneDBConnector final : public velox::connector::Connector {
         pool,
         TextMaterializer(pool, std::move(source), std::move(reader),
                          std::move(row_reader), output_type, column_oids),
-        search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+        search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer(),
+        offsets_column_ids);
     }
 
     return std::make_unique<SearchDataSource<RocksDBMaterializer>>(
@@ -1193,7 +1216,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       RocksDBMaterializer(pool, search_snapshot.snapshot->GetSnapshot(), &_db,
                           nullptr, _cf, output_type, column_oids,
                           handle.GetEffectiveColumnId(), handle.TableId()),
-      search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer());
+      search_snapshot.reader, handle.GetSearchQuery(), handle.GetScorer(),
+      offsets_column_ids);
   }
 
  private:

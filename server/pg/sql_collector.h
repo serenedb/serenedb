@@ -22,8 +22,10 @@
 
 #include <axiom/connectors/ConnectorMetadata.h>
 
+#include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -119,6 +121,7 @@ class Objects : public irs::memory::Managed {
   auto& getFunctions(this auto& self) noexcept { return self._functions; }
 
   std::shared_ptr<const irs::Scorer> BeginNode() {
+    _offsets_field_names.clear();
     return std::exchange(_scorer, nullptr);
   }
 
@@ -130,17 +133,43 @@ class Objects : public irs::memory::Managed {
     return true;
   }
 
+  // Adds field_name to the offsets request list if not already present.
+  // Returns false if the same field was already requested.
+  bool AddOffsetsField(std::string field_name) noexcept {
+    for (const auto& f : _offsets_field_names) {
+      if (f == field_name) {
+        return false;
+      }
+    }
+    _offsets_field_names.push_back(std::move(field_name));
+    return true;
+  }
+
   void EndNode(const void* node, std::shared_ptr<const irs::Scorer> outer) {
     SDB_ASSERT(node);
     auto inner = std::exchange(_scorer, std::move(outer));
     if (inner) {
       _node_to_scorer[node] = std::move(inner);
     }
+    if (!_offsets_field_names.empty()) {
+      _node_to_offsets_fields[node] = std::exchange(_offsets_field_names, {});
+    }
   }
 
   std::shared_ptr<const irs::Scorer> GetScorer(const void* node) const {
     auto it = _node_to_scorer.find(node);
     return it != _node_to_scorer.end() ? it->second : nullptr;
+  }
+
+  // Returns the list of field names for which OFFSETS() was requested in the
+  // given SELECT node, in the order they were encountered.
+  const std::vector<std::string>& GetOffsetsFields(const void* node) const {
+    auto it = _node_to_offsets_fields.find(node);
+    if (it != _node_to_offsets_fields.end()) {
+      return it->second;
+    }
+    static const std::vector<std::string> kEmpty;
+    return kEmpty;
   }
 
   bool empty() const noexcept {
@@ -152,6 +181,8 @@ class Objects : public irs::memory::Managed {
     _functions.clear();
     _scorer.reset();
     _node_to_scorer.clear();
+    _offsets_field_names.clear();
+    _node_to_offsets_fields.clear();
   }
 
  private:
@@ -170,6 +201,9 @@ class Objects : public irs::memory::Managed {
   std::shared_ptr<const irs::Scorer> _scorer;
   containers::FlatHashMap<const void*, std::shared_ptr<const irs::Scorer>>
     _node_to_scorer;
+  std::vector<std::string> _offsets_field_names;
+  containers::FlatHashMap<const void*, std::vector<std::string>>
+    _node_to_offsets_fields;
 };
 
 // collect objects to objects

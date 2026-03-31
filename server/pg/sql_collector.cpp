@@ -33,6 +33,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/transaction.h"
+#include "search/functions.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -241,6 +242,28 @@ void ObjectCollector::CollectFuncCall(const State& state,
         ERR_MSG("Only one scorer function is allowed per inverted index"),
         ERR_HINT("Use UNION to combine different score functions for same "
                  "inverted index"));
+    }
+    return;
+  }
+
+  // OFFSETS(field) produces an offsets column in the output -- not a catalog
+  // function, resolved during analysis similarly to BM25()/TFIDF().
+  if (name.schema.empty() && name.relation == search::functions::kOffsets) {
+    if (list_length(expr.args) != 1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("OFFSETS() requires exactly one argument"));
+    }
+    const auto* arg = linitial_node(Node, expr.args);
+    if (!IsA(arg, ColumnRef)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("OFFSETS() argument must be a column reference"));
+    }
+    auto field_name =
+      NameToStr(castNode(ColumnRef, arg)->fields);
+    if (!_objects.AddOffsetsField(std::move(field_name))) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Duplicate OFFSETS() call for the same field"));
     }
     return;
   }

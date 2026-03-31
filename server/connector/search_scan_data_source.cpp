@@ -35,12 +35,17 @@ template<typename Materializer>
 SearchDataSource<Materializer>::SearchDataSource(
   velox::memory::MemoryPool& memory_pool, Materializer materializer,
   const irs::IndexReader& reader, const irs::Filter::Query& query,
-  const irs::Scorer* scorer)
+  const irs::Scorer* scorer,
+  std::vector<catalog::Column::Id> offsets_column_ids)
   : _memory_pool{memory_pool},
     _materializer{std::move(materializer)},
     _reader{reader},
     _query{query},
-    _scorer{scorer} {}
+    _scorer{scorer},
+    _offsets_column_ids{std::move(offsets_column_ids)} {
+  _pos_attrs.resize(_offsets_column_ids.size(), nullptr);
+  _offs_attrs.resize(_offsets_column_ids.size(), nullptr);
+}
 
 template<typename Materializer>
 void SearchDataSource<Materializer>::addSplit(
@@ -69,6 +74,14 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
     scores = velox::BaseVector::create<velox::FlatVector<float>>(
       velox::REAL(), size, &_memory_pool);
     score_raw = scores->asFlatVector<float>()->mutableRawValues();
+  }
+
+  // Per-field, per-document flat int64 values: interleaved start,end pairs.
+  // offsets_data[field_idx][doc_idx] = {start0, end0, start1, end1, ...}
+  const size_t n_offsets_fields = _offsets_column_ids.size();
+  std::vector<std::vector<std::vector<int64_t>>> offsets_data(n_offsets_fields);
+  for (auto& field_data : offsets_data) {
+    field_data.reserve(size);
   }
 
   std::array<irs::doc_id_t, irs::kScoreBlock> block_docs;
@@ -104,6 +117,11 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
           .fetcher = &_fetcher,
         });
       }
+      for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
+        _pos_attrs[fi] = irs::GetMutable<irs::PosAttr>(_doc.get());
+        _offs_attrs[fi] =
+          _pos_attrs[fi] ? irs::get<irs::OffsAttr>(*_pos_attrs[fi]) : nullptr;
+      }
     }
   };
 
@@ -133,6 +151,12 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
           block_count = 0;
         }
       }
+      for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
+        auto& doc_offsets = offsets_data[fi].emplace_back();
+        // Stub: emit column_id as start/end pair for each requested field.
+        doc_offsets.push_back(static_cast<int64_t>(_offsets_column_ids[fi]));
+        doc_offsets.push_back(static_cast<int64_t>(_offsets_column_ids[fi]));
+      }
       --size;
     }
     if (irs::doc_limits::eof(doc_id)) {
@@ -154,8 +178,55 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
     scores->resize(index_keys.size());
   }
 
+  // Build one ArrayVector per requested offsets field.
+  std::vector<velox::VectorPtr> offsets_per_field;
+  if (n_offsets_fields > 0) {
+    const auto n_docs =
+      static_cast<velox::vector_size_t>(offsets_data[0].size());
+    auto offsets_type = catalog::Column::OffsetsType();
+
+    for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
+      const auto& field_data = offsets_data[fi];
+
+      velox::vector_size_t total_elements = 0;
+      for (const auto& doc_offs : field_data) {
+        total_elements += static_cast<velox::vector_size_t>(doc_offs.size());
+      }
+
+      auto elements = velox::BaseVector::create<velox::FlatVector<int64_t>>(
+        velox::BIGINT(), total_elements, &_memory_pool);
+      int64_t* elements_raw =
+        elements->asFlatVector<int64_t>()->mutableRawValues();
+      velox::vector_size_t elem_idx = 0;
+      for (const auto& doc_offs : field_data) {
+        for (int64_t v : doc_offs) {
+          elements_raw[elem_idx++] = v;
+        }
+      }
+
+      auto offsets_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
+        n_docs, &_memory_pool);
+      auto* offsets_buf_raw = offsets_buf->asMutable<velox::vector_size_t>();
+      auto sizes_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
+        n_docs, &_memory_pool);
+      auto* sizes_buf_raw = sizes_buf->asMutable<velox::vector_size_t>();
+      velox::vector_size_t running = 0;
+      for (velox::vector_size_t i = 0; i < n_docs; ++i) {
+        offsets_buf_raw[i] = running;
+        sizes_buf_raw[i] =
+          static_cast<velox::vector_size_t>(field_data[i].size());
+        running += sizes_buf_raw[i];
+      }
+
+      offsets_per_field.push_back(std::make_shared<velox::ArrayVector>(
+        &_memory_pool, offsets_type, velox::BufferPtr{nullptr}, n_docs,
+        std::move(offsets_buf), std::move(sizes_buf), std::move(elements)));
+    }
+  }
+
   // batch ready - materialize it
-  return _materializer.ReadRows(index_keys, std::move(scores));
+  return _materializer.ReadRows(index_keys, std::move(scores),
+                                std::move(offsets_per_field));
 }
 
 template<typename Materializer>

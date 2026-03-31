@@ -44,7 +44,8 @@ class TextMaterializer {
                    std::vector<catalog::Column::Id> column_ids);
 
   velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
-                               velox::VectorPtr scores);
+                               velox::VectorPtr scores,
+                               std::vector<velox::VectorPtr> offsets_per_field);
 
  private:
   velox::memory::MemoryPool& _pool;
@@ -53,6 +54,7 @@ class TextMaterializer {
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   velox::RowTypePtr _output_type;
   int64_t _score_column_idx = -1;
+  std::vector<int64_t> _offsets_column_indices;
 };
 
 }  // namespace sdb::connector

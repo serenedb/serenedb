@@ -109,6 +109,7 @@ std::string Column::GenerateScoreName(
   return GenerateUniqueName("sdb_inverted_index_score", column_names);
 }
 
+
 std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
   SDB_ASSERT(expr);
 

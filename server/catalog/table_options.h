@@ -99,6 +99,7 @@ struct Column {
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
   static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
+  static constexpr Id kInvertedIndexOffsetsId = kMaxRealId + 3;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
     static constexpr std::string_view kUpdatePrefix = "upd$";
@@ -123,6 +124,44 @@ struct Column {
 
   static std::string GenerateScoreName(
     std::span<const std::string> column_names);
+
+  static std::string_view DemangleColumnName(std::string_view name) {
+    const auto sep = name.rfind(query::kColumnSeparator);
+    if (sep != std::string::npos) {
+      return std::string_view{name.data(), sep};
+    }
+    return name;
+  }
+
+  // Prefix used in virtual offsets column names. Ends with kReservedSymbol so
+  // it can never collide with a user-defined column name.
+  static constexpr std::string_view kOffsetsNamePrefix =
+    "sdb_inverted_index_offsets$";
+
+  static bool IsOffsetsName(std::string_view name) {
+    return absl::StartsWith(name, kOffsetsNamePrefix);
+  }
+
+  // Encodes the searched column's catalog ID into the virtual column name.
+  static std::string MakeOffsetsName(Id column_id) {
+    static_assert(kOffsetsNamePrefix.ends_with(query::kReservedSymbol));
+    return absl::StrCat(kOffsetsNamePrefix, column_id);
+  }
+
+  // Recovers the catalog column ID from a virtual offsets column name.
+  static Id ExtractOffsetsColumnId(std::string_view col_name) {
+    SDB_ASSERT(DemangleColumnName(col_name).size() > kOffsetsNamePrefix.size());
+    Id id;
+    const auto ok =
+      absl::SimpleAtoi(DemangleColumnName(col_name).substr(kOffsetsNamePrefix.size()), &id);
+    SDB_ASSERT(ok);
+    return id;
+  }
+
+  // ARRAY(BIGINT) — flat offsets column: interleaved start,end pairs.
+  static velox::TypePtr OffsetsType() {
+    return velox::ARRAY(velox::BIGINT());
+  }
 
   Id id;
   velox::TypePtr type;

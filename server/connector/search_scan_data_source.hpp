@@ -22,6 +22,8 @@
 
 #include <velox/connectors/Connector.h>
 
+#include <vector>
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -31,6 +33,7 @@
 #include <iresearch/search/scorer.hpp>
 
 #include "basics/fwd.h"
+#include "catalog/table_options.h"
 #include "iresearch/index/index_reader.hpp"
 
 namespace sdb::connector {
@@ -40,7 +43,8 @@ class SearchDataSource final : public velox::connector::DataSource {
  public:
   SearchDataSource(velox::memory::MemoryPool& memory_pool,
                    Materializer materializer, const irs::IndexReader& reader,
-                   const irs::Filter::Query& query, const irs::Scorer* scorer);
+                   const irs::Filter::Query& query, const irs::Scorer* scorer,
+                   std::vector<catalog::Column::Id> offsets_column_ids);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -69,6 +73,11 @@ class SearchDataSource final : public velox::connector::DataSource {
   const irs::Scorer* _scorer = nullptr;
   irs::ColumnArgsFetcher _fetcher;
   irs::ScoreFunction _score_function;
+  // One entry per requested OFFSETS() column, in the same order as
+  // offsets_column_ids passed to the constructor.
+  std::vector<catalog::Column::Id> _offsets_column_ids;
+  std::vector<irs::PosAttr*> _pos_attrs;
+  std::vector<const irs::OffsAttr*> _offs_attrs;
 };
 
 }  // namespace sdb::connector

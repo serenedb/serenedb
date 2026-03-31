@@ -133,8 +133,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   if (auto r = ParseIndexOptions(stmt, columns, options); !r.ok()) {
     SDB_THROW(std::move(r));
   }
-  // Create shard options depending on index type.
-  // Inverted indexes have specific options; secondary indexes use base options.
+
   Result create_result;
   if (options.type == IndexType::Inverted) {
     explain_options::ExplainOptions dummy;

@@ -979,7 +979,21 @@ RocksDBMultiRangeLookupDataSource<Source>::RocksDBMultiRangeLookupDataSource(
                                       std::move(remaining_filter),
                                       evaluator},
     _ranges{std::move(ranges)},
-    _pk_type{std::move(pk_type)} {}
+    _pk_type{std::move(pk_type)} {
+  SDB_ASSERT(absl::c_is_sorted(_ranges), "ranges must be sorted");
+  SDB_ASSERT(
+    [&] {
+      for (size_t i = 1; i < _ranges.size(); ++i) {
+        const auto& a = _ranges[i - 1];
+        const auto& b = _ranges[i];
+        if (a.prefix == b.prefix && a.range_col.OverlapsWith(b.range_col)) {
+          return false;
+        }
+      }
+      return true;
+    }(),
+    "ranges must be non-overlapping");
+}
 
 template<typename Source>
 void RocksDBMultiRangeLookupDataSource<Source>::addSplit(

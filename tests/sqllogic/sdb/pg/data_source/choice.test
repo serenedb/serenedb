@@ -862,6 +862,30 @@ EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND
 QUERY PLAN
 <slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(5, +inf)}, {a=2, b=2, c=(-inf, 5)}]]<slt:ignore>
 
+
+# SELECT * FROM t_range3 WHERE (a < 2 AND b <= 2) OR (a <= 1 AND b < 3) ORDER BY a, b, c;
+
+
+# Unite multiple columns
+skipif serenedb
+query
+SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
+----
+a	b	c	val
+1	2	1	121
+1	2	3	123
+1	2	5	125
+1	2	7	127
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>Filter[1][expression: or(presto_lte("b",2),presto_lt("b",3))]<slt:ignore>
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}]]<slt:ignore>
+
+
 statement ok
 DROP TABLE t_range3;
 

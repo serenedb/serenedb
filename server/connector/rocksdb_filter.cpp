@@ -35,9 +35,12 @@ namespace {
 std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
   std::vector<KeyConstraint>);
 
+void MergeSourceExprs(KeyConstraint::SourceExprsMap& dst,
+                      const KeyConstraint::SourceExprsMap& src);
+
 std::vector<KeyConstraint> AnyKeyConstraint(
   const std::span<const std::string> names) {
-  return {KeyConstraint(names)};
+  return {KeyConstraint::MakeAny(names)};
 }
 
 std::vector<KeyConstraint> ExtractFilterEq(
@@ -56,7 +59,7 @@ std::vector<KeyConstraint> ExtractFilterEq(
   if (!absl::c_linear_search(pk_names, field_access->name())) {
     return AnyKeyConstraint(pk_names);
   }
-  KeyConstraint p{pk_names};
+  auto p = KeyConstraint::MakeAny(pk_names);
   p.AddEqFilter(field_access->name(), *const_val, func_call);
   return {p};
 }
@@ -100,7 +103,7 @@ std::vector<KeyConstraint> ExtractFilterComparison(
     op = field_left ? ComparisonOp::Le : ComparisonOp::Ge;
   }
 
-  KeyConstraint kc{pk_names};
+  auto kc = KeyConstraint::MakeAny(pk_names);
   kc.AddComparisonFilter(field_access->name(), *const_val, op, func_call);
   return {std::move(kc)};
 }
@@ -137,7 +140,7 @@ std::vector<KeyConstraint> ExtractFilterIn(
   for (velox::vector_size_t i = 0; i < size; ++i) {
     velox::core::ConstantTypedExpr elem_const{
       velox::BaseVector::wrapInConstant(1, offset + i, elements)};
-    KeyConstraint p{pk_names};
+    auto p = KeyConstraint::MakeAny(pk_names);
     // If all points that uses func_call source expr become specific, it means
     // that this node maybe replaced with constant true, as specific points will
     // be processed in point lookup data source
@@ -169,7 +172,7 @@ std::vector<KeyConstraint> ExtractFilterAnd(
     bool had_contradiction = false;
     for (const auto& lhs : result) {
       for (const auto& rhs : rhs_pts) {
-        if (auto merged = KeyConstraint::Intersect(lhs, rhs)) {
+        if (auto merged = KeyConstraint::TryIntersect(lhs, rhs)) {
           if (!merged->IsUnconstrained()) {
             next.push_back(std::move(*merged));
           }
@@ -301,7 +304,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
       next.reserve(result.size() * negated.size());
       for (const auto& lhs : result) {
         for (const auto& rhs : negated) {
-          if (auto merged = KeyConstraint::Intersect(lhs, rhs);
+          if (auto merged = KeyConstraint::TryIntersect(lhs, rhs);
               merged && !merged->IsUnconstrained()) {
             next.push_back(std::move(*merged));
           }
@@ -348,7 +351,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
       op = field_left ? ComparisonOp::Le : ComparisonOp::Ge;
     }
 
-    KeyConstraint kc{pk_names};
+    auto kc = KeyConstraint::MakeAny(pk_names);
     kc.AddComparisonFilter(field_access->name(), *const_val, NegateOp(op),
                            func_call);
     return {std::move(kc)};
@@ -416,42 +419,330 @@ velox::core::TypedExprPtr RewriteExpr(
 // Sorts constraints lexicographically by each PK column's left bound in order.
 // This groups constraints that share the same prefix columns and orders the
 // differing column so overlapping ranges become adjacent.
-bool KeyConstraintLess(const KeyConstraint& a, const KeyConstraint& b) {
-  for (std::string_view name : a.PkNames()) {
-    const ColumnRange* ra = a.FindColumnRange(name);
-    const ColumnRange* rb = b.FindColumnRange(name);
-    // Treat missing filter as unbounded (-inf left bound).
-    static const ColumnRange kUnbounded{};
-    const ColumnRange& la = ra ? *ra : kUnbounded;
-    const ColumnRange& lb = rb ? *rb : kUnbounded;
-    if (la.LeftBoundLessThan(lb)) {
-      return true;
+// ── Sweep helpers ────────────────────────────────────────────────────────────
+
+// One atomic segment on a single dimension's axis.
+// is_point=false → open interval (left, right); has_left/has_right mark
+// whether the endpoint is finite. is_point=true → closed singleton {left}.
+struct Atom {
+  bool is_point{false};
+  bool has_left{false};
+  bool has_right{false};
+  velox::variant left;   // valid iff has_left
+  velox::variant right;  // valid iff has_right (== left when is_point)
+};
+
+// Lightweight constraint representation used during the recursive sweep.
+struct SweepRange {
+  std::span<const std::string> pk_names;
+  containers::FlatHashMap<std::string, ColumnRange> col_ranges;
+  KeyConstraint::SourceExprsMap source_exprs;
+};
+
+// Builds the atom sequence for a sorted, deduplicated list of event points.
+// Emits: (-inf, p0), {p0}, (p0,p1), {p1}, ..., {pN}, (pN, +inf).
+// If event_points is empty, emits one unconstrained open atom.
+std::vector<Atom> BuildAtoms(const std::vector<velox::variant>& pts) {
+  if (pts.empty()) {
+    return {Atom{}};  // one unconstrained open atom
+  }
+  std::vector<Atom> atoms;
+  atoms.reserve(2 * pts.size() + 1);
+  // Leading open interval (-inf, p0).
+  atoms.push_back(Atom{false, false, true, {}, pts[0]});
+  for (size_t i = 0; i < pts.size(); ++i) {
+    // Point singleton {p}.
+    atoms.push_back(Atom{true, true, true, pts[i], pts[i]});
+    // Trailing open interval (pi, pi+1) or (pN, +inf).
+    if (i + 1 < pts.size()) {
+      atoms.push_back(Atom{false, true, true, pts[i], pts[i + 1]});
+    } else {
+      atoms.push_back(Atom{false, true, false, pts[i], {}});
     }
-    if (lb.LeftBoundLessThan(la)) {
+  }
+  return atoms;
+}
+
+// Returns true iff ColumnRange cr contains atom a.
+// cr with no bounds is treated as (-inf, +inf) and covers every atom.
+bool AtomContainedBy(const Atom& a, const ColumnRange& cr) {
+  if (a.is_point) {
+    // Check: cr.left ≤ a.left  AND  cr.right ≥ a.left
+    const velox::variant& p = a.left;
+    const bool left_ok = !cr.HasLeft() || cr.left_value < p ||
+                         (cr.left_value == p && cr.IsLeftInclusive());
+    const bool right_ok = !cr.HasRight() || p < cr.right_value ||
+                          (cr.right_value == p && cr.IsRightInclusive());
+    return left_ok && right_ok;
+  } else {
+    // Open interval atom (p, q): cr.left < q  AND  cr.right > p.
+    // Infinite atom ends are handled by short-circuit.
+    const bool left_ok =
+      !a.has_right ||   // atom right is +inf → cr always satisfies
+      !cr.HasLeft() ||  // cr left is -inf → always ok
+      cr.left_value < a.right;
+    const bool right_ok = !a.has_left ||     // atom left is -inf → always ok
+                          !cr.HasRight() ||  // cr right is +inf → always ok
+                          a.left < cr.right_value;
+    return left_ok && right_ok;
+  }
+}
+
+// Converts an Atom to its ColumnRange representation.
+ColumnRange AtomToColumnRange(const Atom& a) {
+  if (a.is_point) {
+    return ColumnRange::Point(a.left);
+  }
+  if (!a.has_left && !a.has_right) {
+    return ColumnRange{};  // fully unconstrained
+  }
+  if (!a.has_left) {
+    return ColumnRange::RightBound(a.right, false);
+  }
+  if (!a.has_right) {
+    return ColumnRange::LeftBound(a.left, false);
+  }
+  return ColumnRange::Bounded(a.left, false, a.right, false);
+}
+
+// Reconstructs the merged ColumnRange for a contiguous run of atoms.
+// Left bound comes from the first atom, right bound from the last.
+// For a single-atom run (first == last), delegates to AtomToColumnRange.
+ColumnRange FuseAtomRange(const Atom& first, const Atom& last) {
+  if (first.is_point == last.is_point && first.has_left == last.has_left &&
+      first.has_right == last.has_right &&
+      (!first.has_left || first.left == last.left) &&
+      (!first.has_right || first.right == last.right)) {
+    return AtomToColumnRange(first);
+  }
+
+  // Left: point atom → inclusive; open atom → exclusive; no left → unbounded.
+  const bool left_inc = first.is_point;
+  // Right: point atom → inclusive; open atom → exclusive; no right → unbounded.
+  const bool right_inc = last.is_point;
+
+  const bool has_l = first.has_left;
+  const bool has_r = last.has_right;
+
+  if (!has_l && !has_r) {
+    return ColumnRange{};
+  }
+  if (!has_l) {
+    return ColumnRange::RightBound(last.is_point ? last.left : last.right,
+                                   right_inc);
+  }
+  if (!has_r) {
+    return ColumnRange::LeftBound(first.left, left_inc);
+  }
+  return ColumnRange::Bounded(
+    first.left, left_inc, last.is_point ? last.left : last.right, right_inc);
+}
+
+// Collects, sorts, and deduplicates all boundary values from `ranges` on
+// dimension `dim_col`. Missing column (unconstrained) contributes no events.
+std::vector<velox::variant> CollectEventPoints(
+  const std::vector<SweepRange>& ranges, std::string_view dim_col) {
+  std::vector<velox::variant> pts;
+  for (const auto& sr : ranges) {
+    auto it = sr.col_ranges.find(dim_col);
+    if (it == sr.col_ranges.end()) {
+      continue;
+    }
+    const ColumnRange& cr = it->second;
+    if (cr.HasLeft()) {
+      pts.push_back(cr.left_value);
+    }
+    if (cr.HasRight()) {
+      pts.push_back(cr.right_value);
+    }
+  }
+  absl::c_sort(pts);
+  pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+  return pts;
+}
+
+// Returns a copy of sr with dim_col removed from col_ranges.
+SweepRange ProjectAwayDim(const SweepRange& sr, std::string_view dim_col) {
+  SweepRange out;
+  out.pk_names = sr.pk_names;
+  out.source_exprs = sr.source_exprs;
+  for (const auto& [k, v] : sr.col_ranges) {
+    if (k != dim_col) {
+      out.col_ranges.emplace(k, v);
+    }
+  }
+  return out;
+}
+
+// Two SweepRanges are equal on all dimensions except dim_col.
+bool EqualExceptDim(const SweepRange& a, const SweepRange& b,
+                    std::string_view dim_col) {
+  for (const auto& name : a.pk_names) {
+    if (name == dim_col) {
+      continue;
+    }
+    const auto* ca =
+      a.col_ranges.count(name) ? &a.col_ranges.at(name) : nullptr;
+    const auto* cb =
+      b.col_ranges.count(name) ? &b.col_ranges.at(name) : nullptr;
+    if (!ca && !cb) {
+      continue;
+    }
+    if (!ca || !cb) {
+      return false;
+    }
+    if (!(*ca == *cb)) {
       return false;
     }
   }
-  return false;
+  return true;
 }
 
-// Reduces constraints by sorting then doing a single linear scan.
-// Leaves constraints with gaps between them as separate entries.
+// Fuses adjacent atom-result pairs that are consecutive and share the same
+// sub-result on all other dimensions. Reconstructs ColumnRange for dim_col.
+std::vector<SweepRange> MergeAlongDim0(
+  std::vector<std::pair<Atom, SweepRange>> atom_results,
+  std::string_view dim_col) {
+  if (atom_results.empty()) {
+    return {};
+  }
+  std::vector<SweepRange> result;
+  size_t run_start = 0;
+  for (size_t i = 1; i <= atom_results.size(); ++i) {
+    bool merge = false;
+    if (i < atom_results.size()) {
+      // Atoms are consecutive if they share an endpoint and the sub-results
+      // agree on all other dimensions.
+      const Atom& prev = atom_results[i - 1].first;
+      const Atom& curr = atom_results[i].first;
+      const SweepRange& prev_sr = atom_results[i - 1].second;
+      const SweepRange& curr_sr = atom_results[i].second;
+      // Consecutive: end of prev == start of curr.
+      const velox::variant& prev_end =
+        prev.is_point ? prev.left
+                      : (prev.has_right ? prev.right : velox::variant{});
+      const velox::variant& curr_start =
+        curr.is_point ? curr.left
+                      : (curr.has_left ? curr.left : velox::variant{});
+      const bool endpoints_touch = (prev.has_right == curr.has_left) &&
+                                   (!prev.has_right || prev_end == curr_start);
+      merge = endpoints_touch && EqualExceptDim(prev_sr, curr_sr, dim_col);
+    }
+    if (!merge) {
+      // Flush the run [run_start, i).
+      SweepRange out = atom_results[run_start].second;
+      const ColumnRange fused =
+        FuseAtomRange(atom_results[run_start].first, atom_results[i - 1].first);
+      if (fused.flags != ColumnRange::kZero) {
+        out.col_ranges[std::string(dim_col)] = fused;
+      } else {
+        out.col_ranges.erase(dim_col);
+      }
+      // Union source_exprs from the entire run.
+      for (size_t j = run_start + 1; j < i; ++j) {
+        MergeSourceExprs(out.source_exprs, atom_results[j].second.source_exprs);
+      }
+      result.push_back(std::move(out));
+      run_start = i;
+    }
+  }
+  return result;
+}
+
+// Recursively sweeps dimensions pk_names[dim_idx..K-1].
+// Returns SweepRanges with ColumnRange entries for those dimensions.
+std::vector<SweepRange> SweepDims(std::vector<SweepRange> ranges,
+                                  std::span<const std::string> pk_names,
+                                  size_t dim_idx) {
+  if (dim_idx == pk_names.size()) {
+    // Base case: all dimensions projected away. Merge source exprs.
+    SweepRange out;
+    out.pk_names = pk_names;
+    for (const auto& sr : ranges) {
+      MergeSourceExprs(out.source_exprs, sr.source_exprs);
+    }
+    return {std::move(out)};
+  }
+
+  const std::string& dim_col = pk_names[dim_idx];
+  const auto events = CollectEventPoints(ranges, dim_col);
+  const auto atoms = BuildAtoms(events);
+
+  static const ColumnRange kUnconstrained{};
+  std::vector<std::pair<Atom, SweepRange>> atom_results;
+  for (const auto& a : atoms) {
+    std::vector<SweepRange> active;
+    for (const auto& sr : ranges) {
+      auto it = sr.col_ranges.find(dim_col);
+      const ColumnRange& cr =
+        (it != sr.col_ranges.end()) ? it->second : kUnconstrained;
+      if (AtomContainedBy(a, cr)) {
+        active.push_back(ProjectAwayDim(sr, dim_col));
+      }
+    }
+    if (active.empty()) {
+      continue;
+    }
+    auto sub = SweepDims(std::move(active), pk_names, dim_idx + 1);
+    const ColumnRange atom_cr = AtomToColumnRange(a);
+    for (auto& s : sub) {
+      // Only insert a ColumnRange for this dimension if it actually constrains
+      // something (flags != 0). Unconstrained open atoms produced for
+      // dimensions with no event points represent (-inf, +inf) and should be
+      // absent from col_ranges so FindColumnRange returns nullptr for them.
+      if (atom_cr.flags != ColumnRange::kZero) {
+        s.col_ranges[std::string(dim_col)] = atom_cr;
+      }
+      atom_results.emplace_back(a, std::move(s));
+    }
+  }
+  return MergeAlongDim0(std::move(atom_results), dim_col);
+}
+
+// Produces a set of disjoint KeyConstraints covering exactly the union of the
+// input constraints' key-spaces, using the recursive atomic-sweep algorithm.
 std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
   std::vector<KeyConstraint> constraints) {
-  if (constraints.size() <= 1) {
+  if (constraints.empty()) {
+    return {};
+  }
+  const auto pk_names = constraints[0].PKNames();
+
+  for (const auto& c : constraints) {
+    if (c.IsUnconstrained()) {
+      return {KeyConstraint::MakeAny(pk_names)};
+    }
+  }
+  std::erase_if(constraints,
+                [](const KeyConstraint& c) { return c.IsContradictory(); });
+  if (constraints.empty()) {
+    return {KeyConstraint::MakeContradictory(pk_names)};
+  }
+  if (constraints.size() == 1) {
     return constraints;
   }
 
-  absl::c_sort(constraints, KeyConstraintLess);
+  std::vector<SweepRange> inputs;
+  inputs.reserve(constraints.size());
+  for (const auto& kc : constraints) {
+    SweepRange sr;
+    sr.pk_names = pk_names;
+    for (const auto& name : pk_names) {
+      if (const auto* cr = kc.FindColumnRange(name)) {
+        sr.col_ranges.emplace(name, *cr);
+      }
+    }
+    sr.source_exprs = kc.GetSourceExprs();
+    inputs.push_back(std::move(sr));
+  }
+
+  auto swept = SweepDims(std::move(inputs), pk_names, 0);
 
   std::vector<KeyConstraint> result;
-  result.push_back(std::move(constraints[0]));
-  for (size_t i = 1; i < constraints.size(); ++i) {
-    if (auto merged = KeyConstraint::TryUnion(result.back(), constraints[i])) {
-      result.back() = std::move(*merged);
-    } else {
-      result.push_back(std::move(constraints[i]));
-    }
+  result.reserve(swept.size());
+  for (auto& sr : swept) {
+    result.push_back(KeyConstraint::BuildFromRanges(
+      pk_names, std::move(sr.col_ranges), std::move(sr.source_exprs)));
   }
   return result;
 }
@@ -535,7 +826,7 @@ size_t KeyConstraint::RangePrefixSize() const noexcept {
     }
     if (!column_range->IsPoint()) {
       // k specific points that defines prefix and
-      // one on-column range that defines a rocksdb key range
+      // one on-column range that defines a rocksdb key range.
       return k + 1;
     }
   }
@@ -551,6 +842,16 @@ bool KeyConstraint::IsSpecificPoint() const {
     }
     return it->second.IsPoint();
   });
+}
+
+KeyConstraint KeyConstraint::BuildFromRanges(
+  std::span<const std::string> pk_names,
+  containers::FlatHashMap<std::string, ColumnRange> ranges,
+  SourceExprsMap source_exprs) {
+  KeyConstraint kc{pk_names};
+  kc._column_ranges = std::move(ranges);
+  kc._source_exprs = std::move(source_exprs);
+  return kc;
 }
 
 bool ColumnRange::operator==(const ColumnRange& other) const noexcept {
@@ -734,10 +1035,10 @@ void KeyConstraint::AddComparisonFilter(
   _source_exprs[std::string(column_name)].insert(source_expr);
 }
 
-std::optional<KeyConstraint> KeyConstraint::Intersect(
+std::optional<KeyConstraint> KeyConstraint::TryIntersect(
   const KeyConstraint& lhs, const KeyConstraint& rhs) {
   SDB_ASSERT(lhs._pk_names.data() == rhs._pk_names.data());
-  KeyConstraint result{lhs._pk_names};
+  auto result = KeyConstraint::MakeAny(lhs._pk_names);
   for (std::string_view pk_name : lhs._pk_names) {
     const auto* lhs_f = lhs.FindColumnRange(pk_name);
     const auto* rhs_f = rhs.FindColumnRange(pk_name);
@@ -764,6 +1065,7 @@ std::optional<KeyConstraint> KeyConstraint::Intersect(
   return result;
 }
 
+// TODO looks like wrong
 std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
                                                      const KeyConstraint& rhs) {
   SDB_ASSERT(lhs._pk_names.data() == rhs._pk_names.data());
@@ -948,6 +1250,57 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
         return c.RangePrefixSize() == 0;
       })) {
     return {ConstraintKind::None, {}, expr};
+  }
+
+  // If the constraints' first-column ranges together cover (-inf, +inf) with
+  // no gap, the range scan reads every row — equivalent to a full scan.
+  // Detect this by checking that sorted disjoint ranges tile the whole axis:
+  // first has no left bound, last has no right bound, and every consecutive
+  // pair is adjacent (right of prev and left of next share a value with
+  // complementary or equal-inclusive endpoints, leaving no uncovered point).
+  {
+    std::vector<const ColumnRange*> first_col_ranges;
+    first_col_ranges.reserve(constraints.size());
+    for (const auto& c : constraints) {
+      first_col_ranges.push_back(c.FindColumnRange(pk_names[0]));
+    }
+    // Sort by left bound (constraints may not be sorted in pk_names[0] order).
+    static const ColumnRange kUnconstrained{};
+    absl::c_sort(first_col_ranges,
+                 [](const ColumnRange* a, const ColumnRange* b) {
+                   const ColumnRange& ra = a ? *a : kUnconstrained;
+                   const ColumnRange& rb = b ? *b : kUnconstrained;
+                   return ra.LeftBoundLessThan(rb);
+                 });
+    const bool first_unbounded =
+      !first_col_ranges.front() || !first_col_ranges.front()->HasLeft();
+    const bool last_unbounded =
+      !first_col_ranges.back() || !first_col_ranges.back()->HasRight();
+    bool contiguous = first_unbounded && last_unbounded;
+    if (contiguous && first_col_ranges.size() > 1) {
+      for (size_t i = 1; i < first_col_ranges.size(); ++i) {
+        const ColumnRange* prev = first_col_ranges[i - 1];
+        const ColumnRange* curr = first_col_ranges[i];
+        // prev must have a right bound and curr a left bound with the same
+        // value; together they must not leave the shared point uncovered
+        // (i.e. not both exclusive).
+        if (!prev || !prev->HasRight() || !curr || !curr->HasLeft()) {
+          contiguous = false;
+          break;
+        }
+        if (!(prev->right_value == curr->left_value)) {
+          contiguous = false;
+          break;
+        }
+        if (!prev->IsRightInclusive() && !curr->IsLeftInclusive()) {
+          contiguous = false;
+          break;
+        }
+      }
+    }
+    if (contiguous) {
+      return {ConstraintKind::None, {}, expr};
+    }
   }
 
   // Collect rewrite sources from every column in each constraint's prefix

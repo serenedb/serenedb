@@ -136,8 +136,17 @@ struct ColumnRange {
 // A set of per-column range constraints over PK columns.
 class KeyConstraint {
  public:
-  explicit KeyConstraint(std::span<const std::string> pk_names)
-    : _pk_names{pk_names} {}
+  [[nodiscard]] static KeyConstraint MakeAny(
+    std::span<const std::string> pk_names) {
+    return KeyConstraint{pk_names};
+  }
+
+  [[nodiscard]] static KeyConstraint MakeContradictory(
+    std::span<const std::string> pk_names) {
+    KeyConstraint kc{pk_names};
+    kc._contradictory = true;
+    return kc;
+  }
 
   [[nodiscard]] bool IsSpecificPoint() const;
 
@@ -147,13 +156,6 @@ class KeyConstraint {
 
   [[nodiscard]] bool IsContradictory() const noexcept { return _contradictory; }
 
-  [[nodiscard]] static KeyConstraint MakeContradictory(
-    std::span<const std::string> pk_names) {
-    KeyConstraint kc{pk_names};
-    kc._contradictory = true;
-    return kc;
-  }
-
   // Returns the number of PK columns covered by the constraint's leading
   // prefix, or 0 if the constraint cannot drive a useful range scan.
   [[nodiscard]] size_t RangePrefixSize() const noexcept;
@@ -162,7 +164,7 @@ class KeyConstraint {
   [[nodiscard]] const ColumnRange* FindColumnRange(
     std::string_view column_name) const;
 
-  [[nodiscard]] std::span<const std::string> PkNames() const noexcept {
+  [[nodiscard]] std::span<const std::string> PKNames() const noexcept {
     return _pk_names;
   }
 
@@ -194,17 +196,28 @@ class KeyConstraint {
 
   // Returns nullopt when the two constraints are contradictory (e.g. a=1 AND
   // a=2).
-  [[nodiscard]] static std::optional<KeyConstraint> Intersect(
+  [[nodiscard]] static std::optional<KeyConstraint> TryIntersect(
     const KeyConstraint& lhs, const KeyConstraint& rhs);
 
-  // Returns nullopt when the constraints cannot be merged into one — i.e. they
-  // differ on more than one column, or their ranges on the differing column
-  // have a gap. Otherwise returns a single constraint covering the union of
-  // both key-spaces.
+  // Fast-path approximation: merges two constraints only when they differ on
+  // exactly one column and the ranges on that column overlap. Returns nullopt
+  // when the constraints differ on more than one column or have a gap on the
+  // differing column. Use MergeKeyConstraintsPrecise for the general case.
   [[nodiscard]] static std::optional<KeyConstraint> TryUnion(
     const KeyConstraint& lhs, const KeyConstraint& rhs);
 
+  // Constructs a KeyConstraint directly from pre-built column ranges and source
+  // expressions. All columns absent from `ranges` are treated as unconstrained.
+  // Used by the sweep-based merge algorithm.
+  [[nodiscard]] static KeyConstraint BuildFromRanges(
+    std::span<const std::string> pk_names,
+    containers::FlatHashMap<std::string, ColumnRange> ranges,
+    SourceExprsMap source_exprs);
+
  private:
+  explicit KeyConstraint(std::span<const std::string> pk_names)
+    : _pk_names{pk_names} {}
+
   std::span<const std::string> _pk_names;
   bool _contradictory =
     false;  // true → contradictory predicate, matches no rows
@@ -235,41 +248,33 @@ struct ResolvedRange {
   // When two ranges share all elements of the shorter one → ranges overlap,
   // which must not happen — asserts.
   bool operator<(const ResolvedRange& other) const {
-    // Value at position i: prefix[i] for i < K, or range_col.left for i == K.
-    auto val_at = [](const ResolvedRange& sr,
-                     size_t i) -> const velox::variant* {
-      if (i < sr.prefix.size()) {
-        return &sr.prefix[i];
-      }
-      SDB_ASSERT(i == sr.prefix.size());
-      return sr.range_col.HasLeft() ? &sr.range_col.left_value : nullptr;
-    };
-
-    const size_t len = prefix.size() + 1;  // this range's sequence length
-    const size_t other_len = other.prefix.size() + 1;
-    const size_t common = std::min(len, other_len);
-
-    for (size_t i = 0; i < common; ++i) {
-      const velox::variant* a = val_at(*this, i);
-      const velox::variant* b = val_at(other, i);
-      const bool a_inf = (a == nullptr);
-      const bool b_inf = (b == nullptr);
-      if (a_inf != b_inf) {
-        return a_inf;  // -inf < concrete value
-      }
-      if (a_inf) {
-        return false;  // both -inf at same pos: equal here
-      }
-      if (*a < *b) {
+    // Compare prefix values (exact equality columns) first.
+    const size_t common_prefix = std::min(prefix.size(), other.prefix.size());
+    for (size_t i = 0; i < common_prefix; ++i) {
+      if (prefix[i] < other.prefix[i]) {
         return true;
       }
-      if (*b < *a) {
+      if (other.prefix[i] < prefix[i]) {
         return false;
       }
     }
+    if (prefix.size() != other.prefix.size()) {
+      // Unequal prefix lengths with a shared prefix means ranges overlap.
+      SDB_UNREACHABLE();
+    }
 
-    // All common elements equal - one range is a structural prefix of the
-    // other, meaning they overlap. This is an invalid sorted range list.
+    // Same prefix length: compare left bounds of range_col.
+    // Use LeftBoundLessThan so that ties on value are broken by inclusivity:
+    // [v, ...] < (v, ...) because [v starts earlier.
+    // Two ranges with identical left bounds overlap — asserts.
+    if (range_col.LeftBoundLessThan(other.range_col)) {
+      return true;
+    }
+    if (other.range_col.LeftBoundLessThan(range_col)) {
+      return false;
+    }
+
+    // Identical left bounds → ranges overlap.
     SDB_UNREACHABLE();
   }
 };

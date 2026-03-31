@@ -85,6 +85,8 @@ inline velox::AllowedCoercions AllowedCoercions() {
   add(velox::BIGINT(), {velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
+  add(velox::INTEGER(), {REGCLASS()});
+  add(velox::BIGINT(), {REGCLASS()});
   add(REGCLASS(), {velox::INTEGER(), velox::BIGINT()});
   add(REGTYPE(), {velox::INTEGER(), velox::BIGINT()});
 

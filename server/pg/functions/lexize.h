@@ -45,11 +45,10 @@ template<typename T>
 struct PgTsLexize {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<velox::Varchar>* /*ts_dict*/,
-    const arg_type<velox::Varchar>* /*text*/) {
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const arg_type<velox::Varchar>*) {
     auto conn = basics::downCast<const ConnectionContext>(config.config());
     db_id = conn->GetDatabaseId();
     current_schema = conn->GetCurrentSchema();

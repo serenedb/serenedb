@@ -567,6 +567,9 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("pg_table_size",
           VeloxFunction{"pg_table_size", false, FunctionLanguage::VeloxNative,
                         FunctionKind::Scalar})
+    .Case("pg_relation_size",
+          VeloxFunction{"pg_relation_size", false,
+                        FunctionLanguage::VeloxNative, FunctionKind::Scalar})
     .Case("ts_lexize",
           VeloxFunction{"pg_ts_lexize", false, FunctionLanguage::VeloxNative,
                         FunctionKind::Scalar})

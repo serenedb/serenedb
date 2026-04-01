@@ -3,6 +3,21 @@ add_subdirectory(functions)
 target_sources(
     sereneserver
     PRIVATE
+        pg_catalog/pg_attribute.cpp
+        pg_catalog/pg_authid.cpp
+        pg_catalog/pg_class.cpp
+        pg_catalog/pg_constraint.cpp
+        pg_catalog/pg_database.cpp
+        pg_catalog/pg_index.cpp
+        pg_catalog/pg_language.cpp
+        pg_catalog/pg_namespace.cpp
+        pg_catalog/pg_proc.cpp
+        pg_catalog/pg_ts_dict.cpp
+        pg_catalog/pg_stat_progress.cpp
+        pg_catalog/pg_type.cpp
+        information_schema/sql_implementation_info.cpp
+        information_schema/sql_parts.cpp
+        information_schema/sql_sizing.cpp
         command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
@@ -12,12 +27,7 @@ target_sources(
         pg_types.cpp
         serialize.cpp
         system_catalog.cpp
-        pg_catalog/pg_class.cpp
-        pg_catalog/pg_index.cpp
-        pg_catalog/pg_namespace.cpp
         progress_tracker.cpp
-        pg_catalog/pg_stat_progress.cpp
-        pg_catalog/pg_type.cpp
         sdb_catalog/sdb_log.cpp
         functions.cpp
         sql_analyzer_velox.cpp

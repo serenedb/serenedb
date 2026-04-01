@@ -30,7 +30,6 @@
 #include "basics/logger/logger.h"
 
 namespace sdb::fuerte {
-namespace {
 
 template<typename SocketT, typename F, typename IsAbortedCb>
 void ResolveConnect(const detail::ConnectionConfiguration& config,
@@ -99,8 +98,6 @@ void ResolveConnect(const detail::ConnectionConfiguration& config,
   resolver.async_resolve(config.host, config.port, std::move(cb));
 #endif
 }
-
-}  // namespace
 
 enum class ConnectTimerRole {
   Connect = 1,

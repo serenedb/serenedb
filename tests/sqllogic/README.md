@@ -71,10 +71,10 @@ command: /sqllogic/_execute_tests_in_docker.sh --your-parameters-here
    - Verify Rust toolchain is installed (`cargo --version`)
 
 ## Directory organization
-* `any/any/` – tests that **every SQL database** must pass (absent for now)
-* `any/pg/` – tests that **every PostgreSQL-compatible backend** must pass, it should have symlink to `any/any/` when the last one appears.
-* `sdb/pg/` – tests that **only SereneDB PostgreSQL-compatible backend** must pass. It has symlink to `any/pg/` suites with suffix `_any`.
-* `pg/` – tests that only reference PostgreSQL backend must pass, but **SereneDB PostgreSQL-compatible backend strives to pass**. It has symlinks to `any/pg/` suites with suffix `_any`.
+* `any/any/` - tests that **every SQL database** must pass (absent for now)
+* `any/pg/` - tests that **every PostgreSQL-compatible backend** must pass, it should have symlink to `any/any/` when the last one appears.
+* `sdb/pg/` - tests that **only SereneDB PostgreSQL-compatible backend** must pass. It has symlink to `any/pg/` suites with suffix `_any`.
+* `pg/` - tests that only reference PostgreSQL backend must pass, but **SereneDB PostgreSQL-compatible backend strives to pass**. It has symlinks to `any/pg/` suites with suffix `_any`.
 
 This structure is applied for each protocol.
 ```

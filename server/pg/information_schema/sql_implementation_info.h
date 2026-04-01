@@ -24,7 +24,7 @@
 
 namespace sdb::pg {
 
-// https://www.postgresql.org/docs/18/infoschema-sql-implementations.html
+// https://www.postgresql.org/docs/18/infoschema-sql-implementation-info.html
 // NOLINTBEGIN
 struct SqlImplementationInfo {
   static constexpr uint64_t kId = 166;
@@ -37,5 +37,10 @@ struct SqlImplementationInfo {
   CharacterData comments;
 };
 // NOLINTEND
+
+template<>
+std::vector<velox::VectorPtr>
+SystemTableSnapshot<SqlImplementationInfo>::GetTableData(
+  velox::memory::MemoryPool& pool);
 
 }  // namespace sdb::pg

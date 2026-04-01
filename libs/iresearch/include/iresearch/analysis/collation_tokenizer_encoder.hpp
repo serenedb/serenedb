@@ -32,10 +32,10 @@
 // UTF-8 string as SortKey was never intended to be human redable. And this
 // split still leaves the binary sorting order of modified SortKeys
 
-namespace {
+namespace irs {
 
 // static array of offsets and lengths in kBytesRecalcMap
-constexpr inline std::array<std::pair<uint16_t, uint8_t>, 256> kRecalcMap{
+inline constexpr std::array<std::pair<uint16_t, uint8_t>, 256> kRecalcMap{
   {{0, 1},   {1, 1},   {2, 1},   {3, 1},   {4, 1},   {5, 1},   {6, 1},
    {7, 1},   {8, 1},   {9, 1},   {10, 1},  {11, 1},  {12, 1},  {13, 1},
    {14, 1},  {15, 1},  {16, 1},  {17, 1},  {18, 1},  {19, 1},  {20, 1},
@@ -106,4 +106,4 @@ constexpr inline uint8_t kBytesRecalcMap[] = {
   0xde, 0x86, 0xde, 0x87, 0xdf, 0x80, 0xdf, 0x81, 0xdf, 0x82, 0xdf, 0x83, 0xdf,
   0x84, 0xdf, 0x85, 0xdf, 0x86, 0xdf, 0x87};
 
-}  // namespace
+}  // namespace irs

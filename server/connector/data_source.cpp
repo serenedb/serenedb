@@ -83,9 +83,9 @@ void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
   for (size_t i = 0; i < values.size(); ++i) {
     if (values[i].empty()) {
       flat.setNull(offset + i, true);
-    } else {
-      SetResultValue(values[i].ToStringView(), offset + i, flat);
+      continue;
     }
+    SetResultValue(values[i].ToStringView(), offset + i, flat);
   }
 }
 

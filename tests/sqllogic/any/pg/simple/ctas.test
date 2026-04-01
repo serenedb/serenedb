@@ -194,7 +194,7 @@ LOGICAL PLAN:
     - Project: -> ROW<"generate_series":BIGINT>
         generate_series := generate_series
       - Unnest: -> ROW<"generate_series":BIGINT>
-          [generate_series] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+          [generate_series] := pg_generate_series(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
         - Values: 1 rows -> ROW<>
 
 
@@ -213,17 +213,17 @@ QUERY PLAN
 EXECUTION PLAN WITH STATS:
 Fragment 0:  numWorkers=1:
 -- TableWrite[5][serenedb(table=vedernikoff, kind=INSERT)] -> rows:BIGINT
-   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+   Output: 1 rows <slt:ignore>
   -- Project[4][expressions: (x:BIGINT, "x"), (dt1.__p17:BIGINT, null)] -> "x":BIGINT, "dt1.__p17":BIGINT
-     Output: 10 rows (136B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 128B, Memory allocations: 1, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+     Output: 10 rows <slt:ignore>
     -- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
-       Output: 10 rows (128B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+       Output: 10 rows <slt:ignore>
       -- Unnest[2][dt4.__p10] -> "generate_series":BIGINT
-         Output: 10 rows (128B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 448B, Memory allocations: 4, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-        -- Project[1][expressions: (dt4.__p10:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...5 more})] -> "dt4.__p10":ARRAY<BIGINT>
-           Output: 1 rows (224B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+         Output: 10 rows <slt:ignore>
+        -- Project[1][expressions: (dt4.__p10:ARRAY<BIGINT>, pg_generate_series(1,10))] -> "dt4.__p10":ARRAY<BIGINT>
+           Output: 1 rows <slt:ignore>
           -- Values[0][1 rows in 1 vectors] ->
-             Input: 0 rows (0B, 0 batches), Output: 1 rows (0B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+             Input: 0 rows <slt:ignore>
 
 
 onlyif serenedb

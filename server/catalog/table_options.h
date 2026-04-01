@@ -148,6 +148,7 @@ struct Column {
 };
 
 struct CheckConstraint {
+  ObjectId id;
   std::string name;
   std::shared_ptr<ColumnExpr> expr;
 

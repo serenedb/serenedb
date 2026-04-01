@@ -60,5 +60,13 @@ pg_class
 
 
 skipif postgres-extended
+query
+SELECT 'regclass_test_table'::regclass <> 0::bigint;
+----
+?column?
+t
+
+
+skipif postgres-extended
 statement ok
 DROP TABLE regclass_test_table;

@@ -24,6 +24,9 @@
 #include <velox/dwio/common/Mutation.h>
 #include <velox/dwio/parquet/reader/ParquetReader.h>
 
+#include <cstring>
+#include <ranges>
+
 #include "basics/down_cast.h"
 #include "connector/primary_key.hpp"
 
@@ -51,11 +54,30 @@ ParquetMaterializer::ParquetMaterializer(
   auto num_groups = metadata.numRowGroups();
   _row_group_starts.reserve(num_groups);
   int64_t offset = 0;
+  int64_t max_rg_rows = 0;
   for (int i = 0; i < num_groups; ++i) {
     _row_group_starts.push_back(offset);
-    offset += metadata.rowGroup(i).numRows();
+    auto rg_rows = metadata.rowGroup(i).numRows();
+    max_rg_rows = std::max(max_rg_rows, rg_rows);
+    offset += rg_rows;
   }
   _total_rows = offset;
+  _bitmap_buf.assign(velox::bits::nwords(max_rg_rows), ~uint64_t{0});
+}
+
+uint32_t ParquetMaterializer::FindRowGroup(int64_t row_number,
+                                           uint32_t search_from) const {
+  auto begin = _row_group_starts.begin() + search_from;
+  auto it = std::upper_bound(begin, _row_group_starts.end(), row_number);
+  SDB_ASSERT(it != _row_group_starts.begin(), "row before first row group");
+  return it - _row_group_starts.begin() - 1;
+}
+
+int64_t ParquetMaterializer::RowGroupEnd(uint32_t rg) const {
+  if (rg + 1 < _row_group_starts.size()) {
+    return _row_group_starts[rg + 1];
+  }
+  return _total_rows;
 }
 
 velox::RowVectorPtr ParquetMaterializer::ReadRows(
@@ -68,105 +90,73 @@ velox::RowVectorPtr ParquetMaterializer::ReadRows(
   if (_score_column_idx >= 0) {
     SDB_ASSERT(scores);
     auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
-    std::vector<uint32_t> order(total);
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-      return row_keys[a] < row_keys[b];
-    });
-    for (uint32_t i = 0; i < total; ++i) {
-      while (order[i] != i) {
-        uint32_t j = order[i];
-        std::swap(row_keys[i], row_keys[j]);
-        std::swap(score_raw[i], score_raw[j]);
-        std::swap(order[i], order[j]);
-      }
-    }
+    std::span score_span{score_raw, row_keys.size()};
+    std::ranges::sort(std::views::zip(row_keys, score_span), std::less{},
+                      [](const auto& p) { return std::get<0>(p); });
   } else {
     std::sort(row_keys.begin(), row_keys.end());
   }
 
-  auto decode = [](std::string_view key) {
-    return primary_key::ReadSigned<int64_t>(key);
-  };
-  auto output =
+  _decoded_rows.resize(total);
+  for (velox::vector_size_t i = 0; i < total; ++i) {
+    _decoded_rows[i] = primary_key::ReadSigned<int64_t>(row_keys[i]);
+  }
+
+  velox::VectorPtr output =
     velox::BaseVector::create<velox::RowVector>(_output_type, total, &_pool);
 
-  velox::vector_size_t written = 0;
-  size_t i = 0;
-  uint32_t rg = 0;
-  int64_t rg_start = 0;
-  int64_t rg_end = 0;
+  auto& parquet_reader =
+    basics::downCast<velox::parquet::ParquetRowReader>(*_row_reader);
 
-  while (i < row_keys.size()) {
-    auto first_row = decode(row_keys[i]);
+  uint32_t last_rg = 0;
+  velox::vector_size_t out_offset = 0;
 
-    if (i == 0 || first_row >= rg_end) {
-      auto begin = _row_group_starts.begin() + rg;
-      auto it = std::upper_bound(begin, _row_group_starts.end(), first_row);
-      SDB_ASSERT(it != _row_group_starts.begin(), "row before first row group");
-      rg = static_cast<uint32_t>(it - _row_group_starts.begin() - 1);
-      rg_start = _row_group_starts[rg];
-      rg_end = (rg + 1 < _row_group_starts.size()) ? _row_group_starts[rg + 1]
-                                                   : _total_rows;
+  std::span row_idx = _decoded_rows;
+  for (velox::vector_size_t i = 0; i < total;) {
+    auto rg = FindRowGroup(row_idx[i], last_rg);
+    auto rg_start = _row_group_starts[rg];
+    auto rg_end = RowGroupEnd(rg);
+
+    // collect all row in this row group.
+    auto it = std::lower_bound(row_idx.begin() + i, row_idx.end(), rg_end);
+    velox::vector_size_t end = it - row_idx.begin();
+
+    // mark wanted row_idx as not-deleted in the pre-filled bitmap.
+    auto last_offset = row_idx[end - 1] - rg_start;
+    uint64_t read_size = last_offset + 1;
+    auto* bits = _bitmap_buf.data();
+    for (auto k = i; k < end; ++k) {
+      velox::bits::clearBit(bits, row_idx[k] - rg_start);
     }
 
-    size_t j = i + 1;
-    while (j < row_keys.size() && decode(row_keys[j]) < rg_end) {
-      ++j;
-    }
+    velox::dwio::common::Mutation mutation{};
+    mutation.deletedRows = bits;
 
-    auto& parquet_reader =
-      basics::downCast<velox::parquet::ParquetRowReader>(*_row_reader);
     parquet_reader.seekToRowGroup(rg);
 
-    auto last_offset = decode(row_keys[j - 1]) - rg_start;
-    auto read_size = static_cast<uint64_t>(last_offset + 1);
-    auto num_words = velox::bits::nwords(read_size);
-    std::vector<uint64_t> deleted(num_words, ~uint64_t{0});
-    for (size_t k = i; k < j; ++k) {
-      velox::bits::clearBit(deleted.data(), decode(row_keys[k]) - rg_start);
-    }
-
-    velox::dwio::common::Mutation mutation;
-    mutation.deletedRows = deleted.data();
-
-    // TODO: Make it faster.
     velox::VectorPtr result =
       velox::BaseVector::create(_output_type, read_size, &_pool);
     parquet_reader.next(read_size, result, &mutation);
-    if (result && result->size() > 0) {
-      auto row_batch = basics::downCast<velox::RowVector>(std::move(result));
-      for (auto& child : row_batch->children()) {
-        if (child) {
-          child->loadedVector();
-        }
-      }
-      auto batch_size = row_batch->size();
-      for (size_t col = 0; col < _output_type->size(); ++col) {
-        if (static_cast<int64_t>(col) == _score_column_idx) {
-          continue;
-        }
-        output->childAt(col)->copy(row_batch->children()[col].get(), written, 0,
-                                   batch_size);
-      }
-      written += batch_size;
+
+    output->copy(result.get(), out_offset, 0, end - i);
+    out_offset += end - i;
+
+    for (auto k = i; k < end; ++k) {
+      velox::bits::setBit(bits, row_idx[k] - rg_start);
     }
 
-    i = j;
+    last_rg = rg;
+    i = end;
   }
 
-  if (written == 0) {
-    return nullptr;
-  }
-
-  output->resize(written);
+  auto result = basics::downCast<velox::RowVector>(std::move(output));
   if (_score_column_idx >= 0) {
     SDB_ASSERT(scores);
     SDB_ASSERT(scores->size() == row_keys.size());
-    scores->resize(written);
-    output->children()[_score_column_idx] = std::move(scores);
+    scores->resize(result->size());
+    result->children()[_score_column_idx] = std::move(scores);
   }
-  return output;
+  return result;
 }
 
 }  // namespace sdb::connector

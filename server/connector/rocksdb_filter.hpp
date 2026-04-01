@@ -79,7 +79,7 @@ class Point {
 };
 
 // A fully resolved point: one variant per PK column, ordered by pk_type.
-// Used after filter extraction — no expression metadata, no names.
+// Used after filter extraction -- no expression metadata, no names.
 using SpecificPoint = std::vector<velox::variant>;
 
 // Converts specific (fully constrained) Points to SpecificPoint, ordered by

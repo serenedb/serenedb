@@ -43,10 +43,10 @@
   ::sdb::basics::detail::ThrowError{__VA_ARGS__}; \
   SDB_UNREACHABLE()
 
-#define SDB_ENSURE(expr, ...) \
-  if (!(expr)) [[unlikely]] { \
-    SDB_ASSERT(false);        \
-    SDB_THROW(__VA_ARGS__);   \
+#define SDB_ENSURE(expr, error_code, ...) \
+  if (!(expr)) [[unlikely]] {             \
+    SDB_ASSERT(false, __VA_ARGS__);       \
+    SDB_THROW(error_code, __VA_ARGS__);   \
   }
 
 #define SDB_THROW_FORMAT(code, ...) \

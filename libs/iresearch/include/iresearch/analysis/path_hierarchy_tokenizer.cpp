@@ -27,9 +27,7 @@
 #include <vpack/serializer.h>
 #include <vpack/slice.h>
 
-#include <cstring>
 #include <string_view>
-#include <vector>
 
 #include "basics/logger/logger.h"
 #include "iresearch/analysis/analyzers.hpp"
@@ -68,7 +66,9 @@ bool ParseVPackOptions(const vpack::Slice slice,
   }
 
   if (temp.delimiter.empty()) {
-    temp.delimiter = "/";
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "path_hierarchy_token_stream delimiter must not be empty");
+    return false;
   }
   options.delimiter = std::move(temp.delimiter);
 
@@ -197,280 +197,113 @@ class ForwardPathHierarchyTokenizer final : public PathHierarchyTokenizer {
   bool next() final;
 
  private:
-  struct State {
-    std::string_view data;
-    std::string result_token;
-    size_t acc_len = 0;
-    size_t chars_read = 0;
-    size_t start_position = 0;
-    size_t skipped = 0;
-    bool end_delimiter = false;
-  };
-
-  bool next_slice();
-  bool next_replace();
-
-  size_t FindNextDelim(std::string_view data, std::string_view delim,
-                       size_t from);
-  bool MatchesDelimAt(std::string_view data, size_t pos,
-                      std::string_view delim);
-
-  State _state;
-  bool _has_state{false};
-  bool _slice_mode{false};
+  std::string_view _data = "";
+  std::string _buffer = "";
+  size_t _start = 0;
+  size_t _curr_start_raw = 0;
+  size_t _last_raw_end = 0;
+  size_t _delim_size = 0;
+  bool _passthrough = false;
 };
 
-size_t ForwardPathHierarchyTokenizer::FindNextDelim(std::string_view data,
-                                                    std::string_view delim,
-                                                    size_t from) {
-  if (delim.empty() || from >= data.size()) {
-    return data.size();
-  }
-  if (delim.size() == 1) {
-    const char* ptr = data.data() + from;
-    const char* next =
-      static_cast<const char*>(std::memchr(ptr, delim[0], data.size() - from));
-    return next ? static_cast<size_t>(next - data.data()) : data.size();
-  }
-  const size_t pos = data.find(delim, from);
-  return pos == std::string_view::npos ? data.size() : pos;
-}
-
-bool ForwardPathHierarchyTokenizer::MatchesDelimAt(std::string_view data,
-                                                   size_t pos,
-                                                   std::string_view delim) {
-  if (delim.empty()) {
-    return false;
-  }
-  return pos + delim.size() <= data.size() &&
-         data.substr(pos, delim.size()) == delim;
-}
-
 bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
-  _slice_mode = (_options.delimiter == _options.replacement);
-  _state.data = data;
-  _state.chars_read = 0;
-  _state.start_position = 0;
-  _state.skipped = 0;
-  _state.end_delimiter = false;
-  _state.acc_len = 0;
-  _state.result_token.clear();
-  if (!_slice_mode) {
-    _state.result_token.reserve(data.size());
-  }
-  _has_state = true;
+  _data = data;
   _term_eof = data.empty();
+
+  if (_term_eof) {
+    return true;
+  }
+
+  std::string_view delim = _options.delimiter;
+  std::string_view repl = _options.replacement;
+
+  _delim_size = delim.size();
+  _passthrough = delim == repl;
+
+  _start = 0;
+  if (_options.skip > 0) {
+    size_t pos = 0;
+    size_t hit = 0;
+
+    bool leading = (_data.find(delim) == 0);
+    size_t needed = _options.skip + leading;
+
+    while (hit < needed) {
+      size_t find_pos = _data.find(delim, pos);
+      if (find_pos == std::string_view::npos) {
+        _term_eof = true;
+        return true;
+      }
+      _start = find_pos;
+      pos = find_pos + _delim_size;
+      ++hit;
+    }
+  }
+
+  _last_raw_end = _start;
+  _curr_start_raw = _start;
+
+  if (_curr_start_raw + _delim_size <= _data.size() && 
+      _data.compare(_curr_start_raw, _delim_size, delim) == 0) {
+    _curr_start_raw += _delim_size;
+  }
+
+  if (!_passthrough) {
+    _buffer.clear();
+    _buffer.reserve(_options.buffer_size);
+  }
+
   return true;
 }
 
 bool ForwardPathHierarchyTokenizer::next() {
-  if (_slice_mode) {
-    return next_slice();
-  }
-  return next_replace();
-}
-
-bool ForwardPathHierarchyTokenizer::next_slice() {
-  if (_term_eof || !_has_state) {
+  if (_term_eof) {
     return false;
   }
-
-  const std::string_view delim{_options.delimiter};
-  const std::string_view repl{_options.replacement};
 
   auto& term_attr = std::get<TermAttr>(_attrs);
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  auto& state = _state;
+  std::string_view delim = _options.delimiter;
+  std::string_view repl = _options.replacement;
 
-  const size_t prefix_len = state.acc_len;
-  size_t length = 0;
-  bool added = false;
+  size_t end_in = _data.size();
+  size_t find_pos = _data.find(delim, _curr_start_raw);
 
-  if (state.end_delimiter) {
-    state.acc_len += repl.size();
-    length += repl.size();
-    state.end_delimiter = false;
-    added = true;
+  if (find_pos != std::string_view::npos) {
+    end_in = find_pos;
+    _curr_start_raw = find_pos + _delim_size;
+  } else {
+    _term_eof = true;
   }
 
-  while (true) {
-    if (state.chars_read >= state.data.size()) {
-      if (state.skipped > _options.skip && added) {
-        const size_t total_len = prefix_len + length;
-        term_attr.value = ViewCast<byte_type>(
-          state.data.substr(state.start_position, total_len));
-        offset_attr.start = state.start_position;
-        offset_attr.end = state.start_position + total_len;
-        inc_attr.value = 1;
-        _term_eof = true;
-        return true;
+  if (_passthrough) {
+    term_attr.value =
+      ViewCast<byte_type>(_data.substr(_start, end_in - _start));
+  } else {
+    if (_last_raw_end < end_in) {
+      bool delim_at_from = false;
+      if (_last_raw_end + _delim_size <= end_in) {
+        delim_at_from = (_data.compare(_last_raw_end, _delim_size, delim) == 0);
       }
-      _term_eof = true;
-      return false;
-    }
 
-    if (!added) {
-      added = true;
-      ++state.skipped;
-      if (state.skipped > _options.skip) {
-        if (MatchesDelimAt(state.data, state.chars_read, delim)) {
-          state.acc_len += repl.size();
-          length += repl.size();
-          state.chars_read += delim.size();
-        } else {
-          state.acc_len += 1;
-          length += 1;
-          state.chars_read += 1;
-        }
+      if (delim_at_from) {
+        _buffer.append(repl);
+        _buffer.append(_data.data() + _last_raw_end + _delim_size, end_in - _last_raw_end - _delim_size);
       } else {
-        ++state.start_position;
-        state.chars_read += 1;
+        _buffer.append(_data.data() + _last_raw_end, end_in - _last_raw_end);
       }
-      continue;
     }
 
-    if (MatchesDelimAt(state.data, state.chars_read, delim)) {
-      if (state.skipped > _options.skip) {
-        state.end_delimiter = true;
-        state.chars_read += delim.size();
-        break;
-      }
-      ++state.skipped;
-      if (state.skipped > _options.skip) {
-        state.acc_len += repl.size();
-        length += repl.size();
-        state.chars_read += delim.size();
-      } else {
-        state.start_position += delim.size();
-        state.chars_read += delim.size();
-      }
-      continue;
-    }
-
-    const size_t component_start = state.chars_read;
-    const size_t component_end =
-      FindNextDelim(state.data, delim, component_start + 1);
-    const size_t component_len = component_end - component_start;
-
-    if (state.skipped > _options.skip) {
-      state.acc_len += component_len;
-      length += component_len;
-    } else {
-      state.start_position += component_len;
-    }
-    state.chars_read = component_end;
+    _last_raw_end = end_in;
+    term_attr.value = ViewCast<byte_type>(std::string_view(_buffer));
   }
 
-  const size_t total_len = prefix_len + length;
-  term_attr.value =
-    ViewCast<byte_type>(state.data.substr(state.start_position, total_len));
-  offset_attr.start = state.start_position;
-  offset_attr.end = state.start_position + total_len;
+  offset_attr.start = static_cast<uint32_t>(_start);
+  offset_attr.end = static_cast<uint32_t>(end_in);
   inc_attr.value = 1;
-  return true;
-}
 
-bool ForwardPathHierarchyTokenizer::next_replace() {
-  if (_term_eof || !_has_state) {
-    return false;
-  }
-
-  const std::string_view delim{_options.delimiter};
-  const std::string_view repl{_options.replacement};
-
-  auto& term_attr = std::get<TermAttr>(_attrs);
-  auto& offset_attr = std::get<OffsAttr>(_attrs);
-  auto& inc_attr = std::get<IncAttr>(_attrs);
-
-  auto& state = _state;
-
-  const size_t prefix_len = state.result_token.size();
-  size_t length = 0;
-  bool added = false;
-
-  if (state.end_delimiter) {
-    state.result_token.append(repl);
-    length += repl.size();
-    state.end_delimiter = false;
-    added = true;
-  }
-
-  while (true) {
-    if (state.chars_read >= state.data.size()) {
-      if (state.skipped > _options.skip && added) {
-        const size_t total_len = prefix_len + length;
-        term_attr.value =
-          ViewCast<byte_type>(std::string_view(state.result_token));
-        offset_attr.start = state.start_position;
-        offset_attr.end = state.start_position + total_len;
-        inc_attr.value = 1;
-        _term_eof = true;
-        return true;
-      }
-      _term_eof = true;
-      return false;
-    }
-
-    if (!added) {
-      added = true;
-      ++state.skipped;
-      if (state.skipped > _options.skip) {
-        if (MatchesDelimAt(state.data, state.chars_read, delim)) {
-          state.result_token.append(repl);
-          length += repl.size();
-          state.chars_read += delim.size();
-        } else {
-          state.result_token.push_back(state.data[state.chars_read]);
-          length += 1;
-          state.chars_read += 1;
-        }
-      } else {
-        ++state.start_position;
-        state.chars_read += 1;
-      }
-      continue;
-    }
-
-    if (MatchesDelimAt(state.data, state.chars_read, delim)) {
-      if (state.skipped > _options.skip) {
-        state.end_delimiter = true;
-        state.chars_read += delim.size();
-        break;
-      }
-      ++state.skipped;
-      if (state.skipped > _options.skip) {
-        state.result_token.append(repl);
-        length += repl.size();
-        state.chars_read += delim.size();
-      } else {
-        state.start_position += delim.size();
-        state.chars_read += delim.size();
-      }
-      continue;
-    }
-
-    const size_t component_start = state.chars_read;
-    const size_t component_end =
-      FindNextDelim(state.data, delim, component_start + 1);
-    const size_t component_len = component_end - component_start;
-
-    if (state.skipped > _options.skip) {
-      state.result_token.append(state.data.data() + component_start,
-                                component_len);
-      length += component_len;
-    } else {
-      state.start_position += component_len;
-    }
-    state.chars_read = component_end;
-  }
-
-  const size_t total_len = prefix_len + length;
-  term_attr.value = ViewCast<byte_type>(std::string_view(state.result_token));
-  offset_attr.start = state.start_position;
-  offset_attr.end = state.start_position + total_len;
-  inc_attr.value = 1;
   return true;
 }
 
@@ -483,121 +316,74 @@ class ReversePathHierarchyTokenizer final : public PathHierarchyTokenizer {
   bool next() final;
 
  private:
-  // Replaces delimiter with replacement; writes result to `buffer`/term.
-  // Optionally collects component start offsets after each delimiter.
-  void ApplyReplacement(std::string_view input, TermAttr& term_attr,
-                        std::string_view delimiter,
-                        std::string_view replacement, std::string& buffer,
-                        std::vector<size_t>* component_starts);
-
-  size_t FindNextDelim(std::string_view data, std::string_view delim,
-                       size_t from);
-
-  std::string_view _data;
-  std::vector<size_t> _delimiter_positions;
-  std::string _buffer;
-  int _delimiters_count = -1;
-  size_t _end_position = 0;
-  size_t _final_offset = 0;
-  int _skipped = 0;
+  std::string_view _data = "";
+  std::string _buffer = "";
+  size_t _trim_end = 0;
+  size_t _curr_start_buf = 0;
+  size_t _curr_start_raw = 0;
+  size_t _delim_size = 0;
+  bool _passthrough = false;
 };
-
-size_t ReversePathHierarchyTokenizer::FindNextDelim(std::string_view data,
-                                                    std::string_view delim,
-                                                    size_t from) {
-  if (delim.empty() || from >= data.size()) {
-    return data.size();
-  }
-  if (delim.size() == 1) {
-    const char* ptr = data.data() + from;
-    const char* next =
-      static_cast<const char*>(std::memchr(ptr, delim[0], data.size() - from));
-    return next ? static_cast<size_t>(next - data.data()) : data.size();
-  }
-  const size_t pos = data.find(delim, from);
-  return pos == std::string_view::npos ? data.size() : pos;
-}
-
-void ReversePathHierarchyTokenizer::ApplyReplacement(
-  std::string_view input, TermAttr& term_attr, std::string_view delimiter,
-  std::string_view replacement, std::string& buffer,
-  std::vector<size_t>* component_starts) {
-  if (delimiter.empty()) {
-    term_attr.value = ViewCast<byte_type>(input);
-    if (component_starts) {
-      component_starts->clear();
-      component_starts->push_back(0);
-      if (component_starts->back() < input.size()) {
-        component_starts->push_back(input.size());
-      }
-    }
-    return;
-  }
-
-  if (delimiter == replacement) {
-    term_attr.value = ViewCast<byte_type>(input);
-    if (component_starts) {
-      component_starts->clear();
-      component_starts->push_back(0);
-      size_t pos = 0;
-      while (pos < input.size()) {
-        const size_t next =
-          ReversePathHierarchyTokenizer::FindNextDelim(input, delimiter, pos);
-        if (next == input.size()) {
-          break;
-        }
-        pos = next + delimiter.size();
-        component_starts->push_back(pos);
-      }
-      if (component_starts->empty() ||
-          component_starts->back() < input.size()) {
-        component_starts->push_back(input.size());
-      }
-    }
-    return;
-  }
-
-  buffer.clear();
-  buffer.reserve(input.size() + 8);
-
-  if (component_starts) {
-    component_starts->clear();
-    component_starts->push_back(0);
-  }
-
-  size_t pos = 0;
-  while (pos < input.size()) {
-    const size_t next =
-      ReversePathHierarchyTokenizer::FindNextDelim(input, delimiter, pos);
-    buffer.append(input.data() + pos, next - pos);
-    if (next == input.size()) {
-      break;
-    }
-    buffer.append(replacement);
-    pos = next + delimiter.size();
-    if (component_starts) {
-      component_starts->push_back(buffer.size());
-    }
-  }
-
-  if (component_starts && !component_starts->empty() &&
-      component_starts->back() < buffer.size()) {
-    component_starts->push_back(buffer.size());
-  }
-  term_attr.value =
-    ViewCast<byte_type>(std::string_view(buffer.data(), buffer.size()));
-}
 
 bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
   _data = data;
   _term_eof = data.empty();
-  _delimiter_positions.clear();
-  _delimiter_positions.reserve(data.size());
+
+  if (_term_eof) {
+    return true;
+  }
+
+  std::string_view delim = _options.delimiter;
+  std::string_view repl = _options.replacement;
+
+  _delim_size = delim.size();
+  _passthrough = delim == repl;
+
+  size_t end = data.size();
+  for (size_t s = 0; s < _options.skip; ++s) {
+    if (end <= _delim_size) {
+      _term_eof = true;
+      return true;
+    }
+
+    size_t find_pos = data.rfind(delim, end - _delim_size - 1);
+    if (find_pos == std::string_view::npos) {
+      _term_eof = true;
+      return true;
+    }
+    end = find_pos + _delim_size;
+  }
+  _trim_end = end;
+
+  _curr_start_raw = 0;
+  _curr_start_buf = 0;
+
+  if (_passthrough) {
+    if (_trim_end == 0) {
+      _term_eof = true;
+    }
+    return true;
+  }
+
   _buffer.clear();
-  _delimiters_count = -1;  // lazy init on first next()
-  _end_position = 0;
-  _final_offset = 0;
-  _skipped = 0;
+  _buffer.reserve(_options.buffer_size);
+
+  size_t pos = 0;
+  while (pos < _trim_end) {
+    size_t find_pos = data.find(delim, pos);
+    if (find_pos == std::string_view::npos) {
+      _buffer.append(data.data() + pos, _trim_end - pos);
+      break;
+    }
+    _buffer.append(data.data() + pos, find_pos - pos);
+    _buffer.append(repl);
+    pos = find_pos + _delim_size;
+  }
+
+  if (_buffer.size() == 0) {
+    _term_eof = true;
+    return true;
+  }
   return true;
 }
 
@@ -610,44 +396,38 @@ bool ReversePathHierarchyTokenizer::next() {
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  // one-time initialization on first call to next():
-  // build replaced string in _buffer and delimiter start positions
-  if (_delimiters_count == -1) {
-    ApplyReplacement(_data, term_attr, _options.delimiter, _options.replacement,
-                     _buffer, &_delimiter_positions);
-    if (_buffer.empty()) {
-      _buffer.assign(_data.begin(), _data.end());
-    }
+  std::string_view delim = _options.delimiter;
 
-    _delimiters_count = _delimiter_positions.size();
-    int idx = _delimiters_count - 1 - _options.skip;
-    if (idx >= 0) {
-      _end_position = _delimiter_positions[idx];
-    }
-    _final_offset = _data.size();
+  if (_passthrough) {
+    term_attr.value = ViewCast<byte_type>(
+      _data.substr(_curr_start_raw, _trim_end - _curr_start_raw));
+  } else {
+    term_attr.value =
+      ViewCast<byte_type>(std::string_view(_buffer).substr(_curr_start_buf));
   }
 
+  offset_attr.start = static_cast<uint32_t>(_curr_start_raw);
+  offset_attr.end = static_cast<uint32_t>(_trim_end);
   inc_attr.value = 1;
 
-  int limit = _delimiters_count - 1 - _options.skip;
-  if (_skipped < limit) {
-    size_t start = _delimiter_positions[_skipped];
-    size_t len = _end_position - start;
+  size_t find_pos = _data.find(delim, _curr_start_raw);
 
-    const char* base = (_options.delimiter == _options.replacement)
-                         ? _data.data()
-                         : _buffer.data();
-    term_attr.value = ViewCast<byte_type>(std::string_view(base + start, len));
+  if (find_pos == std::string_view::npos || find_pos >= _trim_end) {
+    _term_eof = true;
+  } else {
+    size_t raw_segment_len = find_pos - _curr_start_raw;
+    _curr_start_raw = find_pos + delim.size();
 
-    offset_attr.start = start;
-    offset_attr.end = _end_position;
+    if (!_passthrough) {
+      _curr_start_buf += (raw_segment_len + _options.replacement.size());
+    }
 
-    ++_skipped;
-    return true;
+    if (_curr_start_raw >= _trim_end) {
+      _term_eof = true;
+    }
   }
 
-  _term_eof = true;
-  return false;
+  return true;
 }
 
 Analyzer::ptr PathHierarchyTokenizer::make(Options&& options) {

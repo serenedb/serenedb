@@ -38,9 +38,10 @@ namespace analysis {
 /// @note Configuration (compatible with Lucene PathHierarchyTokenizer):
 ///       - delimiter: path separator (default: "/"); UTF-8 byte sequence
 ///       - replacement: optional replacement for delimiter (default: "/")
-///       - buffer_size: config compatibility (default: 1024); forward mode uses
-///         at most one scratch string sized to the current input when delimiter
-///         and replacement differ; equal delimiter/replacement uses only views
+///       - buffer_size: the number of characters read into the term buffer in a
+///       single pass. Defaults to 1024. The term buffer will grow by this size
+///       until all the text has been consumed. It is advisable not to change
+///       this setting.
 ///       - reverse: use reverse tokenization for domain-like hierarchies
 ///       (default: false)
 ///       - skip: number of initial tokens to skip (default: 0)

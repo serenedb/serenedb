@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/functions/vector.h"
+#include "pg/sdb_functions/vector.h"
 
 #include <velox/expression/ComplexViewTypes.h>
 #include <velox/functions/Macros.h>

@@ -195,6 +195,7 @@ inline void RegisterVeloxFunctionsAndTypes() {
   pg::functions::registerFunctions("pg_");
   velox::TypeCoercer::registerCoercions(AllowedCoercions());
   search::functions::registerSearchFunctions();
+  pg::functions::RegisterSdbFunctions("sdb_");
 }
 
 }  // namespace sdb::pg

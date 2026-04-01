@@ -45,7 +45,7 @@
 #include "pg/functions/stub.h"
 #include "pg/functions/system.h"
 #include "pg/functions/util.h"
-#include "pg/functions/vector.h"
+#include "pg/sdb_functions/vector.h"
 
 namespace sdb::pg::functions {
 
@@ -63,6 +63,9 @@ void registerFunctions(const std::string& prefix) {
   registerSystemFunctions(prefix);
   registerGenerateFunctions(prefix);
   registerUtilFunctions(prefix);
+}
+
+void RegisterSdbFunctions(const std::string& prefix) {
   RegisterVectorFunctions(prefix);
 }
 

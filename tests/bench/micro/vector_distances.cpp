@@ -22,8 +22,6 @@
 
 #include <iresearch/utils/vector.hpp>
 
-#include "pg/functions/vector.h"
-
 #ifdef VELOX_ENABLE_FAISS
 #include <faiss/utils/distances.h>
 #endif

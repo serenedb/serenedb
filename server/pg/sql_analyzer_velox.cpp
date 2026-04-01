@@ -1167,7 +1167,6 @@ class SqlAnalyzer {
   // Maps catalog field name -> current virtual offsets column expr.
   containers::FlatHashMap<std::string, lp::ExprPtr> _exprs_for_offsets;
   std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
-  std::vector<std::unique_ptr<ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(

@@ -2087,3 +2087,34 @@ QUERY PLAN
 
 statement ok
 DROP TABLE t_between_cpk;
+
+# =============================================================================
+# Contradictory sub-expression simplification
+# =============================================================================
+
+statement ok
+CREATE TABLE t_contra (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_contra VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# id > 0 AND (id = 4 OR (id = 2 AND id != 2))
+# Inner AND: id=2 AND id!=2 -> contradictory (no row satisfies both)
+# OR: contradictory branch contributes nothing -> reduces to id=4
+# AND with id>0: intersect -> id=4 (point lookup)
+query
+SELECT * FROM t_contra WHERE id > 0 AND (id = 4 OR (id = 2 AND id != 2));
+----
+id	val
+4	40
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_contra
+  WHERE id > 0 AND (id = 4 OR (id = 2 AND id != 2));
+----
+QUERY PLAN
+<slt:ignore>[t_contra, type=rocksdb_point_lookup, points=[(id=4)]]<slt:ignore>
+
+statement ok
+DROP TABLE t_contra;

@@ -28,13 +28,27 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "basics/logger/logger.h"
 
 namespace sdb::connector {
-
-velox::variant ToVariant(const velox::core::ConstantTypedExpr&);
-
 namespace {
+
+template<velox::TypeKind Kind>
+velox::variant ExtractScalarVariant(const velox::BaseVector& vec) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+  const auto& cv = static_cast<const velox::ConstantVector<T>&>(vec);
+  return velox::variant(cv.valueAt(0));
+}
+
+velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
+  if (!expr.hasValueVector()) {
+    return expr.value();
+  }
+  if (expr.isNull()) {
+    return velox::variant(expr.type()->kind());
+  }
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+    ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
+}
 
 std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
   std::vector<KeyConstraint>);
@@ -47,19 +61,34 @@ std::vector<KeyConstraint> AnyKeyConstraint(
   return {KeyConstraint::MakeAny(names)};
 }
 
-// Negates a comparison op for NOT push-down.
-ComparisonOp NegateOp(ComparisonOp op);
+ComparisonOp NegateOp(ComparisonOp op) {
+  switch (op) {
+    case ComparisonOp::Gt:
+      return ComparisonOp::Le;
+    case ComparisonOp::Ge:
+      return ComparisonOp::Lt;
+    case ComparisonOp::Lt:
+      return ComparisonOp::Ge;
+    case ComparisonOp::Le:
+      return ComparisonOp::Gt;
+    case ComparisonOp::None:
+      return ComparisonOp::None;
+  }
+  SDB_UNREACHABLE();
+}
 
-// Helper: produces two KCs for a != v  ->  a < v  OR  a > v.
+// Helper: produces two KCs for a != v -> a < v OR a > v.
 std::vector<KeyConstraint> MakeNeqConstraints(
   std::string_view col_name, const velox::core::ConstantTypedExpr& val,
   const velox::core::ITypedExpr* source,
   std::span<const std::string> pk_names) {
-  auto kc_lt = KeyConstraint::MakeAny(pk_names);
-  kc_lt.AddComparisonFilter(col_name, val, ComparisonOp::Lt, source);
-  auto kc_gt = KeyConstraint::MakeAny(pk_names);
-  kc_gt.AddComparisonFilter(col_name, val, ComparisonOp::Gt, source);
-  return {std::move(kc_lt), std::move(kc_gt)};
+  auto less_constraint = KeyConstraint::MakeAny(pk_names);
+  less_constraint.AddComparisonFilter(col_name, val, ComparisonOp::Lt, source);
+
+  auto greater_constraint = KeyConstraint::MakeAny(pk_names);
+  greater_constraint.AddComparisonFilter(col_name, val, ComparisonOp::Gt,
+                                         source);
+  return {std::move(less_constraint), std::move(greater_constraint)};
 }
 
 std::vector<KeyConstraint> ExtractFilterEq(
@@ -140,26 +169,47 @@ std::vector<KeyConstraint> ExtractFilterComparison(
     return AnyKeyConstraint(pk_names);
   }
 
-  // Determine the op from the function name, flipping if field is on the right.
-  // e.g. `5 > a` with field_right means `a < 5`.
+  // Base op (field on left), then flip direction for field_right (Gt<->Lt,
+  // Ge<->Le), then flip inclusivity for negated (Gt<->Le, Ge<->Lt). e.g. `5 >
+  // a` with field_right -> a < 5; negated `a > 5` -> a <= 5.
+  auto flip_direction = [](ComparisonOp o) {
+    switch (o) {
+      case ComparisonOp::Gt:
+        return ComparisonOp::Lt;
+      case ComparisonOp::Lt:
+        return ComparisonOp::Gt;
+      case ComparisonOp::Ge:
+        return ComparisonOp::Le;
+      case ComparisonOp::Le:
+        return ComparisonOp::Ge;
+      case ComparisonOp::None:
+        return ComparisonOp::None;
+    }
+    SDB_UNREACHABLE();
+  };
+
   ComparisonOp op;
   if (IsCallOf(func_call, "_gt")) {
-    op = field_left ? ComparisonOp::Gt : ComparisonOp::Lt;
+    op = ComparisonOp::Gt;
   } else if (IsCallOf(func_call, "_gte")) {
-    op = field_left ? ComparisonOp::Ge : ComparisonOp::Le;
+    op = ComparisonOp::Ge;
   } else if (IsCallOf(func_call, "_lt")) {
-    op = field_left ? ComparisonOp::Lt : ComparisonOp::Gt;
-  } else {  // _lte
-    op = field_left ? ComparisonOp::Le : ComparisonOp::Ge;
+    op = ComparisonOp::Lt;
+  } else {
+    op = ComparisonOp::Le;  // _lte
   }
 
+  if (!field_left) {
+    op = flip_direction(op);
+  }
   if (negated) {
     op = NegateOp(op);
   }
 
-  auto kc = KeyConstraint::MakeAny(pk_names);
-  kc.AddComparisonFilter(field_access->name(), *const_val, op, func_call);
-  return {std::move(kc)};
+  auto constraint = KeyConstraint::MakeAny(pk_names);
+  constraint.AddComparisonFilter(field_access->name(), *const_val, op,
+                                 func_call);
+  return {std::move(constraint)};
 }
 
 std::vector<KeyConstraint> ExtractFilterIn(
@@ -187,21 +237,22 @@ std::vector<KeyConstraint> ExtractFilterIn(
     basics::downCast<velox::ArrayVector>(const_vec->valueVector());
   const auto offset = array_vec->offsetAt(const_vec->index());
   const auto size = array_vec->sizeAt(const_vec->index());
+  SDB_ASSERT(size > 0);
   const auto& elements = array_vec->elements();
 
   const std::string& col = field_access->name();
 
   if (!negated) {
-    // a IN (x1, ..., xn)  ->  n equality KCs
+    // a IN (x1, ..., xn)  ->  n equality constaints
     std::vector<KeyConstraint> points;
     points.reserve(size);
     for (velox::vector_size_t i = 0; i < size; ++i) {
       velox::core::ConstantTypedExpr elem_const{
         velox::BaseVector::wrapInConstant(1, offset + i, elements)};
       auto p = KeyConstraint::MakeAny(pk_names);
-      // If all points that uses func_call source expr become specific, it means
-      // that this node maybe replaced with constant true, as specific points
-      // will be processed in point lookup data source
+      // If any point is used for range scan or point lookup, it means
+      // this filter fully utilized in table scan, so it's OK
+      // to replace with true.
       p.AddEqFilter(col, elem_const, func_call);
       points.push_back(std::move(p));
     }
@@ -209,10 +260,6 @@ std::vector<KeyConstraint> ExtractFilterIn(
   }
 
   // NOT IN (x1, ..., xn)  ->  n+1 open intervals between sorted values
-  if (size == 0) {
-    return AnyKeyConstraint(pk_names);  // NOT IN () is vacuously true
-  }
-
   // Sort element indices by value so we can build ordered complement intervals.
   std::vector<velox::vector_size_t> order(size);
   std::iota(order.begin(), order.end(), 0);
@@ -224,47 +271,30 @@ std::vector<KeyConstraint> ExtractFilterIn(
     return ToVariant(ea) < ToVariant(eb);
   });
 
-  // Helper: build ConstantTypedExpr for the i-th sorted element.
   auto elem = [&](velox::vector_size_t i) {
     return velox::core::ConstantTypedExpr{
       velox::BaseVector::wrapInConstant(1, offset + order[i], elements)};
   };
+  auto make_constraint = [&](ComparisonOp op,
+                             const velox::core::ConstantTypedExpr& val) {
+    auto constraint = KeyConstraint::MakeAny(pk_names);
+    constraint.AddComparisonFilter(col, val, op, func_call);
+    return constraint;
+  };
 
   std::vector<KeyConstraint> result;
   result.reserve(size + 1);
-
-  // Leading interval: a < v_0
-  {
-    auto kc = KeyConstraint::MakeAny(pk_names);
-    kc.AddComparisonFilter(col, elem(0), ComparisonOp::Lt, func_call);
-    result.push_back(std::move(kc));
-  }
-  // Middle intervals: v_{i-1} < a < v_i
+  result.push_back(make_constraint(ComparisonOp::Lt, elem(0)));
   for (velox::vector_size_t i = 1; i < size; ++i) {
-    auto kc_lo = KeyConstraint::MakeAny(pk_names);
-    kc_lo.AddComparisonFilter(col, elem(i - 1), ComparisonOp::Gt, func_call);
-    auto kc_hi = KeyConstraint::MakeAny(pk_names);
-    kc_hi.AddComparisonFilter(col, elem(i), ComparisonOp::Lt, func_call);
-    if (auto kc = KeyConstraint::TryIntersect(kc_lo, kc_hi)) {
+    if (auto kc = KeyConstraint::TryIntersect(
+          make_constraint(ComparisonOp::Gt, elem(i - 1)),
+          make_constraint(ComparisonOp::Lt, elem(i)))) {
       result.push_back(std::move(*kc));
     }
   }
-  // Trailing interval: a > v_{n-1}
-  {
-    auto kc = KeyConstraint::MakeAny(pk_names);
-    kc.AddComparisonFilter(col, elem(size - 1), ComparisonOp::Gt, func_call);
-    result.push_back(std::move(kc));
-  }
+  result.push_back(make_constraint(ComparisonOp::Gt, elem(size - 1)));
   return result;
 }
-
-std::vector<KeyConstraint> ExtractFilterAnd(
-  const velox::core::CallTypedExpr* func_call,
-  std::span<const std::string> pk_names, bool negated = false);
-
-std::vector<KeyConstraint> ExtractFilterOr(
-  const velox::core::CallTypedExpr* func_call,
-  std::span<const std::string> pk_names, bool negated = false);
 
 std::vector<KeyConstraint> ExtractFilterAnd(
   const velox::core::CallTypedExpr* func_call,
@@ -277,8 +307,8 @@ std::vector<KeyConstraint> ExtractFilterAnd(
   std::vector<KeyConstraint> result =
     ExtractFilterExpr(func_call->inputs()[0], pk_names, negated);
   for (size_t i = 1; i < func_call->inputs().size(); ++i) {
-    // Propagate void: AND(void, anything) = void.
-    if (absl::c_any_of(
+    // Propagate contradictory: AND(contradictory, anything) = contradictory.
+    if (absl::c_all_of(
           result, [](const KeyConstraint& c) { return c.IsContradictory(); })) {
       return result;
     }
@@ -319,48 +349,28 @@ std::vector<KeyConstraint> ExtractFilterOr(
   std::vector<KeyConstraint> result;
   for (const auto& input : func_call->inputs()) {
     auto constraints = ExtractFilterExpr(input, pk_names, negated);
-    // Void branch (impossible sub-expression) contributes nothing to OR.
-    // Guard against empty pts: c_all_of on {} is vacuously true and would
-    // incorrectly treat an unconstrained (empty) result as contradictory.
-    if (!constraints.empty() &&
-        absl::c_all_of(constraints, [](const KeyConstraint& p) {
-          return p.IsContradictory();
-        })) {
-      continue;
-    }
-    // Empty pts means all intersections were unconstrained -- treat as AnyKC.
-    // Also, any unconstrained constraint makes the whole OR unconstrained.
+
     if (constraints.empty() ||
         absl::c_any_of(constraints, [](const KeyConstraint& p) {
           return p.IsUnconstrained();
         })) {
       return AnyKeyConstraint(pk_names);
     }
+
+    if (absl::c_all_of(constraints, [](const KeyConstraint& p) {
+          return p.IsContradictory();
+        })) {
+      continue;
+    }
+
     result.insert(result.end(), std::make_move_iterator(constraints.begin()),
                   std::make_move_iterator(constraints.end()));
   }
-  // All branches were void -> OR is itself impossible.
+  // All branches were contradictory -> OR is itself contradictory.
   if (result.empty()) {
     return {KeyConstraint::MakeContradictory(pk_names)};
   }
   return MergeKeyConstraintsPrecise(std::move(result));
-}
-
-// Negates a comparison op for NOT push-down.
-ComparisonOp NegateOp(ComparisonOp op) {
-  switch (op) {
-    case ComparisonOp::Gt:
-      return ComparisonOp::Le;
-    case ComparisonOp::Ge:
-      return ComparisonOp::Lt;
-    case ComparisonOp::Lt:
-      return ComparisonOp::Ge;
-    case ComparisonOp::Le:
-      return ComparisonOp::Gt;
-    case ComparisonOp::None:
-      return ComparisonOp::None;
-  }
-  SDB_ASSERT(false, "unreachable");
 }
 
 // Recursively rewrites `expr`, replacing any node whose address appears in
@@ -433,6 +443,25 @@ struct Atom {
   velox::variant left;   // valid iff has_left
   velox::variant right;  // valid iff has_right (== left when is_point)
 
+  // Closed singleton {v}.
+  [[nodiscard]] static Atom Point(velox::variant v) {
+    return {.is_point = true,
+            .has_left = true,
+            .has_right = true,
+            .left = v,
+            .right = std::move(v)};
+  }
+
+  // Open interval (l, r); pass std::nullopt for -inf / +inf.
+  [[nodiscard]] static Atom Interval(std::optional<velox::variant> l,
+                                     std::optional<velox::variant> r) {
+    return {.is_point = false,
+            .has_left = l.has_value(),
+            .has_right = r.has_value(),
+            .left = l ? std::move(*l) : velox::variant{},
+            .right = r ? std::move(*r) : velox::variant{}};
+  }
+
   bool operator==(const Atom&) const = default;
 };
 
@@ -448,22 +477,18 @@ struct SweepRange {
 // If event_points is empty, emits one unconstrained open atom.
 std::vector<Atom> BuildAtoms(const std::vector<velox::variant>& pts) {
   if (pts.empty()) {
-    return {Atom{}};  // one unconstrained open atom
+    return {Atom::Interval(std::nullopt,
+                           std::nullopt)};  // unconstrained (-inf, +inf)
   }
   std::vector<Atom> atoms;
   atoms.reserve(2 * pts.size() + 1);
-  // Leading open interval (-inf, p0).
-  atoms.push_back(Atom{false, false, true, {}, pts[0]});
-  for (size_t i = 0; i < pts.size(); ++i) {
-    // Point singleton {p}.
-    atoms.push_back(Atom{true, true, true, pts[i], pts[i]});
-    // Trailing open interval (pi, pi+1) or (pN, +inf).
-    if (i + 1 < pts.size()) {
-      atoms.push_back(Atom{false, true, true, pts[i], pts[i + 1]});
-    } else {
-      atoms.push_back(Atom{false, true, false, pts[i], {}});
-    }
+  atoms.push_back(Atom::Interval(std::nullopt, pts[0]));
+  for (size_t i = 0; i + 1 < pts.size(); ++i) {
+    atoms.push_back(Atom::Point(pts[i]));
+    atoms.push_back(Atom::Interval(pts[i], pts[i + 1]));
   }
+  atoms.push_back(Atom::Point(pts.back()));
+  atoms.push_back(Atom::Interval(pts.back(), std::nullopt));
   return atoms;
 }
 
@@ -471,12 +496,11 @@ std::vector<Atom> BuildAtoms(const std::vector<velox::variant>& pts) {
 // cr with no bounds is treated as (-inf, +inf) and covers every atom.
 bool AtomContainedBy(const Atom& a, const ColumnRange& cr) {
   if (a.is_point) {
-    // Check: cr.left <= a.left  AND  cr.right >= a.left
-    const velox::variant& p = a.left;
-    const bool left_ok = !cr.HasLeft() || cr.left_value < p ||
-                         (cr.left_value == p && cr.IsLeftInclusive());
-    const bool right_ok = !cr.HasRight() || p < cr.right_value ||
-                          (cr.right_value == p && cr.IsRightInclusive());
+    const velox::variant& point = a.left;
+    const bool left_ok = !cr.HasLeft() || cr.left_value < point ||
+                         (cr.left_value == point && cr.IsLeftInclusive());
+    const bool right_ok = !cr.HasRight() || point < cr.right_value ||
+                          (cr.right_value == point && cr.IsRightInclusive());
     return left_ok && right_ok;
   } else {
     // Open interval atom (p, q): cr.left < q  AND  cr.right > p.
@@ -724,9 +748,8 @@ std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
   }
   std::erase_if(constraints,
                 [](const KeyConstraint& c) { return c.IsContradictory(); });
-  if (constraints.empty()) {
-    return {KeyConstraint::MakeContradictory(pk_names)};
-  }
+  SDB_ASSERT(!constraints.empty());
+
   if (constraints.size() == 1) {
     return constraints;
   }
@@ -766,24 +789,6 @@ void MergeSourceExprs(KeyConstraint::SourceExprsMap& dst,
 }
 
 }  // namespace
-
-template<velox::TypeKind Kind>
-velox::variant ExtractScalarVariant(const velox::BaseVector& vec) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  const auto& cv = static_cast<const velox::ConstantVector<T>&>(vec);
-  return velox::variant(cv.valueAt(0));
-}
-
-velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
-  if (!expr.hasValueVector()) {
-    return expr.value();
-  }
-  if (expr.isNull()) {
-    return velox::variant(expr.type()->kind());
-  }
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-    ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
-}
 
 std::string ColumnRange::toString() const {
   auto variant_str = [](const velox::variant& v) {

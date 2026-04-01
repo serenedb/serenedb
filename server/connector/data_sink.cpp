@@ -175,7 +175,7 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   std::vector<ColumnInfo> columns, WriteConflictPolicy conflict_policy,
   uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock)
+  std::shared_mutex& table_lock)
   : RocksDBDataSinkBase<RocksDBSinkWriter>{RocksDBSinkWriter{transaction, cf},
                                            memory_pool,
                                            object_key,
@@ -195,7 +195,8 @@ SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex, UniqueIndex>::
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
+    std::shared_mutex& table_lock,
+    std::vector<velox::column_index_t> sk_children)
   : Base(
       SSTSinkWriter<IsGeneratedPK>{
         object_key, db, cf,
@@ -271,7 +272,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
   velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock)
+  std::shared_mutex& table_lock)
   : RocksDBDataSinkBase<RocksDBSinkWriter>{RocksDBSinkWriter{transaction, cf},
                                            memory_pool,
                                            object_key,
@@ -2535,7 +2536,7 @@ RocksDBIndexBackfillDataSink::RocksDBIndexBackfillDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
-  std::unique_ptr<SinkIndexWriter> index_writer, absl::Mutex& table_lock,
+  std::unique_ptr<SinkIndexWriter> index_writer, std::shared_mutex& table_lock,
   pg::IndexProgressReporter* progress)
   : RocksDBDataSinkBase<
       NoopSinkWriter>{NoopSinkWriter{},
@@ -2596,7 +2597,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   std::span<const velox::column_index_t> pk_indices,
   std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock)
+  std::shared_mutex& table_lock)
   : _row_type{std::move(row_type)},
     _data_writer{transaction, cf},
     _index_writers{std::move(index_writers)},

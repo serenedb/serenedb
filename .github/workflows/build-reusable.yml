@@ -33,6 +33,10 @@ on:
         required: false
         type: string
         default: ""
+    outputs:
+      packages_ok:
+        description: "Whether build and packaging succeeded (independent of test results)"
+        value: ${{ jobs.build-test-package.outputs.packages_ok }}
     secrets:
       PAT_TOKEN:
         required: true
@@ -53,6 +57,8 @@ env:
 jobs:
   build-test-package:
     name: Build, Test & Package
+    outputs:
+      packages_ok: ${{ steps.serenedb_packages.outcome == 'success' }}
     permissions:
       statuses: write
       contents: write

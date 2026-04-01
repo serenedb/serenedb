@@ -373,7 +373,6 @@ struct PgRegexpSubstr {
   velox::functions::detail::ReCache _cache;
 };
 
-// regexp_count(string, pattern, start) -- 3-arg with start position
 template<typename T>
 struct PgRegexpCount3 {
   PgRegexpCount3() : _cache(0) {}

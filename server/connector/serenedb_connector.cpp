@@ -100,6 +100,7 @@ std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
 
     auto sk_type = velox::ROW(std::move(sk_names), std::move(sk_types));
     auto points = ToResolvedPoints(res.constraints, *sk_type);
+    absl::c_sort(points);
 
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(*index);
@@ -284,7 +285,7 @@ SereneDBTableLayout::createTableHandle(
     }
 
     // 2. No PK match -- try secondary index.
-    if (points.empty()) {
+    if (points.empty() && ranges.empty() && !zero_ranges) {
       velox::core::TypedExprPtr remaining;
       if (auto handle =
             TryMatchSecondaryIndex(remaining_filter, *table,

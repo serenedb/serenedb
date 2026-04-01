@@ -118,10 +118,6 @@ struct ColumnRange {
   // True iff the two ranges share at least one point.
   [[nodiscard]] bool OverlapsWith(const ColumnRange& other) const;
 
-  // Smallest interval covering all keys in both ranges (may over-approximate
-  // gaps).
-  [[nodiscard]] ColumnRange UnionWith(const ColumnRange& other) const;
-
   // True iff *this starts strictly before other by left bound.
   // Unbounded left (-inf) sorts first; ties broken by inclusive < exclusive.
   [[nodiscard]] bool LeftBoundLessThan(const ColumnRange& other) const noexcept;
@@ -209,13 +205,6 @@ class KeyConstraint {
   // Returns nullopt when the two constraints are contradictory (e.g. a=1 AND
   // a=2).
   [[nodiscard]] static std::optional<KeyConstraint> TryIntersect(
-    const KeyConstraint& lhs, const KeyConstraint& rhs);
-
-  // Fast-path approximation: merges two constraints only when they differ on
-  // exactly one column and the ranges on that column overlap. Returns nullopt
-  // when the constraints differ on more than one column or have a gap on the
-  // differing column. Use MergeKeyConstraintsPrecise for the general case.
-  [[nodiscard]] static std::optional<KeyConstraint> TryUnion(
     const KeyConstraint& lhs, const KeyConstraint& rhs);
 
   // Constructs a KeyConstraint directly from pre-built column ranges and source

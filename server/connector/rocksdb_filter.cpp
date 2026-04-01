@@ -50,8 +50,7 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
     ExtractScalarVariant, expr.type()->kind(), *expr.valueVector());
 }
 
-std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
-  std::vector<KeyConstraint>);
+std::vector<KeyConstraint> MergeKeyConstraints(std::vector<KeyConstraint>);
 
 void MergeSourceExprs(KeyConstraint::SourceExprsMap& dst,
                       const KeyConstraint::SourceExprsMap& src);
@@ -388,7 +387,7 @@ std::vector<KeyConstraint> ExtractFilterOr(
   if (result.empty()) {
     return {KeyConstraint::MakeContradictory(pk_names)};
   }
-  return MergeKeyConstraintsPrecise(std::move(result));
+  return MergeKeyConstraints(std::move(result));
 }
 
 // Recursively rewrites `expr`, replacing any node whose address appears in
@@ -429,11 +428,17 @@ velox::core::TypedExprPtr RewriteExpr(
   }
 
   if (call->name() == "or") {
-    // If any branch became true (null), the whole OR is trivially true.
-    if (absl::c_any_of(new_inputs,
+    // If ALL branches became true (null), the whole OR is trivially true.
+    if (absl::c_all_of(new_inputs,
                        [](const auto& e) { return e == nullptr; })) {
       return {};
     }
+    // For OR, we cannot safely produce a simplified remaining filter when some
+    // but not all branches were captured: different branches select different
+    // row subsets, so stripping captured branches would lose per-branch
+    // conditions (e.g. `score=200` from `(city='berlin' AND score=200) OR
+    // city='tokyo'`). Return the original expression as the post-filter.
+    return expr;
   }
 
   // For any other call (e.g. "not"), if any input was rewritten to null (i.e.
@@ -722,7 +727,7 @@ std::vector<SweepRange> SweepDims(std::vector<SweepRange> ranges,
 
 // Produces a set of disjoint KeyConstraints covering exactly the union of the
 // input constraints' key-spaces, using the recursive atomic-sweep algorithm.
-std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
+std::vector<KeyConstraint> MergeKeyConstraints(
   std::vector<KeyConstraint> constraints) {
   if (constraints.empty()) {
     return {};
@@ -853,10 +858,10 @@ KeyConstraint KeyConstraint::BuildFromRanges(
   std::span<const std::string> pk_names,
   containers::FlatHashMap<std::string, ColumnRange> ranges,
   SourceExprsMap source_exprs) {
-  KeyConstraint kc{pk_names};
-  kc._column_ranges = std::move(ranges);
-  kc._source_exprs = std::move(source_exprs);
-  return kc;
+  KeyConstraint constraint{pk_names};
+  constraint._column_ranges = std::move(ranges);
+  constraint._source_exprs = std::move(source_exprs);
+  return constraint;
 }
 
 bool ColumnRange::operator==(const ColumnRange& other) const noexcept {
@@ -930,48 +935,6 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
 
 bool ColumnRange::OverlapsWith(const ColumnRange& other) const {
   return IntersectWith(other).has_value();
-}
-
-ColumnRange ColumnRange::UnionWith(const ColumnRange& other) const {
-  // Widest left bound: pick the lesser (less restrictive) lower bound.
-  // If either is unbounded, result is unbounded.
-  ColumnRange result;
-  if (HasLeft() && other.HasLeft()) {
-    bool use_other_left;
-    if (_left_value < other._left_value) {
-      use_other_left = false;
-    } else if (other._left_value < _left_value) {
-      use_other_left = true;
-    } else {
-      // Same value: inclusive is less restrictive.
-      use_other_left = !IsLeftInclusive() && other.IsLeftInclusive();
-    }
-    const ColumnRange& left_src = use_other_left ? other : *this;
-    result._flags |=
-      kLeftBounded | (left_src.IsLeftInclusive() ? kLeftInclusive : kZero);
-    result._left_value = left_src._left_value;
-  }
-  // else: at least one side is unbounded -> result has no left bound.
-
-  // Widest right bound: pick the greater (less restrictive) upper bound.
-  if (HasRight() && other.HasRight()) {
-    bool use_other_right;
-    if (other._right_value < _right_value) {
-      use_other_right = false;
-    } else if (_right_value < other._right_value) {
-      use_other_right = true;
-    } else {
-      // Same value: inclusive is less restrictive.
-      use_other_right = !IsRightInclusive() && other.IsRightInclusive();
-    }
-    const ColumnRange& right_src = use_other_right ? other : *this;
-    result._flags |=
-      kRightBounded | (right_src.IsRightInclusive() ? kRightInclusive : kZero);
-    result._right_value = right_src._right_value;
-  }
-  // else: at least one side is unbounded -> result has no right bound.
-
-  return result;
 }
 
 bool ColumnRange::LeftBoundLessThan(const ColumnRange& other) const noexcept {
@@ -1067,57 +1030,6 @@ std::optional<KeyConstraint> KeyConstraint::TryIntersect(
   }
   MergeSourceExprs(result._source_exprs, lhs._source_exprs);
   MergeSourceExprs(result._source_exprs, rhs._source_exprs);
-  return result;
-}
-
-// TODO looks like wrong
-std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
-                                                     const KeyConstraint& rhs) {
-  SDB_ASSERT(lhs._pk_names.data() == rhs._pk_names.data());
-
-  std::string_view differing_col;
-  int diff_count = 0;
-  for (std::string_view pk_name : lhs._pk_names) {
-    const ColumnRange* lf = lhs.FindColumnRange(pk_name);
-    const ColumnRange* rf = rhs.FindColumnRange(pk_name);
-    if (!lf && !rf) {
-      continue;
-    }
-    if (!lf || !rf || *lf != *rf) {
-      if (++diff_count > 1) {
-        return std::nullopt;
-      }
-      differing_col = pk_name;
-    }
-  }
-
-  // Start from lhs and merge source exprs from rhs.
-  KeyConstraint result{lhs};
-  MergeSourceExprs(result._source_exprs, rhs._source_exprs);
-
-  if (diff_count == 0) {
-    return result;  // identical constraints
-  }
-
-  const ColumnRange* lf = lhs.FindColumnRange(differing_col);
-  const ColumnRange* rf = rhs.FindColumnRange(differing_col);
-
-  // One side unconstrained on this column -> union removes the constraint.
-  if (!lf || !rf) {
-    result._column_ranges.erase(differing_col);
-    return result;
-  }
-
-  // Both have a range -> merge only if they overlap (no gap).
-  auto merged =
-    lf->OverlapsWith(*rf) ? std::optional{lf->UnionWith(*rf)} : std::nullopt;
-  if (!merged) {
-    return std::nullopt;
-  }
-
-  auto it = result._column_ranges.find(differing_col);
-  SDB_ASSERT(it != result._column_ranges.end());
-  it->second = *merged;
   return result;
 }
 

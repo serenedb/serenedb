@@ -243,7 +243,7 @@ bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
   _last_raw_end = _start;
   _curr_start_raw = _start;
 
-  if (_curr_start_raw + _delim_size <= _data.size() && 
+  if (_curr_start_raw + _delim_size <= _data.size() &&
       _data.compare(_curr_start_raw, _delim_size, delim) == 0) {
     _curr_start_raw += _delim_size;
   }
@@ -290,7 +290,8 @@ bool ForwardPathHierarchyTokenizer::next() {
 
       if (delim_at_from) {
         _buffer.append(repl);
-        _buffer.append(_data.data() + _last_raw_end + _delim_size, end_in - _last_raw_end - _delim_size);
+        _buffer.append(_data.data() + _last_raw_end + _delim_size,
+                       end_in - _last_raw_end - _delim_size);
       } else {
         _buffer.append(_data.data() + _last_raw_end, end_in - _last_raw_end);
       }

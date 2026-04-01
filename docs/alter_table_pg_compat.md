@@ -5,8 +5,8 @@
 - [x] `ALTER VIEW ... RENAME TO` — rename a view
 - [x] `ALTER INDEX ... RENAME TO` — rename an index
 - [x] `ALTER FUNCTION ... RENAME TO` — rename a function
-- [ ] `ALTER TABLE ... RENAME COLUMN ... TO` — rename a column
-- [ ] `ALTER TABLE ... RENAME CONSTRAINT ... TO` — rename a constraint
+- [x] `ALTER TABLE ... RENAME COLUMN ... TO` — rename a column
+- [x] `ALTER TABLE ... RENAME CONSTRAINT ... TO` — rename a constraint
 
 ### Column operations (via `AlterTableStmt`)
 - [ ] `ALTER TABLE ... ADD COLUMN` — add a new column

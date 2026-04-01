@@ -91,6 +91,12 @@ class Table : public SchemaObject {
     return *_sharding_strategy;
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
+
+  Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
+                      std::string_view new_name) const;
+  Result RenameConstraint(std::shared_ptr<Table>& result,
+                          std::string_view old_name,
+                          std::string_view new_name) const;
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {

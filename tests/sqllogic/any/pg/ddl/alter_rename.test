@@ -199,6 +199,60 @@ db error: ERROR: could not find a function named "pudge"
 
 
 statement ok
+ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
+
+query
+SELECT a_renamed FROM pudge;
+----
+
+statement error
+SELECT a FROM pudge;
+----
+db error: ERROR: column "a" does not exist
+
+statement ok
+ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
+
+query
+SELECT a FROM pudge;
+----
+
+
+statement error
+ALTER TABLE pudge RENAME COLUMN nonexistent TO something;
+----
+db error: ERROR: column "nonexistent" does not exist
+
+statement error
+ALTER TABLE pudge RENAME COLUMN a TO b;
+----
+db error: ERROR: column "b" of relation "pudge" already exists
+
+statement error
+ALTER TABLE nonexistent RENAME COLUMN a TO b;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+
+statement ok
+CREATE TABLE constr_test(a integer CONSTRAINT constr_test_pos CHECK (a > 0));
+
+statement ok
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_positive;
+
+statement error
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO something;
+----
+db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not exist
+
+statement ok
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_pos;
+
+statement ok
+DROP TABLE constr_test;
+
+
+statement ok
 DROP FUNCTION clickclack;
 
 statement ok

@@ -1515,10 +1515,9 @@ Result LocalCatalog::RenameIndex(ObjectId database_id, std::string_view schema,
   if (!impl_parsed) {
     return std::move(impl_parsed.error());
   }
-  auto new_index_result =
-    MakeIndex(old_index->GetDatabaseId(), old_index->GetSchemaId(),
-              old_index->GetId(), old_index->GetRelationId(),
-              std::move(**impl_parsed));
+  auto new_index_result = MakeIndex(
+    old_index->GetDatabaseId(), old_index->GetSchemaId(), old_index->GetId(),
+    old_index->GetRelationId(), std::move(**impl_parsed));
   if (!new_index_result) {
     return std::move(new_index_result.error());
   }
@@ -1543,8 +1542,8 @@ Result LocalCatalog::RenameIndex(ObjectId database_id, std::string_view schema,
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto obj = clone->GetObject<Index>(new_index->GetId());
       if (obj->GetName() == new_index->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id,
-                                                             new_name, old_index);
+        auto r = clone->ReplaceObject<ResolveType::Relation>(
+          *schema_id, new_name, old_index);
         SDB_ASSERT(r.ok());
       }
     });
@@ -1620,8 +1619,7 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
   modified.openObject();
   for (auto pair : vpack::ObjectIterator(b.slice())) {
     if (pair.key.stringView() == StaticStrings::kDataSourceName) {
-      modified.add(StaticStrings::kDataSourceName,
-                   vpack::Value(new_name));
+      modified.add(StaticStrings::kDataSourceName, vpack::Value(new_name));
     } else {
       modified.add(pair.key);
       modified.add(pair.value());
@@ -1651,9 +1649,9 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
       out.openObject();
       new_function->WriteInternal(out);
       out.close();
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::Function, new_function->GetId(),
-        [&](bool) { return out.slice(); });
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
+                                       new_function->GetId(),
+                                       [&](bool) { return out.slice(); });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto obj = clone->GetObject<Function>(new_function->GetId());

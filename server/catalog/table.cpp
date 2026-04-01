@@ -218,4 +218,73 @@ void catalog::Table::WriteInternal(vpack::Builder& build) const {
                      ObjectInternal{_database_id});
 }
 
+Result Table::RenameColumn(std::shared_ptr<Table>& result,
+                           std::string_view old_name,
+                           std::string_view new_name) const {
+  auto col_it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.name == old_name; });
+  if (col_it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME, "column \"", old_name,
+                  "\" does not exist"};
+  }
+
+  if (absl::c_any_of(_columns,
+                     [&](const Column& c) { return c.name == new_name; })) {
+    return Result{
+      ERROR_SERVER_DUPLICATE_NAME, "column \"", new_name,
+      "\" of relation \"",         GetName(),   "\" already exists"};
+  }
+
+  NewOptions opts{
+    .name = GetName(),
+    .schema = _schema,
+    .number_of_shards = _number_of_shards,
+    .replication_factor = _replication_factor,
+    .write_concern = _write_concern,
+    .wait_for_sync = _wait_for_sync,
+  };
+  auto new_table = std::make_shared<Table>(*this, std::move(opts));
+
+  auto& target = new_table->_columns[std::distance(_columns.begin(), col_it)];
+  target.name = std::string{new_name};
+
+  new_table->_row_type = BuildRowType(new_table->_columns);
+  new_table->_pk_type =
+    BuildPkType(new_table->_columns, new_table->_pk_columns);
+
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::RenameConstraint(std::shared_ptr<Table>& result,
+                               std::string_view old_name,
+                               std::string_view new_name) const {
+  auto it = absl::c_find_if(_check_constraints, [&](const CheckConstraint& c) {
+    return c.name == old_name;
+  });
+  if (it == _check_constraints.end()) {
+    return Result{
+      ERROR_SERVER_ILLEGAL_NAME, "constraint \"", old_name,
+      "\" for table \"",         GetName(),       "\" does not exist"};
+  }
+
+  NewOptions opts{
+    .name = GetName(),
+    .schema = _schema,
+    .number_of_shards = _number_of_shards,
+    .replication_factor = _replication_factor,
+    .write_concern = _write_concern,
+    .wait_for_sync = _wait_for_sync,
+  };
+  auto new_table = std::make_shared<Table>(*this, std::move(opts));
+
+  auto& target =
+    new_table
+      ->_check_constraints[std::distance(_check_constraints.begin(), it)];
+  target.name = std::string{new_name};
+
+  result = std::move(new_table);
+  return {};
+}
+
 }  // namespace sdb::catalog

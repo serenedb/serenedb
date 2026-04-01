@@ -24,6 +24,7 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception.h"
@@ -36,6 +37,48 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
+
+namespace {
+
+yaclib::Future<> RenameColumnOrConstraint(
+  catalog::LogicalCatalog& catalog, ExecContext& context,
+  const RenameStmt& stmt, std::string_view schema, std::string_view table_name,
+  std::string_view old_name, std::string_view new_name) {
+  const auto db = context.GetDatabaseId();
+  const bool is_column = stmt.renameType == OBJECT_COLUMN;
+
+  Result r = catalog.ChangeTable(
+    db, schema, table_name,
+    [&](const catalog::Table& table, std::shared_ptr<catalog::Table>& updated) {
+      return is_column ? table.RenameColumn(updated, old_name, new_name)
+                       : table.RenameConstraint(updated, old_name, new_name);
+    });
+
+  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
+      r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    auto msg = r.errorMessage();
+    if (!msg.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(is_column ? ERRCODE_UNDEFINED_COLUMN
+                                         : ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG(msg));
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+  }
+
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+                    ERR_MSG(r.errorMessage()));
+  }
+
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+
+  return {};
+}
+
+}  // namespace
 
 yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   auto& catalogs =
@@ -52,6 +95,13 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   std::string_view name{rel->relname};
   std::string_view new_name{stmt.newname};
 
+  if (stmt.renameType == OBJECT_COLUMN ||
+      stmt.renameType == OBJECT_TABCONSTRAINT) {
+    std::string_view subname{stmt.subname};
+    return RenameColumnOrConstraint(catalog, context, stmt, schema, name,
+                                    subname, new_name);
+  }
+
   Result r;
 
   switch (stmt.renameType) {
@@ -66,10 +116,9 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
       r = catalog.RenameFunction(db, schema, name, new_name);
       break;
     default:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("ALTER ", magic_enum::enum_name(stmt.renameType),
-                " RENAME is not yet supported"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("ALTER ", magic_enum::enum_name(stmt.renameType),
+                              " RENAME is not yet supported"));
   }
 
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
@@ -86,19 +135,17 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
           ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
           ERR_MSG("could not find a function named \"", name, "\""));
       }
-      conn_ctx.AddNotice(
-        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                       ERR_MSG("function ", name,
-                               "() does not exist, skipping")));
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        ERR_MSG("function ", name, "() does not exist, skipping")));
     } else {
       if (!stmt.missing_ok) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                         ERR_MSG("relation \"", name, "\" does not exist"));
       }
-      conn_ctx.AddNotice(
-        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                       ERR_MSG("relation \"", name,
-                               "\" does not exist, skipping")));
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+        ERR_MSG("relation \"", name, "\" does not exist, skipping")));
     }
     r = {};
   }

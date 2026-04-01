@@ -95,7 +95,7 @@ namespace {
 #define CASE_ARRAY_SERIALIZATION(kind)                                  \
   case kind: {                                                          \
     SERIALIZE_PRIMITIVE(kind);                                          \
-    static constexpr auto kOid = GetPrimitiveTypeOID(kind, true);       \
+    static constexpr auto kOid = Kind2Oid(kind, true);                  \
     RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kOid); \
   }
 
@@ -414,7 +414,7 @@ void SerializePrimitiveType(SerializationContext context,
   }
 }
 
-template<SerializationFunction ElementSerialization, int32_t ElemenOID,
+template<SerializationFunction ElementSerialization, int32_t ElementOID,
          VarFormat Format>
 void SerializeOneDimArray(SerializationContext context,
                           const velox::DecodedVector& decoded_vector,
@@ -449,7 +449,7 @@ void SerializeOneDimArray(SerializationContext context,
     auto* prefix_data = context.buffer->GetContiguousData(20);
     absl::big_endian::Store32(prefix_data, 1);
     absl::big_endian::Store32(prefix_data + 4, 1);
-    absl::big_endian::Store32(prefix_data + 8, ElemenOID);
+    absl::big_endian::Store32(prefix_data + 8, ElementOID);
     absl::big_endian::Store32(prefix_data + 12, array_size);
     absl::big_endian::Store32(prefix_data + 16, 0);
     for (velox::vector_size_t i = 0; i < array_size; ++i) {
@@ -506,7 +506,7 @@ int32_t FlattenArray(SerializationContext context,
   return dims;
 }
 
-template<SerializationFunction ElementSerialization, int32_t ElemenOID,
+template<SerializationFunction ElementSerialization, int32_t ElementOID,
          VarFormat Format>
 void SerializeArray(SerializationContext context,
                     const velox::DecodedVector& decoded_vector,
@@ -534,7 +534,7 @@ void SerializeArray(SerializationContext context,
         context.buffer->WriteUncommitted(",");
       }
       const auto element_row = array_offset + i;
-      SerializeArray<ElementSerialization, ElemenOID, Format>(
+      SerializeArray<ElementSerialization, ElementOID, Format>(
         context, decoded_child, element_row);
     }
     context.buffer->WriteUncommitted("}");
@@ -542,7 +542,7 @@ void SerializeArray(SerializationContext context,
     // dimensions(4) + flags(4) + element_oid(4)
     auto* prefix_data = context.buffer->GetContiguousData(12);
     absl::big_endian::Store32(prefix_data + 4, 0);
-    absl::big_endian::Store32(prefix_data + 8, ElemenOID);
+    absl::big_endian::Store32(prefix_data + 8, ElementOID);
     const auto dims =
       FlattenArray<ElementSerialization, Format>(context, decoded_vector, row);
     absl::big_endian::Store32(prefix_data, dims);
@@ -618,9 +618,9 @@ void SerializeRegnamespaceText(SerializationContext context,
   context.buffer->WriteUncommitted(RegnamespaceOut(*context.snapshot, oid));
 }
 
-// Binary serialization for reg* types:
+// Binary serialization for oid-like types:
 // truncate 64-bit OID to 32-bit for PG wire protocol compatibility.
-void SerializeRegBinary(SerializationContext context,
+void SerializeOidBinary(SerializationContext context,
                         const velox::DecodedVector& decoded_vector,
                         velox::vector_size_t row) {
   const auto oid = decoded_vector.valueAt<int64_t>(row);
@@ -705,14 +705,16 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
                                             size_t dims) {
   if (isUuidType(type)) {
     RETURN_ARRAY_SERIALIZATION(SerializeUuid<VarFormat::Text>,
-                               SerializeUuid<VarFormat::Binary>, 2950);
+                               SerializeUuid<VarFormat::Binary>,
+                               PgTypeOID::kUuid);
   }
 
   if (isJsonType(type)) {
     static constexpr auto kSerializeText = SerializeJson<VarFormat::Text, true>;
     static constexpr auto kSerializeBinary =
       SerializeJson<VarFormat::Binary, true>;
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 199);
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kJson);
   }
 
   if (isIPAddressType(type)) {
@@ -744,7 +746,8 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
       SerializeDecimal<VarFormat::Text, int64_t>;
     static constexpr auto kSerializeBinary =
       SerializeDecimal<VarFormat::Binary, int64_t>;
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1231);
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kNumeric);
   }
 
   if (type->isLongDecimal()) {
@@ -752,7 +755,8 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
       SerializeDecimal<VarFormat::Text, velox::int128_t>;
     static constexpr auto kSerializeBinary =
       SerializeDecimal<VarFormat::Binary, velox::int128_t>;
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1231);
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kNumeric);
   }
 
   if (type->isIntervalYearMonth()) {
@@ -776,7 +780,108 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
 
   if (type->isDate()) {
     RETURN_ARRAY_SERIALIZATION(SerializeDate<VarFormat::Text>,
-                               SerializeDate<VarFormat::Binary>, 1082);
+                               SerializeDate<VarFormat::Binary>,
+                               PgTypeOID::kDate);
+  }
+
+  if (pg::IsOid(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kOid);
+  }
+  if (pg::IsTid(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kTid);
+  }
+  if (pg::IsCid(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kCid);
+  }
+  if (pg::IsXid(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kXid);
+  }
+
+  // TODO(mbkkt) reg* types here temporarily treated as bigint for text
+  // serialization should be changed to real name.
+  if (pg::IsRegproc(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegproc);
+  }
+  if (pg::IsRegoper(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegoper);
+  }
+  if (pg::IsRegoperator(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegoperator);
+  }
+  if (pg::IsRegprocedure(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegprocedure);
+  }
+  if (pg::IsRegrole(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegrole);
+  }
+  if (pg::IsRegconfig(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegconfig);
+  }
+  if (pg::IsRegdictionary(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegdictionary);
+  }
+  if (pg::IsRegcollation(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                               PgTypeOID::kRegcollation);
+  }
+
+  if (pg::IsRegtype(type)) {
+    RETURN_ARRAY_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary,
+                               PgTypeOID::kRegtype);
+  }
+  if (pg::IsRegclass(type)) {
+    RETURN_ARRAY_SERIALIZATION(SerializeRegclassText, SerializeOidBinary,
+                               PgTypeOID::kRegclass);
+  }
+  if (pg::IsRegnamespace(type)) {
+    RETURN_ARRAY_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary,
+                               PgTypeOID::kRegnamespace);
+  }
+
+  // TODO(mbkkt) pg::IsXid8 is it expected to be serialized as bigint?
+  // It looks like yes, but we need to check it later.
+  if (pg::IsXid8(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    static constexpr auto kSerializeBinary =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Binary>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                               PgTypeOID::kXid8);
   }
 
   switch (type->kind()) {
@@ -790,8 +895,7 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
     case velox::TypeKind::REAL: {
       static constexpr auto kSerializeBinary =
         SerializeFloat<float, VarFormat::Binary>;
-      static constexpr auto kOid =
-        GetPrimitiveTypeOID(velox::TypeKind::REAL, true);
+      static constexpr auto kOid = Kind2Oid(velox::TypeKind::REAL, false);
       return irs::ResolveBool(
         context.extra_float_digits > 0, [&]<bool Precise> {
           static constexpr auto kSerializeText =
@@ -802,8 +906,7 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
     case velox::TypeKind::DOUBLE: {
       static constexpr auto kSerializeBinary =
         SerializeFloat<double, VarFormat::Binary>;
-      static constexpr auto kOid =
-        GetPrimitiveTypeOID(velox::TypeKind::DOUBLE, true);
+      static constexpr auto kOid = Kind2Oid(velox::TypeKind::DOUBLE, false);
       return irs::ResolveBool(
         context.extra_float_digits > 0, [&]<bool Precise> {
           static constexpr auto kSerializeText =
@@ -812,8 +915,7 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
         });
     }
     case velox::TypeKind::VARCHAR: {
-      static constexpr auto kOid =
-        GetPrimitiveTypeOID(velox::TypeKind::VARCHAR, true);
+      static constexpr auto kOid = Kind2Oid(velox::TypeKind::VARCHAR, false);
       static constexpr auto kSerializeText =
         SerializeVarchar<VarFormat::Text, true>;
       static constexpr auto kSerializeBinary =
@@ -821,8 +923,7 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
       RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kOid);
     }
     case velox::TypeKind::VARBINARY: {
-      static constexpr auto kOid =
-        GetPrimitiveTypeOID(velox::TypeKind::VARBINARY, true);
+      static constexpr auto kOid = Kind2Oid(velox::TypeKind::VARBINARY, false);
       if (context.bytea_output == ByteaOutput::Hex) {
         static constexpr auto kSerializeText = SerializeByteaTextHex<true>;
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary, kOid);
@@ -1018,16 +1119,30 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
                          SerializeInterval<VarFormat::Binary>);
   }
 
+  if (pg::IsOid(type) || pg::IsTid(type) || pg::IsCid(type) ||
+      pg::IsXid(type) ||
+      // TODO(mbkkt) reg* types here temporarily treated as bigint for text
+      // serialization should be changed to real name.
+      pg::IsRegproc(type) || pg::IsRegoper(type) || pg::IsRegoperator(type) ||
+      pg::IsRegprocedure(type) || pg::IsRegrole(type) ||
+      pg::IsRegconfig(type) || pg::IsRegdictionary(type) ||
+      pg::IsRegcollation(type)) {
+    static constexpr auto kSerializeText =
+      SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
+    RETURN_SERIALIZATION(kSerializeText, SerializeOidBinary);
+  }
   if (pg::IsRegtype(type)) {
-    RETURN_SERIALIZATION(SerializeRegtypeText, SerializeRegBinary);
+    RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
   }
   if (pg::IsRegclass(type)) {
-    RETURN_SERIALIZATION(SerializeRegclassText, SerializeRegBinary);
+    RETURN_SERIALIZATION(SerializeRegclassText, SerializeOidBinary);
   }
   if (pg::IsRegnamespace(type)) {
-    RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeRegBinary);
+    RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
   }
 
+  // TODO(mbkkt) pg::IsXid8 is it expected to be serialized as bigint?
+  // It looks like yes, but we need to check it later.
   switch (type->kind()) {
     CASE_SERIALIZATION(velox::TypeKind::UNKNOWN)
     CASE_SERIALIZATION(velox::TypeKind::TINYINT)

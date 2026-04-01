@@ -29,14 +29,33 @@
 
 namespace sdb::pg {
 
-using Oid = uint64_t;
-using Xid = uint64_t;
-using Regproc = Oid;
-using Regtype = Oid;
-using Regclass = Oid;
+#define SDB_PG_OID_TYPE(name)                                  \
+  struct name {                                                \
+    constexpr name(uint64_t v = 0) noexcept : v{v} {}          \
+    constexpr operator uint64_t() const noexcept { return v; } \
+    uint64_t v;                                                \
+  }
+SDB_PG_OID_TYPE(Oid);
+SDB_PG_OID_TYPE(Xid);
+SDB_PG_OID_TYPE(Regproc);
+SDB_PG_OID_TYPE(Regtype);
+SDB_PG_OID_TYPE(Regclass);
+SDB_PG_OID_TYPE(Cid);
+SDB_PG_OID_TYPE(Xid8);
+SDB_PG_OID_TYPE(Tid);
+#undef SDB_PG_OID_TYPE
+
 using Text = std::string_view;
 using Bytea = irs::bytes_view;
-using Name = std::string_view;
+struct Name {
+  constexpr Name() = default;
+  constexpr Name(const char* v) noexcept : v{v} {}
+  constexpr Name(std::string_view v) noexcept : v{v} {}
+  Name(const std::string& v) noexcept : v{v} {}
+  constexpr operator std::string_view() const { return v; }
+  std::string_view v;
+};
+
 struct Empty {};
 using PgNodeTree = Empty;
 using Aclitem = Empty;
@@ -91,7 +110,5 @@ constexpr size_t GetIndex(MemberType ClassType::* member_ptr) {
   });
   return index;
 }
-
-inline constexpr Oid kNone = 0;
 
 };  // namespace sdb::pg

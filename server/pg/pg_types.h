@@ -23,6 +23,7 @@
 #include <velox/type/Type.h>
 
 #include <expected>
+#include <magic_enum/magic_enum.hpp>
 
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
@@ -44,13 +45,18 @@ using ParamIndex = int16_t;
 enum PgTypeOID : int32_t {
   kBool = 16,
   kChar = 18,
+  kName = 19,
   kInt2 = 21,
   kInt4 = 23,
+  kRegproc = 24,
+  kText = 25,
+  kOid = 26,
+  kTid = 27,
+  kXid = 28,
+  kCid = 29,
   kInt8 = 20,
   kFloat4 = 700,
   kFloat8 = 701,
-  kText = 25,
-  kVarchar = 1043,
   kBytea = 17,
   kJson = 114,
   kUuid = 2950,
@@ -59,21 +65,34 @@ enum PgTypeOID : int32_t {
   kTimestamp = 1114,
   kTimestampTz = 1184,
   kInterval = 1186,
+  kRegprocedure = 2202,
+  kRegoper = 2203,
+  kRegoperator = 2204,
   kRegclass = 2205,
   kRegtype = 2206,
+  kRegconfig = 3734,
+  kRegdictionary = 3769,
   kRegnamespace = 4089,
+  kRegrole = 4096,
+  kRegcollation = 4191,
+  kXid8 = 5069,
 
   // Array types
   kBoolArray = 1000,
+  kByteaArray = 1001,
   kCharArray = 1002,
+  kNameArray = 1003,
   kInt2Array = 1005,
   kInt4Array = 1007,
+  kRegprocArray = 1008,
+  kTextArray = 1009,
+  kTidArray = 1010,
+  kXidArray = 1011,
+  kCidArray = 1012,
   kInt8Array = 1016,
+  kOidArray = 1028,
   kFloat4Array = 1021,
   kFloat8Array = 1022,
-  kTextArray = 1009,
-  kVarcharArray = 1015,
-  kByteaArray = 1001,
   kJsonArray = 199,
   kUuidArray = 2951,
   kNumericArray = 1231,
@@ -81,12 +100,20 @@ enum PgTypeOID : int32_t {
   kTimestampArray = 1115,
   kTimestampTzArray = 1185,
   kIntervalArray = 1187,
+  kRegprocedureArray = 2207,
+  kRegoperArray = 2208,
+  kRegoperatorArray = 2209,
   kRegclassArray = 2210,
   kRegtypeArray = 2211,
+  kRegconfigArray = 3735,
+  kRegdictionaryArray = 3770,
   kRegnamespaceArray = 4090,
+  kRegroleArray = 4097,
+  kRegcollationArray = 4192,
+  kXid8Array = 271,
 };
 
-constexpr int32_t GetPrimitiveTypeOID(velox::TypeKind kind, bool in_array) {
+constexpr int32_t Kind2Oid(velox::TypeKind kind, bool in_array) {
   switch (kind) {
     case velox::TypeKind::UNKNOWN: {
       return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
@@ -123,11 +150,13 @@ constexpr int32_t GetPrimitiveTypeOID(velox::TypeKind kind, bool in_array) {
     }
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "unsupported converting velox -> pg type kind: ");
+                "unsupported converting velox -> pg type kind: ",
+                magic_enum::enum_name(kind));
   }
 }
 
-int32_t GetTypeOID(const velox::TypePtr& type, bool in_array = false);
+int32_t Type2Oid(const velox::TypePtr& type, bool in_array = false);
+velox::TypePtr Oid2Type(int32_t oid);
 
 std::string ToPgTypeString(const velox::Type& type);
 std::string ToPgTypeString(const velox::TypePtr& type);

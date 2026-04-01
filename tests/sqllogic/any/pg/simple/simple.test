@@ -1450,7 +1450,7 @@ array_length
 NULL
 
 
-# 2D: dim=0 → NULL
+# 2D: dim=0 -> NULL
 query
 SELECT array_length(ARRAY[ARRAY[1,2], ARRAY[3,4]], 0);
 ----
@@ -1458,7 +1458,7 @@ array_length
 NULL
 
 
-# 2D: negative dim → NULL
+# 2D: negative dim -> NULL
 query
 SELECT array_length(ARRAY[ARRAY[1,2], ARRAY[3,4]], -1);
 ----
@@ -1489,7 +1489,7 @@ array_length
 3
 
 
-# 3D: dim=4 → NULL (beyond nesting depth)
+# 3D: dim=4 -> NULL (beyond nesting depth)
 query
 SELECT array_length(ARRAY[ARRAY[ARRAY[1,2,3], ARRAY[4,5,6]], ARRAY[ARRAY[7,8,9], ARRAY[10,11,12]]], 4);
 ----
@@ -1497,7 +1497,7 @@ array_length
 NULL
 
 
-# 3D: dim=5 → NULL
+# 3D: dim=5 -> NULL
 query
 SELECT array_length(ARRAY[ARRAY[ARRAY['a','b'], ARRAY['c','d']], ARRAY[ARRAY['e','f'], ARRAY['g','h']]], 5);
 ----
@@ -1542,7 +1542,7 @@ array_length
 2
 
 
-# 5D: dim=6 → NULL (beyond nesting depth)
+# 5D: dim=6 -> NULL (beyond nesting depth)
 query
 SELECT array_length(ARRAY[ARRAY[ARRAY[ARRAY[ARRAY[1,2]]]]], 6);
 ----
@@ -1550,7 +1550,7 @@ array_length
 NULL
 
 
-# 5D: dim=0 → NULL
+# 5D: dim=0 -> NULL
 query
 SELECT array_length(ARRAY[ARRAY[ARRAY[ARRAY[ARRAY[1,2]]]]], 0);
 ----

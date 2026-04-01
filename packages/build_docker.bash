@@ -32,6 +32,7 @@ error() {
 NEEDS_LOGOUT=""
 cleanup() {
 	rm -rf "${BUILD_DIR:-}"
+	rm -f /tmp/serenedb-amd64.tar /tmp/serenedb-arm64.tar
 	docker buildx rm "${BUILDER_NAME}" 2>/dev/null || true
 	if [ -n "$NEEDS_LOGOUT" ]; then
 		if [ "$NEEDS_LOGOUT" = "hub" ]; then
@@ -128,12 +129,17 @@ if [ "${PUSH_IMAGES_2_REGISTRY}" = "true" ]; then
 		rm -f "/tmp/serenedb-${arch}.tar"
 	done
 
-	# Smoke test
+	# Smoke test (use first available arch; only works natively if it matches HOST_ARCH)
 	log "=== Smoke test ==="
-	if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}-${HOST_ARCH}" --version 2>/dev/null; then
-		log "  Version check passed"
+	SMOKE_ARCH="${AVAILABLE_ARCHES[0]}"
+	if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}-${SMOKE_ARCH}" --version 2>/dev/null; then
+		log "  Version check passed (${SMOKE_ARCH})"
 	else
-		error "  Version check failed"
+		if [ "$SMOKE_ARCH" != "$HOST_ARCH" ]; then
+			log "  Skipping smoke test: built ${SMOKE_ARCH} but host is ${HOST_ARCH}"
+		else
+			error "  Version check failed"
+		fi
 	fi
 
 	# Login and push

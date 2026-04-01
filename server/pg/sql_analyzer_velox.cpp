@@ -54,6 +54,7 @@
 #include <velox/functions/prestosql/types/UuidType.h>
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/type/Type.h>
+#include <velox/type/TypeCoercer.h>
 #include <velox/vector/FlatVector.h>
 
 #include <algorithm>
@@ -121,7 +122,6 @@ namespace ve = velox::exec;
 namespace vc = velox::core;
 
 using namespace velox::dwio::common;
-using pg::ParamIndex;
 
 // Expression kinds for SQL analysis context tracking
 // Based on PostgreSQL's ParseExprKind from parse_node.h
@@ -254,7 +254,7 @@ std::vector<velox::TypePtr> GetExprsTypes(
            // String literal as pg_unknown
            if (use_pg_unknown && arg_type == velox::VARCHAR() &&
                arg->kind() == lp::ExprKind::kConstant) {
-             return PG_UNKNOWN();
+             return PGUNKNOWN();
            }
            return arg->type();
          }) |
@@ -265,7 +265,7 @@ velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
   if (!ret_type) {
     return ret_type;
   }
-  if (ret_type == PG_UNKNOWN()) {
+  if (IsUnknown(ret_type)) {
     return velox::VARCHAR();
   }
   const auto& params = ret_type->parameters();
@@ -517,6 +517,8 @@ struct CTE {
   const CommonTableExpr* node = nullptr;
   // ^ we could use LogicalPlanNode, but axiom renaming logic
   // doesn't consider DAG; so we reprocess CTE each time to make it tree
+  const Node* query_override =
+    nullptr;  // for recursive CTEs: non-recursive term only
 };
 
 struct State {
@@ -598,6 +600,7 @@ struct State {
     child.parent = this;
     child.expr_kind = expr_kind;
     child.func_params = func_params;
+    child.is_sublink = is_sublink;
     return child;
   }
 };
@@ -689,7 +692,7 @@ class SqlAnalyzer {
  public:
   explicit SqlAnalyzer(const QueryString& query_sting, const Objects& objects,
                        UniqueIdGenerator& id_generator,
-                       query::QueryContext& query_ctx, pg::Params& params,
+                       query::QueryContext& query_ctx, Params& params,
                        message::Buffer* send_buffer,
                        CopyMessagesQueue* copy_queue) noexcept
     : _objects{objects},
@@ -923,6 +926,9 @@ class SqlAnalyzer {
 
   lp::ExprPtr ProcessFuncCall(State& state, const FuncCall& expr);
 
+  lp::ExprPtr EmitTableFuncExpr(State& state, std::string_view name,
+                                lp::ExprPtr expr);
+
   lp::AggregateExprPtr MaybeAggregateFuncCall(
     State& state, const catalog::Function& logical_function,
     const FuncCall& func_call);
@@ -983,7 +989,7 @@ class SqlAnalyzer {
                                     const catalog::Function& logical_function,
                                     const FuncCall& expr);
 
-  lp::ExprPtr MakeCast(velox::TypePtr to, lp::ExprPtr from) {
+  lp::ExprPtr MakeCast(velox::TypePtr to, lp::ExprPtr from, int location = -1) {
     if (auto it = _param_to_idx.find(from.get()); it != _param_to_idx.end()) {
       auto param_idx = it->second;
       auto& param_type = _params.types[param_idx - 1];
@@ -991,6 +997,37 @@ class SqlAnalyzer {
       if (param_type == kUncastedParamPlaceholder) {
         param_type = to;
       }
+    }
+
+    const bool from_varchar = from->type() == velox::VARCHAR();
+
+    if (from_varchar && IsInterval(to)) {
+      return std::make_shared<lp::CallExpr>(
+        std::move(to), "pg_intervalin", std::move(from),
+        MakeConst(INTERVAL_FULL_RANGE), MakeConst(INTERVAL_FULL_PRECISION));
+    }
+
+    if (from_varchar && IsRegclass(to)) {
+      return std::make_shared<lp::CallExpr>(
+        std::move(to), "pg_regclassin", std::move(from), MakeConst(location));
+    }
+
+    if (from_varchar && IsRegtype(to)) {
+      return std::make_shared<lp::CallExpr>(
+        std::move(to), "pg_regtypein", std::move(from), MakeConst(location));
+    }
+
+    if (from_varchar && IsRegnamespace(to)) {
+      return std::make_shared<lp::CallExpr>(std::move(to), "pg_regnamespacein",
+                                            std::move(from),
+                                            MakeConst(location));
+    }
+
+    if (from_varchar && to->isArray()) {
+      auto varchar_array = std::make_shared<lp::CallExpr>(
+        velox::ARRAY(velox::VARCHAR()), "pg_array_text_in", std::move(from));
+      return std::make_shared<lp::SpecialFormExpr>(
+        std::move(to), lp::SpecialForm::kCast, std::move(varchar_array));
     }
 
     return std::make_shared<lp::SpecialFormExpr>(
@@ -1115,14 +1152,14 @@ class SqlAnalyzer {
   query::QueryContext& _query_ctx;
   vc::QueryCtx& _velox_query_ctx;
   velox::memory::MemoryPool& _memory_pool;
-  pg::Params& _params;
+  Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
   query::Transaction& _transaction;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
   std::shared_ptr<const irs::Scorer> _scorer_for_select;
   lp::ExprPtr _expr_for_scorer;
-  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
+  std::vector<std::unique_ptr<ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -2377,7 +2414,7 @@ void SqlAnalyzer::ProcessCreateFunctionStmt(State& state,
 
       State::FuncParamToExpr dummy_args;
       dummy_args.reserve(list_length(stmt.parameters));
-      auto signature = pg::ToSignature(stmt.parameters, stmt.returnType);
+      auto signature = ToSignature(stmt.parameters, stmt.returnType);
       for (const auto& param : signature.parameters) {
         auto expr =
           std::make_shared<lp::InputReferenceExpr>(param.type, param.name);
@@ -2842,18 +2879,14 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
       return SqlCommandType::DDL;
     }
     default:
-      SDB_ENSURE(false, ERROR_INTERNAL);
-      return SqlCommandType::Unknown;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("unsupported statement type"));
   }
 }
 
 void SqlAnalyzer::ProcessWithClause(State& state, const WithClause* clause) {
   if (!clause) {
     return;
-  }
-  if (clause->recursive) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("recursive WITH query is not supported"));
   }
 
   VisitNodes(clause->ctes, [&](const CommonTableExpr& cte) {
@@ -2862,8 +2895,23 @@ void SqlAnalyzer::ProcessWithClause(State& state, const WithClause* clause) {
     const auto* ctequery = cte.ctequery;
     SDB_ASSERT(ctequery);
 
+    // LIMITATION: Recursive CTEs are not properly implemented.
+    // We only process the non-recursive term (left branch of UNION ALL).
+    // This is correct ONLY when the recursive term never produces rows
+    // (e.g. `UNION ALL SELECT ... WHERE false`), which covers system
+    // catalog compatibility queries from tools like psql/pgAdmin.
+    // A real recursive CTE will silently return wrong results.
+    // TODO: implement proper iterative recursive CTE execution.
+    const Node* query_override = nullptr;
+    if (clause->recursive && IsA(ctequery, SelectStmt)) {
+      const auto* select = castNode(SelectStmt, ctequery);
+      if (select->op != SETOP_NONE && select->larg) {
+        query_override = castNode(Node, select->larg);
+      }
+    }
+
     auto child_state = state.MakeChild();
-    ProcessStmt(child_state, *ctequery);
+    ProcessStmt(child_state, query_override ? *query_override : *ctequery);
 
     if (cte.aliascolnames) {
       const uint32_t cte_aliases_size = list_length(cte.aliascolnames);
@@ -2881,7 +2929,7 @@ void SqlAnalyzer::ProcessWithClause(State& state, const WithClause* clause) {
       }
     }
 
-    auto [_, emplaced] = state.ctes.emplace(ctename, CTE{&cte});
+    auto [_, emplaced] = state.ctes.emplace(ctename, CTE{&cte, query_override});
     if (!emplaced) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_ALIAS),
@@ -3761,7 +3809,9 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 
   SDB_ASSERT(cte->node);
   auto state = parent->MakeChild();
-  ProcessStmt(state, *cte->node->ctequery);
+  const auto* query =
+    cte->query_override ? cte->query_override : cte->node->ctequery;
+  ProcessStmt(state, *query);
   if (node->alias) {
     ProcessAlias(state, node->alias->colnames, cte->node->aliascolnames,
                  node->alias->aliasname);
@@ -4228,6 +4278,10 @@ State SqlAnalyzer::ProcessRangeSubselect(State* parent,
                                          const RangeSubselect* node) {
   SDB_ASSERT(node);
   SDB_ASSERT(node->subquery);
+  if (node->lateral) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("LATERAL subqueries are not supported"));
+  }
   auto subquery_state = parent->MakeChild();
   auto subquery_type = ProcessStmt(subquery_state, *node->subquery);
   SDB_ASSERT(subquery_type == SqlCommandType::Select);
@@ -4241,6 +4295,11 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
                                         const RangeFunction* node) {
   SDB_ASSERT(node);
   SDB_ASSERT(node->functions);
+
+  if (node->lateral) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("LATERAL joins are not supported"));
+  }
 
   std::vector<lp::ExprPtr> unnest_exprs;
   std::vector<std::vector<std::string>> unnested_names;
@@ -4316,7 +4375,7 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
         const auto* column_definitions = castNode(List, lsecond(&func_columns));
         const auto column_definitions_size = list_length(column_definitions);
         // In PG, for single-column functions, the table alias also becomes
-        // the column name (e.g., generate_series(1,3) AS gs → column "gs").
+        // the column name (e.g., generate_series(1,3) AS gs -> column "gs").
         const bool use_table_alias_as_colname =
           node->alias && !node->alias->colnames && args.size() == 1;
         for (size_t i = 0; i < args.size(); ++i) {
@@ -4750,9 +4809,8 @@ lp::ExprPtr SqlAnalyzer::MaybeIntervalOp(std::string_view op, lp::ExprPtr& lhs,
   const auto is_interval_op = [](lp::ExprPtr& lhs, lp::ExprPtr& rhs) -> bool {
     const auto& l_type = lhs->type();
     const auto& r_type = rhs->type();
-    return pg::IsInterval(r_type) &&
-           (l_type->isDate() || l_type->isTimestamp() ||
-            pg::IsInterval(l_type));
+    return IsInterval(r_type) &&
+           (l_type->isDate() || l_type->isTimestamp() || IsInterval(l_type));
   };
 
   if (!is_interval_op(lhs, rhs) && !is_interval_op(rhs, lhs)) {
@@ -5031,6 +5089,11 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
                         ERR_MSG("ANY/ALL expression must have right argument"));
       }
 
+      if (rhs->type() == velox::VARCHAR() ||
+          rhs->type()->kind() == velox::TypeKind::UNKNOWN) {
+        rhs = MakeCast(velox::ARRAY(lhs->type()), std::move(rhs));
+      }
+
       const auto& rhs_type = rhs->type();
       if (!rhs_type->isArray()) {
         THROW_SQL_ERROR(
@@ -5084,6 +5147,28 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
       SDB_ASSERT(false);
   }
   return {};
+}
+
+lp::ExprPtr SqlAnalyzer::EmitTableFuncExpr(State& state, std::string_view name,
+                                           lp::ExprPtr expr) {
+  const auto& type = *expr->type();
+  auto col_name = _id_generator.NextColumnName(name);
+  std::vector<std::string> unnested_names;
+  velox::TypePtr ref_type;
+  if (type.size() != 0) {
+    unnested_names.reserve(type.size());
+    ref_type = MakePtrView(type.childAt(0));
+    for (size_t j = 0; j != type.size(); ++j) {
+      unnested_names.emplace_back(_id_generator.NextColumnName(name));
+    }
+    col_name = unnested_names.front();
+  } else {
+    ref_type = MakePtrView(expr->type());
+    unnested_names.emplace_back(col_name);
+  }
+  state.target_list_rows_from.emplace_back(std::move(expr),
+                                           std::move(unnested_names));
+  return std::make_shared<lp::InputReferenceExpr>(ref_type, col_name);
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
@@ -5194,6 +5279,10 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
                       ERR_MSG("Decorator function '", name,
                               "' must have exactly one argument"));
     }
+    if (logical_function.Options().table &&
+        state.expr_kind == ExprKind::SelectTarget) {
+      return EmitTableFuncExpr(state, name, std::move(args[0]));
+    }
     return std::move(args[0]);
   }
 
@@ -5202,26 +5291,9 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
     // collect them here and later process them (via unnest)
     if (logical_function.Options().table &&
         state.expr_kind == ExprKind::SelectTarget) {
-      auto func_expr = ResolveVeloxFunctionAndInferArgsCommonType(
-        std::string{name}, std::move(args));
-      const auto& type = *func_expr->type();
-      auto col_name = _id_generator.NextColumnName(name);
-      std::vector<std::string> unnested_names;
-      velox::TypePtr ref_type;
-      if (type.size() != 0) {
-        unnested_names.reserve(type.size());
-        ref_type = MakePtrView(type.childAt(0));
-        for (size_t j = 0; j != type.size(); ++j) {
-          unnested_names.emplace_back(_id_generator.NextColumnName(name));
-        }
-        col_name = unnested_names.front();
-      } else {
-        ref_type = MakePtrView(func_expr->type());
-        unnested_names.emplace_back(col_name);
-      }
-      state.target_list_rows_from.emplace_back(std::move(func_expr),
-                                               std::move(unnested_names));
-      return std::make_shared<lp::InputReferenceExpr>(ref_type, col_name);
+      return EmitTableFuncExpr(state, name,
+                               ResolveVeloxFunctionAndInferArgsCommonType(
+                                 std::string{name}, std::move(args)));
     }
     return ResolveVeloxFunctionAndInferArgsCommonType(std::string{name},
                                                       std::move(args));
@@ -5417,6 +5489,8 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
       CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+      ERR_HINT("No function matches the given name and argument types. "
+               "You might need to add explicit type casts."),
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   };
 
@@ -5433,6 +5507,10 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessColumnRef(State& state, const ColumnRef& expr) {
+  if (!state.root && state.is_sublink && state.parent) {
+    return ProcessColumnRef(*state.parent, expr);
+  }
+
   std::string name = NameToStr(expr.fields);
 
   if (!state.root) {
@@ -5512,15 +5590,27 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"date", velox::DATE()},
   {"uuid", velox::UUID()},
   {"cidr", velox::IPPREFIX()},
-  {"void", pg::VOID()},
-  {"regtype", pg::REGTYPE()},
-  {"regclass", pg::REGCLASS()},
-  {"regnamespace", pg::REGNAMESPACE()},
+  {"void", VOID()},
+  {"oid", PGOID()},
+  {"regproc", REGPROC()},
+  {"regtype", REGTYPE()},
+  {"regclass", REGCLASS()},
+  {"regnamespace", REGNAMESPACE()},
+  {"regoper", REGOPER()},
+  {"regoperator", REGOPERATOR()},
+  {"regprocedure", REGPROCEDURE()},
+  {"regrole", REGROLE()},
+  {"regconfig", REGCONFIG()},
+  {"regdictionary", REGDICTIONARY()},
+  {"regcollation", REGCOLLATION()},
+  {"tid", PGTID()},
+  {"cid", PGCID()},
+  {"xid", PGXID()},
+  {"xid8", PGXID8()},
   {"pg_attribute", SystemTable<PgAttribute>{}.RowType()},
   {"pg_type", SystemTable<PgType>{}.RowType()},
   // TODO(mbkkt) Think about it
-  {"oid", velox::BIGINT()},
-  {"name", velox::VARCHAR()},
+  {"name", PGNAME()},
   // information_schema domains (simplified to base types, no constraints)
   {"cardinal_number", velox::INTEGER()},
   {"character_data", velox::VARCHAR()},
@@ -5894,6 +5984,8 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
   if (!type) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+      ERR_HINT("No function matches the given name and argument types. "
+               "You might need to add explicit type casts."),
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   }
 
@@ -6018,6 +6110,22 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
       // Scalar parameter: process the argument and coerce to parameter type.
       auto arg_expr = ProcessExprNodeImpl(state, arg_node);
       if (param.type && param.type != arg_expr->type()) {
+        // String literal constants behave as PG_UNKNOWN for coercion purposes.
+        auto coerce_from = arg_expr->type();
+        if (coerce_from == velox::VARCHAR() &&
+            arg_expr->kind() == lp::ExprKind::kConstant) {
+          coerce_from = PGUNKNOWN();
+        }
+        if (!velox::TypeCoercer::coercible(coerce_from, param.type)) {
+          std::string_view fname = logical_function.GetName();
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+            CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+            ERR_HINT("No function matches the given name and argument types. "
+                     "You might need to add explicit type casts."),
+            ERR_MSG("function ", fname, "(", ToPgTypeString(arg_expr->type()),
+                    ") does not exist"));
+        }
         arg_expr = MakeCast(param.type, std::move(arg_expr));
       }
       param2expr.try_emplace(positional_name, arg_expr);
@@ -6136,7 +6244,9 @@ lp::ExprPtr SqlAnalyzer::ProcessParamRef(State& state, const ParamRef& expr) {
   if (_params.values.empty()) {
     // parse stage
     auto param = MakeConst(velox::TypeKind::UNKNOWN);
-    _params.types[param_idx - 1] = kUncastedParamPlaceholder;
+    if (!_params.types[param_idx - 1]) {
+      _params.types[param_idx - 1] = kUncastedParamPlaceholder;
+    }
     _param_to_idx.try_emplace(param.get(), param_idx);
     return param;
   }
@@ -6272,7 +6382,9 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   // TODO(mkornaukhov): use velox::exec::CastHook for custom cast functions
   // instead of such hacks
-  if (arg->type() == velox::VARCHAR() && type == velox::VARBINARY()) {
+  const bool from_varchar = arg->type() == velox::VARCHAR();
+
+  if (from_varchar && type == velox::VARBINARY()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteain",
                                           std::move(arg));
   }
@@ -6282,7 +6394,7 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           std::move(arg));
   }
 
-  if (arg->type() == velox::VARCHAR() && pg::IsInterval(type)) {
+  if (from_varchar && IsInterval(type)) {
     const auto* typemod = type_name.typmods;
     auto range = TryGet<int>(typemod, 0).value_or(INTERVAL_FULL_RANGE);
     auto precision = TryGet<int>(typemod, 1).value_or(INTERVAL_FULL_PRECISION);
@@ -6291,12 +6403,12 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           MakeConst(precision));
   }
 
-  if (pg::IsInterval(arg->type()) && type == velox::VARCHAR()) {
+  if (IsInterval(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_intervalout",
                                           std::move(arg));
   }
 
-  if (arg->type() == velox::VARCHAR() && type == velox::JSON()) {
+  if (from_varchar && type == velox::JSON()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_jsonin",
                                           std::move(arg));
   }
@@ -6306,44 +6418,17 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           std::move(arg));
   }
 
-  if (arg->type() == velox::VARCHAR() && pg::IsRegtype(type)) {
-    return std::make_shared<lp::CallExpr>(
-      std::move(type), "pg_regtypein", std::move(arg),
-      MakeConst(ErrorPosition(expr.location)));
-  }
-
-  if (pg::IsRegtype(arg->type()) && type == velox::VARCHAR()) {
+  if (IsRegtype(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_regtypeout",
                                           std::move(arg));
   }
 
-  if (arg->type() == velox::VARCHAR() && pg::IsRegclass(type)) {
-    return std::make_shared<lp::CallExpr>(
-      std::move(type), "pg_regclassin", std::move(arg),
-      MakeConst(ErrorPosition(expr.location)));
-  }
-
-  if ((arg->type() == velox::INTEGER() || arg->type() == velox::BIGINT()) &&
-      pg::IsRegclass(type)) {
-    if (arg->type() == velox::INTEGER()) {
-      arg = MakeCast(velox::BIGINT(), std::move(arg));
-    }
-    return std::make_shared<lp::SpecialFormExpr>(
-      std::move(type), lp::SpecialForm::kCast, std::move(arg));
-  }
-
-  if (pg::IsRegclass(arg->type()) && type == velox::VARCHAR()) {
+  if (IsRegclass(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_regclassout",
                                           std::move(arg));
   }
 
-  if (arg->type() == velox::VARCHAR() && pg::IsRegnamespace(type)) {
-    return std::make_shared<lp::CallExpr>(
-      std::move(type), "pg_regnamespacein", std::move(arg),
-      MakeConst(ErrorPosition(expr.location)));
-  }
-
-  if (pg::IsRegnamespace(arg->type()) && type == velox::VARCHAR()) {
+  if (IsRegnamespace(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_regnamespaceout",
                                           std::move(arg));
   }
@@ -6372,17 +6457,14 @@ lp::ExprPtr SqlAnalyzer::ProcessSQLValueFunction(State& state,
                                                  const SQLValueFunction& expr) {
   switch (expr.op) {
     case SVFOP_CURRENT_SCHEMA:
-      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
-                                            "pg_current_schema");
+      return std::make_shared<lp::CallExpr>(PGNAME(), "pg_current_schema");
     case SVFOP_CURRENT_USER:
     case SVFOP_CURRENT_ROLE:
     case SVFOP_USER:
     case SVFOP_SESSION_USER:
-      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
-                                            "pg_current_user");
+      return std::make_shared<lp::CallExpr>(PGNAME(), "pg_current_user");
     case SVFOP_CURRENT_CATALOG:
-      return std::make_shared<lp::CallExpr>(velox::VARCHAR(),
-                                            "pg_current_database");
+      return std::make_shared<lp::CallExpr>(PGNAME(), "pg_current_database");
     case SVFOP_CURRENT_DATE:
     case SVFOP_CURRENT_TIME:
     case SVFOP_CURRENT_TIME_N:
@@ -6487,7 +6569,7 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
 
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
-                        query::QueryContext& query_ctx, pg::Params& params,
+                        query::QueryContext& query_ctx, Params& params,
                         message::Buffer* send_buffer,
                         CopyMessagesQueue* copy_queue) {
   SqlAnalyzer analyzer{query_string, objects,     id_generator, query_ctx,
@@ -6563,7 +6645,7 @@ velox::TypePtr NameToType(const TypeName& type_name) {
     return wrap_in_array(velox::TINYINT());
   }
   if (name == "interval") {
-    return wrap_in_array(pg::INTERVAL());
+    return wrap_in_array(INTERVAL());
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

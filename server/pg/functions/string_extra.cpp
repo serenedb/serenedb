@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -33,10 +33,12 @@
 
 #include "basics/fwd.h"
 #include "pg/sql_exception_macro.h"
+#include "query/types.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
+#include "common/keywords.h"
 #include "utils/errcodes.h"
 LIBPG_QUERY_INCLUDES_END
 
@@ -609,6 +611,523 @@ struct PgConvertTo {
   }
 };
 
+template<typename T>
+struct ConcatWsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE bool callNullable(
+    out_type<velox::Varchar>& result, const arg_type<velox::Varchar>* separator,
+    const arg_type<velox::Variadic<velox::Varchar>>* args) {
+    if (!separator) {
+      return false;
+    }
+    if (args) {
+      std::string_view s{*separator};
+      bool first = true;
+      for (size_t i = 0; i < args->size(); ++i) {
+        if (const auto& v = (*args)[i]) {
+          if (!first) {
+            result.append(s);
+          }
+          first = false;
+          result.append(*v);
+        }
+      }
+    }
+    return true;
+  }
+};
+
+// Returns the number of bytes in the string (not characters).
+template<typename T>
+struct PgOctetLength {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(int64_t& result,
+                                const arg_type<velox::Varchar>& input) {
+    result = static_cast<int64_t>(input.size());
+  }
+};
+
+template<typename T>
+struct QuoteIdentFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& input) {
+    std::string_view str{input};
+    bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
+    if (!needs_quoting) {
+      for (auto c : str) {
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+          needs_quoting = true;
+          break;
+        }
+      }
+    }
+    // Check if the identifier is a reserved keyword in PostgreSQL.
+    if (!needs_quoting) {
+      // ScanKeywordLookup expects a null-terminated lowercase string.
+      // Our str is already lowercase (passed the char check above).
+      std::string null_terminated{str};
+      int kwnum = ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
+      if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
+        needs_quoting = true;
+      }
+    }
+    if (!needs_quoting) {
+      result = str;
+      return;
+    }
+    result.reserve(str.size() + 2);
+    result.append("\"");
+    for (auto c : str) {
+      if (c == '"') {
+        result.append("\"\"");
+      } else {
+        result.append(std::string_view{&c, 1});
+      }
+    }
+    result.append("\"");
+  }
+};
+
+template<typename T>
+struct QuoteLiteralFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // STRICT: returns NULL on NULL input (the default velox behavior for
+  // non-default-null functions)
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& input) {
+    std::string_view str{input};
+    bool has_backslash = str.find('\\') != std::string_view::npos;
+    result.reserve(str.size() + 2);
+    if (has_backslash) {
+      result.append("E'");
+    } else {
+      result.append("'");
+    }
+    for (auto c : str) {
+      if (c == '\'') {
+        result.append("''");
+      } else if (c == '\\') {
+        result.append("\\\\");
+      } else {
+        result.append(std::string_view{&c, 1});
+      }
+    }
+    result.append("'");
+  }
+};
+
+template<typename T>
+struct QuoteNullableFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE bool callNullable(out_type<velox::Varchar>& result,
+                                        const arg_type<velox::Varchar>* input) {
+    if (!input) {
+      result = "NULL";
+      return true;
+    }
+    QuoteLiteralFunction<T> literal;
+    literal.call(result, *input);
+    return true;
+  }
+};
+
+// PostgreSQL-compatible format function similar to C's sprintf.
+// Supports %s (string), %I (SQL identifier), %L (SQL literal),
+// %% (literal %), positional args (%n$s), width, and left-align (-).
+template<typename T>
+struct PgFormat {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr bool is_default_null_behavior = false;
+
+  FOLLY_ALWAYS_INLINE bool callNullable(
+    out_type<velox::Varchar>& result, const arg_type<velox::Varchar>* formatstr,
+    const arg_type<velox::Variadic<velox::Varchar>>* args) {
+    if (!formatstr) {
+      return false;
+    }
+
+    const char* fmt = formatstr->data();
+    size_t fmt_len = formatstr->size();
+    size_t next_arg = 0;
+
+    auto check_arg = [&](size_t idx) {
+      if (!args || idx >= args->size()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("too few arguments for format()"));
+      }
+    };
+
+    size_t i = 0;
+    while (i < fmt_len) {
+      if (fmt[i] != '%') {
+        size_t start = i;
+        while (i < fmt_len && fmt[i] != '%') {
+          ++i;
+        }
+        result.append(std::string_view{fmt + start, i - start});
+        continue;
+      }
+
+      ++i;  // skip '%'
+      if (i >= fmt_len) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() type specifier"));
+      }
+
+      if (fmt[i] == '%') {
+        result.append("%");
+        ++i;
+        continue;
+      }
+
+      // Parse optional position: digits followed by '$'
+      int arg_index = -1;
+      size_t num_start = i;
+      while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
+        ++i;
+      }
+      if (i < fmt_len && fmt[i] == '$' && i > num_start) {
+        int pos = 0;
+        for (size_t j = num_start; j < i; ++j) {
+          pos = pos * 10 + (fmt[j] - '0');
+        }
+        if (pos < 1) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("format specifies argument 0, but arguments are "
+                    "numbered from 1"));
+        }
+        arg_index = pos - 1;
+        ++i;  // skip '$'
+      } else {
+        i = num_start;
+      }
+
+      // Parse optional flags
+      bool left_align = false;
+      if (i < fmt_len && fmt[i] == '-') {
+        left_align = true;
+        ++i;
+      }
+
+      // Parse optional width (literal integer only — PostgreSQL format() does
+      // not support '*' dynamic width unlike C printf)
+      int width = 0;
+      while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
+        width = width * 10 + (fmt[i] - '0');
+        ++i;
+      }
+
+      if (i >= fmt_len) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() type specifier"));
+      }
+
+      char type = fmt[i];
+      ++i;
+
+      size_t ai =
+        (arg_index >= 0) ? static_cast<size_t>(arg_index) : next_arg++;
+      check_arg(ai);
+
+      switch (type) {
+        case 's': {
+          if (const auto& v = (*args)[ai]) {
+            AppendPadded(result, *v, width, left_align);
+          }
+        } break;
+        case 'I': {
+          if (const auto& v = (*args)[ai]) {
+            auto quoted = QuoteIdent(*v);
+            AppendPadded(result, quoted, width, left_align);
+          } else {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                            ERR_MSG("null values cannot be formatted as an SQL "
+                                    "identifier"));
+          }
+        } break;
+        case 'L': {
+          if (const auto& v = (*args)[ai]) {
+            auto quoted = QuoteLiteral(*v);
+            AppendPadded(result, quoted, width, left_align);
+          } else {
+            AppendPadded(result, "NULL", width, left_align);
+          }
+        } break;
+        default:
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("unrecognized format() type specifier \"",
+                                  std::string_view{&type, 1}, "\""));
+      }
+    }
+    return true;
+  }
+
+ private:
+  static void AppendPadded(out_type<velox::Varchar>& result, const auto& v,
+                           int width, bool left_align) {
+    std::string_view str{v};
+    int len = static_cast<int>(str.size());
+    int pad = (width > len) ? (width - len) : 0;
+    if (!left_align && pad > 0) {
+      for (int j = 0; j < pad; ++j) {
+        result.append(" ");
+      }
+    }
+    result.append(str);
+    if (left_align && pad > 0) {
+      for (int j = 0; j < pad; ++j) {
+        result.append(" ");
+      }
+    }
+  }
+
+  static std::string QuoteIdent(const auto& v) {
+    std::string_view str{v};
+    bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
+    if (!needs_quoting) {
+      for (auto c : str) {
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+          needs_quoting = true;
+          break;
+        }
+      }
+    }
+    if (!needs_quoting) {
+      std::string null_terminated{str};
+      int kwnum = ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
+      if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
+        needs_quoting = true;
+      }
+    }
+    if (!needs_quoting) {
+      return std::string{str};
+    }
+    std::string out;
+    out.reserve(str.size() + 2);
+    out += '"';
+    for (auto c : str) {
+      if (c == '"') {
+        out += "\"\"";
+      } else {
+        out += c;
+      }
+    }
+    out += '"';
+    return out;
+  }
+
+  static std::string QuoteLiteral(const auto& v) {
+    std::string_view str{v};
+    bool has_backslash = str.find('\\') != std::string_view::npos;
+    std::string out;
+    out.reserve(str.size() + 2);
+    if (has_backslash) {
+      out += "E'";
+    } else {
+      out += '\'';
+    }
+    for (auto c : str) {
+      if (c == '\'') {
+        out += "''";
+      } else if (c == '\\') {
+        out += "\\\\";
+      } else {
+        out += c;
+      }
+    }
+    out += '\'';
+    return out;
+  }
+};
+
+template<typename T>
+struct PgSimilarToEscape {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& pattern) {
+    result = EscapePattern(pattern, '\\');
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& pattern,
+                                const arg_type<velox::Varchar>& escape) {
+    if (escape.size() != 1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
+                      ERR_MSG("invalid escape string: must be one character"));
+    }
+
+    result = EscapePattern({pattern.data(), pattern.size()}, escape.data()[0]);
+  }
+
+ private:
+  std::string EscapePattern(std::string_view pattern, char escape_char) {
+    // Postgres implementation from
+    // https://raw.githubusercontent.com/postgres/postgres/master/src/backend/utils/adt/regexp.c
+    std::string result;
+    result.reserve(pattern.size() + 6);  // at least
+
+    bool afterescape = false;
+    int nquotes = 0;
+    int bracket_depth = 0;
+    int charclass_pos = 0;
+
+    result += "^(?:";
+
+    for (size_t i = 0; i < pattern.size(); ++i) {
+      char pchar = pattern[i];
+
+      if (afterescape) {
+        if (pchar == '"' && bracket_depth < 1) {
+          if (nquotes == 0) {
+            result += "){1,1}?(";
+          } else if (nquotes == 1) {
+            result += "){1,1}(?:";
+          } else {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER),
+              ERR_MSG("SQL regular expression may not contain more than "
+                      "two escape-double-quote separators"));
+          }
+          nquotes++;
+        } else {
+          result += '\\';
+          result += pchar;
+          charclass_pos = 3;
+        }
+
+        afterescape = false;
+      } else if (pchar == escape_char) {
+        afterescape = true;
+      } else if (bracket_depth > 0) {
+        if (pchar == '\\') {
+          result += '\\';
+        }
+        result += pchar;
+
+        if (pchar == ']' && charclass_pos > 2) {
+          bracket_depth--;
+        } else if (pchar == '[') {
+          bracket_depth++;
+          charclass_pos = 3;
+        } else if (pchar == '^') {
+          charclass_pos++;
+        } else {
+          charclass_pos = 3;
+        }
+      } else if (pchar == '[') {
+        result += pchar;
+        bracket_depth = 1;
+        charclass_pos = 1;
+      } else if (pchar == '%') {
+        result += ".*";
+      } else if (pchar == '_') {
+        result += '.';
+      } else if (pchar == '(') {
+        result += "(?:";
+      } else if (pchar == '\\' || pchar == '.' || pchar == '^' ||
+                 pchar == '$') {
+        result += '\\';
+        result += pchar;
+      } else {
+        result += pchar;
+      }
+    }
+
+    result += ")$";
+    return result;
+  }
+};
+
+template<typename T>
+struct PgLikeEscape {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& pattern,
+                                const arg_type<velox::Varchar>& escape) {
+    if (escape.size() != 1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
+                      ERR_MSG("invalid escape string: must be one character"));
+    }
+    result = EscapePattern({pattern.data(), pattern.size()}, escape.data()[0]);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& pattern) {
+    result = EscapePattern(pattern, '\0');
+  }
+
+ private:
+  std::string EscapePattern(std::string_view pattern, char escape_char) {
+    // Postgres implementation
+    std::string result;
+    result.reserve(pattern.size());  // at least
+    if (escape_char == '\\') {
+      result = pattern;
+      return result;
+    }
+    bool afterescape = false;
+    for (char c : pattern) {
+      if (c == escape_char && !afterescape) {
+        result += '\\';
+        afterescape = true;
+        continue;
+      } else if (c == '\\' && !afterescape) {
+        result += '\\';
+      }
+      result += c;
+      afterescape = false;
+    }
+    return result;
+  }
+};
+
+// Process escape pattern for LIKE
+// to make pattern presto compatible for escape character '\'
+// Example: escape '\' in 'ab\ac' => 'abac'
+template<typename T>
+struct ProcessEscapePattern {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<velox::Varchar>& pattern) {
+    char escape_char = '\\';
+    std::string res;
+    res.reserve(pattern.size());
+    bool afterescape = false;
+    for (char c : pattern) {
+      if (c == escape_char && !afterescape) {
+        afterescape = true;
+        continue;
+      }
+      if (afterescape && (c == '%' || c == '_' || c == '\\')) {
+        res += '\\';
+      }
+      res += c;
+      afterescape = false;
+    }
+    if (afterescape) {
+      // For some reason postgres allows escape character at the end of pattern
+      res += escape_char;
+      res += escape_char;
+    }
+    result = std::move(res);
+  }
+};
+
 // pg_client_encoding() -> name
 template<typename T>
 struct PgClientEncoding {
@@ -663,7 +1182,32 @@ void registerStringExtraFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "convert_from"});
   velox::registerFunction<PgConvertTo, velox::Varbinary, velox::Varchar,
                           velox::Varchar>({prefix + "convert_to"});
-  velox::registerFunction<PgClientEncoding, velox::Varchar>(
+  velox::registerFunction<ConcatWsFunction, velox::Varchar, velox::Varchar,
+                          velox::Variadic<velox::Varchar>>(
+    {prefix + "concat_ws"});
+  velox::registerFunction<PgFormat, velox::Varchar, velox::Varchar,
+                          velox::Variadic<velox::Varchar>>({prefix + "format"});
+
+  velox::registerFunction<PgOctetLength, int64_t, velox::Varchar>(
+    {prefix + "octet_length"});
+
+  velox::registerFunction<QuoteIdentFunction, velox::Varchar, velox::Varchar>(
+    {prefix + "quote_ident"});
+  velox::registerFunction<QuoteLiteralFunction, velox::Varchar, velox::Varchar>(
+    {prefix + "quote_literal"});
+  velox::registerFunction<QuoteNullableFunction, velox::Varchar,
+                          velox::Varchar>({prefix + "quote_nullable"});
+
+  velox::registerFunction<PgSimilarToEscape, velox::Varchar, velox::Varchar,
+                          velox::Varchar>({prefix + "similar_to_escape"});
+  velox::registerFunction<PgSimilarToEscape, velox::Varchar, velox::Varchar>(
+    {prefix + "similar_to_escape"});
+  velox::registerFunction<PgLikeEscape, velox::Varchar, velox::Varchar,
+                          velox::Varchar>({prefix + "like_escape"});
+  velox::registerFunction<ProcessEscapePattern, velox::Varchar, velox::Varchar>(
+    {prefix + "process_escape_pattern"});
+
+  velox::registerFunction<PgClientEncoding, NameCustomType>(
     {prefix + "client_encoding"});
 }
 

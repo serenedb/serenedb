@@ -93,7 +93,7 @@ jobs:
     needs: [resolve-version, build-x64, build-arm64]
     if: >-
       always() && !cancelled() &&
-      (needs.build-x64.result == 'success' || needs.build-arm64.result == 'success')
+      (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
     runs-on:
       - X64
     permissions:
@@ -117,14 +117,14 @@ jobs:
 
       # Download tarball artifacts and map to Docker arch names
       - name: Download x64 tarball
-        if: needs.build-x64.result == 'success'
+        if: needs.build-x64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
           name: tarball-X64
           path: packages/tarball/
 
       - name: Download arm64 tarball
-        if: needs.build-arm64.result == 'success'
+        if: needs.build-arm64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
           name: tarball-arm
@@ -166,14 +166,14 @@ jobs:
 
       # Download package artifacts for GitHub release
       - name: Download x64 packages
-        if: inputs.CREATE_GITHUB_RELEASE && needs.build-x64.result == 'success'
+        if: inputs.CREATE_GITHUB_RELEASE && needs.build-x64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
           name: packages-X64-${{ github.run_number }}
           path: release-packages/
 
       - name: Download arm64 packages
-        if: inputs.CREATE_GITHUB_RELEASE && needs.build-arm64.result == 'success'
+        if: inputs.CREATE_GITHUB_RELEASE && needs.build-arm64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
           name: packages-arm-${{ github.run_number }}
@@ -231,7 +231,7 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ github.ref_name }}
-          JOB_STATUS: ${{ (needs.build-x64.result == 'success' || needs.build-x64.result == 'skipped') && (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped') && 'success' || 'failure' }}
+          JOB_STATUS: ${{ (needs.build-x64.outputs.packages_ok == 'true' || needs.build-x64.result == 'skipped') && (needs.build-arm64.outputs.packages_ok == 'true' || needs.build-arm64.result == 'skipped') && 'success' || 'failure' }}
           ACTOR: ${{ github.actor }}
           RUN_NAME: "SereneDB [release]"
           RUN_NUMBER: ${{ github.run_number }}

@@ -208,7 +208,7 @@ FROM pg_catalog.pg_tables
 WHERE tablename = 'vedernikoff' AND schemaname = 'public'
 ----
 tableowner
-unknown (OID=1000000)
+postgres
 
 
 # pg_class: approximate row count

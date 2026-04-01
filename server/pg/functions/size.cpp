@@ -24,18 +24,11 @@
 #include <velox/functions/Registerer.h>
 #include <velox/type/SimpleFunctionApi.h>
 
-#include <string>
-
-#include "basics/down_cast.h"
 #include "basics/fwd.h"
-#include "catalog/catalog.h"
-#include "catalog/object.h"
 #include "pg/connection_context.h"
-#include "pg/sql_collector.h"
+#include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
 #include "query/types.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -48,11 +41,15 @@ namespace sdb::pg::functions {
 namespace {
 
 int64_t GetRelationForkSize(const catalog::Snapshot& snapshot, uint64_t oid,
-                            std::string_view fork) {
+                            std::string_view fork, bool table_only = false) {
   auto rel = snapshot.GetObject(ObjectId{oid});
   if (!rel) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation with OID ", oid, " does not exist"));
+  }
+  if (table_only && rel->GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", rel->GetName(), "\" is not a table"));
   }
   if (fork != "main") {
     return 0;
@@ -78,17 +75,16 @@ template<typename T>
 struct PgDatabaseSize {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<velox::Varchar>& /*input*/) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    snapshot = conn->EnsureCatalogSnapshot();
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*) {
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
                                 const arg_type<velox::Varchar>& input) {
     std::string_view database_name = input;
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
     auto database = snapshot->GetDatabase(database_name);
     if (!database) {
       THROW_SQL_ERROR(
@@ -98,66 +94,81 @@ struct PgDatabaseSize {
     result = GetServerEngine().GetDatabaseSize(*snapshot, database->GetId());
   }
 
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+ private:
+  const ConnectionContext* _ctx;
+};
+
+template<typename T>
+struct PgDatabaseSizeOid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
+                                const arg_type<int64_t>& input) {
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
+    auto database = snapshot->GetDatabase(static_cast<ObjectId>(input));
+    if (!database) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_NAME),
+                      ERR_MSG("database with OID ", input, " does not exist"));
+    }
+    result = GetServerEngine().GetDatabaseSize(*snapshot, database->GetId());
+  }
+
+ private:
+  const ConnectionContext* _ctx;
 };
 
 template<typename T>
 struct PgTableSize {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<velox::Varchar>* /*input*/) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    db_id = conn->GetDatabaseId();
-    current_schema = conn->GetCurrentSchema();
-    snapshot = conn->EnsureCatalogSnapshot();
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
-                                const arg_type<velox::Varchar>& input) {
-    auto object_name = ParseObjectName(input, current_schema);
-    auto table =
-      snapshot->GetTable(db_id, object_name.schema, object_name.relation);
-    if (!table) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_NAME),
-        ERR_MSG("relation \"", object_name.relation, "\" does not exist"));
-    }
-    result = GetServerEngine().GetTableSize(table->GetId());
+                                const arg_type<int64_t>& input) {
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
+    result = GetRelationForkSize(*snapshot, static_cast<uint64_t>(input),
+                                 "main", true);
   }
 
-  ObjectId db_id;
-  std::string current_schema;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+ private:
+  const ConnectionContext* _ctx;
 };
 
 template<typename T>
 struct PgSchemaSize {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& /*inputTypes*/,
-    const velox::core::QueryConfig& config,
-    const arg_type<velox::Varchar>* /*input*/) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    db_id = conn->GetDatabaseId();
-    snapshot = conn->EnsureCatalogSnapshot();
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
-                                const arg_type<velox::Varchar>& input) {
-    std::string_view schema_name = input;
-    if (!snapshot->GetSchema(db_id, schema_name)) {
+                                const arg_type<int64_t>& input) {
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
+    auto schema = snapshot->GetObject<catalog::Schema>(
+      ObjectId{static_cast<uint64_t>(input)});
+    if (!schema) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_NAME),
-                      ERR_MSG("schema \"", schema_name, "\" does not exist"));
+                      ERR_MSG("schema with OID ", input, " does not exist"));
     }
-    result = GetServerEngine().GetSchemaSize(*snapshot, db_id, schema_name);
+    result = GetServerEngine().GetSchemaSize(*snapshot, schema->GetDatabaseId(),
+                                             schema->GetName());
   }
 
-  ObjectId db_id;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+ private:
+  const ConnectionContext* _ctx;
 };
 
 template<typename T>
@@ -167,17 +178,18 @@ struct PgRelationSize {
   FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
                                       const velox::core::QueryConfig& config,
                                       const arg_type<int64_t>*) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    snapshot = conn->EnsureCatalogSnapshot();
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
                                 const arg_type<int64_t>& input) {
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
     result =
       GetRelationForkSize(*snapshot, static_cast<uint64_t>(input), "main");
   }
 
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+ private:
+  const ConnectionContext* _ctx;
 };
 
 template<typename T>
@@ -188,34 +200,168 @@ struct PgRelationSizeWithFork {
                                       const velox::core::QueryConfig& config,
                                       const arg_type<int64_t>*,
                                       const arg_type<velox::Varchar>*) {
-    auto conn = basics::downCast<const ConnectionContext>(config.config());
-    snapshot = conn->EnsureCatalogSnapshot();
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
                                 const arg_type<int64_t>& input,
                                 const arg_type<velox::Varchar>& fork) {
-    result = GetRelationForkSize(*snapshot, static_cast<uint64_t>(input),
-                                 std::string_view{fork.data(), fork.size()});
+    std::string_view fork_name = fork;
+    if (fork_name != "main" && fork_name != "fsm" && fork_name != "vm" &&
+        fork_name != "init") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("invalid fork name"));
+    }
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
+    result =
+      GetRelationForkSize(*snapshot, static_cast<uint64_t>(input), fork_name);
   }
 
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+ private:
+  const ConnectionContext* _ctx;
+};
+
+template<typename T>
+struct PgTotalRelationSize {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = basics::downCast<const ConnectionContext>(config.config().get());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
+                                const arg_type<int64_t>& input) {
+    auto snapshot = _ctx->EnsureCatalogSnapshot();
+    result =
+      GetRelationForkSize(*snapshot, static_cast<uint64_t>(input), "main");
+  }
+
+ private:
+  const ConnectionContext* _ctx;
+};
+
+template<typename T>
+struct PgIndexesSize {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
+                                const arg_type<int64_t>&) {
+    // In RocksDB, indexes are embedded in the LSM tree alongside table data,
+    // so we cannot separate index size from table size.
+    result = 0;
+  }
+};
+
+template<typename T>
+struct PgTablespaceSizeOid {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&, const arg_type<int64_t>&) {
+    return false;  // NULL: SereneDB has no tablespaces
+  }
+};
+
+template<typename T>
+struct PgTablespaceSizeName {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&,
+                                const arg_type<velox::Varchar>&) {
+    return false;  // NULL: SereneDB has no tablespaces
+  }
+};
+
+template<typename T>
+struct PgColumnSize {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<int32_t>&,
+                                const arg_type<velox::Any>&) {
+    return false;  // NULL: requires runtime type inspection
+  }
+};
+
+template<typename T>
+struct PgColumnCompression {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
+                                const arg_type<velox::Any>&) {
+    return false;  // NULL: SereneDB does not use TOAST compression
+  }
+};
+
+template<typename T>
+struct PgColumnToastChunkId {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&,
+                                const arg_type<velox::Any>&) {
+    return false;  // NULL: SereneDB does not use TOAST
+  }
+};
+
+template<typename T>
+struct PgSizeBytes {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<int64_t>&,
+                                const arg_type<velox::Varchar>&) {
+    return false;  // NULL: not yet implemented
+  }
+};
+
+template<typename T>
+struct PgSizePretty {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>&,
+                                const arg_type<int64_t>&) {
+    return false;  // NULL: not yet implemented
+  }
 };
 
 }  // namespace
 
 void registerSizeFunctions(const std::string& prefix) {
-  velox::registerFunction<PgDatabaseSize, int64_t, velox::Varchar>(
+  velox::registerFunction<PgColumnSize, int32_t, velox::Any>(
+    {prefix + "column_size"});
+  velox::registerFunction<PgColumnCompression, velox::Varchar, velox::Any>(
+    {prefix + "column_compression"});
+  velox::registerFunction<PgColumnToastChunkId, OidCustomType, velox::Any>(
+    {prefix + "column_toast_chunk_id"});
+  velox::registerFunction<PgDatabaseSize, int64_t, NameCustomType>(
     {prefix + "database_size"});
-  velox::registerFunction<PgSchemaSize, int64_t, velox::Varchar>(
-    {prefix + "schema_size"});
-  velox::registerFunction<PgTableSize, int64_t, velox::Varchar>(
+  velox::registerFunction<PgDatabaseSizeOid, int64_t, OidCustomType>(
+    {prefix + "database_size"});
+  velox::registerFunction<PgIndexesSize, int64_t, RegclassCustomType>(
+    {prefix + "indexes_size"});
+  velox::registerFunction<PgRelationSize, int64_t, RegclassCustomType>(
+    {prefix + "relation_size"});
+  velox::registerFunction<PgRelationSizeWithFork, int64_t, RegclassCustomType,
+                          velox::Varchar>({prefix + "relation_size"});
+  velox::registerFunction<PgSizeBytes, int64_t, velox::Varchar>(
+    {prefix + "size_bytes"});
+  velox::registerFunction<PgSizePretty, velox::Varchar, int64_t>(
+    {prefix + "size_pretty"});
+  // TODO: pg_size_pretty(numeric) -> text
+  velox::registerFunction<PgTableSize, int64_t, RegclassCustomType>(
     {prefix + "table_size"});
-  velox::registerFunction<PgRelationSize, int64_t, pg::RegclassCustomType>(
-    {prefix + "relation_size"});
-  velox::registerFunction<PgRelationSizeWithFork, int64_t,
-                          pg::RegclassCustomType, velox::Varchar>(
-    {prefix + "relation_size"});
+  velox::registerFunction<PgTablespaceSizeName, int64_t, NameCustomType>(
+    {prefix + "tablespace_size"});
+  velox::registerFunction<PgTablespaceSizeOid, int64_t, OidCustomType>(
+    {prefix + "tablespace_size"});
+  velox::registerFunction<PgTotalRelationSize, int64_t, RegclassCustomType>(
+    {prefix + "total_relation_size"});
+
+  // pg_schema_size is not a standard PostgreSQL function, but we include it for
+  // convenience. It returns the total size of all objects in the schema, which
+  // is a common use case that would otherwise require summing table_size and
+  // index sizes for all tables in the schema.
+  velox::registerFunction<PgSchemaSize, int64_t, RegnamespaceCustomType>(
+    {prefix + "schema_size"});
 }
 
 }  // namespace sdb::pg::functions

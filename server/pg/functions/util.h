@@ -24,6 +24,6 @@
 
 namespace sdb::pg::functions {
 
-void registerJsonFunctions(const std::string& prefix);
+void registerUtilFunctions(const std::string& prefix);
 
 }  // namespace sdb::pg::functions

@@ -81,7 +81,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
       // Map return type
       Oid rettype = 0;
       if (sig.return_type) {
-        rettype = static_cast<Oid>(GetTypeOID(sig.return_type));
+        rettype = Type2Oid(sig.return_type);
       }
 
       // Build argument types
@@ -92,7 +92,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
             param.mode == catalog::FunctionParameter::Mode::InOut ||
             param.mode == catalog::FunctionParameter::Mode::Variadic) {
           if (param.type) {
-            argtypes.push_back(static_cast<Oid>(GetTypeOID(param.type)));
+            argtypes.push_back(Type2Oid(param.type));
           } else {
             argtypes.push_back(0);
           }

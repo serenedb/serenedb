@@ -212,13 +212,13 @@ jobs:
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
-        if: steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
+        if: always() && !cancelled() && steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
         run: ./scripts/ci/steps/05-ci-in-docker-package.bash
 
       # ==================== RELEASE TEST AUTOMATION ====================
       - name: Release Test Automation (RTA)
         id: rta
-        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         run: ./scripts/ci/steps/08-ci-rta.bash
 
       # ==================== COVERAGE REPORT ====================
@@ -229,7 +229,7 @@ jobs:
 
       # ==================== UPLOAD RELEASE TARBALL ====================
       - name: Upload release tarball
-        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: tarball-${{ inputs.LOCATION }}

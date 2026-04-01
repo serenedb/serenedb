@@ -73,3 +73,4 @@ jobs:
             APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
             APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
             DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+            TG_USER_MAP: ${{ secrets.TG_USER_MAP }}

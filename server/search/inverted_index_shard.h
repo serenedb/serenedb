@@ -186,7 +186,7 @@ class InvertedIndexShard final
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
 
-  void StatsToVPack(vpack::Builder& builder);
+  void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
 
   auto& GetMutex() { return _mutex; }

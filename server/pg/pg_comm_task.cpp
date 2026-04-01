@@ -480,7 +480,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
     _send.WriteUncommitted({"\0", 1});
     int32_t table_oid = 0;
     int16_t attr_number = 0;
-    int32_t type_oid = GetTypeOID(output_type->childAt(i));
+    int32_t type_oid = Type2Oid(output_type->childAt(i));
     int16_t type_size = -1;
     int32_t type_modifier = -1;
     const auto format_code = i < formats.size() ? formats[i] : default_format;
@@ -507,7 +507,7 @@ void DescribeParameters(const std::vector<velox::TypePtr>& param_types,
   const uint16_t num_fields = param_types.size();
   for (const auto& type : param_types) {
     SDB_ASSERT(type);
-    const auto oid = GetTypeOID(type);
+    const auto oid = Type2Oid(type);
     SDB_ASSERT(oid > 0);
     absl::big_endian::Store32(buffer.GetContiguousData(4), oid);
   }
@@ -931,14 +931,14 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   ParamIndex num_params = absl::big_endian::Load16(packet.data());
   packet.remove_prefix(sizeof(int16_t));
 
+  std::vector<int32_t> oids;
   if (num_params > 0) {
     if (packet.size() < num_params * sizeof(int32_t)) {
       return SendError("Malformed Parse packet.", ERRCODE_PROTOCOL_VIOLATION);
     }
+    oids.reserve(num_params);
     for (ParamIndex i = 0; i < num_params; ++i) {
-      // TODO: use type OID from client if it's specified
-      [[maybe_unused]] int32_t param_oid =
-        absl::big_endian::Load32(packet.data());
+      oids.push_back(absl::big_endian::Load32(packet.data()));
       packet.remove_prefix(sizeof(int32_t));
     }
   }
@@ -946,10 +946,12 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   size_t root_count = 0;
   if (it == _statements.end()) {
     _anonymous_statement = MakeStatement(_current_query);
+    _anonymous_statement.params.oids = std::move(oids);
     root_count = _anonymous_statement.RootCount();
     _current_query = _anonymous_statement.query_string->view();
   } else {
     it->second = MakeStatement(_current_query);
+    it->second.params.oids = std::move(oids);
     root_count = it->second.RootCount();
     _current_query = it->second.query_string->view();
   }
@@ -997,9 +999,11 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   // TODO: Check if bind was already and reparse AST
   if (!param_values.empty()) {
     auto types = std::move(stmt.params.types);
+    auto oids = std::move(stmt.params.oids);
     stmt = MakeStatement(stmt.query_string->view());
     stmt.params.values = std::move(param_values);
     stmt.params.types = std::move(types);
+    stmt.params.oids = std::move(oids);
   }
   portal.stmt = &stmt;
 

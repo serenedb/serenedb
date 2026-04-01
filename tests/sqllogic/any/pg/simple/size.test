@@ -1,0 +1,132 @@
+# Tests for pg_*_size functions
+
+
+# Setup
+
+statement ok
+CREATE TABLE size_test (id INT PRIMARY KEY, data TEXT)
+
+
+statement ok
+INSERT INTO size_test VALUES (1, 'hello'), (2, 'world')
+
+
+# pg_relation_size (regclass)
+
+query
+SELECT pg_relation_size('size_test') >= 0 AS ok;
+----
+ok
+t
+
+
+query
+SELECT pg_relation_size('size_test', 'main') >= 0 AS ok;
+----
+ok
+t
+
+
+query
+SELECT pg_relation_size('size_test', 'fsm') = 0 AS ok;
+----
+ok
+t
+
+
+query
+SELECT pg_relation_size('size_test', 'vm') = 0 AS ok;
+----
+ok
+t
+
+
+query
+SELECT pg_relation_size('size_test', 'init') = 0 AS ok;
+----
+ok
+t
+
+
+# pg_relation_size with explicit regclass cast
+
+query
+SELECT pg_relation_size('size_test'::regclass) >= 0 AS ok;
+----
+ok
+t
+
+
+query
+SELECT pg_relation_size('size_test'::regclass, 'main') >= 0 AS ok;
+----
+ok
+t
+
+
+# pg_total_relation_size (regclass)
+
+query
+SELECT pg_total_relation_size('size_test') >= 0 AS ok;
+----
+ok
+t
+
+
+# pg_indexes_size (regclass)
+
+query
+SELECT pg_indexes_size('size_test') >= 0 AS ok;
+----
+ok
+t
+
+
+# pg_table_size (regclass)
+
+query
+SELECT pg_table_size('size_test') >= 0 AS ok;
+----
+ok
+t
+
+
+# pg_database_size (name)
+
+query
+SELECT pg_database_size(current_database()) >= 0 AS ok;
+----
+ok
+t
+
+
+# pg_database_size (oid)
+
+query
+SELECT pg_database_size(d.oid) >= 0 AS ok FROM pg_database d WHERE d.datname = current_database();
+----
+ok
+t
+
+# Verify unknown->regclass implicit coercion (text->regclass is castcontext='i' in pg_cast.dat)
+
+query
+SELECT pg_relation_size('size_test'::text) >= 0 AS ok;
+----
+ok
+t
+
+
+# Verify unknown->name implicit coercion for pg_database_size
+
+query
+SELECT pg_database_size(current_database()::name) >= 0 AS ok;
+----
+ok
+t
+
+
+# Cleanup
+
+statement ok
+DROP TABLE size_test

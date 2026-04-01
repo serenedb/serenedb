@@ -1,0 +1,131 @@
+# Tests for PostgreSQL array literal parsing:
+#   '{...}'::type[]  explicit cast
+#   expr = ANY('{...}') / expr = ALL('{...}') implicit coercion
+
+
+# ====== Explicit cast: varchar -> array ======
+
+query
+SELECT '{public,pg_catalog}'::text[];
+----
+text
+{public,pg_catalog}
+
+
+query
+SELECT '{1,2,3}'::int[];
+----
+int4
+{1,2,3}
+
+
+query
+SELECT '{1,2,3}'::int8[];
+----
+int8
+{1,2,3}
+
+
+query
+SELECT '{1.5,2.5}'::float8[];
+----
+float8
+{1.5,2.5}
+
+
+query
+SELECT '{true,false,true}'::bool[];
+----
+bool
+{t,f,t}
+
+
+# Quoted elements preserve leading/trailing whitespace inside quotes
+query
+SELECT '{hello," world "}'::text[];
+----
+text
+{hello," world "}
+
+
+# Unquoted elements have trailing whitespace stripped
+query
+SELECT '{  hello  ,  world  }'::text[];
+----
+text
+{hello,world}
+
+
+# NULL element (unquoted, case-insensitive)
+query
+SELECT '{1,NULL,3}'::int[];
+----
+int4
+{1,NULL,3}
+
+
+query
+SELECT '{a,null,b}'::text[];
+----
+text
+{a,NULL,b}
+
+
+# Empty array
+query
+SELECT '{}'::text[];
+----
+text
+{}
+
+
+# ====== ANY/ALL with implicit array literal coercion ======
+
+query
+SELECT 'public' = ANY('{public,pg_catalog}');
+----
+?column?
+t
+
+
+query
+SELECT 'information_schema' = ANY('{public,pg_catalog}');
+----
+?column?
+f
+
+
+query
+SELECT 42 = ANY('{1,42,100}');
+----
+?column?
+t
+
+
+query
+SELECT 7 = ANY('{1,42,100}');
+----
+?column?
+f
+
+
+query
+SELECT 'x' = ALL('{x,x,x}');
+----
+?column?
+t
+
+
+query
+SELECT 'x' = ALL('{x,y,x}');
+----
+?column?
+f
+
+
+# Single-element array
+query
+SELECT 'foo' = ANY('{foo}');
+----
+?column?
+t

@@ -523,7 +523,7 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, WandExtent,
                                                  const ScoreFunction& scorer,
                                                  ColumnArgsFetcher* fetcher,
                                                  doc_id_t min, doc_id_t max) {
-  // Iterator already past window — nothing to do.
+  // Iterator already past window -- nothing to do.
   if (value() >= max) [[unlikely]] {
     return;
   }
@@ -847,7 +847,7 @@ SingleWandIterator<IteratorTraits, Root, Pos, Offs, WandExtent,
   SDB_ASSERT(score.score && !score.score->IsDefault());
   SDB_ASSERT(score.merge_type == ScoreMergeType::Sum);
 
-  // Iterator already past window — nothing to do.
+  // Iterator already past window -- nothing to do.
   if (value() >= max) [[unlikely]] {
     return std::pair{_doc, true};
   }

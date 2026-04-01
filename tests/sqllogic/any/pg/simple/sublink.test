@@ -586,3 +586,20 @@ avg
 1
 2
 3
+
+
+# Correlated subquery inside ARRAY() with WITH RECURSIVE
+query
+SELECT outer_t.v,
+       ARRAY(WITH RECURSIVE cte AS (
+         SELECT inner_t.v FROM (VALUES (10), (20), (30)) AS inner_t(v)
+         WHERE inner_t.v = outer_t.v
+         UNION ALL
+         SELECT 0 FROM cte WHERE false
+       ) SELECT v FROM cte) AS arr
+FROM (VALUES (10), (20)) AS outer_t(v)
+ORDER BY 1;
+----
+v	arr
+10	{10}
+20	{20}

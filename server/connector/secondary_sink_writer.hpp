@@ -82,13 +82,9 @@ inline void AppendDummyColumnId(std::string& key) {
   absl::big_endian::Store64(key.data() + base, 0);
 }
 
-inline void AppendNullMarker(std::string& key) {
-  key.push_back('\0');
-}
+inline void AppendNullMarker(std::string& key) { key.push_back('\0'); }
 
-inline void AppendNotNullMarker(std::string& key) {
-  key.push_back('\1');
-}
+inline void AppendNotNullMarker(std::string& key) { key.push_back('\1'); }
 
 // Appends <marker><encoded_value> for each SK column.
 // Returns true if any SK column is NULL.

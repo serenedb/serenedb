@@ -35,7 +35,7 @@
 
 namespace sdb::connector {
 
-template<bool IsGeneratedPK, bool IncludeColumnId = true>
+template<bool IsGeneratedPK>
 class SSTBlockBuilder {
  public:
   SSTBlockBuilder(ObjectId table_id, catalog::Column::Id column_id,
@@ -96,8 +96,7 @@ class SSTBlockBuilder {
 
   static constexpr size_t kFlushThreshold = 64 * 1024;  // 64 KB
   static constexpr size_t kPrefixSize =
-    IncludeColumnId ? sizeof(ObjectId) + sizeof(catalog::Column::Id)
-                    : sizeof(ObjectId);
+    sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
   Block _curr;
   Block _next;
@@ -106,13 +105,12 @@ class SSTBlockBuilder {
   catalog::Column::Id _column_id = 0;
 };
 
-extern template class SSTBlockBuilder<true, true>;
-extern template class SSTBlockBuilder<false, true>;
-extern template class SSTBlockBuilder<false, false>;
+extern template class SSTBlockBuilder<true>;
+extern template class SSTBlockBuilder<false>;
 
 inline constexpr std::string_view kBulkInsertDirName = "bulk_insert";
 
-template<bool IsGeneratedPK, bool IncludeColumnId = true>
+template<bool IsGeneratedPK>
 class SSTSinkWriter {
  public:
   SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
@@ -136,20 +134,17 @@ class SSTSinkWriter {
   rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle* _cf;
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
-  std::vector<std::unique_ptr<SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>>>
-    _block_builders;
+  std::vector<std::unique_ptr<SSTBlockBuilder<IsGeneratedPK>>> _block_builders;
   std::string _sst_directory;
   int64_t _column_idx = -1;
 };
 
-extern template class SSTSinkWriter<true, true>;
-extern template class SSTSinkWriter<false, true>;
-extern template class SSTSinkWriter<false, false>;
+extern template class SSTSinkWriter<true>;
+extern template class SSTSinkWriter<false>;
 
 template<typename T>
 inline constexpr bool kIsSSTSinkWriter = false;
-template<bool IsGeneratedPK, bool IncludeColumnId>
-inline constexpr bool
-  kIsSSTSinkWriter<SSTSinkWriter<IsGeneratedPK, IncludeColumnId>> = true;
+template<bool IsGeneratedPK>
+inline constexpr bool kIsSSTSinkWriter<SSTSinkWriter<IsGeneratedPK>> = true;
 
 }  // namespace sdb::connector

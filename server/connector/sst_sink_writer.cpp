@@ -52,10 +52,10 @@ inline void AppendSize(Buffer& buf, size_t additional) {
 static constexpr size_t kInternalKeyFooterSize =
   sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::SSTBlockBuilder(
-  ObjectId table_id, catalog::Column::Id column_id,
-  velox::memory::MemoryPool& pool)
+template<bool IsGeneratedPK>
+SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(ObjectId table_id,
+                                                catalog::Column::Id column_id,
+                                                velox::memory::MemoryPool& pool)
   : _curr{pool}, _next{pool}, _table_id{table_id}, _column_id{column_id} {
   static_assert(kFlushThreshold == 64 * 1024);
   // https://jemalloc.net/jemalloc.3.html
@@ -64,8 +64,8 @@ SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::SSTBlockBuilder(
   _next.buffer.reserve(kCapacity);
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::AddEntry(
+template<bool IsGeneratedPK>
+void SSTBlockBuilder<IsGeneratedPK>::AddEntry(
   std::span<const rocksdb::Slice> value_slices, std::string_view key) {
   if (_curr.entry_cnt == 0) [[unlikely]] {
     AddEntryImpl<true>(_curr, key, value_slices);
@@ -74,9 +74,9 @@ void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::AddEntry(
   }
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
+template<bool IsGeneratedPK>
 template<bool IsFullKey>
-void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::AddEntryImpl(
+void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
   Block& block, std::string_view key,
   std::span<const rocksdb::Slice> value_slices) {
   const size_t pk_size = IsGeneratedPK ? sizeof(uint64_t) : key.size();
@@ -125,9 +125,7 @@ void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::AddEntryImpl(
   block.last_pk_size = non_shared;
   if constexpr (IsFullKey) {
     absl::big_endian::Store(ptr, _table_id);
-    if constexpr (IncludeColumnId) {
-      absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
-    }
+    absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
     ptr += kPrefixSize;
   }
   std::memcpy(ptr, key.data(), pk_size);
@@ -156,8 +154,8 @@ void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::AddEntryImpl(
   ++block.entry_cnt;
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::Finish(
+template<bool IsGeneratedPK>
+rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
   std::string_view next_block_first_pk,
   std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;
@@ -191,9 +189,7 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::Finish(
     AppendSize(_curr.buffer, full_pk_size);
     auto* ptr = reinterpret_cast<char*>(_curr.buffer.data()) + append_pos;
     absl::big_endian::Store(ptr, _table_id);
-    if constexpr (IncludeColumnId) {
-      absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
-    }
+    absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
     std::memcpy(ptr + kPrefixSize, _curr.buffer.data() + _curr.last_pk_offset,
                 _curr.last_pk_size);
     _curr.last_pk_offset = append_pos;
@@ -212,8 +208,8 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::Finish(
     .raw_value_size = _curr.raw_value_size};
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::NextBlock() {
+template<bool IsGeneratedPK>
+void SSTBlockBuilder<IsGeneratedPK>::NextBlock() {
   _curr.buffer.clear();
   _curr.last_pk_offset = 0;
   _curr.last_pk_size = 0;
@@ -224,19 +220,19 @@ void SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>::NextBlock() {
   std::swap(_curr, _next);
 }
 
-template class SSTBlockBuilder<true, true>;
-template class SSTBlockBuilder<false, true>;
-template class SSTBlockBuilder<false, false>;
+template class SSTBlockBuilder<true>;
+template class SSTBlockBuilder<false>;
 
 std::string GenerateSSTDirPath() {
   return absl::StrCat(GetServerEngine().path(), "/", kBulkInsertDirName, "/",
                       RevisionId::create().id());
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::SSTSinkWriter(
-  ObjectId table_id, rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-  std::span<const ColumnInfo> columns, velox::memory::MemoryPool& pool)
+template<bool IsGeneratedPK>
+SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
+                                            rocksdb::ColumnFamilyHandle& cf,
+                                            std::span<const ColumnInfo> columns,
+                                            velox::memory::MemoryPool& pool)
   : _db{&db}, _cf{&cf}, _sst_directory{GenerateSSTDirPath()} {
   _writers.resize(columns.size());
   _block_builders.resize(columns.size());
@@ -268,9 +264,8 @@ SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::SSTSinkWriter(
       continue;
     }
     _writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
-    _block_builders[i] =
-      std::make_unique<SSTBlockBuilder<IsGeneratedPK, IncludeColumnId>>(
-        table_id, columns[i].id, pool);
+    _block_builders[i] = std::make_unique<SSTBlockBuilder<IsGeneratedPK>>(
+      table_id, columns[i].id, pool);
     auto sst_file_path =
       absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);
@@ -280,8 +275,8 @@ SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::SSTSinkWriter(
   }
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::Write(
+template<bool IsGeneratedPK>
+void SSTSinkWriter<IsGeneratedPK>::Write(
   std::span<const rocksdb::Slice> cell_slices, std::string_view key) {
   SDB_ASSERT(!cell_slices.empty());
   SDB_ASSERT(_column_idx < _block_builders.size());
@@ -302,8 +297,8 @@ void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::Write(
   block_builder.AddEntry(cell_slices, key);
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::FlushBlockBuilder(
+template<bool IsGeneratedPK>
+void SSTSinkWriter<IsGeneratedPK>::FlushBlockBuilder(
   size_t column_idx, std::string_view next_block_first_pk,
   std::span<const rocksdb::Slice> next_block_first_value) {
   SDB_ASSERT(column_idx < _block_builders.size());
@@ -321,8 +316,8 @@ void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::FlushBlockBuilder(
   block_builder.NextBlock();
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::Finish() {
+template<bool IsGeneratedPK>
+void SSTSinkWriter<IsGeneratedPK>::Finish() {
   irs::Finally clean_dir = [&] noexcept {
     std::error_code ec;
     std::filesystem::remove_all(_sst_directory, ec);
@@ -365,14 +360,13 @@ void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::Finish() {
   SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
 }
 
-template<bool IsGeneratedPK, bool IncludeColumnId>
-void SSTSinkWriter<IsGeneratedPK, IncludeColumnId>::Abort() {
+template<bool IsGeneratedPK>
+void SSTSinkWriter<IsGeneratedPK>::Abort() {
   std::error_code ec;
   std::filesystem::remove_all(_sst_directory, ec);
 }
 
-template class SSTSinkWriter<true, true>;
-template class SSTSinkWriter<false, true>;
-template class SSTSinkWriter<false, false>;
+template class SSTSinkWriter<true>;
+template class SSTSinkWriter<false>;
 
 }  // namespace sdb::connector

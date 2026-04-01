@@ -44,7 +44,8 @@ constexpr bool kExecuteFiltersInTableScan = false;
 
 std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
   const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
-  query::Transaction& transaction) {
+  query::Transaction& transaction,
+  velox::core::TypedExprPtr& out_remaining_filter) {
   auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
   auto snapshot = transaction.EnsureCatalogSnapshot();
 
@@ -90,6 +91,7 @@ std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(*index);
 
+    out_remaining_filter = std::move(res.remaining_filter);
     return std::make_shared<SecondaryIndexTableHandle>(
       table.name(), rocksdb_table.TableId(), transaction, index_shard->GetId(),
       std::move(points), std::move(sk_type), table, sec_index.IsUnique());
@@ -258,8 +260,21 @@ SereneDBTableLayout::createTableHandle(
 
     // 2. No PK match — try secondary index.
     if (points.empty()) {
-      if (auto handle = TryMatchSecondaryIndex(
-            remaining_filter, *table, rocksdb_table.GetTransaction())) {
+      velox::core::TypedExprPtr remaining;
+      if (auto handle =
+            TryMatchSecondaryIndex(remaining_filter, *table,
+                                   rocksdb_table.GetTransaction(), remaining)) {
+        if (remaining) {
+          if (const auto* call =
+                dynamic_cast<const velox::core::CallTypedExpr*>(
+                  remaining.get());
+              call && call->name() == velox::expression::kAnd) {
+            rejected_filters.assign(call->inputs().begin(),
+                                    call->inputs().end());
+          } else {
+            rejected_filters = {std::move(remaining)};
+          }
+        }
         return handle;
       }
     }

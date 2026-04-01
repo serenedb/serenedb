@@ -33,6 +33,10 @@ on:
         required: false
         type: string
         default: ""
+    outputs:
+      packages_ok:
+        description: "Whether build and packaging succeeded (independent of test results)"
+        value: ${{ jobs.build-test-package.outputs.packages_ok }}
     secrets:
       PAT_TOKEN:
         required: true
@@ -53,6 +57,8 @@ env:
 jobs:
   build-test-package:
     name: Build, Test & Package
+    outputs:
+      packages_ok: ${{ steps.serenedb_packages.outcome == 'success' }}
     permissions:
       statuses: write
       contents: write
@@ -206,13 +212,13 @@ jobs:
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
-        if: steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
+        if: always() && !cancelled() && steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
         run: ./scripts/ci/steps/05-ci-in-docker-package.bash
 
       # ==================== RELEASE TEST AUTOMATION ====================
       - name: Release Test Automation (RTA)
         id: rta
-        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         run: ./scripts/ci/steps/08-ci-rta.bash
 
       # ==================== COVERAGE REPORT ====================
@@ -223,7 +229,7 @@ jobs:
 
       # ==================== UPLOAD RELEASE TARBALL ====================
       - name: Upload release tarball
-        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: tarball-${{ inputs.LOCATION }}

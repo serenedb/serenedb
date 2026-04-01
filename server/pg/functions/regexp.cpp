@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ size_t Utf8CharCount(const char* begin, size_t byte_len) {
 // Advance pos by one UTF-8 character (for empty-match advancement).
 size_t Utf8NextCharPos(const char* begin, size_t byte_len, size_t pos) {
   if (pos >= byte_len) {
-    return pos + 1;  // past end – just bump to terminate loop
+    return pos + 1;  // past end - just bump to terminate loop
   }
   auto* it = reinterpret_cast<const irs::byte_type*>(begin) + pos;
   auto* end = reinterpret_cast<const irs::byte_type*>(begin) + byte_len;
@@ -373,7 +373,6 @@ struct PgRegexpSubstr {
   velox::functions::detail::ReCache _cache;
 };
 
-// regexp_count(string, pattern, start) — 3-arg with start position
 template<typename T>
 struct PgRegexpCount3 {
   PgRegexpCount3() : _cache(0) {}

@@ -17,18 +17,52 @@ SCRIPTS=()
 # [[ "${SQLLOGIC_TESTS:-true}" == "true" ]] && SCRIPTS+=("BUILD_DIR=build_tests ./scripts/ci/steps/044-ci-in-docker-run-sqllogic-tests.bash")
 # [[ "${RECOVERY_TESTS:-true}" == "true" ]] && SCRIPTS+=("BUILD_DIR=build_tests ./scripts/ci/steps/045-ci-in-docker-run-recovery-tests.bash")
 
-if [[ ! ${#SCRIPTS[@]} -eq 0 ]]; then
+JOBLOG=$(mktemp)
+PARALLEL_RC=0
+if [[ ${#SCRIPTS[@]} -gt 0 ]]; then
 	echo "Running ${#SCRIPTS[@]} test suite(s) in parallel:"
 	printf '%s\n' "${SCRIPTS[@]}"
 
-	parallel --jobs 4 --tagstring '{/.}' --line-buffer --halt soon,fail=1 \
+	parallel --jobs 4 --tagstring '{/.}' --line-buffer --joblog "$JOBLOG" --halt now,fail=1 \
 		'bash -c {}' \
-		::: "${SCRIPTS[@]}"
+		::: "${SCRIPTS[@]}" || PARALLEL_RC=$?
 fi
 
 # Run SQLLOGIC_TESTS & RECOVERY_TESTS separately
-[[ "${SQLLOGIC_TESTS:-true}" == "true" ]] && BUILD_DIR=build_tests ./scripts/ci/steps/044-ci-in-docker-run-sqllogic-tests.bash
-[[ "${RECOVERY_TESTS:-true}" == "true" ]] && BUILD_DIR=build_tests ./scripts/ci/steps/045-ci-in-docker-run-recovery-tests.bash
+SERIAL_RC=0
+if [[ $PARALLEL_RC -eq 0 ]]; then
+	[[ "${SQLLOGIC_TESTS:-true}" == "true" ]] && { BUILD_DIR=build_tests ./scripts/ci/steps/044-ci-in-docker-run-sqllogic-tests.bash || SERIAL_RC=$?; }
+	[[ $SERIAL_RC -eq 0 && "${RECOVERY_TESTS:-true}" == "true" ]] && { BUILD_DIR=build_tests ./scripts/ci/steps/045-ci-in-docker-run-recovery-tests.bash || SERIAL_RC=$?; }
+fi
+
+# Print summary
+echo ""
+echo "========================================"
+echo "  TEST RESULTS SUMMARY"
+echo "========================================"
+if [[ -s "$JOBLOG" ]]; then
+	while IFS=$'\t' read -r seq host starttime jobruntime send receive exitval signal command; do
+		[[ "$seq" == "Seq" ]] && continue
+		name=$(basename "$command" .bash | sed 's/^[0-9]*-ci-in-docker-run-//')
+		if [[ "$exitval" -eq 0 ]]; then
+			echo "  PASSED  ${name} (${jobruntime}s)"
+		elif [[ "$signal" -ne 0 ]]; then
+			echo "  KILLED  ${name} (signal ${signal})"
+		else
+			echo "  FAILED  ${name} (${jobruntime}s, exit code ${exitval})"
+		fi
+	done <"$JOBLOG"
+fi
+rm -f "$JOBLOG"
+if [[ $PARALLEL_RC -ne 0 || $SERIAL_RC -ne 0 ]]; then
+	echo "========================================"
+	echo "  SOME TESTS FAILED (see above)"
+	echo "========================================"
+	exit 1
+fi
+echo "========================================"
+echo "  ALL TESTS PASSED"
+echo "========================================"
 
 TEST_VALS=("$VPACK_TESTS" "$IRESEARCH_TESTS" "$UNIT_TESTS" "$SQLLOGIC_TESTS" "$RECOVERY_TESTS")
 all_false=true

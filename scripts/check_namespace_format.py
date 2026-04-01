@@ -10,6 +10,8 @@ Check namespace formatting rules:
 import re
 import sys
 
+from fix_namespace_format import fix_file
+
 NS_OPEN = re.compile(r"^\s*(?:inline\s+)?namespace(?:\s+[\w:]+)?\s*\{\s*$")
 NS_CLOSE = re.compile(r"^\s*\}\s*//\s*namespace")
 
@@ -58,6 +60,7 @@ for path in sys.argv[1:]:
     for e in errors:
         print(f"{path}: {e}", file=sys.stderr)
     if errors:
+        fix_file(path)
         failed += 1
 
 sys.exit(1 if failed else 0)

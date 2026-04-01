@@ -970,17 +970,19 @@ db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
-query error
+query
 SELECT pg_column_compression(1);
 ----
-db error: ERROR: Function is not supported in SereneDB
+pg_column_compression
+NULL
 
 
 onlyif serenedb
-query error
+query
 SELECT pg_column_size(1);
 ----
-db error: ERROR: Function is not supported in SereneDB
+pg_column_size
+NULL
 
 
 onlyif serenedb
@@ -1000,7 +1002,7 @@ db error: ERROR: Function is not supported in SereneDB
 # TODO(Pasha): add type convertion to xid8
 onlyif serenedb
 query error
-SELECT pg_xact_status(1);
+SELECT pg_xact_status('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
@@ -1014,35 +1016,35 @@ db error: ERROR: Function is not supported in SereneDB
 
 onlyif serenedb
 query error
-SELECT pg_snapshot_xip(1);
+SELECT pg_snapshot_xip('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT pg_snapshot_xmax(1);
+SELECT pg_snapshot_xmax('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT pg_snapshot_xmin(1);
+SELECT pg_snapshot_xmin('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT pg_visible_in_snapshot(1, 1);
+SELECT pg_visible_in_snapshot('1'::xid8, '1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT pg_get_multixact_members(0);
+SELECT pg_get_multixact_members('1'::xid);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
@@ -1077,42 +1079,42 @@ db error: ERROR: Function is not supported in SereneDB
 
 onlyif serenedb
 query error
-SELECT txid_snapshot_xip(1);
+SELECT txid_snapshot_xip('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT txid_snapshot_xmax(1);
+SELECT txid_snapshot_xmax('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT txid_snapshot_xmin(1);
+SELECT txid_snapshot_xmin('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT txid_visible_in_snapshot(1, 1);
+SELECT txid_visible_in_snapshot('1'::xid8, '1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT txid_status(1);
+SELECT txid_status('1'::xid8);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb
 query error
-SELECT pg_xact_commit_timestamp_origin(0);
+SELECT pg_xact_commit_timestamp_origin(0::xid);
 ----
 db error: ERROR: Function is not supported in SereneDB
 
@@ -1180,9 +1182,9 @@ db error: ERROR: Function is not supported in SereneDB
 
 onlyif serenedb
 query error
-SELECT pg_wal_summary_contents(0, 0, 0, 0, 0);
+SELECT pg_wal_summary_contents(0, 0, 0);
 ----
-db error: ERROR: function pg_wal_summary_contents(integer, integer, integer, integer, integer) does not exist
+db error: ERROR: Function is not supported in SereneDB
 
 
 onlyif serenedb

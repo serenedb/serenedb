@@ -1,0 +1,834 @@
+# Test each implicit coercion declared in pg_functions_registration.hpp
+# Pattern: CREATE FUNCTION accepting target type, call with source type
+# TINYINT (int1) and HUGEINT don't exist in standard PG - skipped
+
+# ====== INTEGER target ======
+statement ok
+CREATE FUNCTION coerce_to_integer(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_integer(1::smallint);
+----
+coerce_to_integer
+1
+
+statement ok
+DROP FUNCTION coerce_to_integer(INTEGER)
+
+
+# ====== BIGINT target ======
+
+statement ok
+CREATE FUNCTION coerce_to_bigint(x BIGINT) RETURNS BIGINT AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_bigint(1::smallint);
+----
+coerce_to_bigint
+1
+
+
+query
+SELECT coerce_to_bigint(1::integer);
+----
+coerce_to_bigint
+1
+
+statement ok
+DROP FUNCTION coerce_to_bigint(BIGINT)
+
+
+# ====== REAL target ======
+
+statement ok
+CREATE FUNCTION coerce_to_real(x REAL) RETURNS REAL AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_real(1::smallint);
+----
+coerce_to_real
+1
+
+
+query
+SELECT coerce_to_real(1::integer);
+----
+coerce_to_real
+1
+
+
+query
+SELECT coerce_to_real(1::bigint);
+----
+coerce_to_real
+1
+
+
+statement ok
+DROP FUNCTION coerce_to_real(REAL)
+
+
+# ====== DOUBLE PRECISION target ======
+
+statement ok
+CREATE FUNCTION coerce_to_double(x DOUBLE PRECISION) RETURNS DOUBLE PRECISION AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_double(1::smallint);
+----
+coerce_to_double
+1
+
+
+query
+SELECT coerce_to_double(1::integer);
+----
+coerce_to_double
+1
+
+
+query
+SELECT coerce_to_double(1::bigint);
+----
+coerce_to_double
+1
+
+
+query
+SELECT coerce_to_double(1::real);
+----
+coerce_to_double
+1
+
+
+statement ok
+DROP FUNCTION coerce_to_double(DOUBLE PRECISION)
+
+
+# ====== TIMESTAMP target ======
+
+statement ok
+CREATE FUNCTION coerce_to_timestamp(x TIMESTAMP) RETURNS TIMESTAMP AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_timestamp('2024-01-01'::date);
+----
+coerce_to_timestamp
+2024-01-01 00:00:00
+
+
+statement ok
+DROP FUNCTION coerce_to_timestamp(TIMESTAMP)
+
+
+# ====== OID target: integer and bigint coerce to oid; xid/cid/xid8/tid do NOT ======
+statement ok
+CREATE FUNCTION coerce_to_oid(x OID) RETURNS OID AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_oid(1::integer);
+----
+coerce_to_oid
+1
+
+
+query
+SELECT coerce_to_oid(1::bigint);
+----
+coerce_to_oid
+1
+
+
+# reg* -> oid coercions all exist in PG
+query
+SELECT coerce_to_oid(1259::regclass);
+----
+coerce_to_oid
+1259
+
+query
+SELECT coerce_to_oid(23::regtype);
+----
+coerce_to_oid
+23
+
+query
+SELECT coerce_to_oid(11::regnamespace);
+----
+coerce_to_oid
+11
+
+query
+SELECT coerce_to_oid(43::regproc);
+----
+coerce_to_oid
+43
+
+query
+SELECT coerce_to_oid(97::regoper);
+----
+coerce_to_oid
+97
+
+query
+SELECT coerce_to_oid(97::regoperator);
+----
+coerce_to_oid
+97
+
+
+query
+SELECT coerce_to_oid(43::regprocedure);
+----
+coerce_to_oid
+43
+
+
+query
+SELECT coerce_to_oid(10::regrole);
+----
+coerce_to_oid
+10
+
+
+query
+SELECT coerce_to_oid(3748::regconfig);
+----
+coerce_to_oid
+3748
+
+
+query
+SELECT coerce_to_oid(3769::regdictionary);
+----
+coerce_to_oid
+3769
+
+
+query
+SELECT coerce_to_oid(100::regcollation);
+----
+coerce_to_oid
+100
+
+
+statement ok
+DROP FUNCTION coerce_to_oid(OID)
+
+
+# Verify oid/xid/cid/xid8/tid do NOT implicitly coerce to integer or bigint
+statement ok
+CREATE FUNCTION coerce_to_integer2(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql
+
+
+query error
+SELECT coerce_to_integer2(1::oid);
+----
+db error: ERROR: function coerce_to_integer2(oid) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+query error
+SELECT coerce_to_integer2(1259::regclass);
+----
+db error: ERROR: function coerce_to_integer2(regclass) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+statement ok
+DROP FUNCTION coerce_to_integer2(INTEGER)
+
+
+# Verify integer/bigint/oid do NOT implicitly coerce to xid/cid/tid/xid8
+statement ok
+CREATE FUNCTION coerce_to_xid(x XID) RETURNS XID AS $$ SELECT x $$ LANGUAGE sql
+
+
+query error
+SELECT coerce_to_xid(1::integer);
+----
+db error: ERROR: function coerce_to_xid(integer) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+query error
+SELECT coerce_to_xid(1::bigint);
+----
+db error: ERROR: function coerce_to_xid(bigint) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+query error
+SELECT coerce_to_xid(1::oid);
+----
+db error: ERROR: function coerce_to_xid(oid) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+statement ok
+DROP FUNCTION coerce_to_xid(XID)
+
+
+# ====== REGCLASS target: integer, bigint, oid coerce to reg* ======
+statement ok
+CREATE FUNCTION coerce_to_regclass(x REGCLASS) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regclass(1259::integer);
+----
+coerce_to_regclass
+1259
+
+
+query
+SELECT coerce_to_regclass(1259::bigint);
+----
+coerce_to_regclass
+1259
+
+
+query
+SELECT coerce_to_regclass(1259::oid);
+----
+coerce_to_regclass
+1259
+
+
+statement ok
+DROP FUNCTION coerce_to_regclass(REGCLASS)
+
+
+# ====== REGTYPE target: from integer, bigint, oid ======
+
+statement ok
+CREATE FUNCTION coerce_to_regtype(x REGTYPE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regtype(23::integer);
+----
+coerce_to_regtype
+23
+
+
+query
+SELECT coerce_to_regtype(23::bigint);
+----
+coerce_to_regtype
+23
+
+
+query
+SELECT coerce_to_regtype(23::oid);
+----
+coerce_to_regtype
+23
+
+
+statement ok
+DROP FUNCTION coerce_to_regtype(REGTYPE)
+
+
+# ====== REGNAMESPACE target ======
+statement ok
+CREATE FUNCTION coerce_to_regnamespace(x REGNAMESPACE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regnamespace(11::integer);
+----
+coerce_to_regnamespace
+11
+
+
+query
+SELECT coerce_to_regnamespace(11::bigint);
+----
+coerce_to_regnamespace
+11
+
+
+query
+SELECT coerce_to_regnamespace(11::oid);
+----
+coerce_to_regnamespace
+11
+
+
+statement ok
+DROP FUNCTION coerce_to_regnamespace(REGNAMESPACE)
+
+
+# ====== REGPROC target ======
+statement ok
+CREATE FUNCTION coerce_to_regproc(x REGPROC) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regproc(43::integer);
+----
+coerce_to_regproc
+43
+
+
+query
+SELECT coerce_to_regproc(43::bigint);
+----
+coerce_to_regproc
+43
+
+
+query
+SELECT coerce_to_regproc(43::oid);
+----
+coerce_to_regproc
+43
+
+
+statement ok
+DROP FUNCTION coerce_to_regproc(REGPROC)
+
+
+# ====== REGOPER target ======
+statement ok
+CREATE FUNCTION coerce_to_regoper(x REGOPER) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regoper(97::integer);
+----
+coerce_to_regoper
+97
+
+
+query
+SELECT coerce_to_regoper(97::bigint);
+----
+coerce_to_regoper
+97
+
+
+query
+SELECT coerce_to_regoper(97::oid);
+----
+coerce_to_regoper
+97
+
+
+statement ok
+DROP FUNCTION coerce_to_regoper(REGOPER)
+
+
+# ====== REGOPERATOR target ======
+statement ok
+CREATE FUNCTION coerce_to_regoperator(x REGOPERATOR) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regoperator(97::integer);
+----
+coerce_to_regoperator
+97
+
+
+query
+SELECT coerce_to_regoperator(97::bigint);
+----
+coerce_to_regoperator
+97
+
+
+query
+SELECT coerce_to_regoperator(97::oid);
+----
+coerce_to_regoperator
+97
+
+
+statement ok
+DROP FUNCTION coerce_to_regoperator(REGOPERATOR)
+
+
+# ====== REGPROCEDURE target ======
+statement ok
+CREATE FUNCTION coerce_to_regprocedure(x REGPROCEDURE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regprocedure(43::integer);
+----
+coerce_to_regprocedure
+43
+
+
+query
+SELECT coerce_to_regprocedure(43::bigint);
+----
+coerce_to_regprocedure
+43
+
+
+query
+SELECT coerce_to_regprocedure(43::oid);
+----
+coerce_to_regprocedure
+43
+
+
+statement ok
+DROP FUNCTION coerce_to_regprocedure(REGPROCEDURE)
+
+
+# ====== REGROLE target ======
+statement ok
+CREATE FUNCTION coerce_to_regrole(x REGROLE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regrole(10::integer);
+----
+coerce_to_regrole
+10
+
+
+query
+SELECT coerce_to_regrole(10::bigint);
+----
+coerce_to_regrole
+10
+
+
+query
+SELECT coerce_to_regrole(10::oid);
+----
+coerce_to_regrole
+10
+
+
+statement ok
+DROP FUNCTION coerce_to_regrole(REGROLE)
+
+
+# ====== REGCONFIG target ======
+statement ok
+CREATE FUNCTION coerce_to_regconfig(x REGCONFIG) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regconfig(3748::integer);
+----
+coerce_to_regconfig
+3748
+
+
+query
+SELECT coerce_to_regconfig(3748::bigint);
+----
+coerce_to_regconfig
+3748
+
+
+query
+SELECT coerce_to_regconfig(3748::oid);
+----
+coerce_to_regconfig
+3748
+
+
+statement ok
+DROP FUNCTION coerce_to_regconfig(REGCONFIG)
+
+
+# ====== REGDICTIONARY target ======
+statement ok
+CREATE FUNCTION coerce_to_regdictionary(x REGDICTIONARY) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regdictionary(3769::integer);
+----
+coerce_to_regdictionary
+3769
+
+
+query
+SELECT coerce_to_regdictionary(3769::bigint);
+----
+coerce_to_regdictionary
+3769
+
+
+query
+SELECT coerce_to_regdictionary(3769::oid);
+----
+coerce_to_regdictionary
+3769
+
+
+statement ok
+DROP FUNCTION coerce_to_regdictionary(REGDICTIONARY)
+
+
+# ====== REGCOLLATION target ======
+statement ok
+CREATE FUNCTION coerce_to_regcollation(x REGCOLLATION) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_regcollation(100::integer);
+----
+coerce_to_regcollation
+100
+
+
+query
+SELECT coerce_to_regcollation(100::bigint);
+----
+coerce_to_regcollation
+100
+
+
+query
+SELECT coerce_to_regcollation(100::oid);
+----
+coerce_to_regcollation
+100
+
+
+statement ok
+DROP FUNCTION coerce_to_regcollation(REGCOLLATION)
+
+
+# ====== NAME target: unknown literal and text coerce to name ======
+statement ok
+CREATE FUNCTION coerce_to_name(x NAME) RETURNS NAME AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_name('hello');
+----
+coerce_to_name
+hello
+
+
+query
+SELECT coerce_to_name('hello'::text);
+----
+coerce_to_name
+hello
+
+
+statement ok
+DROP FUNCTION coerce_to_name(NAME)
+
+
+# ====== TEXT target: name coerces to text ======
+statement ok
+CREATE FUNCTION coerce_to_text(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_to_text('hello'::name);
+----
+coerce_to_text
+hello
+
+
+statement ok
+DROP FUNCTION coerce_to_text(TEXT)
+
+
+# ====== PG_UNKNOWN -> each type (untyped string literal) ======
+statement ok
+CREATE FUNCTION coerce_unknown_to_text(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_text('hello');
+----
+coerce_unknown_to_text
+hello
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_text(TEXT)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_smallint(x SMALLINT) RETURNS SMALLINT AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_smallint('1');
+----
+coerce_unknown_to_smallint
+1
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_smallint(SMALLINT)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_integer(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_integer('1');
+----
+coerce_unknown_to_integer
+1
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_integer(INTEGER)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_bigint(x BIGINT) RETURNS BIGINT AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_bigint('1');
+----
+coerce_unknown_to_bigint
+1
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_bigint(BIGINT)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_real(x REAL) RETURNS REAL AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_real('1.0');
+----
+coerce_unknown_to_real
+1
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_real(REAL)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_double(x DOUBLE PRECISION) RETURNS DOUBLE PRECISION AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_double('1.0');
+----
+coerce_unknown_to_double
+1
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_double(DOUBLE PRECISION)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_boolean(x BOOLEAN) RETURNS BOOLEAN AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_boolean('true');
+----
+coerce_unknown_to_boolean
+t
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_boolean(BOOLEAN)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_timestamp(x TIMESTAMP) RETURNS TIMESTAMP AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_timestamp('2024-01-01 00:00:00');
+----
+coerce_unknown_to_timestamp
+2024-01-01 00:00:00
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_timestamp(TIMESTAMP)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_date(x DATE) RETURNS DATE AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_date('2024-01-01');
+----
+coerce_unknown_to_date
+2024-01-01
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_date(DATE)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_interval(x INTERVAL) RETURNS INTERVAL AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_interval('1 day');
+----
+coerce_unknown_to_interval
+1 day
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_interval(INTERVAL)
+
+
+statement ok
+CREATE FUNCTION coerce_unknown_to_name(x NAME) RETURNS NAME AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT coerce_unknown_to_name('hello');
+----
+coerce_unknown_to_name
+hello
+
+
+statement ok
+DROP FUNCTION coerce_unknown_to_name(NAME)
+
+
+# Verify unknown -> name coercion: calling a name-arg function with an unknown arg
+statement ok
+CREATE FUNCTION test_name_coerce(x NAME) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql
+
+
+query
+SELECT test_name_coerce('public');
+----
+test_name_coerce
+public
+
+
+query
+SELECT test_name_coerce('public'::text);
+----
+test_name_coerce
+public
+
+
+statement ok
+DROP FUNCTION test_name_coerce(NAME)

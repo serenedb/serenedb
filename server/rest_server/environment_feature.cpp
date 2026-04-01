@@ -542,9 +542,9 @@ void PrintEnvironment() {
       uint64_t v = basics::string_utils::Uint64(content);
       // from man proc:
       //
-      // 0 – No randomization. Everything is static.
-      // 1 – Conservative randomization. Shared libraries, stack, mmap(), VDSO
-      // and heap are randomized. 2 – Full randomization. In addition to
+      // 0 - No randomization. Everything is static.
+      // 1 - Conservative randomization. Shared libraries, stack, mmap(), VDSO
+      // and heap are randomized. 2 - Full randomization. In addition to
       // elements listed in the previous point, memory managed through brk() is
       // also randomized.
       std::string_view s;

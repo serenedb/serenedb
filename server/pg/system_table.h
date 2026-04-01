@@ -35,6 +35,7 @@
 #include "catalog/virtual_table.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
+#include "query/types.h"
 
 namespace sdb::pg {
 
@@ -45,6 +46,8 @@ template<typename Field>
 auto GetField(const Field& field) {
   if constexpr (std::is_enum_v<Field>) {
     return GetField(std::to_underlying(field));
+  } else if constexpr (std::is_same_v<Field, Name>) {
+    return velox::StringView{field.v};
   } else if constexpr (std::is_same_v<Field, std::string_view>) {
     return velox::StringView{field};
   } else if constexpr (std::is_same_v<Field, std::string>) {
@@ -69,6 +72,15 @@ auto GetField(const Field& field) {
     return static_cast<int16_t>(field);
   } else if constexpr (std::is_same_v<Field, int32_t>) {
     return static_cast<int32_t>(field);
+  } else if constexpr (std::is_same_v<Field, Oid> ||
+                       std::is_same_v<Field, Xid> ||
+                       std::is_same_v<Field, Regproc> ||
+                       std::is_same_v<Field, Regtype> ||
+                       std::is_same_v<Field, Regclass> ||
+                       std::is_same_v<Field, Cid> ||
+                       std::is_same_v<Field, Xid8> ||
+                       std::is_same_v<Field, Tid>) {
+    return static_cast<int64_t>(static_cast<uint64_t>(field));
   } else if constexpr (std::is_same_v<Field, int64_t> ||
                        std::is_same_v<Field, uint64_t>) {
     return static_cast<int64_t>(field);
@@ -82,7 +94,19 @@ auto GetField(const Field& field) {
 template<typename Field>
 velox::TypePtr GetFieldType() {
   using OutputType = decltype(GetField(std::declval<Field>()));
-  if constexpr (std::is_same_v<Field, Bytea>) {
+  if constexpr (std::is_same_v<Field, Oid>) {
+    return PGOID();
+  } else if constexpr (std::is_same_v<Field, Regproc>) {
+    return REGPROC();
+  } else if constexpr (std::is_same_v<Field, Regtype>) {
+    return REGTYPE();
+  } else if constexpr (std::is_same_v<Field, Regclass>) {
+    return REGCLASS();
+  } else if constexpr (std::is_same_v<Field, Xid>) {
+    return PGXID();
+  } else if constexpr (std::is_same_v<Field, Name>) {
+    return PGNAME();
+  } else if constexpr (std::is_same_v<Field, Bytea>) {
     // Since Bytea is mapped to velox::StringView, we need to explicitly
     // return VARBINARY type here to avoid confusion with VARCHAR.
     return velox::VARBINARY();

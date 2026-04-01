@@ -16,10 +16,20 @@ INSERT INTO vedernikoff_unique VALUES (2, 'cutelooked', 20);
 statement ok
 INSERT INTO vedernikoff_unique VALUES (3, 'crookface', 30);
 
+
+onlyif serenedb
 statement error
 INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+skipif serenedb
+statement error
+INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_unique_rank_idx"
 DETAIL: Key (rank)=(10) already exists.
 
 
@@ -658,6 +668,8 @@ CREATE UNIQUE INDEX clickclack_ryow_code_idx ON clickclack_ryow(code);
 statement ok
 INSERT INTO clickclack_ryow VALUES (1, 10), (2, 20);
 
+
+onlyif serenedb
 statement ok
 SET sdb_read_your_own_writes = 1;
 
@@ -676,6 +688,8 @@ pid
 statement ok
 COMMIT;
 
+
+onlyif serenedb
 statement ok
 SET sdb_read_your_own_writes = 0;
 
@@ -685,10 +699,13 @@ BEGIN;
 statement ok
 INSERT INTO clickclack_ryow VALUES (4, 40);
 
+
+onlyif serenedb
 query
 SELECT pid FROM clickclack_ryow WHERE code = 40;
 ----
 pid
+
 
 statement ok
 COMMIT;
@@ -746,10 +763,20 @@ SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 99;
 ----
 pid	nickname
 
+
+onlyif serenedb
 statement error
 INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+skipif serenedb
+statement error
+INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_csv_unique_rank_idx"
 DETAIL: Key (rank)=(10) already exists.
 
 
@@ -826,7 +853,7 @@ INSERT INTO vedernikoff_pq_unique VALUES
   (3, 'crookface', 30);
 
 statement count 3
-COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.parquet' WITH (FORMAT PARQUET);
+COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
 
 statement ok
 DROP TABLE vedernikoff_pq_unique;
@@ -835,7 +862,7 @@ statement ok
 CREATE TABLE vedernikoff_pq_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
 
 statement count 3
-COPY vedernikoff_pq_unique FROM '/tmp/${__DATABASE__}_vedernikoff_pq_unique.parquet' WITH (FORMAT PARQUET);
+COPY vedernikoff_pq_unique FROM '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE UNIQUE INDEX vedernikoff_pq_unique_rank_idx ON vedernikoff_pq_unique(rank);
@@ -857,10 +884,20 @@ SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 99;
 ----
 pid	nickname
 
+
+onlyif serenedb
 statement error
 INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+skipif serenedb
+statement error
+INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_pq_unique_rank_idx"
 DETAIL: Key (rank)=(10) already exists.
 
 
@@ -893,7 +930,7 @@ INSERT INTO babsky_pq_nulluniq VALUES
   (4, 200, 'delta');
 
 statement count 4
-COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.parquet' WITH (FORMAT PARQUET);
+COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
 
 statement ok
 DROP TABLE babsky_pq_nulluniq;
@@ -902,7 +939,7 @@ statement ok
 CREATE TABLE babsky_pq_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
 
 statement count 4
-COPY babsky_pq_nulluniq FROM '/tmp/${__DATABASE__}_babsky_pq_nulluniq.parquet' WITH (FORMAT PARQUET);
+COPY babsky_pq_nulluniq FROM '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE UNIQUE INDEX babsky_pq_nulluniq_code_idx ON babsky_pq_nulluniq(code);

@@ -513,6 +513,9 @@ class FixedPhraseFrequency {
         lead.next();
         lead_pos = lead.value();
       } else {
+        if constexpr (Offs) {
+          lead.next();
+        }
         return 1;
       }
     }

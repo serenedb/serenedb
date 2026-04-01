@@ -92,11 +92,11 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_statement.h"
 #include "pg/sql_utils.h"
-#include "search/functions.hpp"
 #include "query/context.h"
 #include "query/transaction.h"
 #include "query/types.h"
 #include "query/utils.h"
+#include "search/functions.hpp"
 #include "utils/elog.h"
 #include "utils/query_string.h"
 
@@ -1295,8 +1295,8 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
   auto scorer_for_select =
     std::exchange(_scorer_for_select, _objects.GetScorer(&stmt));
   auto expr_for_scorer = std::exchange(_expr_for_scorer, nullptr);
-  auto offsets_fields_for_select = std::exchange(
-    _offsets_fields_for_select, _objects.GetOffsetsFields(&stmt));
+  auto offsets_fields_for_select =
+    std::exchange(_offsets_fields_for_select, _objects.GetOffsetsFields(&stmt));
   auto exprs_for_offsets = std::exchange(_exprs_for_offsets, {});
   irs::Finally end = [&] noexcept {
     _scorer_for_select = std::move(scorer_for_select);
@@ -3896,7 +3896,8 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
     object.table = std::make_shared<connector::InvertedIndexTable>(
       _transaction, std::move(scan_table), inverted_index, offsets_column_ids);
   } else {
-    SDB_ASSERT(dynamic_cast<connector::InvertedIndexTable*>(object.table.get()));
+    SDB_ASSERT(
+      dynamic_cast<connector::InvertedIndexTable*>(object.table.get()));
   }
 
   if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
@@ -4290,8 +4291,7 @@ void SqlAnalyzer::RefreshExprsForOffsets(std::vector<std::string>& names,
       continue;
     }
     SDB_ASSERT(expr_ptr->isInputReference());
-    const auto& offsets_column =
-      expr_ptr->as<lp::InputReferenceExpr>()->name();
+    const auto& offsets_column = expr_ptr->as<lp::InputReferenceExpr>()->name();
     const auto offsets_type = expr_ptr->type();
     for (size_t i = 0; i < exprs.size(); ++i) {
       SDB_ASSERT(exprs[i]);

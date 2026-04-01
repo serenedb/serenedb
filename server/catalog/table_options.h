@@ -152,16 +152,14 @@ struct Column {
   static Id ExtractOffsetsColumnId(std::string_view col_name) {
     SDB_ASSERT(DemangleColumnName(col_name).size() > kOffsetsNamePrefix.size());
     Id id;
-    const auto ok =
-      absl::SimpleAtoi(DemangleColumnName(col_name).substr(kOffsetsNamePrefix.size()), &id);
+    const auto ok = absl::SimpleAtoi(
+      DemangleColumnName(col_name).substr(kOffsetsNamePrefix.size()), &id);
     SDB_ASSERT(ok);
     return id;
   }
 
   // ARRAY(BIGINT) — flat offsets column: interleaved start,end pairs.
-  static velox::TypePtr OffsetsType() {
-    return velox::ARRAY(velox::BIGINT());
-  }
+  static velox::TypePtr OffsetsType() { return velox::ARRAY(velox::BIGINT()); }
 
   Id id;
   velox::TypePtr type;

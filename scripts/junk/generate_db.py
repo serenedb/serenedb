@@ -34,7 +34,7 @@ def generate_and_insert_data(conn, num_records, start_id):
     """
     cur = conn.cursor()
     fake = Faker()
-        
+
     # Use StringIO as an in-memory CSV file
     csv_buffer = io.StringIO()
     cur_id = start_id
@@ -46,7 +46,7 @@ def generate_and_insert_data(conn, num_records, start_id):
         # Format data into a CSV line
         csv_buffer.write(f"{id},{name},{email},{address}\n")
         start_id = start_id + 1
-            
+
     # Move the "file" pointer back to the beginning
     csv_buffer.seek(0)
     start_time = time.time()
@@ -57,7 +57,7 @@ def generate_and_insert_data(conn, num_records, start_id):
         columns=('id', 'name', 'email', 'address'),
         sep=','
     )
-        
+
     end_time = time.time()
     print(f"Inserted {num_records} records in {end_time - start_time:.2f} seconds using copy_from.")
 

@@ -20,11 +20,17 @@
 
 #include "search_scan_data_source.hpp"
 
+#include <absl/container/flat_hash_set.h>
 #include <velox/vector/FlatVector.h>
 
+#include <algorithm>
+#include <array>
+
+#include "catalog/mangling.h"
 #include "connector/parquet_materializer.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/rocksdb_materializer.hpp"
+#include "connector/search_filter_builder.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "connector/text_materializer.hpp"
 #include "velox/core/PlanNode.h"
@@ -43,8 +49,13 @@ SearchDataSource<Materializer>::SearchDataSource(
     _query{query},
     _scorer{scorer},
     _offsets_column_ids{std::move(offsets_column_ids)} {
-  _pos_attrs.resize(_offsets_column_ids.size(), nullptr);
-  _offs_attrs.resize(_offsets_column_ids.size(), nullptr);
+  for (const auto col_id : _offsets_column_ids) {
+    std::string name;
+    MakeFieldName(col_id, name);
+    search::mangling::MangleString(name);
+    _binary_field_names.push_back(std::move(name));
+  }
+  _offsets_field_state.resize(_offsets_column_ids.size());
 }
 
 template<typename Materializer>
@@ -57,6 +68,7 @@ void SearchDataSource<Materializer>::addSplit(
   }
   _current_split = std::move(split);
   _current_segment = 0;
+  _current_seg = nullptr;
   _doc.reset();
 }
 
@@ -117,10 +129,13 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
           .fetcher = &_fetcher,
         });
       }
-      for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
-        _pos_attrs[fi] = irs::GetMutable<irs::PosAttr>(_doc.get());
-        _offs_attrs[fi] =
-          _pos_attrs[fi] ? irs::get<irs::OffsAttr>(*_pos_attrs[fi]) : nullptr;
+      _current_seg = &segment;
+      if (n_offsets_fields > 0) {
+        for (auto& fs : _offsets_field_state) {
+          fs.Clear();
+        }
+        OffsetsCollector visitor(_binary_field_names, _offsets_field_state);
+        _query.visit(segment, visitor, irs::kNoBoost);
       }
     }
   };
@@ -153,9 +168,71 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
       }
       for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
         auto& doc_offsets = offsets_data[fi].emplace_back();
-        // Stub: emit column_id as start/end pair for each requested field.
-        doc_offsets.push_back(static_cast<int64_t>(_offsets_column_ids[fi]));
-        doc_offsets.push_back(static_cast<int64_t>(_offsets_column_ids[fi]));
+        absl::flat_hash_set<uint64_t> seen_offsets;
+
+        constexpr size_t kMaxOffsetsPerDoc = 10;
+        constexpr auto kFeatures = irs::IndexFeatures::Freq |
+                                   irs::IndexFeatures::Pos |
+                                   irs::IndexFeatures::Offs;
+
+        for (auto& fe : _offsets_field_state[fi].entries) {
+          if (doc_offsets.size() / 2 >= kMaxOffsetsPerDoc) {
+            break;
+          }
+          // Lazy iterator creation: once per segment, reused for all docs.
+          if (!fe.docs) {
+            SDB_ASSERT(_current_seg);
+            fe.docs = std::visit(
+              [&]<typename T>(const T* ptr) -> irs::DocIterator::ptr {
+                if constexpr (std::is_same_v<T, irs::SeekCookie>) {
+                  SDB_ASSERT(_offsets_field_state[fi].reader);
+                  return _offsets_field_state[fi].reader->Iterator(
+                    kFeatures, irs::PostingCookie{.cookie = ptr});
+                } else {
+                  return ptr->ExecuteWithOffsets(*_current_seg);
+                }
+              },
+              fe.filter);
+            if (!fe.docs || irs::doc_limits::eof(fe.docs->value())) {
+              fe.docs.reset();
+              continue;
+            }
+            fe.pos = irs::GetMutable<irs::PosAttr>(fe.docs.get());
+            if (!fe.pos) {
+              fe.docs.reset();
+              continue;
+            }
+            fe.offs = irs::get<irs::OffsAttr>(*fe.pos);
+            if (!fe.offs) {
+              fe.docs.reset();
+              continue;
+            }
+          }
+
+          if (fe.docs->seek(doc_id) != doc_id) {
+            continue;
+          }
+          while (fe.pos->next()) {
+            if (doc_offsets.size() / 2 >= kMaxOffsetsPerDoc) {
+              break;
+            }
+            const uint64_t key =
+              (uint64_t{fe.offs->start} << 32) | fe.offs->end;
+            if (!seen_offsets.insert(key).second) {
+              continue;
+            }
+            doc_offsets.push_back(static_cast<int64_t>(fe.offs->start));
+            doc_offsets.push_back(static_cast<int64_t>(fe.offs->end));
+          }
+        }
+
+        // Sort pairs by start ascending.
+        if (doc_offsets.size() > 2) {
+          using Pair = std::array<int64_t, 2>;
+          auto* pairs = reinterpret_cast<Pair*>(doc_offsets.data());
+          std::sort(pairs, pairs + doc_offsets.size() / 2,
+                    [](const Pair& a, const Pair& b) { return a[0] < b[0]; });
+        }
       }
       --size;
     }
@@ -165,6 +242,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
         _score_function = {};
       }
       _doc.reset();
+      _current_seg = nullptr;
     }
   }
 

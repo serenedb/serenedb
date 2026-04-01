@@ -22,18 +22,18 @@
 
 #include <velox/connectors/Connector.h>
 
-#include <vector>
-
-#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <string>
+#include <vector>
 
 #include "basics/fwd.h"
 #include "catalog/table_options.h"
+#include "connector/offsets_collector.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace sdb::connector {
@@ -76,8 +76,14 @@ class SearchDataSource final : public velox::connector::DataSource {
   // One entry per requested OFFSETS() column, in the same order as
   // offsets_column_ids passed to the constructor.
   std::vector<catalog::Column::Id> _offsets_column_ids;
-  std::vector<irs::PosAttr*> _pos_attrs;
-  std::vector<const irs::OffsAttr*> _offs_attrs;
+  // 8-byte big-endian encoding of each column ID, matching IResearch field
+  // names.
+  std::vector<std::string> _binary_field_names;
+  // Per-field offset state, rebuilt on each segment transition.
+  std::vector<PerFieldState> _offsets_field_state;
+  // Pointer to the segment currently being scanned; valid between next_segment
+  // and the following _doc.reset().
+  const irs::SubReader* _current_seg = nullptr;
 };
 
 }  // namespace sdb::connector

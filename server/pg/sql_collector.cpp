@@ -258,12 +258,10 @@ void ObjectCollector::CollectFuncCall(const State& state,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("OFFSETS() argument must be a column reference"));
     }
-    auto field_name =
-      NameToStr(castNode(ColumnRef, arg)->fields);
+    auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
     if (!_objects.AddOffsetsField(std::move(field_name))) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Duplicate OFFSETS() call for the same field"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Duplicate OFFSETS() call for the same field"));
     }
     return;
   }

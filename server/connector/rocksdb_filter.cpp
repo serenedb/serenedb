@@ -30,6 +30,9 @@
 #include "basics/down_cast.h"
 
 namespace sdb::connector {
+
+velox::variant ToVariant(const velox::core::ConstantTypedExpr&);
+
 namespace {
 
 std::vector<KeyConstraint> MergeKeyConstraintsPrecise(
@@ -41,6 +44,18 @@ void MergeSourceExprs(KeyConstraint::SourceExprsMap& dst,
 std::vector<KeyConstraint> AnyKeyConstraint(
   const std::span<const std::string> names) {
   return {KeyConstraint::MakeAny(names)};
+}
+
+// Helper: produces two KCs for a != v  →  a < v  OR  a > v.
+std::vector<KeyConstraint> MakeNeqConstraints(
+  std::string_view col_name, const velox::core::ConstantTypedExpr& val,
+  const velox::core::ITypedExpr* source,
+  std::span<const std::string> pk_names) {
+  auto kc_lt = KeyConstraint::MakeAny(pk_names);
+  kc_lt.AddComparisonFilter(col_name, val, ComparisonOp::Lt, source);
+  auto kc_gt = KeyConstraint::MakeAny(pk_names);
+  kc_gt.AddComparisonFilter(col_name, val, ComparisonOp::Gt, source);
+  return {std::move(kc_lt), std::move(kc_gt)};
 }
 
 std::vector<KeyConstraint> ExtractFilterEq(
@@ -62,6 +77,26 @@ std::vector<KeyConstraint> ExtractFilterEq(
   auto p = KeyConstraint::MakeAny(pk_names);
   p.AddEqFilter(field_access->name(), *const_val, func_call);
   return {p};
+}
+
+// a != v  →  a < v  OR  a > v
+std::vector<KeyConstraint> ExtractFilterNeq(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
+  SDB_ASSERT(func_call->inputs().size() == 2);
+  if (!func_call->inputs()[0]->isFieldAccessKind() ||
+      !func_call->inputs()[1]->isConstantKind()) {
+    return AnyKeyConstraint(pk_names);
+  }
+  auto field_access =
+    basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
+  auto const_val =
+    basics::downCast<velox::core::ConstantTypedExpr>(func_call->inputs()[1]);
+  if (!absl::c_linear_search(pk_names, field_access->name())) {
+    return AnyKeyConstraint(pk_names);
+  }
+  return MakeNeqConstraints(field_access->name(), *const_val, func_call,
+                            pk_names);
 }
 
 std::vector<KeyConstraint> ExtractFilterComparison(
@@ -357,7 +392,123 @@ std::vector<KeyConstraint> ExtractFilterNot(
     return {std::move(kc)};
   }
 
-  // not(a = v) and not(a in (...)) cannot be expressed as a useful range.
+  // not(a != v) → a = v
+  if (IsCallOf(child, "_neq")) {
+    if (child->inputs().size() != 2 ||
+        !child->inputs()[0]->isFieldAccessKind() ||
+        !child->inputs()[1]->isConstantKind()) {
+      return AnyKeyConstraint(pk_names);
+    }
+    auto field_access =
+      basics::downCast<velox::core::FieldAccessTypedExpr>(child->inputs()[0]);
+    auto const_val =
+      basics::downCast<velox::core::ConstantTypedExpr>(child->inputs()[1]);
+    if (!absl::c_linear_search(pk_names, field_access->name())) {
+      return AnyKeyConstraint(pk_names);
+    }
+    auto kc = KeyConstraint::MakeAny(pk_names);
+    kc.AddEqFilter(field_access->name(), *const_val, func_call);
+    return {std::move(kc)};
+  }
+
+  // not(a = v) → a < v  OR  a > v
+  if (IsCallOf(child, "_eq")) {
+    if (child->inputs().size() != 2 ||
+        !child->inputs()[0]->isFieldAccessKind() ||
+        !child->inputs()[1]->isConstantKind()) {
+      return AnyKeyConstraint(pk_names);
+    }
+    auto field_access =
+      basics::downCast<velox::core::FieldAccessTypedExpr>(child->inputs()[0]);
+    auto const_val =
+      basics::downCast<velox::core::ConstantTypedExpr>(child->inputs()[1]);
+    if (!absl::c_linear_search(pk_names, field_access->name())) {
+      return AnyKeyConstraint(pk_names);
+    }
+    return MakeNeqConstraints(field_access->name(), *const_val, func_call,
+                              pk_names);
+  }
+
+  // not(a in (x1, ..., xn)) → n+1 open intervals between the sorted values
+  if (IsCallOf(child, "_in")) {
+    if (child->inputs().size() < 2 ||
+        !child->inputs()[0]->isFieldAccessKind() ||
+        !child->inputs()[1]->isConstantKind()) {
+      return AnyKeyConstraint(pk_names);
+    }
+    auto field_access =
+      basics::downCast<velox::core::FieldAccessTypedExpr>(child->inputs()[0]);
+    auto array_const =
+      basics::downCast<velox::core::ConstantTypedExpr>(child->inputs()[1]);
+    if (array_const->type()->kind() != velox::TypeKind::ARRAY) {
+      return AnyKeyConstraint(pk_names);
+    }
+    if (!absl::c_linear_search(pk_names, field_access->name())) {
+      return AnyKeyConstraint(pk_names);
+    }
+
+    SDB_ASSERT(array_const->valueVector()->typeKind() ==
+               velox::TypeKind::ARRAY);
+    auto const_vec =
+      basics::downCast<velox::ConstantVector<velox::ComplexType>>(
+        array_const->valueVector());
+    auto array_vec =
+      basics::downCast<velox::ArrayVector>(const_vec->valueVector());
+    const auto offset = array_vec->offsetAt(const_vec->index());
+    const auto size = array_vec->sizeAt(const_vec->index());
+    const auto& elements = array_vec->elements();
+
+    if (size == 0) {
+      return AnyKeyConstraint(pk_names);  // NOT IN () is vacuously true
+    }
+
+    // Sort element indices by value so we can build ordered complement
+    // intervals.
+    std::vector<velox::vector_size_t> order(size);
+    std::iota(order.begin(), order.end(), 0);
+    absl::c_sort(order, [&](velox::vector_size_t a, velox::vector_size_t b) {
+      velox::core::ConstantTypedExpr ea{
+        velox::BaseVector::wrapInConstant(1, offset + a, elements)};
+      velox::core::ConstantTypedExpr eb{
+        velox::BaseVector::wrapInConstant(1, offset + b, elements)};
+      return ToVariant(ea) < ToVariant(eb);
+    });
+
+    // Helper: build ConstantTypedExpr for the i-th sorted element.
+    auto elem = [&](velox::vector_size_t i) {
+      return velox::core::ConstantTypedExpr{
+        velox::BaseVector::wrapInConstant(1, offset + order[i], elements)};
+    };
+
+    const std::string& col = field_access->name();
+    std::vector<KeyConstraint> result;
+    result.reserve(size + 1);
+
+    // Leading interval: a < v_0
+    {
+      auto kc = KeyConstraint::MakeAny(pk_names);
+      kc.AddComparisonFilter(col, elem(0), ComparisonOp::Lt, func_call);
+      result.push_back(std::move(kc));
+    }
+    // Middle intervals: v_{i-1} < a < v_i
+    for (velox::vector_size_t i = 1; i < size; ++i) {
+      auto kc_lo = KeyConstraint::MakeAny(pk_names);
+      kc_lo.AddComparisonFilter(col, elem(i - 1), ComparisonOp::Gt, func_call);
+      auto kc_hi = KeyConstraint::MakeAny(pk_names);
+      kc_hi.AddComparisonFilter(col, elem(i), ComparisonOp::Lt, func_call);
+      if (auto kc = KeyConstraint::TryIntersect(kc_lo, kc_hi)) {
+        result.push_back(std::move(*kc));
+      }
+    }
+    // Trailing interval: a > v_{n-1}
+    {
+      auto kc = KeyConstraint::MakeAny(pk_names);
+      kc.AddComparisonFilter(col, elem(size - 1), ComparisonOp::Gt, func_call);
+      result.push_back(std::move(kc));
+    }
+    return result;
+  }
+
   return AnyKeyConstraint(pk_names);
 }
 
@@ -1193,6 +1344,8 @@ std::vector<KeyConstraint> ExtractFilterExpr(
     const auto* func_call = expr->asUnchecked<velox::core::CallTypedExpr>();
     if (IsCallOf(func_call, "_eq")) {
       pts = ExtractFilterEq(func_call, pk_names);
+    } else if (IsCallOf(func_call, "_neq")) {
+      pts = ExtractFilterNeq(func_call, pk_names);
     } else if (IsCallOf(func_call, "_in")) {
       pts = ExtractFilterIn(func_call, pk_names);
     } else if (IsCallOf(func_call, "_gt") || IsCallOf(func_call, "_gte") ||

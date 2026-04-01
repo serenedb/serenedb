@@ -1,0 +1,70 @@
+name: SereneDB-Build-Images
+
+run-name: "SereneDB [build image]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: 'Where the build is executed'
+        type: choice
+        required: true
+        options:
+          - X64
+          - arm
+          - self-hosted
+        default: 'X64'
+      PUSH_IMAGES_2_REGISTRY:
+        description: 'Push build images to Docker Hub'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    name: Produce Build Image
+    runs-on:
+      - ${{ inputs.LOCATION }}
+    steps:
+      - name: Checkout SereneDB
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Setup QEMU for multi-arch
+        run: docker run --rm --privileged tonistiigi/binfmt --install all
+
+      - name: Build and push build images
+        working-directory: ./scripts/ci
+        env:
+          DOCKER_REGISTRY: serenedb
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+          PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+        run: ./build_images.sh
+
+      - name: Docker cleanup
+        if: always()
+        run: |
+          docker system prune -f || true
+          docker volume prune -f || true
+
+      - name: Send Telegram notification
+        if: always() && !cancelled()
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID_MAIN: "51"
+          TG_THREAD_ID_BUILD: "53"
+          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+          BRANCH: ${{ github.ref_name }}
+          JOB_STATUS: ${{ job.status }}
+          ACTOR: ${{ github.actor }}
+          RUN_NAME: "SereneDB [build image]"
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/notify_telegram.bash

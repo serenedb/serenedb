@@ -72,8 +72,8 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
 
   R"(CREATE FUNCTION pg_stat_get_progress_info(cmd TEXT)
   RETURNS TABLE( pid BIGINT,
-                 datid BIGINT,
-                 relid BIGINT,
+                 datid OID,
+                 relid OID,
                  param1 BIGINT,
                  param2 BIGINT,
                  param3 BIGINT,

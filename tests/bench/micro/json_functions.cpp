@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/random/random.h>
+#include <absl/strings/str_cat.h>
 #include <benchmark/benchmark.h>
 #include <velox/type/StringView.h>
 
@@ -27,11 +28,11 @@
 #include <string_view>
 #include <vector>
 
-#include "pg/functions/json.h"
-
-using sdb::pg::JsonParser;
+#include "pg/functions/json.tpp"
 
 namespace {
+
+using sdb::pg::functions::JsonParser;
 
 // Very simple JSON quoting(handles only double quotes) for test data
 // generation.
@@ -248,11 +249,13 @@ BENCHMARK_DEFINE_F(JsonPathFixture,
   }
 }
 
-}  // namespace
 BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndexText);
 BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractFieldText);
 BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtractText);
 BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndex);
 BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractField);
 BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtract);
+
+}  // namespace
+
 BENCHMARK_MAIN();

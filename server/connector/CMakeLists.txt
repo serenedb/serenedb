@@ -1,6 +1,7 @@
 add_library(
     serene_connector
     STATIC
+    common.cpp
     data_sink.cpp
     primary_key.cpp
     data_source.cpp
@@ -12,6 +13,7 @@ add_library(
     file_table.cpp
     rocksdb_materializer.cpp
     parquet_materializer.cpp
+    text_materializer.cpp
     search_count_data_source.cpp
     search_scan_data_source.cpp
     search_filter_builder.cpp

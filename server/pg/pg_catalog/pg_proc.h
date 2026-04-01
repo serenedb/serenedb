@@ -58,8 +58,18 @@ struct PgProc {
   bool proleakproof;
   bool proisstrict;
   bool proretset;
-  bool provolatile;
-  bool proparallel;
+  enum class Provolatile : char {
+    Immutable = 'i',
+    Stable = 's',
+    Volatile = 'v',
+  };
+  enum class Proparallel : char {
+    Safe = 's',
+    Restricted = 'r',
+    Unsafe = 'u',
+  };
+  Provolatile provolatile;
+  Proparallel proparallel;
   int16_t pronargs;
   int16_t pronargdefaults;
   Oid prorettype;
@@ -76,5 +86,9 @@ struct PgProc {
   Array<Aclitem> proacl;
 };
 // NOLINTEND
+
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
+  velox::memory::MemoryPool& pool);
 
 }  // namespace sdb::pg

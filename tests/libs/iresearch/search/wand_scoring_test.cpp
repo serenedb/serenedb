@@ -258,7 +258,7 @@ TEST_P(WandScoringTestCase, WandSmallK) {
   CompareWandVsNonWand(reader, *filter, scorer, 3);
 }
 
-// WAND with k larger than matches — no pruning expected
+// WAND with k larger than matches -- no pruning expected
 TEST_P(WandScoringTestCase, WandLargeK) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer);
@@ -280,7 +280,7 @@ TEST_P(WandScoringTestCase, WandBm15) {
   CompareWandVsNonWand(reader, *filter, scorer, 10);
 }
 
-// k=1 — aggressive threshold, 4200 docs
+// k=1 -- aggressive threshold, 4200 docs
 TEST_P(WandScoringTestCase, WandKOne) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
@@ -291,7 +291,7 @@ TEST_P(WandScoringTestCase, WandKOne) {
   CompareWandVsNonWand(reader, *filter, scorer, 1);
 }
 
-// Multi-segment TFIDF, 3 segments × 1400 docs each
+// Multi-segment TFIDF, 3 segments x 1400 docs each
 TEST_P(WandScoringTestCase, WandMultisegTfidf) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
@@ -303,7 +303,7 @@ TEST_P(WandScoringTestCase, WandMultisegTfidf) {
   CompareWandVsNonWand(reader, *filter, scorer, 15);
 }
 
-// Multi-segment BM25, 3 segments × 1400 docs each
+// Multi-segment BM25, 3 segments x 1400 docs each
 TEST_P(WandScoringTestCase, WandMultisegBm25) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateMultiSegmentIndex(scorer, 10);

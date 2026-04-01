@@ -1,0 +1,311 @@
+# Fix #1: quote_nullable(NULL) must return text 'NULL', not SQL NULL
+
+query
+SELECT quote_nullable(NULL);
+----
+quote_nullable
+NULL
+
+
+query
+SELECT quote_nullable('hello');
+----
+quote_nullable
+'hello'
+
+
+query
+SELECT quote_nullable('it''s');
+----
+quote_nullable
+'it''s'
+
+
+# Fix #2: quote_literal must not emit leading space for E-strings
+
+query
+SELECT quote_literal(E'hello\\world');
+----
+quote_literal
+E'hello\\\\world'
+
+
+query
+SELECT quote_literal('simple');
+----
+quote_literal
+'simple'
+
+
+query
+SELECT quote_literal('it''s');
+----
+quote_literal
+'it''s'
+
+
+# Fix #3: get_bit/set_bit must reject negative offsets
+
+statement error
+SELECT get_bit('\xAB'::bytea, -1);
+
+
+statement error
+SELECT set_bit('\xAB'::bytea, -1, 1);
+
+
+query
+SELECT get_bit('\xFF'::bytea, 0);
+----
+get_bit
+1
+
+
+query
+SELECT get_bit('\xFF'::bytea, 7);
+----
+get_bit
+1
+
+
+query
+SELECT get_bit('\x80'::bytea, 0);
+----
+get_bit
+0
+
+
+query
+SELECT get_bit('\x80'::bytea, 7);
+----
+get_bit
+1
+
+
+# multi-byte: \x0001 = byte0=0x00, byte1=0x01
+query
+SELECT get_bit('\x0001'::bytea, 0);
+----
+get_bit
+0
+
+
+query
+SELECT get_bit('\x0001'::bytea, 8);
+----
+get_bit
+1
+
+
+# multi-byte: \x8000 = byte0=0x80, byte1=0x00
+query
+SELECT get_bit('\x8000'::bytea, 7);
+----
+get_bit
+1
+
+
+query
+SELECT get_bit('\x8000'::bytea, 8);
+----
+get_bit
+0
+
+
+# set_bit multi-byte
+query
+SELECT set_bit('\x0000'::bytea, 8, 1);
+----
+set_bit
+\\x0001
+
+
+query
+SELECT set_bit('\xFF00'::bytea, 0, 0);
+----
+set_bit
+\\xfe00
+
+
+# Fix #4: lcm must not crash on MIN_INT
+
+statement error
+SELECT lcm(-9223372036854775808::bigint, 1::bigint);
+
+
+query
+SELECT lcm(12::bigint, 18::bigint);
+----
+lcm
+36
+
+
+query
+SELECT lcm(0::bigint, 5::bigint);
+----
+lcm
+0
+
+
+query
+SELECT lcm(5::bigint, 0::bigint);
+----
+lcm
+0
+
+
+# Fix #6: json_strip_nulls must preserve escaped keys
+
+query
+SELECT json_strip_nulls('{"a": 1, "b": null}'::json);
+----
+json_strip_nulls
+{"a":1}
+
+
+query
+SELECT json_strip_nulls('{"a": 1, "b": 2}'::json);
+----
+json_strip_nulls
+{"a":1,"b":2}
+
+
+query
+SELECT json_strip_nulls('{"a": {"b": null, "c": 1}}'::json);
+----
+json_strip_nulls
+{"a":{"c":1}}
+
+
+query
+SELECT json_strip_nulls('{"a\\b": 1, "c": null}'::json);
+----
+json_strip_nulls
+{"a\\\\b":1}
+
+
+query
+SELECT json_strip_nulls('{"a\"b": 1, "c": null}'::json);
+----
+json_strip_nulls
+{"a\\"b":1}
+
+
+# Fix #7: age() must preserve sub-second precision
+
+query
+SELECT age('2024-01-01 12:00:00.5'::timestamp, '2024-01-01 12:00:00.0'::timestamp);
+----
+age
+00:00:00.5
+
+
+query
+SELECT age('2024-01-01 12:00:01.25'::timestamp, '2024-01-01 12:00:00.75'::timestamp);
+----
+age
+00:00:00.5
+
+
+query
+SELECT div(7::bigint, 2::bigint);
+----
+div
+3
+
+
+query
+SELECT div(7.0, 2.0);
+----
+div
+3
+
+
+statement error
+SELECT div(1.0, 0.0);
+
+
+# Fix #9: string_to_array with empty delimiter
+
+query
+SELECT string_to_array('hello', '');
+----
+string_to_array
+{hello}
+
+
+query
+SELECT string_to_array('', '');
+----
+string_to_array
+{}
+
+
+query
+SELECT string_to_array('hello', 'l');
+----
+string_to_array
+{he,"",o}
+
+
+query
+SELECT string_to_array('a,b,c', ',');
+----
+string_to_array
+{a,b,c}
+
+
+query
+select string_to_array(NULL, NULL);
+----
+string_to_array
+NULL
+
+
+query
+select string_to_array(NULL, '');
+----
+string_to_array
+NULL
+
+
+query
+select string_to_array('', NULL);
+----
+string_to_array
+{}
+
+
+query
+select string_to_array('', '');
+----
+string_to_array
+{}
+
+
+query
+select string_to_array(NULL, 'l');
+----
+string_to_array
+NULL
+
+
+query
+select string_to_array('hello', NULL);
+----
+string_to_array
+{h,e,l,l,o}
+
+
+query
+select string_to_array('hello', 'l');
+----
+string_to_array
+{he,"",o}
+
+
+query
+select string_to_array('hello', '');
+----
+string_to_array
+{hello}

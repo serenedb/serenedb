@@ -47,14 +47,14 @@ struct PgAggregate {
   int16_t aggnumdirectargs;
 
   Regproc aggtransfn;
-  Regproc aggfinalfn = kNone;
-  Regproc aggcombinefn = kNone;
-  Regproc aggserialfn = kNone;
-  Regproc aggdeserialfn = kNone;
+  Regproc aggfinalfn;
+  Regproc aggcombinefn;
+  Regproc aggserialfn;
+  Regproc aggdeserialfn;
 
-  Regproc aggmtransfn = kNone;
-  Regproc aggminvtransfn = kNone;
-  Regproc aggmfinalfn = kNone;
+  Regproc aggmtransfn;
+  Regproc aggminvtransfn;
+  Regproc aggmfinalfn;
 
   bool aggfinalextra;
   bool aggmfinalextra;
@@ -62,10 +62,10 @@ struct PgAggregate {
   Aggfinalmodify aggfinalmodify;
   Aggfinalmodify aggmfinalmodify;
 
-  Oid aggsortop = kNone;
+  Oid aggsortop;
   Oid aggtranstype;
   int32_t aggtransspace;
-  Oid aggmtranstype = kNone;
+  Oid aggmtranstype;
   Oid aggmtransspace;
 
   Text agginitval;

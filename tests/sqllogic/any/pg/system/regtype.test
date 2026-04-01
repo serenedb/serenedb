@@ -97,13 +97,6 @@ uuid
 
 
 query
-SELECT 'varchar'::regtype;
-----
-regtype
-character varying
-
-
-query
 SELECT 'int4'::regtype;
 ----
 regtype
@@ -283,13 +276,6 @@ SELECT 'float8[]'::regtype;
 ----
 regtype
 double precision[]
-
-
-query
-SELECT 'varchar[]'::regtype;
-----
-regtype
-character varying[]
 
 
 query

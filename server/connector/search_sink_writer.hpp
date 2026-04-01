@@ -180,7 +180,9 @@ class SearchSinkInsertWriter final : public SinkIndexWriter,
                          std::span<const catalog::Column::Id> columns)
     : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider), columns} {}
 
-  void Init(size_t batch_size) final { InitImpl(batch_size); }
+  void Init(size_t batch_size, const velox::RowVectorPtr&) final {
+    InitImpl(batch_size);
+  }
 
   bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
@@ -203,9 +205,13 @@ class SearchSinkDeleteWriter final : public SinkIndexWriter,
   SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
     : SearchSinkDeleteBaseImpl{trx} {}
 
-  void Init(size_t batch_size) final { InitImpl(batch_size); }
+  void Init(size_t batch_size, const velox::RowVectorPtr&) final {
+    InitImpl(batch_size);
+  }
 
-  void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
+  void DeleteRow(std::string_view encoded_pk) final {
+    DeleteRowImpl(encoded_pk);
+  }
 
   void Finish() final { FinishImpl(); }
 
@@ -222,7 +228,7 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
     : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider), columns},
       SearchSinkDeleteBaseImpl{trx} {}
 
-  void Init(size_t batch_size) final {
+  void Init(size_t batch_size, const velox::RowVectorPtr&) final {
     SearchSinkInsertBaseImpl::InitImpl(batch_size);
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
@@ -249,7 +255,9 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
     SearchSinkDeleteBaseImpl::AbortImpl();
   }
 
-  void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
+  void DeleteRow(std::string_view encoded_pk) final {
+    DeleteRowImpl(encoded_pk);
+  }
 };
 
 // SearchSinkInsertBaseImpl stores a reference to the transaction, so the
@@ -273,7 +281,15 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
                                columns},
       _shard{shard} {}
 
-  void Init(size_t batch_size) final { InitImpl(batch_size); }
+  void Init(size_t batch_size, const velox::RowVectorPtr&) final {
+    // Flush should happen only at batch boundary
+    // where we re-create document and have all previous values written.
+    if (_trx.FlushRequired()) {
+      _document.reset();
+      Commit(false);
+    }
+    InitImpl(batch_size);
+  }
 
   bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
@@ -284,14 +300,11 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
     SearchSinkInsertBaseImpl::WriteImpl(cell_slices, full_key);
-    if (_trx.FlushRequired()) {
-      Commit();
-    }
   }
 
   void Finish() final {
     SearchSinkInsertBaseImpl::FinishImpl();
-    Commit();
+    Commit(true);
   }
 
   void Abort() final {
@@ -300,9 +313,11 @@ class SearchSinkBackfillWriter final : public SinkIndexWriter,
   }
 
  private:
-  void Commit() {
+  void Commit(bool finish) {
     _trx_storage.Commit();
-    _trx_storage = _shard.GetTransaction();
+    if (!finish) {
+      _trx_storage = _shard.GetTransaction();
+    }
   }
 
   search::InvertedIndexShard& _shard;

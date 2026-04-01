@@ -27,8 +27,10 @@
 
 #include <span>
 #include <string>
+#include <vector>
 
 #include "basics/fwd.h"
+#include "catalog/table_options.h"
 
 namespace sdb::connector {
 
@@ -38,20 +40,26 @@ class ParquetMaterializer {
     velox::memory::MemoryPool& pool, std::shared_ptr<velox::ReadFile> source,
     std::unique_ptr<velox::dwio::common::Reader> reader,
     std::unique_ptr<velox::dwio::common::RowReader> row_reader,
-    velox::RowTypePtr output_type);
+    velox::RowTypePtr output_type, std::vector<catalog::Column::Id> column_ids);
 
-  velox::RowVectorPtr ReadRows(std::span<const std::string> row_keys,
+  velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
                                velox::VectorPtr scores);
 
  private:
+  uint32_t FindRowGroup(int64_t row_number, uint32_t search_from) const;
+
+  int64_t RowGroupEnd(uint32_t rg) const;
+
   velox::memory::MemoryPool& _pool;
   std::shared_ptr<velox::ReadFile> _source;
   std::unique_ptr<velox::dwio::common::Reader> _reader;
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   velox::RowTypePtr _output_type;
+  int64_t _score_column_idx = -1;
   std::vector<int64_t> _row_group_starts;
   int64_t _total_rows = 0;
-  size_t _produced = 0;
+  std::vector<uint64_t> _bitmap_buf;
+  std::vector<int64_t> _decoded_rows;
 };
 
 }  // namespace sdb::connector

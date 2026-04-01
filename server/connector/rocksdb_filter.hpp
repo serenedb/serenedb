@@ -79,7 +79,7 @@ class Point {
 };
 
 // A fully resolved point: one variant per PK column, ordered by pk_type.
-// Used after filter extraction — no expression metadata, no names.
+// Used after filter extraction -- no expression metadata, no names.
 using SpecificPoint = std::vector<velox::variant>;
 
 // Converts specific (fully constrained) Points to SpecificPoint, ordered by
@@ -98,7 +98,8 @@ struct ExtractAndRewriteResult {
 };
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
-  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
+  const velox::core::TypedExprPtr& expr,
+  std::span<const std::string> column_names);
 
 // Sorts points in-place by PK key order. Column order matches the pk_type used
 // during ToSpecificPoints. Comparison uses velox::variant::operator<.

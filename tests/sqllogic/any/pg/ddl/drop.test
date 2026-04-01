@@ -1,9 +1,9 @@
 statement ok
 CREATE TABLE pudge(a integer);
 
-onlyif serenedb
+
 statement ok
-CREATE INDEX deadinside ON pudge USING inverted(a);
+CREATE INDEX deadinside ON pudge(a);
 
 statement ok
 CREATE SCHEMA kostya;
@@ -17,7 +17,7 @@ BEGIN ATOMIC
   SELECT * FROM pudge;
 END;
 
-onlyif serenedb
+
 statement error
 DROP TABLE deadinside;
 ----
@@ -25,7 +25,7 @@ db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
 
 
-onlyif serenedb
+
 statement error
 DROP TABLE IF EXISTS deadinside;
 ----
@@ -61,7 +61,7 @@ db error: ERROR: "pudge" is not a view
 HINT: Use DROP TABLE to remove a table.
 
 
-onlyif serenedb
+
 statement error
 DROP VIEW deadinside;
 ----
@@ -69,7 +69,7 @@ db error: ERROR: "deadinside" is not a view
 HINT: Use DROP INDEX to remove an index.
 
 
-onlyif serenedb
+
 statement error
 DROP VIEW IF EXISTS deadinside;
 ----
@@ -152,7 +152,7 @@ DROP TABLE kostya.babsky;
 statement ok
 DROP SCHEMA kostya;
 
-onlyif serenedb
+
 statement ok
 DROP INDEX deadinside;
 

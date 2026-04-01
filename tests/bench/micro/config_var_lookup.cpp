@@ -30,12 +30,12 @@
 //   - Miss:                  keys not present, varied lengths
 //
 // Approaches under test:
-//   1. frozen::unordered_map  – lowercase keys,  AsciiStrToLower on input
-//   2. frozen::unordered_map  – canonical keys,  case-insensitive hash/equal
-//   3. absl::flat_hash_map    – lowercase keys,  AsciiStrToLower on input
-//   4. absl::flat_hash_map    – canonical keys,  case-insensitive hash/equal
-//   5. linear scan            – canonical keys,  EqualsIgnoreCase   (baseline)
-//   6. utils::TrivialBiMap    – lowercase keys,  ICase switch-on-length
+//   1. frozen::unordered_map  - lowercase keys,  AsciiStrToLower on input
+//   2. frozen::unordered_map  - canonical keys,  case-insensitive hash/equal
+//   3. absl::flat_hash_map    - lowercase keys,  AsciiStrToLower on input
+//   4. absl::flat_hash_map    - canonical keys,  case-insensitive hash/equal
+//   5. linear scan            - canonical keys,  EqualsIgnoreCase   (baseline)
+//   6. utils::TrivialBiMap    - lowercase keys,  ICase switch-on-length
 //
 // Approaches 1 and 2 require building with -DSDB_BENCH_FROZEN=1.
 
@@ -57,7 +57,7 @@ namespace {
 using Value = int;
 
 // ---------------------------------------------------------------------------
-// kLowerKeys – all keys in lowercase (for maps 1/3/6 and as canonical array
+// kLowerKeys - all keys in lowercase (for maps 1/3/6 and as canonical array
 // for the linear scan).  Mirrors kVariableDescription +
 // kVeloxVariableDescription exactly, in their definition order.
 // ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ static constexpr std::string_view kLowerKeys[] = {
 
 static constexpr auto kN = std::size(kLowerKeys);
 
-// kCanonicalKeys – same as kLowerKeys but with PostgreSQL canonical casing
+// kCanonicalKeys - same as kLowerKeys but with PostgreSQL canonical casing
 // for DateStyle / IntervalStyle / TimeZone.
 // clang-format off
 static constexpr std::string_view kCanonicalKeys[] = {
@@ -325,18 +325,16 @@ static constexpr std::string_view kSqlKeys[] = {
   "max_split_preload_per_driver",
 };
 
-// Miss keys – not in the map, with lengths that collide with real keys.
+// Miss keys - not in the map, with lengths that collide with real keys.
 // "spill_enabled" is 13 chars, so "no_such_param" (13) is a real collision.
 static constexpr std::string_view kMissKeys[] = {
-  "no_such_param",     // len 13 – same as "spill_enabled"
-  "unknown_variable",  // len 16 – same as "scram_iterations", "server_version"
+  "no_such_param",     // len 13 - same as "spill_enabled"
+  "unknown_variable",  // len 16 - same as "scram_iterations", "server_version"
   "nonexistent_config_key",  // len 22
   "xyz",                     // short, len 3
 };
 
-// ===========================================================================
-// Approach 1 – frozen::unordered_map, lowercase keys  [#ifdef SDB_BENCH_FROZEN]
-// ===========================================================================
+// Approach 1 - frozen::unordered_map, lowercase keys  [#ifdef SDB_BENCH_FROZEN]
 
 #ifdef SDB_BENCH_FROZEN
 // clang-format off
@@ -450,10 +448,8 @@ constexpr auto kFrozenLower =
 // clang-format on
 #endif  // SDB_BENCH_FROZEN
 
-// ===========================================================================
-// Approach 2 – frozen::unordered_map, canonical keys, icase hash/equal
+// Approach 2 - frozen::unordered_map, canonical keys, icase hash/equal
 //              [IcaseHash/IcaseEqual also used by approach 4]
-// ===========================================================================
 
 struct IcaseHash {
   constexpr std::size_t operator()(std::string_view v) const noexcept {
@@ -616,9 +612,7 @@ constexpr auto kFrozenIcase =
 // clang-format on
 #endif  // SDB_BENCH_FROZEN
 
-// ===========================================================================
-// Approach 3 – absl::flat_hash_map, lowercase keys
-// ===========================================================================
+// Approach 3 - absl::flat_hash_map, lowercase keys
 
 const absl::flat_hash_map<std::string, Value> kAbslLower = [] {
   absl::flat_hash_map<std::string, Value> m;
@@ -629,9 +623,7 @@ const absl::flat_hash_map<std::string, Value> kAbslLower = [] {
   return m;
 }();
 
-// ===========================================================================
-// Approach 4 – absl::flat_hash_map, canonical keys, icase hash/equal
-// ===========================================================================
+// Approach 4 - absl::flat_hash_map, canonical keys, icase hash/equal
 
 const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
   kAbslIcase = [] {
@@ -643,9 +635,7 @@ const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
     return m;
   }();
 
-// ===========================================================================
-// Approach 6 – utils::TrivialBiMap, lowercase keys
-// ===========================================================================
+// Approach 6 - utils::TrivialBiMap, lowercase keys
 
 static constexpr Value kTrivialValues[] = {
   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,
@@ -664,9 +654,7 @@ static_assert(std::size(kTrivialValues) == kN);
 constexpr auto kTrivialMap =
   sdb::containers::MakeTrivialBiMap<kLowerKeys, kTrivialValues>();
 
-// ===========================================================================
 // Helpers
-// ===========================================================================
 
 template<typename Map>
 [[gnu::noinline]] static void LookupAll(benchmark::State& state, const Map& map,
@@ -716,9 +704,7 @@ template<typename Map>
   }
 }
 
-// ===========================================================================
 // Wire-protocol path (13 canonical-case keys, happens once per connection)
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 void BmFrozenLower_Wire(benchmark::State& s) {
@@ -750,9 +736,7 @@ BENCHMARK(BmAbslIcase_Wire);
 BENCHMARK(BmLinear_Wire);
 BENCHMARK(BmTrivial_Wire);
 
-// ===========================================================================
 // SQL SET/SHOW path (lowercase input)
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 void BmFrozenLower_Sql(benchmark::State& s) {
@@ -784,9 +768,7 @@ BENCHMARK(BmAbslIcase_Sql);
 BENCHMARK(BmLinear_Sql);
 BENCHMARK(BmTrivial_Sql);
 
-// ===========================================================================
 // Miss cases (varied key lengths to exercise length-dispatch fairly)
-// ===========================================================================
 
 #ifdef SDB_BENCH_FROZEN
 void BmFrozenLower_Miss(benchmark::State& s) {

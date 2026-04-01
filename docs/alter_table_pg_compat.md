@@ -21,7 +21,7 @@
 - [ ] `ALTER TABLE ... VALIDATE CONSTRAINT` — validate a NOT VALID constraint
 
 ### Table-level operations
-- [ ] `ALTER TABLE ... SET SCHEMA` — move table to different schema
+- [x] `ALTER TABLE ... SET SCHEMA` — move table to different schema
 - [ ] `ALTER TABLE ... OWNER TO` — change table owner
 - [ ] `ALTER TABLE ... SET` / `RESET` — storage parameters
 

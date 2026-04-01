@@ -201,6 +201,17 @@ ALTER TABLE pudge RENAME TO invoker;
 ----
 db error: ERROR: relation "invoker" already exists
 
+statement error
+ALTER VIEW pudge_view RENAME TO pudge;
+----
+db error: ERROR: relation "pudge" already exists
+
+onlyif serenedb
+statement error
+ALTER INDEX deadinside RENAME TO pudge;
+----
+db error: ERROR: relation "pudge" already exists
+
 
 statement ok
 ALTER TABLE pudge RENAME TO pudge;
@@ -274,6 +285,14 @@ db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not e
 
 statement ok
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_pos;
+
+statement ok
+ALTER TABLE constr_test ADD CONSTRAINT constr_test_bound CHECK (a < 100);
+
+statement error
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_bound;
+----
+db error: ERROR: constraint "constr_test_bound" for relation "constr_test" already exists
 
 statement ok
 DROP TABLE constr_test;
@@ -388,3 +407,78 @@ DROP TABLE invoker;
 
 statement ok
 DROP TABLE pudge;
+
+
+# ALTER TABLE ... SET SCHEMA
+
+statement ok
+CREATE SCHEMA alpha;
+
+statement ok
+CREATE SCHEMA beta;
+
+statement ok
+CREATE TABLE alpha.mover(a integer, b text);
+
+statement ok
+INSERT INTO alpha.mover VALUES (1, 'hello');
+
+statement ok
+ALTER TABLE alpha.mover SET SCHEMA beta;
+
+query
+SELECT * FROM beta.mover;
+----
+a	b
+1	hello
+
+statement error
+SELECT * FROM alpha.mover;
+----
+db error: ERROR: relation "alpha.mover" does not exist
+
+
+statement ok
+ALTER TABLE beta.mover SET SCHEMA alpha;
+
+query
+SELECT * FROM alpha.mover;
+----
+a	b
+1	hello
+
+
+statement error
+ALTER TABLE alpha.nonexistent SET SCHEMA beta;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+statement error
+ALTER TABLE alpha.mover SET SCHEMA nonexistent;
+----
+db error: ERROR: schema "nonexistent" does not exist
+
+
+statement ok
+CREATE TABLE beta.mover(x integer);
+
+statement error
+ALTER TABLE alpha.mover SET SCHEMA beta;
+----
+db error: ERROR: relation "mover" already exists in schema "beta"
+
+statement ok
+DROP TABLE beta.mover;
+
+
+statement ok
+ALTER TABLE alpha.mover SET SCHEMA alpha;
+
+statement ok
+DROP TABLE alpha.mover;
+
+statement ok
+DROP SCHEMA beta;
+
+statement ok
+DROP SCHEMA alpha;

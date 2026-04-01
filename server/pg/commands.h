@@ -86,4 +86,7 @@ yaclib::Future<> RenameObject(ExecContext& ctx, const RenameStmt& stmt);
 
 yaclib::Future<> AlterTable(ExecContext& ctx, const AlterTableStmt& stmt);
 
+yaclib::Future<> AlterObjectSchema(ExecContext& ctx,
+                                   const AlterObjectSchemaStmt& stmt);
+
 }  // namespace sdb::pg

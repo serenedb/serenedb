@@ -1501,6 +1501,80 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
   return RenameObjectImpl<Function>(database_id, schema, name, new_name);
 }
 
+Result LocalCatalog::AlterTableSchema(ObjectId database_id,
+                                      std::string_view old_schema,
+                                      std::string_view name,
+                                      std::string_view new_schema) {
+  auto old_schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, old_schema);
+  if (!old_schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto new_schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, new_schema);
+  if (!new_schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  if (*old_schema_id == *new_schema_id) {
+    return {};
+  }
+
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*old_schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+
+  auto schema_obj = basics::downCast<SchemaObject>(std::move(obj));
+  schema_obj->SetSchemaId(*new_schema_id);
+
+  auto entry_type = [&]() {
+    switch (schema_obj->GetType()) {
+      case ObjectType::Table:
+        return RocksDBEntryType::Table;
+      case ObjectType::View:
+        return RocksDBEntryType::View;
+      case ObjectType::Index:
+        return RocksDBEntryType::Index;
+      default:
+        SDB_UNREACHABLE();
+    }
+  }();
+
+  absl::MutexLock lock{&_mutex};
+  return Apply(
+    _snapshot,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      clone->UnregisterObject(schema_obj, *old_schema_id);
+      auto r = clone->RegisterObject(schema_obj, *new_schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+
+      vpack::Builder b;
+      b.openObject();
+      schema_obj->WriteInternal(b);
+      b.close();
+
+      return _engine->CreateDefinition(*new_schema_id, entry_type,
+                                       schema_obj->GetId(),
+                                       [&](bool) { return b.slice(); });
+    },
+    [&](const std::shared_ptr<SnapshotImpl>& clone) {
+      clone->UnregisterObject(schema_obj, *new_schema_id, true);
+      auto r = clone->RegisterObject(schema_obj, *old_schema_id, true);
+      SDB_ASSERT(r.ok());
+      schema_obj->SetSchemaId(*old_schema_id);
+    });
+}
+
 Result LocalCatalog::ChangeRole(std::string_view name,
                                 ChangeCallback<Role> new_role) {
   absl::MutexLock lock{&_mutex};

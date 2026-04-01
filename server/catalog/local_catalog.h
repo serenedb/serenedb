@@ -102,6 +102,9 @@ class LocalCatalog final : public LogicalCatalog,
                         std::string_view name, std::string_view new_name) final;
   Result RenameFunction(ObjectId database_id, std::string_view schema,
                         std::string_view name, std::string_view new_name) final;
+  Result AlterTableSchema(ObjectId database_id, std::string_view old_schema,
+                          std::string_view name,
+                          std::string_view new_schema) final;
 
   template<typename T>
   Result RenameObjectImpl(ObjectId database_id, std::string_view schema,

@@ -16,4 +16,5 @@ target_sources(
         create_tsdictionary.cpp
         rename_object.cpp
         alter_table.cpp
+        alter_object_schema.cpp
 )

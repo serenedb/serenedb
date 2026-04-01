@@ -41,10 +41,11 @@ namespace sdb::connector {
 template<typename Materializer>
 class SearchDataSource final : public velox::connector::DataSource {
  public:
-  SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                   Materializer materializer, const irs::IndexReader& reader,
-                   const irs::Filter::Query& query, const irs::Scorer* scorer,
-                   std::vector<catalog::Column::Id> offsets_column_ids);
+  SearchDataSource(
+    velox::memory::MemoryPool& memory_pool, Materializer materializer,
+    const irs::IndexReader& reader, const irs::Filter::Query& query,
+    const irs::Scorer* scorer,
+    std::vector<catalog::Column::OffsetsFieldRequest> offsets_fields);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -74,10 +75,10 @@ class SearchDataSource final : public velox::connector::DataSource {
   irs::ColumnArgsFetcher _fetcher;
   irs::ScoreFunction _score_function;
   // One entry per requested OFFSETS() column, in the same order as
-  // offsets_column_ids passed to the constructor.
-  std::vector<catalog::Column::Id> _offsets_column_ids;
-  // 8-byte big-endian encoding of each column ID, matching IResearch field
-  // names.
+  // offsets_fields passed to the constructor.
+  std::vector<catalog::Column::OffsetsFieldRequest> _offsets_fields;
+  // 8-byte big-endian encoding of each column ID + mangle byte, matching
+  // IResearch field names.
   std::vector<std::string> _binary_field_names;
   // Per-field offset state, rebuilt on each segment transition.
   std::vector<PerFieldState> _offsets_field_state;

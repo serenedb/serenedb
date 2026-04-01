@@ -28,6 +28,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "catalog/table_options.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
@@ -246,20 +247,39 @@ void ObjectCollector::CollectFuncCall(const State& state,
     return;
   }
 
-  // OFFSETS(field) produces an offsets column in the output -- not a catalog
-  // function, resolved during analysis similarly to BM25()/TFIDF().
+  // OFFSETS(field [, limit]) produces an offsets column in the output --
+  // not a catalog function, resolved during analysis similarly to
+  // BM25()/TFIDF().
   if (name.schema.empty() && name.relation == search::functions::kOffsets) {
-    if (list_length(expr.args) != 1) {
+    const auto nargs = list_length(expr.args);
+    if (nargs < 1 || nargs > 2) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("OFFSETS() requires exactly one argument"));
+                      ERR_MSG("OFFSETS() requires one or two arguments"));
     }
     const auto* arg = linitial_node(Node, expr.args);
     if (!IsA(arg, ColumnRef)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("OFFSETS() argument must be a column reference"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("OFFSETS() first argument must be a column reference"));
+    }
+    size_t limit = Objects::kDefaultOffsetsLimit;
+    if (nargs == 2) {
+      const auto* limit_arg = lsecond_node(Node, expr.args);
+      if (!IsA(limit_arg, A_Const) ||
+          nodeTag(&castNode(A_Const, limit_arg)->val) != T_Integer) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("OFFSETS() second argument must be an integer constant"));
+      }
+      const auto v = intVal(&castNode(A_Const, limit_arg)->val);
+      if (v <= 0) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("OFFSETS() limit must be greater than zero"));
+      }
+      limit = static_cast<size_t>(v);
     }
     auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
-    if (!_objects.AddOffsetsField(std::move(field_name))) {
+    if (!_objects.AddOffsetsField(std::move(field_name), limit)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("Duplicate OFFSETS() call for the same field"));
     }

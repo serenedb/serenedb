@@ -1162,8 +1162,8 @@ class SqlAnalyzer {
   CopyMessagesQueue* _copy_queue;
   std::shared_ptr<const irs::Scorer> _scorer_for_select;
   lp::ExprPtr _expr_for_scorer;
-  // Field names for which OFFSETS() was requested in the current SELECT.
-  std::vector<std::string> _offsets_fields_for_select;
+  // Field requests for which OFFSETS() was requested in the current SELECT.
+  std::vector<pg::Objects::OffsetsFieldInfo> _offsets_fields_for_select;
   // Maps catalog field name -> current virtual offsets column expr.
   containers::FlatHashMap<std::string, lp::ExprPtr> _exprs_for_offsets;
   std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
@@ -3928,23 +3928,23 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
 
   // Resolve OFFSETS() field names to column IDs before creating the table,
   // so we can register the virtual offsets columns in InvertedIndexTable.
-  std::vector<catalog::Column::Id> offsets_column_ids;
+  std::vector<catalog::Column::OffsetsFieldRequest> offsets_requests;
   if (!_offsets_fields_for_select.empty()) {
     auto name_to_column = GetNameToColumn(table.Columns());
-    for (const auto& field_name : _offsets_fields_for_select) {
-      auto it = name_to_column.find(field_name);
+    for (const auto& field : _offsets_fields_for_select) {
+      auto it = name_to_column.find(field.name);
       if (it == name_to_column.end()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("OFFSETS(): column '", field_name, "' not found in table"));
+          ERR_MSG("OFFSETS(): column '", field.name, "' not found in table"));
       }
-      offsets_column_ids.push_back(it->second->id);
+      offsets_requests.push_back({it->second->id, field.limit});
     }
   }
 
   if (!object.table) {
     object.table = std::make_shared<connector::InvertedIndexTable>(
-      _transaction, std::move(scan_table), inverted_index, offsets_column_ids);
+      _transaction, std::move(scan_table), inverted_index, offsets_requests);
   } else {
     SDB_ASSERT(
       dynamic_cast<connector::InvertedIndexTable*>(object.table.get()));
@@ -3974,14 +3974,14 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
     std::vector type_names = type->names();
 
     for (size_t i = 0; i < _offsets_fields_for_select.size(); ++i) {
-      const auto& field_name = _offsets_fields_for_select[i];
+      const auto& field = _offsets_fields_for_select[i];
       auto offsets_col_name =
-        catalog::Column::MakeOffsetsName(offsets_column_ids[i]);
+        catalog::Column::MakeOffsetsName(offsets_requests[i].column_id);
       types.push_back(offsets_type);
       type_names.push_back(offsets_col_name);
       type = velox::ROW(type_names, types);
       column_names.push_back(_id_generator.NextColumnName(offsets_col_name));
-      _exprs_for_offsets[field_name] = std::make_shared<lp::InputReferenceExpr>(
+      _exprs_for_offsets[field.name] = std::make_shared<lp::InputReferenceExpr>(
         offsets_type, column_names.back());
     }
     _offsets_fields_for_select.clear();
@@ -5274,16 +5274,17 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   // resolved during collection. Return the injected offsets column reference
   // set up in ProcessInvertedIndex for the given field.
   if (schema.empty() && name == search::functions::kOffsets) {
-    if (list_length(expr.args) != 1) {
+    if (list_length(expr.args) < 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-                      ERR_MSG("OFFSETS() requires exactly one argument"));
+                      ERR_MSG("OFFSETS() requires at least one argument"));
     }
     const auto* arg = linitial_node(Node, expr.args);
     if (!IsA(arg, ColumnRef)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-                      ERR_MSG("OFFSETS() argument must be a column reference"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG("OFFSETS() first argument must be a column reference"));
     }
     const auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
     auto it = _exprs_for_offsets.find(field_name);

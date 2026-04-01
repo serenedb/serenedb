@@ -158,8 +158,15 @@ struct Column {
     return id;
   }
 
-  // ARRAY(BIGINT) — flat offsets column: interleaved start,end pairs.
+  // ARRAY(BIGINT) -- flat offsets column: interleaved start,end pairs.
   static velox::TypePtr OffsetsType() { return velox::ARRAY(velox::BIGINT()); }
+
+  // Request for a single OFFSETS() column: which catalog column to extract
+  // offsets for, and how many offset pairs to return per document at most.
+  struct OffsetsFieldRequest {
+    Id column_id;
+    size_t limit = pg::Objects::kDefaultOffsetsLimit;
+  };
 
   Id id;
   velox::TypePtr type;

@@ -133,15 +133,22 @@ class Objects : public irs::memory::Managed {
     return true;
   }
 
+  static constexpr size_t kDefaultOffsetsLimit = 10;
+
+  struct OffsetsFieldInfo {
+    std::string name;
+    size_t limit = kDefaultOffsetsLimit;
+  };
+
   // Adds field_name to the offsets request list if not already present.
   // Returns false if the same field was already requested.
-  bool AddOffsetsField(std::string field_name) noexcept {
+  bool AddOffsetsField(std::string field_name, size_t limit) noexcept {
     for (const auto& f : _offsets_field_names) {
-      if (f == field_name) {
+      if (f.name == field_name) {
         return false;
       }
     }
-    _offsets_field_names.push_back(std::move(field_name));
+    _offsets_field_names.push_back({std::move(field_name), limit});
     return true;
   }
 
@@ -161,14 +168,15 @@ class Objects : public irs::memory::Managed {
     return it != _node_to_scorer.end() ? it->second : nullptr;
   }
 
-  // Returns the list of field names for which OFFSETS() was requested in the
-  // given SELECT node, in the order they were encountered.
-  const std::vector<std::string>& GetOffsetsFields(const void* node) const {
+  // Returns the list of offsets field requests for the given SELECT node,
+  // in the order they were encountered.
+  const std::vector<OffsetsFieldInfo>& GetOffsetsFields(
+    const void* node) const {
     auto it = _node_to_offsets_fields.find(node);
     if (it != _node_to_offsets_fields.end()) {
       return it->second;
     }
-    static const std::vector<std::string> kEmpty;
+    static const std::vector<OffsetsFieldInfo> kEmpty;
     return kEmpty;
   }
 
@@ -201,8 +209,8 @@ class Objects : public irs::memory::Managed {
   std::shared_ptr<const irs::Scorer> _scorer;
   containers::FlatHashMap<const void*, std::shared_ptr<const irs::Scorer>>
     _node_to_scorer;
-  std::vector<std::string> _offsets_field_names;
-  containers::FlatHashMap<const void*, std::vector<std::string>>
+  std::vector<OffsetsFieldInfo> _offsets_field_names;
+  containers::FlatHashMap<const void*, std::vector<OffsetsFieldInfo>>
     _node_to_offsets_fields;
 };
 

@@ -42,20 +42,20 @@ SearchDataSource<Materializer>::SearchDataSource(
   velox::memory::MemoryPool& memory_pool, Materializer materializer,
   const irs::IndexReader& reader, const irs::Filter::Query& query,
   const irs::Scorer* scorer,
-  std::vector<catalog::Column::Id> offsets_column_ids)
+  std::vector<catalog::Column::OffsetsFieldRequest> offsets_fields)
   : _memory_pool{memory_pool},
     _materializer{std::move(materializer)},
     _reader{reader},
     _query{query},
     _scorer{scorer},
-    _offsets_column_ids{std::move(offsets_column_ids)} {
-  for (const auto col_id : _offsets_column_ids) {
+    _offsets_fields{std::move(offsets_fields)} {
+  for (const auto& req : _offsets_fields) {
     std::string name;
-    MakeFieldName(col_id, name);
+    MakeFieldName(req.column_id, name);
     search::mangling::MangleString(name);
     _binary_field_names.push_back(std::move(name));
   }
-  _offsets_field_state.resize(_offsets_column_ids.size());
+  _offsets_field_state.resize(_offsets_fields.size());
 }
 
 template<typename Materializer>
@@ -90,7 +90,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
 
   // Per-field, per-document flat int64 values: interleaved start,end pairs.
   // offsets_data[field_idx][doc_idx] = {start0, end0, start1, end1, ...}
-  const size_t n_offsets_fields = _offsets_column_ids.size();
+  const size_t n_offsets_fields = _offsets_fields.size();
   std::vector<std::vector<std::vector<int64_t>>> offsets_data(n_offsets_fields);
   for (auto& field_data : offsets_data) {
     field_data.reserve(size);
@@ -170,13 +170,13 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
         auto& doc_offsets = offsets_data[fi].emplace_back();
         absl::flat_hash_set<uint64_t> seen_offsets;
 
-        constexpr size_t kMaxOffsetsPerDoc = 10;
+        const size_t max_offsets = _offsets_fields[fi].limit;
         constexpr auto kFeatures = irs::IndexFeatures::Freq |
                                    irs::IndexFeatures::Pos |
                                    irs::IndexFeatures::Offs;
 
         for (auto& fe : _offsets_field_state[fi].entries) {
-          if (doc_offsets.size() / 2 >= kMaxOffsetsPerDoc) {
+          if (doc_offsets.size() / 2 >= max_offsets) {
             break;
           }
           // Lazy iterator creation: once per segment, reused for all docs.
@@ -213,7 +213,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
             continue;
           }
           while (fe.pos->next()) {
-            if (doc_offsets.size() / 2 >= kMaxOffsetsPerDoc) {
+            if (doc_offsets.size() / 2 >= max_offsets) {
               break;
             }
             const uint64_t key =

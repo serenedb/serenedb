@@ -32,7 +32,6 @@
 #include <iresearch/search/states/ngram_state.hpp>
 #include <iresearch/search/states/phrase_state.hpp>
 #include <iresearch/search/states/term_state.hpp>
-
 #include <span>
 #include <string>
 #include <variant>
@@ -44,10 +43,10 @@ namespace sdb::connector {
 // For term/multiterm: holds the SeekCookie pointer (reader->Iterator is used).
 // For phrase/ngram: holds the query pointer (ExecuteWithOffsets is used).
 struct FilterEntry {
-  std::variant<const irs::SeekCookie*,
-               const irs::FixedPhraseQuery*,
+  std::variant<const irs::SeekCookie*, const irs::FixedPhraseQuery*,
                const irs::VariadicPhraseQuery*,
-               const irs::NGramSimilarityQuery*> filter;
+               const irs::NGramSimilarityQuery*>
+    filter;
   // Lazy: null until first use in a segment, then reused for all docs.
   irs::DocIterator::ptr docs;
   irs::PosAttr* pos = nullptr;

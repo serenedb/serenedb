@@ -197,7 +197,7 @@ kek
 17
 
 
-onlyif sdb
+onlyif serenedb
 query error
 SELECT DISTINCT ON(ROW_NUMBER() OVER(PARTITION BY name ORDER BY grade DESC)) name
 FROM

@@ -1,0 +1,238 @@
+statement ok
+CREATE TABLE clickclack_tri_null (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER, vedernikoff VARCHAR);
+
+statement count 16
+INSERT INTO clickclack_tri_null VALUES
+  (1,  1, 1, 1, 'clickclack'),
+  (2,  1, 1, 1, 'deadinside'),
+  (3,  NULL, 1, 1, 'pudge'),
+  (4,  NULL, 1, 1, 'kostya'),
+  (5,  1, NULL, 1, 'androed'),
+  (6,  1, NULL, 1, 'arelav'),
+  (7,  1, 1, NULL, 'ksimironov'),
+  (8,  1, 1, NULL, 'gul'),
+  (9,  NULL, NULL, 1, 'clickclack_ab'),
+  (10, NULL, NULL, 1, 'deadinside_ab'),
+  (11, NULL, 1, NULL, 'pudge_ac'),
+  (12, NULL, 1, NULL, 'kostya_ac'),
+  (13, 1, NULL, NULL, 'androed_bc'),
+  (14, 1, NULL, NULL, 'arelav_bc'),
+  (15, NULL, NULL, NULL, 'ksimironov_all'),
+  (16, NULL, NULL, NULL, 'gul_all');
+
+query
+SELECT * FROM clickclack_tri_null ORDER BY id;
+----
+id	a	b	c	vedernikoff
+1	1	1	1	clickclack
+2	1	1	1	deadinside
+3	NULL	1	1	pudge
+4	NULL	1	1	kostya
+5	1	NULL	1	androed
+6	1	NULL	1	arelav
+7	1	1	NULL	ksimironov
+8	1	1	NULL	gul
+9	NULL	NULL	1	clickclack_ab
+10	NULL	NULL	1	deadinside_ab
+11	NULL	1	NULL	pudge_ac
+12	NULL	1	NULL	kostya_ac
+13	1	NULL	NULL	androed_bc
+14	1	NULL	NULL	arelav_bc
+15	NULL	NULL	NULL	ksimironov_all
+16	NULL	NULL	NULL	gul_all
+
+statement ok
+DROP TABLE clickclack_tri_null;
+
+query
+SELECT * FROM (VALUES (1, NULL, 'clickclack'), (2, 42, 'vedernikoff')) AS t(id, val, name) ORDER BY id;
+----
+id	val	name
+1	NULL	clickclack
+2	42	vedernikoff
+
+
+query
+SELECT * FROM (VALUES (NULL, NULL), (1, 2)) AS t(a, b);
+----
+a	b
+NULL	NULL
+1	2
+
+
+query
+SELECT * FROM (VALUES (1, 2), (NULL, NULL)) AS t(a, b);
+----
+a	b
+1	2
+NULL	NULL
+
+
+query
+SELECT * FROM (VALUES (1.5, 'clickclack'), (2, 'vedernikoff')) AS t(num, name) ORDER BY name;
+----
+num	name
+1.5	clickclack
+2	vedernikoff
+
+
+query
+SELECT * FROM (VALUES (1::smallint, 'kostya'), (2::bigint, 'pudge')) AS t(num, name) ORDER BY name;
+----
+num	name
+1	kostya
+2	pudge
+
+
+query
+SELECT * FROM (VALUES (1::integer, 'androed'), (2::bigint, 'gul'), (3::smallint, 'arelav')) AS t(num, name) ORDER BY name;
+----
+num	name
+1	androed
+3	arelav
+2	gul
+
+
+query
+SELECT * FROM (VALUES (1::bigint, 'clickclack'), (NULL, 'vedernikoff'), (3::smallint, 'deadinside')) AS t(num, name) ORDER BY name;
+----
+num	name
+1	clickclack
+3	deadinside
+NULL	vedernikoff
+
+
+statement ok
+CREATE TABLE vedernikoff_mixed (id BIGINT PRIMARY KEY, val DOUBLE PRECISION);
+
+statement count 3
+INSERT INTO vedernikoff_mixed VALUES (1, 1.5), (2, NULL), (3, 42);
+
+query
+SELECT * FROM vedernikoff_mixed ORDER BY id;
+----
+id	val
+1	1.5
+2	NULL
+3	42
+
+statement ok
+DROP TABLE vedernikoff_mixed;
+
+query
+SELECT 1 AS kostya, 'clickclack' AS vedernikoff
+UNION ALL
+SELECT NULL, 'deadinside';
+----
+kostya	vedernikoff
+1	clickclack
+NULL	deadinside
+
+
+query
+SELECT NULL AS kostya, NULL AS vedernikoff
+UNION ALL
+SELECT 42, 'pudge';
+----
+kostya	vedernikoff
+NULL	NULL
+42	pudge
+
+
+query
+SELECT 1::smallint AS kostya
+UNION ALL
+SELECT 2::bigint;
+----
+kostya
+1
+2
+
+
+query
+SELECT 1::integer AS kostya, 'clickclack' AS vedernikoff
+UNION ALL
+SELECT 2::bigint, 'deadinside'
+UNION ALL
+SELECT 3::smallint, 'gul';
+----
+kostya	vedernikoff
+1	clickclack
+2	deadinside
+3	gul
+
+
+query
+SELECT 1.5 AS kostya
+UNION ALL
+SELECT 2;
+----
+kostya
+1.5
+2
+
+
+query
+SELECT 1::bigint AS kostya, NULL AS vedernikoff
+UNION ALL
+SELECT NULL, 'pudge'
+UNION ALL
+SELECT 3::smallint, 'arelav';
+----
+kostya	vedernikoff
+1	NULL
+NULL	pudge
+3	arelav
+
+
+query
+SELECT 1 AS kostya UNION SELECT NULL;
+----
+kostya
+1
+NULL
+
+
+query
+SELECT NULL AS kostya UNION SELECT 42;
+----
+kostya
+42
+NULL
+
+
+query
+SELECT 1::smallint AS kostya INTERSECT SELECT 1::bigint;
+----
+kostya
+1
+
+
+query
+SELECT 1::integer AS kostya
+EXCEPT
+SELECT 2::bigint;
+----
+kostya
+1
+
+
+query
+SELECT * FROM (
+  SELECT 1 AS kostya, 'clickclack' AS vedernikoff
+  UNION ALL
+  SELECT NULL, 'deadinside'
+) AS t
+ORDER BY vedernikoff;
+----
+kostya	vedernikoff
+1	clickclack
+NULL	deadinside
+
+
+query
+SELECT * FROM (VALUES (1984, '228'), ('1337', 14.999));
+----
+column1	column2
+1984	228
+1337	14.999

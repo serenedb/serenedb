@@ -23,6 +23,7 @@ esac
 
 NEEDS_LOGOUT=""
 cleanup() {
+	rm -f /tmp/serene-ui-amd64.tar /tmp/serene-ui-arm64.tar
 	docker buildx rm "${BUILDER_NAME}" 2>/dev/null || true
 	if [ -n "$NEEDS_LOGOUT" ]; then
 		if [ "$NEEDS_LOGOUT" = "hub" ]; then

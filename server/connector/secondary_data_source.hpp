@@ -178,6 +178,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   void BuildScanPrefix(const SpecificPoint& point) {
     _current_scan_prefix.clear();
     secondary_key::AppendShardPrefix(_current_scan_prefix, _shard_id);
+    secondary_key::AppendDummyColumnId(_current_scan_prefix);
     for (size_t i = 0; i < point.size(); ++i) {
       if (point[i].isNull()) {
         secondary_key::AppendNullMarker(_current_scan_prefix);

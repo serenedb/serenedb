@@ -144,7 +144,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
       shard_options, {.create_with_tombstone = true});
   } else if (options.type == IndexType::Secondary) {
     SecondaryIndexShardOptions shard_options;
-    shard_options.unique = stmt.unique;
+    shard_options.base.unique = stmt.unique;
     create_result = catalog.CreateIndex(
       db, schema, relation_name, std::move(columns), std::move(options),
       shard_options, {.create_with_tombstone = true});

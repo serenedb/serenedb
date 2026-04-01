@@ -307,10 +307,8 @@ class RocksDBUpdateDataSink final
 
 template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
 class SSTInsertDataSink final
-  : public RocksDBDataSinkBase<
-      SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>> {
-  using Base =
-    RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>>;
+  : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>> {
+  using Base = RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>>;
 
  public:
   SSTInsertDataSink(

@@ -307,7 +307,7 @@ std::vector<Point> ExtractFilterExpr(const velox::core::TypedExprPtr& expr,
       pts = ExtractFilterEq(func_call, pk_names);
     } else if (IsCallOf(func_call, "_in")) {
       pts = ExtractFilterIn(func_call, pk_names);
-    } else if (func_call->name() == "spark_isnull") {
+    } else if (IsCallOf(func_call, "_isnull")) {
       pts = ExtractFilterIsNull(func_call, pk_names);
     } else if (func_call->name() == velox::expression::kAnd) {
       pts = ExtractFilterAnd(func_call, pk_names);

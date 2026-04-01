@@ -56,6 +56,7 @@ class SecondaryKeyBuilder {
   void BuildFullKey(std::string& key, catalog::Column::Id column_id,
                     std::span<const velox::variant> values) const {
     secondary_key::AppendShardPrefix(key, _shard_id);
+    secondary_key::AppendDummyColumnId(key);
     for (size_t i = 0; i < values.size(); ++i) {
       if (values[i].isNull()) {
         secondary_key::AppendNullMarker(key);

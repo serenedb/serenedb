@@ -26,8 +26,8 @@
 namespace sdb {
 
 struct SecondaryIndexShardOptions : public IndexShardOptions {
-  bool unique = false;
   struct Base {
+    bool unique = false;
   } base;
 };
 

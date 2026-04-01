@@ -189,35 +189,32 @@ void catalog::Table::WriteInternal(vpack::Builder& build) const {
 Table::LookupCache::LookupCache(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_columns) {
+  std::vector<std::string> row_names;
+  std::vector<velox::TypePtr> row_types;
+  row_names.reserve(columns.size());
+  row_types.reserve(columns.size());
   name2column.reserve(columns.size());
   id2column.reserve(columns.size());
-  for (const auto& column : columns) {
-    name2column.emplace(column.name, &column);
-    id2column.emplace(column.id, &column);
+  for (const auto& col : columns) {
+    name2column.emplace(col.name, &col);
+    id2column.emplace(col.id, &col);
+    row_names.emplace_back(col.name);
+    row_types.emplace_back(col.type);
   }
+  row_type = velox::ROW(std::move(row_names), std::move(row_types));
 
   std::vector<std::string> pk_names;
   std::vector<velox::TypePtr> pk_types;
   pk_names.reserve(pk_columns.size());
   pk_types.reserve(pk_columns.size());
-  for (auto pk_col_id : pk_columns) {
-    auto it = absl::c_find_if(
-      columns, [&](const Column& col) { return col.id == pk_col_id; });
-    SDB_ASSERT(it != columns.end());
-    pk_names.emplace_back(it->name);
-    pk_types.emplace_back(it->type);
+  for (auto id : pk_columns) {
+    auto it = id2column.find(id);
+    SDB_ASSERT(it != id2column.end());
+    const auto& col = *it->second;
+    pk_names.emplace_back(col.name);
+    pk_types.emplace_back(col.type);
   }
   pk_type = velox::ROW(std::move(pk_names), std::move(pk_types));
-
-  std::vector<std::string> row_names;
-  std::vector<velox::TypePtr> row_types;
-  row_names.reserve(columns.size());
-  row_types.reserve(columns.size());
-  for (const auto& col : columns) {
-    row_names.emplace_back(col.name);
-    row_types.emplace_back(col.type);
-  }
-  row_type = velox::ROW(std::move(row_names), std::move(row_types));
 }
 
 }  // namespace sdb::catalog

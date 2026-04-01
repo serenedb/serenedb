@@ -186,7 +186,7 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
       auto& sec_shard_opts =
         basics::downCast<SecondaryIndexShardOptions>(shard_options);
       SecondaryIndexOptionsWrapper impl_options(std::move(options));
-      impl_options.impl.unique = sec_shard_opts.unique;
+      impl_options.impl.unique = sec_shard_opts.base.unique;
       return std::make_shared<SecondaryIndex>(
         database_id, schema_id, id, relation_id, std::move(impl_options));
     }

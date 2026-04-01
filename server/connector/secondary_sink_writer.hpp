@@ -43,24 +43,29 @@ namespace sdb::connector {
 //
 // Secondary index key layout:
 //
+// Every key starts with <shard (8B)> <dummy column_id=0 (8B)> to satisfy
+// CappedPrefixTransform(16).  After the 16-byte prefix, each SK column is
+// encoded as a 1-byte null/not-null marker followed by the encoded value
+// (omitted when NULL).
+//
 // 1) Unique, non-NULL:
-//    Key:   <shard (8B)> <not-null marker (8B)> <encoded SK values>
+//    Key:   <shard (8B)> <dummy (8B)> <1B markers + encoded SK values>
 //    Value: <PK bytes>
 //    One entry per SK value. Uniqueness enforced via GetForUpdate.
 //
 // 2) Unique, NULL:
-//    Key:   <shard (8B)> <null marker (8B)> <PK bytes>
+//    Key:   <shard (8B)> <dummy (8B)> <1B markers + encoded SK values>
+//           <PK bytes>
 //    Value: empty
 //    PK in key — multiple NULLs allowed (PostgreSQL semantics).
 //
 // 3) Non-unique (any value):
-//    Key:   <shard (8B)> <marker (8B)> <encoded SK values> <PK bytes>
+//    Key:   <shard (8B)> <dummy (8B)> <1B markers + encoded SK values>
+//           <PK bytes>
 //    Value: empty
 //    PK always in key. Multiple rows per SK value.
 //
-// The marker occupies sizeof(Column::Id) bytes to match the primary table
-// convention: every key starts with ObjectId + Column::Id sized prefix.
-// Marker values (big-endian, 8 bytes): 0 = NULL, 1 = NOT NULL.
+// Marker values (1 byte): 0x00 = NULL, 0x01 = NOT NULL (nulls-first).
 namespace secondary_key {
 
 inline void AppendShardPrefix(std::string& key, ObjectId shard_id) {
@@ -69,17 +74,20 @@ inline void AppendShardPrefix(std::string& key, ObjectId shard_id) {
   absl::big_endian::Store64(key.data() + base, shard_id.id());
 }
 
-// Null/not-null markers are Column::Id-sized to match primary key convention.
-inline void AppendNullMarker(std::string& key) {
+// Appends a dummy Column::Id (0) so that the key reaches the 16-byte prefix
+// required by CappedPrefixTransform(16) on the default column family.
+inline void AppendDummyColumnId(std::string& key) {
   const auto base = key.size();
   basics::StrAppend(key, sizeof(catalog::Column::Id));
   absl::big_endian::Store64(key.data() + base, 0);
 }
 
+inline void AppendNullMarker(std::string& key) {
+  key.push_back('\0');
+}
+
 inline void AppendNotNullMarker(std::string& key) {
-  const auto base = key.size();
-  basics::StrAppend(key, sizeof(catalog::Column::Id));
-  absl::big_endian::Store64(key.data() + base, 1);
+  key.push_back('\1');
 }
 
 // Appends <marker><encoded_value> for each SK column.
@@ -176,18 +184,17 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     auto pk_bytes = key_utils::ExtractRowKey(full_pk);
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
+    secondary_key::AppendDummyColumnId(_key_buffer);
     bool has_null = secondary_key::AppendSKValue(_key_buffer, *_input,
                                                  _sk_children, _row_idx);
     if constexpr (Unique) {
       if (has_null) {
-        _key_buffer.append(pk_bytes.data(), pk_bytes.size());
-        value = rocksdb::Slice{};
+        _key_buffer.append(pk_bytes);
       } else {
-        value = rocksdb::Slice{pk_bytes.data(), pk_bytes.size()};
+        value = pk_bytes;
       }
     } else {
-      _key_buffer.append(pk_bytes.data(), pk_bytes.size());
-      value = rocksdb::Slice{};
+      _key_buffer.append(pk_bytes);
     }
     ++_row_idx;
     return has_null;
@@ -198,14 +205,15 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     std::span<const velox::column_index_t> sk_children) {
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
+    secondary_key::AppendDummyColumnId(_key_buffer);
     bool has_null = secondary_key::AppendSKValue(_key_buffer, *_input,
                                                  sk_children, _del_row_idx);
     if constexpr (Unique) {
       if (has_null) {
-        _key_buffer.append(encoded_pk.data(), encoded_pk.size());
+        _key_buffer.append(encoded_pk);
       }
     } else {
-      _key_buffer.append(encoded_pk.data(), encoded_pk.size());
+      _key_buffer.append(encoded_pk);
     }
     ++_del_row_idx;
     return _key_buffer;

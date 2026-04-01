@@ -194,7 +194,7 @@ SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex, UniqueIndex>::
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
     absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
   : Base(
-      SSTSinkWriter<IsGeneratedPK, !IsSecondaryIndex>{
+      SSTSinkWriter<IsGeneratedPK>{
         object_key, db, cf,
         IsSecondaryIndex ? std::vector<ColumnInfo>{{catalog::Column::Id{0}, ""}}
                          : columns,

@@ -282,6 +282,7 @@ INSERT INTO vedernikoff_safehouse VALUES (3, NULL, 'east');
 statement ok
 INSERT INTO vedernikoff_safehouse VALUES (5, NULL, 'central');
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
 ----
@@ -291,6 +292,7 @@ Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
   -- TableScan[0][vedernikoff_safehouse, scan=secondary_index] -> "pid":INTEGER, "district":VARCHAR
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
 ----

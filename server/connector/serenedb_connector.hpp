@@ -697,7 +697,21 @@ class SecondaryIndexTableHandle final
   const std::string& name() const final { return _name; }
 
   std::string toString() const final {
-    return absl::StrCat(_name, ", scan=secondary_index");
+    const auto& names = _sk_type->names();
+    const auto& types = _sk_type->children();
+    std::string points_str = absl::StrJoin(
+      _points, ", ", [&](std::string* out, const SpecificPoint& point) {
+        absl::StrAppend(out, "(");
+        for (size_t i = 0; i < point.size(); ++i) {
+          if (i > 0) {
+            absl::StrAppend(out, ", ");
+          }
+          absl::StrAppend(out, names[i], "=", point[i].toString(types[i]));
+        }
+        absl::StrAppend(out, ")");
+      });
+    return absl::StrCat(_name, ", scan=secondary_index, points=[", points_str,
+                        "]");
   }
 
   ObjectId TableId() const noexcept { return _table_id; }

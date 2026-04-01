@@ -400,6 +400,7 @@ CREATE INDEX clickclack_heist_loot_idx ON clickclack_heist(loot);
 statement ok
 INSERT INTO clickclack_heist VALUES (1, 'bank', 1000), (2, 'museum', 2000);
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, target FROM clickclack_heist WHERE loot = 1000;
 ----
@@ -563,6 +564,7 @@ SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 30;
 pid	tag
 2	beta
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL;
 ----
@@ -572,6 +574,7 @@ Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
   -- TableScan[0][vedernikoff_nullvault, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 10;
 ----
@@ -778,6 +781,7 @@ statement ok
 INSERT INTO vedernikoff_nullbulk VALUES (11, 42), (12, 42), (13, 99);
 
 
+onlyif serenedb
 query
 EXPLAIN SELECT count(*) FROM vedernikoff_nullbulk WHERE val IS NULL;
 ----
@@ -911,6 +915,7 @@ INSERT INTO babsky_composite VALUES
   (4, 'tokyo', 30, 'delta'),
   (5, 'berlin', 20, 'echo');
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10;
 ----
@@ -954,6 +959,7 @@ statement ok
 DROP TABLE babsky_composite;
 
 
+onlyif serenedb
 statement ok
 CREATE TEXT SEARCH DICTIONARY test_english_sec(
     template = 'text',
@@ -965,15 +971,19 @@ CREATE TEXT SEARCH DICTIONARY test_english_sec(
     position = true
 );
 
+onlyif serenedb
 statement ok
 CREATE TABLE gayazov_dual (pid INTEGER PRIMARY KEY, name VARCHAR, rank INTEGER);
 
+onlyif serenedb
 statement ok
 CREATE INDEX gayazov_dual_inv_idx ON gayazov_dual USING inverted(pid, name test_english_sec);
 
+onlyif serenedb
 statement ok
 CREATE INDEX gayazov_dual_rank_idx ON gayazov_dual(rank);
 
+onlyif serenedb
 statement ok
 INSERT INTO gayazov_dual VALUES
   (1, 'pudge goes mid', 10),
@@ -981,6 +991,7 @@ INSERT INTO gayazov_dual VALUES
   (3, 'krivda writes sql', 10),
   (4, 'gayazov plays games', 30);
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, name FROM gayazov_dual_inv_idx WHERE rank = 10;
 ----
@@ -991,6 +1002,7 @@ Fragment 0:  numWorkers=0:
   -- Filter[1][expression: presto_eq("rank",10)] -> "pid":INTEGER, "name":VARCHAR, "rank":INTEGER
     -- TableScan[0][gayazov_dual, type=search_lookup, filter=AND[]] -> "pid":INTEGER, "name":VARCHAR, "rank":INTEGER
 
+onlyif serenedb
 statement ok
 DROP TABLE gayazov_dual;
 
@@ -1056,6 +1068,7 @@ SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 30;
 ----
 pid	nickname	stocks
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, nickname FROM vedernikoff_csv_crew WHERE stocks = 30;
 ----
@@ -1210,6 +1223,7 @@ SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 30;
 ----
 pid	nickname	stocks
 
+onlyif serenedb
 query
 EXPLAIN SELECT pid, nickname FROM vedernikoff_pq_crew WHERE stocks = 30;
 ----

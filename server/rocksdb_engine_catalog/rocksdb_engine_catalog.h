@@ -224,6 +224,9 @@ class RocksDBEngineCatalog {
 
   Result CreateDefinition(ObjectId parent_id, RocksDBEntryType type,
                           ObjectId id, WriteProperties properties);
+  Result ReplaceDefinition(ObjectId old_parent_id, ObjectId new_parent_id,
+                           RocksDBEntryType type, ObjectId id,
+                           WriteProperties properties);
   Result DropDefinition(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
   Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
   Result DropEntry(ObjectId parent_id);

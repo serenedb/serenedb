@@ -1563,9 +1563,9 @@ Result LocalCatalog::AlterTableSchema(ObjectId database_id,
       schema_obj->WriteInternal(b);
       b.close();
 
-      return _engine->CreateDefinition(*new_schema_id, entry_type,
-                                       schema_obj->GetId(),
-                                       [&](bool) { return b.slice(); });
+      return _engine->ReplaceDefinition(*old_schema_id, *new_schema_id,
+                                        entry_type, schema_obj->GetId(),
+                                        [&](bool) { return b.slice(); });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       clone->UnregisterObject(schema_obj, *new_schema_id, true);

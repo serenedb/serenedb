@@ -1293,6 +1293,22 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
     [&] { return properties(true); }, [] { return std::string_view{}; });
 }
 
+Result RocksDBEngineCatalog::ReplaceDefinition(ObjectId old_parent_id,
+                                               ObjectId new_parent_id,
+                                               RocksDBEntryType type,
+                                               ObjectId id,
+                                               WriteProperties properties) {
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      return RocksDBKeyWithBuffer<DefinitionKey>{old_parent_id, type, id};
+    },
+    [&] {
+      return RocksDBKeyWithBuffer<DefinitionKey>{new_parent_id, type, id};
+    },
+    [&] { return properties(true); }, [] { return std::string_view{}; });
+}
+
 Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
                                             RocksDBEntryType type,
                                             ObjectId id) {

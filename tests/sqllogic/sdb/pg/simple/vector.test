@@ -9,7 +9,7 @@ query
 SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
-0.2000<slt:ignore>
+0.2<slt:ignore>
 
 
 query

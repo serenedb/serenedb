@@ -49,6 +49,7 @@
 #include "pg/functions/regexp.h"
 #include "pg/functions/size.h"
 #include "pg/functions/string_extra.h"
+#include "pg/functions/vector.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
@@ -2177,6 +2178,8 @@ void registerFunctions(const std::string& prefix) {
   registerMathExtraFunctions(prefix);
   registerDatetimeExtraFunctions(prefix);
   registerArrayExtraFunctions(prefix);
+
+  RegisterVectorFunctions(prefix);
 
   velox::registerFunction<RegtypeInFunction, RegtypeCustomType, velox::Varchar,
                           int32_t>({prefix + "regtypein"});

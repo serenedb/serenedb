@@ -4566,10 +4566,10 @@ constexpr containers::TrivialBiMap kOpToFunc = [](auto selector) {
     .Case("IS DISTINCT FROM", "presto_distinct_from")
     .Case("count_star", "presto_count")
     // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
-    .Case("<->", "presto_l2_squared")
-    .Case("<#>", "presto_dot_product")
-    .Case("<=>", "presto_cosine_similarity")
-    .Case("<+>", "presto_l1_distance");
+    .Case("<->", "pg_l2_squared")
+    .Case("<#>", "pg_dot_product")
+    .Case("<=>", "pg_cosine_similarity")
+    .Case("<+>", "pg_l1_distance");
 };
 
 constexpr containers::TrivialBiMap kDateIntervalOp = [](auto selector) {

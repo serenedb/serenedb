@@ -91,22 +91,23 @@ void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
 
 }  // namespace
 
-void ColumnCollector::Init(const velox::TypePtr& type, size_t capacity,
-                           velox::memory::MemoryPool& pool) {
+void PrimaryKeyColumnBuilder::Init(const velox::TypePtr& type, size_t capacity,
+                                   velox::memory::MemoryPool& pool) {
   _type_kind = type->kind();
   _vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(CreatePointsColumnVector,
                                             _type_kind, capacity, pool);
   _present_rows.reset(capacity);
 }
 
-void ColumnCollector::Fill(size_t batch_idx, size_t found_idx,
-                           std::span<const rocksdb::PinnableSlice> values) {
+void PrimaryKeyColumnBuilder::Fill(
+  size_t batch_idx, size_t found_idx,
+  std::span<const rocksdb::PinnableSlice> values) {
   _present_rows.set(batch_idx);
   VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillPointsColumnValues, _type_kind, *_vec,
                                      found_idx, values);
 }
 
-velox::VectorPtr ColumnCollector::Finish(size_t found_count) {
+velox::VectorPtr PrimaryKeyColumnBuilder::Finish(size_t found_count) {
   SDB_ASSERT(_present_rows.count() == found_count);
   _vec->resize(found_count);
   return std::move(_vec);
@@ -735,7 +736,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Policy>::next(
   }
 
   // Materializer path: PKs collected, materialize and return.
-  if constexpr (kHasMaterializer) {
+  if constexpr (kIsSecondaryIndex) {
     _produced += found_count;
     return _collector.Finish(found_count);
   }

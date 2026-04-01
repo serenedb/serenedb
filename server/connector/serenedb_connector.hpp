@@ -1094,7 +1094,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           rocksdb_transaction.GetSnapshot(),
           connector_query_ctx->expressionEvaluator(), rocksdb_transaction,
           PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
-          ColumnCollector{});
+          PrimaryKeyColumnBuilder{});
       }
 
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
@@ -1111,7 +1111,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         object_key, points, output_column_count, compiled_filter, snapshot,
         connector_query_ctx->expressionEvaluator(), _db,
         PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
-        ColumnCollector{});
+        PrimaryKeyColumnBuilder{});
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(
@@ -1449,7 +1449,7 @@ class SereneDBConnector final : public velox::connector::Connector {
             pool, _cf, output_type, column_oids, handle.TableId(), points,
             output_type->size(), nullptr, snapshot, nullptr, source,
             std::move(key_builder),
-            MaterializerCollector<Mat>{std::move(mat), pool});
+            SecondaryKeyColumnBuilder<Mat>{std::move(mat), pool});
         }
         return irs::ResolveBool(
           handle.IsUnique(),

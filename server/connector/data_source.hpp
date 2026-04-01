@@ -214,9 +214,9 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   catalog::Column::Id _effective_column_id;
 };
 
-class ColumnCollector {
+class PrimaryKeyColumnBuilder {
  public:
-  static constexpr bool kHasMaterializer = false;
+  static constexpr bool kIsSecondaryIndex = false;
 
   void Init(const velox::TypePtr& type, size_t capacity,
             velox::memory::MemoryPool& pool);
@@ -232,12 +232,12 @@ class ColumnCollector {
 };
 
 template<typename Materializer>
-class MaterializerCollector {
+class SecondaryKeyColumnBuilder {
  public:
-  static constexpr bool kHasMaterializer = true;
+  static constexpr bool kIsSecondaryIndex = true;
 
-  MaterializerCollector(Materializer materializer,
-                        velox::memory::MemoryPool& pool)
+  SecondaryKeyColumnBuilder(Materializer materializer,
+                            velox::memory::MemoryPool& pool)
     : _materializer{std::move(materializer)}, _row_keys{pool} {}
 
   void Init(const velox::TypePtr& type, size_t capacity,
@@ -269,7 +269,7 @@ struct PrimaryLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
   using KeyBuilder = PrimaryKeyBuilder;
-  using ResultCollector = ColumnCollector;
+  using ResultCollector = PrimaryKeyColumnBuilder;
 };
 
 template<bool ReadYourOwnWrites, typename Materializer>
@@ -277,7 +277,7 @@ struct SecondaryLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
   using KeyBuilder = SecondaryKeyBuilder;
-  using ResultCollector = MaterializerCollector<Materializer>;
+  using ResultCollector = SecondaryKeyColumnBuilder<Materializer>;
 };
 
 template<typename Policy>
@@ -285,7 +285,7 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   using Source = typename Policy::Source;
   using KeyBuilder = typename Policy::KeyBuilder;
   using ResultCollector = typename Policy::ResultCollector;
-  static constexpr bool kHasMaterializer = ResultCollector::kHasMaterializer;
+  static constexpr bool kIsSecondaryIndex = ResultCollector::kIsSecondaryIndex;
 
  public:
   RocksDBPointLookupDataSource(

@@ -67,6 +67,7 @@ repos:
         language: python
         entry: python3 scripts/check_llm_symbols.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|py|sh|cmake)$
+        exclude: scripts/check_llm_symbols\.py$
       - id: check-no-anon-namespace-in-headers
         name: Check no anonymous namespace in headers
         language: python

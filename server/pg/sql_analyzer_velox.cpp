@@ -1101,7 +1101,7 @@ class SqlAnalyzer {
     const auto& first_output = *inputs[0]->outputType();
     const auto col_count = first_output.size();
 
-    SDB_ASSERT(absl::c_any_of(inputs, [&](const lp::LogicalPlanNodePtr& input) {
+    SDB_ASSERT(absl::c_all_of(inputs, [&](const lp::LogicalPlanNodePtr& input) {
       return *input->outputType() == first_output;
     }));
 
@@ -1134,10 +1134,12 @@ class SqlAnalyzer {
       exprs.reserve(col_count);
       for (const auto& [child_type, name, target_type] :
            std::views::zip(output.children(), output.names(), types)) {
-        names.emplace_back(name);
         lp::ExprPtr expr =
           std::make_shared<lp::InputReferenceExpr>(child_type, name);
-        expr = MakeCast(target_type, std::move(expr));
+        if (child_type != target_type) {
+          expr = MakeCast(target_type, std::move(expr));
+        }
+        names.emplace_back(name);
         exprs.emplace_back(std::move(expr));
       }
       input = std::make_shared<lp::ProjectNode>(

@@ -43,6 +43,7 @@ SDB_PG_OID_TYPE(Regclass);
 SDB_PG_OID_TYPE(Cid);
 SDB_PG_OID_TYPE(Xid8);
 SDB_PG_OID_TYPE(Tid);
+SDB_PG_OID_TYPE(Int8);
 #undef SDB_PG_OID_TYPE
 
 using Text = std::string_view;

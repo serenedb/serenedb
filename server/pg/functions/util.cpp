@@ -178,7 +178,7 @@ struct PgTsLexize {
 
 }  // namespace
 
-void registerUtilFunctions(const std::string& prefix) {
+void RegisterUtilFunctions(const std::string& prefix) {
   // pg_error(message)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, velox::Varchar>(
     {prefix + "error"});

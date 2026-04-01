@@ -46,27 +46,29 @@
 #include "pg/functions/system.h"
 #include "pg/functions/util.h"
 #include "pg/sdb_functions/vector.h"
+#include "search/functions.hpp"
 
 namespace sdb::pg::functions {
 
-void registerFunctions(const std::string& prefix) {
-  registerInOutFunctions(prefix);
-  registerJsonFunctions(prefix);
-  registerSizeFunctions(prefix);
-  registerRegexpFunctions(prefix);
-  registerStringExtraFunctions(prefix);
-  registerMathExtraFunctions(prefix);
-  registerDatetimeExtraFunctions(prefix);
-  registerArrayExtraFunctions(prefix);
-  registerExtractFunctions(prefix);
-  registerStubFunctions(prefix);
-  registerSystemFunctions(prefix);
-  registerGenerateFunctions(prefix);
-  registerUtilFunctions(prefix);
+void RegisterFunctions(const std::string& prefix) {
+  RegisterInOutFunctions(prefix);
+  RegisterJsonFunctions(prefix);
+  RegisterSizeFunctions(prefix);
+  RegisterRegexpFunctions(prefix);
+  RegisterStringExtraFunctions(prefix);
+  RegisterMathExtraFunctions(prefix);
+  RegisterDatetimeExtraFunctions(prefix);
+  RegisterArrayExtraFunctions(prefix);
+  RegisterExtractFunctions(prefix);
+  RegisterStubFunctions(prefix);
+  RegisterSystemFunctions(prefix);
+  RegisterGenerateFunctions(prefix);
+  RegisterUtilFunctions(prefix);
 }
 
 void RegisterSdbFunctions(const std::string& prefix) {
   RegisterVectorFunctions(prefix);
+  search::functions::RegisterSearchFunctions(prefix);
 }
 
 }  // namespace sdb::pg::functions

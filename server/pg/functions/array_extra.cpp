@@ -405,7 +405,7 @@ struct ArrayDimsFunction {
 
 }  // namespace
 
-void registerArrayExtraFunctions(const std::string& prefix) {
+void RegisterArrayExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgArrayPosition, int64_t,
                           velox::Array<velox::Varchar>, velox::Varchar>(
     {prefix + "array_position"});

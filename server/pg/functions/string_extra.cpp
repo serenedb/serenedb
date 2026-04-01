@@ -1139,7 +1139,7 @@ struct PgClientEncoding {
 
 }  // namespace
 
-void registerStringExtraFunctions(const std::string& prefix) {
+void RegisterStringExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgMd5, velox::Varchar, velox::Varchar>(
     {prefix + "md5"});
   velox::registerFunction<PgToHex, velox::Varchar, int32_t>(

@@ -135,7 +135,7 @@ struct NotSupportedFunction {
   }
 };
 
-void registerNotSupportedFunctions(const std::string& prefix) {
+void RegisterNotSupportedFunctions(const std::string& prefix) {
   velox::registerFunction<NotSupportedFunction, velox::Varchar>(
     {prefix + "get_loaded_modules"});
   velox::registerFunction<NotSupportedFunction, velox::Varchar>(
@@ -308,7 +308,7 @@ struct NullFunction {
   }
 };
 
-void registerNullFunctions(const std::string& prefix) {
+void RegisterNullFunctions(const std::string& prefix) {
   velox::registerFunction<NullFunction, velox::Varchar, velox::Varchar,
                           velox::Varchar>({prefix + "get_serial_sequence"});
   velox::registerFunction<NullFunction, RegclassCustomType, velox::Varchar>(
@@ -501,7 +501,7 @@ struct AlwaysTrueFunction {
   }
 };
 
-void registerAlwaysTrueFunctions(const std::string& prefix) {
+void RegisterAlwaysTrueFunctions(const std::string& prefix) {
   // 9.27.2 Access Privilege Inquiry Functions
 
   // ([name/oid user] x text/oid table x text privilege)
@@ -829,7 +829,7 @@ struct AlwaysFalseFunction {
   }
 };
 
-void registerAlwaysFalseFunctions(const std::string& prefix) {
+void RegisterAlwaysFalseFunctions(const std::string& prefix) {
   velox::registerFunction<AlwaysFalseFunction, bool, OidCustomType>(
     {prefix + "is_other_temp_schema"});
   velox::registerFunction<AlwaysFalseFunction, bool>(
@@ -911,7 +911,7 @@ struct EmptyStringFunction {
   }
 };
 
-void registerEmptyStringFunctions(const std::string& prefix) {
+void RegisterEmptyStringFunctions(const std::string& prefix) {
   velox::registerFunction<EmptyStringFunction, velox::Varchar, velox::Varchar,
                           OidCustomType>({prefix + "get_expr"});
   velox::registerFunction<EmptyStringFunction, velox::Varchar, velox::Varchar,
@@ -978,7 +978,7 @@ struct AlwaysZeroFunction {
   }
 };
 
-void registerAlwaysZeroFunctions(const std::string& prefix) {
+void RegisterAlwaysZeroFunctions(const std::string& prefix) {
   velox::registerFunction<AlwaysZeroFunction, OidCustomType>(
     {prefix + "my_temp_schema"});
   velox::registerFunction<AlwaysZeroFunction, double>(
@@ -1112,13 +1112,13 @@ struct EmptyTextArrayFromText {
 
 }  // namespace
 
-void registerStubFunctions(const std::string& prefix) {
-  registerNotSupportedFunctions(prefix);
-  registerNullFunctions(prefix);
-  registerAlwaysTrueFunctions(prefix);
-  registerAlwaysFalseFunctions(prefix);
-  registerEmptyStringFunctions(prefix);
-  registerAlwaysZeroFunctions(prefix);
+void RegisterStubFunctions(const std::string& prefix) {
+  RegisterNotSupportedFunctions(prefix);
+  RegisterNullFunctions(prefix);
+  RegisterAlwaysTrueFunctions(prefix);
+  RegisterAlwaysFalseFunctions(prefix);
+  RegisterEmptyStringFunctions(prefix);
+  RegisterAlwaysZeroFunctions(prefix);
 
   velox::registerFunction<PgBlockingPidsFunction, velox::Array<int32_t>,
                           int32_t>({prefix + "blocking_pids"});

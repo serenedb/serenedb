@@ -88,45 +88,44 @@ struct SearchStubFunction {
 // fail query.
 // TODO(Dronplane): maybe add naive implementation to run without index on best
 // effort basis?
-void registerSearchFunctions() {
+void RegisterSearchFunctions(const std::string& prefix) {
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kPhrase}});
+                          velox::Varchar>({prefix + kPhrase});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kTermEq}});
+                          velox::Varchar>({prefix + kTermEq});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kTermLt}});
+                          velox::Varchar>({prefix + kTermLt});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kTermLe}});
+                          velox::Varchar>({prefix + kTermLe});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kTermGe}});
+                          velox::Varchar>({prefix + kTermGe});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kTermGt}});
+                          velox::Varchar>({prefix + kTermGt});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Variadic<velox::Varchar>>(
-    {std::string{kTermIn}});
+                          velox::Variadic<velox::Varchar>>({prefix + kTermIn});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kTermLike}});
+                          velox::Varchar>({prefix + kTermLike});
 
   // NGRAM_MATCH(path, target[, threshold])
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar>({std::string{kNgramMatch}});
+                          velox::Varchar>({prefix + kNgramMatch});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
-                          velox::Varchar, double>({std::string{kNgramMatch}});
+                          velox::Varchar, double>({prefix + kNgramMatch});
 
   // LEVENSHTEIN_MATCH(path, target, distance[, transpositions[, maxTerms[,
   // prefix]]])
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar, int64_t>(
-    {std::string{kLevenshteinMatch}});
+    {prefix + kLevenshteinMatch});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar, int64_t, bool>(
-    {std::string{kLevenshteinMatch}});
+    {prefix + kLevenshteinMatch});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar, int64_t, bool, int64_t>(
-    {std::string{kLevenshteinMatch}});
+    {prefix + kLevenshteinMatch});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar, int64_t, bool, int64_t,
-                          velox::Varchar>({std::string{kLevenshteinMatch}});
+                          velox::Varchar>({prefix + kLevenshteinMatch});
 }
 
 }  // namespace sdb::search::functions

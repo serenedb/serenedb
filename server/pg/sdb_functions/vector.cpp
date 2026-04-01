@@ -69,155 +69,169 @@ void CheckVectors(const velox::exec::ArrayView<false, T>& l,
   }
 }
 
-template<typename T>
-T ComputeL2(const velox::exec::ArrayView<false, T>& l,
-            const velox::exec::ArrayView<false, T>& r, size_t size) {
-  std::vector<T> lbuf, rbuf;
-  const auto* l_data = GetArrayDataOrCopy(l, lbuf);
-  const auto* r_data = GetArrayDataOrCopy(r, rbuf);
-  return irs::vector::L2Space<T, T, T>::Dist(
-    reinterpret_cast<const irs::byte_type*>(l_data),
-    reinterpret_cast<const irs::byte_type*>(r_data),
-    static_cast<uint16_t>(l.size()));
-}
-
-template<typename T>
-T ComputeL1(const velox::exec::ArrayView<false, T>& l,
-            const velox::exec::ArrayView<false, T>& r, size_t size) {
-  std::vector<T> lbuf, rbuf;
-  const auto* l_data = GetArrayDataOrCopy(l, lbuf);
-  const auto* r_data = GetArrayDataOrCopy(r, rbuf);
-  return irs::vector::L1Space<T, T, T>::Dist(
-    reinterpret_cast<const irs::byte_type*>(l_data),
-    reinterpret_cast<const irs::byte_type*>(r_data),
-    static_cast<uint16_t>(l.size()));
-}
-
-template<typename T>
-T ComputeCosine(const velox::exec::ArrayView<false, T>& l,
-                const velox::exec::ArrayView<false, T>& r, size_t size) {
-  std::vector<T> lbuf, rbuf;
-  const auto* l_data = GetArrayDataOrCopy(l, lbuf);
-  const auto* r_data = GetArrayDataOrCopy(r, rbuf);
-  const auto [ll, lr, rr] =
-    irs::vector::CosineDistanceImpl<T, T, double>::Compute(
+template<typename T, typename R>
+struct ComputeDistanceBase {
+  R ComputeL2(const velox::exec::ArrayView<false, T>& l,
+              const velox::exec::ArrayView<false, T>& r, size_t size) {
+    std::vector<T> lbuf, rbuf;
+    const auto* l_data = GetArrayDataOrCopy(l, lbuf);
+    const auto* r_data = GetArrayDataOrCopy(r, rbuf);
+    return irs::vector::L2Space<T, T, R>::Dist(
       reinterpret_cast<const irs::byte_type*>(l_data),
       reinterpret_cast<const irs::byte_type*>(r_data),
       static_cast<uint16_t>(l.size()));
-  const T denom = std::sqrt(ll * rr);
-  if (denom == 0.0) {
-    return 0.0;
   }
-  return lr / denom;
-}
 
-template<typename T>
-T ComputeDotProduct(const velox::exec::ArrayView<false, T>& l,
-                    const velox::exec::ArrayView<false, T>& r, size_t size) {
+  R ComputeL1(const velox::exec::ArrayView<false, T>& l,
+              const velox::exec::ArrayView<false, T>& r, size_t size) {
+    std::vector<T> lbuf, rbuf;
+    const auto* l_data = GetArrayDataOrCopy(l, lbuf);
+    const auto* r_data = GetArrayDataOrCopy(r, rbuf);
+    return irs::vector::L1Space<T, T, R>::Dist(
+      reinterpret_cast<const irs::byte_type*>(l_data),
+      reinterpret_cast<const irs::byte_type*>(r_data),
+      static_cast<uint16_t>(l.size()));
+  }
+
+  R ComputeCosine(const velox::exec::ArrayView<false, T>& l,
+                  const velox::exec::ArrayView<false, T>& r, size_t size) {
+    std::vector<T> lbuf, rbuf;
+    const auto* l_data = GetArrayDataOrCopy(l, lbuf);
+    const auto* r_data = GetArrayDataOrCopy(r, rbuf);
+    const auto [ll, lr, rr] = irs::vector::CosineDistanceImpl<T, T, R>::Compute(
+      reinterpret_cast<const irs::byte_type*>(l_data),
+      reinterpret_cast<const irs::byte_type*>(r_data),
+      static_cast<uint16_t>(l.size()));
+    const T denom = std::sqrt(ll * rr);
+    if (denom == 0.0) {
+      return 0.0;
+    }
+    return lr / denom;
+  }
+
+  R ComputeDotProduct(const velox::exec::ArrayView<false, T>& l,
+                      const velox::exec::ArrayView<false, T>& r, size_t size) {
+    std::vector<T> lbuf, rbuf;
+    const auto* l_data = GetArrayDataOrCopy(l, lbuf);
+    const auto* r_data = GetArrayDataOrCopy(r, rbuf);
+    return irs::vector::DotProductImpl<T, R>::Compute(
+      reinterpret_cast<const irs::byte_type*>(l_data),
+      reinterpret_cast<const irs::byte_type*>(r_data),
+      static_cast<uint16_t>(l.size()));
+  }
+
   std::vector<T> lbuf, rbuf;
-  const auto* l_data = GetArrayDataOrCopy(l, lbuf);
-  const auto* r_data = GetArrayDataOrCopy(r, rbuf);
-  return irs::vector::DotProductImpl<T, T>::Compute(
-    reinterpret_cast<const irs::byte_type*>(l_data),
-    reinterpret_cast<const irs::byte_type*>(r_data),
-    static_cast<uint16_t>(l.size()));
-}
+};
 
-template<typename T, typename Elem>
-struct L2Squared {
+template<typename T, typename Elem, typename Res>
+struct L2Squared : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
-    out_type<Elem>& result, const velox::exec::ArrayView<false, Elem>& l,
+  FOLLY_ALWAYS_INLINE void callNullFree(
+    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
     const velox::exec::ArrayView<false, Elem>& r) {
     CheckVectors(l, r);
-    result = ComputeL2(l, r, l.size());
-    return true;
+    result = this->ComputeL2(l, r, l.size());
   }
 };
 
 template<typename T>
-using L2SquaredDouble = L2Squared<T, double>;
+using L2SquaredDouble = L2Squared<T, double, double>;
 
 template<typename T>
-using L2SquaredFloat = L2Squared<T, float>;
+using L2SquaredFloat = L2Squared<T, float, float>;
 
-template<typename T, typename Elem>
-struct L1Distance {
+template<typename T>
+using L2SquaredInt32 = L2Squared<T, int32_t, int64_t>;
+
+template<typename T, typename Elem, typename Res>
+struct L1Distance : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
-    out_type<Elem>& result, const velox::exec::ArrayView<false, Elem>& l,
+  FOLLY_ALWAYS_INLINE void callNullFree(
+    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
     const velox::exec::ArrayView<false, Elem>& r) {
     CheckVectors(l, r);
-    result = ComputeL1(l, r, l.size());
-    return true;
+    result = this->ComputeL1(l, r, l.size());
   }
 };
 
 template<typename T>
-using L1DistanceFloat = L1Distance<T, float>;
+using L1DistanceFloat = L1Distance<T, float, float>;
 
 template<typename T>
-using L1DistanceDouble = L1Distance<T, double>;
+using L1DistanceDouble = L1Distance<T, double, double>;
 
-template<typename T, typename Elem>
-struct CosineSimilarity {
+template<typename T>
+using L1DistanceInt32 = L1Distance<T, int32_t, int64_t>;
+
+template<typename T, typename Elem, typename Res>
+struct CosineSimilarity : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
-    out_type<Elem>& result, const velox::exec::ArrayView<false, Elem>& l,
+  FOLLY_ALWAYS_INLINE void callNullFree(
+    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
     const velox::exec::ArrayView<false, Elem>& r) {
     CheckVectors(l, r);
-    result = ComputeCosine(l, r, l.size());
-    return true;
+    result = this->ComputeCosine(l, r, l.size());
   }
 };
 
 template<typename T>
-using CosineSimilarityFloat = CosineSimilarity<T, float>;
+using CosineSimilarityFloat = CosineSimilarity<T, float, float>;
 
 template<typename T>
-using CosineSimilarityDouble = CosineSimilarity<T, double>;
+using CosineSimilarityDouble = CosineSimilarity<T, double, double>;
 
-template<typename T, typename Elem>
-struct DotProduct {
+template<typename T, typename Elem, typename Res>
+struct DotProduct : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool callNullFree(  // NOLINT
-    out_type<Elem>& result, const velox::exec::ArrayView<false, Elem>& l,
+  FOLLY_ALWAYS_INLINE void callNullFree(
+    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
     const velox::exec::ArrayView<false, Elem>& r) {
     CheckVectors(l, r);
-    result = ComputeDotProduct(l, r, l.size());
-    return true;
+    result = this->ComputeDotProduct(l, r, l.size());
   }
 };
 
 template<typename T>
-using DotProductFloat = DotProduct<T, float>;
+using DotProductFloat = DotProduct<T, float, float>;
 
 template<typename T>
-using DotProductDouble = DotProduct<T, double>;
+using DotProductDouble = DotProduct<T, double, double>;
+
+template<typename T>
+using DotProductInt32 = DotProduct<T, int32_t, int64_t>;
 
 }  // namespace
 
 void RegisterVectorFunctions(const std::string& prefix) {
   velox::registerFunction<L2SquaredFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + "l2_squared"});
+                          velox::Array<float>>({prefix + kL2Distance});
   velox::registerFunction<L2SquaredDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + "l2_squared"});
+                          velox::Array<double>>({prefix + kL2Distance});
+  velox::registerFunction<L2SquaredInt32, int64_t, velox::Array<int32_t>,
+                          velox::Array<int32_t>>({prefix + kL2Distance});
+
   velox::registerFunction<L1DistanceFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + "l1_distance"});
+                          velox::Array<float>>({prefix + kL1Distance});
   velox::registerFunction<L1DistanceDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + "l1_distance"});
+                          velox::Array<double>>({prefix + kL1Distance});
+  velox::registerFunction<L1DistanceInt32, int64_t, velox::Array<int32_t>,
+                          velox::Array<int32_t>>({prefix + kL1Distance});
+
   velox::registerFunction<CosineSimilarityFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + "cosine_similarity"});
+                          velox::Array<float>>({prefix + kCosineDistance});
   velox::registerFunction<CosineSimilarityDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + "cosine_similarity"});
+                          velox::Array<double>>({prefix + kCosineDistance});
+
   velox::registerFunction<DotProductFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + "dot_product"});
+                          velox::Array<float>>({prefix + kInnerProduct});
   velox::registerFunction<DotProductDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + "dot_product"});
+                          velox::Array<double>>({prefix + kInnerProduct});
+  velox::registerFunction<DotProductInt32, int64_t, velox::Array<int32_t>,
+                          velox::Array<int32_t>>({prefix + kInnerProduct});
 }
 
 }  // namespace sdb::pg::functions

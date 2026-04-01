@@ -738,16 +738,21 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     // Other scalar stubs
     .Case("getdatabaseencoding", VeloxFunction{"pg_getdatabaseencoding"})
     // Search functions
-    .Case("phrase", VeloxFunction{search::functions::kPhrase, false})
-    .Case("term_eq", VeloxFunction{search::functions::kTermEq, false})
-    .Case("term_lt", VeloxFunction{search::functions::kTermLt, false})
-    .Case("term_lte", VeloxFunction{search::functions::kTermLe, false})
-    .Case("term_gte", VeloxFunction{search::functions::kTermGe, false})
-    .Case("term_gt", VeloxFunction{search::functions::kTermGt, false})
-    .Case("term_in", VeloxFunction{search::functions::kTermIn, false})
-    .Case("term_like", VeloxFunction{search::functions::kTermLike, false})
-    .Case("ngram_match", {search::functions::kNgramMatch, false})
-    .Case("levenshtein_match", {search::functions::kLevenshteinMatch, false});
+    .Case("phrase", VeloxFunction{"sdb_phrase", false})
+    .Case("term_eq", VeloxFunction{"sdb_term_eq", false})
+    .Case("term_lt", VeloxFunction{"sdb_term_lt", false})
+    .Case("term_lte", VeloxFunction{"sdb_term_lte", false})
+    .Case("term_gte", VeloxFunction{"sdb_term_gte", false})
+    .Case("term_gt", VeloxFunction{"sdb_term_gt", false})
+    .Case("term_in", VeloxFunction{"sdb_term_in", false})
+    .Case("term_like", VeloxFunction{"sdb_term_like", false})
+    .Case("ngram_match", {"sdb_ngram_match", false})
+    .Case("levenshtein_match", {"sdb_levenshtein_match", false})
+    // Vector functions
+    .Case("l2_distance", VeloxFunction{"sdb_l2_distance", false})
+    .Case("l1_distance", VeloxFunction{"sdb_l1_distance", false})
+    .Case("cosine_distance", VeloxFunction{"sdb_cosine_distance", false})
+    .Case("inner_product", VeloxFunction{"sdb_inner_product", false});
 };
 
 const VirtualTable* GetTableFromSchema(std::string_view name,

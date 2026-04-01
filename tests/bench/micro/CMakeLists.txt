@@ -33,6 +33,7 @@ add_executable(vector-distances-bench vector_distances.cpp)
 target_compile_options(
     vector-distances-bench
     PRIVATE
+        -fno-lto # no faiss inlined
         -fapprox-func
         -fno-math-errno
         -fassociative-math
@@ -42,6 +43,7 @@ target_compile_options(
         -fno-rounding-math
         -ffp-contract=fast
 )
+target_link_options(vector-distances-bench PRIVATE -fno-lto)
 
 target_link_libraries(vector-distances-bench PRIVATE sereneserver benchmark)
 if(VELOX_ENABLE_FAISS)

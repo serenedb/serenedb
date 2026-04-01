@@ -315,7 +315,7 @@ struct RegnamespaceOutFunction {
 
 }  // namespace
 
-void registerInOutFunctions(const std::string& prefix) {
+void RegisterInOutFunctions(const std::string& prefix) {
   // Internal type I/O and operator functions (not in 9.27)
 
   velox::registerFunction<ByteaInFunction, velox::Varbinary, velox::Varchar>(

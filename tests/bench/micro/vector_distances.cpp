@@ -20,6 +20,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include <cstddef>
 #include <iresearch/utils/vector.hpp>
 
 #ifdef VELOX_ENABLE_FAISS
@@ -31,14 +32,21 @@
 #include <vector>
 
 // Benchmarks comparing:
-//   - sdb::pg UDF structs from server/pg/functions/vector.h (full wrapper incl.
-//   flat-check)
+//   - sdb::pg distance functions (iresearch SIMD-backed)
 //   - Velox UDF structs from velox/functions/prestosql/DistanceFunctions.h
 //     (only available with VELOX_ENABLE_FAISS; backed by FAISS)
-//   - Plain C++ loop equivalents (mirrors velox non-FAISS path)
 //
 // Vector construction is done in the fixture's SetUp, outside the timed loop.
-// Parameterized by dimension: 64, 128, 256, 512, 1024.
+// Parameterized by dimension: 64, 128, 256, 512, 1024, 2048.
+
+#define DISTANCES_BENCHMARK_REGISTER(BaseClass, Method) \
+  BENCHMARK_REGISTER_F(BaseClass, Method)               \
+    ->Arg(64)                                           \
+    ->Arg(128)                                          \
+    ->Arg(256)                                          \
+    ->Arg(512)                                          \
+    ->Arg(1024)                                         \
+    ->Arg(2048)
 
 namespace {
 
@@ -62,45 +70,54 @@ class DistanceFixture : public benchmark::Fixture {
   std::vector<float> rdata;
 };
 
-///////////////////////////////////////////////////////////////////////////////
-// L2 Squared
-///////////////////////////////////////////////////////////////////////////////
+[[gnu::noinline]] float SdbComputeL2(const float* left, const float* right,
+                                     size_t sz) {
+  return irs::vector::L2Space<float, float, float>::Dist(
+    reinterpret_cast<const irs::byte_type*>(left),
+    reinterpret_cast<const irs::byte_type*>(right), static_cast<uint16_t>(sz));
+}
+
+[[gnu::noinline]] float SdbComputeL1(const float* left, const float* right,
+                                     size_t sz) {
+  return irs::vector::L1Space<float, float, float>::Dist(
+    reinterpret_cast<const irs::byte_type*>(left),
+    reinterpret_cast<const irs::byte_type*>(right), static_cast<uint16_t>(sz));
+}
+
+[[gnu::noinline]] float SdbComputeDotProduct(const float* left,
+                                             const float* right, size_t sz) {
+  return irs::vector::DotProductImpl<float, float>::Compute(
+    reinterpret_cast<const irs::byte_type*>(left),
+    reinterpret_cast<const irs::byte_type*>(right), static_cast<uint16_t>(sz));
+}
+
+[[gnu::noinline]] float SdbComputeCosine(const float* left, const float* right,
+                                         size_t sz) {
+  const auto [ll, lr, rr] =
+    irs::vector::CosineDistanceImpl<float, float, float>::Compute(
+      reinterpret_cast<const irs::byte_type*>(left),
+      reinterpret_cast<const irs::byte_type*>(right),
+      static_cast<uint16_t>(sz));
+  return static_cast<float>(lr / std::sqrt(ll * rr));
+}
+
+[[gnu::noinline]] float VeloxComputeCosine(const float* left,
+                                           const float* right, size_t sz) {
+  float norm_x = 0, norm_y = 0;
+  faiss::fvec_norms_L2(&norm_x, left, sz, 1);
+  faiss::fvec_norms_L2(&norm_y, right, sz, 1);
+  float product = faiss::fvec_inner_product(left, right, sz);
+  return static_cast<float>(product / (norm_x * norm_y));
+}
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = irs::vector::L2Space<float, float, float>::Dist(
-      reinterpret_cast<const irs::byte_type*>(ldata.data()),
-      reinterpret_cast<const irs::byte_type*>(rdata.data()),
-      static_cast<uint16_t>(ldata.size()));
+    float result = SdbComputeL2(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
 
-BENCHMARK_REGISTER_F(DistanceFixture, SdbL2Squared)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
-
-BENCHMARK_DEFINE_F(DistanceFixture, PlainL2Squared)(benchmark::State& state) {
-  const int dim = state.range(0);
-  for (auto _ : state) {
-    float s = 0.0f;
-    for (int i = 0; i < dim; ++i) {
-      const float d = ldata[i] - rdata[i];
-      s += d * d;
-    }
-    benchmark::DoNotOptimize(s);
-  }
-}
-
-BENCHMARK_REGISTER_F(DistanceFixture, PlainL2Squared)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -113,53 +130,18 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
   }
 }
 
-BENCHMARK_REGISTER_F(DistanceFixture, VeloxL2Squared)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL2Squared);
 
 #endif
 
-///////////////////////////////////////////////////////////////////////////////
-// L1 (Manhattan) distance
-///////////////////////////////////////////////////////////////////////////////
-
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = irs::vector::L1Space<float, float, float>::Dist(
-      reinterpret_cast<const irs::byte_type*>(ldata.data()),
-      reinterpret_cast<const irs::byte_type*>(rdata.data()),
-      static_cast<uint16_t>(ldata.size()));
+    float result = SdbComputeL1(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
 
-BENCHMARK_REGISTER_F(DistanceFixture, SdbL1Distance)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
-
-BENCHMARK_DEFINE_F(DistanceFixture, PlainL1Distance)(benchmark::State& state) {
-  const int dim = state.range(0);
-  for (auto _ : state) {
-    float s = 0.0f;
-    for (int i = 0; i < dim; ++i) {
-      s += std::abs(ldata[i] - rdata[i]);
-    }
-    benchmark::DoNotOptimize(s);
-  }
-}
-
-BENCHMARK_REGISTER_F(DistanceFixture, PlainL1Distance)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL1Distance);
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -172,53 +154,19 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
   }
 }
 
-BENCHMARK_REGISTER_F(DistanceFixture, VeloxL1Distance)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL1Distance);
 
 #endif
 
-///////////////////////////////////////////////////////////////////////////////
-// Dot product
-///////////////////////////////////////////////////////////////////////////////
-
 BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = irs::vector::DotProductImpl<float, float>::Compute(
-      reinterpret_cast<const irs::byte_type*>(ldata.data()),
-      reinterpret_cast<const irs::byte_type*>(rdata.data()),
-      static_cast<uint16_t>(ldata.size()));
+    float result =
+      SdbComputeDotProduct(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
 
-BENCHMARK_REGISTER_F(DistanceFixture, SdbDotProduct)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
-
-BENCHMARK_DEFINE_F(DistanceFixture, PlainDotProduct)(benchmark::State& state) {
-  const int dim = state.range(0);
-  for (auto _ : state) {
-    double s = 0.0;
-    for (int i = 0; i < dim; ++i) {
-      s += static_cast<double>(ldata[i]) * rdata[i];
-    }
-    benchmark::DoNotOptimize(s);
-  }
-}
-
-BENCHMARK_REGISTER_F(DistanceFixture, PlainDotProduct)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -231,81 +179,26 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
   }
 }
 
-BENCHMARK_REGISTER_F(DistanceFixture, VeloxDotProduct)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxDotProduct);
 
 #endif
 
-///////////////////////////////////////////////////////////////////////////////
-// Cosine similarity
-///////////////////////////////////////////////////////////////////////////////
-
 BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
   for (auto _ : state) {
-    auto [ll, lr, rr] =
-      irs::vector::CosineDistanceImpl<float, float, float>::Compute(
-        reinterpret_cast<const irs::byte_type*>(ldata.data()),
-        reinterpret_cast<const irs::byte_type*>(rdata.data()),
-        static_cast<uint16_t>(ldata.size()));
-    float result = static_cast<float>(lr / std::sqrt(ll * rr));
+    float result = SdbComputeCosine(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
-BENCHMARK_REGISTER_F(DistanceFixture, SdbCosine)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
-
-// Mirrors the velox non-FAISS cosine path (plain C++ loops with double
-// accumulation).
-BENCHMARK_DEFINE_F(DistanceFixture, PlainCosine)(benchmark::State& state) {
-  const int dim = state.range(0);
-  for (auto _ : state) {
-    double ll = 0.0, lr = 0.0, rr = 0.0;
-    for (int i = 0; i < dim; ++i) {
-      const double li = ldata[i];
-      const double ri = rdata[i];
-      ll += li * li;
-      lr += li * ri;
-      rr += ri * ri;
-    }
-    const float result = static_cast<float>(lr / std::sqrt(ll * rr));
-    benchmark::DoNotOptimize(result);
-  }
-}
-
-BENCHMARK_REGISTER_F(DistanceFixture, PlainCosine)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
   for (auto _ : state) {
-    float norm_x = 0, norm_y = 0;
-    faiss::fvec_norms_L2(&norm_x, ldata.data(), ldata.size(), 1);
-    faiss::fvec_norms_L2(&norm_y, rdata.data(), rdata.size(), 1);
-    float result = 0.0f;
-    float product =
-      faiss::fvec_inner_product(ldata.data(), rdata.data(), ldata.size());
-    result = static_cast<float>(product / (norm_x * norm_y));
+    float result = VeloxComputeCosine(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
-BENCHMARK_REGISTER_F(DistanceFixture, VeloxCosine)
-  ->Arg(64)
-  ->Arg(128)
-  ->Arg(256)
-  ->Arg(512)
-  ->Arg(1024);
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxCosine);
 #endif
 
 }  // namespace

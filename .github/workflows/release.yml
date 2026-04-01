@@ -226,7 +226,15 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ github.ref_name }}
-          JOB_STATUS: ${{ (needs.build-x64.outputs.packages_ok == 'true' || needs.build-x64.result == 'skipped') && (needs.build-arm64.outputs.packages_ok == 'true' || needs.build-arm64.result == 'skipped') && 'success' || 'failure' }}
+          JOB_STATUS: >-
+            ${{
+              (needs.build-x64.result == 'success' || needs.build-x64.result == 'skipped') &&
+              (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
+                && 'success'
+                || (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
+                  && 'warning'
+                  || 'failure'
+            }}
           ACTOR: ${{ github.actor }}
           RUN_NAME: "SereneDB [release]"
           RUN_NUMBER: ${{ github.run_number }}

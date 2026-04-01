@@ -48,5 +48,3 @@ if [ "$DEB_TAR_PACKAGES" = "true" ]; then
 	/serenedb/packages/build_deb.bash || exit 1
 	/serenedb/packages/build_targz.bash || exit 1
 fi
-
-chown "${RUNNER_ID}" -R /serenedb

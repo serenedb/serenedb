@@ -344,7 +344,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
-  absl::Mutex _table_lock;
+  std::shared_mutex _table_lock;
 };
 
 TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {

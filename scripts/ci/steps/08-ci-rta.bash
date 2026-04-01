@@ -45,16 +45,4 @@ else
 fi
 
 echo "RTA_TESTS=${test_result}"
-
-# Fix ownership of log files written by the container so the runner can upload them
-docker run --rm \
-	--cap-add=SYS_PTRACE \
-	--privileged \
-	--security-opt seccomp=unconfined \
-	--env-file ./docker.env \
-	-v /etc/passwd:/etc/passwd:ro \
-	-v /etc/group:/etc/group:ro \
-	-v "${WORKSPACE}/logs:/logs" \
-	"${BUILD_IMAGE}" bash -c 'chown -R "$1" /logs && echo "Permissions set successfully"' -- "${RUNNER_ID}"
-
 exit ${exit_code}

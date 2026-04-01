@@ -32,16 +32,19 @@ if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi
 
-# Docker container assumes that sanitizers and coverage dirs are created.
-# Executable 'serened' switches to 'serenedb' user. If required dirs are not created,
-# /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
 mkdir -p "$WORKSPACE/sanitizers"
 mkdir -p "$WORKSPACE/$BUILD_DIR/coverage"
 mkdir -p "$WORKSPACE/logs"
+mkdir -p "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
 
 if test -z "$BUILD_IMAGE"; then
 	export BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest
 fi
+
+# Pass host user to compose/docker for correct file ownership
+export DOCKER_UID="$(id -u)"
+export DOCKER_GID="$(id -g)"
+export DOCKER_SOCK_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)"
 
 cd $SQLLOGIC_DIR
 
@@ -70,7 +73,9 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 
 	docker service create \
 		--name "$SERVICE_NAME" \
+		--user "$(id -u):$(id -g)" \
 		--env BUILD_DIR="$BUILD_DIR" \
+		--env HOME=/serenedb \
 		--restart-condition on-failure \
 		--replicas 1 \
 		--restart-delay 1ns \
@@ -80,14 +85,8 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 		--mount type=bind,src="$WORKSPACE",dst=/serenedb \
 		--mount type=bind,src="$WORKSPACE/logs",dst=/var/log/serenedb \
 		--mount type=volume,src="$VOLUME_NAME",dst=/serenedb_datadir \
-		"${env_args[@]}" \
 		"$BUILD_IMAGE" \
 		sh -c '
-      if ! id serenedb >/dev/null 2>&1; then
-        useradd serenedb &&
-        chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR}/coverage
-      fi &&
-      chown serenedb:serenedb /serenedb_datadir &&
       exec /serenedb/${BUILD_DIR}/bin/serened /serenedb_datadir \
         --server.endpoint pgsql+tcp://0.0.0.0:7777 \
         --server.authentication 0
@@ -95,10 +94,16 @@ if [[ "$TEST_KIND" == "recovery" ]]; then
 
 	# Run tests
 	docker run --rm \
+		--user "$(id -u):$(id -g)" \
+		--group-add "$DOCKER_SOCK_GID" \
+		-e HOME=/sqllogic \
+		-e CARGO_HOME=/tmp/cargo \
+		-e CARGO_TARGET_DIR=/cargo-target \
 		--network "$NETWORK_NAME" \
 		-e "SERVICE_HOST=$SERVICE_NAME" \
 		-v "$SQLLOGIC_DIR:/sqllogic" \
 		-v "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs" \
+		-v "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target" \
 		${BUILD_IMAGE} \
 		bash -c 'exec sqllogic/run_recovery.sh'
 	test_exit_code=$?

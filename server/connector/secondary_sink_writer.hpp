@@ -65,7 +65,7 @@ namespace sdb::connector {
 //    Value: empty
 //    PK always in key. Multiple rows per SK value.
 //
-// Marker values (1 byte): 0x00 = NULL, 0x01 = NOT NULL (nulls-first).
+// Marker values (1 byte): 0x01 = NULL, 0x02 = NOT NULL (nulls-first).
 namespace secondary_key {
 
 inline void AppendShardPrefix(std::string& key, ObjectId shard_id) {
@@ -82,9 +82,9 @@ inline void AppendDummyColumnId(std::string& key) {
   absl::big_endian::Store64(key.data() + base, 0);
 }
 
-inline void AppendNullMarker(std::string& key) { key.push_back('\0'); }
+inline void AppendNullMarker(std::string& key) { key.push_back('\1'); }
 
-inline void AppendNotNullMarker(std::string& key) { key.push_back('\1'); }
+inline void AppendNotNullMarker(std::string& key) { key.push_back('\2'); }
 
 // Appends <marker><encoded_value> for each SK column.
 // Returns true if any SK column is NULL.

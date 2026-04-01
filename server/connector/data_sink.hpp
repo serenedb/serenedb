@@ -324,6 +324,8 @@ class SSTInsertDataSink final
  private:
   absl::ReaderMutexLock _table_lock_guard;
   std::vector<velox::column_index_t> _sk_children;
+
+  // TODO: Write directly to SST file without buffering whole key in memory.
   std::string _sk_buffer;
   std::string _pk_buffer;
 };

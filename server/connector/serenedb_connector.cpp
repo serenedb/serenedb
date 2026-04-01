@@ -42,10 +42,24 @@ namespace {
 // execution graph may change).
 constexpr bool kExecuteFiltersInTableScan = false;
 
+void RejectFilter(velox::core::TypedExprPtr filter,
+                  std::vector<velox::core::TypedExprPtr>& rejected_filters) {
+  if (!filter) {
+    return;
+  }
+  if (const auto* call =
+        dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
+      call && call->name() == velox::expression::kAnd) {
+    rejected_filters.assign(call->inputs().begin(), call->inputs().end());
+  } else {
+    rejected_filters = {std::move(filter)};
+  }
+}
+
 std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
   const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
   query::Transaction& transaction,
-  velox::core::TypedExprPtr& out_remaining_filter) {
+  velox::core::TypedExprPtr& remaining_filter) {
   auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
   auto snapshot = transaction.EnsureCatalogSnapshot();
 
@@ -91,7 +105,7 @@ std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(*index);
 
-    out_remaining_filter = std::move(res.remaining_filter);
+    remaining_filter = std::move(res.remaining_filter);
     return std::make_shared<SecondaryIndexTableHandle>(
       table.name(), rocksdb_table.TableId(), transaction, index_shard->GetId(),
       std::move(points), std::move(sk_type), table, sec_index.IsUnique());
@@ -264,31 +278,14 @@ SereneDBTableLayout::createTableHandle(
       if (auto handle =
             TryMatchSecondaryIndex(remaining_filter, *table,
                                    rocksdb_table.GetTransaction(), remaining)) {
-        if (remaining) {
-          if (const auto* call =
-                dynamic_cast<const velox::core::CallTypedExpr*>(
-                  remaining.get());
-              call && call->name() == velox::expression::kAnd) {
-            rejected_filters.assign(call->inputs().begin(),
-                                    call->inputs().end());
-          } else {
-            rejected_filters = {std::move(remaining)};
-          }
-        }
+        RejectFilter(std::move(remaining), rejected_filters);
         return handle;
       }
     }
   }
 
-  if (!kExecuteFiltersInTableScan && remaining_filter) {
-    if (const auto* call = dynamic_cast<const velox::core::CallTypedExpr*>(
-          remaining_filter.get());
-        call && call->name() == velox::expression::kAnd) {
-      rejected_filters.assign(call->inputs().begin(), call->inputs().end());
-    } else {
-      rejected_filters = {std::move(remaining_filter)};
-    }
-    remaining_filter.reset();
+  if (!kExecuteFiltersInTableScan) {
+    RejectFilter(std::move(remaining_filter), rejected_filters);
   }
 
   SDB_ASSERT(!table->columnMap().empty(),

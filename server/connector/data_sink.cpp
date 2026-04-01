@@ -155,6 +155,9 @@ RocksDBDataSinkBase<DataWriterType>::RocksDBDataSinkBase(
     _store_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool} {
   _key_childs.assign_range(key_childs);
+  SDB_ASSERT(std::ranges::is_sorted(_key_childs) &&
+               std::ranges::adjacent_find(_key_childs) == _key_childs.end(),
+             "RocksDBDataSinkBase: key_childs must be sorted and unique");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
   SDB_ASSERT(!_columns_info.empty(),
              "RocksDBDataSinkBase: no columns in a table");
@@ -216,7 +219,7 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
   this->_store_keys_buffers.reserve(num_rows);
 
   if constexpr (IsSecondaryIndex) {
-    // Build key and write in one pass — reuse _sk_buffer/_pk_buffer.
+    // Build key and write in one pass - reuse _sk_buffer/_pk_buffer.
     this->_data_writer.SetColumnIndex(0);
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       _sk_buffer.clear();

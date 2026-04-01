@@ -924,6 +924,177 @@ TEST_P(Format10TestCase, postings_seek) {
   }
 }
 
+TEST_P(Format10TestCase, position_reset_with_offsets) {
+  // Regression test: reset() must restore both pos and pay stream positions.
+  // Previously, reset() only seeked _pos_in but not _pay_in, causing
+  // ReadTail to hit unreachable code when offsets were enabled.
+
+  auto generate_docs = [](size_t count) {
+    std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
+    docs.reserve(count);
+    irs::doc_id_t i = (irs::doc_limits::min)();
+    std::generate_n(std::back_inserter(docs), count, [&i]() {
+      const irs::doc_id_t doc = i;
+      const uint32_t freq = std::max(1U, doc % 7);
+      ++i;
+      return std::pair{doc, freq};
+    });
+    return docs;
+  };
+
+  auto test_reset =
+    [&](const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
+        irs::IndexFeatures features) {
+      irs::FieldMeta field;
+      field.index_features = features;
+      auto dir = get_directory(*this);
+
+      auto codec = get_codec();
+      ASSERT_NE(nullptr, codec);
+      auto writer =
+        codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+      ASSERT_NE(nullptr, writer);
+      irs::CookieImpl term_meta;
+
+      // write postings
+      {
+        irs::FlushState state{
+          .dir = dir.get(),
+          .name = "segment_name",
+          .doc_count = docs.back().first + 1,
+          .index_features = field.index_features,
+        };
+
+        auto out = dir->create("attributes");
+        ASSERT_FALSE(!out);
+        irs::WriteStr(*out, std::string_view("file_header"));
+
+        writer->Prepare(*out, state);
+        writer->BeginField(field);
+
+        {
+          TestPostings it(docs, field.index_features);
+          writer->Write(it, term_meta.meta);
+          writer->Encode(*out, term_meta.meta);
+        }
+
+        writer->EndField();
+        writer->End();
+      }
+
+      // read postings and test reset
+      {
+        irs::SegmentMeta meta;
+        meta.name = "segment_name";
+
+        irs::ReaderState state;
+        state.dir = dir.get();
+        state.meta = &meta;
+
+        auto in = dir->open("attributes", irs::IOAdvice::NORMAL);
+        ASSERT_FALSE(!in);
+        const auto tmp = irs::ReadString<std::string>(*in);
+
+        auto reader = codec->get_postings_reader();
+        ASSERT_NE(nullptr, reader);
+        reader->prepare(*in, state, field.index_features);
+
+        irs::bstring in_data(in->Length() - in->Position(), 0);
+        in->ReadBytes(&in_data[0], in_data.size());
+        const auto* begin = in_data.c_str();
+
+        irs::CookieImpl read_meta;
+        begin += reader->decode(begin, field.index_features, read_meta.meta);
+
+        for (size_t i = 0; i < docs.size();
+             i += std::max<size_t>(1, docs.size() / 10)) {
+          auto actual = reader->Iterator(field.index_features, features,
+                                         {.cookie = &read_meta}, 0);
+          ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
+
+          const auto& doc = docs[i];
+          ASSERT_EQ(doc.first, actual->seek(doc.first));
+
+          auto* pos = irs::GetMutable<irs::PosAttr>(actual.get());
+          ASSERT_NE(nullptr, pos);
+
+          auto* offs = irs::get<irs::OffsAttr>(*pos);
+          const bool has_offs =
+            irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs);
+          ASSERT_EQ(has_offs, offs != nullptr);
+
+          // collect positions (and offsets) from the first pass
+          struct PosData {
+            irs::PosAttr::value_t value;
+            uint32_t start;
+            uint32_t end;
+          };
+          std::vector<PosData> expected_positions;
+          while (pos->next()) {
+            PosData pd{.value = pos->value()};
+            if (offs) {
+              pd.start = offs->start;
+              pd.end = offs->end;
+            }
+            expected_positions.push_back(pd);
+          }
+          ASSERT_EQ(doc.second, expected_positions.size());
+
+          // reset and iterate again -- must produce the same results
+          pos->reset();
+          std::vector<PosData> actual_positions;
+          while (pos->next()) {
+            PosData pd{.value = pos->value()};
+            if (offs) {
+              pd.start = offs->start;
+              pd.end = offs->end;
+            }
+            actual_positions.push_back(pd);
+          }
+
+          ASSERT_EQ(expected_positions.size(), actual_positions.size());
+          for (size_t j = 0; j < expected_positions.size(); ++j) {
+            ASSERT_EQ(expected_positions[j].value, actual_positions[j].value)
+              << "doc=" << doc.first << " pos_index=" << j;
+            if (offs) {
+              ASSERT_EQ(expected_positions[j].start, actual_positions[j].start)
+                << "doc=" << doc.first << " pos_index=" << j;
+              ASSERT_EQ(expected_positions[j].end, actual_positions[j].end)
+                << "doc=" << doc.first << " pos_index=" << j;
+            }
+          }
+        }
+
+        ASSERT_EQ(begin, in_data.data() + in_data.size());
+      }
+    };
+
+  constexpr auto kPos = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
+  constexpr auto kOffs = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+                         irs::IndexFeatures::Offs;
+
+  // short list (< block size) -- only tail positions
+  {
+    const auto docs = generate_docs(117);
+    test_reset(docs, kPos);
+    test_reset(docs, kOffs);
+  }
+
+  // exactly one block
+  {
+    const auto docs = generate_docs(GetPostingsBlockSize());
+    test_reset(docs, kPos);
+    test_reset(docs, kOffs);
+  }
+
+  // multiple blocks
+  {
+    const auto docs = generate_docs(1000);
+    test_reset(docs, kPos);
+    test_reset(docs, kOffs);
+  }
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs),

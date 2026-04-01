@@ -8,13 +8,13 @@ LOGICAL PLAN:
   - Project: -> ROW<"generate_series":BIGINT>
       generate_series := generate_series
     - Unnest: -> ROW<"generate_series":BIGINT>
-        [generate_series] := presto_sequence(CAST(1 AS BIGINT), CAST(10000 AS BIGINT))
+        [generate_series] := pg_generate_series(CAST(1 AS BIGINT), CAST(10000 AS BIGINT))
       - Values: 1 rows -> ROW<>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
 -- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
   -- Unnest[2][dt3.__p9] -> "generate_series":BIGINT
-    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, pg_generate_series(1,10000))] -> "dt3.__p9":ARRAY<BIGINT>
       -- Values[0][1 rows in 1 vectors] ->
 
 
@@ -26,7 +26,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
 -- Project[3][expressions: (x:2:BIGINT, "generate_series:1")] -> "x:2":BIGINT
   -- Unnest[2][dt3.__p9] -> "generate_series:1":BIGINT
-    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, pg_generate_series(1,10000))] -> "dt3.__p9":ARRAY<BIGINT>
       -- Values[0][1 rows in 1 vectors] ->
 
 query
@@ -37,7 +37,7 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
 -- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
   -- Unnest[2][dt3.__p9] -> "generate_series":BIGINT
-    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, pg_generate_series(1,10000))] -> "dt3.__p9":ARRAY<BIGINT>
       -- Values[0][1 rows in 1 vectors] ->
 
 
@@ -98,9 +98,9 @@ LOGICAL PLAN:
           unnest:2 := unnest:2
           unnest:3 := unnest:3
         - Unnest: -> ROW<"unnest:1":BIGINT,"unnest:2":BIGINT,"unnest:3":BIGINT>
-            [unnest:1] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
-            [unnest:2] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
-            [unnest:3] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+            [unnest:1] := pg_generate_series(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+            [unnest:2] := pg_generate_series(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+            [unnest:3] := pg_generate_series(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
           - Values: 1 rows -> ROW<>
 
 query

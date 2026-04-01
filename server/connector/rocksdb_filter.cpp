@@ -101,7 +101,7 @@ std::vector<Point> ExtractFilterAnd(const velox::core::CallTypedExpr* func_call,
   SDB_ASSERT(!func_call->inputs().empty());
 
   // Cartesian product of all children's point sets, intersecting each tuple.
-  // An unconstrained child (AnyPoint — empty filters) acts as identity because
+  // An unconstrained child (AnyPoint -- empty filters) acts as identity because
   // Intersect(P, {}) == P, so no special-casing is needed.
   std::vector<Point> result =
     ExtractFilterExpr(func_call->inputs()[0], pk_names);

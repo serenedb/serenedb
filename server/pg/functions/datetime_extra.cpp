@@ -311,6 +311,47 @@ struct PgDateBin {
   }
 };
 
+velox::Timestamp AddIntervalToTimestamp(const velox::Timestamp& timestamp,
+                                        const UnpackedInterval& interval) {
+  auto result = velox::functions::addToTimestamp(
+    timestamp, velox::functions::DateTimeUnit::kMonth, interval.month);
+  result = velox::functions::addToTimestamp(
+    result, velox::functions::DateTimeUnit::kDay, interval.day);
+  result = velox::functions::addToTimestamp(
+    result, velox::functions::DateTimeUnit::kMicrosecond, interval.time);
+  return result;
+}
+
+template<typename T>
+struct TimestampPlusIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
+                                const arg_type<velox::Timestamp>& timestamp,
+                                const arg_type<Interval>& packed_interval) {
+    auto interval = UnpackInterval(packed_interval);
+    result = AddIntervalToTimestamp(timestamp, interval);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
+                                const arg_type<Interval>& interval,
+                                const arg_type<velox::Timestamp>& timestamp) {
+    call(result, timestamp, interval);
+  }
+};
+
+template<typename T>
+struct TimestampMinusIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
+                                const arg_type<velox::Timestamp>& timestamp,
+                                const arg_type<Interval>& packed_interval) {
+    auto interval = UnpackInterval(packed_interval).Negate();
+    result = AddIntervalToTimestamp(timestamp, interval);
+  }
+};
+
 }  // namespace
 
 void registerDatetimeExtraFunctions(const std::string& prefix) {
@@ -333,6 +374,13 @@ void registerDatetimeExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgDateBin, velox::Timestamp, Interval,
                           velox::Timestamp, velox::Timestamp>(
     {prefix + "date_bin"});
+
+  velox::registerFunction<TimestampPlusIntervalFunction, velox::Timestamp,
+                          velox::Timestamp, Interval>({prefix + "time_plus"});
+  velox::registerFunction<TimestampPlusIntervalFunction, velox::Timestamp,
+                          Interval, velox::Timestamp>({prefix + "time_plus"});
+  velox::registerFunction<TimestampMinusIntervalFunction, velox::Timestamp,
+                          velox::Timestamp, Interval>({prefix + "time_minus"});
 }
 
 }  // namespace sdb::pg::functions

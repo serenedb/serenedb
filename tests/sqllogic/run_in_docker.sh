@@ -40,7 +40,7 @@ mkdir -p "$WORKSPACE/$BUILD_DIR/coverage"
 mkdir -p "$WORKSPACE/logs"
 
 if test -z "$BUILD_IMAGE"; then
-	export BUILD_IMAGE=registry.serenedb.com:5000/serenedb-build-ubuntu:latest
+	export BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest
 fi
 
 cd $SQLLOGIC_DIR

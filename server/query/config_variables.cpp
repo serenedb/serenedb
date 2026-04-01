@@ -21,6 +21,7 @@
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
 #include "basics/logger/logger.h"
+#include "basics/static_strings.h"
 #include "pg/isolation_level.h"
 #include "query/config.h"
 
@@ -202,6 +203,22 @@ constexpr std::pair<std::string_view, VariableDescription>
         VariableType::String,
         "Sets the message levels that are sent to the client.",
         "notice",
+      },
+    },
+    {
+      "session_authorization",
+      {
+        VariableType::String,
+        "Sets the current session's user name.",
+        StaticStrings::kDefaultUser,
+      },
+    },
+    {
+      "is_superuser",
+      {
+        VariableType::Bool,
+        "Shows whether the current session's user is a superuser.",
+        "on",
       },
     },
 };

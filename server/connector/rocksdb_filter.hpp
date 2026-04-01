@@ -338,7 +338,8 @@ struct ExtractAndRewriteResult {
 };
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
-  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
+  const velox::core::TypedExprPtr& expr,
+  std::span<const std::string> column_names);
 
 // Returns true if `call` matches a velox function named either `suffix[1:]`
 // (bare name, e.g. "eq") or anything ending with `suffix` (prefixed name, e.g.

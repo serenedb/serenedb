@@ -117,7 +117,25 @@ std::vector<KeyConstraint> ExtractFilterEq(
   return {p};
 }
 
-// a != v  ->  a < v  OR  a > v
+std::vector<KeyConstraint> ExtractFilterIsNull(
+  const velox::core::CallTypedExpr* func_call,
+  std::span<const std::string> pk_names) {
+  SDB_ASSERT(func_call->inputs().size() == 1);
+  if (!func_call->inputs()[0]->isFieldAccessKind()) {
+    return AnyKeyConstraint(pk_names);
+  }
+  auto field_access =
+    basics::downCast<velox::core::FieldAccessTypedExpr>(func_call->inputs()[0]);
+  if (!absl::c_linear_search(pk_names, field_access->name())) {
+    return AnyKeyConstraint(pk_names);
+  }
+  velox::core::ConstantTypedExpr null_val{
+    field_access->type(), velox::variant::null(field_access->type()->kind())};
+  auto p = KeyConstraint::MakeAny(pk_names);
+  p.AddEqFilter(field_access->name(), null_val, func_call);
+  return {p};
+}
+
 std::vector<KeyConstraint> ExtractFilterNeq(
   const velox::core::CallTypedExpr* func_call,
   std::span<const std::string> pk_names, bool negated) {
@@ -1184,6 +1202,10 @@ std::vector<KeyConstraint> ExtractFilterExpr(
     } else if (IsCallOf(func_call, "_gt") || IsCallOf(func_call, "_gte") ||
                IsCallOf(func_call, "_lt") || IsCallOf(func_call, "_lte")) {
       pts = ExtractFilterComparison(func_call, pk_names, negated);
+    } else if (IsCallOf(func_call, "_isnull") ||
+               IsCallOf(func_call, "_is_null")) {
+      // TODO: NOT NULL
+      pts = ExtractFilterIsNull(func_call, pk_names);
     } else if (func_call->name() == velox::expression::kAnd) {
       // De Morgan: NOT(A AND B) = NOT(A) OR NOT(B)
       pts = negated ? ExtractFilterOr(func_call, pk_names, negated)

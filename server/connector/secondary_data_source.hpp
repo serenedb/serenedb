@@ -41,8 +41,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
                            const rocksdb::Snapshot* snapshot, ObjectId shard_id,
                            std::vector<SpecificPoint> values,
                            velox::RowTypePtr sk_type)
-    : _memory_pool{memory_pool},
-      _materializer{std::move(materializer)},
+    : _materializer{std::move(materializer)},
       _source{source},
       _cf{cf},
       _snapshot{snapshot},
@@ -73,37 +72,10 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
 
     while (_row_keys.size() < size && _current_value_idx < _values.size()) {
       if (!_iterator) {
-        BuildScanPrefix(_values[_current_value_idx]);
-
-        rocksdb::ReadOptions ro;
-        ro.snapshot = _snapshot;
-        ro.total_order_seek = true;
-        _upper_bound = _current_scan_prefix;
-        IncrementPrefix(_upper_bound);
-        _upper_bound_slice = rocksdb::Slice{_upper_bound};
-        ro.iterate_upper_bound = &_upper_bound_slice;
-        if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
-          _iterator.reset(_source.GetIterator(ro, &_cf));
-        } else {
-          _iterator.reset(_source.NewIterator(ro, &_cf));
-        }
-        _iterator->Seek(_current_scan_prefix);
+        SeekToPoint(_values[_current_value_idx]);
       }
 
-      const auto pk_start = sizeof(ObjectId) + _value_key_size;
-
-      if constexpr (Unique) {
-        bool has_null =
-          absl::c_any_of(_values[_current_value_idx],
-                         [](const velox::variant& v) { return v.isNull(); });
-        if (has_null) {
-          CollectPKsFromKey(size, pk_start);
-        } else {
-          CollectPKsFromValue(size);
-        }
-      } else {
-        CollectPKsFromKey(size, pk_start);
-      }
+      CollectPKs(size);
 
       if (!_iterator->Valid()) {
         _iterator.reset();
@@ -137,15 +109,45 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   void cancel() final { _iterator.reset(); }
 
  private:
-  void CollectPKsFromKey(uint64_t size, size_t pk_start) {
+  void SeekToPoint(const SpecificPoint& point) {
+    BuildScanPrefix(point);
+
+    rocksdb::ReadOptions ro;
+    ro.snapshot = _snapshot;
+    ro.total_order_seek = true;
+    _upper_bound = _scan_prefix;
+    IncrementPrefix(_upper_bound);
+    _upper_bound_slice = rocksdb::Slice{_upper_bound};
+    ro.iterate_upper_bound = &_upper_bound_slice;
+
+    if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
+      _iterator.reset(_source.GetIterator(ro, &_cf));
+    } else {
+      _iterator.reset(_source.NewIterator(ro, &_cf));
+    }
+    _iterator->Seek(_scan_prefix);
+
+    if constexpr (Unique) {
+      _pk_from_value = !absl::c_any_of(
+        point, [](const velox::variant& v) { return v.isNull(); });
+    }
+  }
+
+  void CollectPKs(uint64_t size) {
+    if constexpr (Unique) {
+      if (_pk_from_value) {
+        CollectPKsFromValue(size);
+        return;
+      }
+    }
+    CollectPKsFromKey(size);
+  }
+
+  void CollectPKsFromKey(uint64_t size) {
     while (_row_keys.size() < size && _iterator->Valid()) {
       auto key = _iterator->key();
-      std::string_view key_view{key.data(), key.size()};
-      if (!key_view.starts_with(_current_scan_prefix)) {
-        break;
-      }
-      if (key_view.size() > pk_start) {
-        _row_keys.emplace_back(key_view.substr(pk_start));
+      if (key.size() > _pk_start) {
+        _row_keys.emplace_back(key.data() + _pk_start, key.size() - _pk_start);
       }
       _iterator->Next();
     }
@@ -153,11 +155,6 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
 
   void CollectPKsFromValue(uint64_t size) {
     while (_row_keys.size() < size && _iterator->Valid()) {
-      auto key = _iterator->key();
-      std::string_view key_view{key.data(), key.size()};
-      if (!key_view.starts_with(_current_scan_prefix)) {
-        break;
-      }
       auto val = _iterator->value();
       _row_keys.emplace_back(val.data(), val.size());
       _iterator->Next();
@@ -165,19 +162,19 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   }
 
   void BuildScanPrefix(const SpecificPoint& point) {
-    _current_scan_prefix.clear();
-    secondary_key::AppendShardPrefix(_current_scan_prefix, _shard_id);
-    secondary_key::AppendDummyColumnId(_current_scan_prefix);
+    _scan_prefix.clear();
+    secondary_key::AppendShardPrefix(_scan_prefix, _shard_id);
+    secondary_key::AppendDummyColumnId(_scan_prefix);
     for (size_t i = 0; i < point.size(); ++i) {
       if (point[i].isNull()) {
-        secondary_key::AppendNullMarker(_current_scan_prefix);
+        secondary_key::AppendNullMarker(_scan_prefix);
       } else {
-        secondary_key::AppendNotNullMarker(_current_scan_prefix);
-        primary_key::AppendVariantValue(_current_scan_prefix, point[i],
+        secondary_key::AppendNotNullMarker(_scan_prefix);
+        primary_key::AppendVariantValue(_scan_prefix, point[i],
                                         _sk_type->childAt(i));
       }
     }
-    _value_key_size = _current_scan_prefix.size() - sizeof(ObjectId);
+    _pk_start = _scan_prefix.size();
   }
 
   static void IncrementPrefix(std::string& prefix) {
@@ -192,7 +189,6 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
     prefix.push_back('\x00');
   }
 
-  velox::memory::MemoryPool& _memory_pool;
   Materializer _materializer;
   Source& _source;
   rocksdb::ColumnFamilyHandle& _cf;
@@ -201,8 +197,9 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   std::vector<SpecificPoint> _values;
   velox::RowTypePtr _sk_type;
   primary_key::Keys _row_keys;
-  std::string _current_scan_prefix;
-  size_t _value_key_size = 0;
+  std::string _scan_prefix;
+  size_t _pk_start = 0;
+  bool _pk_from_value = false;
   std::string _upper_bound;
   rocksdb::Slice _upper_bound_slice;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;

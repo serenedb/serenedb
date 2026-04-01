@@ -13,7 +13,7 @@ FROM
   generate_series(1, 10000) AS crook(id);
 
 statement ok
-CREATE INDEX clickclack_bigcrew_boss_idx ON clickclack_bigcrew USING secondary(boss);
+CREATE INDEX clickclack_bigcrew_boss_idx ON clickclack_bigcrew(boss);
 
 query
 SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
@@ -30,7 +30,7 @@ SELECT * FROM clickclack_bigcrew WHERE boss = 0 ORDER BY id LIMIT 5;
 500	0	0	crook_500
 
 statement ok
-CREATE INDEX clickclack_bigcrew_team_idx ON clickclack_bigcrew USING secondary(team);
+CREATE INDEX clickclack_bigcrew_team_idx ON clickclack_bigcrew(team);
 
 query
 SELECT count(*) FROM clickclack_bigcrew WHERE team = 7;
@@ -101,7 +101,7 @@ FROM
   generate_series(1, 10000) AS cutelooked(id);
 
 statement ok
-CREATE INDEX clickclack_division_leader_idx ON clickclack_division USING secondary(leader);
+CREATE INDEX clickclack_division_leader_idx ON clickclack_division(leader);
 
 query
 SELECT count(*) FROM clickclack_division WHERE leader = 'vedernikoff';

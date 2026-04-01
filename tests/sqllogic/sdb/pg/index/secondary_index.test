@@ -5,7 +5,7 @@ statement ok
 CREATE TABLE vedernikoff_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
 
 statement ok
-CREATE INDEX vedernikoff_crew_stocks_idx ON vedernikoff_crew USING secondary(stocks);
+CREATE INDEX vedernikoff_crew_stocks_idx ON vedernikoff_crew(stocks);
 
 statement ok
 INSERT INTO vedernikoff_crew VALUES (1, 'vedernikoff', 30);
@@ -120,7 +120,7 @@ statement ok
 INSERT INTO babsky_vault VALUES (1, 100), (2, 200), (3, 100), (4, 300), (5, 100);
 
 statement ok
-CREATE INDEX babsky_vault_loot_idx ON babsky_vault USING secondary(loot);
+CREATE INDEX babsky_vault_loot_idx ON babsky_vault(loot);
 
 query
 SELECT pid, loot FROM babsky_vault WHERE loot = 100 ORDER BY pid;
@@ -190,13 +190,13 @@ statement ok
 CREATE TABLE clickclack_ranks (pid INTEGER PRIMARY KEY, rank INTEGER);
 
 statement ok
-CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+CREATE INDEX clickclack_ranks_idx ON clickclack_ranks(rank);
 
 statement ok
-CREATE INDEX IF NOT EXISTS clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+CREATE INDEX IF NOT EXISTS clickclack_ranks_idx ON clickclack_ranks(rank);
 
 statement error
-CREATE INDEX clickclack_ranks_idx ON clickclack_ranks USING secondary(rank);
+CREATE INDEX clickclack_ranks_idx ON clickclack_ranks(rank);
 
 statement ok
 DROP TABLE clickclack_ranks;
@@ -206,7 +206,7 @@ statement ok
 CREATE TABLE babsky_division (pid INTEGER PRIMARY KEY, leader VARCHAR, team VARCHAR);
 
 statement ok
-CREATE INDEX babsky_division_leader_idx ON babsky_division USING secondary(leader);
+CREATE INDEX babsky_division_leader_idx ON babsky_division(leader);
 
 statement ok
 INSERT INTO babsky_division VALUES
@@ -276,10 +276,10 @@ statement ok
 CREATE TABLE clickclack_stash (pid INTEGER PRIMARY KEY, amount BIGINT, active BOOLEAN);
 
 statement ok
-CREATE INDEX clickclack_stash_amount_idx ON clickclack_stash USING secondary(amount);
+CREATE INDEX clickclack_stash_amount_idx ON clickclack_stash(amount);
 
 statement ok
-CREATE INDEX clickclack_stash_active_idx ON clickclack_stash USING secondary(active);
+CREATE INDEX clickclack_stash_active_idx ON clickclack_stash(active);
 
 statement ok
 INSERT INTO clickclack_stash VALUES
@@ -329,7 +329,7 @@ statement ok
 CREATE TABLE vedernikoff_empire (pid INTEGER PRIMARY KEY, balance INTEGER);
 
 statement ok
-CREATE INDEX vedernikoff_empire_balance_idx ON vedernikoff_empire USING secondary(balance);
+CREATE INDEX vedernikoff_empire_balance_idx ON vedernikoff_empire(balance);
 
 statement ok
 INSERT INTO vedernikoff_empire VALUES
@@ -395,7 +395,7 @@ statement ok
 CREATE TABLE clickclack_heist (pid INTEGER PRIMARY KEY, target VARCHAR, loot INTEGER);
 
 statement ok
-CREATE INDEX clickclack_heist_loot_idx ON clickclack_heist USING secondary(loot);
+CREATE INDEX clickclack_heist_loot_idx ON clickclack_heist(loot);
 
 statement ok
 INSERT INTO clickclack_heist VALUES (1, 'bank', 1000), (2, 'museum', 2000);
@@ -417,10 +417,10 @@ statement ok
 CREATE TABLE babsky_mafia (pid INTEGER PRIMARY KEY, hitman VARCHAR, bounty INTEGER);
 
 statement ok
-CREATE INDEX babsky_mafia_bounty_idx ON babsky_mafia USING secondary(bounty);
+CREATE INDEX babsky_mafia_bounty_idx ON babsky_mafia(bounty);
 
 statement ok
-CREATE INDEX babsky_mafia_hitman_idx ON babsky_mafia USING secondary(hitman);
+CREATE INDEX babsky_mafia_hitman_idx ON babsky_mafia(hitman);
 
 statement ok
 INSERT INTO babsky_mafia VALUES
@@ -505,7 +505,7 @@ statement ok
 CREATE TABLE vedernikoff_nullvault (pid INTEGER PRIMARY KEY, grade INTEGER, tag VARCHAR);
 
 statement ok
-CREATE INDEX vedernikoff_nullvault_grade_idx ON vedernikoff_nullvault USING secondary(grade);
+CREATE INDEX vedernikoff_nullvault_grade_idx ON vedernikoff_nullvault(grade);
 
 statement ok
 INSERT INTO vedernikoff_nullvault VALUES (1, 10, 'alpha'), (4, 20, 'delta'), (6, 10, 'zeta');
@@ -589,7 +589,7 @@ statement ok
 CREATE TABLE clickclack_ops (pid INTEGER PRIMARY KEY, op_type VARCHAR, reward INTEGER);
 
 statement ok
-CREATE INDEX clickclack_ops_type_idx ON clickclack_ops USING secondary(op_type);
+CREATE INDEX clickclack_ops_type_idx ON clickclack_ops(op_type);
 
 statement ok
 INSERT INTO clickclack_ops VALUES (1, 'heist', 500), (2, 'recon', 100), (4, 'heist', 300), (6, 'sabotage', 800);
@@ -655,7 +655,7 @@ statement ok
 CREATE TABLE babsky_ledger (pid INTEGER PRIMARY KEY, region INTEGER, tier INTEGER, note VARCHAR);
 
 statement ok
-CREATE INDEX babsky_ledger_region_tier_idx ON babsky_ledger USING secondary(region, tier);
+CREATE INDEX babsky_ledger_region_tier_idx ON babsky_ledger(region, tier);
 
 statement ok
 INSERT INTO babsky_ledger VALUES
@@ -742,7 +742,7 @@ statement ok
 CREATE TABLE vedernikoff_nullbulk (pid INTEGER PRIMARY KEY, val INTEGER);
 
 statement ok
-CREATE INDEX vedernikoff_nullbulk_val_idx ON vedernikoff_nullbulk USING secondary(val);
+CREATE INDEX vedernikoff_nullbulk_val_idx ON vedernikoff_nullbulk(val);
 
 statement ok
 INSERT INTO vedernikoff_nullbulk VALUES (1, NULL);
@@ -842,7 +842,7 @@ statement ok
 CREATE TABLE clickclack_ryow (pid INTEGER PRIMARY KEY, score INTEGER);
 
 statement ok
-CREATE INDEX clickclack_ryow_score_idx ON clickclack_ryow USING secondary(score);
+CREATE INDEX clickclack_ryow_score_idx ON clickclack_ryow(score);
 
 statement ok
 INSERT INTO clickclack_ryow VALUES (1, 10), (2, 20);
@@ -901,7 +901,7 @@ statement ok
 CREATE TABLE babsky_composite (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, tag VARCHAR);
 
 statement ok
-CREATE INDEX babsky_composite_idx ON babsky_composite USING secondary(city, level);
+CREATE INDEX babsky_composite_idx ON babsky_composite(city, level);
 
 statement ok
 INSERT INTO babsky_composite VALUES
@@ -972,7 +972,7 @@ statement ok
 CREATE INDEX gayazov_dual_inv_idx ON gayazov_dual USING inverted(pid, name test_english_sec);
 
 statement ok
-CREATE INDEX gayazov_dual_rank_idx ON gayazov_dual USING secondary(rank);
+CREATE INDEX gayazov_dual_rank_idx ON gayazov_dual(rank);
 
 statement ok
 INSERT INTO gayazov_dual VALUES
@@ -1019,7 +1019,7 @@ statement count 4
 COPY vedernikoff_csv_crew FROM '/tmp/${__DATABASE__}_vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
-CREATE INDEX vedernikoff_csv_crew_stocks_idx ON vedernikoff_csv_crew USING secondary(stocks);
+CREATE INDEX vedernikoff_csv_crew_stocks_idx ON vedernikoff_csv_crew(stocks);
 
 query
 SELECT pid, nickname, stocks FROM vedernikoff_csv_crew WHERE stocks = 30 ORDER BY pid;
@@ -1087,7 +1087,7 @@ statement count 5
 COPY babsky_csv_vault FROM '/tmp/${__DATABASE__}_babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
-CREATE INDEX babsky_csv_vault_loot_idx ON babsky_csv_vault USING secondary(loot);
+CREATE INDEX babsky_csv_vault_loot_idx ON babsky_csv_vault(loot);
 
 query
 SELECT pid, tag FROM babsky_csv_vault WHERE loot = 100 ORDER BY pid;
@@ -1131,7 +1131,7 @@ statement count 5
 COPY clickclack_csv_ops FROM '/tmp/${__DATABASE__}_clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
-CREATE INDEX clickclack_csv_ops_idx ON clickclack_csv_ops USING secondary(city, level);
+CREATE INDEX clickclack_csv_ops_idx ON clickclack_csv_ops(city, level);
 
 query
 SELECT pid, note FROM clickclack_csv_ops WHERE city = 'berlin' AND level = 10 ORDER BY pid;
@@ -1173,7 +1173,7 @@ statement count 4
 COPY vedernikoff_pq_crew FROM '/tmp/${__DATABASE__}_vedernikoff_pq_crew.parquet' WITH (FORMAT PARQUET);
 
 statement ok
-CREATE INDEX vedernikoff_pq_crew_stocks_idx ON vedernikoff_pq_crew USING secondary(stocks);
+CREATE INDEX vedernikoff_pq_crew_stocks_idx ON vedernikoff_pq_crew(stocks);
 
 query
 SELECT pid, nickname, stocks FROM vedernikoff_pq_crew WHERE stocks = 30 ORDER BY pid;
@@ -1241,7 +1241,7 @@ statement count 5
 COPY babsky_pq_vault FROM '/tmp/${__DATABASE__}_babsky_pq_vault.parquet' WITH (FORMAT PARQUET);
 
 statement ok
-CREATE INDEX babsky_pq_vault_loot_idx ON babsky_pq_vault USING secondary(loot);
+CREATE INDEX babsky_pq_vault_loot_idx ON babsky_pq_vault(loot);
 
 query
 SELECT pid, tag FROM babsky_pq_vault WHERE loot = 100 ORDER BY pid;
@@ -1285,7 +1285,7 @@ statement count 5
 COPY clickclack_pq_ops FROM '/tmp/${__DATABASE__}_clickclack_pq_ops.parquet' WITH (FORMAT PARQUET);
 
 statement ok
-CREATE INDEX clickclack_pq_ops_idx ON clickclack_pq_ops USING secondary(city, level);
+CREATE INDEX clickclack_pq_ops_idx ON clickclack_pq_ops(city, level);
 
 query
 SELECT pid, note FROM clickclack_pq_ops WHERE city = 'berlin' AND level = 10 ORDER BY pid;
@@ -1308,7 +1308,7 @@ DROP TABLE clickclack_pq_ops;
 # CREATE TABLE babsky_from_idx (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
 #
 # statement ok
-# CREATE INDEX babsky_from_idx_val_idx ON babsky_from_idx USING secondary(val);
+# CREATE INDEX babsky_from_idx_val_idx ON babsky_from_idx(val);
 #
 # statement ok
 # INSERT INTO babsky_from_idx VALUES (1, 10, 'alpha'), (2, 20, 'beta'), (3, 10, 'gamma');
@@ -1350,7 +1350,7 @@ statement ok
 CREATE TABLE babsky_tri_null (pid INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER, note VARCHAR);
 
 statement ok
-CREATE INDEX babsky_tri_null_idx ON babsky_tri_null USING secondary(a, b, c);
+CREATE INDEX babsky_tri_null_idx ON babsky_tri_null(a, b, c);
 
 statement ok
 INSERT INTO babsky_tri_null VALUES (1,  1, 1, 1, 'all_set');
@@ -1554,7 +1554,7 @@ statement ok
 CREATE TABLE vedernikoff_same_pk (pid INTEGER PRIMARY KEY, name VARCHAR);
 
 statement ok
-CREATE INDEX vedernikoff_same_pk_idx ON vedernikoff_same_pk USING secondary(pid);
+CREATE INDEX vedernikoff_same_pk_idx ON vedernikoff_same_pk(pid);
 
 statement ok
 INSERT INTO vedernikoff_same_pk VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma'), (4, 'delta');
@@ -1600,7 +1600,7 @@ statement ok
 CREATE TABLE babsky_full_cpk (a INTEGER, b INTEGER, val VARCHAR, PRIMARY KEY(a, b));
 
 statement ok
-CREATE INDEX babsky_full_cpk_idx ON babsky_full_cpk USING secondary(a, b);
+CREATE INDEX babsky_full_cpk_idx ON babsky_full_cpk(a, b);
 
 statement ok
 INSERT INTO babsky_full_cpk VALUES
@@ -1658,10 +1658,10 @@ statement ok
 CREATE TABLE clickclack_subset_cpk (a INTEGER, b INTEGER, c INTEGER, val VARCHAR, PRIMARY KEY(a, b, c));
 
 statement ok
-CREATE INDEX clickclack_subset_cpk_a_idx ON clickclack_subset_cpk USING secondary(a);
+CREATE INDEX clickclack_subset_cpk_a_idx ON clickclack_subset_cpk(a);
 
 statement ok
-CREATE INDEX clickclack_subset_cpk_ab_idx ON clickclack_subset_cpk USING secondary(a, b);
+CREATE INDEX clickclack_subset_cpk_ab_idx ON clickclack_subset_cpk(a, b);
 
 statement ok
 INSERT INTO clickclack_subset_cpk VALUES
@@ -1743,10 +1743,10 @@ statement ok
 CREATE TABLE babsky_partial_cpk (a INTEGER, b INTEGER, c INTEGER, val VARCHAR, PRIMARY KEY(a, b, c));
 
 statement ok
-CREATE INDEX babsky_partial_cpk_b_idx ON babsky_partial_cpk USING secondary(b);
+CREATE INDEX babsky_partial_cpk_b_idx ON babsky_partial_cpk(b);
 
 statement ok
-CREATE INDEX babsky_partial_cpk_bc_idx ON babsky_partial_cpk USING secondary(b, c);
+CREATE INDEX babsky_partial_cpk_bc_idx ON babsky_partial_cpk(b, c);
 
 statement ok
 INSERT INTO babsky_partial_cpk VALUES

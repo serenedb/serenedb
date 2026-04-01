@@ -2693,9 +2693,14 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   column_exprs.reserve(size);
   FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
 
+  std::string_view access_method = stmt.accessMethod;
   auto index_type = magic_enum::enum_cast<IndexType>(
-                      stmt.accessMethod, magic_enum::case_insensitive)
+                      access_method, magic_enum::case_insensitive)
                       .value_or(IndexType::Unknown);
+  // "btree" is the PostgreSQL default when no USING clause is specified.
+  if (index_type == IndexType::Unknown && access_method == "btree") {
+    index_type = IndexType::Secondary;
+  }
   const bool is_secondary = (index_type == IndexType::Secondary);
 
   // SST table writer requires all columns to be sorted by.

@@ -62,6 +62,11 @@ namespace {
 
 IndexType GetIndexType(char* method) {
   SDB_ASSERT(method);
+  // Standard PostgreSQL syntax (CREATE INDEX ... ON table(col)) defaults to
+  // "btree".  We map it to Secondary since that is our default index type.
+  if (std::string_view{method} == "btree") {
+    return IndexType::Secondary;
+  }
   return magic_enum::enum_cast<IndexType>(method, magic_enum::case_insensitive)
     .value_or(IndexType::Unknown);
 }

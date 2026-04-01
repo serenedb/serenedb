@@ -290,7 +290,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
-  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index] -> "pid":INTEGER, "district":VARCHAR
+  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index, points=[(code=100)]] -> "pid":INTEGER, "district":VARCHAR
 
 onlyif serenedb
 query
@@ -300,7 +300,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
-  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index] -> "pid":INTEGER, "district":VARCHAR
+  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index, points=[(code=null)]] -> "pid":INTEGER, "district":VARCHAR
 
 query
 SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;

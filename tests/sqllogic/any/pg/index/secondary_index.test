@@ -408,7 +408,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (target:VARCHAR, "target")] -> "pid":INTEGER, "target":VARCHAR
-  -- TableScan[0][clickclack_heist, scan=secondary_index] -> "pid":INTEGER, "target":VARCHAR
+  -- TableScan[0][clickclack_heist, scan=secondary_index, points=[(loot=1000)]] -> "pid":INTEGER, "target":VARCHAR
 
 statement ok
 DROP TABLE clickclack_heist;
@@ -572,7 +572,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
-  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
+  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index, points=[(grade=null)]] -> "pid":INTEGER, "tag":VARCHAR
 
 onlyif serenedb
 query
@@ -582,7 +582,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
-  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
+  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index, points=[(grade=10)]] -> "pid":INTEGER, "tag":VARCHAR
 
 statement ok
 DROP TABLE vedernikoff_nullvault;
@@ -789,7 +789,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
-  -- TableScan[0][vedernikoff_nullbulk, scan=secondary_index] ->
+  -- TableScan[0][vedernikoff_nullbulk, scan=secondary_index, points=[(val=null)]] ->
 
 
 query
@@ -923,7 +923,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
-  -- TableScan[0][babsky_composite, scan=secondary_index] -> "pid":INTEGER, "tag":VARCHAR
+  -- TableScan[0][babsky_composite, scan=secondary_index, points=[(city=berlin, level=10)]] -> "pid":INTEGER, "tag":VARCHAR
 
 query
 SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10 ORDER BY pid;
@@ -1076,7 +1076,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (nickname:VARCHAR, "nickname")] -> "pid":INTEGER, "nickname":VARCHAR
-  -- TableScan[0][vedernikoff_csv_crew, scan=secondary_index] -> "pid":INTEGER, "nickname":VARCHAR
+  -- TableScan[0][vedernikoff_csv_crew, scan=secondary_index, points=[(stocks=30)]] -> "pid":INTEGER, "nickname":VARCHAR
 
 statement ok
 DROP TABLE vedernikoff_csv_crew;
@@ -1231,7 +1231,7 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- Project[1][expressions: (pid:INTEGER, "pid"), (nickname:VARCHAR, "nickname")] -> "pid":INTEGER, "nickname":VARCHAR
-  -- TableScan[0][vedernikoff_pq_crew, scan=secondary_index] -> "pid":INTEGER, "nickname":VARCHAR
+  -- TableScan[0][vedernikoff_pq_crew, scan=secondary_index, points=[(stocks=30)]] -> "pid":INTEGER, "nickname":VARCHAR
 
 statement ok
 DROP TABLE vedernikoff_pq_crew;

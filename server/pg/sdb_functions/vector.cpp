@@ -73,7 +73,6 @@ template<typename T, typename R>
 struct ComputeDistanceBase {
   R ComputeL2(const velox::exec::ArrayView<false, T>& l,
               const velox::exec::ArrayView<false, T>& r, size_t size) {
-    std::vector<T> lbuf, rbuf;
     const auto* l_data = GetArrayDataOrCopy(l, lbuf);
     const auto* r_data = GetArrayDataOrCopy(r, rbuf);
     return irs::vector::L2Space<T, T, R>::Dist(
@@ -84,7 +83,6 @@ struct ComputeDistanceBase {
 
   R ComputeL1(const velox::exec::ArrayView<false, T>& l,
               const velox::exec::ArrayView<false, T>& r, size_t size) {
-    std::vector<T> lbuf, rbuf;
     const auto* l_data = GetArrayDataOrCopy(l, lbuf);
     const auto* r_data = GetArrayDataOrCopy(r, rbuf);
     return irs::vector::L1Space<T, T, R>::Dist(
@@ -95,7 +93,6 @@ struct ComputeDistanceBase {
 
   R ComputeCosine(const velox::exec::ArrayView<false, T>& l,
                   const velox::exec::ArrayView<false, T>& r, size_t size) {
-    std::vector<T> lbuf, rbuf;
     const auto* l_data = GetArrayDataOrCopy(l, lbuf);
     const auto* r_data = GetArrayDataOrCopy(r, rbuf);
     const auto [ll, lr, rr] = irs::vector::CosineDistanceImpl<T, T, R>::Compute(
@@ -111,7 +108,6 @@ struct ComputeDistanceBase {
 
   R ComputeDotProduct(const velox::exec::ArrayView<false, T>& l,
                       const velox::exec::ArrayView<false, T>& r, size_t size) {
-    std::vector<T> lbuf, rbuf;
     const auto* l_data = GetArrayDataOrCopy(l, lbuf);
     const auto* r_data = GetArrayDataOrCopy(r, rbuf);
     return irs::vector::DotProductImpl<T, R>::Compute(

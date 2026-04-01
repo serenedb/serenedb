@@ -51,7 +51,7 @@ if [[ -s "$JOBLOG" ]]; then
 		else
 			echo "  FAILED  ${name} (${jobruntime}s, exit code ${exitval})"
 		fi
-	done < "$JOBLOG"
+	done <"$JOBLOG"
 fi
 rm -f "$JOBLOG"
 if [[ $PARALLEL_RC -ne 0 || $SERIAL_RC -ne 0 ]]; then

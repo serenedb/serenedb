@@ -27,6 +27,8 @@
 #include "catalog/table.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/pg_list_utils.h"
+#include "pg/sql_collector.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 
@@ -88,12 +90,25 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   auto current_schema = conn_ctx.GetCurrentSchema();
   const auto db = context.GetDatabaseId();
 
-  SDB_ASSERT(stmt.relation);
-  const auto* rel = stmt.relation;
-  std::string_view schema =
-    rel->schemaname ? std::string_view{rel->schemaname} : current_schema;
-  std::string_view name{rel->relname};
   std::string_view new_name{stmt.newname};
+  std::string_view schema;
+  std::string_view name;
+
+  if (stmt.renameType == OBJECT_FUNCTION) {
+    SDB_ASSERT(stmt.object);
+    auto* func_with_args = castNode(ObjectWithArgs, stmt.object);
+    auto [s, n] =
+      ParseObjectName(func_with_args->objname, context.GetDatabase(),
+                      current_schema);
+    schema = s;
+    name = n;
+  } else {
+    SDB_ASSERT(stmt.relation);
+    const auto* rel = stmt.relation;
+    schema =
+      rel->schemaname ? std::string_view{rel->schemaname} : current_schema;
+    name = rel->relname;
+  }
 
   if (stmt.renameType == OBJECT_COLUMN ||
       stmt.renameType == OBJECT_TABCONSTRAINT) {

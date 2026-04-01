@@ -30,11 +30,13 @@ ALTER TABLE invoker RENAME TO invoker_renamed;
 query
 SELECT * FROM invoker_renamed;
 ----
+x
 
 statement error
 SELECT * FROM invoker;
 ----
 db error: ERROR: relation "invoker" does not exist
+
 
 statement ok
 ALTER TABLE invoker_renamed RENAME TO invoker;
@@ -42,6 +44,7 @@ ALTER TABLE invoker_renamed RENAME TO invoker;
 query
 SELECT * FROM invoker;
 ----
+x
 
 
 statement ok
@@ -50,11 +53,14 @@ ALTER TABLE kostya.babsky RENAME TO babsky_renamed;
 query
 SELECT * FROM kostya.babsky_renamed;
 ----
+a
+
 
 statement error
 SELECT * FROM kostya.babsky;
 ----
-db error: ERROR: relation "babsky" does not exist
+db error: ERROR: relation "kostya.babsky" does not exist
+
 
 statement ok
 ALTER TABLE kostya.babsky_renamed RENAME TO babsky;
@@ -62,6 +68,7 @@ ALTER TABLE kostya.babsky_renamed RENAME TO babsky;
 query
 SELECT * FROM kostya.babsky;
 ----
+a
 
 
 statement ok
@@ -70,11 +77,13 @@ ALTER VIEW pudge_view RENAME TO pudge_view_renamed;
 query
 SELECT * FROM pudge_view_renamed;
 ----
+a	b
 
 statement error
 SELECT * FROM pudge_view;
 ----
 db error: ERROR: relation "pudge_view" does not exist
+
 
 statement ok
 ALTER VIEW pudge_view_renamed RENAME TO pudge_view;
@@ -82,6 +91,7 @@ ALTER VIEW pudge_view_renamed RENAME TO pudge_view;
 query
 SELECT * FROM pudge_view;
 ----
+a	b
 
 
 statement ok
@@ -103,11 +113,13 @@ onlyif serenedb
 statement ok
 ALTER INDEX deadinside RENAME TO deadinside_renamed;
 
+
 onlyif serenedb
 statement error
 DROP INDEX deadinside;
 ----
 db error: ERROR: index "deadinside" does not exist
+
 
 onlyif serenedb
 statement ok
@@ -126,14 +138,17 @@ ALTER INDEX pudge_tmp RENAME TO pudge;
 statement ok
 ALTER FUNCTION clickclack RENAME TO clickclack_renamed;
 
+
 statement error
 SELECT * FROM clickclack();
 ----
-db error: ERROR: function clickclack() does not exist
+db error: ERROR: function "clickclack" does not exist
+
 
 query
 SELECT * FROM clickclack_renamed();
 ----
+a	b
 
 statement ok
 ALTER FUNCTION clickclack_renamed RENAME TO clickclack;
@@ -141,12 +156,14 @@ ALTER FUNCTION clickclack_renamed RENAME TO clickclack;
 query
 SELECT * FROM clickclack();
 ----
+a	b
 
 
 statement error
 ALTER VIEW pudge RENAME TO something;
 ----
 db error: ERROR: "pudge" is not a view
+
 
 onlyif serenedb
 statement error
@@ -160,15 +177,18 @@ ALTER TABLE nonexistent RENAME TO something;
 ----
 db error: ERROR: relation "nonexistent" does not exist
 
+
 statement error
 ALTER VIEW nonexistent RENAME TO something;
 ----
 db error: ERROR: relation "nonexistent" does not exist
 
+
 statement error
 ALTER INDEX nonexistent RENAME TO something;
 ----
 db error: ERROR: relation "nonexistent" does not exist
+
 
 statement error
 ALTER FUNCTION nonexistent RENAME TO something;
@@ -204,11 +224,14 @@ ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
 query
 SELECT a_renamed FROM pudge;
 ----
+a_renamed
+
 
 statement error
 SELECT a FROM pudge;
 ----
 db error: ERROR: column "a" does not exist
+
 
 statement ok
 ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
@@ -216,6 +239,7 @@ ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
 query
 SELECT a FROM pudge;
 ----
+a
 
 
 statement error
@@ -223,15 +247,17 @@ ALTER TABLE pudge RENAME COLUMN nonexistent TO something;
 ----
 db error: ERROR: column "nonexistent" does not exist
 
+
 statement error
 ALTER TABLE pudge RENAME COLUMN a TO b;
 ----
 db error: ERROR: column "b" of relation "pudge" already exists
 
+
 statement error
 ALTER TABLE nonexistent RENAME COLUMN a TO b;
 ----
-db error: ERROR: relation "nonexistent" does not exist
+db error: ERROR: collection or view not found
 
 
 statement ok
@@ -244,6 +270,7 @@ statement error
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO something;
 ----
 db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not exist
+
 
 statement ok
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_pos;

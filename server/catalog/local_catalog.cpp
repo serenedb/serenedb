@@ -1619,7 +1619,7 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
   modified.openObject();
   for (auto pair : vpack::ObjectIterator(b.slice())) {
     if (pair.key.stringView() == StaticStrings::kDataSourceName) {
-      modified.add(StaticStrings::kDataSourceName, vpack::Value(new_name));
+      modified.add(StaticStrings::kDataSourceName, new_name);
     } else {
       modified.add(pair.key);
       modified.add(pair.value());
@@ -1794,7 +1794,9 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
 
     return basics::SafeCall([&] {
       vpack::Builder b;
+      b.openObject();
       updated->WriteInternal(b);
+      b.close();
       return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
                                        updated->GetId(),
                                        [&](bool) { return b.slice(); });

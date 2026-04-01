@@ -116,6 +116,7 @@ Result FunctionImpl::FromVPack(ObjectId database, vpack::Slice slice,
   if (!r.ok()) {
     return r;
   }
+  impl->_query = std::move(query);
   implementation = std::move(impl);
   return {};
 }

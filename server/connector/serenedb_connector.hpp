@@ -1166,8 +1166,8 @@ class SereneDBConnector final : public velox::connector::Connector {
         std::string_view real_name = catalog::Column::ExtractColumnName(col);
         auto handle = table.columnMap().find(real_name);
         if (handle == table.columnMap().end()) {
-          // Synthetic column (e.g. _sdb_old_* for secondary index old values).
-          // Placeholder — not iterated by the data sink's column loop.
+          SDB_ASSERT(catalog::Column::IsOldValueName(col),
+                     "Unknown column in input: ", col);
           columns.emplace_back(std::numeric_limits<catalog::Column::Id>::max(),
                                col);
           continue;

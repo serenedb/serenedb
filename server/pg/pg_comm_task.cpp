@@ -621,6 +621,7 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   // Note that a simple Query message also destroys the unnamed portal.
   _anonymous_portal.Reset(*this);
   _current_query = query_string;
+  SDB_ERROR("xxxxx", Logger::REQUESTS, "RunSimpleQuery: ", _current_query);
   // Note that a simple Query message also destroys the unnamed statement.
   _anonymous_statement.Reset();
   _anonymous_statement = MakeStatement(query_string);
@@ -959,6 +960,8 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
       "cannot insert multiple commands into a prepared statement",
       ERRCODE_PROTOCOL_VIOLATION);
   }
+
+  SDB_ERROR("xxxxx", Logger::REQUESTS, "ParseQuery: ", _current_query);
 
   it = _statements.end();
   _send.Write(ToBuffer(kParseComplete), true);

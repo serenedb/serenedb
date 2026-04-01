@@ -1,0 +1,221 @@
+statement ok
+CREATE TABLE pudge(a integer, b text);
+
+statement ok
+CREATE TABLE invoker(x integer);
+
+statement ok
+CREATE SCHEMA kostya;
+
+statement ok
+CREATE TABLE kostya.babsky(a integer);
+
+statement ok
+CREATE VIEW pudge_view AS SELECT * FROM pudge;
+
+statement ok
+CREATE FUNCTION clickclack() RETURNS TABLE(a integer, b text) LANGUAGE SQL
+BEGIN ATOMIC
+  SELECT * FROM pudge;
+END;
+
+onlyif serenedb
+statement ok
+CREATE INDEX deadinside ON pudge USING inverted(b);
+
+
+statement ok
+ALTER TABLE invoker RENAME TO invoker_renamed;
+
+query
+SELECT * FROM invoker_renamed;
+----
+
+statement error
+SELECT * FROM invoker;
+----
+db error: ERROR: relation "invoker" does not exist
+
+statement ok
+ALTER TABLE invoker_renamed RENAME TO invoker;
+
+query
+SELECT * FROM invoker;
+----
+
+
+statement ok
+ALTER TABLE kostya.babsky RENAME TO babsky_renamed;
+
+query
+SELECT * FROM kostya.babsky_renamed;
+----
+
+statement error
+SELECT * FROM kostya.babsky;
+----
+db error: ERROR: relation "babsky" does not exist
+
+statement ok
+ALTER TABLE kostya.babsky_renamed RENAME TO babsky;
+
+query
+SELECT * FROM kostya.babsky;
+----
+
+
+statement ok
+ALTER VIEW pudge_view RENAME TO pudge_view_renamed;
+
+query
+SELECT * FROM pudge_view_renamed;
+----
+
+statement error
+SELECT * FROM pudge_view;
+----
+db error: ERROR: relation "pudge_view" does not exist
+
+statement ok
+ALTER VIEW pudge_view_renamed RENAME TO pudge_view;
+
+query
+SELECT * FROM pudge_view;
+----
+
+
+statement ok
+ALTER TABLE pudge_view RENAME TO pudge_view_tmp;
+
+statement ok
+ALTER TABLE pudge_view_tmp RENAME TO pudge_view;
+
+onlyif serenedb
+statement ok
+ALTER TABLE deadinside RENAME TO deadinside_tmp;
+
+onlyif serenedb
+statement ok
+ALTER TABLE deadinside_tmp RENAME TO deadinside;
+
+
+onlyif serenedb
+statement ok
+ALTER INDEX deadinside RENAME TO deadinside_renamed;
+
+onlyif serenedb
+statement error
+DROP INDEX deadinside;
+----
+db error: ERROR: index "deadinside" does not exist
+
+onlyif serenedb
+statement ok
+ALTER INDEX deadinside_renamed RENAME TO deadinside;
+
+
+onlyif serenedb
+statement ok
+ALTER INDEX pudge RENAME TO pudge_tmp;
+
+onlyif serenedb
+statement ok
+ALTER INDEX pudge_tmp RENAME TO pudge;
+
+
+statement ok
+ALTER FUNCTION clickclack RENAME TO clickclack_renamed;
+
+statement error
+SELECT * FROM clickclack();
+----
+db error: ERROR: function clickclack() does not exist
+
+query
+SELECT * FROM clickclack_renamed();
+----
+
+statement ok
+ALTER FUNCTION clickclack_renamed RENAME TO clickclack;
+
+query
+SELECT * FROM clickclack();
+----
+
+
+statement error
+ALTER VIEW pudge RENAME TO something;
+----
+db error: ERROR: "pudge" is not a view
+
+onlyif serenedb
+statement error
+ALTER VIEW deadinside RENAME TO something;
+----
+db error: ERROR: "deadinside" is not a view
+
+
+statement error
+ALTER TABLE nonexistent RENAME TO something;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+statement error
+ALTER VIEW nonexistent RENAME TO something;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+statement error
+ALTER INDEX nonexistent RENAME TO something;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+statement error
+ALTER FUNCTION nonexistent RENAME TO something;
+----
+db error: ERROR: could not find a function named "nonexistent"
+
+
+statement error
+ALTER TABLE pudge RENAME TO invoker;
+----
+db error: ERROR: relation "invoker" already exists
+
+
+statement ok
+ALTER TABLE pudge RENAME TO pudge;
+
+statement ok
+ALTER VIEW pudge_view RENAME TO pudge_view;
+
+statement ok
+ALTER FUNCTION clickclack RENAME TO clickclack;
+
+
+statement error
+ALTER FUNCTION pudge RENAME TO something;
+----
+db error: ERROR: could not find a function named "pudge"
+
+
+statement ok
+DROP FUNCTION clickclack;
+
+statement ok
+DROP VIEW pudge_view;
+
+onlyif serenedb
+statement ok
+DROP INDEX deadinside;
+
+statement ok
+DROP TABLE kostya.babsky;
+
+statement ok
+DROP SCHEMA kostya;
+
+statement ok
+DROP TABLE invoker;
+
+statement ok
+DROP TABLE pudge;

@@ -214,6 +214,15 @@ struct LogicalCatalog {
   virtual Result RenameView(ObjectId database_id, std::string_view schema,
                             std::string_view name,
                             std::string_view new_name) = 0;
+  virtual Result RenameIndex(ObjectId database_id, std::string_view schema,
+                             std::string_view name,
+                             std::string_view new_name) = 0;
+  virtual Result RenameRelation(ObjectId database_id, std::string_view schema,
+                                std::string_view name,
+                                std::string_view new_name) = 0;
+  virtual Result RenameFunction(ObjectId database_id, std::string_view schema,
+                                std::string_view name,
+                                std::string_view new_name) = 0;
 
   virtual Result ChangeView(ObjectId database_id, std::string_view schema,
                             std::string_view name,

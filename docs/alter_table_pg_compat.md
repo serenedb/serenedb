@@ -3,8 +3,8 @@
 ### RENAME (via `RenameStmt`)
 - [x] `ALTER TABLE ... RENAME TO` — rename a table
 - [x] `ALTER VIEW ... RENAME TO` — rename a view
-- [ ] `ALTER INDEX ... RENAME TO` — rename an index
-- [ ] `ALTER FUNCTION ... RENAME TO` — rename a function
+- [x] `ALTER INDEX ... RENAME TO` — rename an index
+- [x] `ALTER FUNCTION ... RENAME TO` — rename a function
 - [ ] `ALTER TABLE ... RENAME COLUMN ... TO` — rename a column
 - [ ] `ALTER TABLE ... RENAME CONSTRAINT ... TO` — rename a constraint
 

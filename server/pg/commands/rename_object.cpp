@@ -23,7 +23,6 @@
 #include "app/app_server.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"
-#include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
@@ -37,25 +36,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
-namespace {
-
-std::string_view ObjectTypeName(ObjectType rename_type) {
-  switch (rename_type) {
-    case OBJECT_TABLE:
-      return "table";
-    case OBJECT_VIEW:
-      return "view";
-    case OBJECT_INDEX:
-      return "index";
-    case OBJECT_FUNCTION:
-      return "function";
-    default:
-      return "object";
-  }
-}
-
-}  // namespace
 
 yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   auto& catalogs =
@@ -76,10 +56,14 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
 
   switch (stmt.renameType) {
     case OBJECT_TABLE:
-      r = catalog.RenameTable(db, schema, name, new_name);
+    case OBJECT_INDEX:
+      r = catalog.RenameRelation(db, schema, name, new_name);
       break;
     case OBJECT_VIEW:
       r = catalog.RenameView(db, schema, name, new_name);
+      break;
+    case OBJECT_FUNCTION:
+      r = catalog.RenameFunction(db, schema, name, new_name);
       break;
     default:
       THROW_SQL_ERROR(
@@ -88,31 +72,34 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
                 " RENAME is not yet supported"));
   }
 
-  auto object_name = ObjectTypeName(stmt.renameType);
-
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    auto actual_type = r.errorMessage();
-    auto actual_name = absl::AsciiStrToLower(actual_type);
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-      ERR_MSG("\"", name, "\" is not ",
-              basics::string_utils::GetArticle(object_name), " ", object_name),
-      ERR_HINT("Use ALTER ", absl::AsciiStrToUpper(actual_type),
-               " ... RENAME to rename ",
-               basics::string_utils::GetArticle(actual_name), " ",
-               actual_name, "."));
+    auto object_name = stmt.renameType == OBJECT_VIEW ? "a view" : "an index";
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not ", object_name));
   }
 
   if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
       r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    if (!stmt.missing_ok) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG(object_name, " \"", name, "\" does not exist"));
+    if (stmt.renameType == OBJECT_FUNCTION) {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      }
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+                       ERR_MSG("function ", name,
+                               "() does not exist, skipping")));
+    } else {
+      if (!stmt.missing_ok) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", name, "\" does not exist"));
+      }
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                       ERR_MSG("relation \"", name,
+                               "\" does not exist, skipping")));
     }
-    conn_ctx.AddNotice(
-      SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                     ERR_MSG(object_name, " \"", name,
-                             "\" does not exist, skipping")));
     r = {};
   }
 

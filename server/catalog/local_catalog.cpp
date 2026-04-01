@@ -1348,10 +1348,15 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
-  if (!view) {
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
+  if (obj->GetType() != ObjectType::View) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  magic_enum::enum_name(obj->GetType())};
+  }
+  auto view = basics::downCast<View>(std::move(obj));
 
   if (view->GetName() == new_name) {
     return {};
@@ -1406,10 +1411,15 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto old_table = basics::downCast<Table>(_snapshot->GetObject(*object_id));
-  if (!old_table) {
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
+  if (obj->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  magic_enum::enum_name(obj->GetType())};
+  }
+  auto old_table = basics::downCast<Table>(std::move(obj));
 
   if (old_table->GetName() == new_name) {
     return {};

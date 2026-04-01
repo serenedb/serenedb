@@ -82,4 +82,6 @@ yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);
 
+yaclib::Future<> RenameObject(ExecContext& ctx, const RenameStmt& stmt);
+
 }  // namespace sdb::pg

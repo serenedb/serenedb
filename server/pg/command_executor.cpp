@@ -102,6 +102,10 @@ yaclib::Future<> DDLExecutor::Execute(velox::RowVectorPtr& batch) {
         const auto& stmt = *castNode(DefineStmt, &_node);
         return CreateTokenizer(*_context, stmt);
       }
+      case NodeTag::T_RenameStmt: {
+        const auto& stmt = *castNode(RenameStmt, &_node);
+        return RenameObject(*_context, stmt);
+      }
       default:
         SDB_UNREACHABLE();
     }

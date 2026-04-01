@@ -14,4 +14,5 @@ target_sources(
         remove_tombstone.cpp
         vacuum.cpp
         create_tsdictionary.cpp
+        rename_object.cpp
 )

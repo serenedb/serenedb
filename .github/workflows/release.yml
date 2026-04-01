@@ -1,0 +1,239 @@
+name: SereneDB-Release
+
+run-name: "SereneDB Release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      SERENEDB_VERSION_PATCH:
+        description: 'Version patch number (>0). Leave empty to auto-increment.'
+        required: false
+        type: string
+        default: ''
+      PUSH_IMAGES_2_REGISTRY:
+        description: 'Push Docker images to Docker Hub'
+        required: true
+        type: boolean
+        default: false
+      CREATE_GITHUB_RELEASE:
+        description: 'Create a GitHub Release draft'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_EXTRA_TAGS:
+        description: 'Optional extra Docker tags (comma-separated)'
+        required: false
+        type: string
+        default: ''
+      BUILD_X64:
+        description: 'Build for x86_64 (amd64)'
+        required: true
+        type: boolean
+        default: true
+      BUILD_ARM64:
+        description: 'Build for aarch64 (arm64)'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  statuses: write
+  contents: write
+  actions: write
+
+jobs:
+  # ==================== RESOLVE VERSION ====================
+  resolve-version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      patch: ${{ steps.version.outputs.patch }}
+    steps:
+      - name: Resolve version patch
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
+          if [[ -z "$PATCH" ]]; then
+            MAJOR=$(date -u +%y)
+            MINOR=$(date -u +%m)
+            LAST=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName \
+              --jq "[.[] | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
+              2>/dev/null || echo "0")
+            PATCH=$(( LAST + 1 ))
+          fi
+          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+
+  # ==================== BUILD X64 ====================
+  build-x64:
+    if: inputs.BUILD_X64
+    needs: [resolve-version]
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      PRESET: release
+      LOCATION: X64
+      SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
+    secrets: inherit
+
+  # ==================== BUILD ARM64 ====================
+  build-arm64:
+    if: inputs.BUILD_ARM64
+    needs: [resolve-version]
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      PRESET: release
+      LOCATION: arm
+      SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
+    secrets: inherit
+
+  # ==================== RELEASE ====================
+  release:
+    name: Docker & Release
+    needs: [resolve-version, build-x64, build-arm64]
+    if: >-
+      always() && !cancelled() &&
+      (needs.build-x64.result == 'success' || needs.build-arm64.result == 'success')
+    runs-on:
+      - X64
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Set version
+        run: |
+          PATCH="${{ needs.resolve-version.outputs.patch }}"
+          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
+          MAJOR=$(date -u +%y)
+          MINOR=$(date -u +%m)
+          echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
+
+      # Download tarball artifacts and map to Docker arch names
+      - name: Download x64 tarball
+        if: needs.build-x64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: tarball-X64
+          path: packages/tarball/
+
+      - name: Download arm64 tarball
+        if: needs.build-arm64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: tarball-arm
+          path: packages/tarball/
+
+      - name: Map tarballs to Docker arch names
+        id: map_tarballs
+        run: |
+          mkdir -p packages/tarball
+          cd packages/tarball
+          HAS_TARBALLS=false
+          for f in install-*.tar.gz; do
+            [ -e "$f" ] || continue
+            case "$f" in
+              *x86_64*) ln -sf "$f" install-amd64.tar.gz ;;
+              *arm64*|*aarch64*) ln -sf "$f" install-arm64.tar.gz ;;
+            esac
+            HAS_TARBALLS=true
+          done
+          echo "has_tarballs=$HAS_TARBALLS" >> "$GITHUB_OUTPUT"
+          echo "Available tarballs:"
+          ls -la install-*.tar.gz 2>/dev/null || echo "  (none)"
+
+      # Build multi-arch Docker image
+      - name: Setup QEMU
+        if: inputs.PUSH_IMAGES_2_REGISTRY && steps.map_tarballs.outputs.has_tarballs == 'true'
+        run: docker run --rm --privileged tonistiigi/binfmt --install all
+
+      - name: Build and push Docker images
+        if: inputs.PUSH_IMAGES_2_REGISTRY && steps.map_tarballs.outputs.has_tarballs == 'true'
+        env:
+          DOCKER_REGISTRY: serenedb
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+          PUSH_IMAGES_2_REGISTRY: "true"
+          DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+          DOCKER_TAG: ${{ env.DOCKER_TAG }}
+        run: ./packages/build_docker.bash
+
+      # Download package artifacts for GitHub release
+      - name: Download x64 packages
+        if: inputs.CREATE_GITHUB_RELEASE && needs.build-x64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-X64-${{ github.run_number }}
+          path: release-packages/
+
+      - name: Download arm64 packages
+        if: inputs.CREATE_GITHUB_RELEASE && needs.build-arm64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-arm-${{ github.run_number }}
+          path: release-packages/
+
+      # Create GitHub Release
+      - name: Create GitHub Release
+        if: inputs.CREATE_GITHUB_RELEASE && steps.map_tarballs.outputs.has_tarballs == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKER_TAG: ${{ env.DOCKER_TAG }}
+        run: |
+          TAG="v${DOCKER_TAG}"
+          TITLE="SereneDB ${TAG}"
+          BODY="Docker image: https://hub.docker.com/r/serenedb/serenedb/tags?name=${DOCKER_TAG}"
+
+          ASSETS=()
+          for f in release-packages/*.deb release-packages/*.tar.gz; do
+            [ -e "$f" ] && ASSETS+=("$f")
+          done
+
+          if [ ${#ASSETS[@]} -eq 0 ]; then
+            echo "::error::No packages found, skipping GitHub release"
+            exit 1
+          fi
+
+          gh release create "${TAG}" \
+            --draft \
+            --title "${TITLE}" \
+            --notes "${BODY}" \
+            "${ASSETS[@]}"
+
+      # Cleanup artifacts
+      - name: Delete tarball artifacts
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for name in tarball-X64 tarball-arm; do
+            ARTIFACT_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${name}\") | .id" 2>/dev/null || true)
+            if [[ -n "$ARTIFACT_ID" ]]; then
+              gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}" || true
+              echo "Deleted artifact: ${name}"
+            fi
+          done
+
+      # Telegram notification
+      - name: Send Telegram notification
+        if: always() && !cancelled()
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID_MAIN: "51"
+          TG_THREAD_ID_BUILD: "53"
+          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+          BRANCH: ${{ github.ref_name }}
+          JOB_STATUS: ${{ (needs.build-x64.result == 'success' || needs.build-x64.result == 'skipped') && (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped') && 'success' || 'failure' }}
+          ACTOR: ${{ github.actor }}
+          RUN_NAME: "SereneDB [release]"
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/notify_telegram.bash

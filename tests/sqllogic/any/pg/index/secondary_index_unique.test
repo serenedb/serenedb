@@ -1,0 +1,1450 @@
+hash-threshold 100
+
+
+statement ok
+CREATE TABLE vedernikoff_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_unique_rank_idx ON vedernikoff_unique(rank);
+
+statement ok
+INSERT INTO vedernikoff_unique VALUES (1, 'vedernikoff', 10);
+
+statement ok
+INSERT INTO vedernikoff_unique VALUES (2, 'cutelooked', 20);
+
+statement ok
+INSERT INTO vedernikoff_unique VALUES (3, 'crookface', 30);
+
+
+onlyif serenedb
+statement error
+INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+skipif serenedb
+statement error
+INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_unique_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
+
+
+query
+SELECT pid, nickname, rank FROM vedernikoff_unique ORDER BY pid;
+----
+pid	nickname	rank
+1	vedernikoff	10
+2	cutelooked	20
+3	crookface	30
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 10;
+----
+pid	nickname
+1	vedernikoff
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 20;
+----
+pid	nickname
+2	cutelooked
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 99;
+----
+pid	nickname
+
+statement ok
+UPDATE vedernikoff_unique SET rank = 15 WHERE pid = 1;
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 10;
+----
+pid	nickname
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 15;
+----
+pid	nickname
+1	vedernikoff
+
+statement error
+UPDATE vedernikoff_unique SET rank = 20 WHERE pid = 1;
+
+query
+SELECT pid, nickname, rank FROM vedernikoff_unique ORDER BY pid;
+----
+pid	nickname	rank
+1	vedernikoff	15
+2	cutelooked	20
+3	crookface	30
+
+statement ok
+DELETE FROM vedernikoff_unique WHERE pid = 2;
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 20;
+----
+pid	nickname
+
+statement ok
+INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 20);
+
+query
+SELECT pid, nickname FROM vedernikoff_unique WHERE rank = 20;
+----
+pid	nickname
+4	bossmann
+
+query
+SELECT pid, nickname, rank FROM vedernikoff_unique ORDER BY pid;
+----
+pid	nickname	rank
+1	vedernikoff	15
+3	crookface	30
+4	bossmann	20
+
+statement ok
+DROP TABLE vedernikoff_unique;
+
+
+statement ok
+CREATE TABLE babsky_nulls (pid INTEGER PRIMARY KEY, codename VARCHAR, score INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX babsky_nulls_score_idx ON babsky_nulls(score);
+
+statement ok
+INSERT INTO babsky_nulls VALUES (1, 'vedernikoff', 100);
+
+statement ok
+INSERT INTO babsky_nulls VALUES (2, 'cutelooked', NULL);
+
+statement ok
+INSERT INTO babsky_nulls VALUES (3, 'crookface', NULL);
+
+statement ok
+INSERT INTO babsky_nulls VALUES (4, 'bossmann', 200);
+
+statement error
+INSERT INTO babsky_nulls VALUES (5, 'stockpiler', 100);
+
+query
+SELECT pid, codename, score FROM babsky_nulls ORDER BY pid;
+----
+pid	codename	score
+1	vedernikoff	100
+2	cutelooked	NULL
+3	crookface	NULL
+4	bossmann	200
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score IS NULL ORDER BY pid;
+----
+pid	codename
+2	cutelooked
+3	crookface
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score = 100;
+----
+pid	codename
+1	vedernikoff
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score = 200;
+----
+pid	codename
+4	bossmann
+
+statement ok
+UPDATE babsky_nulls SET score = 300 WHERE pid = 2;
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score = 300;
+----
+pid	codename
+2	cutelooked
+
+statement ok
+UPDATE babsky_nulls SET score = NULL WHERE pid = 1;
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score IS NULL ORDER BY pid;
+----
+pid	codename
+1	vedernikoff
+3	crookface
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score = 100;
+----
+pid	codename
+
+statement ok
+INSERT INTO babsky_nulls VALUES (5, 'stockpiler', 100);
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score = 100;
+----
+pid	codename
+5	stockpiler
+
+query
+SELECT pid, codename, score FROM babsky_nulls ORDER BY pid;
+----
+pid	codename	score
+1	vedernikoff	NULL
+2	cutelooked	300
+3	crookface	NULL
+4	bossmann	200
+5	stockpiler	100
+
+statement ok
+DELETE FROM babsky_nulls WHERE pid = 3;
+
+query
+SELECT pid, codename FROM babsky_nulls WHERE score IS NULL;
+----
+pid	codename
+1	vedernikoff
+
+query
+SELECT pid, codename, score FROM babsky_nulls ORDER BY pid;
+----
+pid	codename	score
+1	vedernikoff	NULL
+2	cutelooked	300
+4	bossmann	200
+5	stockpiler	100
+
+statement ok
+DROP TABLE babsky_nulls;
+
+
+statement ok
+CREATE TABLE clickclack_names (pid INTEGER PRIMARY KEY, callsign VARCHAR, dept INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_names_callsign_idx ON clickclack_names(callsign);
+
+statement ok
+INSERT INTO clickclack_names VALUES (1, 'alpha', 1), (2, 'bravo', 2), (3, 'charlie', 1);
+
+statement error
+INSERT INTO clickclack_names VALUES (4, 'alpha', 3);
+
+query
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'alpha';
+----
+pid	dept
+1	1
+
+query
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'bravo';
+----
+pid	dept
+2	2
+
+statement ok
+UPDATE clickclack_names SET callsign = 'delta' WHERE pid = 1;
+
+query
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'alpha';
+----
+pid	dept
+
+query
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'delta';
+----
+pid	dept
+1	1
+
+statement ok
+INSERT INTO clickclack_names VALUES (4, 'alpha', 3);
+
+query
+SELECT pid, dept FROM clickclack_names WHERE callsign = 'alpha';
+----
+pid	dept
+4	3
+
+statement ok
+DROP TABLE clickclack_names;
+
+
+statement ok
+CREATE TABLE vedernikoff_safehouse (pid INTEGER PRIMARY KEY, code INTEGER, district VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_safehouse_code_idx ON vedernikoff_safehouse(code);
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (1, 100, 'north'), (2, 200, 'south'), (4, 300, 'west');
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (3, NULL, 'east');
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (5, NULL, 'central');
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
+  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index, points=[(code=100)]] -> "pid":INTEGER, "district":VARCHAR
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
+  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index, points=[(code=null)]] -> "pid":INTEGER, "district":VARCHAR
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+pid	district
+1	north
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+3	east
+5	central
+
+statement error
+INSERT INTO vedernikoff_safehouse VALUES (6, 100, 'downtown');
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (6, NULL, 'downtown');
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+3	east
+5	central
+6	downtown
+
+statement ok
+UPDATE vedernikoff_safehouse SET code = NULL WHERE pid = 1;
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+pid	district
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+1	north
+3	east
+5	central
+6	downtown
+
+statement ok
+INSERT INTO vedernikoff_safehouse VALUES (7, 100, 'uptown');
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
+----
+pid	district
+7	uptown
+
+statement ok
+DELETE FROM vedernikoff_safehouse WHERE pid = 5;
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL ORDER BY pid;
+----
+pid	district
+1	north
+3	east
+6	downtown
+
+statement error
+UPDATE vedernikoff_safehouse SET code = 200 WHERE pid = 7;
+
+query
+SELECT pid, district, code FROM vedernikoff_safehouse ORDER BY pid;
+----
+pid	district	code
+1	north	NULL
+2	south	200
+3	east	NULL
+4	west	300
+6	downtown	NULL
+7	uptown	100
+
+statement ok
+DROP TABLE vedernikoff_safehouse;
+
+
+statement ok
+CREATE TABLE babsky_contacts (pid INTEGER PRIMARY KEY, phone VARCHAR, alias VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX babsky_contacts_phone_idx ON babsky_contacts(phone);
+
+statement ok
+INSERT INTO babsky_contacts VALUES (1, '555-0001', 'ghost'), (2, '555-0002', 'shadow');
+
+statement ok
+INSERT INTO babsky_contacts VALUES (3, NULL, 'phantom');
+
+statement ok
+INSERT INTO babsky_contacts VALUES (4, NULL, 'specter');
+
+statement error
+INSERT INTO babsky_contacts VALUES (5, '555-0001', 'wraith');
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone = '555-0001';
+----
+pid	alias
+1	ghost
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone IS NULL ORDER BY pid;
+----
+pid	alias
+3	phantom
+4	specter
+
+statement ok
+UPDATE babsky_contacts SET phone = '555-0003' WHERE pid = 3;
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone IS NULL;
+----
+pid	alias
+4	specter
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone = '555-0003';
+----
+pid	alias
+3	phantom
+
+statement ok
+DELETE FROM babsky_contacts WHERE pid = 1;
+
+statement ok
+INSERT INTO babsky_contacts VALUES (5, '555-0001', 'wraith');
+
+query
+SELECT pid, alias FROM babsky_contacts WHERE phone = '555-0001';
+----
+pid	alias
+5	wraith
+
+query
+SELECT pid, alias, phone FROM babsky_contacts ORDER BY pid;
+----
+pid	alias	phone
+2	shadow	555-0002
+3	phantom	555-0003
+4	specter	NULL
+5	wraith	555-0001
+
+statement ok
+DROP TABLE babsky_contacts;
+
+
+statement ok
+CREATE TABLE vedernikoff_ledger (pid INTEGER PRIMARY KEY, region INTEGER, tier INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_ledger_region_tier_idx ON vedernikoff_ledger(region, tier);
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES
+  (1, 1, 10, 'alpha'),
+  (2, 1, 20, 'beta'),
+  (3, 2, 10, 'gamma'),
+  (4, 2, 20, 'delta');
+
+statement error
+INSERT INTO vedernikoff_ledger VALUES (5, 1, 10, 'epsilon');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (5, 1, 30, 'epsilon');
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
+----
+pid	note
+1	alpha
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region = 2 AND tier = 20;
+----
+pid	note
+4	delta
+
+statement ok
+UPDATE vedernikoff_ledger SET tier = 40 WHERE pid = 1;
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (6, 1, 10, 'zeta');
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
+----
+pid	note
+6	zeta
+
+statement error
+UPDATE vedernikoff_ledger SET tier = 20 WHERE pid = 6;
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (7, NULL, 10, 'eta');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (8, NULL, 10, 'theta');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (9, 1, NULL, 'iota');
+
+statement ok
+INSERT INTO vedernikoff_ledger VALUES (10, 1, NULL, 'kappa');
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE region IS NULL ORDER BY pid;
+----
+pid	note
+7	eta
+8	theta
+
+query
+SELECT pid, note FROM vedernikoff_ledger WHERE tier IS NULL ORDER BY pid;
+----
+pid	note
+9	iota
+10	kappa
+
+query
+SELECT pid, region, tier, note FROM vedernikoff_ledger ORDER BY pid;
+----
+pid	region	tier	note
+1	1	40	alpha
+2	1	20	beta
+3	2	10	gamma
+4	2	20	delta
+5	1	30	epsilon
+6	1	10	zeta
+7	NULL	10	eta
+8	NULL	10	theta
+9	1	NULL	iota
+10	1	NULL	kappa
+
+statement ok
+DROP TABLE vedernikoff_ledger;
+
+
+statement ok
+CREATE TABLE babsky_nullbulk (pid INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX babsky_nullbulk_val_idx ON babsky_nullbulk(val);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (1, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (2, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (3, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (4, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (5, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (6, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (7, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (8, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (9, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (10, NULL);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (11, 42);
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (12, 99);
+
+statement error
+INSERT INTO babsky_nullbulk VALUES (13, 42);
+
+query
+SELECT count(*) FROM babsky_nullbulk WHERE val IS NULL;
+----
+count
+10
+
+query
+SELECT pid FROM babsky_nullbulk WHERE val IS NULL ORDER BY pid;
+----
+pid
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+
+query
+SELECT pid FROM babsky_nullbulk WHERE val = 42;
+----
+pid
+11
+
+statement ok
+DELETE FROM babsky_nullbulk WHERE pid IN (3, 5, 7);
+
+query
+SELECT count(*) FROM babsky_nullbulk WHERE val IS NULL;
+----
+count
+7
+
+statement ok
+UPDATE babsky_nullbulk SET val = NULL WHERE pid = 11;
+
+query
+SELECT count(*) FROM babsky_nullbulk WHERE val IS NULL;
+----
+count
+8
+
+statement ok
+INSERT INTO babsky_nullbulk VALUES (13, 42);
+
+query
+SELECT pid FROM babsky_nullbulk WHERE val = 42;
+----
+pid
+13
+
+statement ok
+DROP TABLE babsky_nullbulk;
+
+
+statement ok
+CREATE TABLE clickclack_ryow (pid INTEGER PRIMARY KEY, code INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_ryow_code_idx ON clickclack_ryow(code);
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (1, 10), (2, 20);
+
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (3, 30);
+
+query
+SELECT pid FROM clickclack_ryow WHERE code = 30;
+----
+pid
+3
+
+statement ok
+COMMIT;
+
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO clickclack_ryow VALUES (4, 40);
+
+
+onlyif serenedb
+query
+SELECT pid FROM clickclack_ryow WHERE code = 40;
+----
+pid
+
+
+statement ok
+COMMIT;
+
+query
+SELECT pid FROM clickclack_ryow WHERE code = 40;
+----
+pid
+4
+
+statement ok
+DROP TABLE clickclack_ryow;
+
+
+control substitution on
+
+statement ok
+CREATE TABLE vedernikoff_csv_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_csv_unique VALUES
+  (1, 'vedernikoff', 10),
+  (2, 'cutelooked', 20),
+  (3, 'crookface', 30);
+
+statement count 3
+COPY vedernikoff_csv_unique TO '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+DROP TABLE vedernikoff_csv_unique;
+
+statement ok
+CREATE TABLE vedernikoff_csv_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement count 3
+COPY vedernikoff_csv_unique FROM '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_csv_unique_rank_idx ON vedernikoff_csv_unique(rank);
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 10;
+----
+pid	nickname
+1	vedernikoff
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 20;
+----
+pid	nickname
+2	cutelooked
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 99;
+----
+pid	nickname
+
+
+onlyif serenedb
+statement error
+INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+skipif serenedb
+statement error
+INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_csv_unique_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
+
+
+statement ok
+UPDATE vedernikoff_csv_unique SET rank = 15 WHERE pid = 1;
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 10;
+----
+pid	nickname
+
+query
+SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 15;
+----
+pid	nickname
+1	vedernikoff
+
+statement ok
+DROP TABLE vedernikoff_csv_unique;
+
+
+statement ok
+CREATE TABLE babsky_csv_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement ok
+INSERT INTO babsky_csv_nulluniq VALUES
+  (1, 100, 'alpha'),
+  (2, NULL, 'beta'),
+  (3, NULL, 'gamma'),
+  (4, 200, 'delta');
+
+statement count 4
+COPY babsky_csv_nulluniq TO '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+DROP TABLE babsky_csv_nulluniq;
+
+statement ok
+CREATE TABLE babsky_csv_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement count 4
+COPY babsky_csv_nulluniq FROM '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement ok
+CREATE UNIQUE INDEX babsky_csv_nulluniq_code_idx ON babsky_csv_nulluniq(code);
+
+query
+SELECT pid, tag FROM babsky_csv_nulluniq WHERE code = 100;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM babsky_csv_nulluniq WHERE code IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+
+statement error
+INSERT INTO babsky_csv_nulluniq VALUES (5, 100, 'epsilon');
+
+statement ok
+DROP TABLE babsky_csv_nulluniq;
+
+
+statement ok
+CREATE TABLE vedernikoff_pq_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement ok
+INSERT INTO vedernikoff_pq_unique VALUES
+  (1, 'vedernikoff', 10),
+  (2, 'cutelooked', 20),
+  (3, 'crookface', 30);
+
+statement count 3
+COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
+
+statement ok
+DROP TABLE vedernikoff_pq_unique;
+
+statement ok
+CREATE TABLE vedernikoff_pq_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
+
+statement count 3
+COPY vedernikoff_pq_unique FROM '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_pq_unique_rank_idx ON vedernikoff_pq_unique(rank);
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 10;
+----
+pid	nickname
+1	vedernikoff
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 20;
+----
+pid	nickname
+2	cutelooked
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 99;
+----
+pid	nickname
+
+
+onlyif serenedb
+statement error
+INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint on secondary index
+DETAIL: Key (rank)=(10) already exists.
+
+
+skipif serenedb
+statement error
+INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
+----
+db error: ERROR: duplicate key value violates unique constraint "vedernikoff_pq_unique_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
+
+
+statement ok
+UPDATE vedernikoff_pq_unique SET rank = 15 WHERE pid = 1;
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 10;
+----
+pid	nickname
+
+query
+SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 15;
+----
+pid	nickname
+1	vedernikoff
+
+statement ok
+DROP TABLE vedernikoff_pq_unique;
+
+
+statement ok
+CREATE TABLE babsky_pq_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement ok
+INSERT INTO babsky_pq_nulluniq VALUES
+  (1, 100, 'alpha'),
+  (2, NULL, 'beta'),
+  (3, NULL, 'gamma'),
+  (4, 200, 'delta');
+
+statement count 4
+COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
+
+statement ok
+DROP TABLE babsky_pq_nulluniq;
+
+statement ok
+CREATE TABLE babsky_pq_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement count 4
+COPY babsky_pq_nulluniq FROM '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
+
+statement ok
+CREATE UNIQUE INDEX babsky_pq_nulluniq_code_idx ON babsky_pq_nulluniq(code);
+
+query
+SELECT pid, tag FROM babsky_pq_nulluniq WHERE code = 100;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM babsky_pq_nulluniq WHERE code IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+
+statement error
+INSERT INTO babsky_pq_nulluniq VALUES (5, 100, 'epsilon');
+
+statement ok
+DROP TABLE babsky_pq_nulluniq;
+
+
+statement ok
+CREATE TABLE vedernikoff_tri_uniq (pid INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_tri_uniq_idx ON vedernikoff_tri_uniq(a, b, c);
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (1, 1, 1, 1, 'all_set');
+
+statement error
+INSERT INTO vedernikoff_tri_uniq VALUES (2, 1, 1, 1, 'all_set_dup');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (2, 1, 1, 2, 'diff_c');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (3, 1, 2, 1, 'diff_b');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (4, 2, 1, 1, 'diff_a');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+1	all_set
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 2;
+----
+pid	note
+2	diff_c
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 2 AND c = 1;
+----
+pid	note
+3	diff_b
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 2 AND b = 1 AND c = 1;
+----
+pid	note
+4	diff_a
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (10, NULL, 1, 1, 'a_null_1'),
+  (11, NULL, 1, 1, 'a_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (12, 1, NULL, 1, 'b_null_1'),
+  (13, 1, NULL, 1, 'b_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (14, 1, 1, NULL, 'c_null_1'),
+  (15, 1, 1, NULL, 'c_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (20, NULL, NULL, 1, 'ab_null_1'),
+  (21, NULL, NULL, 1, 'ab_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (22, NULL, 1, NULL, 'ac_null_1'),
+  (23, NULL, 1, NULL, 'ac_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (24, 1, NULL, NULL, 'bc_null_1'),
+  (25, 1, NULL, NULL, 'bc_null_2');
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES
+  (30, NULL, NULL, NULL, 'all_null_1'),
+  (31, NULL, NULL, NULL, 'all_null_2');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c = 1 ORDER BY pid;
+----
+pid	note
+10	a_null_1
+11	a_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+12	b_null_1
+13	b_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c IS NULL ORDER BY pid;
+----
+pid	note
+14	c_null_1
+15	c_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b IS NULL AND c = 1 ORDER BY pid;
+----
+pid	note
+20	ab_null_1
+21	ab_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c IS NULL ORDER BY pid;
+----
+pid	note
+22	ac_null_1
+23	ac_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c IS NULL ORDER BY pid;
+----
+pid	note
+24	bc_null_1
+25	bc_null_2
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b IS NULL AND c IS NULL ORDER BY pid;
+----
+pid	note
+30	all_null_1
+31	all_null_2
+
+query
+SELECT pid, a, b, c, note FROM vedernikoff_tri_uniq ORDER BY pid;
+----
+pid	a	b	c	note
+1	1	1	1	all_set
+2	1	1	2	diff_c
+3	1	2	1	diff_b
+4	2	1	1	diff_a
+10	NULL	1	1	a_null_1
+11	NULL	1	1	a_null_2
+12	1	NULL	1	b_null_1
+13	1	NULL	1	b_null_2
+14	1	1	NULL	c_null_1
+15	1	1	NULL	c_null_2
+20	NULL	NULL	1	ab_null_1
+21	NULL	NULL	1	ab_null_2
+22	NULL	1	NULL	ac_null_1
+23	NULL	1	NULL	ac_null_2
+24	1	NULL	NULL	bc_null_1
+25	1	NULL	NULL	bc_null_2
+30	NULL	NULL	NULL	all_null_1
+31	NULL	NULL	NULL	all_null_2
+
+statement ok
+DELETE FROM vedernikoff_tri_uniq WHERE pid IN (11, 13, 15, 21, 23, 25, 31);
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c = 1;
+----
+pid	note
+10	a_null_1
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1;
+----
+pid	note
+12	b_null_1
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c IS NULL;
+----
+pid	note
+14	c_null_1
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b IS NULL AND c IS NULL;
+----
+pid	note
+30	all_null_1
+
+statement ok
+UPDATE vedernikoff_tri_uniq SET a = 3 WHERE pid = 10;
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a IS NULL AND b = 1 AND c = 1;
+----
+pid	note
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 3 AND b = 1 AND c = 1;
+----
+pid	note
+10	a_null_1
+
+statement ok
+DELETE FROM vedernikoff_tri_uniq WHERE pid = 1;
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (40, 1, 1, 1, 'reuse_slot');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+40	reuse_slot
+
+statement error
+INSERT INTO vedernikoff_tri_uniq VALUES (41, 1, 1, 1, 'reuse_conflict');
+
+statement ok
+UPDATE vedernikoff_tri_uniq SET b = NULL WHERE pid = 40;
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b IS NULL AND c = 1;
+----
+pid	note
+12	b_null_1
+40	reuse_slot
+
+statement ok
+INSERT INTO vedernikoff_tri_uniq VALUES (41, 1, 1, 1, 'freed_slot');
+
+query
+SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+pid	note
+41	freed_slot
+
+statement ok
+DROP TABLE vedernikoff_tri_uniq;
+
+
+
+statement ok
+CREATE TABLE babsky_uniq_in (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX babsky_uniq_in_idx ON babsky_uniq_in(code);
+
+statement ok
+INSERT INTO babsky_uniq_in VALUES (1, 100, 'alpha'), (2, 200, 'beta'), (3, 300, 'gamma'), (4, 400, 'delta');
+
+statement ok
+INSERT INTO babsky_uniq_in VALUES (5, NULL, 'epsilon');
+
+statement ok
+INSERT INTO babsky_uniq_in VALUES (6, NULL, 'zeta');
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300) ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (200);
+----
+pid	tag
+2	beta
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (999, 888);
+----
+pid	tag
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 200, 300, 400) ORDER BY pid;
+----
+pid	tag
+1	alpha
+2	beta
+3	gamma
+4	delta
+
+statement ok
+DROP TABLE babsky_uniq_in;
+
+
+
+statement ok
+CREATE TABLE clickclack_uniq_or (pid INTEGER PRIMARY KEY, rank INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_uniq_or_idx ON clickclack_uniq_or(rank);
+
+statement ok
+INSERT INTO clickclack_uniq_or VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta'),
+  (3, 30, 'gamma'),
+  (4, 40, 'delta');
+
+query
+SELECT pid, note FROM clickclack_uniq_or WHERE rank = 10 OR rank = 30 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	gamma
+
+query
+SELECT pid, note FROM clickclack_uniq_or WHERE rank = 20 OR rank = 40 ORDER BY pid;
+----
+pid	note
+2	beta
+4	delta
+
+query
+SELECT pid, note FROM clickclack_uniq_or WHERE rank = 99 OR rank = 100;
+----
+pid	note
+
+statement ok
+DROP TABLE clickclack_uniq_or;
+
+
+
+statement ok
+CREATE TABLE vedernikoff_uniq_rem (pid INTEGER PRIMARY KEY, key INTEGER, level INTEGER, tag VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_uniq_rem_idx ON vedernikoff_uniq_rem(key);
+
+statement ok
+INSERT INTO vedernikoff_uniq_rem VALUES
+  (1, 100, 10, 'alpha'),
+  (2, 200, 20, 'beta'),
+  (3, 300, 10, 'gamma'),
+  (4, 400, 20, 'delta');
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 99;
+----
+pid	tag
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key IN (100, 300) AND level = 10 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key IN (100, 200, 300, 400) AND level = 20 ORDER BY pid;
+----
+pid	tag
+2	beta
+4	delta
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE (key = 100 AND level = 10) OR key = 300 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+statement ok
+DROP TABLE vedernikoff_uniq_rem;
+
+
+
+statement ok
+CREATE TABLE babsky_uniq_null_combo (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX babsky_uniq_null_combo_idx ON babsky_uniq_null_combo(val);
+
+statement ok
+INSERT INTO babsky_uniq_null_combo VALUES (1, 10, 'alpha'), (3, 20, 'gamma');
+
+statement ok
+INSERT INTO babsky_uniq_null_combo VALUES (2, NULL, 'beta');
+
+statement ok
+INSERT INTO babsky_uniq_null_combo VALUES (4, NULL, 'delta');
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+4	delta
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IN (10, 20) ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val = 10 OR val = 20 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IS NULL AND tag = 'beta';
+----
+pid	tag
+2	beta
+
+statement ok
+UPDATE babsky_uniq_null_combo SET val = 30 WHERE pid = 2;
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IS NULL;
+----
+pid	tag
+4	delta
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val = 30;
+----
+pid	tag
+2	beta
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IN (10, 30) ORDER BY pid;
+----
+pid	tag
+1	alpha
+2	beta
+
+statement ok
+DROP TABLE babsky_uniq_null_combo;
+
+
+
+statement ok
+CREATE TABLE clickclack_comp_uniq_in (pid INTEGER PRIMARY KEY, city VARCHAR, tier INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_comp_uniq_in_idx ON clickclack_comp_uniq_in(city, tier);
+
+statement ok
+INSERT INTO clickclack_comp_uniq_in VALUES
+  (1, 'berlin', 10, 'alpha'),
+  (2, 'berlin', 20, 'beta'),
+  (3, 'moscow', 10, 'gamma'),
+  (4, 'moscow', 20, 'delta'),
+  (5, 'tokyo', 10, 'epsilon');
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city IN ('berlin', 'moscow') AND tier = 10 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	gamma
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city = 'berlin' AND tier IN (10, 20) ORDER BY pid;
+----
+pid	note
+1	alpha
+2	beta
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city = 'berlin' AND tier = 10 AND note = 'alpha';
+----
+pid	note
+1	alpha
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city = 'berlin' AND tier = 10 AND note = 'wrong';
+----
+pid	note
+
+statement error
+INSERT INTO clickclack_comp_uniq_in VALUES (6, 'berlin', 10, 'duplicate');
+
+statement ok
+DROP TABLE clickclack_comp_uniq_in;

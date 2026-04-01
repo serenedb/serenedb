@@ -24,6 +24,7 @@
 
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -39,6 +40,7 @@ class Transaction;
 }  // namespace sdb::query
 namespace sdb::catalog {
 
+class Index;
 class Table;
 
 }  // namespace sdb::catalog
@@ -51,15 +53,6 @@ namespace sdb::pg {
 
 class Objects : public irs::memory::Managed {
  public:
-  enum class AccessType : uint64_t {
-    None = 0,
-    Read = uint64_t{1} << 0,
-    Insert = uint64_t{1} << 1,
-    Delete = uint64_t{1} << 2,
-    Update = uint64_t{1} << 3,
-    Merge = uint64_t{1} << 4,
-  };
-
   struct ObjectName {
     std::string_view schema;  // null => current search path
     std::string_view relation;
@@ -81,8 +74,15 @@ class Objects : public irs::memory::Managed {
 
   struct ObjectData {
     std::shared_ptr<catalog::SchemaObject> object;
+
     // TODO(mbkkt): remove it
-    std::shared_ptr<catalog::Table> catalog_table;
+    struct CatalogDataImpl {
+      std::shared_ptr<catalog::Table> table;
+      std::vector<std::shared_ptr<catalog::Index>> indexes;
+    };
+    std::shared_ptr<void> catalog_data;
+    const catalog::Table& CatalogTable() const;
+    const std::vector<std::shared_ptr<catalog::Index>>& Indexes() const;
 
     // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
     // to implement connector::Table without allocation.

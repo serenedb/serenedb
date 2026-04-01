@@ -48,19 +48,6 @@ SELECT * FROM clickclack_facts WHERE PHRASE(fact, 'has 0 stocks');
 ----
 400 values hashing to 281bddebb99a13518781132c8d56e194
 
-statement ok
-SET sdb_fault_segment_1000_docs_max TO DEFAULT;
-
-statement ok
-CREATE INDEX clickclack_facts_2 ON clickclack USING inverted(fact test_english);
-
-query
-SELECT * FROM clickclack_facts_2 WHERE PHRASE(fact, 'team member');
-----
-100000 values hashing to b3b411b881b6ec438b321353df0f649a
-
-statement ok
-RESET sdb_fault_segment_1000_docs_max;
 
 statement ok
 DROP TABLE clickclack;

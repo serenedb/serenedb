@@ -263,7 +263,6 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
     if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
-
     _writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
     _block_builders[i] = std::make_unique<SSTBlockBuilder<IsGeneratedPK>>(
       table_id, columns[i].id, pool);

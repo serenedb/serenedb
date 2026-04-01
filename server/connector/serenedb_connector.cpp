@@ -23,6 +23,7 @@
 #include <iresearch/search/all_filter.hpp>
 
 #include "basics/static_strings.h"
+#include "catalog/secondary_index.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
 #include "search_filter_builder.hpp"
@@ -40,6 +41,79 @@ namespace {
 // operator. When value is changed, some explain tests will be broken (as
 // execution graph may change).
 constexpr bool kExecuteFiltersInTableScan = false;
+
+void RejectFilter(velox::core::TypedExprPtr filter,
+                  std::vector<velox::core::TypedExprPtr>& rejected_filters) {
+  if (!filter) {
+    return;
+  }
+  if (const auto* call =
+        dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
+      call && call->name() == velox::expression::kAnd) {
+    rejected_filters.assign(call->inputs().begin(), call->inputs().end());
+  } else {
+    rejected_filters = {std::move(filter)};
+  }
+}
+
+std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
+  const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
+  query::Transaction& transaction,
+  velox::core::TypedExprPtr& remaining_filter) {
+  auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
+  auto snapshot = transaction.EnsureCatalogSnapshot();
+
+  for (auto index_shard :
+       snapshot->GetIndexShardsByTable(rocksdb_table.TableId())) {
+    if (index_shard->GetType() != IndexType::Secondary) {
+      continue;
+    }
+    auto index = snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
+    if (!index) {
+      continue;
+    }
+    auto index_col_ids = index->GetColumnIds();
+
+    std::vector<std::string> sk_names;
+    std::vector<velox::TypePtr> sk_types;
+    sk_names.reserve(index_col_ids.size());
+    sk_types.reserve(index_col_ids.size());
+    for (auto col_id : index_col_ids) {
+      for (const auto& [name, col_ptr] : table.columnMap()) {
+        const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
+        if (scol->Id() == col_id) {
+          sk_names.push_back(name);
+          sk_types.push_back(scol->type());
+          break;
+        }
+      }
+    }
+    if (sk_names.size() != index_col_ids.size()) {
+      continue;
+    }
+
+    auto res = ExtractAndRewriteFilterExpr(filter, sk_names);
+    if (res.points.empty() || !absl::c_all_of(res.points, [](const Point& p) {
+          return p.IsSpecific();
+        })) {
+      continue;
+    }
+
+    auto sk_type = velox::ROW(std::move(sk_names), std::move(sk_types));
+    auto points = ToSpecificPoints(res.points, *sk_type);
+    SortPoints(points);
+
+    const auto& sec_index =
+      basics::downCast<const catalog::SecondaryIndex>(*index);
+
+    remaining_filter = std::move(res.remaining_filter);
+    return std::make_shared<SecondaryIndexTableHandle>(
+      table.name(), rocksdb_table.TableId(), transaction, index_shard->GetId(),
+      std::move(points), std::move(sk_type), table, sec_index.IsUnique());
+  }
+
+  return nullptr;
+}
 
 }  // namespace
 
@@ -60,16 +134,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
 
   // TODO(Dronplane): measure the performance! Maybe it's worth selecting the
   // smallest possible field as the effective column, not just the first
-  _effective_column_id =
-    basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
-  if (_effective_column_id == catalog::Column::kGeneratedPKId) {
-    // Iterating over generated primary key gives 0 rows,
-    // use another one
-    SDB_ASSERT(column_map.size() >= 2);
-    _effective_column_id = basics::downCast<const SereneDBColumn>(
-                             std::next(column_map.begin())->second)
-                             ->Id();
-  }
+  _effective_column_id = ComputeEffectiveColumnId(column_map);
   _pk_type = basics::downCast<RocksDBTable>(layout.table()).PKType();
   for (const auto& [orig_name, col_ptr] : column_map) {
     const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
@@ -88,9 +153,12 @@ SereneDBTableLayout::createTableHandle(
   std::vector<velox::core::TypedExprPtr> filters,
   std::vector<velox::core::TypedExprPtr>& rejected_filters) const {
   const auto* table = &this->table();
-  const auto* inv_index = dynamic_cast<const InvertedIndexTable*>(table);
-  if (inv_index) {
-    const auto& index = inv_index->GetIndex();
+  const auto* idx_table = dynamic_cast<const IndexTable*>(table);
+  if (idx_table &&
+      idx_table->GetIndex().GetIndexType() == IndexType::Inverted) {
+    const auto* inv_index = idx_table;
+    const auto& index =
+      basics::downCast<const catalog::InvertedIndex>(inv_index->GetIndex());
     auto column_getter =
       [&](std::string_view name) -> std::optional<SearchColumnInfo> {
       const auto* column = inv_index->findColumn(name);
@@ -182,7 +250,8 @@ SereneDBTableLayout::createTableHandle(
                                              std::move(remaining_filter));
   }
 
-  const auto& pk_type = basics::downCast<RocksDBTable>(*table).PKType();
+  const auto& rocksdb_table = basics::downCast<RocksDBTable>(*table);
+  const auto& pk_type = rocksdb_table.PKType();
 
   velox::core::TypedExprPtr remaining_filter;
   if (filters.size() == 1) {
@@ -194,24 +263,30 @@ SereneDBTableLayout::createTableHandle(
 
   std::vector<SpecificPoint> points;
   if (remaining_filter) {
+    // 1. Try PK point lookup.
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
-
-    if (!res.points.empty()) {
+    if (!res.points.empty() && absl::c_all_of(res.points, [](const Point& p) {
+          return p.IsSpecific();
+        })) {
       points = ToSpecificPoints(res.points, *pk_type);
       SortPoints(points);
       remaining_filter = std::move(res.remaining_filter);
     }
+
+    // 2. No PK match -- try secondary index.
+    if (points.empty()) {
+      velox::core::TypedExprPtr remaining;
+      if (auto handle =
+            TryMatchSecondaryIndex(remaining_filter, *table,
+                                   rocksdb_table.GetTransaction(), remaining)) {
+        RejectFilter(std::move(remaining), rejected_filters);
+        return handle;
+      }
+    }
   }
 
-  if (!kExecuteFiltersInTableScan && remaining_filter) {
-    if (const auto* call = dynamic_cast<const velox::core::CallTypedExpr*>(
-          remaining_filter.get());
-        call && call->name() == velox::expression::kAnd) {
-      rejected_filters.assign(call->inputs().begin(), call->inputs().end());
-    } else {
-      rejected_filters = {std::move(remaining_filter)};
-    }
-    remaining_filter.reset();
+  if (!kExecuteFiltersInTableScan) {
+    RejectFilter(std::move(remaining_filter), rejected_filters);
   }
 
   SDB_ASSERT(!table->columnMap().empty(),

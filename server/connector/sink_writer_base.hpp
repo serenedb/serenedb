@@ -33,7 +33,7 @@ class SinkIndexWriter {
   SinkIndexWriter() = default;
   virtual ~SinkIndexWriter() = default;
 
-  virtual void Init(size_t batch_size) {}
+  virtual void Init(size_t batch_size, const velox::RowVectorPtr& input) {}
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;

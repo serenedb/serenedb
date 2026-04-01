@@ -327,8 +327,8 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   std::span<const std::string> column_names) {
   auto pts = ExtractFilterExpr(expr, column_names);
 
-  std::erase_if(pts, [](const Point& p) { return !p.IsSpecific(); });
-  if (pts.empty()) {
+  if (!absl::c_all_of(pts,
+                       [](const Point& p) { return p.IsSpecific(); })) {
     return {{}, expr};
   }
 

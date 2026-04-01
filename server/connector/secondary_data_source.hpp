@@ -29,21 +29,6 @@
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/utilities/transaction.h"
 
-namespace sdb::connector::detail {
-
-inline std::unique_ptr<rocksdb::Iterator> CreateSecondaryIterator(
-  rocksdb::DB& source, const rocksdb::ReadOptions& ro,
-  rocksdb::ColumnFamilyHandle& cf) {
-  return std::unique_ptr<rocksdb::Iterator>(source.NewIterator(ro, &cf));
-}
-
-inline std::unique_ptr<rocksdb::Iterator> CreateSecondaryIterator(
-  rocksdb::Transaction& source, const rocksdb::ReadOptions& ro,
-  rocksdb::ColumnFamilyHandle& cf) {
-  return std::unique_ptr<rocksdb::Iterator>(source.GetIterator(ro, &cf));
-}
-
-}  // namespace sdb::connector::detail
 namespace sdb::connector {
 
 // TODO: replace with Misha's RocksdbRangeDataSource when it's ready
@@ -97,7 +82,11 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
         IncrementPrefix(_upper_bound);
         _upper_bound_slice = rocksdb::Slice{_upper_bound};
         ro.iterate_upper_bound = &_upper_bound_slice;
-        _iterator = detail::CreateSecondaryIterator(_source, ro, _cf);
+        if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
+          _iterator.reset(_source.GetIterator(ro, &_cf));
+        } else {
+          _iterator.reset(_source.NewIterator(ro, &_cf));
+        }
         _iterator->Seek(_current_scan_prefix);
       }
 

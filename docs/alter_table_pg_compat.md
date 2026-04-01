@@ -16,8 +16,8 @@
 - [ ] `ALTER TABLE ... ALTER COLUMN ... SET NOT NULL` / `DROP NOT NULL` — nullability
 
 ### Constraint operations
-- [ ] `ALTER TABLE ... ADD CONSTRAINT` — add CHECK, UNIQUE, PRIMARY KEY, FOREIGN KEY
-- [ ] `ALTER TABLE ... DROP CONSTRAINT` — remove a named constraint
+- [x] `ALTER TABLE ... ADD CONSTRAINT CHECK` — add CHECK constraint
+- [x] `ALTER TABLE ... DROP CONSTRAINT` — remove a named constraint
 - [ ] `ALTER TABLE ... VALIDATE CONSTRAINT` — validate a NOT VALID constraint
 
 ### Table-level operations

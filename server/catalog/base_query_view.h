@@ -53,8 +53,6 @@ class BaseQueryView : public View, public QueryViewImpl {
     return _state;
   }
 
-  void WriteProperties(vpack::Builder&) const final;
-
   void WriteInternal(vpack::Builder&) const final;
 
   bool visitCollections(const CollectionVisitor& visitor) const final {

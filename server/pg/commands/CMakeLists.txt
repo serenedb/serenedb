@@ -15,4 +15,5 @@ target_sources(
         vacuum.cpp
         create_tsdictionary.cpp
         rename_object.cpp
+        alter_table.cpp
 )

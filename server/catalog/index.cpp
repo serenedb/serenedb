@@ -202,4 +202,33 @@ Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
   SDB_ASSERT(GetId().isSet());
 }
 
+Result Index::Rename(std::shared_ptr<Index>& result,
+                     std::string_view new_name) const {
+  vpack::Builder b;
+  WriteInternal(b);
+
+  IndexBaseOptions options;
+  if (auto r =
+        vpack::ReadTupleNothrow(b.slice().get(kIndexBaseOptions), options);
+      !r.ok()) {
+    return r;
+  }
+  options.name = std::string{new_name};
+
+  auto impl_parsed =
+    ParseImplSlice(std::move(options), b.slice().get(kIndexImplOptions));
+  if (!impl_parsed) {
+    return std::move(impl_parsed.error());
+  }
+
+  auto new_index = MakeIndex(GetDatabaseId(), GetSchemaId(), GetId(),
+                             _relation_id, std::move(**impl_parsed));
+  if (!new_index) {
+    return std::move(new_index.error());
+  }
+
+  result = std::move(*new_index);
+  return {};
+}
+
 }  // namespace sdb::catalog

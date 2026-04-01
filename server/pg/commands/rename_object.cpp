@@ -56,21 +56,35 @@ yaclib::Future<> RenameColumnOrConstraint(
                        : table.RenameConstraint(updated, old_name, new_name);
     });
 
-  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
-      r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    auto msg = r.errorMessage();
-    if (!msg.empty()) {
-      THROW_SQL_ERROR(ERR_CODE(is_column ? ERRCODE_UNDEFINED_COLUMN
-                                         : ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG(msg));
-    }
+  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", table_name, "\" does not exist"));
   }
 
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (is_column) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", old_name, "\" does not exist"));
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("constraint \"", old_name, "\" for table \"", table_name,
+                "\" does not exist"));
+    }
+  }
+
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-                    ERR_MSG(r.errorMessage()));
+    if (is_column) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+        ERR_MSG("column \"", new_name, "\" of relation \"", table_name,
+                "\" already exists"));
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("constraint \"", new_name, "\" for relation \"", table_name,
+                "\" already exists"));
+    }
   }
 
   if (!r.ok()) {

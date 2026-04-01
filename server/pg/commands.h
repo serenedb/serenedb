@@ -84,4 +84,6 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);
 
 yaclib::Future<> RenameObject(ExecContext& ctx, const RenameStmt& stmt);
 
+yaclib::Future<> AlterTable(ExecContext& ctx, const AlterTableStmt& stmt);
+
 }  // namespace sdb::pg

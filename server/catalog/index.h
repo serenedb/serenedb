@@ -80,6 +80,9 @@ class Index : public SchemaObject {
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions& options) const = 0;
 
+  Result Rename(std::shared_ptr<Index>& result,
+                std::string_view new_name) const;
+
   virtual ~Index() = default;
 
  protected:

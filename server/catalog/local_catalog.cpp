@@ -1192,7 +1192,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
 
       vpack::Builder builder;
       builder.openObject();
-      view->WriteProperties(builder);
+      view->WriteInternal(builder);
       builder.close();
 
       return _engine->CreateDefinition(
@@ -1335,10 +1335,19 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
     });
 }
 
-Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
-                                std::string_view name,
-                                std::string_view new_name) {
-  absl::MutexLock lock{&_mutex};
+template<typename T>
+Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
+                                      std::string_view schema,
+                                      std::string_view name,
+                                      std::string_view new_name) {
+  constexpr auto kResolveType = []() {
+    if constexpr (std::is_same_v<T, Function>) {
+      return ResolveType::Function;
+    } else {
+      return ResolveType::Relation;
+    }
+  }();
+
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
@@ -1346,7 +1355,7 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
   }
 
   auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+    _snapshot->GetObjectId<kResolveType>(*schema_id, name);
   if (!object_id) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
@@ -1355,198 +1364,109 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
   if (!obj) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
-  if (obj->GetType() != ObjectType::View) {
-    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                  magic_enum::enum_name(obj->GetType())};
-  }
-  auto view = basics::downCast<View>(std::move(obj));
 
-  if (view->GetName() == new_name) {
+  if constexpr (!std::is_same_v<T, Function>) {
+    constexpr auto kExpectedType = []() {
+      if constexpr (std::is_same_v<T, Table>) return ObjectType::Table;
+      else if constexpr (std::is_same_v<T, View>) return ObjectType::View;
+      else if constexpr (std::is_same_v<T, Index>) return ObjectType::Index;
+    }();
+    if (obj->GetType() != kExpectedType) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    magic_enum::enum_name(obj->GetType())};
+    }
+  }
+
+  auto old_obj = basics::downCast<T>(std::move(obj));
+  if (!old_obj) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+
+  if (old_obj->GetName() == new_name) {
     return {};
   }
 
-  std::shared_ptr<View> new_view;
-  auto r = view->Rename(new_view, new_name);
-  if (!r.ok()) {
+  std::shared_ptr<T> new_obj;
+  if (auto r = old_obj->Rename(new_obj, new_name); !r.ok()) {
     return r;
   }
 
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      if (auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                               new_view);
-          !r.ok()) {
-        return r;
-      }
-
-      vpack::Builder builder;
-      builder.openObject();
-      new_view->WriteProperties(builder);
-      builder.close();
-
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::View, new_view->GetId(),
-        [&](bool internal) { return builder.slice(); });
-    },
-    [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto obj = clone->GetObject<View>(new_view->GetId());
-      if (obj->GetName() == new_view->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id,
-                                                             new_name, view);
-        SDB_ASSERT(r.ok());
-      }
-    });
-}
-
-Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
-                                 std::string_view name,
-                                 std::string_view new_name) {
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
-  }
-
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!object_id) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  auto obj = _snapshot->GetObject(*object_id);
-  if (!obj) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-  if (obj->GetType() != ObjectType::Table) {
-    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                  magic_enum::enum_name(obj->GetType())};
-  }
-  auto old_table = basics::downCast<Table>(std::move(obj));
-
-  if (old_table->GetName() == new_name) {
-    return {};
-  }
-
-  NewOptions options{
-    .name = new_name,
-    .schema = old_table->GetSchema(),
-    .number_of_shards = old_table->numberOfShards(),
-    .replication_factor = old_table->replicationFactor(),
-    .write_concern = old_table->writeConcern(),
-    .wait_for_sync = old_table->waitForSync(),
-  };
-
-  auto new_table = std::make_shared<Table>(*old_table, std::move(options));
+  constexpr auto kEntryType = []() {
+    if constexpr (std::is_same_v<T, Table>) return RocksDBEntryType::Table;
+    else if constexpr (std::is_same_v<T, View>) return RocksDBEntryType::View;
+    else if constexpr (std::is_same_v<T, Index>) return RocksDBEntryType::Index;
+    else if constexpr (std::is_same_v<T, Function>)
+      return RocksDBEntryType::Function;
+  }();
 
   absl::MutexLock lock{&_mutex};
   return Apply(
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                           new_table);
+      auto r =
+        clone->ReplaceObject<kResolveType>(*schema_id, name, new_obj);
       if (!r.ok()) {
         return r;
       }
 
       vpack::Builder b;
-      b.openObject();
-      new_table->WriteInternal(b);
-      b.close();
-      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
-                                       new_table->GetId(),
-                                       [&](bool) { return b.slice(); });
+      if constexpr (std::is_same_v<T, Index>) {
+        new_obj->WriteInternal(b);
+      } else {
+        b.openObject();
+        new_obj->WriteInternal(b);
+        b.close();
+      }
+
+      ObjectId parent_id;
+      if constexpr (std::is_same_v<T, Index>) {
+        parent_id = old_obj->GetRelationId();
+      } else {
+        parent_id = *schema_id;
+      }
+
+      return _engine->CreateDefinition(
+        parent_id, kEntryType, new_obj->GetId(),
+        [&](bool) { return b.slice(); });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto obj = clone->GetObject<Table>(new_table->GetId());
-      if (obj->GetName() == new_table->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(
-          *schema_id, new_name, old_table);
+      auto current = clone->GetObject<T>(new_obj->GetId());
+      if (current->GetName() == new_obj->GetName()) {
+        auto r = clone->ReplaceObject<kResolveType>(*schema_id, new_name,
+                                                    old_obj);
         SDB_ASSERT(r.ok());
       }
     });
 }
 
+template Result LocalCatalog::RenameObjectImpl<Table>(ObjectId, std::string_view,
+                                                      std::string_view,
+                                                      std::string_view);
+template Result LocalCatalog::RenameObjectImpl<View>(ObjectId, std::string_view,
+                                                     std::string_view,
+                                                     std::string_view);
+template Result LocalCatalog::RenameObjectImpl<Index>(ObjectId, std::string_view,
+                                                      std::string_view,
+                                                      std::string_view);
+template Result LocalCatalog::RenameObjectImpl<Function>(
+  ObjectId, std::string_view, std::string_view, std::string_view);
+
+Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
+                                std::string_view name,
+                                std::string_view new_name) {
+  return RenameObjectImpl<View>(database_id, schema, name, new_name);
+}
+
+Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
+                                 std::string_view name,
+                                 std::string_view new_name) {
+  return RenameObjectImpl<Table>(database_id, schema, name, new_name);
+}
+
 Result LocalCatalog::RenameIndex(ObjectId database_id, std::string_view schema,
                                  std::string_view name,
                                  std::string_view new_name) {
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
-  }
-
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!object_id) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  auto obj = _snapshot->GetObject(*object_id);
-  if (!obj) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-  if (obj->GetType() != ObjectType::Index) {
-    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                  magic_enum::enum_name(obj->GetType())};
-  }
-  auto old_index = basics::downCast<Index>(std::move(obj));
-
-  if (old_index->GetName() == new_name) {
-    return {};
-  }
-
-  // Serialize the old index to vpack
-  vpack::Builder b;
-  old_index->WriteInternal(b);
-
-  // Read back base options and replace name
-  IndexBaseOptions options;
-  if (auto r =
-        vpack::ReadTupleNothrow(b.slice().get(kIndexBaseOptions), options);
-      !r.ok()) {
-    return r;
-  }
-  options.name = std::string{new_name};
-
-  // Parse impl options and create new index
-  auto impl_parsed =
-    ParseImplSlice(std::move(options), b.slice().get(kIndexImplOptions));
-  if (!impl_parsed) {
-    return std::move(impl_parsed.error());
-  }
-  auto new_index_result = MakeIndex(
-    old_index->GetDatabaseId(), old_index->GetSchemaId(), old_index->GetId(),
-    old_index->GetRelationId(), std::move(**impl_parsed));
-  if (!new_index_result) {
-    return std::move(new_index_result.error());
-  }
-  auto new_index = std::move(*new_index_result);
-
-  absl::MutexLock lock{&_mutex};
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                           new_index);
-      if (!r.ok()) {
-        return r;
-      }
-
-      vpack::Builder out;
-      new_index->WriteInternal(out);
-      return _engine->CreateDefinition(
-        old_index->GetRelationId(), RocksDBEntryType::Index, new_index->GetId(),
-        [&](bool) { return out.slice(); });
-    },
-    [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto obj = clone->GetObject<Index>(new_index->GetId());
-      if (obj->GetName() == new_index->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(
-          *schema_id, new_name, old_index);
-        SDB_ASSERT(r.ok());
-      }
-    });
+  return RenameObjectImpl<Index>(database_id, schema, name, new_name);
 }
 
 Result LocalCatalog::RenameRelation(ObjectId database_id,
@@ -1587,80 +1507,7 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
                                     std::string_view schema,
                                     std::string_view name,
                                     std::string_view new_name) {
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
-  }
-
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-  if (!object_id) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  auto old_function =
-    basics::downCast<Function>(_snapshot->GetObject(*object_id));
-  if (!old_function) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  if (old_function->GetName() == new_name) {
-    return {};
-  }
-
-  // Serialize the old function and replace the name
-  vpack::Builder b;
-  b.openObject();
-  old_function->WriteInternal(b);
-  b.close();
-
-  vpack::Builder modified;
-  modified.openObject();
-  for (auto pair : vpack::ObjectIterator(b.slice())) {
-    if (pair.key.stringView() == StaticStrings::kDataSourceName) {
-      modified.add(StaticStrings::kDataSourceName, new_name);
-    } else {
-      modified.add(pair.key);
-      modified.add(pair.value());
-    }
-  }
-  modified.close();
-
-  // Re-instantiate function from the modified definition
-  std::shared_ptr<Function> new_function;
-  auto r = Function::Instantiate(new_function, old_function->GetDatabaseId(),
-                                 modified.slice(), false);
-  if (!r.ok()) {
-    return r;
-  }
-
-  absl::MutexLock lock{&_mutex};
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      auto r = clone->ReplaceObject<ResolveType::Function>(*schema_id, name,
-                                                           new_function);
-      if (!r.ok()) {
-        return r;
-      }
-
-      vpack::Builder out;
-      out.openObject();
-      new_function->WriteInternal(out);
-      out.close();
-      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
-                                       new_function->GetId(),
-                                       [&](bool) { return out.slice(); });
-    },
-    [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto obj = clone->GetObject<Function>(new_function->GetId());
-      if (obj->GetName() == new_function->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Function>(
-          *schema_id, new_name, old_function);
-        SDB_ASSERT(r.ok());
-      }
-    });
+  return RenameObjectImpl<Function>(database_id, schema, name, new_name);
 }
 
 Result LocalCatalog::ChangeRole(std::string_view name,
@@ -1746,7 +1593,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
 
     vpack::Builder builder;
     builder.openObject();
-    updated->WriteProperties(builder);
+    updated->WriteInternal(builder);
     builder.close();
 
     return _engine->CreateDefinition(

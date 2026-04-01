@@ -197,6 +197,9 @@ class Function final : public SchemaObject {
     return *_sql_impl;
   }
 
+  Result Rename(std::shared_ptr<Function>& result,
+                std::string_view new_name) const;
+
  private:
   FunctionSignature _signature;
   FunctionOptions _options;

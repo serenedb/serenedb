@@ -220,4 +220,26 @@ void catalog::Function::WriteInternal(vpack::Builder& builder) const {
   }
 }
 
+Result Function::Rename(std::shared_ptr<Function>& result,
+                        std::string_view new_name) const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+
+  vpack::Builder modified;
+  modified.openObject();
+  for (auto pair : vpack::ObjectIterator(b.slice())) {
+    if (pair.key.stringView() == StaticStrings::kDataSourceName) {
+      modified.add(StaticStrings::kDataSourceName, new_name);
+    } else {
+      modified.add(pair.key);
+      modified.add(pair.value());
+    }
+  }
+  modified.close();
+
+  return Instantiate(result, GetDatabaseId(), modified.slice(), false);
+}
+
 }  // namespace sdb::catalog

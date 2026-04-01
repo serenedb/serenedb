@@ -100,14 +100,6 @@ template<typename ImplQueryView>
 void BaseQueryView<ImplQueryView>::WriteInternal(vpack::Builder& b) const {
   SDB_ASSERT(b.isOpenObject());
   vpack::WriteObject(b, vpack::Embedded{ViewMeta::Make(*this)});
-  b.add("internal");
-  vpack::WriteTuple(b, _meta);
-}
-
-template<typename ImplQueryView>
-void BaseQueryView<ImplQueryView>::WriteProperties(vpack::Builder& b) const {
-  SDB_ASSERT(b.isOpenObject());
-  vpack::WriteObject(b, vpack::Embedded{ViewMeta::Make(*this)});
   vpack::WriteObject(b, vpack::Embedded{&_meta});
 }
 

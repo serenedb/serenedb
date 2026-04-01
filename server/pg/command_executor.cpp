@@ -106,6 +106,10 @@ yaclib::Future<> DDLExecutor::Execute(velox::RowVectorPtr& batch) {
         const auto& stmt = *castNode(RenameStmt, &_node);
         return RenameObject(*_context, stmt);
       }
+      case NodeTag::T_AlterTableStmt: {
+        const auto& stmt = *castNode(AlterTableStmt, &_node);
+        return AlterTable(*_context, stmt);
+      }
       default:
         SDB_UNREACHABLE();
     }

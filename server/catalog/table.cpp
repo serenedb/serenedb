@@ -76,7 +76,8 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _shard_ids{other._shard_ids},
     _number_of_shards{options.number_of_shards},
     _replication_factor{options.replication_factor},
-    _write_concern{options.write_concern} {}
+    _write_concern{options.write_concern},
+    _file_info{other._file_info} {}
 
 velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
                               const std::vector<Column::Id>& pk_columns) {
@@ -218,24 +219,8 @@ void catalog::Table::WriteInternal(vpack::Builder& build) const {
                      ObjectInternal{_database_id});
 }
 
-Result Table::RenameColumn(std::shared_ptr<Table>& result,
-                           std::string_view old_name,
-                           std::string_view new_name) const {
-  auto col_it = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.name == old_name; });
-  if (col_it == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME, "column \"", old_name,
-                  "\" does not exist"};
-  }
-
-  if (absl::c_any_of(_columns,
-                     [&](const Column& c) { return c.name == new_name; })) {
-    return Result{
-      ERROR_SERVER_DUPLICATE_NAME, "column \"", new_name,
-      "\" of relation \"",         GetName(),   "\" already exists"};
-  }
-
-  NewOptions opts{
+NewOptions Table::MakeNewOptions() const {
+  return {
     .name = GetName(),
     .schema = _schema,
     .number_of_shards = _number_of_shards,
@@ -243,7 +228,31 @@ Result Table::RenameColumn(std::shared_ptr<Table>& result,
     .write_concern = _write_concern,
     .wait_for_sync = _wait_for_sync,
   };
-  auto new_table = std::make_shared<Table>(*this, std::move(opts));
+}
+
+Result Table::Rename(std::shared_ptr<Table>& result,
+                     std::string_view new_name) const {
+  auto opts = MakeNewOptions();
+  opts.name = new_name;
+  result = std::make_shared<Table>(*this, std::move(opts));
+  return {};
+}
+
+Result Table::RenameColumn(std::shared_ptr<Table>& result,
+                           std::string_view old_name,
+                           std::string_view new_name) const {
+  auto col_it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.name == old_name; });
+  if (col_it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  if (absl::c_any_of(_columns,
+                     [&](const Column& c) { return c.name == new_name; })) {
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
+  }
+
+  auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
 
   auto& target = new_table->_columns[std::distance(_columns.begin(), col_it)];
   target.name = std::string{new_name};
@@ -263,25 +272,55 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
     return c.name == old_name;
   });
   if (it == _check_constraints.end()) {
-    return Result{
-      ERROR_SERVER_ILLEGAL_NAME, "constraint \"", old_name,
-      "\" for table \"",         GetName(),       "\" does not exist"};
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  NewOptions opts{
-    .name = GetName(),
-    .schema = _schema,
-    .number_of_shards = _number_of_shards,
-    .replication_factor = _replication_factor,
-    .write_concern = _write_concern,
-    .wait_for_sync = _wait_for_sync,
-  };
-  auto new_table = std::make_shared<Table>(*this, std::move(opts));
+  if (absl::c_any_of(_check_constraints, [&](const CheckConstraint& c) {
+        return c.name == new_name;
+      })) {
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
+  }
+
+  auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
 
   auto& target =
     new_table
       ->_check_constraints[std::distance(_check_constraints.begin(), it)];
   target.name = std::string{new_name};
+
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::DropConstraint(std::shared_ptr<Table>& result,
+                             std::string_view constraint_name) const {
+  auto it = absl::c_find_if(_check_constraints, [&](const CheckConstraint& c) {
+    return c.name == constraint_name;
+  });
+  if (it == _check_constraints.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
+
+  auto idx = std::distance(_check_constraints.begin(), it);
+  new_table->_check_constraints.erase(
+    new_table->_check_constraints.begin() + idx);
+
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::AddConstraint(std::shared_ptr<Table>& result,
+                            CheckConstraint constraint) const {
+  if (absl::c_any_of(_check_constraints, [&](const CheckConstraint& c) {
+        return c.name == constraint.name;
+      })) {
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
+  }
+
+  auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
+  new_table->_check_constraints.push_back(std::move(constraint));
 
   result = std::move(new_table);
   return {};

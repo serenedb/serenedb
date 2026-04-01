@@ -92,11 +92,17 @@ class Table : public SchemaObject {
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
 
+  Result Rename(std::shared_ptr<Table>& result,
+                std::string_view new_name) const;
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
   Result RenameConstraint(std::shared_ptr<Table>& result,
                           std::string_view old_name,
                           std::string_view new_name) const;
+  Result DropConstraint(std::shared_ptr<Table>& result,
+                        std::string_view constraint_name) const;
+  Result AddConstraint(std::shared_ptr<Table>& result,
+                       CheckConstraint constraint) const;
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {
@@ -107,6 +113,8 @@ class Table : public SchemaObject {
 #endif
 
  private:
+  NewOptions MakeNewOptions() const;
+
   struct TableOutput;
   TableOutput MakeTableOptions() const;
 

@@ -210,7 +210,7 @@ SereneDBTableLayout::createTableHandle(
       if (!res.constraints.empty()) {
         ranges = ToResolvedRanges(res.constraints, *pk_type);
       } else {
-        zero_ranges = true;  // contradictory predicate → 0-range scan
+        zero_ranges = true;  // contradictory predicate -> 0-range scan
       }
       remaining_filter = std::move(res.remaining_filter);
     }

@@ -1,0 +1,163 @@
+# Tests for system function return/argument types fixed in this PR.
+# Verifies: pg_client_encoding, pg_get_userbyid, pg_encoding_to_char,
+# pg_char_to_encoding, pg_my_temp_schema, xid8/xid transaction functions,
+# privilege check overloads.
+
+
+# ====== pg_client_encoding() -> name ======
+
+query
+SELECT pg_typeof(pg_client_encoding())::text;
+----
+pg_typeof
+name
+
+
+query
+SELECT pg_client_encoding();
+----
+pg_client_encoding
+UTF8
+
+
+# ====== pg_get_userbyid(oid) -> name ======
+
+query
+SELECT pg_typeof(pg_get_userbyid(10::oid))::text;
+----
+pg_typeof
+name
+
+
+# ====== pg_encoding_to_char(int4) -> name ======
+
+query
+SELECT pg_typeof(pg_encoding_to_char(6))::text;
+----
+pg_typeof
+name
+
+
+query
+SELECT pg_encoding_to_char(6);
+----
+pg_encoding_to_char
+UTF8
+
+
+# ====== pg_char_to_encoding(name) -> int4 ======
+
+query
+SELECT pg_char_to_encoding('UTF8');
+----
+pg_char_to_encoding
+6
+
+
+# ====== pg_my_temp_schema() -> oid ======
+
+query
+SELECT pg_typeof(pg_my_temp_schema())::text;
+----
+pg_typeof
+oid
+
+
+# ====== pg_current_xact_id() -> xid8 ======
+
+statement error
+SELECT pg_current_xact_id();
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+# pg_current_xact_id returns xid8 type (verify via pg_typeof in pg only)
+
+
+# ====== pg_xact_status(xid8) -> text ======
+# Accepts xid8 argument
+
+statement error
+SELECT pg_xact_status(1::xid8);
+----
+db error: ERROR: Function is not supported in SereneDB
+
+
+# ====== has_table_privilege: oid-role overloads ======
+
+query
+SELECT has_table_privilege(10::oid, 'pg_class', 'SELECT');
+----
+has_table_privilege
+t
+
+
+query
+SELECT has_table_privilege(10::oid, 'pg_class'::regclass, 'SELECT');
+----
+has_table_privilege
+t
+
+
+# ====== has_schema_privilege: oid-role overloads ======
+
+query
+SELECT has_schema_privilege(10::oid, 'public', 'USAGE');
+----
+has_schema_privilege
+t
+
+
+query
+SELECT has_schema_privilege(10::oid, 11::oid, 'USAGE');
+----
+has_schema_privilege
+t
+
+
+# ====== pg_has_role: oid-role overloads ======
+
+query
+SELECT pg_has_role(10::oid, 'postgres', 'USAGE');
+----
+pg_has_role
+t
+
+
+query
+SELECT pg_has_role(10::oid, 10::oid, 'USAGE');
+----
+pg_has_role
+t
+
+
+# ====== has_column_privilege: (name/oid, oid/text, int2/text, text) ======
+# attnum-based overload with name role
+
+statement ok
+CREATE TABLE col_priv_test (id INT PRIMARY KEY, val TEXT)
+
+
+query
+SELECT has_column_privilege('postgres', 'col_priv_test', 1::int2, 'SELECT');
+----
+has_column_privilege
+t
+
+
+query
+SELECT has_column_privilege(10::oid, 'col_priv_test', 1::int2, 'SELECT');
+----
+has_column_privilege
+t
+
+
+query
+SELECT has_column_privilege(10::oid, 'col_priv_test'::regclass, 1::int2, 'SELECT');
+----
+has_column_privilege
+t
+
+
+statement ok
+DROP TABLE col_priv_test

@@ -220,14 +220,14 @@ class KeyConstraint {
 
   std::span<const std::string> _pk_names;
   bool _contradictory =
-    false;  // true → contradictory predicate, matches no rows
+    false;  // true -> contradictory predicate, matches no rows
 
   containers::FlatHashMap<std::string, ColumnRange> _column_ranges;
   SourceExprsMap _source_exprs;
 };
 
 // A fully resolved point: one variant per PK column, ordered by pk_type.
-// Used after filter extraction — no expression metadata, no names.
+// Used after filter extraction -- no expression metadata, no names.
 using ResolvedPoint = std::vector<velox::variant>;
 
 // Converts specific (fully constrained) KeyConstraints to SpecificPoint,
@@ -245,8 +245,8 @@ struct ResolvedRange {
   // Ordering: compare the effective (K+1)-element sequence element by element.
   // Each element is either a prefix value (exact) or, at position K, the
   // range_col left boundary (nullopt = -inf, sorts before any concrete value).
-  // When two ranges share all elements of the shorter one → ranges overlap,
-  // which must not happen — asserts.
+  // When two ranges share all elements of the shorter one -> ranges overlap,
+  // which must not happen -- asserts.
   bool operator<(const ResolvedRange& other) const {
     // Compare prefix values (exact equality columns) first.
     const size_t common_prefix = std::min(prefix.size(), other.prefix.size());
@@ -266,7 +266,7 @@ struct ResolvedRange {
     // Same prefix length: compare left bounds of range_col.
     // Use LeftBoundLessThan so that ties on value are broken by inclusivity:
     // [v, ...] < (v, ...) because [v starts earlier.
-    // Two ranges with identical left bounds overlap — asserts.
+    // Two ranges with identical left bounds overlap -- asserts.
     if (range_col.LeftBoundLessThan(other.range_col)) {
       return true;
     }
@@ -274,7 +274,7 @@ struct ResolvedRange {
       return false;
     }
 
-    // Identical left bounds → ranges overlap.
+    // Identical left bounds -> ranges overlap.
     SDB_UNREACHABLE();
   }
 };

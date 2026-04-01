@@ -20,7 +20,7 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       PRESET: 'coverage'
-      LOCATION: 'x86'
+      LOCATION: 'X64'
       BRANCH: 'main'
       BUILD_CONFIG: '{"SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
     secrets:
@@ -35,7 +35,7 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       PRESET: 'msan'
-      LOCATION: 'x86'
+      LOCATION: 'X64'
       BRANCH: 'main'
       BUILD_CONFIG: '{"SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
     secrets:
@@ -50,7 +50,7 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       PRESET: 'asan'
-      LOCATION: 'x86'
+      LOCATION: 'X64'
       BRANCH: 'main'
       BUILD_CONFIG: '{"SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
     secrets:
@@ -65,7 +65,7 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       PRESET: 'ubsan'
-      LOCATION: 'x86'
+      LOCATION: 'X64'
       BRANCH: 'main'
       BUILD_CONFIG: '{"SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
     secrets:
@@ -80,7 +80,7 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       PRESET: 'tsan'
-      LOCATION: 'x86'
+      LOCATION: 'X64'
       BRANCH: 'main'
       BUILD_CONFIG: '{"SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
     secrets:

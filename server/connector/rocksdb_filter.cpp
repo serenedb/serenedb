@@ -46,7 +46,7 @@ std::vector<KeyConstraint> AnyKeyConstraint(
   return {KeyConstraint::MakeAny(names)};
 }
 
-// Helper: produces two KCs for a != v  →  a < v  OR  a > v.
+// Helper: produces two KCs for a != v  ->  a < v  OR  a > v.
 std::vector<KeyConstraint> MakeNeqConstraints(
   std::string_view col_name, const velox::core::ConstantTypedExpr& val,
   const velox::core::ITypedExpr* source,
@@ -79,7 +79,7 @@ std::vector<KeyConstraint> ExtractFilterEq(
   return {p};
 }
 
-// a != v  →  a < v  OR  a > v
+// a != v  ->  a < v  OR  a > v
 std::vector<KeyConstraint> ExtractFilterNeq(
   const velox::core::CallTypedExpr* func_call,
   std::span<const std::string> pk_names) {
@@ -191,8 +191,8 @@ std::vector<KeyConstraint> ExtractFilterAnd(
   SDB_ASSERT(!func_call->inputs().empty());
 
   // Cartesian product of all children's point sets, intersecting each tuple.
-  // An unconstrained child (AnyKeyConstraint — empty filters) acts as identity
-  // because Intersect(P, {}) == P, so no special-casing is needed.
+  // An unconstrained child (AnyPoint -- empty filters) acts as identity because
+  // Intersect(P, {}) == P, so no special-casing is needed.
   std::vector<KeyConstraint> result =
     ExtractFilterExpr(func_call->inputs()[0], pk_names);
   for (size_t i = 1; i < func_call->inputs().size(); ++i) {
@@ -250,7 +250,7 @@ std::vector<KeyConstraint> ExtractFilterOr(
         })) {
       continue;
     }
-    // Empty pts means all intersections were unconstrained — treat as AnyKC.
+    // Empty pts means all intersections were unconstrained -- treat as AnyKC.
     // Also, any unconstrained constraint makes the whole OR unconstrained.
     if (constraints.empty() ||
         absl::c_any_of(constraints, [](const KeyConstraint& p) {
@@ -261,7 +261,7 @@ std::vector<KeyConstraint> ExtractFilterOr(
     result.insert(result.end(), std::make_move_iterator(constraints.begin()),
                   std::make_move_iterator(constraints.end()));
   }
-  // All branches were void → OR is itself impossible.
+  // All branches were void -> OR is itself impossible.
   if (result.empty()) {
     return {KeyConstraint::MakeContradictory(pk_names)};
   }
@@ -295,14 +295,14 @@ std::vector<KeyConstraint> ExtractFilterNot(
   }
   const auto* child = child_expr->asUnchecked<velox::core::CallTypedExpr>();
 
-  // not(not(x)) → x
+  // not(not(x)) -> x
   if (IsCallOf(child, "_not")) {
     auto inner = child->asUnchecked<velox::core::CallTypedExpr>();
     SDB_ASSERT(inner->inputs().size() == 1);
     return ExtractFilterExpr(inner->inputs()[0], pk_names);
   }
 
-  // not(and(a, b)) → or(not(a), not(b))  — De Morgan
+  // not(and(a, b)) -> or(not(a), not(b))  -- De Morgan
   if (child->name() == velox::expression::kAnd) {
     std::vector<KeyConstraint> result;
     for (const auto& input : child->inputs()) {
@@ -321,7 +321,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
     return MergeKeyConstraintsPrecise(std::move(result));
   }
 
-  // not(or(a, b)) → and(not(a), not(b))  — De Morgan
+  // not(or(a, b)) -> and(not(a), not(b))  -- De Morgan
   if (child->name() == velox::expression::kOr) {
     std::vector<KeyConstraint> result;
     bool first = true;
@@ -350,7 +350,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
     return result;
   }
 
-  // not(a > v) → a <= v, etc.
+  // not(a > v) -> a <= v, etc.
   if (IsCallOf(child, "_gt") || IsCallOf(child, "_gte") ||
       IsCallOf(child, "_lt") || IsCallOf(child, "_lte")) {
     if (child->inputs().size() != 2) {
@@ -392,7 +392,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
     return {std::move(kc)};
   }
 
-  // not(a != v) → a = v
+  // not(a != v) -> a = v
   if (IsCallOf(child, "_neq")) {
     if (child->inputs().size() != 2 ||
         !child->inputs()[0]->isFieldAccessKind() ||
@@ -411,7 +411,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
     return {std::move(kc)};
   }
 
-  // not(a = v) → a < v  OR  a > v
+  // not(a = v) -> a < v  OR  a > v
   if (IsCallOf(child, "_eq")) {
     if (child->inputs().size() != 2 ||
         !child->inputs()[0]->isFieldAccessKind() ||
@@ -429,7 +429,7 @@ std::vector<KeyConstraint> ExtractFilterNot(
                               pk_names);
   }
 
-  // not(a in (x1, ..., xn)) → n+1 open intervals between the sorted values
+  // not(a in (x1, ..., xn)) -> n+1 open intervals between the sorted values
   if (IsCallOf(child, "_in")) {
     if (child->inputs().size() < 2 ||
         !child->inputs()[0]->isFieldAccessKind() ||
@@ -573,8 +573,8 @@ velox::core::TypedExprPtr RewriteExpr(
 // ── Sweep helpers ────────────────────────────────────────────────────────────
 
 // One atomic segment on a single dimension's axis.
-// is_point=false → open interval (left, right); has_left/has_right mark
-// whether the endpoint is finite. is_point=true → closed singleton {left}.
+// is_point=false -> open interval (left, right); has_left/has_right mark
+// whether the endpoint is finite. is_point=true -> closed singleton {left}.
 struct Atom {
   bool is_point{false};
   bool has_left{false};
@@ -620,7 +620,7 @@ std::vector<Atom> BuildAtoms(const std::vector<velox::variant>& pts) {
 // cr with no bounds is treated as (-inf, +inf) and covers every atom.
 bool AtomContainedBy(const Atom& a, const ColumnRange& cr) {
   if (a.is_point) {
-    // Check: cr.left ≤ a.left  AND  cr.right ≥ a.left
+    // Check: cr.left <= a.left  AND  cr.right >= a.left
     const velox::variant& p = a.left;
     const bool left_ok = !cr.HasLeft() || cr.left_value < p ||
                          (cr.left_value == p && cr.IsLeftInclusive());
@@ -631,11 +631,11 @@ bool AtomContainedBy(const Atom& a, const ColumnRange& cr) {
     // Open interval atom (p, q): cr.left < q  AND  cr.right > p.
     // Infinite atom ends are handled by short-circuit.
     const bool left_ok =
-      !a.has_right ||   // atom right is +inf → cr always satisfies
-      !cr.HasLeft() ||  // cr left is -inf → always ok
+      !a.has_right ||   // atom right is +inf -> cr always satisfies
+      !cr.HasLeft() ||  // cr left is -inf -> always ok
       cr.left_value < a.right;
-    const bool right_ok = !a.has_left ||     // atom left is -inf → always ok
-                          !cr.HasRight() ||  // cr right is +inf → always ok
+    const bool right_ok = !a.has_left ||     // atom left is -inf -> always ok
+                          !cr.HasRight() ||  // cr right is +inf -> always ok
                           a.left < cr.right_value;
     return left_ok && right_ok;
   }
@@ -666,9 +666,11 @@ ColumnRange FuseAtomRange(const Atom& first, const Atom& last) {
     return AtomToColumnRange(first);
   }
 
-  // Left: point atom → inclusive; open atom → exclusive; no left → unbounded.
+  // Left: point atom -> inclusive; open atom -> exclusive; no left ->
+  // unbounded.
   const bool left_inc = first.is_point;
-  // Right: point atom → inclusive; open atom → exclusive; no right → unbounded.
+  // Right: point atom -> inclusive; open atom -> exclusive; no right ->
+  // unbounded.
   const bool right_inc = last.is_point;
 
   const bool has_l = first.has_left;
@@ -774,7 +776,7 @@ std::vector<SweepRange> MergeAlongDim0(
       const velox::variant& curr_start =
         curr.is_point ? curr.left
                       : (curr.has_left ? curr.left : velox::variant{});
-      // In BuildAtoms the sequence strictly alternates open/point/open/…, so
+      // In BuildAtoms the sequence strictly alternates open/point/open/..., so
       // two open-interval atoms are never adjacent: there is always a point
       // atom between them. If that point atom was skipped (not covered by any
       // range) there is a gap at the shared boundary and we must NOT merge.
@@ -1102,7 +1104,7 @@ ColumnRange ColumnRange::UnionWith(const ColumnRange& other) const {
       kLeftBounded | (left_src.IsLeftInclusive() ? kLeftInclusive : kZero);
     result.left_value = left_src.left_value;
   }
-  // else: at least one side is unbounded → result has no left bound.
+  // else: at least one side is unbounded -> result has no left bound.
 
   // Widest right bound: pick the greater (less restrictive) upper bound.
   if (HasRight() && other.HasRight()) {
@@ -1120,7 +1122,7 @@ ColumnRange ColumnRange::UnionWith(const ColumnRange& other) const {
       kRightBounded | (right_src.IsRightInclusive() ? kRightInclusive : kZero);
     result.right_value = right_src.right_value;
   }
-  // else: at least one side is unbounded → result has no right bound.
+  // else: at least one side is unbounded -> result has no right bound.
 
   return result;
 }
@@ -1253,13 +1255,13 @@ std::optional<KeyConstraint> KeyConstraint::TryUnion(const KeyConstraint& lhs,
   const ColumnRange* lf = lhs.FindColumnRange(differing_col);
   const ColumnRange* rf = rhs.FindColumnRange(differing_col);
 
-  // One side unconstrained on this column → union removes the constraint.
+  // One side unconstrained on this column -> union removes the constraint.
   if (!lf || !rf) {
     result._column_ranges.erase(differing_col);
     return result;
   }
 
-  // Both have a range → merge only if they overlap (no gap).
+  // Both have a range -> merge only if they overlap (no gap).
   auto merged =
     lf->OverlapsWith(*rf) ? std::optional{lf->UnionWith(*rf)} : std::nullopt;
   if (!merged) {
@@ -1450,7 +1452,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   }
 
   // If the constraints' first-column ranges together cover (-inf, +inf) with
-  // no gap, the range scan reads every row — equivalent to a full scan.
+  // no gap, the range scan reads every row -- equivalent to a full scan.
   // Detect this by checking that sorted disjoint ranges tile the whole axis:
   // first has no left bound, last has no right bound, and every consecutive
   // pair is adjacent (right of prev and left of next share a value with

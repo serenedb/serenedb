@@ -76,26 +76,86 @@ inline velox::AllowedCoercions AllowedCoercions() {
     }
   };
 
-  add(velox::TINYINT(), {velox::SMALLINT(), velox::INTEGER(), velox::BIGINT(),
-                         velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
-  add(velox::SMALLINT(), {velox::INTEGER(), velox::BIGINT(), velox::HUGEINT(),
-                          velox::REAL(), velox::DOUBLE()});
-  add(velox::INTEGER(),
-      {velox::BIGINT(), velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
-  add(velox::BIGINT(), {velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
-  add(velox::REAL(), {velox::DOUBLE()});
-  add(velox::DATE(), {velox::TIMESTAMP()});
-  add(velox::INTEGER(), {REGCLASS()});
-  add(velox::BIGINT(), {REGCLASS()});
-  add(REGCLASS(), {velox::INTEGER(), velox::BIGINT()});
-  add(REGTYPE(), {velox::INTEGER(), velox::BIGINT()});
+  static const auto kRegTypes = {
+    REGPROC(),   REGCLASS(),      REGTYPE(),      REGNAMESPACE(),
+    REGOPER(),   REGOPERATOR(),   REGPROCEDURE(), REGROLE(),
+    REGCONFIG(), REGDICTIONARY(), REGCOLLATION(),
+  };
+  add(PGOID(), kRegTypes);
+  for (const auto& reg : kRegTypes) {
+    add(reg, {PGOID()});
+  }
+  add(REGPROC(), {REGPROCEDURE()});
+  add(REGPROCEDURE(), {REGPROC()});
+  add(REGOPER(), {REGOPERATOR()});
+  add(REGOPERATOR(), {REGOPER()});
 
-  add_same_cost(
-    PG_UNKNOWN(),
-    {velox::VARCHAR(), velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(),
-     velox::BIGINT(), velox::HUGEINT(), velox::REAL(), velox::DOUBLE(),
-     velox::BOOLEAN(), velox::TIMESTAMP(), velox::DATE(), INTERVAL()},
-    kNullCoercionCost + 1);
+  add(velox::SMALLINT(), {
+                           velox::INTEGER(),
+                           velox::BIGINT(),
+
+                           velox::REAL(),
+                           velox::DOUBLE(),
+
+                           PGOID(),
+                         });
+  add(velox::SMALLINT(), kRegTypes);
+
+  add(velox::INTEGER(), {
+                          velox::BIGINT(),
+
+                          velox::REAL(),
+                          velox::DOUBLE(),
+
+                          PGOID(),
+                        });
+  add(velox::INTEGER(), kRegTypes);
+
+  add(velox::BIGINT(), {
+                         velox::REAL(),
+                         velox::DOUBLE(),
+
+                         PGOID(),
+                       });
+  add(velox::BIGINT(), kRegTypes);
+
+  add(velox::REAL(), {velox::DOUBLE()});
+
+  add(velox::DATE(), {velox::TIMESTAMP()});
+
+  add(velox::VARCHAR(), {REGCLASS(), PGNAME()});
+  add(PGNAME(), {velox::VARCHAR()});
+
+  // PG_UNKNOWN kludge
+  add_same_cost(PGUNKNOWN(),
+                {
+                  velox::BOOLEAN(),
+
+                  velox::SMALLINT(),
+                  velox::INTEGER(),
+                  velox::BIGINT(),
+
+                  velox::REAL(),
+                  velox::DOUBLE(),
+
+                  velox::VARCHAR(),
+
+                  velox::TIMESTAMP(),
+                  velox::DATE(),
+
+                  INTERVAL(),
+
+                  PGNAME(),
+
+                  PGOID(),
+
+                  PGTID(),
+                  PGCID(),
+                  PGXID(),
+                  PGXID8(),
+                },
+                kNullCoercionCost + 1);
+  add_same_cost(PGUNKNOWN(), kRegTypes, kNullCoercionCost + 1);
 
   return coercions;
 }

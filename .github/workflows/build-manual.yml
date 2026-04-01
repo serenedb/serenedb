@@ -1,6 +1,6 @@
 name: SereneDB-Build-Manual
 
-run-name: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
+run-name: "SereneDB [${{ inputs.PRESET }}]"
 
 on:
   workflow_dispatch:
@@ -17,7 +17,6 @@ on:
           - ubsan
           - coverage
           - build
-          - release
       LOCATION:
         description: 'Where the load is executed'
         type: choice
@@ -27,46 +26,17 @@ on:
           - arm
           - self-hosted
         default: 'X64'
-      DOCKER_SERENEDB_IMAGE:
-        description: 'Produce SereneDB Docker Images'
-        required: true
-        type: boolean
-        default: false
-      PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Docker Hub/Registry'
-        required: true
-        type: boolean
-        default: false
-      CREATE_GITHUB_RELEASE:
-        description: 'Create a GitHub Release draft'
-        required: true
-        type: boolean
-        default: false
-      DOCKER_EXTRA_TAGS:
-        description: 'Optional Custom TAGS for DOCKER_SERENEDB_IMAGE'
-        required: false
-        type: string
-        default: ''
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
         required: false
         default: ''
-      DOCKER_BUILD_IMAGES:
-        description: 'Produce SereneDB Build Images'
-        required: true
-        type: boolean
-        default: false
       BUILD_CONFIG:
         description: 'JSON configuration for builds and job settings'
         type: string
         required: false
         default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
-      SERENEDB_VERSION_PATCH:
-        description: 'Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release.'
-        required: false
-        type: string
-        default: ''
+
 permissions:
   statuses: write
   contents: write
@@ -75,17 +45,9 @@ jobs:
   call-reusable:
     uses: ./.github/workflows/build-reusable.yml
     with:
-      # General environment
       PRESET: ${{ inputs.PRESET }}
       LOCATION: ${{ inputs.LOCATION }}
-      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
-      PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-      DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
       EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
-      DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
-      # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-      CREATE_GITHUB_RELEASE: ${{ inputs.CREATE_GITHUB_RELEASE }}
-      SERENEDB_VERSION_PATCH: ${{ inputs.SERENEDB_VERSION_PATCH }}
 
     secrets: inherit

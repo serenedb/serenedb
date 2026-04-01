@@ -1,9 +1,11 @@
 # ---- Extract Stage ----
 FROM ubuntu:24.04 AS extractor
 
-COPY install.tar.gz /tmp/
+ARG TARGETARCH
+COPY install-${TARGETARCH}.tar.gz /tmp/install.tar.gz
 RUN mkdir -p /tmp/serenedb-extract \
     && tar -xzf /tmp/install.tar.gz -C /tmp/serenedb-extract --strip-components=1 \
+    && rm /tmp/install.tar.gz \
     && cd /tmp/serenedb-extract \
     && if [ -d sbin ]; then cp -f sbin/* usr/sbin/; rm -rf sbin; fi \
     && if [ -d bin ]; then cp -f bin/* usr/bin/; rm -rf bin; fi

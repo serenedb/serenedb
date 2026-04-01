@@ -769,7 +769,7 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Source>::next(
 // Iterates a single RocksDB column across multiple key ranges.
 // One underlying rocksdb::Iterator is created per range, each configured with
 // its own iterate_lower_bound / iterate_upper_bound in ReadOptions so RocksDB
-// enforces the bounds natively — no per-step upper-bound check in Next().
+// enforces the bounds natively -- no per-step upper-bound check in Next().
 class RocksDBMultiRangeIterator : public rocksdb::Iterator {
  public:
   using IteratorFactory =
@@ -777,7 +777,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
 
   // col_prefix     : encoded object_id + column_id prefix for this column
   // col_upper_bound: exclusive upper bound for the whole column (must outlive
-  //                  this iterator — typically _upper_bound_slices[i])
+  //                  this iterator -- typically _upper_bound_slices[i])
   // ranges         : pre-sorted SpecificRange list for the query
   // pk_type        : PK row type for encoding boundary values
   // factory        : creates a rocksdb::Iterator given ReadOptions
@@ -789,7 +789,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     SDB_ASSERT(absl::c_is_sorted(ranges));
     // Two-pass construction: first populate bounds (strings + slices), then
     // create iterators. The vector is reserved so no reallocation occurs
-    // between the two passes — &entry.upper_slice stays stable when the
+    // between the two passes -- &entry.upper_slice stays stable when the
     // iterator is created with opts.iterate_upper_bound = &entry.upper_slice.
     _entries.reserve(ranges.size());
     for (const auto& sr : ranges) {
@@ -839,13 +839,13 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     if (_current < _entries.size()) {
       return _entries[_current].iter->status();
     }
-    // All ranges exhausted — return the last iterator's status (OK unless a
+    // All ranges exhausted -- return the last iterator's status (OK unless a
     // RocksDB error occurred on the final range).
     return _entries.empty() ? rocksdb::Status::OK()
                             : _entries.back().iter->status();
   }
 
-  // Unsupported navigation — only forward iteration is needed.
+  // Unsupported navigation -- only forward iteration is needed.
   void SeekToFirst() override { SDB_ASSERT(false, "not supported"); }
   void SeekToLast() override { SDB_ASSERT(false, "not supported"); }
   void Seek(const rocksdb::Slice&) override {
@@ -885,7 +885,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
         return;
       }
     }
-    key.clear();  // all 0xff — no upper bound
+    key.clear();  // all 0xff -- no upper bound
   }
 
   static Entry BuildBounds(const std::string& col_prefix,
@@ -916,10 +916,10 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     }
 
     // Upper bound (exclusive for iterate_upper_bound).
-    // Exclusive right: encode value directly — RocksDB stops before it.
+    // Exclusive right: encode value directly -- RocksDB stops before it.
     // Inclusive right or prefix-only: encode value/prefix then advance last
     //   byte so all keys sharing that prefix (e.g. multi-col PK suffixes) are
-    //   included. Clears to empty if all 0xff → fall back to col_upper_bound.
+    //   included. Clears to empty if all 0xff -> fall back to col_upper_bound.
     if (sr.range_col.HasRight()) {
       e.upper_key = col_prefix;
       encode_prefix(e.upper_key);

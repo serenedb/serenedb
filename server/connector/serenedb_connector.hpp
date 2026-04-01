@@ -266,7 +266,7 @@ class SereneDBConnectorTableHandle final
   velox::RowTypePtr _pk_type;
   std::vector<ResolvedPoint> _points;
   std::vector<ResolvedRange> _ranges;
-  bool _zero_ranges = false;  // true → contradictory predicate, 0-range scan
+  bool _zero_ranges = false;  // true -> contradictory predicate, 0-range scan
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };

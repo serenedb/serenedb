@@ -110,8 +110,25 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/checkout@v5
+      - name: Get PR info
+        id: pr-info
+        uses: actions/github-script@v7
         with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            });
+            const isFork = pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`;
+            core.setOutput('branch', pr.head.ref);
+            core.setOutput('is_fork', isFork.toString());
+            // For forks: use main (trusted workflows). For same-repo: use PR branch (testable CI changes).
+            core.setOutput('checkout_ref', isFork ? pr.base.ref : pr.head.ref);
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.pr-info.outputs.checkout_ref }}
           sparse-checkout: .github/workflows/build-manual.yml
           sparse-checkout-cone-mode: false
 

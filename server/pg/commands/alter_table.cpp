@@ -40,7 +40,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
 namespace {
 
 std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {

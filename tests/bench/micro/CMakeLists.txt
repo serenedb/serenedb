@@ -26,6 +26,7 @@ add_bench(fp_neg_zero_cmp)
 add_bench(uuid_print)
 add_bench(json_functions)
 add_bench(config_var_lookup)
+add_bench(norm_gather)
 
 # vector distances
 add_executable(vector-distances-bench vector_distances.cpp)

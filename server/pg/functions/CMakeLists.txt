@@ -26,4 +26,5 @@ target_sources(
         math_extra.cpp
         regexp.cpp
         string_extra.cpp
+        size.cpp
 )

@@ -21,7 +21,87 @@ reltuples
 
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE INDEX t_idx ON t USING inverted(name test_english);
+
+
+statement ok
 VACUUM (SYNC_STATS) t;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+query
+SELECT pg_relation_size('t'::regclass) > 0 AS table_has_size;
+----
+table_has_size
+t
+
+
+query
+SELECT pg_relation_size('t'::regclass, 'main') > 0 AS table_main_has_size;
+----
+table_main_has_size
+t
+
+
+query
+SELECT pg_relation_size('t'::regclass, 'fsm') = 0 AS fsm_is_empty;
+----
+fsm_is_empty
+t
+
+
+query
+SELECT pg_relation_size('t'::regclass, 'vm') = 0 AS vm_is_empty;
+----
+vm_is_empty
+t
+
+
+query
+SELECT pg_relation_size('t'::regclass, 'init') = 0 AS init_is_empty;
+----
+init_is_empty
+t
+
+
+query error db error: ERROR: relation with OID 101 does not exist
+SELECT pg_relation_size(101, 'init') = 0 AS init_is_empty;
+
+
+query
+SELECT pg_relation_size('t_idx'::regclass) > 0 AS index_has_size;
+----
+index_has_size
+t
+
+
+query
+SELECT pg_relation_size('t_idx'::regclass, 'main') > 0 AS index_main_has_size;
+----
+index_main_has_size
+t
+
+
+query
+SELECT pg_relation_size('t_idx'::regclass, 'fsm') = 0 AS index_fsm_is_empty;
+----
+index_fsm_is_empty
+t
 
 
 statement ok
@@ -38,3 +118,51 @@ SELECT reltuples FROM pg_class WHERE relname = 't';
 ----
 reltuples
 6
+
+
+connection after_reboot
+query
+SELECT pg_relation_size('t'::regclass) > 0 AS table_has_size;
+----
+table_has_size
+t
+
+
+connection after_reboot
+query
+SELECT pg_relation_size('t'::regclass, 'main') > 0 AS table_main_has_size;
+----
+table_main_has_size
+t
+
+
+connection after_reboot
+query
+SELECT pg_relation_size('t'::regclass, 'fsm') = 0 AS fsm_is_empty;
+----
+fsm_is_empty
+t
+
+
+connection after_reboot
+query
+SELECT pg_relation_size('t_idx'::regclass) > 0 AS index_has_size;
+----
+index_has_size
+t
+
+
+connection after_reboot
+query
+SELECT pg_relation_size('t_idx'::regclass, 'main') > 0 AS index_main_has_size;
+----
+index_main_has_size
+t
+
+
+connection after_reboot
+query
+SELECT pg_relation_size('t_idx'::regclass, 'fsm') = 0 AS index_fsm_is_empty;
+----
+index_fsm_is_empty
+t

@@ -43,8 +43,7 @@ namespace sdb::pg {
 
 namespace {
 
-std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
-                                                    Node* expr) {
+std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {
   auto column_expr = std::make_shared<ColumnExpr>();
   auto r = column_expr->Init(database_id, expr);
   if (!r.ok()) {
@@ -111,9 +110,8 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
       case AT_AddConstraint: {
         auto* constraint = castNode(Constraint, cmd.def);
         if (constraint->contype != CONSTR_CHECK) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-            ERR_MSG("only CHECK constraints are supported"));
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("only CHECK constraints are supported"));
         }
 
         std::string name;
@@ -129,12 +127,11 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
           db, schema, table_name,
           [&](const catalog::Table& table,
               std::shared_ptr<catalog::Table>& updated) {
-            return table.AddConstraint(
-              updated, catalog::CheckConstraint{
-                         .id = catalog::NextId(),
-                         .name = std::move(name),
-                         .expr = std::move(expr),
-                       });
+            return table.AddConstraint(updated, catalog::CheckConstraint{
+                                                  .id = catalog::NextId(),
+                                                  .name = std::move(name),
+                                                  .expr = std::move(expr),
+                                                });
           });
 
         if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
@@ -142,10 +139,9 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
         }
 
         if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-            ERR_MSG("constraint \"", name, "\" for relation \"", table_name,
-                    "\" already exists"));
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                          ERR_MSG("constraint \"", name, "\" for relation \"",
+                                  table_name, "\" already exists"));
         }
 
         if (!r.ok()) {
@@ -154,9 +150,8 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
         return;
       }
       default:
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("ALTER TABLE subcommand is not yet supported"));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("ALTER TABLE subcommand is not yet supported"));
     }
   });
 

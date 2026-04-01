@@ -183,8 +183,6 @@ class Function final : public SchemaObject {
 
   ~Function() final;
 
-  void WriteProperties(vpack::Builder& build) const final;
-
   void WriteInternal(vpack::Builder& build) const final;
 
   const FunctionSignature& Signature() const noexcept { return _signature; }

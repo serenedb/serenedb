@@ -207,12 +207,6 @@ Table::TableOutput Table::MakeTableOptions() const {
   };
 }
 
-void catalog::Table::WriteProperties(vpack::Builder& build) const {
-  SDB_ASSERT(build.isOpenObject());
-  vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
-                     ObjectProperties{});
-}
-
 void catalog::Table::WriteInternal(vpack::Builder& build) const {
   SDB_ASSERT(build.isOpenObject());
   vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
@@ -304,8 +298,8 @@ Result Table::DropConstraint(std::shared_ptr<Table>& result,
   auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
 
   auto idx = std::distance(_check_constraints.begin(), it);
-  new_table->_check_constraints.erase(
-    new_table->_check_constraints.begin() + idx);
+  new_table->_check_constraints.erase(new_table->_check_constraints.begin() +
+                                      idx);
 
   result = std::move(new_table);
   return {};

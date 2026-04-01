@@ -178,27 +178,6 @@ catalog::Function::Function(FunctionProperties&& properties,
 
 catalog::Function::~Function() = default;
 
-void catalog::Function::WriteProperties(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
-  vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{
-                                .id = Identifier{GetId().id()},
-                                .name = GetName(),
-                              }});
-  builder.add("signature");
-  vpack::WriteObject(builder, _signature);
-  builder.add("options");
-  vpack::WriteObject(builder, _options);
-  builder.add("implementation");
-  switch (_options.language) {
-    case FunctionLanguage::SQL:
-      _sql_impl->ToVPack(builder);
-      break;
-    default:
-      SDB_ENSURE(false, ERROR_BAD_PARAMETER,
-                 "Unsupported function language: ", _options.language);
-  }
-}
-
 void catalog::Function::WriteInternal(vpack::Builder& builder) const {
   SDB_ASSERT(builder.isOpenObject());
   vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{

@@ -51,7 +51,6 @@ class Database final : public Object {
       _write_concern{options.writeConcern} {}
 
   void WriteInternal(vpack::Builder& build) const final;
-  void WriteProperties(vpack::Builder& build) const;
 
   auto GetReplicationFactor() const noexcept { return _replication_factor; }
   auto GetWriteConcern() const noexcept { return _write_concern; }

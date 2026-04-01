@@ -151,10 +151,6 @@ class DatabaseObject : public Object {
  public:
   ObjectId GetDatabaseId() const noexcept { return _database_id; }
 
-  virtual void WriteProperties(vpack::Builder& build) const {
-    WriteInternal(build);
-  }
-
  protected:
   DatabaseObject(ObjectId owner_id, ObjectId database_id, ObjectId id,
                  std::string_view name, ObjectType type)

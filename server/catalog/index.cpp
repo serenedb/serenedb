@@ -181,7 +181,7 @@ Index::IndexOutput Index::MakeIndexOutput() const {
 
 void Index::WriteInternalImpl(vpack::Builder& builder,
                               absl::FunctionRef<void()> impl_write) const {
-  vpack::ObjectBuilder scope_object(&builder);
+  SDB_ASSERT(builder.isOpenObject());
   builder.add(kIndexBaseOptions);
   vpack::WriteTuple(builder, MakeIndexOutput());
   builder.add(kIndexImplOptions);
@@ -205,7 +205,9 @@ Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
 Result Index::Rename(std::shared_ptr<Index>& result,
                      std::string_view new_name) const {
   vpack::Builder b;
+  b.openObject();
   WriteInternal(b);
+  b.close();
 
   IndexBaseOptions options;
   if (auto r =

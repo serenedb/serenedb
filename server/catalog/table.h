@@ -57,8 +57,6 @@ class Table : public SchemaObject {
   Table(TableOptions&& options, ObjectId database_id);
   Table(const catalog::Table& other, NewOptions options);
 
-  void WriteProperties(vpack::Builder& build) const final;
-
   void WriteInternal(vpack::Builder& build) const final;
 
   const auto& PKType() const noexcept { return _pk_type; }

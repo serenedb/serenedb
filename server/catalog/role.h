@@ -46,7 +46,6 @@ class Role final : public catalog::Object {
   explicit Role(PrivateTag, ObjectId id, std::string_view name);
 
   void WriteInternal(vpack::Builder& build) const final;
-  void WriteProperties(vpack::Builder& build) const;
 
   static std::shared_ptr<catalog::Role> NewUser(std::string_view name,
                                                 std::string_view password,

@@ -66,24 +66,21 @@ yaclib::Future<> RenameColumnOrConstraint(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("column \"", old_name, "\" does not exist"));
     } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("constraint \"", old_name, "\" for table \"", table_name,
-                "\" does not exist"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("constraint \"", old_name, "\" for table \"",
+                              table_name, "\" does not exist"));
     }
   }
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (is_column) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-        ERR_MSG("column \"", new_name, "\" of relation \"", table_name,
-                "\" already exists"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+                      ERR_MSG("column \"", new_name, "\" of relation \"",
+                              table_name, "\" already exists"));
     } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("constraint \"", new_name, "\" for relation \"", table_name,
-                "\" already exists"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                      ERR_MSG("constraint \"", new_name, "\" for relation \"",
+                              table_name, "\" already exists"));
     }
   }
 
@@ -111,9 +108,8 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   if (stmt.renameType == OBJECT_FUNCTION) {
     SDB_ASSERT(stmt.object);
     auto* func_with_args = castNode(ObjectWithArgs, stmt.object);
-    auto [s, n] =
-      ParseObjectName(func_with_args->objname, context.GetDatabase(),
-                      current_schema);
+    auto [s, n] = ParseObjectName(func_with_args->objname,
+                                  context.GetDatabase(), current_schema);
     schema = s;
     name = n;
   } else {

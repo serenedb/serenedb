@@ -130,10 +130,6 @@ Role::Role(ObjectId id, std::string_view name)
   : catalog::Object{{}, id, std::string{name}, ObjectType::Role} {}
 
 void catalog::Role::WriteInternal(vpack::Builder& build) const {
-  WriteProperties(build);
-}
-
-void catalog::Role::WriteProperties(vpack::Builder& build) const {
   SDB_ASSERT(build.isOpenObject());
   build.add("id", GetId().id());
   build.add("name", GetName());

@@ -1130,7 +1130,9 @@ Result LocalCatalog::CreateIndex(
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {  // Write index definition
         vpack::Builder b;
+        b.openObject();
         (*index)->WriteInternal(b);
+        b.close();
         r = _engine->CreateDefinition(
           (*index)->GetRelationId(), RocksDBEntryType::Index, (*index)->GetId(),
           [&](bool) { return b.slice(); });
@@ -1354,8 +1356,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  auto object_id =
-    _snapshot->GetObjectId<kResolveType>(*schema_id, name);
+  auto object_id = _snapshot->GetObjectId<kResolveType>(*schema_id, name);
   if (!object_id) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
@@ -1367,9 +1368,13 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
 
   if constexpr (!std::is_same_v<T, Function>) {
     constexpr auto kExpectedType = []() {
-      if constexpr (std::is_same_v<T, Table>) return ObjectType::Table;
-      else if constexpr (std::is_same_v<T, View>) return ObjectType::View;
-      else if constexpr (std::is_same_v<T, Index>) return ObjectType::Index;
+      if constexpr (std::is_same_v<T, Table>) {
+        return ObjectType::Table;
+      } else if constexpr (std::is_same_v<T, View>) {
+        return ObjectType::View;
+      } else if constexpr (std::is_same_v<T, Index>) {
+        return ObjectType::Index;
+      }
     }();
     if (obj->GetType() != kExpectedType) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
@@ -1392,31 +1397,30 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
   }
 
   constexpr auto kEntryType = []() {
-    if constexpr (std::is_same_v<T, Table>) return RocksDBEntryType::Table;
-    else if constexpr (std::is_same_v<T, View>) return RocksDBEntryType::View;
-    else if constexpr (std::is_same_v<T, Index>) return RocksDBEntryType::Index;
-    else if constexpr (std::is_same_v<T, Function>)
+    if constexpr (std::is_same_v<T, Table>) {
+      return RocksDBEntryType::Table;
+    } else if constexpr (std::is_same_v<T, View>) {
+      return RocksDBEntryType::View;
+    } else if constexpr (std::is_same_v<T, Index>) {
+      return RocksDBEntryType::Index;
+    } else if constexpr (std::is_same_v<T, Function>) {
       return RocksDBEntryType::Function;
+    }
   }();
 
   absl::MutexLock lock{&_mutex};
   return Apply(
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      auto r =
-        clone->ReplaceObject<kResolveType>(*schema_id, name, new_obj);
+      auto r = clone->ReplaceObject<kResolveType>(*schema_id, name, new_obj);
       if (!r.ok()) {
         return r;
       }
 
       vpack::Builder b;
-      if constexpr (std::is_same_v<T, Index>) {
-        new_obj->WriteInternal(b);
-      } else {
-        b.openObject();
-        new_obj->WriteInternal(b);
-        b.close();
-      }
+      b.openObject();
+      new_obj->WriteInternal(b);
+      b.close();
 
       ObjectId parent_id;
       if constexpr (std::is_same_v<T, Index>) {
@@ -1425,31 +1429,18 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
         parent_id = *schema_id;
       }
 
-      return _engine->CreateDefinition(
-        parent_id, kEntryType, new_obj->GetId(),
-        [&](bool) { return b.slice(); });
+      return _engine->CreateDefinition(parent_id, kEntryType, new_obj->GetId(),
+                                       [&](bool) { return b.slice(); });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto current = clone->GetObject<T>(new_obj->GetId());
       if (current->GetName() == new_obj->GetName()) {
-        auto r = clone->ReplaceObject<kResolveType>(*schema_id, new_name,
-                                                    old_obj);
+        auto r =
+          clone->ReplaceObject<kResolveType>(*schema_id, new_name, old_obj);
         SDB_ASSERT(r.ok());
       }
     });
 }
-
-template Result LocalCatalog::RenameObjectImpl<Table>(ObjectId, std::string_view,
-                                                      std::string_view,
-                                                      std::string_view);
-template Result LocalCatalog::RenameObjectImpl<View>(ObjectId, std::string_view,
-                                                     std::string_view,
-                                                     std::string_view);
-template Result LocalCatalog::RenameObjectImpl<Index>(ObjectId, std::string_view,
-                                                      std::string_view,
-                                                      std::string_view);
-template Result LocalCatalog::RenameObjectImpl<Function>(
-  ObjectId, std::string_view, std::string_view, std::string_view);
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,

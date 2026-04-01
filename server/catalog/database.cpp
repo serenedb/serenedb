@@ -51,24 +51,4 @@ void Database::WriteInternal(vpack::Builder& b) const {
   vpack::WriteTuple(b, options);
 }
 
-void Database::WriteProperties(vpack::Builder& b) const {
-  SDB_ASSERT(b.isOpenObject());
-  struct DatabaseProperties {
-    // NOLINTBEGIN
-    std::string_view name;
-    std::string id;
-    uint32_t replicationFactor = 1;
-    uint32_t writeConcern = 1;
-    // NOLINTEND
-  };
-  vpack::WriteObject(b,
-                     vpack::Embedded{DatabaseProperties{
-                       .name = GetName(),
-                       .id = absl::StrCat(GetId()),
-                       .replicationFactor = GetReplicationFactor(),
-                       .writeConcern = GetWriteConcern(),
-                     }},
-                     ObjectProperties{});
-}
-
 }  // namespace sdb::catalog

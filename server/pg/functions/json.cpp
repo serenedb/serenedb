@@ -375,6 +375,8 @@ struct PgJsonStripNulls {
   }
 };
 
+}  // namespace
+
 simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
   simdjson::ondemand::array arr, int64_t relative_index) {
   size_t size, index;
@@ -414,8 +416,6 @@ simdjson::ondemand::document JsonParser::GetJsonDocument() {
   }
   return doc;
 }
-
-}  // namespace
 
 void registerJsonFunctions(const std::string& prefix) {
   velox::registerFunction<PgJsonExtractIndex, velox::Json, velox::Json,

@@ -436,34 +436,10 @@ velox::core::TypedExprPtr RewriteExpr(
 // One atomic segment on a single dimension's axis.
 // is_point=false -> open interval (left, right); has_left/has_right mark
 // whether the endpoint is finite. is_point=true -> closed singleton {left}.
-struct Atom {
-  bool is_point{false};
-  bool has_left{false};
-  bool has_right{false};
-  velox::variant left;   // valid iff has_left
-  velox::variant right;  // valid iff has_right (== left when is_point)
-
-  // Closed singleton {v}.
-  [[nodiscard]] static Atom Point(velox::variant v) {
-    return {.is_point = true,
-            .has_left = true,
-            .has_right = true,
-            .left = v,
-            .right = std::move(v)};
-  }
-
-  // Open interval (l, r); pass std::nullopt for -inf / +inf.
-  [[nodiscard]] static Atom Interval(std::optional<velox::variant> l,
-                                     std::optional<velox::variant> r) {
-    return {.is_point = false,
-            .has_left = l.has_value(),
-            .has_right = r.has_value(),
-            .left = l ? std::move(*l) : velox::variant{},
-            .right = r ? std::move(*r) : velox::variant{}};
-  }
-
-  bool operator==(const Atom&) const = default;
-};
+// Atoms are represented as ColumnRanges: points use Point(), open intervals
+// use Bounded/LeftBound/RightBound with exclusive endpoints, and the fully
+// unconstrained atom is an empty ColumnRange{} (no flags set).
+using Atom = ColumnRange;
 
 // Lightweight constraint representation used during the recursive sweep.
 struct SweepRange {
@@ -477,92 +453,86 @@ struct SweepRange {
 // If event_points is empty, emits one unconstrained open atom.
 std::vector<Atom> BuildAtoms(const std::vector<velox::variant>& pts) {
   if (pts.empty()) {
-    return {Atom::Interval(std::nullopt,
-                           std::nullopt)};  // unconstrained (-inf, +inf)
+    return {ColumnRange{}};  // unconstrained (-inf, +inf)
   }
   std::vector<Atom> atoms;
   atoms.reserve(2 * pts.size() + 1);
-  atoms.push_back(Atom::Interval(std::nullopt, pts[0]));
+  atoms.push_back(ColumnRange::RightBound(pts[0], false));
   for (size_t i = 0; i + 1 < pts.size(); ++i) {
-    atoms.push_back(Atom::Point(pts[i]));
-    atoms.push_back(Atom::Interval(pts[i], pts[i + 1]));
+    atoms.push_back(ColumnRange::Point(pts[i]));
+    atoms.push_back(ColumnRange::Bounded(pts[i], false, pts[i + 1], false));
   }
-  atoms.push_back(Atom::Point(pts.back()));
-  atoms.push_back(Atom::Interval(pts.back(), std::nullopt));
+  atoms.push_back(ColumnRange::Point(pts.back()));
+  atoms.push_back(ColumnRange::LeftBound(pts.back(), false));
   return atoms;
 }
 
-// Returns true iff ColumnRange cr contains atom a.
-// cr with no bounds is treated as (-inf, +inf) and covers every atom.
-bool AtomContainedBy(const Atom& a, const ColumnRange& cr) {
-  if (a.is_point) {
-    const velox::variant& point = a.left;
-    const bool left_ok = !cr.HasLeft() || cr.left_value < point ||
-                         (cr.left_value == point && cr.IsLeftInclusive());
-    const bool right_ok = !cr.HasRight() || point < cr.right_value ||
-                          (cr.right_value == point && cr.IsRightInclusive());
-    return left_ok && right_ok;
+// Returns true iff column_range contains atom.
+// Fast path: by sweep invariant, overlap <-> full containment (no KC boundary
+// lies strictly inside an open atom). Under SDB_DEV the full check is also
+// performed and must agree.
+bool AtomContainedBy(const Atom& atom, const ColumnRange& column_range) {
+#ifdef SDB_DEV
+  bool fully_contained;
+  if (atom.IsPoint()) {
+    const velox::variant& p = atom.LeftValue();
+    fully_contained =
+      (!column_range.HasLeft() || column_range.LeftValue() < p ||
+       (column_range.LeftValue() == p && column_range.IsLeftInclusive())) &&
+      (!column_range.HasRight() || p < column_range.RightValue() ||
+       (column_range.RightValue() == p && column_range.IsRightInclusive()));
   } else {
-    // Open interval atom (p, q): cr.left < q  AND  cr.right > p.
-    // Infinite atom ends are handled by short-circuit.
-    const bool left_ok =
-      !a.has_right ||   // atom right is +inf -> cr always satisfies
-      !cr.HasLeft() ||  // cr left is -inf -> always ok
-      cr.left_value < a.right;
-    const bool right_ok = !a.has_left ||     // atom left is -inf -> always ok
-                          !cr.HasRight() ||  // cr right is +inf -> always ok
-                          a.left < cr.right_value;
-    return left_ok && right_ok;
+    // Open interval (l, r) ⊆ column_range iff column_range starts at or
+    // before l AND ends at or after r. If atom is unbounded on a side,
+    // column_range must also be unbounded on that side.
+    fully_contained =
+      (!atom.HasLeft() ? !column_range.HasLeft()
+                       : (!column_range.HasLeft() ||
+                          !(atom.LeftValue() < column_range.LeftValue()))) &&
+      (!atom.HasRight() ? !column_range.HasRight()
+                        : (!column_range.HasRight() ||
+                           !(column_range.RightValue() < atom.RightValue())));
   }
-}
-
-// Converts an Atom to its ColumnRange representation.
-ColumnRange AtomToColumnRange(const Atom& a) {
-  if (a.is_point) {
-    return ColumnRange::Point(a.left);
-  }
-  if (!a.has_left && !a.has_right) {
-    return ColumnRange{};  // fully unconstrained
-  }
-  if (!a.has_left) {
-    return ColumnRange::RightBound(a.right, false);
-  }
-  if (!a.has_right) {
-    return ColumnRange::LeftBound(a.left, false);
-  }
-  return ColumnRange::Bounded(a.left, false, a.right, false);
+  const bool overlaps = atom.OverlapsWith(column_range);
+  SDB_ASSERT(overlaps == fully_contained, ERROR_INTERNAL,
+             "AtomContainedBy: sweep invariant violated");
+  return overlaps;
+#else
+  return atom.OverlapsWith(column_range);
+#endif
 }
 
 // Reconstructs the merged ColumnRange for a contiguous run of atoms.
 // Left bound comes from the first atom, right bound from the last.
-// For a single-atom run (first == last), delegates to AtomToColumnRange.
+// For a single-atom run (first == last), returns the atom as-is.
 ColumnRange FuseAtomRange(const Atom& first, const Atom& last) {
   if (first == last) {
-    return AtomToColumnRange(first);
+    return first;
   }
 
   // Left: point atom -> inclusive; open atom -> exclusive; no left ->
   // unbounded.
-  const bool left_inc = first.is_point;
+  const bool left_inc = first.IsPoint();
   // Right: point atom -> inclusive; open atom -> exclusive; no right ->
   // unbounded.
-  const bool right_inc = last.is_point;
+  const bool right_inc = last.IsPoint();
 
-  const bool has_l = first.has_left;
-  const bool has_r = last.has_right;
+  const bool has_l = first.HasLeft();
+  const bool has_r = last.HasRight();
 
   if (!has_l && !has_r) {
     return ColumnRange{};
   }
   if (!has_l) {
-    return ColumnRange::RightBound(last.is_point ? last.left : last.right,
-                                   right_inc);
+    return ColumnRange::RightBound(
+      last.IsPoint() ? last.LeftValue() : last.RightValue(), right_inc);
   }
   if (!has_r) {
-    return ColumnRange::LeftBound(first.left, left_inc);
+    return ColumnRange::LeftBound(first.LeftValue(), left_inc);
   }
   return ColumnRange::Bounded(
-    first.left, left_inc, last.is_point ? last.left : last.right, right_inc);
+    first.LeftValue(), left_inc,
+    last.IsPoint() ? last.LeftValue() : last.RightValue(), right_inc);
 }
 
 // Collects, sorts, and deduplicates all boundary values from `ranges` on
@@ -577,10 +547,10 @@ std::vector<velox::variant> CollectEventPoints(
     }
     const ColumnRange& cr = it->second;
     if (cr.HasLeft()) {
-      pts.push_back(cr.left_value);
+      pts.push_back(cr.LeftValue());
     }
     if (cr.HasRight()) {
-      pts.push_back(cr.right_value);
+      pts.push_back(cr.RightValue());
     }
   }
   absl::c_sort(pts);
@@ -646,19 +616,20 @@ std::vector<SweepRange> MergeAlongDim0(
       const SweepRange& curr_sr = atom_results[i].second;
       // Consecutive: end of prev == start of curr.
       const velox::variant& prev_end =
-        prev.is_point ? prev.left
-                      : (prev.has_right ? prev.right : velox::variant{});
+        prev.IsPoint()
+          ? prev.LeftValue()
+          : (prev.HasRight() ? prev.RightValue() : velox::variant{});
       const velox::variant& curr_start =
-        curr.is_point ? curr.left
-                      : (curr.has_left ? curr.left : velox::variant{});
+        curr.IsPoint() ? curr.LeftValue()
+                       : (curr.HasLeft() ? curr.LeftValue() : velox::variant{});
       // In BuildAtoms the sequence strictly alternates open/point/open/..., so
       // two open-interval atoms are never adjacent: there is always a point
       // atom between them. If that point atom was skipped (not covered by any
       // range) there is a gap at the shared boundary and we must NOT merge.
-      const bool alternating = (prev.is_point != curr.is_point);
+      const bool alternating = (prev.IsPoint() != curr.IsPoint());
       const bool endpoints_touch = alternating &&
-                                   (prev.has_right == curr.has_left) &&
-                                   (!prev.has_right || prev_end == curr_start);
+                                   (prev.HasRight() == curr.HasLeft()) &&
+                                   (!prev.HasRight() || prev_end == curr_start);
       merge = endpoints_touch && EqualExceptDim(prev_sr, curr_sr, dim_col);
     }
     if (!merge) {
@@ -666,7 +637,7 @@ std::vector<SweepRange> MergeAlongDim0(
       SweepRange out = atom_results[run_start].second;
       const ColumnRange fused =
         FuseAtomRange(atom_results[run_start].first, atom_results[i - 1].first);
-      if (fused.flags != ColumnRange::kZero) {
+      if (fused.HasLeft() || fused.HasRight()) {
         out.col_ranges[std::string(dim_col)] = fused;
       } else {
         out.col_ranges.erase(dim_col);
@@ -717,14 +688,13 @@ std::vector<SweepRange> SweepDims(std::vector<SweepRange> ranges,
       continue;
     }
     auto sub = SweepDims(std::move(active), pk_names, dim_idx + 1);
-    const ColumnRange atom_cr = AtomToColumnRange(a);
     for (auto& s : sub) {
       // Only insert a ColumnRange for this dimension if it actually constrains
-      // something (flags != 0). Unconstrained open atoms produced for
-      // dimensions with no event points represent (-inf, +inf) and should be
-      // absent from col_ranges so FindColumnRange returns nullptr for them.
-      if (atom_cr.flags != ColumnRange::kZero) {
-        s.col_ranges[std::string(dim_col)] = atom_cr;
+      // something. Unconstrained open atoms produced for dimensions with no
+      // event points represent (-inf, +inf) and should be absent from
+      // col_ranges so FindColumnRange returns nullptr for them.
+      if (a.HasLeft() || a.HasRight()) {
+        s.col_ranges[std::string(dim_col)] = a;
       }
       atom_results.emplace_back(a, std::move(s));
     }
@@ -795,20 +765,20 @@ std::string ColumnRange::toString() const {
     return v.toString(velox::createScalarType(v.kind()));
   };
   if (IsPoint()) {
-    return variant_str(left_value);
+    return variant_str(_left_value);
   }
   std::string result;
   if (!HasLeft()) {
     absl::StrAppend(&result, "(-inf");
   } else {
     absl::StrAppend(&result, IsLeftInclusive() ? "[" : "(",
-                    variant_str(left_value));
+                    variant_str(_left_value));
   }
   absl::StrAppend(&result, ", ");
   if (!HasRight()) {
     absl::StrAppend(&result, "+inf)");
   } else {
-    absl::StrAppend(&result, variant_str(right_value),
+    absl::StrAppend(&result, variant_str(_right_value),
                     IsRightInclusive() ? "]" : ")");
   }
   return result;
@@ -872,8 +842,8 @@ KeyConstraint KeyConstraint::BuildFromRanges(
 }
 
 bool ColumnRange::operator==(const ColumnRange& other) const noexcept {
-  return flags == other.flags && left_value == other.left_value &&
-         right_value == other.right_value;
+  return _flags == other._flags && _left_value == other._left_value &&
+         _right_value == other._right_value;
 }
 
 std::optional<ColumnRange> ColumnRange::IntersectWith(
@@ -888,10 +858,10 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
     if (!b.HasLeft()) {
       return a;
     }
-    if (a.left_value < b.left_value) {
+    if (a._left_value < b._left_value) {
       return b;
     }
-    if (b.left_value < a.left_value) {
+    if (b._left_value < a._left_value) {
       return a;
     }
     return a.IsLeftInclusive() ? b : a;  // exclusive is more restrictive
@@ -907,10 +877,10 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
     if (!b.HasRight()) {
       return a;
     }
-    if (b.right_value < a.right_value) {
+    if (b._right_value < a._right_value) {
       return b;
     }
-    if (a.right_value < b.right_value) {
+    if (a._right_value < b._right_value) {
       return a;
     }
     return a.IsRightInclusive() ? b : a;  // exclusive is more restrictive
@@ -920,10 +890,10 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
   const ColumnRange& rs = pick_tighter_right(*this, other);
 
   if (ls.HasLeft() && rs.HasRight()) {
-    if (rs.right_value < ls.left_value) {
+    if (rs._right_value < ls._left_value) {
       return std::nullopt;
     }
-    if (ls.left_value == rs.right_value &&
+    if (ls._left_value == rs._right_value &&
         (!ls.IsLeftInclusive() || !rs.IsRightInclusive())) {
       return std::nullopt;
     }
@@ -933,10 +903,10 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
   // Unset left_value/right_value are always default-constructed, so
   // copying them unconditionally is safe.
   ColumnRange result;
-  result.flags |= ls.flags & (kLeftBounded | kLeftInclusive);
-  result.flags |= rs.flags & (kRightBounded | kRightInclusive);
-  result.left_value = ls.left_value;
-  result.right_value = rs.right_value;
+  result._flags |= ls._flags & (kLeftBounded | kLeftInclusive);
+  result._flags |= rs._flags & (kRightBounded | kRightInclusive);
+  result._left_value = ls._left_value;
+  result._right_value = rs._right_value;
   return result;
 }
 
@@ -950,36 +920,36 @@ ColumnRange ColumnRange::UnionWith(const ColumnRange& other) const {
   ColumnRange result;
   if (HasLeft() && other.HasLeft()) {
     bool use_other_left;
-    if (left_value < other.left_value) {
+    if (_left_value < other._left_value) {
       use_other_left = false;
-    } else if (other.left_value < left_value) {
+    } else if (other._left_value < _left_value) {
       use_other_left = true;
     } else {
       // Same value: inclusive is less restrictive.
       use_other_left = !IsLeftInclusive() && other.IsLeftInclusive();
     }
     const ColumnRange& left_src = use_other_left ? other : *this;
-    result.flags |=
+    result._flags |=
       kLeftBounded | (left_src.IsLeftInclusive() ? kLeftInclusive : kZero);
-    result.left_value = left_src.left_value;
+    result._left_value = left_src._left_value;
   }
   // else: at least one side is unbounded -> result has no left bound.
 
   // Widest right bound: pick the greater (less restrictive) upper bound.
   if (HasRight() && other.HasRight()) {
     bool use_other_right;
-    if (other.right_value < right_value) {
+    if (other._right_value < _right_value) {
       use_other_right = false;
-    } else if (right_value < other.right_value) {
+    } else if (_right_value < other._right_value) {
       use_other_right = true;
     } else {
       // Same value: inclusive is less restrictive.
       use_other_right = !IsRightInclusive() && other.IsRightInclusive();
     }
     const ColumnRange& right_src = use_other_right ? other : *this;
-    result.flags |=
+    result._flags |=
       kRightBounded | (right_src.IsRightInclusive() ? kRightInclusive : kZero);
-    result.right_value = right_src.right_value;
+    result._right_value = right_src._right_value;
   }
   // else: at least one side is unbounded -> result has no right bound.
 
@@ -993,10 +963,10 @@ bool ColumnRange::LeftBoundLessThan(const ColumnRange& other) const noexcept {
   if (!other.HasLeft()) {
     return false;  // bounded >= -inf
   }
-  if (left_value < other.left_value) {
+  if (_left_value < other._left_value) {
     return true;
   }
-  if (other.left_value < left_value) {
+  if (other._left_value < _left_value) {
     return false;
   }
   // Same value: inclusive (starts earlier) sorts before exclusive.
@@ -1144,7 +1114,7 @@ std::vector<ResolvedPoint> ToResolvedPoints(
       const auto* filter = p.FindColumnRange(name);
       SDB_ASSERT(filter != nullptr, "pk column not found in specific point");
       SDB_ASSERT(filter->HasLeft());
-      sp.push_back(filter->left_value);
+      sp.push_back(filter->LeftValue());
     }
     result.push_back(std::move(sp));
   }
@@ -1182,7 +1152,7 @@ std::vector<ResolvedRange> ToResolvedRanges(
       const ColumnRange* column_range =
         key_contraint.FindColumnRange(pk_type.nameOf(i));
       SDB_ASSERT(column_range && column_range->IsPoint());
-      resolved_range.prefix.push_back(column_range->left_value);
+      resolved_range.prefix.push_back(column_range->LeftValue());
     }
 
     // Column range_column_index is the range column.
@@ -1327,7 +1297,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
       // value; together they must not leave the shared point uncovered
       // (i.e. not both exclusive).
       if (!prev || !prev->HasRight() || !curr || !curr->HasLeft() ||
-          !(prev->right_value == curr->left_value) ||
+          !(prev->RightValue() == curr->LeftValue()) ||
           (!prev->IsRightInclusive() && !curr->IsLeftInclusive())) {
         contiguous = false;
       }

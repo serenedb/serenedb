@@ -909,7 +909,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     e.lower_key = col_prefix;
     encode_prefix(e.lower_key);
     if (sr.range_col.HasLeft()) {
-      AppendColValue(e.lower_key, k, sr.range_col.left_value, pk_type);
+      AppendColValue(e.lower_key, k, sr.range_col.LeftValue(), pk_type);
       if (!sr.range_col.IsLeftInclusive()) {
         MakeExclusiveUpperBound(e.lower_key);
       }
@@ -923,7 +923,7 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     if (sr.range_col.HasRight()) {
       e.upper_key = col_prefix;
       encode_prefix(e.upper_key);
-      AppendColValue(e.upper_key, k, sr.range_col.right_value, pk_type);
+      AppendColValue(e.upper_key, k, sr.range_col.RightValue(), pk_type);
       if (sr.range_col.IsRightInclusive()) {
         MakeExclusiveUpperBound(e.upper_key);
       }

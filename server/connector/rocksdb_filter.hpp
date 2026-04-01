@@ -35,6 +35,8 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
@@ -52,43 +54,41 @@ struct ColumnRange {
   static constexpr uint8_t kRightBounded = 0x4;
   static constexpr uint8_t kRightInclusive = 0x8;
 
-  velox::variant left_value;   // valid iff HasLeft()
-  velox::variant right_value;  // valid iff HasRight()
-  uint8_t flags{kZero};
-
-  [[nodiscard]] bool HasLeft() const noexcept { return flags & kLeftBounded; }
+  [[nodiscard]] bool HasLeft() const noexcept { return _flags & kLeftBounded; }
   [[nodiscard]] bool IsLeftInclusive() const noexcept {
-    return flags & kLeftInclusive;
+    return _flags & kLeftInclusive;
   }
-  [[nodiscard]] bool HasRight() const noexcept { return flags & kRightBounded; }
+  [[nodiscard]] bool HasRight() const noexcept {
+    return _flags & kRightBounded;
+  }
   [[nodiscard]] bool IsRightInclusive() const noexcept {
-    return flags & kRightInclusive;
+    return _flags & kRightInclusive;
+  }
+
+  [[nodiscard]] const velox::variant& LeftValue() const noexcept {
+    return _left_value;
+  }
+  [[nodiscard]] const velox::variant& RightValue() const noexcept {
+    return _right_value;
   }
 
   // [v, v]
   [[nodiscard]] static ColumnRange Point(velox::variant v) {
-    ColumnRange r;
-    r.flags = kLeftBounded | kLeftInclusive | kRightBounded | kRightInclusive;
-    r.left_value = v;
-    r.right_value = std::move(v);
-    return r;
+    return Make(kLeftBounded | kLeftInclusive | kRightBounded | kRightInclusive,
+                v, std::move(v));
   }
 
   // (v, +inf) or [v, +inf)
   [[nodiscard]] static ColumnRange LeftBound(velox::variant v, bool inclusive) {
-    ColumnRange r;
-    r.flags = kLeftBounded | (inclusive ? kLeftInclusive : kZero);
-    r.left_value = std::move(v);
-    return r;
+    return Make(kLeftBounded | (inclusive ? kLeftInclusive : kZero),
+                std::move(v), {});
   }
 
   // (-inf, v) or (-inf, v]
   [[nodiscard]] static ColumnRange RightBound(velox::variant v,
                                               bool inclusive) {
-    ColumnRange r;
-    r.flags = kRightBounded | (inclusive ? kRightInclusive : kZero);
-    r.right_value = std::move(v);
-    return r;
+    return Make(kRightBounded | (inclusive ? kRightInclusive : kZero), {},
+                std::move(v));
   }
 
   // Full two-sided interval
@@ -96,18 +96,15 @@ struct ColumnRange {
                                            bool left_inclusive,
                                            velox::variant right_value,
                                            bool right_inclusive) {
-    ColumnRange r;
-    r.flags = kLeftBounded | (left_inclusive ? kLeftInclusive : kZero) |
-              kRightBounded | (right_inclusive ? kRightInclusive : kZero);
-    r.left_value = std::move(left_value);
-    r.right_value = std::move(right_value);
-    return r;
+    return Make(kLeftBounded | (left_inclusive ? kLeftInclusive : kZero) |
+                  kRightBounded | (right_inclusive ? kRightInclusive : kZero),
+                std::move(left_value), std::move(right_value));
   }
 
   // Returns true when the range represents a single exact value [v, v].
   [[nodiscard]] bool IsPoint() const noexcept {
     return HasLeft() && HasRight() && IsLeftInclusive() && IsRightInclusive() &&
-           left_value == right_value;
+           _left_value == _right_value;
   }
 
   // True iff both ranges represent the exact same interval.
@@ -132,6 +129,20 @@ struct ColumnRange {
   // e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
   // NOLINTNEXTLINE(readability-identifier-naming)
   [[nodiscard]] std::string toString() const;
+
+ private:
+  [[nodiscard]] static ColumnRange Make(uint8_t f, velox::variant l,
+                                        velox::variant r) {
+    ColumnRange cr;
+    cr._flags = f;
+    cr._left_value = std::move(l);
+    cr._right_value = std::move(r);
+    return cr;
+  }
+
+  velox::variant _left_value;   // valid iff HasLeft()
+  velox::variant _right_value;  // valid iff HasRight()
+  uint8_t _flags{kZero};
 };
 
 // A set of per-column range constraints over PK columns.
@@ -250,21 +261,6 @@ struct ResolvedRange {
   // range's range_col is compared against the exact prefix value of the longer
   // range at that position.
   bool operator<(const ResolvedRange& other) const {
-    [[maybe_unused]] auto print_range = [](const ResolvedRange& r,
-                                           std::string name) {
-      std::string s = "" + name + "{prefix=[";
-      for (size_t i = 0; i < r.prefix.size(); ++i) {
-        if (i > 0) {
-          s += ", ";
-        }
-        s += r.prefix[i].toString(velox::createScalarType(r.prefix[i].kind()));
-      }
-      s += "], range=";
-      s += r.range_col.toString();
-      s += "}";
-      return s;
-    };
-
     const size_t min_depth = std::min(prefix.size(), other.prefix.size());
     for (size_t i = 0; i < min_depth; ++i) {
       if (prefix[i] < other.prefix[i]) {
@@ -286,10 +282,8 @@ struct ResolvedRange {
         return false;
       }
 
-      SDB_PRINT(print_range(*this, "this"));
-      SDB_PRINT(print_range(other, "other"));
-
-      SDB_UNREACHABLE();
+      SDB_ENSURE(false, ERROR_INTERNAL,
+                 "ResolvedRanges must be sorted in scan sweep algorithm");
     }
 
     // Unequal prefix depths with a matching common prefix.
@@ -301,24 +295,19 @@ struct ResolvedRange {
       this_shorter ? other.prefix[prefix.size()] : prefix[other.prefix.size()];
     const ColumnRange& rcol = this_shorter ? range_col : other.range_col;
 
-    if (!rcol.HasLeft()) {
-      // range_col starts at -inf: the shorter range's leftmost key precedes
-      // any row covered by the longer range.
+    // -inf or left bound strictly before exact: shorter range starts first.
+    if (!rcol.HasLeft() || rcol.LeftValue() < exact) {
       return this_shorter;
     }
-    if (rcol.left_value < exact) {
-      return this_shorter;
-    }
-    if (exact < rcol.left_value) {
+    // Left bound strictly after exact: exact-value side (longer range) starts
+    // first.
+    if (exact < rcol.LeftValue()) {
       return !this_shorter;
     }
-    // Equal value: inclusive bound starts at the same point as the exact value
-    // so neither is strictly earlier; exclusive bound starts strictly after, so
-    // the exact-value side comes first.
-    if (rcol.IsLeftInclusive()) {
-      return false;
-    }
-    return !this_shorter;
+    // Equal: inclusive bound ties with exact (neither strictly earlier ->
+    // false); exclusive bound starts after exact -> exact-value side comes
+    // first.
+    return !this_shorter && !rcol.IsLeftInclusive();
   }
 };
 

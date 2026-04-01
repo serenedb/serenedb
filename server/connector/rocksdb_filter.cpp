@@ -198,9 +198,11 @@ velox::core::TypedExprPtr RewriteExpr(
   }
 
   if (call->name() == "or") {
-    SDB_ASSERT(
-      absl::c_all_of(new_inputs, [](auto expr) { return expr == nullptr; }));
-    return {};
+    if (absl::c_all_of(new_inputs,
+                       [](const auto& e) { return e == nullptr; })) {
+      return {};
+    }
+    return expr;
   }
 
   return std::make_shared<velox::core::CallTypedExpr>(
@@ -327,8 +329,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   std::span<const std::string> column_names) {
   auto pts = ExtractFilterExpr(expr, column_names);
 
-  if (!absl::c_all_of(pts,
-                       [](const Point& p) { return p.IsSpecific(); })) {
+  if (!absl::c_all_of(pts, [](const Point& p) { return p.IsSpecific(); })) {
     return {{}, expr};
   }
 

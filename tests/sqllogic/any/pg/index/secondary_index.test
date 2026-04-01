@@ -1562,7 +1562,7 @@ statement ok
 DROP TABLE babsky_tri_null;
 
 
-# Secondary index on the same column as single-column primary key
+
 
 statement ok
 CREATE TABLE vedernikoff_same_pk (pid INTEGER PRIMARY KEY, name VARCHAR);
@@ -1608,7 +1608,7 @@ statement ok
 DROP TABLE vedernikoff_same_pk;
 
 
-# Secondary index on all columns of a composite primary key
+
 
 statement ok
 CREATE TABLE babsky_full_cpk (a INTEGER, b INTEGER, val VARCHAR, PRIMARY KEY(a, b));
@@ -1666,7 +1666,7 @@ statement ok
 DROP TABLE babsky_full_cpk;
 
 
-# Secondary index on a subset of composite primary key columns
+
 
 statement ok
 CREATE TABLE clickclack_subset_cpk (a INTEGER, b INTEGER, c INTEGER, val VARCHAR, PRIMARY KEY(a, b, c));
@@ -1751,7 +1751,7 @@ statement ok
 DROP TABLE clickclack_subset_cpk;
 
 
-# Secondary index on partial overlap with composite PK (non-prefix subset)
+
 
 statement ok
 CREATE TABLE babsky_partial_cpk (a INTEGER, b INTEGER, c INTEGER, val VARCHAR, PRIMARY KEY(a, b, c));
@@ -1822,3 +1822,308 @@ a	b	c	val
 
 statement ok
 DROP TABLE babsky_partial_cpk;
+
+
+
+
+statement ok
+CREATE TABLE vedernikoff_in_test (pid INTEGER PRIMARY KEY, score INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX vedernikoff_in_test_idx ON vedernikoff_in_test(score);
+
+statement ok
+INSERT INTO vedernikoff_in_test VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta'),
+  (3, 30, 'gamma'),
+  (4, 10, 'delta'),
+  (5, 20, 'epsilon'),
+  (6, 40, 'zeta'),
+  (7, 10, 'eta');
+
+query
+SELECT pid, tag FROM vedernikoff_in_test WHERE score IN (10, 30) ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+4	delta
+7	eta
+
+query
+SELECT pid, tag FROM vedernikoff_in_test WHERE score IN (20) ORDER BY pid;
+----
+pid	tag
+2	beta
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_in_test WHERE score IN (99, 100);
+----
+pid	tag
+
+query
+SELECT pid, tag FROM vedernikoff_in_test WHERE score IN (10, 20, 30, 40) ORDER BY pid;
+----
+pid	tag
+1	alpha
+2	beta
+3	gamma
+4	delta
+5	epsilon
+6	zeta
+7	eta
+
+statement ok
+DROP TABLE vedernikoff_in_test;
+
+
+
+
+statement ok
+CREATE TABLE babsky_or_test (pid INTEGER PRIMARY KEY, rank INTEGER, team VARCHAR);
+
+statement ok
+CREATE INDEX babsky_or_test_idx ON babsky_or_test(rank);
+
+statement ok
+INSERT INTO babsky_or_test VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta'),
+  (3, 30, 'gamma'),
+  (4, 10, 'delta'),
+  (5, 20, 'epsilon'),
+  (6, 40, 'zeta');
+
+query
+SELECT pid, team FROM babsky_or_test WHERE rank = 10 OR rank = 30 ORDER BY pid;
+----
+pid	team
+1	alpha
+3	gamma
+4	delta
+
+query
+SELECT pid, team FROM babsky_or_test WHERE rank = 20 OR rank = 40 ORDER BY pid;
+----
+pid	team
+2	beta
+5	epsilon
+6	zeta
+
+query
+SELECT pid, team FROM babsky_or_test WHERE rank = 99 OR rank = 100;
+----
+pid	team
+
+statement ok
+DROP TABLE babsky_or_test;
+
+
+
+
+statement ok
+CREATE TABLE clickclack_remaining (pid INTEGER PRIMARY KEY, city VARCHAR, score INTEGER, note VARCHAR);
+
+statement ok
+CREATE INDEX clickclack_remaining_city_idx ON clickclack_remaining(city);
+
+statement ok
+INSERT INTO clickclack_remaining VALUES
+  (1, 'berlin', 100, 'alpha'),
+  (2, 'berlin', 200, 'beta'),
+  (3, 'berlin', 300, 'gamma'),
+  (4, 'moscow', 100, 'delta'),
+  (5, 'moscow', 200, 'epsilon'),
+  (6, 'tokyo', 100, 'zeta');
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE city = 'berlin' AND score > 150 ORDER BY pid;
+----
+pid	note
+2	beta
+3	gamma
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE city = 'berlin' AND score = 100;
+----
+pid	note
+1	alpha
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE city = 'moscow' AND note = 'epsilon';
+----
+pid	note
+5	epsilon
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE city = 'berlin' AND score > 500;
+----
+pid	note
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE city IN ('berlin', 'moscow') AND score = 100 ORDER BY pid;
+----
+pid	note
+1	alpha
+4	delta
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE (city = 'berlin' AND score = 200) OR city = 'tokyo' ORDER BY pid;
+----
+pid	note
+2	beta
+6	zeta
+
+query
+SELECT pid, note FROM clickclack_remaining WHERE (city = 'berlin' AND score > 250) OR (city = 'moscow' AND score < 150) ORDER BY pid;
+----
+pid	note
+3	gamma
+4	delta
+
+statement ok
+DROP TABLE clickclack_remaining;
+
+
+statement ok
+CREATE TABLE vedernikoff_mixed_or (pid INTEGER PRIMARY KEY, grade INTEGER, level INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX vedernikoff_mixed_or_idx ON vedernikoff_mixed_or(grade);
+
+statement ok
+INSERT INTO vedernikoff_mixed_or VALUES
+  (1, 10, 100, 'alpha'),
+  (2, 20, 200, 'beta'),
+  (3, 10, 300, 'gamma'),
+  (4, 30, 100, 'delta'),
+  (5, 20, 200, 'epsilon');
+
+query
+SELECT pid, tag FROM vedernikoff_mixed_or WHERE grade = 10 AND level = 100;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM vedernikoff_mixed_or WHERE grade = 10 AND level > 200;
+----
+pid	tag
+3	gamma
+
+query
+SELECT pid, tag FROM vedernikoff_mixed_or WHERE grade IN (10, 20) AND level = 200 ORDER BY pid;
+----
+pid	tag
+2	beta
+5	epsilon
+
+statement ok
+DROP TABLE vedernikoff_mixed_or;
+
+statement ok
+CREATE TABLE babsky_comp_in (pid INTEGER PRIMARY KEY, region INTEGER, tier INTEGER, note VARCHAR);
+
+statement ok
+CREATE INDEX babsky_comp_in_idx ON babsky_comp_in(region, tier);
+
+statement ok
+INSERT INTO babsky_comp_in VALUES
+  (1, 1, 10, 'alpha'),
+  (2, 1, 20, 'beta'),
+  (3, 2, 10, 'gamma'),
+  (4, 2, 20, 'delta'),
+  (5, 1, 10, 'epsilon');
+
+query
+SELECT pid, note FROM babsky_comp_in WHERE region = 1 AND tier IN (10, 20) ORDER BY pid;
+----
+pid	note
+1	alpha
+2	beta
+5	epsilon
+
+query
+SELECT pid, note FROM babsky_comp_in WHERE region IN (1, 2) AND tier = 10 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	gamma
+5	epsilon
+
+query
+SELECT pid, note FROM babsky_comp_in WHERE region = 2 AND tier = 20;
+----
+pid	note
+4	delta
+
+statement ok
+DROP TABLE babsky_comp_in;
+
+statement ok
+CREATE TABLE clickclack_null_combo (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX clickclack_null_combo_idx ON clickclack_null_combo(val);
+
+statement ok
+INSERT INTO clickclack_null_combo VALUES (1, 10, 'alpha'), (3, 20, 'gamma'), (5, 10, 'epsilon');
+
+statement ok
+INSERT INTO clickclack_null_combo VALUES (2, NULL, 'beta');
+
+statement ok
+INSERT INTO clickclack_null_combo VALUES (4, NULL, 'delta');
+
+query
+SELECT pid, tag FROM clickclack_null_combo WHERE val IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+4	delta
+
+query
+SELECT pid, tag FROM clickclack_null_combo WHERE val IN (10, 20) ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+5	epsilon
+
+query
+SELECT pid, tag FROM clickclack_null_combo WHERE val = 10 OR val = 20 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+5	epsilon
+
+statement ok
+DELETE FROM clickclack_null_combo WHERE pid = 2;
+
+query
+SELECT pid, tag FROM clickclack_null_combo WHERE val IS NULL;
+----
+pid	tag
+4	delta
+
+statement ok
+UPDATE clickclack_null_combo SET val = NULL WHERE pid = 1;
+
+query
+SELECT pid, tag FROM clickclack_null_combo WHERE val IS NULL ORDER BY pid;
+----
+pid	tag
+1	alpha
+4	delta
+
+query
+SELECT pid, tag FROM clickclack_null_combo WHERE val = 10;
+----
+pid	tag
+5	epsilon
+
+statement ok
+DROP TABLE clickclack_null_combo;

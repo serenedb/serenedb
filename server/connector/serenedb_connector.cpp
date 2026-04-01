@@ -101,6 +101,7 @@ std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
 
     auto sk_type = velox::ROW(std::move(sk_names), std::move(sk_types));
     auto points = ToSpecificPoints(res.points, *sk_type);
+    SortPoints(points);
 
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(*index);

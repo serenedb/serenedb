@@ -1161,3 +1161,253 @@ pid	note
 
 statement ok
 DROP TABLE vedernikoff_tri_uniq;
+
+
+
+statement ok
+CREATE TABLE babsky_uniq_in (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX babsky_uniq_in_idx ON babsky_uniq_in(code);
+
+statement ok
+INSERT INTO babsky_uniq_in VALUES (1, 100, 'alpha'), (2, 200, 'beta'), (3, 300, 'gamma'), (4, 400, 'delta');
+
+statement ok
+INSERT INTO babsky_uniq_in VALUES (5, NULL, 'epsilon');
+
+statement ok
+INSERT INTO babsky_uniq_in VALUES (6, NULL, 'zeta');
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300) ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (200);
+----
+pid	tag
+2	beta
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (999, 888);
+----
+pid	tag
+
+query
+SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 200, 300, 400) ORDER BY pid;
+----
+pid	tag
+1	alpha
+2	beta
+3	gamma
+4	delta
+
+statement ok
+DROP TABLE babsky_uniq_in;
+
+
+
+statement ok
+CREATE TABLE clickclack_uniq_or (pid INTEGER PRIMARY KEY, rank INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_uniq_or_idx ON clickclack_uniq_or(rank);
+
+statement ok
+INSERT INTO clickclack_uniq_or VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta'),
+  (3, 30, 'gamma'),
+  (4, 40, 'delta');
+
+query
+SELECT pid, note FROM clickclack_uniq_or WHERE rank = 10 OR rank = 30 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	gamma
+
+query
+SELECT pid, note FROM clickclack_uniq_or WHERE rank = 20 OR rank = 40 ORDER BY pid;
+----
+pid	note
+2	beta
+4	delta
+
+query
+SELECT pid, note FROM clickclack_uniq_or WHERE rank = 99 OR rank = 100;
+----
+pid	note
+
+statement ok
+DROP TABLE clickclack_uniq_or;
+
+
+
+statement ok
+CREATE TABLE vedernikoff_uniq_rem (pid INTEGER PRIMARY KEY, key INTEGER, level INTEGER, tag VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_uniq_rem_idx ON vedernikoff_uniq_rem(key);
+
+statement ok
+INSERT INTO vedernikoff_uniq_rem VALUES
+  (1, 100, 10, 'alpha'),
+  (2, 200, 20, 'beta'),
+  (3, 300, 10, 'gamma'),
+  (4, 400, 20, 'delta');
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 99;
+----
+pid	tag
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key IN (100, 300) AND level = 10 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key IN (100, 200, 300, 400) AND level = 20 ORDER BY pid;
+----
+pid	tag
+2	beta
+4	delta
+
+query
+SELECT pid, tag FROM vedernikoff_uniq_rem WHERE (key = 100 AND level = 10) OR key = 300 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+statement ok
+DROP TABLE vedernikoff_uniq_rem;
+
+
+
+statement ok
+CREATE TABLE babsky_uniq_null_combo (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX babsky_uniq_null_combo_idx ON babsky_uniq_null_combo(val);
+
+statement ok
+INSERT INTO babsky_uniq_null_combo VALUES (1, 10, 'alpha'), (3, 20, 'gamma');
+
+statement ok
+INSERT INTO babsky_uniq_null_combo VALUES (2, NULL, 'beta');
+
+statement ok
+INSERT INTO babsky_uniq_null_combo VALUES (4, NULL, 'delta');
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IS NULL ORDER BY pid;
+----
+pid	tag
+2	beta
+4	delta
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IN (10, 20) ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val = 10 OR val = 20 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IS NULL AND tag = 'beta';
+----
+pid	tag
+2	beta
+
+statement ok
+UPDATE babsky_uniq_null_combo SET val = 30 WHERE pid = 2;
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IS NULL;
+----
+pid	tag
+4	delta
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val = 30;
+----
+pid	tag
+2	beta
+
+query
+SELECT pid, tag FROM babsky_uniq_null_combo WHERE val IN (10, 30) ORDER BY pid;
+----
+pid	tag
+1	alpha
+2	beta
+
+statement ok
+DROP TABLE babsky_uniq_null_combo;
+
+
+
+statement ok
+CREATE TABLE clickclack_comp_uniq_in (pid INTEGER PRIMARY KEY, city VARCHAR, tier INTEGER, note VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX clickclack_comp_uniq_in_idx ON clickclack_comp_uniq_in(city, tier);
+
+statement ok
+INSERT INTO clickclack_comp_uniq_in VALUES
+  (1, 'berlin', 10, 'alpha'),
+  (2, 'berlin', 20, 'beta'),
+  (3, 'moscow', 10, 'gamma'),
+  (4, 'moscow', 20, 'delta'),
+  (5, 'tokyo', 10, 'epsilon');
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city IN ('berlin', 'moscow') AND tier = 10 ORDER BY pid;
+----
+pid	note
+1	alpha
+3	gamma
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city = 'berlin' AND tier IN (10, 20) ORDER BY pid;
+----
+pid	note
+1	alpha
+2	beta
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city = 'berlin' AND tier = 10 AND note = 'alpha';
+----
+pid	note
+1	alpha
+
+query
+SELECT pid, note FROM clickclack_comp_uniq_in WHERE city = 'berlin' AND tier = 10 AND note = 'wrong';
+----
+pid	note
+
+statement error
+INSERT INTO clickclack_comp_uniq_in VALUES (6, 'berlin', 10, 'duplicate');
+
+statement ok
+DROP TABLE clickclack_comp_uniq_in;

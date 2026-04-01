@@ -268,7 +268,9 @@ template<bool ReadYourOwnWrites>
 struct PrimaryLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
+
   using KeyBuilder = PrimaryKeyBuilder;
+
   using ResultCollector = PrimaryKeyColumnBuilder;
 };
 
@@ -276,15 +278,20 @@ template<bool ReadYourOwnWrites, typename Materializer>
 struct SecondaryLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
+
   using KeyBuilder = SecondaryKeyBuilder;
+
   using ResultCollector = SecondaryKeyColumnBuilder<Materializer>;
 };
 
 template<typename Policy>
 class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   using Source = typename Policy::Source;
+
   using KeyBuilder = typename Policy::KeyBuilder;
+
   using ResultCollector = typename Policy::ResultCollector;
+
   static constexpr bool kIsSecondaryIndex = ResultCollector::kIsSecondaryIndex;
 
  public:

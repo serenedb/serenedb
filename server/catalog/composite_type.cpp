@@ -20,8 +20,8 @@
 
 #include "catalog/composite_type.h"
 
-#include <folly/json.h>
 #include <velox/type/Type.h>
+#include <velox/type/parser/TypeParser.h>
 
 #include "basics/assert.h"
 
@@ -34,8 +34,7 @@ CompositeType::CompositeType(ObjectId id, std::string_view name,
 
 void CompositeType::WriteInternal(vpack::Builder& b) const {
   b.add("name", GetName());
-  auto json = folly::toJson(_row_type->serialize());
-  b.add("row_type", json);
+  b.add("row_type", _row_type->toString());
 }
 
 std::shared_ptr<CompositeType> CompositeType::FromVPack(ObjectId id,
@@ -43,10 +42,11 @@ std::shared_ptr<CompositeType> CompositeType::FromVPack(ObjectId id,
   auto name = slice.get("name");
   SDB_ASSERT(name.isString());
 
-  auto row_type_json = slice.get("row_type");
-  SDB_ASSERT(row_type_json.isString());
-  auto obj = folly::parseJson(row_type_json.stringView());
-  auto row_type = velox::ISerializable::deserialize<velox::RowType>(obj);
+  auto row_type_str = slice.get("row_type");
+  SDB_ASSERT(row_type_str.isString());
+  auto row_type = std::dynamic_pointer_cast<const velox::RowType>(
+    velox::parseType(std::string{row_type_str.stringView()}));
+  SDB_ASSERT(row_type);
 
   return std::make_shared<CompositeType>(id, name.stringView(),
                                          std::move(row_type));

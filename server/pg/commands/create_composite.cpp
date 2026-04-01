@@ -51,6 +51,13 @@ yaclib::Future<> CreateComposite(ExecContext& ctx,
   std::vector<std::string> field_names;
   std::vector<velox::TypePtr> field_types;
   VisitNodes(stmt.coldeflist, [&](const ColumnDef& col) {
+    for (const auto& existing : field_names) {
+      if (existing == col.colname) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+          ERR_MSG("column \"", col.colname, "\" specified more than once"));
+      }
+    }
     field_names.emplace_back(col.colname);
     field_types.emplace_back(NameToType(*col.typeName, &ctx));
   });

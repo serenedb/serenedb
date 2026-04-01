@@ -70,6 +70,34 @@ clickclack
 
 
 query
+SELECT name, illness FROM vedernikoff_patients ORDER BY illness;
+----
+name	illness
+ivansolo2003	bipolyarka
+osadchy	depression
+misterbist	norma
+clickclack	panicataka
+deadinside	shiza
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness > 'norma' ORDER BY illness;
+----
+illness
+panicataka
+shiza
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness >= 'norma' AND illness <= 'shiza' ORDER BY illness;
+----
+illness
+norma
+panicataka
+shiza
+
+
+query
 SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'e' ORDER BY typname;
 ----
 typname	typtype

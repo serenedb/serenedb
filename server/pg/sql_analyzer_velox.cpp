@@ -88,6 +88,7 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_catalog/pg_attribute.h"
+#include "pg/system_catalog.h"
 #include "pg/pg_list_utils.h"
 #include "pg/progress_tracker.h"
 #include "pg/protocol.h"
@@ -5447,8 +5448,6 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"regtype", pg::REGTYPE()},
   {"regclass", pg::REGCLASS()},
   {"regnamespace", pg::REGNAMESPACE()},
-  {"pg_attribute", SystemTable<PgAttribute>{}.RowType()},
-  {"pg_type", SystemTable<PgType>{}.RowType()},
   // TODO(mbkkt) Think about it
   {"oid", velox::BIGINT()},
   {"name", velox::VARCHAR()},
@@ -6532,6 +6531,9 @@ velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
     auto composite_type = snapshot->GetCompositeType(db_id, type_schema, name);
     if (composite_type) {
       return wrap_in_array(composite_type->GetRowType());
+    }
+    if (auto* sys_table = GetSystemTable(type_schema, name)) {
+      return wrap_in_array(sys_table->RowType());
     }
   }
 

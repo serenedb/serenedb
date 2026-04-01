@@ -12,6 +12,12 @@ CREATE TYPE address AS (x INTEGER);
 db error: ERROR: type "address" already exists
 
 
+query error
+CREATE TYPE bad_composite AS (x INTEGER, y VARCHAR, x BOOLEAN);
+----
+db error: ERROR: column "x" specified more than once
+
+
 statement ok
 CREATE TYPE coordinates AS (
   lat DOUBLE PRECISION,

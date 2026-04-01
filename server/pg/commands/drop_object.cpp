@@ -107,9 +107,13 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
       r = catalog.DropTokenizer(db, schema, name);
     } break;
     case OBJECT_TYPE: {
-      r = catalog.DropEnumType(db, schema, name);
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+      auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+      if (snapshot->GetEnumType(db, schema, name)) {
+        r = catalog.DropEnumType(db, schema, name);
+      } else if (snapshot->GetCompositeType(db, schema, name)) {
         r = catalog.DropCompositeType(db, schema, name);
+      } else {
+        r = Result{ERROR_SERVER_ILLEGAL_NAME};
       }
     } break;
     default:

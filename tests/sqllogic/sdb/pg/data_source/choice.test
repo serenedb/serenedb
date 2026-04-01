@@ -102,7 +102,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_range_lookup, ranges=[{a=[3, 3]}]]<slt:ignore>
+<slt:ignore>[t_choice_cpk, type=rocksdb_range_lookup, ranges=[{a=3}]]<slt:ignore>
 
 
 # No filter -> full scan
@@ -901,7 +901,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=[2, 2]}]]<slt:ignore>
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2}]]<slt:ignore>
 
 # a=1 AND c>3 (gap: b not constrained) → not a valid prefix → full scan.
 query
@@ -917,7 +917,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=[1, 1]}]]<slt:ignore>
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1}]]<slt:ignore>
 
 # a > 1 range on first col of 3-col PK → range lookup on a.
 query
@@ -969,7 +969,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>Filter[1][expression: or(presto_lte("b",2),presto_lt("b",3))]<slt:ignore>
+<slt:ignore>Filter[1][expression: or(and(presto_lte("a",1),presto_lte("b",2)),and(presto_lt("a",2),presto_lt("b",3)))]<slt:ignore>
 <slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}]]<slt:ignore>
 
 
@@ -1550,7 +1550,7 @@ query
 EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a = 2 OR a = 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=[2, 2]}]]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
 
 
 # ── 1-D three disjoint ranges ────────────────────────────────────────────────
@@ -1581,7 +1581,7 @@ query
 EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a=2 AND b < 2) OR (a=2 AND b > 1);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=[2, 2]}]]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
 
 
 # ── 2-D: same a, b adjacent exclusive+inclusive → fuses to a=[1,1] ───────────
@@ -1597,7 +1597,7 @@ query
 EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b <= 2) OR (a=1 AND b > 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=[1, 1]}]]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1}]]<slt:ignore>
 
 
 # ── 2-D: different a, same b constraint → b is trailing, full scan on a ───────
@@ -1679,7 +1679,7 @@ EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
   WHERE (a=1 AND b=1 AND c <= 2) OR (a=1 AND b=1 AND c > 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=[1, 1]}]]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=1}]]<slt:ignore>
 
 
 # ── 3-D: b adjacent then c fuses to a-level range ────────────────────────────
@@ -1702,7 +1702,7 @@ EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=[2, 2]}]]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
 
 
 # ── 3-D: all three columns overlapping → full scan ───────────────────────────
@@ -1766,6 +1766,149 @@ EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
 QUERY PLAN
 <slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=1), (a=2, b=2, c=2)]]<slt:ignore>
 
+
+# =============================================================================
+# Sweep algorithm tests: all 3 PK column ranges differ but range scans still fire
+# =============================================================================
+
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b < 2) OR (a > 2 AND b > 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+1	1	3	113
+3	3	1	331
+3	3	2	332
+3	3	3	333
+
+# Reject filters at all, but for data source range are passed
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b < 2) OR (a > 2 AND b > 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[expression: or(and(presto_lt("a",2),presto_lt("b",2)),and(presto_gt("a",2),presto_gt("b",2)))] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+
+# Beyond-prefix equality on b: b=1 for a<2, b=3 for a>2.
+# Scan uses only a-ranges; original filter retained as post-filter.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b = 1) OR (a > 2 AND b = 3)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+1	1	3	113
+3	3	1	331
+3	3	2	332
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b = 1) OR (a > 2 AND b = 3)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[expression: or(and(presto_lt("a",2),presto_eq("b",1)),and(presto_gt("a",2),presto_eq("b",3)))]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]]<slt:ignore>
+
+# Beyond-prefix on c: each KC uses prefix=2 (a equality + b range), c is beyond.
+# Scan uses {a=1, b<2} and {a=3, b>2}; original filter retained as post-filter.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2 AND c < 3) OR (a = 3 AND b > 2 AND c > 1)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+3	3	2	332
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2 AND c < 3) OR (a = 3 AND b > 2 AND c > 1)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[expression: or(and(presto_eq("a",1),presto_lt("b",2),presto_lt("c",3)),and(presto_eq("a",3),presto_gt("b",2),presto_gt("c",1)))]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=3, b=(2, +inf)}]]<slt:ignore>
+
+# Per-a-value b-ranges differ: each a-group gets its own shape
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2) OR (a = 2 AND b BETWEEN 1 AND 2) OR (a = 3 AND b > 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+1	1	3	113
+2	1	1	211
+2	1	2	212
+2	1	3	213
+2	2	1	221
+2	2	2	222
+2	2	3	223
+3	3	1	331
+3	3	2	332
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2) OR (a = 2 AND b BETWEEN 1 AND 2) OR (a = 3 AND b > 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=2, b=[1, 2]}, {a=3, b=(2, +inf)}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+
+# All 3 PK columns constrained differently
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b = 1 AND c < 3) OR (a = 2 AND b = 2 AND c > 1) OR (a = 3 AND b = 3 AND c = 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+2	2	2	222
+2	2	3	223
+3	3	2	332
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b = 1 AND c < 3) OR (a = 2 AND b = 2 AND c > 1) OR (a = 3 AND b = 3 AND c = 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=1, c=(-inf, 3)}, {a=2, b=2, c=(1, +inf)}, {a=3, b=3, c=2}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+
+# Overlapping a-ranges -> fall back to full scan with remaining filter
+query
+SELECT COUNT(*) FROM t_sweep3
+  WHERE (a < 3 AND b < 2) OR (a > 1 AND b < 3);
+----
+count
+15
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+  WHERE (a < 3 AND b < 2) OR (a > 1 AND b < 3);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan<slt:ignore>
 
 statement ok
 DROP TABLE t_sweep3;

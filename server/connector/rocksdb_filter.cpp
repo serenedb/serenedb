@@ -935,10 +935,13 @@ velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
 }
 
 std::string ColumnRange::toString() const {
-  std::string result;
   auto variant_str = [](const velox::variant& v) {
     return v.toString(velox::createScalarType(v.kind()));
   };
+  if (IsPoint()) {
+    return variant_str(left_value);
+  }
+  std::string result;
   if (!HasLeft()) {
     absl::StrAppend(&result, "(-inf");
   } else {
@@ -1505,11 +1508,26 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // Collect rewrite sources from every column in each constraint's prefix
   // (all K equality columns + the range column), not just the first PK column.
   containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
+  bool has_beyond_prefix_constraints = false;
   for (const auto& c : constraints) {
     const size_t prefix = c.RangePrefixSize();
     for (size_t i = 0; i < prefix; ++i) {
       const auto& col_exprs = c.GetSourceExprs(pk_names[i]);
       sources.insert(col_exprs.begin(), col_exprs.end());
+    }
+    // Check if any KC constrains columns beyond its range prefix.  If so, the
+    // scan covers a superset of the intended rows, and the beyond-prefix
+    // predicates must be post-filtered.  Because different KCs may have
+    // different beyond-prefix conditions, we cannot form a single shared
+    // remaining filter by stripping only the prefix sources -- the stripped
+    // expression would combine conditions from different ranges incorrectly
+    // (e.g. OR(b<2, b>2) instead of (a<2 AND b<2) OR (a>2 AND b>2)).
+    // Keep the original expression as remaining_filter in this case.
+    for (size_t i = prefix; i < pk_names.size(); ++i) {
+      if (c.FindColumnRange(pk_names[i]) != nullptr) {
+        has_beyond_prefix_constraints = true;
+        break;
+      }
     }
   }
 
@@ -1517,8 +1535,9 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {ConstraintKind::None, {}, expr};
   }
 
-  return {ConstraintKind::Ranges, std::move(constraints),
-          RewriteExpr(expr, sources)};
+  velox::core::TypedExprPtr remaining =
+    has_beyond_prefix_constraints ? expr : RewriteExpr(expr, sources);
+  return {ConstraintKind::Ranges, std::move(constraints), std::move(remaining)};
 }
 
 }  // namespace sdb::connector

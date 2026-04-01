@@ -36,6 +36,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/fwd.h"
+#include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 
 namespace sdb::connector {
@@ -242,15 +243,30 @@ struct ResolvedRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
   ColumnRange range_col;               // constraint on column K
 
-  // Ordering: compare the effective (K+1)-element sequence element by element.
-  // Each element is either a prefix value (exact) or, at position K, the
-  // range_col left boundary (nullopt = -inf, sorts before any concrete value).
-  // When two ranges share all elements of the shorter one -> ranges overlap,
-  // which must not happen -- asserts.
+  // Ordering: compare the leftmost key covered by each range.
+  // Walk column by column; a prefix value is exact (inclusive point), and at
+  // the range column we compare the range_col left bound.  When the two ranges
+  // have different prefix depths but share the common prefix, the shorter
+  // range's range_col is compared against the exact prefix value of the longer
+  // range at that position.
   bool operator<(const ResolvedRange& other) const {
-    // Compare prefix values (exact equality columns) first.
-    const size_t common_prefix = std::min(prefix.size(), other.prefix.size());
-    for (size_t i = 0; i < common_prefix; ++i) {
+    [[maybe_unused]] auto print_range = [](const ResolvedRange& r,
+                                           std::string name) {
+      std::string s = "" + name + "{prefix=[";
+      for (size_t i = 0; i < r.prefix.size(); ++i) {
+        if (i > 0) {
+          s += ", ";
+        }
+        s += r.prefix[i].toString(velox::createScalarType(r.prefix[i].kind()));
+      }
+      s += "], range=";
+      s += r.range_col.toString();
+      s += "}";
+      return s;
+    };
+
+    const size_t min_depth = std::min(prefix.size(), other.prefix.size());
+    for (size_t i = 0; i < min_depth; ++i) {
       if (prefix[i] < other.prefix[i]) {
         return true;
       }
@@ -258,24 +274,51 @@ struct ResolvedRange {
         return false;
       }
     }
-    if (prefix.size() != other.prefix.size()) {
-      // Unequal prefix lengths with a shared prefix means ranges overlap.
+
+    if (prefix.size() == other.prefix.size()) {
+      // Same prefix depth: compare range_col left bounds.
+      // [v, ...] < (v, ...) because inclusive starts earlier.
+      // Identical left bounds mean ranges overlap -- must not happen.
+      if (range_col.LeftBoundLessThan(other.range_col)) {
+        return true;
+      }
+      if (other.range_col.LeftBoundLessThan(range_col)) {
+        return false;
+      }
+
+      SDB_PRINT(print_range(*this, "this"));
+      SDB_PRINT(print_range(other, "other"));
+
       SDB_UNREACHABLE();
     }
 
-    // Same prefix length: compare left bounds of range_col.
-    // Use LeftBoundLessThan so that ties on value are broken by inclusivity:
-    // [v, ...] < (v, ...) because [v starts earlier.
-    // Two ranges with identical left bounds overlap -- asserts.
-    if (range_col.LeftBoundLessThan(other.range_col)) {
-      return true;
+    // Unequal prefix depths with a matching common prefix.
+    // At position min_depth the shorter side has its range_col and the longer
+    // side has an exact prefix value.  Compare the range_col's left bound
+    // against that exact value (exact == inclusive point).
+    const bool this_shorter = (prefix.size() < other.prefix.size());
+    const velox::variant& exact =
+      this_shorter ? other.prefix[prefix.size()] : prefix[other.prefix.size()];
+    const ColumnRange& rcol = this_shorter ? range_col : other.range_col;
+
+    if (!rcol.HasLeft()) {
+      // range_col starts at -inf: the shorter range's leftmost key precedes
+      // any row covered by the longer range.
+      return this_shorter;
     }
-    if (other.range_col.LeftBoundLessThan(range_col)) {
+    if (rcol.left_value < exact) {
+      return this_shorter;
+    }
+    if (exact < rcol.left_value) {
+      return !this_shorter;
+    }
+    // Equal value: inclusive bound starts at the same point as the exact value
+    // so neither is strictly earlier; exclusive bound starts strictly after, so
+    // the exact-value side comes first.
+    if (rcol.IsLeftInclusive()) {
       return false;
     }
-
-    // Identical left bounds -> ranges overlap.
-    SDB_UNREACHABLE();
+    return !this_shorter;
   }
 };
 
@@ -285,7 +328,8 @@ struct ResolvedRange {
   const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type);
 
 [[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
-  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
+  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names,
+  bool negated = false);
 
 enum class ConstraintKind {
   // All constraints are fully-specified equality points; use point lookup.

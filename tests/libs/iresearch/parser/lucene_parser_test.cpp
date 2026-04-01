@@ -1764,7 +1764,7 @@ TEST_F(LuceneParserTest, RequiredWithOptionals) {
   AssertTerm(OptionalRoot()[2], "content", "licenses");
 }
 
-// Query: "+open" — required only, no optional
+// Query: "+open" -- required only, no optional
 TEST_F(LuceneParserTest, RequiredOnly) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "+open").ok());
   ASSERT_EQ(1, RequiredRoot().size());
@@ -1772,7 +1772,7 @@ TEST_F(LuceneParserTest, RequiredOnly) {
   AssertTerm(RequiredRoot()[0], "content", "open");
 }
 
-// Query: "open source" — optional only (no + prefix), no required
+// Query: "open source" -- optional only (no + prefix), no required
 TEST_F(LuceneParserTest, OptionalOnly) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "open source").ok());
   ASSERT_TRUE(RequiredRoot().empty());

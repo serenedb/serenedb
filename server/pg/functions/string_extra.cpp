@@ -821,7 +821,7 @@ struct PgFormat {
         ++i;
       }
 
-      // Parse optional width (literal integer only — PostgreSQL format() does
+      // Parse optional width (literal integer only -- PostgreSQL format() does
       // not support '*' dynamic width unlike C printf)
       int width = 0;
       while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {

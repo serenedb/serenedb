@@ -84,10 +84,10 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   }
 
   // Create a single-segment index with 4 documents:
-  //   doc A – "open"                  (required only)
-  //   doc B – "open source"           (required + 1 optional)
-  //   doc C – "open source software"  (required + 2 optionals)
-  //   doc D – "source software"       (no required term -> must be excluded)
+  //   doc A - "open"                  (required only)
+  //   doc B - "open source"           (required + 1 optional)
+  //   doc C - "open source software"  (required + 2 optionals)
+  //   doc D - "source software"       (no required term -> must be excluded)
   irs::DirectoryReader CreateIndex() {
     auto writer = open_writer(irs::kOmCreate);
 
@@ -112,7 +112,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   }
 };
 
-// "+open source software" – only docs with "open" must be returned.
+// "+open source software" - only docs with "open" must be returned.
 // Doc D ("source software") does NOT contain "open" and must be excluded.
 TEST_P(BoostQueryTestCase, RequiredExcludesNonMatchingDocs) {
   auto reader = CreateIndex();

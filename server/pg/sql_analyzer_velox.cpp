@@ -3970,7 +3970,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     std::vector type_names = type->names();
 
     //  Important that  if the generated primary key is present, it must be the
-    //  last field in the type — there are data sources that rely on this
+    //  last field in the type -- there are data sources that rely on this
     types.push_back(velox::BIGINT());
     type_names.emplace_back(std::move(generated_pk_name));
     type = velox::ROW(std::move(type_names), std::move(types));
@@ -5955,7 +5955,7 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
   if (name == "pg_extract") {
     return ResolveExtract(std::move(args));
   }
-  // substring(string, pattern, escape) — SQL SIMILAR substring extraction.
+  // substring(string, pattern, escape) -- SQL SIMILAR substring extraction.
   // Rewrite to: regexp_extract(string, similar_to_escape(pattern, escape))
   if (name == "presto_substring" && args.size() == 3 &&
       args[1]->type()->isVarchar() && args[2]->type()->isVarchar()) {

@@ -629,7 +629,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
           } else if constexpr (std::is_same_v<MinMatcher<MergeType>, M> ||
                                std::is_same_v<RangeMatcher<MergeType>, M>) {
             // When min=0 and child has no matches, every parent matches
-            // with score 0 — return parent directly for efficiency
+            // with score 0 -- return parent directly for efficiency
             if (Match{0} == matcher.Range() &&
                 doc_limits::eof(child->value())) {
               return std::move(parent);

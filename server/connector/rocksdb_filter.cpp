@@ -330,6 +330,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {{}, expr};
   }
 
+  // Collect the unique source sub-expressions to get rid of them.
   containers::FlatHashSet<const velox::core::ITypedExpr*> sources;
   for (const auto& p : pts) {
     sources.insert(p.GetSourceExprs().begin(), p.GetSourceExprs().end());

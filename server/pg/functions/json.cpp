@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "basics/fwd.h"
+#include "pg/functions/json.tpp"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
@@ -97,114 +98,6 @@ bool ValidateJson(T& value) {
       return false;
   }
 }
-
-class JsonParser {
- public:
-  enum class OutputType {
-    JSON,
-    TEXT,
-  };
-
-  void PrepareJson(std::string_view json);
-
-  template<OutputType Output, typename Range>
-  std::string_view Extract(const Range& path) {
-    simdjson::ondemand::value value;
-    auto doc = GetJsonDocument();
-    if (doc.get_value().get(value)) {
-      return {};
-    }
-    for (const std::optional<velox::StringView>& element : path) {
-      if (!element.has_value()) {
-        return {};
-      }
-      auto key = static_cast<std::string_view>(*element);
-
-      if (value.type() == simdjson::ondemand::json_type::array) {
-        int64_t index;
-        if (!absl::SimpleAtoi(key, &index)) {
-          return {};
-        }
-        simdjson::ondemand::array arr;
-        if (value.get_array().get(arr)) {
-          return {};
-        }
-        if (GetByIndex(arr, index).get(value)) {
-          return {};
-        }
-      } else if (value.type() == simdjson::ondemand::json_type::object) {
-        auto res = value.find_field(key);
-        if (res.get(value)) {
-          return {};
-        }
-      } else {
-        return {};
-      }
-    }
-    return ProcessOutput<Output>(value);
-  }
-
-  template<OutputType Output>
-  std::string_view ExtractByIndex(int64_t index) {
-    simdjson::ondemand::value value;
-    auto doc = GetJsonDocument();
-    if (doc.get_value().get(value)) {
-      return {};
-    }
-    if (value.type() != simdjson::ondemand::json_type::array) {
-      return {};
-    }
-    simdjson::ondemand::array arr;
-    if (value.get_array().get(arr)) {
-      return {};
-    }
-    if (GetByIndex(arr, index).get(value)) {
-      return {};
-    }
-    return ProcessOutput<Output>(value);
-  }
-
-  template<OutputType Output>
-  std::string_view ExtractByField(std::string_view field) {
-    simdjson::ondemand::value value;
-    auto doc = GetJsonDocument();
-    if (doc.get_value().get(value)) {
-      return {};
-    }
-    if (value.type() != simdjson::ondemand::json_type::object) {
-      return {};
-    }
-    auto res = value.find_field(field);
-    if (res.get(value)) {
-      return {};
-    }
-    return ProcessOutput<Output>(value);
-  }
-
- private:
-  template<OutputType Output>
-  std::string_view ProcessOutput(simdjson::ondemand::value& value) {
-    if constexpr (Output == OutputType::TEXT) {
-      if (value.type() == simdjson::ondemand::json_type::string) {
-        return value.get_string().value();
-      }
-    }
-    std::string_view str;
-    if (simdjson::to_json_string(value).get(str)) {
-      return {};
-    }
-    return str;
-  }
-
-  simdjson::ondemand::document GetJsonDocument();
-
-  simdjson::simdjson_result<simdjson::ondemand::value> GetByIndex(
-    simdjson::ondemand::array arr, int64_t relative_index);
-
-  // TODO(codeworse): Try to reuse parser between calls
-  simdjson::ondemand::parser _parser;
-  simdjson::padded_string _padded_input;
-};
 
 // Process -> operator (by index) and ->> operator (by index text)
 template<JsonParser::OutputType Output, typename T>

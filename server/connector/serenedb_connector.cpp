@@ -272,7 +272,7 @@ SereneDBTableLayout::createTableHandle(
       remaining_filter = std::move(res.remaining_filter);
     }
 
-    // 2. No PK match — try secondary index.
+    // 2. No PK match -- try secondary index.
     if (points.empty()) {
       velox::core::TypedExprPtr remaining;
       if (auto handle =

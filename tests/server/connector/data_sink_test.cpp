@@ -2487,7 +2487,7 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   ASSERT_NE(transaction, nullptr);
 
   size_t rows_affected = 0;
-  std::vector<velox::column_index_t> pk_indices = {0, 1, 2, 3};
+  std::vector<velox::column_index_t> pk_indices = {0};
   RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
                                     row_type, object_key, pk_indices,
                                     {{.id = 0, .name = ""},
@@ -2561,7 +2561,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   ASSERT_NE(transaction2, nullptr);
 
   size_t rows_affected = 0;
-  std::vector<velox::column_index_t> pk_indices = {0, 1, 2, 3};
+  std::vector<velox::column_index_t> pk_indices = {0};
   {
     RocksDBDeleteDataSink delete_sink(
       *transaction, *_cf_handles.front(), row_type, object_key, pk_indices,

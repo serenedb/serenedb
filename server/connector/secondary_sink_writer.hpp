@@ -57,7 +57,7 @@ namespace sdb::connector {
 //    Key:   <shard (8B)> <dummy (8B)> <1B markers + encoded SK values>
 //           <PK bytes>
 //    Value: empty
-//    PK in key — multiple NULLs allowed (PostgreSQL semantics).
+//    PK in key -- multiple NULLs allowed (PostgreSQL semantics).
 //
 // 3) Non-unique (any value):
 //    Key:   <shard (8B)> <dummy (8B)> <1B markers + encoded SK values>
@@ -123,11 +123,11 @@ inline void AppendPK(const velox::RowVector& input,
 //
 // Unique + NULL:
 //   key = [shard][marker][PK]              value = empty
-//   (PK in key — multiple NULLs allowed, like non-unique)
+//   (PK in key -- multiple NULLs allowed, like non-unique)
 //
 // Unique + non-NULL:
 //   key = [shard][marker][SK values]       value = [PK]
-//   (PK as value — uniqueness enforced)
+//   (PK as value -- uniqueness enforced)
 template<bool Unique>
 inline void Create(const velox::RowVector& input,
                    std::span<const velox::column_index_t> pk_children,

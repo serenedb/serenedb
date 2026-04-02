@@ -17,7 +17,8 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-#include "search/functions.hpp"
+
+#include "functions/search.h"
 
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
@@ -27,7 +28,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 
-namespace sdb::search::functions {
+namespace sdb::functions {
 namespace {
 
 template<typename T>
@@ -129,4 +130,4 @@ void RegisterSearchFunctions() {
                           velox::Varchar>({std::string{kLevenshteinMatch}});
 }
 
-}  // namespace sdb::search::functions
+}  // namespace sdb::functions

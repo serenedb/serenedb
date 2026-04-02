@@ -22,8 +22,11 @@
 
 #include <string>
 
-namespace sdb::search::functions {
+#include "basics/string_utils.h"
 
+namespace sdb::functions {
+
+// TODO(codeworse): add constexpr prefix + function name
 inline constexpr std::string_view kPhrase = "sdb_phrase";
 inline constexpr std::string_view kTermEq = "sdb_term_eq";
 inline constexpr std::string_view kTermLt = "sdb_term_lt";
@@ -37,4 +40,4 @@ inline constexpr std::string_view kLevenshteinMatch = "sdb_levenshtein_match";
 
 void RegisterSearchFunctions();
 
-}  // namespace sdb::search::functions
+}  // namespace sdb::functions

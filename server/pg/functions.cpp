@@ -32,6 +32,8 @@
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/vector/ComplexVector.h>
 
+#include "functions/search.h"
+#include "functions/vector.h"
 #include "pg/functions/array_extra.h"
 #include "pg/functions/datetime_extra.h"
 #include "pg/functions/extract.h"
@@ -45,8 +47,6 @@
 #include "pg/functions/stub.h"
 #include "pg/functions/system.h"
 #include "pg/functions/util.h"
-#include "pg/sdb_functions/vector.h"
-#include "search/functions.hpp"
 
 namespace sdb::pg::functions {
 
@@ -67,9 +67,9 @@ void RegisterFunctions(const std::string& prefix) {
 }
 
 void RegisterSdbFunctions(const std::string& prefix) {
-  RegisterVectorFunctions(prefix);
+  sdb::functions::RegisterVectorFunctions();
   // search functions have sdb_ prefix
-  search::functions::RegisterSearchFunctions();
+  sdb::functions::RegisterSearchFunctions();
 }
 
 }  // namespace sdb::pg::functions

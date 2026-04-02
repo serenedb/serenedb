@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/sdb_functions/vector.h"
+#include "functions/vector.h"
 
 #include <velox/expression/ComplexViewTypes.h>
 #include <velox/functions/Macros.h>
@@ -38,7 +38,7 @@ LIBPG_QUERY_INCLUDES_BEGIN
 #include "utils/errcodes.h"
 LIBPG_QUERY_INCLUDES_END
 
-namespace sdb::pg::functions {
+namespace sdb::functions {
 namespace {
 
 // From velox
@@ -202,32 +202,32 @@ using DotProductInt32 = DotProduct<T, int32_t, int64_t>;
 
 }  // namespace
 
-void RegisterVectorFunctions(const std::string& prefix) {
+void RegisterVectorFunctions() {
   velox::registerFunction<L2SquaredFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + kL2Distance});
+                          velox::Array<float>>({std::string{kL2Distance}});
   velox::registerFunction<L2SquaredDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + kL2Distance});
+                          velox::Array<double>>({std::string{kL2Distance}});
   velox::registerFunction<L2SquaredInt32, int64_t, velox::Array<int32_t>,
-                          velox::Array<int32_t>>({prefix + kL2Distance});
+                          velox::Array<int32_t>>({std::string{kL2Distance}});
 
   velox::registerFunction<L1DistanceFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + kL1Distance});
+                          velox::Array<float>>({std::string{kL1Distance}});
   velox::registerFunction<L1DistanceDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + kL1Distance});
+                          velox::Array<double>>({std::string{kL1Distance}});
   velox::registerFunction<L1DistanceInt32, int64_t, velox::Array<int32_t>,
-                          velox::Array<int32_t>>({prefix + kL1Distance});
+                          velox::Array<int32_t>>({std::string{kL1Distance}});
 
   velox::registerFunction<CosineSimilarityFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + kCosineDistance});
+                          velox::Array<float>>({std::string{kCosineDistance}});
   velox::registerFunction<CosineSimilarityDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + kCosineDistance});
+                          velox::Array<double>>({std::string{kCosineDistance}});
 
   velox::registerFunction<DotProductFloat, float, velox::Array<float>,
-                          velox::Array<float>>({prefix + kInnerProduct});
+                          velox::Array<float>>({std::string{kInnerProduct}});
   velox::registerFunction<DotProductDouble, double, velox::Array<double>,
-                          velox::Array<double>>({prefix + kInnerProduct});
+                          velox::Array<double>>({std::string{kInnerProduct}});
   velox::registerFunction<DotProductInt32, int64_t, velox::Array<int32_t>,
-                          velox::Array<int32_t>>({prefix + kInnerProduct});
+                          velox::Array<int32_t>>({std::string{kInnerProduct}});
 }
 
 }  // namespace sdb::pg::functions

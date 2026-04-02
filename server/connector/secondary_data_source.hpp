@@ -156,7 +156,8 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   void CollectPKsFromValue(uint64_t size) {
     while (_row_keys.size() < size && _iterator->Valid()) {
       auto val = _iterator->value();
-      _row_keys.emplace_back(val.data(), val.size());
+      SDB_ASSERT(val.size() > 1 && val[0] == secondary_key::kPKInValue);
+      _row_keys.emplace_back(val.data() + 1, val.size() - 1);
       _iterator->Next();
     }
   }

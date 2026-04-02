@@ -220,7 +220,6 @@ void SSTInsertDataSink<Flags>::appendData(velox::RowVectorPtr input) {
   this->_store_keys_buffers.reserve(num_rows);
 
   if constexpr (kIsSecondaryIndex) {
-    // Build key and write in one pass - reuse _sk_buffer/_pk_buffer.
     this->_data_writer.SetColumnIndex(0);
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       _sk_buffer.clear();
@@ -228,14 +227,8 @@ void SSTInsertDataSink<Flags>::appendData(velox::RowVectorPtr input) {
       secondary_key::Create<kUniqueIndex>(*input, this->_key_childs,
                                           _sk_children, row_idx, _sk_buffer,
                                           _pk_buffer);
-      if constexpr (kUniqueIndex) {
-        rocksdb::Slice pk_slice{_pk_buffer};
-        this->_data_writer.Write({&pk_slice, 1}, _sk_buffer);
-      } else {
-        SDB_ASSERT(_pk_buffer.empty());
-        rocksdb::Slice empty;
-        this->_data_writer.Write({&empty, 1}, _sk_buffer);
-      }
+      rocksdb::Slice val_slice{_pk_buffer};
+      this->_data_writer.Write({&val_slice, 1}, _sk_buffer);
     }
   } else {
     SDB_ASSERT(input->type()->size() == this->_columns_info.size());

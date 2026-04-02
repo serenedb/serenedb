@@ -2952,3 +2952,315 @@ pid	a	b	c
 
 statement ok
 DROP TABLE clickclack_comp_or_and;
+
+statement ok
+CREATE TABLE vedernikoff_idx_scan (pid INTEGER PRIMARY KEY, score INTEGER, name VARCHAR);
+
+statement ok
+CREATE INDEX vedernikoff_idx_scan_score_idx ON vedernikoff_idx_scan(score);
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (1, 30, 'c');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (2, 10, 'a');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (3, 10, 'b');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (4, 20, 'd');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (5, NULL, 'e');
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+----
+pid	score	name
+5	NULL	e
+2	10	a
+3	10	b
+4	20	d
+1	30	c
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 10;
+----
+pid	score	name
+2	10	a
+3	10	b
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+----
+pid	score	name
+5	NULL	e
+
+statement ok
+UPDATE vedernikoff_idx_scan SET score = 5 WHERE pid = 1;
+
+statement ok
+DELETE FROM vedernikoff_idx_scan WHERE pid = 4;
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+----
+pid	score	name
+5	NULL	e
+1	5	c
+2	10	a
+3	10	b
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff_idx_scan_score_idx;
+----
+count
+4
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (6, 10, 'f');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (7, 40, 'g');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (8, NULL, 'h');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (9, 5, 'i');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (10, 50, 'j');
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+----
+pid	score	name
+5	NULL	e
+8	NULL	h
+1	5	c
+9	5	i
+2	10	a
+3	10	b
+6	10	f
+7	40	g
+10	50	j
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10);
+----
+pid	score	name
+1	5	c
+9	5	i
+2	10	a
+3	10	b
+6	10	f
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 5 OR score = 40;
+----
+pid	score	name
+1	5	c
+9	5	i
+7	40	g
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (10, 10, 5);
+----
+pid	score	name
+1	5	c
+9	5	i
+2	10	a
+3	10	b
+6	10	f
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+----
+pid	score	name
+5	NULL	e
+8	NULL	h
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL OR score = 50;
+----
+pid	score	name
+5	NULL	e
+8	NULL	h
+10	50	j
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 10 AND name = 'a';
+----
+pid	score	name
+2	10	a
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE (score = 5 AND name = 'c') OR score = 40;
+----
+pid	score	name
+1	5	c
+7	40	g
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10) AND name >= 'c';
+----
+pid	score	name
+1	5	c
+9	5	i
+6	10	f
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 999;
+----
+pid	score	name
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10);
+----
+count
+5
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+----
+count
+2
+
+statement ok
+DROP TABLE vedernikoff_idx_scan;
+
+statement ok
+CREATE TABLE babsky_idx_scan_comp (pid INTEGER PRIMARY KEY, a INTEGER, b VARCHAR, c INTEGER);
+
+statement ok
+CREATE INDEX babsky_idx_scan_comp_ab_idx ON babsky_idx_scan_comp(a, b);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (1, 2, 'foo', 10);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (2, 1, 'bar', 20);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (3, 1, 'foo', 30);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (4, NULL, 'foo', 40);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (5, 1, NULL, 50);
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx;
+----
+pid	a	b	c
+4	NULL	foo	40
+5	1	NULL	50
+2	1	bar	20
+3	1	foo	30
+1	2	foo	10
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b = 'foo';
+----
+pid	a	b	c
+3	1	foo	30
+
+onlyif serenedb
+query
+SELECT count(*) FROM babsky_idx_scan_comp_ab_idx;
+----
+count
+5
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a IN (1, 2) AND b = 'foo';
+----
+pid	a	b	c
+3	1	foo	30
+1	2	foo	10
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx
+WHERE (a = 1 AND b = 'foo') OR (a = 2 AND b = 'foo');
+----
+pid	a	b	c
+3	1	foo	30
+1	2	foo	10
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b IN ('foo', 'bar');
+----
+pid	a	b	c
+2	1	bar	20
+3	1	foo	30
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a IS NULL AND b = 'foo';
+----
+pid	a	b	c
+4	NULL	foo	40
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b IS NULL;
+----
+pid	a	b	c
+5	1	NULL	50
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx
+WHERE (a IS NULL AND b = 'foo') OR (a = 1 AND b = 'bar');
+----
+pid	a	b	c
+4	NULL	foo	40
+2	1	bar	20
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b = 'foo' AND c = 30;
+----
+pid	a	b	c
+3	1	foo	30
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b = 'foo' AND c = 999;
+----
+pid	a	b	c
+
+onlyif serenedb
+query
+SELECT count(*) FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b IN ('foo', 'bar');
+----
+count
+2
+
+statement ok
+DROP TABLE babsky_idx_scan_comp;

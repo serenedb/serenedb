@@ -39,6 +39,7 @@
 #include "connector/key_builder.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/rocksdb_materializer.hpp"
+#include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -214,7 +215,7 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   catalog::Column::Id _effective_column_id;
 };
 
-class PrimaryKeyColumnBuilder {
+class PointLookupPKColumnBuilder {
  public:
   static constexpr bool kIsSecondaryIndex = false;
 
@@ -231,13 +232,14 @@ class PrimaryKeyColumnBuilder {
   irs::bitset _present_rows;
 };
 
+// PointLookupSKColumnBuilder for point lookups
 template<typename Materializer>
-class SecondaryKeyColumnBuilder {
+class PointLookupSKColumnBuilder {
  public:
   static constexpr bool kIsSecondaryIndex = true;
 
-  SecondaryKeyColumnBuilder(Materializer materializer,
-                            velox::memory::MemoryPool& pool)
+  PointLookupSKColumnBuilder(Materializer materializer,
+                             velox::memory::MemoryPool& pool)
     : _materializer{std::move(materializer)}, _row_keys{pool} {}
 
   void Init(const velox::TypePtr& type, size_t capacity,
@@ -248,7 +250,10 @@ class SecondaryKeyColumnBuilder {
   void Fill(size_t batch_idx, size_t found_idx,
             std::span<const rocksdb::PinnableSlice> values) {
     for (const auto& val : values) {
-      _row_keys.emplace_back(val.data(), val.size());
+      // we store pk in value only for unique non-null SKs, otherwise
+      // pointlookup is not supposed to be used.
+      SDB_ASSERT(val.size() > 1 && val[0] == secondary_key::kPKInValue);
+      _row_keys.emplace_back(val.data() + 1, val.size() - 1);
     }
   }
 
@@ -265,23 +270,23 @@ class SecondaryKeyColumnBuilder {
 };
 
 template<bool ReadYourOwnWrites>
-struct PrimaryLookupPolicy {
+struct PKLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
 
   using KeyBuilder = PrimaryKeyBuilder;
 
-  using ResultCollector = PrimaryKeyColumnBuilder;
+  using ResultCollector = PointLookupPKColumnBuilder;
 };
 
 template<bool ReadYourOwnWrites, typename Materializer>
-struct SecondaryLookupPolicy {
+struct SKLookupPolicy {
   using Source =
     std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
 
   using KeyBuilder = SecondaryKeyBuilder;
 
-  using ResultCollector = SecondaryKeyColumnBuilder<Materializer>;
+  using ResultCollector = PointLookupSKColumnBuilder<Materializer>;
 };
 
 template<typename Policy>
@@ -358,11 +363,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
 using RocksDBRYOWFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::Transaction>;
 using RocksDBRYOWPointLookupDataSource =
-  RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
+  RocksDBPointLookupDataSource<PKLookupPolicy<true>>;
 
 using RocksDBSnapshotFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::DB>;
 using RocksDBSnapshotPointLookupDataSource =
-  RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
+  RocksDBPointLookupDataSource<PKLookupPolicy<false>>;
 
 }  // namespace sdb::connector

@@ -242,6 +242,40 @@ SereneDBTableLayout::createTableHandle(
       irs::ToStringDemangled(conjunct_root, column_id_to_name));
   }
 
+  if (idx_table &&
+      idx_table->GetIndex().GetIndexType() == IndexType::Secondary) {
+    const auto& sec_index =
+      basics::downCast<const catalog::SecondaryIndex>(idx_table->GetIndex());
+    const auto& underlying =
+      basics::downCast<const RocksDBTable>(*idx_table->GetTable());
+    auto& transaction = idx_table->GetTransaction();
+    auto snapshot = transaction.EnsureCatalogSnapshot();
+    auto shard = snapshot->GetIndexShard(sec_index.GetId());
+    auto sk_type = underlying.CatalogTable().IdToColumn().MakeTypeFromColIds(
+      sec_index.GetColumnIds());
+
+    velox::core::TypedExprPtr remaining_filter;
+    if (filters.size() == 1) {
+      remaining_filter = filters[0];
+    } else if (filters.size() > 1) {
+      remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+        velox::BOOLEAN(), filters, velox::expression::kAnd);
+    }
+
+    std::vector<SpecificPoint> points;
+    if (remaining_filter) {
+      if (auto sk = TryMatchPointFilters(remaining_filter, sk_type->names())) {
+        points = std::move(sk->points);
+        remaining_filter = std::move(sk->remaining_filter);
+      }
+    }
+
+    RejectFilter(std::move(remaining_filter), rejected_filters);
+    return std::make_shared<SecondaryIndexTableHandle>(
+      underlying.name(), underlying.TableId(), transaction, shard->GetId(),
+      std::move(points), std::move(sk_type), underlying, sec_index.IsUnique());
+  }
+
   if (const auto* read_file_table = dynamic_cast<const ReadFileTable*>(table)) {
     double sample_rate = 1.0;
     velox::common::SubfieldFilters subfield_filters;

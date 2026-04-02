@@ -397,7 +397,7 @@ struct PgTypeofFunction {
 
 }  // namespace
 
-void registerSystemFunctions(const std::string& prefix) {
+void RegisterSystemFunctions(const std::string& prefix) {
   // 9.27.1 Session Information Functions
 
   velox::registerFunction<CurrentSchemaFunction, NameCustomType>(

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -22,8 +22,13 @@
 
 #include <string>
 
-namespace sdb::pg::functions {
+namespace sdb::functions {
 
-void RegisterMathExtraFunctions(const std::string& prefix);
+inline constexpr std::string_view kL2Distance = "sdb_l2_distance";
+inline constexpr std::string_view kL1Distance = "sdb_l1_distance";
+inline constexpr std::string_view kCosineDistance = "sdb_cosine_distance";
+inline constexpr std::string_view kInnerProduct = "sdb_inner_product_distance";
 
-}  // namespace sdb::pg::functions
+void RegisterVectorFunctions();
+
+}  // namespace sdb::functions

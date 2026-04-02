@@ -47,7 +47,7 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "catalog/mangling.h"
-#include "search/functions.hpp"
+#include "functions/search.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 #include "velox/type/CppToType.h"
@@ -944,7 +944,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return MakeGroup<irs::Or>(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kTermEq) {
+  if (call.name() == functions::kTermEq) {
     return FromVeloxBinaryEq<false>(filter, ctx, call, false);
   }
 
@@ -966,7 +966,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     }
   }
 
-  if (call.name() == search::functions::kTermIn) {
+  if (call.name() == functions::kTermIn) {
     return FromVeloxIn<false>(filter, ctx, call);
   }
 
@@ -974,7 +974,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxIn<true>(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kTermLike) {
+  if (call.name() == functions::kTermLike) {
     return FromVeloxLike<false>(filter, ctx, call);
   }
 
@@ -982,15 +982,15 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxLike<true>(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kPhrase) {
+  if (call.name() == functions::kPhrase) {
     return FromSearchPhrase(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kNgramMatch) {
+  if (call.name() == functions::kNgramMatch) {
     return FromVeloxNgramMatch(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kLevenshteinMatch) {
+  if (call.name() == functions::kLevenshteinMatch) {
     return FromVeloxLevenshteinMatch(filter, ctx, call);
   }
 

@@ -64,6 +64,8 @@ on:
             DOCKER_PASSWORD:
                 required: false
                 description: "Docker registry password / token"
+            TG_USER_MAP:
+                required: true
 
 jobs:
     build-docker:
@@ -90,7 +92,7 @@ jobs:
               run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
 
             - name: Checkout SereneUI
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
@@ -108,9 +110,7 @@ jobs:
 
             - name: Update file ownership
               if: always()
-              run: |
-                  export RUNNER_ID="$(id -u):$(id -g)"
-                  bash ./scripts/update_ownership.sh
+              run: bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
@@ -122,6 +122,10 @@ jobs:
                       serene-ui/logs/**/*
                   if-no-files-found: ignore
                   retention-days: 30
+
+            - name: Setup QEMU for multi-arch
+              if: inputs.BUILD_IMAGE
+              run: docker run --rm --privileged tonistiigi/binfmt --install all
 
             - name: Build Docker image
               if: inputs.BUILD_IMAGE
@@ -152,7 +156,7 @@ jobs:
               run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
 
             - name: Checkout SereneUI
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
@@ -227,7 +231,7 @@ jobs:
               run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
 
             - name: Checkout SereneUI
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
@@ -291,7 +295,7 @@ jobs:
         runs-on: macOS
         permissions:
             contents: read
-        timeout-minutes: 144000
+        timeout-minutes: 240
         defaults:
             run:
                 working-directory: ./serene-ui
@@ -301,7 +305,7 @@ jobs:
               run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
 
             - name: Checkout SereneUI
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
@@ -435,7 +439,7 @@ jobs:
               run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
 
             - name: Checkout (for notify script)
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
               with:
                   repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}

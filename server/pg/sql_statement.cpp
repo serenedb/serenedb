@@ -31,6 +31,7 @@
 #include "pg/command_executor.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
+#include "pg/pg_types.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -187,6 +188,11 @@ bool SqlStatement::ProcessNextRoot(
   if (!params.types.empty()) {
     // cannot have multiple bind stmts, already checked in pg_commit_task
     SDB_ASSERT(RootCount() == 1);
+  }
+  for (size_t i = 0; i < params.oids.size() && i < params.types.size(); ++i) {
+    if (params.oids[i] != 0 && !params.types[i]) {
+      params.types[i] = Oid2Type(params.oids[i]);
+    }
   }
 
   Resolve(connection_ctx->GetDatabaseId(), objects, *connection_ctx);

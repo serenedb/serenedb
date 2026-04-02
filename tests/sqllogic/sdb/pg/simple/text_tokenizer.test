@@ -1124,7 +1124,7 @@ ts_lexize
 {QUICK,BROWN,FOX!}
 
 
-# --- Three-step: delimiter → text with correct stopwords → norm ---
+# --- Three-step: delimiter -> text with correct stopwords -> norm ---
 statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_correct_stopwords(
     template = 'pipeline',

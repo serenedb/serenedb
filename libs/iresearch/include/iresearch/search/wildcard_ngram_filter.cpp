@@ -35,7 +35,7 @@ namespace irs {
 namespace {
 
 // Convert a SQL LIKE pattern to an ICU regex pattern.
-// '%' → '.*', '_' → '.', backslash escapes, all other regex chars escaped.
+// '%' -> '.*', '_' -> '.', backslash escapes, all other regex chars escaped.
 std::shared_ptr<icu::RegexMatcher> BuildLikeMatcher(std::string_view pattern) {
   std::string regex;
   regex.reserve(pattern.size() * 2);

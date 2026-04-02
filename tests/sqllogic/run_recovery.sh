@@ -1,6 +1,18 @@
 #!/bin/bash
 
-cd sqllogic
+# Runs recovery tests against a running serened instance.
+# Expects serened to auto-restart on crash (e.g. via run_serened_loop.sh).
+#
+# Usage (local dev, from another terminal):
+#   ./run_recovery.sh
+#   SERVICE_HOST=serenedb-recovery SERVICE_PORT=7777 ./run_recovery.sh
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+: "${SERVICE_HOST:=localhost}"
+: "${SERVICE_PORT:=7777}"
+
+cd "$SCRIPT_DIR"
 
 export RETRY_ATTEMPTS=10
 export BACKOFF_DURATION=500ms
@@ -24,7 +36,7 @@ for test_file in "${test_files[@]}"; do
 
 	./run.sh \
 		--host "$SERVICE_HOST" \
-		--single-port 7777 \
+		--single-port "$SERVICE_PORT" \
 		--test "$test_file" \
 		--junit "tests-serenedb-recovery" \
 		--protocol simple \

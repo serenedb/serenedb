@@ -18,50 +18,27 @@ on:
         type: string
         required: false
         default: ""
-      DOCKER_SERENEDB_IMAGE:
-        description: "Produce SereneDB Docker Images"
-        required: true
-        type: boolean
-        default: false
-      DOCKER_EXTRA_TAGS:
-        description: "(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE"
-        required: false
-        type: string
-        default: ""
-      PUSH_IMAGES_2_REGISTRY:
-        description: "Push images to Docker Hub"
-        required: true
-        type: boolean
-        default: false
       EXTRA_ARTIFACTS:
         description: "Keep these artifacts additionally"
         type: string
         required: false
         default: ""
-      DOCKER_BUILD_IMAGES:
-        description: "Produce SereneDB Build Images"
-        required: true
-        type: boolean
-        default: false
       BUILD_CONFIG:
         description: "JSON configuration for builds and job settings"
         type: string
         required: false
-        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
-      CREATE_GITHUB_RELEASE:
-        description: 'Create a GitHub Release with packages'
-        required: true
-        type: boolean
-        default: false
+        default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
       SERENEDB_VERSION_PATCH:
         description: "Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release."
         required: false
         type: string
         default: ""
+    outputs:
+      packages_ok:
+        description: "Whether build and packaging succeeded (independent of test results)"
+        value: ${{ jobs.build-test-package.outputs.packages_ok }}
     secrets:
       PAT_TOKEN:
-        required: true
-      SDB_CLUSTER_REPO:
         required: true
       TG_TOKEN:
         required: true
@@ -69,24 +46,19 @@ on:
         required: true
       TG_USER_MAP:
         required: true
-      DOCKER_HUB_TOKEN:
-        required: false
 
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
-  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
-  DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
-  PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
   # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
-  CLUSTER_BRANCH: main
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   DEBUG_PRINT_ENV: "false"
 
 jobs:
   build-test-package:
     name: Build, Test & Package
+    outputs:
+      packages_ok: ${{ steps.serenedb_packages.outcome == 'success' }}
     permissions:
       statuses: write
       contents: write
@@ -119,7 +91,7 @@ jobs:
               echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
-              echo "SANITIZERS=Memory" >> $GITHUB_ENV
+              echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV
               echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
             ubsan)
@@ -198,172 +170,73 @@ jobs:
           submodules: true
           clean: true
 
-      - name: Checkout Cluster
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ secrets.SDB_CLUSTER_REPO }}
-          ref: ${{ env.CLUSTER_BRANCH }}
-          token: ${{ secrets.PAT_TOKEN }}
-          path: private
-          sparse-checkout: |
-            gh-ci
-          sparse-checkout-cone-mode: true
-
-      - name: Remap directories to legacy paths
-        run: |
-          mv private/gh-ci private/ci
-
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'
         run: printenv
 
       - name: Set sanitizer options
         if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
-        run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
+        run: ./scripts/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
-        if: env.DOCKER_BUILD_IMAGES != 'true'
-        run: ./private/ci/steps/02-ci-build-docker-env-file.bash
+        run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
-      # ==================== GTEST PARALLEL CACHE ====================
-      - name: Restore gtest-parallel timing cache
-        id: gtest-cache
-        if: env.DOCKER_BUILD_IMAGES != 'true'
-        uses: actions/cache@v4
-        with:
-          path: .gtest-parallel-cache
-          key: gtest-times-${{ inputs.PRESET }}-${{ env.BRANCH }}-${{ github.run_number }}
-          restore-keys: |
-            gtest-times-${{ inputs.PRESET }}-${{ env.BRANCH }}-
-            gtest-times-${{ inputs.PRESET }}-main-
-            gtest-times-${{ inputs.PRESET }}-
-
-      - name: Prepare gtest-parallel cache directory
-        if: env.DOCKER_BUILD_IMAGES != 'true'
+      # ==================== SHARED CACHES ====================
+      # One-time setup required on each CI machine:
+      #   sudo install -d -m 2777 /mnt/data/.ccache /mnt/data/.gtest-parallel-cache /mnt/data/.cargo-target-sqllogic /mnt/data/cores
+      #   echo 'kernel.core_pattern=/mnt/data/cores/%e.%p.%t' | sudo tee /etc/sysctl.d/99-serenedb-ci.conf
+      #   echo 'kernel.randomize_va_space=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf
+      #   sudo sysctl --system
+      - name: Prepare shared cache directories
         run: |
-          mkdir -p .gtest-parallel-cache
-          echo "GTEST_PARALLEL_CACHE_DIR=${WORKSPACE}/.gtest-parallel-cache" >> $GITHUB_ENV
+          mkdir -p /mnt/data/.gtest-parallel-cache/${{ inputs.PRESET }}
+          echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/.gtest-parallel-cache/${{ inputs.PRESET }}" >> $GITHUB_ENV
+          echo "CARGO_TARGET_CACHE=/mnt/data/.cargo-target-sqllogic" >> $GITHUB_ENV
 
       # ==================== BUILD ====================
-      # if selected, DOCKER_BUILD_IMAGES owns the build
       - name: SereneDB build
         id: serenedb_build
-        if: env.DOCKER_BUILD_IMAGES != 'true'
-        run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
+        run: ./scripts/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
       - name: Run tests
         id: run_tests
         if: steps.serenedb_build.outcome == 'success'
-        run: ./private/ci/steps/04-ci-run-tests.bash
+        run: ./scripts/ci/steps/04-ci-run-tests.bash
 
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
-        if: steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
-        run: ./private/ci/steps/05-ci-in-docker-package.bash
+        if: always() && !cancelled() && steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
+        run: ./scripts/ci/steps/05-ci-in-docker-package.bash
 
       # ==================== RELEASE TEST AUTOMATION ====================
       - name: Release Test Automation (RTA)
         id: rta
-        if: steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
-        run: ./private/ci/steps/08-ci-rta.bash
+        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        run: ./scripts/ci/steps/08-ci-rta.bash
 
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
-        if: steps.serenedb_build.outcome == 'success' && inputs.USE_COVERAGE != ''
-        run: ./private/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+        if: steps.serenedb_build.outcome == 'success' && env.USE_COVERAGE != ''
+        run: ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
-      # ==================== BUILD DOCKER IMAGES ====================
-      - name: Build Docker Images
-        id: build_docker_images
-        if: steps.serenedb_packages.outcome == 'success' && steps.rta.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
-        env:
-          DOCKER_REGISTRY: serenedb
-          DOCKER_USERNAME: serenedb
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-        run: ./packages/build_docker.bash
-
-      # ==================== CREATE GITHUB RELEASE ====================
-      - name: Create GitHub Release
-        id: create_release
-        if: steps.build_docker_images.outcome == 'success' && inputs.CREATE_GITHUB_RELEASE == true && inputs.PUSH_IMAGES_2_REGISTRY == true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./private/ci/steps/09-ci-create-github-release.bash
-
-      # ==================== PRODUCE BUILD IMAGES ====================
-      - name: Produce Build Image
-        id: produce_build_images
-        if: env.DOCKER_BUILD_IMAGES == 'true'
-        working-directory: ./private/ci
-        env:
-          DOCKER_REGISTRY: serenedb
-          DOCKER_USERNAME: serenedb
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-        run: ./build_images.sh
-
-      # ==================== UPDATE FILE OWNERSHIP ====================
-      - name: Update file ownership
-        if: always() && env.DOCKER_BUILD_IMAGES != 'true'
-        run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
-
-      # ==================== DETERMINE FINAL STATUS ====================
-      - name: Determine final job status
-        id: final_status
-        if: always() && !cancelled()
-        run: |
-          HAS_FAILURES=false
-
-          if [[ "${{ steps.serenedb_build.outcome }}" == "failure" ]]; then
-            echo "Build failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.run_tests.outcome }}" == "failure" ]]; then
-            echo "Tests failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.serenedb_packages.outcome }}" == "failure" ]]; then
-            echo "Packages failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.coverage_report.outcome }}" == "failure" ]]; then
-            echo "Coverage report generation failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.build_docker_images.outcome }}" == "failure" ]]; then
-            echo "Build Docker Images failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.produce_build_images.outcome }}" == "failure" ]]; then
-            echo "Produce Build Images failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.rta.outcome }}" == "failure" ]]; then
-            echo "RTA failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.create_release.outcome }}" == "failure" ]]; then
-            echo "GitHub Release creation failed"
-            HAS_FAILURES=true
-          fi
-
-          echo "HAS_FAILURES=$HAS_FAILURES" >> $GITHUB_ENV
+      # ==================== UPLOAD RELEASE TARBALL ====================
+      - name: Upload release tarball
+        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ inputs.LOCATION }}
+          path: packages/tarball/install-*.tar.gz
+          retention-days: 1
 
       # ==================== ARTIFACTS ====================
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ github.run_number }}
+          name: build-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             binaries.tar.gz
             build_description.txt
@@ -397,7 +270,7 @@ jobs:
         if: steps.serenedb_packages.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ github.run_number }}
+          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             *.deb
             *.tar.gz
@@ -407,7 +280,7 @@ jobs:
         if: always() && !cancelled() && inputs.EXTRA_ARTIFACTS != ''
         uses: actions/upload-artifact@v4
         with:
-          name: extra-artifacts-${{ github.run_number }}
+          name: extra-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: ${{ inputs.EXTRA_ARTIFACTS }}
           if-no-files-found: ignore
           retention-days: 30
@@ -416,7 +289,7 @@ jobs:
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ github.run_number }}
+          name: test-results-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             **/vpack-tests.xml
             **/iresearch-tests.xml
@@ -445,9 +318,9 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ env.BRANCH }}
-          JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
+          JOB_STATUS: ${{ job.status }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
-          RUN_NAME: "SereneDB [${{ inputs.DOCKER_BUILD_IMAGES && 'build image' || inputs.PRESET }}]"
+          RUN_NAME: "SereneDB [${{ inputs.PRESET }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash
@@ -459,7 +332,7 @@ jobs:
         with:
           script: |
             const config = JSON.parse(process.env.BUILD_CONFIG);
-            const state = process.env.HAS_FAILURES === 'true' ? 'failure' : 'success';
+            const state = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
@@ -472,9 +345,9 @@ jobs:
             });
         env:
           BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-          HAS_FAILURES: ${{ env.HAS_FAILURES }}
+          JOB_STATUS: ${{ job.status }}
 
       # ==================== FAIL JOB IF ANY STAGE FAILED ====================
       - name: Fail job if any stage failed
-        if: always() && !cancelled() && env.HAS_FAILURES == 'true'
+        if: always() && !cancelled() && job.status == 'failure'
         run: exit 1

@@ -39,6 +39,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
+#include "connector/secondary_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "key_utils.hpp"
 #include "pg/progress_tracker.h"
@@ -63,82 +64,6 @@ namespace {
 
 constexpr std::string_view kZeroLengthVector{"\0", 1};
 constexpr std::string_view kOneValueHeader{"\0\1", 2};
-
-template<typename T>
-std::string VeloxValueToString(T val) {
-  if constexpr (type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
-    return static_cast<std::string>(val);
-  } else if constexpr (std::is_same_v<T, velox::int128_t>) {
-    std::string result;
-    basics::StrResize(result, absl::numbers_internal::kFastToBuffer128Size);
-    char* end = absl::numbers_internal::FastIntToBuffer(val, result.data());
-    result.resize(end - result.data());
-    return result;
-  } else {
-    return absl::StrCat(val);
-  }
-}
-
-template<velox::TypeKind Kind>
-std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx) {
-  SDB_ASSERT(!vec->isNullAt(idx));
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-
-  const auto* simple_vec = vec->as<velox::SimpleVector<T>>();
-  if (!simple_vec) {
-    // TODO(mkornaukhov) support not only simple vectors
-    return "<unsupported>";
-  }
-  return VeloxValueToString(simple_vec->valueAt(idx));
-}
-
-std::string FormatKeyValue(const velox::RowVectorPtr& input,
-                           velox::column_index_t key_idx,
-                           velox::vector_size_t row_idx) {
-  const auto& vector = input->childAt(key_idx);
-  const auto& type = input->rowType()->childAt(key_idx);
-
-  if (type->isPrimitiveType()) {
-    return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-      GetPKVeloxValue, vector->typeKind(), vector, row_idx);
-  }
-
-  // TODO(mkornaukhov) find out do we need complex types here
-  // and implement in case of we do
-  return "<unsupported>";
-}
-
-std::string BuildUniqueViolationDetail(
-  std::span<const velox::column_index_t> key_indices,
-  std::span<const ColumnInfo> columns, const velox::RowVectorPtr& input,
-  velox::vector_size_t row_idx) {
-  static constexpr size_t kDetailReservedSize = 128;
-  std::string detail;
-  detail.reserve(kDetailReservedSize);
-
-  // Build "Key (col1, col2, ...)="
-  detail += "Key (";
-  for (size_t i = 0; i < key_indices.size(); ++i) {
-    if (i > 0) {
-      detail += ", ";
-    }
-    detail += columns[key_indices[i]].name;
-  }
-  detail += ")=(";
-
-  // Build "(val1, val2, ...) already exists."
-  if (input) {
-    for (size_t i = 0; i < key_indices.size(); ++i) {
-      if (i > 0) {
-        detail += ", ";
-      }
-      detail += FormatKeyValue(input, key_indices[i], row_idx);
-    }
-  }
-  detail += ") already exists.";
-
-  return detail;
-}
 
 }  // namespace
 
@@ -230,6 +155,9 @@ RocksDBDataSinkBase<DataWriterType>::RocksDBDataSinkBase(
     _store_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool} {
   _key_childs.assign_range(key_childs);
+  SDB_ASSERT(std::ranges::is_sorted(_key_childs) &&
+               std::ranges::adjacent_find(_key_childs) == _key_childs.end(),
+             "RocksDBDataSinkBase: key_childs must be sorted and unique");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
   SDB_ASSERT(!_columns_info.empty(),
              "RocksDBDataSinkBase: no columns in a table");
@@ -259,55 +187,81 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
     _number_of_rows_affected{number_of_rows_affected},
     _table_lock_guard{table_lock} {}
 
-template<bool IsGeneratedPK>
-SSTInsertDataSink<IsGeneratedPK>::SSTInsertDataSink(
-  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-  std::span<const velox::column_index_t> key_childs,
-  std::vector<ColumnInfo> columns,
-  std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  absl::Mutex& table_lock)
-  : Base(SSTSinkWriter<IsGeneratedPK>{object_key, db, cf, columns, memory_pool},
-         memory_pool, object_key, key_childs, std::move(columns),
-         std::move(index_writers)),
-    _table_lock_guard{table_lock} {}
+template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
+SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex, UniqueIndex>::
+  SSTInsertDataSink(
+    rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<ColumnInfo> columns,
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
+  : Base(
+      SSTSinkWriter<IsGeneratedPK>{
+        object_key, db, cf,
+        IsSecondaryIndex ? std::vector<ColumnInfo>{{catalog::Column::Id{0}, ""}}
+                         : columns,
+        memory_pool},
+      memory_pool, object_key, key_childs, std::move(columns),
+      std::move(index_writers)),
+    _table_lock_guard{table_lock},
+    _sk_children{std::move(sk_children)} {}
 
-template<bool IsGeneratedPK>
-void SSTInsertDataSink<IsGeneratedPK>::appendData(velox::RowVectorPtr input) {
+template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
+void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
+                       UniqueIndex>::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  SDB_ASSERT(input->type()->size() == this->_columns_info.size(),
-             "RocksDBDataSink: column oids size ", this->_columns_info.size(),
-             " doesn't match input type size ", input->type()->size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
   const auto num_rows = input->size();
-  const auto num_columns = input->childrenSize();
 
   this->_store_keys_buffers.clear();
   this->_store_keys_buffers.reserve(num_rows);
-  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    auto& key_buffer = this->_store_keys_buffers.emplace_back();
-    if (!this->_key_childs.empty()) {
-      primary_key::Create(*input, this->_key_childs, row_idx, key_buffer);
-    } else {
-      const auto generated_pk =
-        std::bit_cast<int64_t>(RevisionId::create().id());
-      primary_key::AppendSigned(key_buffer, generated_pk);
-    }
-  }
 
-  velox::IndexRange all_rows(0, num_rows);
-  const folly::Range all_rows_range{&all_rows, 1};
-  for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (this->_columns_info[i].id != catalog::Column::kGeneratedPKId) {
-      this->WriteInputColumn(this->_columns_info[i].id, i, *input,
-                             all_rows_range);
+  if constexpr (IsSecondaryIndex) {
+    // Build key and write in one pass - reuse _sk_buffer/_pk_buffer.
+    this->_data_writer.SetColumnIndex(0);
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      _sk_buffer.clear();
+      _pk_buffer.clear();
+      secondary_key::Create<UniqueIndex>(*input, this->_key_childs,
+                                         _sk_children, row_idx, _sk_buffer,
+                                         _pk_buffer);
+      if constexpr (UniqueIndex) {
+        rocksdb::Slice pk_slice{_pk_buffer};
+        this->_data_writer.Write({&pk_slice, 1}, _sk_buffer);
+      } else {
+        SDB_ASSERT(_pk_buffer.empty());
+        rocksdb::Slice empty;
+        this->_data_writer.Write({&empty, 1}, _sk_buffer);
+      }
+    }
+  } else {
+    SDB_ASSERT(input->type()->size() == this->_columns_info.size());
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      auto& key = this->_store_keys_buffers.emplace_back();
+      if (!this->_key_childs.empty()) {
+        primary_key::Create(*input, this->_key_childs, row_idx, key);
+      } else {
+        auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
+        primary_key::AppendSigned(key, generated_pk);
+      }
+    }
+    velox::IndexRange all_rows(0, num_rows);
+    const folly::Range all_rows_range{&all_rows, 1};
+    for (velox::column_index_t i = 0; i < input->childrenSize(); ++i) {
+      if (this->_columns_info[i].id != catalog::Column::kGeneratedPKId) {
+        this->WriteInputColumn(this->_columns_info[i].id, i, *input,
+                               all_rows_range);
+      }
     }
   }
 }
 
-template class SSTInsertDataSink<true>;
-template class SSTInsertDataSink<false>;
+template class SSTInsertDataSink<true, false, false>;
+template class SSTInsertDataSink<false, false, false>;
+template class SSTInsertDataSink<false, true, false>;
+template class SSTInsertDataSink<false, true, true>;
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::string_view table_name, rocksdb::Transaction& transaction,
@@ -411,7 +365,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   for (const auto& writer : _index_writers) {
-    writer->Init(affected_rows);
+    writer->Init(affected_rows, input);
   }
 
   const velox::IndexRange all_rows{0, num_rows};
@@ -459,8 +413,6 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                 _object_key.id(), " error: ", result.errorMessage());
     }
     if constexpr (DoDelete) {
-      // For now all index writers work by row.
-      // Later by cell processing might be added.
       auto encoded_pk = row_key.substr(sizeof(ObjectId));
       for (const auto& writer : _index_writers) {
         writer->DeleteRow(encoded_pk);
@@ -498,7 +450,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   };
 
   for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
+    writer->Init(num_rows, input);
   }
 
   if (!_update_pk) {
@@ -2618,7 +2570,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   auto& writer = *_index_writers.front();
-  writer.Init(num_rows);
+  writer.Init(num_rows, input);
 
   const velox::IndexRange all_rows{0, num_rows};
   const folly::Range all_rows_range{&all_rows, 1};
@@ -2641,6 +2593,7 @@ void RocksDBIndexBackfillDataSink::appendData(velox::RowVectorPtr input) {
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
+  std::span<const velox::column_index_t> pk_indices,
   std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
   absl::Mutex& table_lock)
@@ -2649,6 +2602,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _columns{std::move(columns)},
+    _key_childs{pk_indices.begin(), pk_indices.end()},
     _number_of_rows_affected{number_of_rows_affected},
     _table_lock_guard{table_lock} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
@@ -2657,8 +2611,6 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
              " does not match row "
              "type size",
              _row_type->size());
-  _key_childs.resize(_row_type->size());
-  absl::c_iota(_key_childs, 0);
 }
 
 void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
@@ -2670,10 +2622,9 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
 
   for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
+    writer->Init(num_rows, input);
   }
 
-  _key_childs.resize(input->childrenSize());
   std::string key_buffer;
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(
@@ -2686,8 +2637,6 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
                     "Failed to acquire row lock for table ", _object_key.id(),
                     " error: ", result.errorMessage());
         }
-        // For now all index writers work by row.
-        // Later by cell processing might be added below.
         auto encoded_pk = row_key.substr(sizeof(ObjectId));
         for (const auto& writer : _index_writers) {
           writer->DeleteRow(encoded_pk);

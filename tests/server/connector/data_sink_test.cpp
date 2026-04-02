@@ -2487,8 +2487,9 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   ASSERT_NE(transaction, nullptr);
 
   size_t rows_affected = 0;
+  std::vector<velox::column_index_t> pk_indices = {0};
   RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
-                                    row_type, object_key,
+                                    row_type, object_key, pk_indices,
                                     {{.id = 0, .name = ""},
                                      {.id = 1, .name = ""},
                                      {.id = 2, .name = ""},
@@ -2560,10 +2561,11 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   ASSERT_NE(transaction2, nullptr);
 
   size_t rows_affected = 0;
+  std::vector<velox::column_index_t> pk_indices = {0};
   {
-    RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
-                                      row_type, object_key, column_ids,
-                                      rows_affected, {}, _table_lock);
+    RocksDBDeleteDataSink delete_sink(
+      *transaction, *_cf_handles.front(), row_type, object_key, pk_indices,
+      column_ids, rows_affected, {}, _table_lock);
 
     delete_sink.appendData(row_data);
     ASSERT_TRUE(delete_sink.finish());
@@ -2573,9 +2575,9 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   {
     size_t rows_affected2 = 0;
 
-    RocksDBDeleteDataSink delete_sink2(*transaction2, *_cf_handles.front(),
-                                       row_type, object_key, column_ids,
-                                       rows_affected2, {}, _table_lock);
+    RocksDBDeleteDataSink delete_sink2(
+      *transaction2, *_cf_handles.front(), row_type, object_key, pk_indices,
+      column_ids, rows_affected2, {}, _table_lock);
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     ASSERT_TRUE(transaction2->Commit().ok());
@@ -2626,9 +2628,10 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   std::unique_ptr<rocksdb::Transaction> transaction_delete{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
   size_t rows_affected = 0;
+  std::vector<velox::column_index_t> del_pk_indices = {0};
   RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
-                                    row_type, kObjectKey, column_ids,
-                                    rows_affected, {}, _table_lock);
+                                    row_type, kObjectKey, del_pk_indices,
+                                    column_ids, rows_affected, {}, _table_lock);
   auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty

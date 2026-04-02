@@ -28,6 +28,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
@@ -535,9 +536,8 @@ void ObjectCollector::CollectValuesLists(const State& state,
     if (tuple_length < 0) {
       tuple_length = list_length(&tuple);
     } else if (tuple_length != list_length(&tuple)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("VALUES lists must have the same number of columns"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("VALUES lists must all be the same length"));
     }
     VisitNodes(&tuple,
                [&](const Node& expr) { CollectExprNode(state, &expr); });
@@ -733,6 +733,17 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 }
 
 }  // namespace
+
+const catalog::Table& Objects::ObjectData::CatalogTable() const {
+  SDB_ASSERT(catalog_data);
+  return *static_cast<const CatalogDataImpl*>(catalog_data.get())->table;
+}
+
+const std::vector<std::shared_ptr<catalog::Index>>&
+Objects::ObjectData::Indexes() const {
+  SDB_ASSERT(catalog_data);
+  return static_cast<const CatalogDataImpl*>(catalog_data.get())->indexes;
+}
 
 void Objects::ObjectData::EnsureTable(query::Transaction& transaction) const {
   if (!table) {

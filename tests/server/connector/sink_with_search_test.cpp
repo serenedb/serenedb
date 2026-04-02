@@ -408,9 +408,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     std::unique_ptr<rocksdb::Transaction> transaction_delete{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     size_t rows_affected = 0;
+    std::vector<velox::column_index_t> del_pk = {0};
     RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
                                       velox::ROW(names, types), kObjectKey,
-                                      all_columns, rows_affected,
+                                      del_pk, all_columns, rows_affected,
                                       std::move(delete_writers), _table_lock);
     auto delete_data = makeRowVector({makeFlatVector<int32_t>({9001, 1})});
     delete_sink.appendData(delete_data);
@@ -1075,9 +1076,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertUpdateDeleteMultiBatch) {
     std::unique_ptr<rocksdb::Transaction> transaction_delete{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     size_t rows_affected = 0;
+    std::vector<velox::column_index_t> del_pk = {0};
     RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
                                       velox::ROW(names, types), kObjectKey,
-                                      all_columns, rows_affected,
+                                      del_pk, all_columns, rows_affected,
                                       std::move(delete_writers), _table_lock);
     auto delete_data = makeRowVector({makeFlatVector<int32_t>({9001})});
     delete_sink.appendData(delete_data);

@@ -54,7 +54,7 @@ export const ExplorerNodeButton = ({
             <div
                 className={cn(
                     className,
-                    "group/explorer-node pl-4 flex w-full h-full items-center justify-start border-none text-foreground dark:hover:bg-accent",
+                    "group/explorer-node pl-4 flex w-full h-full items-center justify-start border-none text-foreground dark:hover:bg-accent pr-1",
                 )}
                 onClick={onClick}>
                 {showArrow && onClick && (
@@ -83,7 +83,7 @@ export const ExplorerNodeButton = ({
                         </TooltipContent>
                     </Tooltip>
                 )}
-                {rightNode && <div className="ml-auto mr-1">{rightNode}</div>}
+                {rightNode && <div className="ml-auto pr-1">{rightNode}</div>}
                 {!rightNode && rightText && (
                     <span className="ml-auto text-xs text-secondary-foreground/50">
                         {rightText}

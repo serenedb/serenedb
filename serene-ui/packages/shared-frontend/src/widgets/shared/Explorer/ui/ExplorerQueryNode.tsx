@@ -222,7 +222,7 @@ export const ExplorerQueryNode = ({
                             <Button
                                 variant="ghost"
                                 size="xsIcon"
-                                className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 transition-none duration-0 opacity-0 pointer-events-none group-hover/explorer-node:opacity-100 group-hover/explorer-node:pointer-events-auto group-focus-within/explorer-node:opacity-100 group-focus-within/explorer-node:pointer-events-auto mr-1"
+                                className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 transition-none duration-0 opacity-0 pointer-events-none group-hover/explorer-node:opacity-100 group-hover/explorer-node:pointer-events-auto group-focus-within/explorer-node:opacity-100 group-focus-within/explorer-node:pointer-events-auto"
                                 title="Delete connection"
                                 disabled={
                                     deletingConnectionId ===

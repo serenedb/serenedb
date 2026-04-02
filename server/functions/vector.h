@@ -27,7 +27,7 @@ namespace sdb::functions {
 inline constexpr std::string_view kL2Distance = "sdb_l2_distance";
 inline constexpr std::string_view kL1Distance = "sdb_l1_distance";
 inline constexpr std::string_view kCosineDistance = "sdb_cosine_distance";
-inline constexpr std::string_view kInnerProduct = "sdb_inner_product";
+inline constexpr std::string_view kInnerProduct = "sdb_inner_product_distance";
 
 void RegisterVectorFunctions();
 

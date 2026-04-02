@@ -15,7 +15,4 @@ target_compile_options(
 target_link_libraries(vector_distances PRIVATE sereneserver)
 target_link_libraries(sereneserver PRIVATE vector_distances)
 
-target_sources(sereneserver
-    PRIVATE
-    search.cpp
-)
+target_sources(sereneserver PRIVATE search.cpp)

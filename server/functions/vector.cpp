@@ -230,4 +230,4 @@ void RegisterVectorFunctions() {
                           velox::Array<int32_t>>({std::string{kInnerProduct}});
 }
 
-}  // namespace sdb::pg::functions
+}  // namespace sdb::functions

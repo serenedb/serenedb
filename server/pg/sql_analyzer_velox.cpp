@@ -4805,9 +4805,9 @@ constexpr containers::TrivialBiMap kOpToFunc = [](auto selector) {
     .Case("count_star", "presto_count")
     // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
     .Case("<->", "sdb_l2_distance")
-    .Case("<#>", "sdb_l1_distance")
+    .Case("<#>", "sdb_inner_product_distance")
     .Case("<=>", "sdb_cosine_distance")
-    .Case("<+>", "sdb_inner_product_distance");
+    .Case("<+>", "sdb_l1_distance");
 };
 
 constexpr containers::TrivialBiMap kDateIntervalOp = [](auto selector) {

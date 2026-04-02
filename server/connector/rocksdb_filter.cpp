@@ -28,6 +28,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "basics/system-compiler.h"
 
 namespace sdb::connector {
 namespace {
@@ -517,7 +518,7 @@ bool AtomContainedBy(const Atom& atom, const ColumnRange& column_range) {
                            !(column_range.RightValue() < atom.RightValue())));
   }
   const bool overlaps = atom.OverlapsWith(column_range);
-  SDB_ASSERT(overlaps == fully_contained, ERROR_INTERNAL,
+  SDB_ASSERT(overlaps == fully_contained,
              "AtomContainedBy: sweep invariant violated");
   return overlaps;
 #else

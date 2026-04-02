@@ -1096,7 +1096,7 @@ class SqlAnalyzer {
     std::vector<lp::LogicalPlanNodePtr>& inputs,
     std::string_view operation_name) {
     SDB_ASSERT(!inputs.empty());
-    const auto& first_output = *inputs[0]->outputType();
+    const auto& first_output = *inputs.front()->outputType();
     const auto col_count = first_output.size();
 
     SDB_ASSERT(absl::c_all_of(inputs, [&](const lp::LogicalPlanNodePtr& input) {

@@ -305,10 +305,33 @@ class RocksDBUpdateDataSink final
   std::shared_lock<std::shared_mutex> _table_lock_guard;
 };
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
+enum class SSTInsertFlag : uint8_t {
+  PrimaryKey = 1 << 0,
+  GeneratedPk = 1 << 1,
+  Secondary = 1 << 2,
+  Unique = 1 << 3,
+};
+
+ENABLE_BITMASK_ENUM(SSTInsertFlag);
+
+template<SSTInsertFlag Flags>
 class SSTInsertDataSink final
-  : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>> {
-  using Base = RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>>;
+  : public RocksDBDataSinkBase<
+      SSTSinkWriter<bool(Flags& SSTInsertFlag::GeneratedPk)>> {
+  static_assert(std::underlying_type_t<SSTInsertFlag>(Flags) != 0,
+                "SSTInsertFlag must not be zero");
+  static constexpr bool kIsGeneratedPK =
+    bool(Flags & SSTInsertFlag::GeneratedPk);
+  static constexpr bool kIsSecondaryIndex =
+    bool(Flags & SSTInsertFlag::Secondary);
+  static constexpr bool kUniqueIndex = bool(Flags & SSTInsertFlag::Unique);
+
+  static_assert(!(kIsGeneratedPK && kIsSecondaryIndex),
+                "secondary index cannot have generated flag");
+  static_assert(!(kUniqueIndex && !kIsSecondaryIndex),
+                "primary index cannot have unique flag");
+
+  using Base = RocksDBDataSinkBase<SSTSinkWriter<kIsGeneratedPK>>;
 
  public:
   SSTInsertDataSink(
@@ -318,23 +341,26 @@ class SSTInsertDataSink final
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
     std::shared_mutex& table_lock,
-    std::vector<velox::column_index_t> sk_children);
+    std::vector<velox::column_index_t> sk_children,
+    pg::IndexProgressReporter* progress);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   std::shared_lock<std::shared_mutex> _table_lock_guard;
   std::vector<velox::column_index_t> _sk_children;
+  pg::IndexProgressReporter* _progress;
 
   // TODO: Write directly to SST file without buffering whole key in memory.
   std::string _sk_buffer;
   std::string _pk_buffer;
 };
 
-extern template class SSTInsertDataSink<true, false, false>;
-extern template class SSTInsertDataSink<false, false, false>;
-extern template class SSTInsertDataSink<false, true, false>;
-extern template class SSTInsertDataSink<false, true, true>;
+extern template class SSTInsertDataSink<SSTInsertFlag::GeneratedPk>;
+extern template class SSTInsertDataSink<SSTInsertFlag::PrimaryKey>;
+extern template class SSTInsertDataSink<SSTInsertFlag::Secondary>;
+extern template class SSTInsertDataSink<SSTInsertFlag::Secondary |
+                                        SSTInsertFlag::Unique>;
 
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {

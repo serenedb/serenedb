@@ -107,10 +107,14 @@ class Table : public SchemaObject {
   const auto& NameToColumn() const noexcept {
     return _lookup_cache.name2column;
   }
+
   using IdToColumnMap =
     containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
 
   const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
+
+  velox::RowTypePtr MakeTypeFromColIds(
+    std::span<const catalog::Column::Id> ids) const;
 
  private:
   struct TableOutput;
@@ -119,6 +123,9 @@ class Table : public SchemaObject {
   struct LookupCache {
     LookupCache(std::span<const catalog::Column> columns,
                 std::span<const catalog::Column::Id> pk_columns);
+
+    velox::RowTypePtr MakeTypeFromColIds(
+      std::span<const catalog::Column::Id> ids) const;
 
     NameToColumnMap name2column;
     IdToColumnMap id2column;

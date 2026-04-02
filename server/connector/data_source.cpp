@@ -91,15 +91,16 @@ void FillPointsColumnValues(velox::BaseVector& result, size_t offset,
 
 }  // namespace
 
-void PrimaryKeyColumnBuilder::Init(const velox::TypePtr& type, size_t capacity,
-                                   velox::memory::MemoryPool& pool) {
+void PointLookupPKColumnBuilder::Init(const velox::TypePtr& type,
+                                      size_t capacity,
+                                      velox::memory::MemoryPool& pool) {
   _type_kind = type->kind();
   _vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(CreatePointsColumnVector,
                                             _type_kind, capacity, pool);
   _present_rows.reset(capacity);
 }
 
-void PrimaryKeyColumnBuilder::Fill(
+void PointLookupPKColumnBuilder::Fill(
   size_t batch_idx, size_t found_idx,
   std::span<const rocksdb::PinnableSlice> values) {
   _present_rows.set(batch_idx);
@@ -107,7 +108,7 @@ void PrimaryKeyColumnBuilder::Fill(
                                      found_idx, values);
 }
 
-velox::VectorPtr PrimaryKeyColumnBuilder::Finish(size_t found_count) {
+velox::VectorPtr PointLookupPKColumnBuilder::Finish(size_t found_count) {
   SDB_ASSERT(_present_rows.count() == found_count);
   _vec->resize(found_count);
   return std::move(_vec);
@@ -1239,15 +1240,15 @@ template class RocksDBFullScanDataSource<rocksdb::DB>;
 template class RocksDBPrefixRangeDataSource<rocksdb::Transaction>;
 template class RocksDBPrefixRangeDataSource<rocksdb::DB>;
 
-template class RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
-template class RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
+template class RocksDBPointLookupDataSource<PKLookupPolicy<true>>;
+template class RocksDBPointLookupDataSource<PKLookupPolicy<false>>;
 template class RocksDBPointLookupDataSource<
-  SecondaryLookupPolicy<true, RocksDBMaterializer>>;
+  SKLookupPolicy<true, RocksDBMaterializer>>;
 template class RocksDBPointLookupDataSource<
-  SecondaryLookupPolicy<false, RocksDBMaterializer>>;
+  SKLookupPolicy<false, RocksDBMaterializer>>;
 template class RocksDBPointLookupDataSource<
-  SecondaryLookupPolicy<false, ParquetMaterializer>>;
+  SKLookupPolicy<false, ParquetMaterializer>>;
 template class RocksDBPointLookupDataSource<
-  SecondaryLookupPolicy<false, TextMaterializer>>;
+  SKLookupPolicy<false, TextMaterializer>>;
 
 }  // namespace sdb::connector

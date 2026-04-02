@@ -238,10 +238,11 @@ class KeyBounds {
 // Used after filter extraction -- no expression metadata, no names.
 using ResolvedPoint = std::vector<velox::variant>;
 
-// Converts specific (fully constrained) KeyConstraints to SpecificPoint,
-// ordered by pk_type column order.
-[[nodiscard]] std::vector<ResolvedPoint> ToResolvedPoints(
-  const std::vector<KeyBounds>& points, const velox::RowType& pk_type);
+// Converts specific (fully constrained) Points to SpecificPoint, ordered by
+// pk_type column order.
+std::vector<ResolvedPoint> ToResolvedPoints(
+  const std::vector<KeyBounds>& points,
+  std::span<const std::string> column_names);
 
 // A fully resolved range: first K exact PK column values (the equality prefix),
 // followed by a Range for the (K+1)-th column.
@@ -332,6 +333,10 @@ struct ExtractAndRewriteResult {
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const velox::core::TypedExprPtr& expr,
   std::span<const std::string> column_names);
+
+// Sorts and deduplicates points in-place by key order. Column order matches
+// the pk_type used during ToResolvedPoints.
+void SortAndDedupPoints(std::vector<ResolvedPoint>& points);
 
 // Returns true if `call` matches a velox function named either `suffix[1:]`
 // (bare name, e.g. "eq") or anything ending with `suffix` (prefixed name, e.g.

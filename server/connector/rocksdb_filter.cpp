@@ -1010,13 +1010,14 @@ std::optional<KeyBounds> KeyBounds::TryIntersect(const KeyBounds& lhs,
 }
 
 std::vector<ResolvedPoint> ToResolvedPoints(
-  const std::vector<KeyBounds>& points, const velox::RowType& pk_type) {
+  const std::vector<KeyBounds>& points,
+  std::span<const std::string> column_names) {
   std::vector<ResolvedPoint> result;
   result.reserve(points.size());
   for (const auto& p : points) {
     ResolvedPoint sp;
-    sp.reserve(pk_type.size());
-    for (const auto& name : pk_type.names()) {
+    sp.reserve(column_names.size());
+    for (const auto& name : column_names) {
       const auto* filter = p.FindColumnRange(name);
       SDB_ASSERT(filter != nullptr, "pk column not found in specific point");
       SDB_ASSERT(filter->HasLeft());
@@ -1241,6 +1242,18 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
 
   velox::core::TypedExprPtr remaining = RewriteExpr(expr, sources);
   return {ConstraintKind::Ranges, std::move(constraints), std::move(remaining)};
+}
+void SortAndDedupPoints(std::vector<ResolvedPoint>& points) {
+  absl::c_sort(points, [](const ResolvedPoint& lhs, const ResolvedPoint& rhs) {
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i] != rhs[i]) {
+        return lhs[i] < rhs[i];
+      }
+    }
+    return false;
+  });
+  auto [first, last] = std::ranges::unique(points);
+  points.erase(first, last);
 }
 
 }  // namespace sdb::connector

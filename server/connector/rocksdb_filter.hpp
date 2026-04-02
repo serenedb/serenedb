@@ -141,17 +141,17 @@ struct ColumnRange {
   uint8_t _flags{kZero};
 };
 
-// A set of per-column range constraints over PK columns.
-class KeyConstraint {
+// A set of per-column range bound constraints over PK columns.
+class KeyBounds {
  public:
-  [[nodiscard]] static KeyConstraint MakeAny(
+  [[nodiscard]] static KeyBounds MakeAny(
     std::span<const std::string> pk_names) {
-    return KeyConstraint{pk_names};
+    return KeyBounds{pk_names};
   }
 
-  [[nodiscard]] static KeyConstraint MakeContradictory(
+  [[nodiscard]] static KeyBounds MakeContradictory(
     std::span<const std::string> pk_names) {
-    KeyConstraint kc{pk_names};
+    KeyBounds kc{pk_names};
     kc._contradictory = true;
     return kc;
   }
@@ -204,19 +204,19 @@ class KeyConstraint {
 
   // Returns nullopt when the two constraints are contradictory (e.g. a=1 AND
   // a=2).
-  [[nodiscard]] static std::optional<KeyConstraint> TryIntersect(
-    const KeyConstraint& lhs, const KeyConstraint& rhs);
+  [[nodiscard]] static std::optional<KeyBounds> TryIntersect(
+    const KeyBounds& lhs, const KeyBounds& rhs);
 
   // Constructs a KeyConstraint directly from pre-built column ranges and source
   // expressions. All columns absent from `ranges` are treated as unconstrained.
   // Used by the sweep-based merge algorithm.
-  [[nodiscard]] static KeyConstraint BuildFromRanges(
+  [[nodiscard]] static KeyBounds BuildFromRanges(
     std::span<const std::string> pk_names,
     containers::FlatHashMap<std::string, ColumnRange> ranges,
     SourceExprsMap source_exprs);
 
  private:
-  explicit KeyConstraint(std::span<const std::string> pk_names)
+  explicit KeyBounds(std::span<const std::string> pk_names)
     : _pk_names{pk_names} {}
 
   std::span<const std::string> _pk_names;
@@ -234,14 +234,14 @@ using ResolvedPoint = std::vector<velox::variant>;
 // Converts specific (fully constrained) KeyConstraints to SpecificPoint,
 // ordered by pk_type column order.
 [[nodiscard]] std::vector<ResolvedPoint> ToResolvedPoints(
-  const std::vector<KeyConstraint>& points, const velox::RowType& pk_type);
+  const std::vector<KeyBounds>& points, const velox::RowType& pk_type);
 
 // A fully resolved range: first K exact PK column values (the equality prefix),
 // followed by a Range for the (K+1)-th column.
 // prefix.size() == K; K may be 0 if the range column is the first PK column.
 struct ResolvedRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
-  ColumnRange range_col;               // constraint on column K
+  ColumnRange range_column;            // constraint on column K
 
   // Ordering: compare the leftmost key covered by each range.
   // Walk column by column; a prefix value is exact (inclusive point), and at
@@ -261,51 +261,34 @@ struct ResolvedRange {
     }
 
     if (prefix.size() == other.prefix.size()) {
-      // Same prefix depth: compare range_col left bounds.
-      // [v, ...] < (v, ...) because inclusive starts earlier.
-      // Identical left bounds mean ranges overlap -- must not happen.
-      if (range_col.LeftBoundLessThan(other.range_col)) {
-        return true;
-      }
-      if (other.range_col.LeftBoundLessThan(range_col)) {
-        return false;
-      }
-
-      SDB_ENSURE(false, ERROR_INTERNAL,
-                 "ResolvedRanges must be sorted in scan sweep algorithm");
+      return range_column.LeftBoundLessThan(other.range_column);
     }
 
     // Unequal prefix depths with a matching common prefix.
-    // At position min_depth the shorter side has its range_col and the longer
-    // side has an exact prefix value.  Compare the range_col's left bound
-    // against that exact value (exact == inclusive point).
-    const bool this_shorter = (prefix.size() < other.prefix.size());
-    const velox::variant& exact =
-      this_shorter ? other.prefix[prefix.size()] : prefix[other.prefix.size()];
-    const ColumnRange& rcol = this_shorter ? range_col : other.range_col;
+    // At the first diverging position, one side has an exact prefix value and
+    // the other has its range_col starting there.
+    const bool range_is_this = prefix.size() < other.prefix.size();
+    const velox::variant& point =
+      range_is_this ? other.prefix[prefix.size()] : prefix[other.prefix.size()];
+    const ColumnRange& column_range =
+      range_is_this ? range_column : other.range_column;
 
-    // -inf or left bound strictly before exact: shorter range starts first.
-    if (!rcol.HasLeft() || rcol.LeftValue() < exact) {
-      return this_shorter;
+    if (!column_range.HasLeft() || column_range.LeftValue() < point) {
+      return range_is_this;
     }
-    // Left bound strictly after exact: exact-value side (longer range) starts
-    // first.
-    if (exact < rcol.LeftValue()) {
-      return !this_shorter;
+    if (point < column_range.LeftValue()) {
+      return !range_is_this;
     }
-    // Equal: inclusive bound ties with exact (neither strictly earlier ->
-    // false); exclusive bound starts after exact -> exact-value side comes
-    // first.
-    return !this_shorter && !rcol.IsLeftInclusive();
+    return !range_is_this && !column_range.IsLeftInclusive();
   }
 };
 
 // Converts range KeyConstraints to ResolvedRange, ordered by pk_type column
 // order. Each constraint must have PrefixSize() >= 1.
 [[nodiscard]] std::vector<ResolvedRange> ToResolvedRanges(
-  const std::vector<KeyConstraint>& ranges, const velox::RowType& pk_type);
+  const std::vector<KeyBounds>& ranges, const velox::RowType& pk_type);
 
-[[nodiscard]] std::vector<KeyConstraint> ExtractFilterExpr(
+[[nodiscard]] std::vector<KeyBounds> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names,
   bool negated = false);
 
@@ -320,7 +303,7 @@ enum class ConstraintKind {
 
 struct ExtractAndRewriteResult {
   ConstraintKind kind;
-  std::vector<KeyConstraint> constraints;
+  std::vector<KeyBounds> constraints;
   // Rewritten filter with captured PK predicates removed; null if the entire
   // expression reduced to true.
   velox::core::TypedExprPtr remaining_filter;

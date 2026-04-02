@@ -932,9 +932,9 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     // correctly: e.g. a > 1 on PK(a,b) skips all (a=1, b=*) keys.
     e.lower_key = col_prefix;
     encode_prefix(e.lower_key);
-    if (sr.range_col.HasLeft()) {
-      AppendColValue(e.lower_key, k, sr.range_col.LeftValue(), pk_type);
-      if (!sr.range_col.IsLeftInclusive()) {
+    if (sr.range_column.HasLeft()) {
+      AppendColValue(e.lower_key, k, sr.range_column.LeftValue(), pk_type);
+      if (!sr.range_column.IsLeftInclusive()) {
         MakeExclusiveUpperBound(e.lower_key);
       }
     }
@@ -944,11 +944,11 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     // Inclusive right or prefix-only: encode value/prefix then advance last
     //   byte so all keys sharing that prefix (e.g. multi-col PK suffixes) are
     //   included. Clears to empty if all 0xff -> fall back to col_upper_bound.
-    if (sr.range_col.HasRight()) {
+    if (sr.range_column.HasRight()) {
       e.upper_key = col_prefix;
       encode_prefix(e.upper_key);
-      AppendColValue(e.upper_key, k, sr.range_col.RightValue(), pk_type);
-      if (sr.range_col.IsRightInclusive()) {
+      AppendColValue(e.upper_key, k, sr.range_column.RightValue(), pk_type);
+      if (sr.range_column.IsRightInclusive()) {
         MakeExclusiveUpperBound(e.upper_key);
       }
     } else if (k > 0) {
@@ -1010,7 +1010,8 @@ RocksDBMultiRangeLookupDataSource<Source>::RocksDBMultiRangeLookupDataSource(
       for (size_t i = 1; i < _ranges.size(); ++i) {
         const auto& a = _ranges[i - 1];
         const auto& b = _ranges[i];
-        if (a.prefix == b.prefix && a.range_col.OverlapsWith(b.range_col)) {
+        if (a.prefix == b.prefix &&
+            a.range_column.OverlapsWith(b.range_column)) {
           return false;
         }
       }

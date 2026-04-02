@@ -94,7 +94,7 @@ std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
 
     auto res = ExtractAndRewriteFilterExpr(filter, sk_names);
 
-    if (!(res.kind == ConstraintKind::Points && !res.constraints.empty())) {
+    if (res.kind != ConstraintKind::Points || res.constraints.empty()) {
       continue;
     }
 
@@ -346,7 +346,7 @@ std::string SereneDBConnectorTableHandle::toString() const {
           if (k > 0) {
             absl::StrAppend(out, ", ");
           }
-          absl::StrAppend(out, names[k], "=", sr.range_col.toString());
+          absl::StrAppend(out, names[k], "=", sr.range_column.toString());
         }
         absl::StrAppend(out, "}");
       });

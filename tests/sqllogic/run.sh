@@ -378,7 +378,11 @@ if [[ "$cancellation" == "true" ]]; then
 	cancel_pid=""
 
 	local_port="${single_port:-$cluster_port}"
-	if pg_isready -h "$host" -p "$local_port" -q; then
+	# TODO: pg_isready -h "$host" -p "$local_port" returns "no attempt" (exit 3)
+	# inside the docker test container, even though the server is up. Works fine
+	# outside docker. Needs investigation into what pg_isready expects from the
+	# container environment (HOME, user mapping, pg_service.conf, etc.).
+	if bash -c "echo > /dev/tcp/$host/$local_port" 2>/dev/null; then
 		echo "[cancellation] Health check OK"
 	else
 		echo "[cancellation] ERROR: DB is not responsive!"

@@ -19,6 +19,11 @@ import { ConsoleSidebarPinnedProvider } from "../model";
 
 interface ConsoleSidebarProps {}
 
+const CONSOLE_SIDEBAR_LAYOUT_STORAGE_KEY = "console:sidebar-layout";
+const CONSOLE_SIDEBAR_PINNED_PANEL_ID = "panel_1";
+const CONSOLE_SIDEBAR_ENTITIES_PANEL_ID = "panel_2";
+const CONSOLE_SIDEBAR_SAVED_QUERIES_PANEL_ID = "panel_3";
+
 const components = {
     entities: () => {
         return <ConsoleExplorer />;
@@ -32,6 +37,109 @@ const components = {
 };
 const headerComponents = {
     default: ConsoleSidebarHeader,
+};
+
+const sanitizeLayout = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+        return value.map((entry) => sanitizeLayout(entry));
+    }
+
+    if (!value || typeof value !== "object") {
+        return value;
+    }
+
+    const record = value as Record<string, unknown>;
+    const sanitized: Record<string, unknown> = {};
+
+    Object.entries(record).forEach(([key, entry]) => {
+        if (key === "icon") {
+            return;
+        }
+
+        sanitized[key] = sanitizeLayout(entry);
+    });
+
+    return sanitized;
+};
+
+const restoreLayout = (event: PaneviewReadyEvent, storageKey: string) => {
+    const rawLayout = localStorage.getItem(storageKey);
+    if (!rawLayout) {
+        return false;
+    }
+
+    try {
+        event.api.fromJSON(sanitizeLayout(JSON.parse(rawLayout)));
+        return true;
+    } catch (error) {
+        console.warn("Failed to restore console sidebar layout:", error);
+        return false;
+    }
+};
+
+const ensurePinnedPanel = (event: PaneviewReadyEvent) => {
+    if (event.api.panels.some((panel) => panel.id === CONSOLE_SIDEBAR_PINNED_PANEL_ID)) {
+        return;
+    }
+
+    event.api.addPanel({
+        id: CONSOLE_SIDEBAR_PINNED_PANEL_ID,
+        component: "pinned",
+        headerComponent: "default",
+        params: {
+            title: "Pinned",
+            icon: <PinIcon className="size-3.5" />,
+            kind: "pinned",
+        },
+        title: "Pinned",
+        headerSize: 36,
+    });
+};
+
+const ensureEntitiesPanel = (event: PaneviewReadyEvent) => {
+    if (
+        event.api.panels.some(
+            (panel) => panel.id === CONSOLE_SIDEBAR_ENTITIES_PANEL_ID,
+        )
+    ) {
+        return;
+    }
+
+    event.api.addPanel({
+        id: CONSOLE_SIDEBAR_ENTITIES_PANEL_ID,
+        component: "entities",
+        headerComponent: "default",
+        params: {
+            title: "Entities",
+            icon: <EntitiesIcon className="size-3.5" />,
+            kind: "entities",
+        },
+        title: "Entities",
+        headerSize: 36,
+    });
+};
+
+const ensureSavedQueriesPanel = (event: PaneviewReadyEvent) => {
+    if (
+        event.api.panels.some(
+            (panel) => panel.id === CONSOLE_SIDEBAR_SAVED_QUERIES_PANEL_ID,
+        )
+    ) {
+        return;
+    }
+
+    event.api.addPanel({
+        id: CONSOLE_SIDEBAR_SAVED_QUERIES_PANEL_ID,
+        component: "savedQueries",
+        headerComponent: "default",
+        params: {
+            title: "Saved queries",
+            icon: <SavedQueriesIcon className="size-3.5" />,
+            kind: "savedQueries",
+        },
+        title: "Saved queries",
+        headerSize: 36,
+    });
 };
 
 export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
@@ -98,8 +206,36 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
         [],
     );
 
+    React.useEffect(() => {
+        if (!api) {
+            return;
+        }
+
+        const disposable = api.onDidLayoutChange(() => {
+            try {
+                localStorage.setItem(
+                    CONSOLE_SIDEBAR_LAYOUT_STORAGE_KEY,
+                    JSON.stringify(sanitizeLayout(api.toJSON())),
+                );
+            } catch (error) {
+                console.warn("Failed to save console sidebar layout:", error);
+            }
+        });
+
+        return () => disposable.dispose();
+    }, [api]);
+
     const onReady = (event: PaneviewReadyEvent) => {
         setApi(event.api);
+        const restored = restoreLayout(
+            event,
+            CONSOLE_SIDEBAR_LAYOUT_STORAGE_KEY,
+        );
+
+        ensurePinnedPanel(event);
+        ensureEntitiesPanel(event);
+        ensureSavedQueriesPanel(event);
+
         const expansionListeners = new Map<string, DockviewIDisposable>();
         const bindPanelExpansionListener = (
             panel: (typeof event.api.panels)[number],
@@ -119,51 +255,14 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
             );
         };
 
-        event.api.addPanel({
-            id: "panel_1",
-            component: "pinned",
-            headerComponent: "default",
-            params: {
-                title: "Pinned",
-                icon: <PinIcon className="size-3.5" />,
-                kind: "pinned",
-            },
-            title: "Pinned",
-            headerSize: 36,
-        });
-
-        event.api.addPanel({
-            id: "panel_2",
-            component: "entities",
-            headerComponent: "default",
-            params: {
-                title: "Entities",
-                icon: <EntitiesIcon className="size-3.5" />,
-                kind: "entities",
-            },
-            title: "Entities",
-            headerSize: 36,
-        });
-
-        event.api.addPanel({
-            id: "panel_3",
-            component: "savedQueries",
-            headerComponent: "default",
-            params: {
-                title: "Saved queries",
-                icon: <SavedQueriesIcon className="size-3.5" />,
-                kind: "savedQueries",
-            },
-            title: "Saved queries",
-            headerSize: 36,
-        });
-
         event.api.panels.forEach(bindPanelExpansionListener);
         event.api.onDidAddView(bindPanelExpansionListener);
 
-        requestAnimationFrame(() => {
-            equalizeEntitiesAndSavedQueries(event);
-        });
+        if (!restored) {
+            requestAnimationFrame(() => {
+                equalizeEntitiesAndSavedQueries(event);
+            });
+        }
 
         event.api.onDidRemoveView((panel) => {
             expansionListeners.get(panel.id)?.dispose();

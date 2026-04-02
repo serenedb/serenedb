@@ -1285,12 +1285,14 @@ class SereneDBConnector final : public velox::connector::Connector {
                 sec_index.IsUnique(),
                 [&]<bool UniqueIdx>()
                   -> std::unique_ptr<velox::connector::DataSink> {
-                  return std::make_unique<
-                    SSTInsertDataSink<false, true, UniqueIdx>>(
+                  constexpr auto kFlags =
+                    UniqueIdx ? SSTInsertFlag::Secondary | SSTInsertFlag::Unique
+                              : SSTInsertFlag::Secondary;
+                  return std::make_unique<SSTInsertDataSink<kFlags>>(
                     _db, _cf, *connector_query_ctx->memoryPool(),
                     shard->GetId(), backfill_pk_indices, columns,
                     std::vector<std::unique_ptr<SinkIndexWriter>>{}, table_lock,
-                    std::move(sk_children));
+                    std::move(sk_children), cis->progress);
                 });
             }
 
@@ -1307,15 +1309,17 @@ class SereneDBConnector final : public velox::connector::Connector {
             if (table.BulkInsert()) {
               const bool is_generated_pk = pk_indices.empty();
               if (is_generated_pk) {
-                return std::make_unique<SSTInsertDataSink<true, false, false>>(
+                return std::make_unique<
+                  SSTInsertDataSink<SSTInsertFlag::GeneratedPk>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
                   pk_indices, columns, std::move(insert_sinks), table_lock,
-                  std::vector<velox::column_index_t>{});
+                  std::vector<velox::column_index_t>{}, nullptr);
               } else {
-                return std::make_unique<SSTInsertDataSink<false, false, false>>(
+                return std::make_unique<
+                  SSTInsertDataSink<SSTInsertFlag::PrimaryKey>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
                   pk_indices, columns, std::move(insert_sinks), table_lock,
-                  std::vector<velox::column_index_t>{});
+                  std::vector<velox::column_index_t>{}, nullptr);
               }
             }
 

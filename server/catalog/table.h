@@ -107,8 +107,13 @@ class Table : public SchemaObject {
   const auto& NameToColumn() const noexcept {
     return _lookup_cache.name2column;
   }
-  using IdToColumnMap =
-    containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
+
+  class IdToColumnMap : public containers::FlatHashMap<catalog::Column::Id,
+                                                       const catalog::Column*> {
+   public:
+    velox::RowTypePtr MakeTypeFromColIds(
+      std::span<const catalog::Column::Id> ids) const;
+  };
 
   const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
 

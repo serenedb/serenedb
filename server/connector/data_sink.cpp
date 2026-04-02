@@ -187,29 +187,30 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
     _number_of_rows_affected{number_of_rows_affected},
     _table_lock_guard{table_lock} {}
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
-SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex, UniqueIndex>::
-  SSTInsertDataSink(
-    rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-    std::span<const velox::column_index_t> key_childs,
-    std::vector<ColumnInfo> columns,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children)
+template<SSTInsertFlag Flags>
+SSTInsertDataSink<Flags>::SSTInsertDataSink(
+  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<ColumnInfo> columns,
+  std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
+  absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children,
+  pg::IndexProgressReporter* progress)
   : Base(
-      SSTSinkWriter<IsGeneratedPK>{
+      SSTSinkWriter<kIsGeneratedPK>{
         object_key, db, cf,
-        IsSecondaryIndex ? std::vector<ColumnInfo>{{catalog::Column::Id{0}, ""}}
-                         : columns,
+        kIsSecondaryIndex
+          ? std::vector<ColumnInfo>{{catalog::Column::Id{0}, ""}}
+          : columns,
         memory_pool},
       memory_pool, object_key, key_childs, std::move(columns),
       std::move(index_writers)),
     _table_lock_guard{table_lock},
-    _sk_children{std::move(sk_children)} {}
+    _sk_children{std::move(sk_children)},
+    _progress{progress} {}
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
-void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
-                       UniqueIndex>::appendData(velox::RowVectorPtr input) {
+template<SSTInsertFlag Flags>
+void SSTInsertDataSink<Flags>::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
@@ -218,16 +219,16 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
   this->_store_keys_buffers.clear();
   this->_store_keys_buffers.reserve(num_rows);
 
-  if constexpr (IsSecondaryIndex) {
+  if constexpr (kIsSecondaryIndex) {
     // Build key and write in one pass - reuse _sk_buffer/_pk_buffer.
     this->_data_writer.SetColumnIndex(0);
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       _sk_buffer.clear();
       _pk_buffer.clear();
-      secondary_key::Create<UniqueIndex>(*input, this->_key_childs,
-                                         _sk_children, row_idx, _sk_buffer,
-                                         _pk_buffer);
-      if constexpr (UniqueIndex) {
+      secondary_key::Create<kUniqueIndex>(*input, this->_key_childs,
+                                          _sk_children, row_idx, _sk_buffer,
+                                          _pk_buffer);
+      if constexpr (kUniqueIndex) {
         rocksdb::Slice pk_slice{_pk_buffer};
         this->_data_writer.Write({&pk_slice, 1}, _sk_buffer);
       } else {
@@ -256,12 +257,17 @@ void SSTInsertDataSink<IsGeneratedPK, IsSecondaryIndex,
       }
     }
   }
+
+  if (_progress) {
+    _progress->ReportBatch(num_rows);
+  }
 }
 
-template class SSTInsertDataSink<true, false, false>;
-template class SSTInsertDataSink<false, false, false>;
-template class SSTInsertDataSink<false, true, false>;
-template class SSTInsertDataSink<false, true, true>;
+template class SSTInsertDataSink<SSTInsertFlag::GeneratedPk>;
+template class SSTInsertDataSink<SSTInsertFlag::PrimaryKey>;
+template class SSTInsertDataSink<SSTInsertFlag::Secondary>;
+template class SSTInsertDataSink<SSTInsertFlag::Secondary |
+                                 SSTInsertFlag::Unique>;
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::string_view table_name, rocksdb::Transaction& transaction,

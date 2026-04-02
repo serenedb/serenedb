@@ -305,10 +305,37 @@ class RocksDBUpdateDataSink final
   absl::ReaderMutexLock _table_lock_guard;
 };
 
-template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
+enum class SSTInsertFlag : uint8_t {
+  PrimaryKey = 0,
+  GeneratedPk = 1 << 0,
+  Secondary = 1 << 1,
+  Unique = 1 << 2,
+};
+
+constexpr SSTInsertFlag operator|(SSTInsertFlag a, SSTInsertFlag b) {
+  return static_cast<SSTInsertFlag>(std::underlying_type_t<SSTInsertFlag>(a) |
+                                    std::underlying_type_t<SSTInsertFlag>(b));
+}
+
+constexpr bool operator&(SSTInsertFlag a, SSTInsertFlag b) {
+  return std::underlying_type_t<SSTInsertFlag>(a) &
+         std::underlying_type_t<SSTInsertFlag>(b);
+}
+
+template<SSTInsertFlag Flags>
 class SSTInsertDataSink final
-  : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>> {
-  using Base = RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>>;
+  : public RocksDBDataSinkBase<
+      SSTSinkWriter<bool(Flags& SSTInsertFlag::GeneratedPk)>> {
+  static constexpr bool kIsGeneratedPK = Flags & SSTInsertFlag::GeneratedPk;
+  static constexpr bool kIsSecondaryIndex = Flags & SSTInsertFlag::Secondary;
+  static constexpr bool kUniqueIndex = Flags & SSTInsertFlag::Unique;
+
+  static_assert(!(kIsGeneratedPK && kIsSecondaryIndex),
+                "secondary index cannot have generated flag");
+  static_assert(!(kUniqueIndex && !kIsSecondaryIndex),
+                "primary index cannot have unique flag");
+
+  using Base = RocksDBDataSinkBase<SSTSinkWriter<kIsGeneratedPK>>;
 
  public:
   SSTInsertDataSink(
@@ -317,23 +344,26 @@ class SSTInsertDataSink final
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children);
+    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children,
+    pg::IndexProgressReporter* progress);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::ReaderMutexLock _table_lock_guard;
   std::vector<velox::column_index_t> _sk_children;
+  pg::IndexProgressReporter* _progress;
 
   // TODO: Write directly to SST file without buffering whole key in memory.
   std::string _sk_buffer;
   std::string _pk_buffer;
 };
 
-extern template class SSTInsertDataSink<true, false, false>;
-extern template class SSTInsertDataSink<false, false, false>;
-extern template class SSTInsertDataSink<false, true, false>;
-extern template class SSTInsertDataSink<false, true, true>;
+extern template class SSTInsertDataSink<SSTInsertFlag::GeneratedPk>;
+extern template class SSTInsertDataSink<SSTInsertFlag::PrimaryKey>;
+extern template class SSTInsertDataSink<SSTInsertFlag::Secondary>;
+extern template class SSTInsertDataSink<SSTInsertFlag::Secondary |
+                                        SSTInsertFlag::Unique>;
 
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {

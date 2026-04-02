@@ -315,10 +315,6 @@ SereneDBTableLayout::createTableHandle(
       velox::BOOLEAN(), filters, velox::expression::kAnd);
   }
 
-  irs::Finally _ = [&] noexcept {
-    RejectFilter(std::move(remaining_filter), rejected_filters);
-  };
-
   std::vector<SpecificPoint> points;
   if (remaining_filter) {
     // Try PK index.
@@ -332,7 +328,9 @@ SereneDBTableLayout::createTableHandle(
       for (auto index : indexes) {
         if (auto sk =
               TryMatchPointFilters(remaining_filter, index.sk_type->names())) {
-          remaining_filter = std::move(sk->remaining_filter);
+          velox::core::TypedExprPtr sk_remaining =
+            std::move(sk->remaining_filter);
+          RejectFilter(std::move(sk_remaining), rejected_filters);
           return std::make_shared<SecondaryIndexTableHandle>(
             table->name(), rocksdb_table.TableId(),
             rocksdb_table.GetTransaction(), index.shard_id,
@@ -342,6 +340,8 @@ SereneDBTableLayout::createTableHandle(
       }
     }
   }
+
+  RejectFilter(std::move(remaining_filter), rejected_filters);
 
   SDB_ASSERT(!table->columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");

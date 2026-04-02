@@ -1116,6 +1116,23 @@ pid	a	b	c	note
 30	NULL	NULL	NULL	all_null_1
 31	NULL	NULL	NULL	all_null_2
 
+onlyif serenedb
+query
+EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[1][expressions: (pid:INTEGER, "pid"), (note:VARCHAR, "note")] -> "pid":INTEGER, "note":VARCHAR
+  -- TableScan[0][vedernikoff_tri_uniq, scan=secondary_index, points=[(a=1, b=null, c=null)]] -> "pid":INTEGER, "note":VARCHAR
+
+query
+SELECT * FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL ORDER BY pid;
+----
+pid	a	b	c	note
+24	1	NULL	NULL	bc_null_1
+25	1	NULL	NULL	bc_null_2
+
 statement ok
 DELETE FROM vedernikoff_tri_uniq WHERE pid IN (11, 13, 15, 21, 23, 25, 31);
 

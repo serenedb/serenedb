@@ -340,7 +340,8 @@ class SSTInsertDataSink final
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    std::shared_mutex& table_lock, std::vector<velox::column_index_t> sk_children,
+    std::shared_mutex& table_lock,
+    std::vector<velox::column_index_t> sk_children,
     pg::IndexProgressReporter* progress);
 
   void appendData(velox::RowVectorPtr input) final;

@@ -92,7 +92,7 @@ export const ExplorerNodeButton = ({
                 {onTogglePin && (
                     <Button
                         variant="ghost"
-                        size="iconSmall"
+                        size="xsIcon"
                         className={cn(
                             "text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 transition-none duration-0",
                             "opacity-0 pointer-events-none",

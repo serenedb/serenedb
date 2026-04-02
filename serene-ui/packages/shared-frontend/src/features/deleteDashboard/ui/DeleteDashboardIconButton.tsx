@@ -46,7 +46,7 @@ export const DeleteDashboardIconButton: React.FC<
             <DialogTrigger asChild>
                 <Button
                     type="button"
-                    size="iconSmall"
+                    size="xsIcon"
                     variant="ghost"
                     title="Delete dashboard"
                     onPointerDown={stopPropagation}

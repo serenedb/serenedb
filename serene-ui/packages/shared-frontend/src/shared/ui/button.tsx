@@ -24,6 +24,7 @@ const buttonVariants = cva(
                 default: "h-9 px-4 py-2.5 has-[>svg]:px-3",
                 icon: "size-7",
                 iconSmall: "size-6",
+                xsIcon: "size-5",
                 small: "h-7 px-2 text-xs",
             },
         },
@@ -52,7 +53,9 @@ function Button({
             className={cn(buttonVariants({ variant, size, className }))}
             aria-label={
                 (props as any)["aria-label"] ??
-                (size === "icon" || size === "iconSmall"
+                (size === "icon" ||
+                size === "iconSmall" ||
+                size === "xsIcon"
                     ? (props as any).title
                     : undefined)
             }

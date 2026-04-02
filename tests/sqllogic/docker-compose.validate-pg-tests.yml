@@ -36,7 +36,7 @@ services:
       - test-network
     command: >
       sh -c '
-        cd /sqllogic/sqllogic &&
+        cd /sqllogic &&
         exec ./run_pg_tests.sh \
           --host postgres \
           --single-port 5432 \

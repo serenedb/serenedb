@@ -16,15 +16,19 @@ on:
           - arm
           - all
       ENABLE_ASAN:
-        description: 'Run ASAN tests'
+        description: 'Run tests with Address Sanitizer'
         type: boolean
         default: false
       ENABLE_TSAN:
-        description: 'Run TSAN tests'
+        description: 'Run tests with Thread Sanitizer'
         type: boolean
         default: false
       ENABLE_MSAN:
-        description: 'Run MSAN tests'
+        description: 'Run tests with Memory Sanitizer'
+        type: boolean
+        default: false
+      FULL_SANITIZER_TESTS:
+        description: 'Include slow tests for sanitizers run'
         type: boolean
         default: false
       VALIDATE_PG_TESTS:
@@ -42,37 +46,39 @@ permissions:
   contents: write
 
 jobs:
-  # ==================== BASE JOBS (always) ====================
+  # ==================== TESTS ====================
   test-unit:
-    name: Unit Tests (${{ matrix.location }})
+    name: unit ${{ matrix.instrumentation }} (${{ matrix.location }})
     strategy:
       fail-fast: false
       matrix:
         location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
       KIND: unit
       DEV: true
-      INSTRUMENTATION: none
+      INSTRUMENTATION: ${{ matrix.instrumentation }}
     secrets: inherit
 
   test-functional:
-    name: Functional Tests (${{ matrix.location }})
+    name: functional ${{ matrix.instrumentation }} (${{ matrix.location }})
     strategy:
       fail-fast: false
       matrix:
         location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
-      KIND: functional_fast
+      KIND: ${{ matrix.instrumentation == 'none' && 'functional' || (inputs.FULL_SANITIZER_TESTS && 'functional' || 'functional_fast') }}
       DEV: true
-      INSTRUMENTATION: none
+      INSTRUMENTATION: ${{ matrix.instrumentation }}
     secrets: inherit
 
   compile-check:
-    name: Release Compile Check (${{ matrix.location }})
+    name: compile check (${{ matrix.location }})
     strategy:
       fail-fast: false
       matrix:
@@ -86,7 +92,7 @@ jobs:
     secrets: inherit
 
   validate-pg:
-    name: Validate PG Tests (${{ matrix.location }})
+    name: validate pg (${{ matrix.location }})
     if: inputs.VALIDATE_PG_TESTS
     strategy:
       fail-fast: false
@@ -99,101 +105,10 @@ jobs:
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 
-  # ==================== OPTIONAL SANITIZER JOBS ====================
-  test-unit-asan:
-    name: Unit Tests ASAN (${{ matrix.location }})
-    if: inputs.ENABLE_ASAN
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: ${{ matrix.location }}
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: asan
-    secrets: inherit
-
-  test-functional-asan:
-    name: Functional Tests ASAN (${{ matrix.location }})
-    if: inputs.ENABLE_ASAN
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: ${{ matrix.location }}
-      KIND: functional_fast
-      DEV: true
-      INSTRUMENTATION: asan
-    secrets: inherit
-
-  test-unit-tsan:
-    name: Unit Tests TSAN (${{ matrix.location }})
-    if: inputs.ENABLE_TSAN
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: ${{ matrix.location }}
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: tsan
-    secrets: inherit
-
-  test-functional-tsan:
-    name: Functional Tests TSAN (${{ matrix.location }})
-    if: inputs.ENABLE_TSAN
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: ${{ matrix.location }}
-      KIND: functional_fast
-      DEV: true
-      INSTRUMENTATION: tsan
-    secrets: inherit
-
-  test-unit-msan:
-    name: Unit Tests MSAN (${{ matrix.location }})
-    if: inputs.ENABLE_MSAN
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: ${{ matrix.location }}
-      KIND: unit
-      DEV: true
-      INSTRUMENTATION: msan
-    secrets: inherit
-
-  test-functional-msan:
-    name: Functional Tests MSAN (${{ matrix.location }})
-    if: inputs.ENABLE_MSAN
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: ${{ matrix.location }}
-      KIND: functional_fast
-      DEV: true
-      INSTRUMENTATION: msan
-    secrets: inherit
-
   # ==================== REPORT ====================
   report:
     name: Report Status
-    needs: [test-unit, test-functional, compile-check, validate-pg, test-unit-asan, test-functional-asan, test-unit-tsan, test-functional-tsan, test-unit-msan, test-functional-msan]
+    needs: [test-unit, test-functional, compile-check, validate-pg]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:

@@ -49,7 +49,7 @@ services:
       - test-network
     command: >
       sh -c '
-        cd /sqllogic/sqllogic &&
+        cd /sqllogic &&
         exec ./run_sdb_tests.sh \
           --host serenedb-single \
           --single-port 7777 \

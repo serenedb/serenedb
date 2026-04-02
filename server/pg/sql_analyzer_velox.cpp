@@ -3276,6 +3276,38 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
     names.emplace_back(std::move(name));
   }
 
+  if (const_values) {
+    std::vector<velox::TypePtr> types;
+    types.reserve(row_size);
+    bool needs_coercion = false;
+    for (int i = 0; i < row_size; ++i) {
+      velox::TypePtr resolved = values[0][i]->type();
+      for (size_t r = 1; r < values.size(); ++r) {
+        auto new_resolved = velox::TypeCoercer::leastCommonSuperType(
+          resolved, values[r][i]->type());
+        if (!new_resolved) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                          ERR_MSG("VALUES types ", ToPgTypeString(resolved),
+                                  " and ", ToPgTypeString(values[r][i]->type()),
+                                  " cannot be matched"));
+        }
+        if (new_resolved != resolved || new_resolved != values[r][i]->type()) {
+          needs_coercion = true;
+        }
+        resolved = std::move(new_resolved);
+      }
+      types.push_back(std::move(resolved));
+    }
+
+    if (!needs_coercion) {
+      auto output_type = velox::ROW(names, types);
+      state.root = std::make_shared<lp::ValuesNode>(_id_generator.NextPlanId(),
+                                                    std::move(output_type),
+                                                    std::move(row_values));
+      return;
+    }
+  }
+
   std::vector<lp::LogicalPlanNodePtr> values_nodes;
   values_nodes.reserve(values.size());
   for (auto& value : values) {

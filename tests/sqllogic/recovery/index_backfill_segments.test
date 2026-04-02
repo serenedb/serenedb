@@ -1,0 +1,43 @@
+show-column-names false
+hash-threshold 100
+
+statement count 100000
+CREATE TABLE clickclack AS
+SELECT
+  CASE
+    WHEN vedernikoff_team.crook % 2 = 0 THEN
+      'team member vedernikoff has ' || (crook / 10)::text || ' stocks'
+    ELSE
+      'team member cutelooked has ' || (boss * 1000)::text || ' stocks'
+  END AS fact
+FROM
+  generate_series(1, 1000) as vedernikoff_team(crook),
+  generate_series(1, 100) as cutelooked_team(boss);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+SET sdb_fault_segment_1000_docs_max TO DEFAULT;
+
+statement ok
+CREATE INDEX clickclack_facts_2 ON clickclack USING inverted(fact test_english);
+
+query
+SELECT * FROM clickclack_facts_2 WHERE PHRASE(fact, 'team member');
+----
+100000 values hashing to b3b411b881b6ec438b321353df0f649a
+
+statement ok
+RESET sdb_fault_segment_1000_docs_max;
+
+statement ok
+DROP TABLE clickclack;

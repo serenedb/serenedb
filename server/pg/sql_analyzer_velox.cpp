@@ -203,16 +203,6 @@ constexpr containers::TrivialBiMap kSpecialForms = [](auto selector) {
     .Case("in", lp::SpecialForm::kIn);
 };
 
-using NameToColumnMap =
-  std::unordered_map<std::string_view, const catalog::Column*>;
-NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
-  return columns | std::views::transform([](const catalog::Column& column) {
-           return std::pair<std::string_view, const catalog::Column*>{
-             column.name, &column};
-         }) |
-         std::ranges::to<NameToColumnMap>();
-}
-
 std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
   return absl::StrCat(
     "This operation is not supported for ",
@@ -330,6 +320,7 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
 }
 
 using query::ToAlias;
+using query::ToAliases;
 
 std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
                                 std::string_view sep) {
@@ -717,6 +708,12 @@ class SqlAnalyzer {
                       std::vector<std::string> column_names,
                       std::vector<lp::ExprPtr> column_exprs);
 
+  void AddIndexColumns(State& state, const Node& stmt,
+                       const Objects::ObjectData& object,
+                       const catalog::Table& table,
+                       std::vector<std::string>& column_names,
+                       std::vector<lp::ExprPtr>& column_exprs);
+
   void ProcessCopyStmt(State& state, const CopyStmt& stmt);
 
   lp::ExprPtr GetDefaultValue(State& state, const catalog::Column& column);
@@ -771,8 +768,8 @@ class SqlAnalyzer {
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
                      bool load_implicit_pk = false);
-  State ProcessInvertedIndex(State* parent, const Objects::ObjectData& object,
-                             const RangeVar* node);
+  State ProcessIndex(State* parent, const Objects::ObjectData& object,
+                     const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1091,6 +1088,78 @@ class SqlAnalyzer {
       std::vector<velox::VectorPtr>{});
     state.root = std::make_shared<lp::ValuesNode>(
       _id_generator.NextPlanId(), std::vector{std::move(dummy_row)});
+  }
+
+  // Resolve common types across multiple plan nodes (for VALUES, UNION, etc.)
+  // and wrap each node in a ProjectNode with casts where types differ.
+  void FindCommonTypeAndApplyCoercions(
+    std::vector<lp::LogicalPlanNodePtr>& inputs,
+    std::string_view operation_name) {
+    SDB_ASSERT(!inputs.empty());
+    const auto& first_output = *inputs.front()->outputType();
+    const auto col_count = first_output.size();
+
+    SDB_ASSERT(absl::c_all_of(inputs, [&](const lp::LogicalPlanNodePtr& input) {
+      return input->outputType()->size() == col_count;
+    }));
+
+    // treat varchar constants as pg unknown as we do for function coercions.
+    auto col_type_for_resolution = [](const lp::LogicalPlanNodePtr& input,
+                                      uint32_t col) {
+      auto type = input->outputType()->childAt(col);
+      if (type == velox::VARCHAR() && input->kind() == lp::NodeKind::kProject) {
+        auto& proj = basics::downCast<lp::ProjectNode>(*input);
+        if (proj.expressionAt(col)->kind() == lp::ExprKind::kConstant) {
+          return PGUNKNOWN();
+        }
+      }
+      return type;
+    };
+
+    // Resolve the common type per column across all inputs.
+    std::vector<velox::TypePtr> types;
+    types.reserve(col_count);
+    for (uint32_t i = 0; i < col_count; ++i) {
+      velox::TypePtr resolved = col_type_for_resolution(inputs[0], i);
+      for (const auto& input : std::span{inputs}.subspan(1)) {
+        auto input_type = col_type_for_resolution(input, i);
+        auto new_resolved =
+          velox::TypeCoercer::leastCommonSuperType(resolved, input_type);
+        if (!new_resolved) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+            ERR_MSG(operation_name, " types ", ToPgTypeString(resolved),
+                    " and ", ToPgTypeString(input_type), " cannot be matched"));
+        }
+        resolved = std::move(new_resolved);
+      }
+      types.push_back(FixupReturnType(std::move(resolved)));
+    }
+
+    // Wrap each input in a ProjectNode with casts where types differ.
+    for (auto& input : inputs) {
+      const auto& output = *input->outputType();
+      if (output.children() == types) {
+        continue;
+      }
+      std::vector<std::string> names;
+      std::vector<lp::ExprPtr> exprs;
+      names.reserve(col_count);
+      exprs.reserve(col_count);
+      for (const auto& [child_type, name, target_type] :
+           std::views::zip(output.children(), output.names(), types)) {
+        lp::ExprPtr expr =
+          std::make_shared<lp::InputReferenceExpr>(child_type, name);
+        if (child_type != target_type) {
+          expr = MakeCast(target_type, std::move(expr));
+        }
+        names.emplace_back(name);
+        exprs.emplace_back(std::move(expr));
+      }
+      input = std::make_shared<lp::ProjectNode>(
+        _id_generator.NextPlanId(), std::move(input), std::move(names),
+        std::move(exprs));
+    }
   }
 
   void CrossProduct(State& state, lp::LogicalPlanNodePtr other) {
@@ -1564,6 +1633,49 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
     std::move(column_names), std::move(column_exprs));
 }
 
+void SqlAnalyzer::AddIndexColumns(State& state, const Node& stmt,
+                                  const Objects::ObjectData& object,
+                                  const catalog::Table& table,
+                                  std::vector<std::string>& column_names,
+                                  std::vector<lp::ExprPtr>& column_exprs) {
+  // output type is aligned with table's RowType, may have one extra column
+  // at the end for generated PK (which is never part of a secondary index).
+  const auto& output_names = state.root->outputType()->names();
+  const auto& row_names = table.RowType()->names();
+  SDB_ASSERT(output_names.size() - row_names.size() <= 1);
+  SDB_ASSERT(std::ranges::starts_with(ToAliases(output_names), row_names));
+
+  const auto& id2column = table.IdToColumn();
+  for (auto& index : object.Indexes()) {
+    if (index->GetIndexType() != IndexType::Secondary) {
+      continue;
+    }
+
+    for (auto col_id : index->GetColumnIds()) {
+      auto it = id2column.find(col_id);
+      SDB_ASSERT(it != id2column.end());
+      const auto& col = *(it->second);
+
+      std::string name;
+      if (stmt.type == T_UpdateStmt) {
+        name = catalog::Column::GenerateOldValueName(col.name);
+      } else {
+        name = col.name;
+      }
+
+      if (absl::c_contains(column_names, name)) {
+        continue;
+      }
+
+      auto col_idx = table.RowType()->getChildIdx(col.name);
+      column_exprs.emplace_back(std::make_shared<lp::InputReferenceExpr>(
+        table.RowType()->childAt(col_idx),
+        state.root->outputType()->nameOf(col_idx)));
+      column_names.emplace_back(std::move(name));
+    }
+  }
+}
+
 // It's literally UNKNOWN
 // but have different address to distinguish it from UNKNOWN().
 const velox::UnknownType kDefaultValueTypePlaceHolder{};
@@ -1761,30 +1873,25 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   column_exprs.reserve(pk_type.size() + list_length(stmt.targetList));
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
-  containers::FlatHashSet<std::string_view> pk_column_names;
-  pk_column_names.reserve(column_names.size());
-  for (std::string_view pk_column_name : column_names) {
-    pk_column_names.insert(pk_column_name);
-  }
-
   containers::FlatHashSet<std::string_view> target_column_names;
   bool update_pk = false;
-  auto name_to_column = GetNameToColumn(table.Columns());
+  const auto& name2column = table.NameToColumn();
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "Indirection in UPDATE target list is not implemented yet");
     }
 
-    if (!target_column_names.emplace(target.name).second) {
+    std::string_view target_name = target.name;
+    if (!target_column_names.emplace(target_name).second) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&target))),
         ERR_MSG("multiple assignments to same column \"", target.name, "\""));
     }
 
-    auto it = name_to_column.find(target.name);
-    if (it == name_to_column.end()) {
+    auto it = name2column.find(target_name);
+    if (it == name2column.end()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       CURSOR_POS(ErrorPosition(ExprLocation(&target))),
                       ERR_MSG("column \"", target.name, "\" of relation \"",
@@ -1793,12 +1900,12 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
-    if (pk_column_names.contains(target.name)) {
+    if (pk_type.containsChild(target_name)) {
       update_pk = true;
       column_names.emplace_back(
-        catalog::Column::GenerateUpdateName(target.name));
+        catalog::Column::GenerateUpdateName(target_name));
     } else {
-      column_names.emplace_back(target.name);
+      column_names.emplace_back(target_name);
     }
 
     auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
@@ -1810,6 +1917,9 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     }
     column_exprs.emplace_back(std::move(expr));
   });
+
+  AddIndexColumns(state, ToNode(&stmt), *object, table, column_names,
+                  column_exprs);
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
@@ -1869,6 +1979,9 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   column_names.reserve(pk_type.size());
   column_exprs.reserve(pk_type.size());
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
+
+  AddIndexColumns(state, ToNode(&stmt), *object, table, column_names,
+                  column_exprs);
 
   object->EnsureTable(_transaction);
 
@@ -2202,10 +2315,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     if (attlist_length > 0) {
       names.reserve(attlist_length);
       types.reserve(attlist_length);
-      auto name_to_column = GetNameToColumn(table.Columns());
+      const auto& name2column = table.NameToColumn();
       for (const auto& column_name : PgStrListWrapper{stmt.attlist}) {
-        auto it = name_to_column.find(column_name);
-        if (it == name_to_column.end() || it->second->IsGeneratedPK()) {
+        auto it = name2column.find(column_name);
+        if (it == name2column.end() || it->second->IsGeneratedPK()) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                           CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
                           ERR_MSG("column \"", column_name, "\" of relation \"",
@@ -2700,7 +2813,8 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
 
   auto table_state =
     ProcessTable(&state, schemaname, relname, *object, stmt.relation, true);
-  const auto& input_type = *table_state.root->outputType();
+  const auto& input_type_ptr = table_state.root->outputType();
+  const auto& input_type = *input_type_ptr;
 
   const auto& pk = *table.PKType();
   size_t size = pk.size() + list_length(stmt.indexParams);
@@ -2709,6 +2823,21 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   column_names.reserve(size);
   column_exprs.reserve(size);
   FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
+
+  std::string_view access_method = stmt.accessMethod;
+  auto index_type = magic_enum::enum_cast<IndexType>(
+                      access_method, magic_enum::case_insensitive)
+                      .value_or(IndexType::Unknown);
+  // "btree" is the PostgreSQL default when no USING clause is specified.
+  if (index_type == IndexType::Unknown && access_method == "btree") {
+    index_type = IndexType::Secondary;
+  }
+  const bool is_secondary = (index_type == IndexType::Secondary);
+
+  // SST table writer requires all columns to be sorted by.
+  // So we put sorting operator as we do it for COPY
+  std::vector<lp::SortingField> sorted_by;
+  sorted_by.reserve(size);
 
   VisitNodes(stmt.indexParams, [&](const IndexElem& index_elem) {
     if (!index_elem.name) {
@@ -2728,7 +2857,11 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
     column_names.emplace_back(colname);
     auto expr = std::make_shared<lp::InputReferenceExpr>(
       input_type.childAt(col_idx), input_type.nameOf(col_idx));
-    column_exprs.emplace_back(std::move(expr));
+    column_exprs.emplace_back(is_secondary ? expr : std::move(expr));
+
+    if (is_secondary) {
+      sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
+    }
   });
 
   // TODO: reuse parsed shard options in CreateIndex to avoid double parsing.
@@ -2736,6 +2869,33 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   // EXPLAIN flags that affect query planning (e.g. choosing the explain
   // executor).
   CreateIndexOptionsParser{stmt.options, _query_ctx.explain_params};
+
+  if (is_secondary) {
+    auto add_sorting_field_for_pk =
+      [&](std::span<const std::string> pk_names,
+          std::span<const velox::TypePtr> pk_types) {
+        for (const auto& [name, type] : std::views::zip(pk_names, pk_types)) {
+          auto column = table_state.resolver.Resolve(input_type_ptr, name);
+          SDB_ASSERT(column.IsFound());
+          auto expr = std::make_shared<lp::InputReferenceExpr>(
+            type, std::string{column.GetColumnName()});
+          sorted_by.emplace_back(std::move(expr),
+                                 lp::SortOrder::kAscNullsFirst);
+        }
+      };
+
+    if (pk.size() > 0) {
+      add_sorting_field_for_pk(pk.names(), pk.children());
+    } else {
+      auto pk_name = catalog::Column::GeneratePKName(table_type.names());
+      velox::TypePtr pk_type = velox::BIGINT();
+      add_sorting_field_for_pk(std::span{&pk_name, 1}, std::span{&pk_type, 1});
+    }
+    SDB_ASSERT(!sorted_by.empty());
+    table_state.root = std::make_shared<lp::SortNode>(
+      _id_generator.NextPlanId(), std::move(table_state.root),
+      std::move(sorted_by));
+  }
 
   object->EnsureTable(_transaction);
   state.root = std::make_shared<lp::TableWriteNode>(
@@ -3132,13 +3292,41 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
   if (const_values) {
     std::vector<velox::TypePtr> types;
     types.reserve(row_size);
-    for (const auto& value : values.back()) {
-      types.push_back(value->type());
+    bool needs_coercion = false;
+    auto expr_type = [](const lp::ExprPtr& e) {
+      if (e->type() == velox::VARCHAR() &&
+          e->kind() == lp::ExprKind::kConstant) {
+        return PGUNKNOWN();
+      }
+      return e->type();
+    };
+    for (int i = 0; i < row_size; ++i) {
+      velox::TypePtr resolved = expr_type(values[0][i]);
+      for (size_t r = 1; r < values.size(); ++r) {
+        auto col_type = expr_type(values[r][i]);
+        auto new_resolved =
+          velox::TypeCoercer::leastCommonSuperType(resolved, col_type);
+        if (!new_resolved) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+            ERR_MSG("VALUES types ", ToPgTypeString(resolved), " and ",
+                    ToPgTypeString(col_type), " cannot be matched"));
+        }
+        if (*new_resolved != *resolved || *new_resolved != *col_type) {
+          needs_coercion = true;
+        }
+        resolved = std::move(new_resolved);
+      }
+      types.push_back(FixupReturnType(std::move(resolved)));
     }
-    state.root = std::make_shared<lp::ValuesNode>(
-      _id_generator.NextPlanId(),
-      velox::ROW(std::move(names), std::move(types)), std::move(row_values));
-    return;
+
+    if (!needs_coercion) {
+      auto output_type = velox::ROW(names, types);
+      state.root = std::make_shared<lp::ValuesNode>(_id_generator.NextPlanId(),
+                                                    std::move(output_type),
+                                                    std::move(row_values));
+      return;
+    }
   }
 
   std::vector<lp::LogicalPlanNodePtr> values_nodes;
@@ -3163,6 +3351,7 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
   if (values_nodes.size() == 1) {
     state.root = std::move(values_nodes.front());
   } else {
+    FindCommonTypeAndApplyCoercions(values_nodes, "VALUES");
     state.root = std::make_shared<lp::SetNode>(_id_generator.NextPlanId(),
                                                std::move(values_nodes),
                                                lp::SetOperation::kUnionAll);
@@ -3727,13 +3916,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
 
   _expr_for_scorer = std::move(l_expr_for_scorer);
 
-  const auto set_operation_type = [&] {
+  const auto [set_operation_type, set_operation_name] =
+    [&] -> std::pair<lp::SetOperation, std::string_view> {
     switch (stmt.op) {
       case SETOP_UNION:
         if (stmt.all) {
-          return lp::SetOperation::kUnionAll;
+          return {lp::SetOperation::kUnionAll, "UNION"};
         } else {
-          return lp::SetOperation::kUnion;
+          return {lp::SetOperation::kUnion, "UNION"};
         }
       case SETOP_INTERSECT:
         if (stmt.all) {
@@ -3741,37 +3931,35 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "INTERSECT ALL is not implemented yet");
         } else {
-          return lp::SetOperation::kIntersect;
+          return {lp::SetOperation::kIntersect, "INTERSECT"};
         }
       case SETOP_EXCEPT:
         if (stmt.all) {
           // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED, "EXCEPT ALL is not implemented yet");
         } else {
-          return lp::SetOperation::kExcept;
+          return {lp::SetOperation::kExcept, "EXCEPT"};
         }
       default:
         SDB_THROW(ERROR_NOT_IMPLEMENTED);
     }
   }();
 
-  auto& l_output = l_state.root->outputType();
-  auto& r_output = r_state.root->outputType();
-  if (l_output->children() != r_output->children()) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "UNION ALL requires both sides to have the same number of "
-              "columns and same types, but got: ",
-              l_output->size(), " and ", r_output->size());
+  if (l_state.root->outputType()->size() !=
+      r_state.root->outputType()->size()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("each ", set_operation_name,
+                            " query must have the same number of columns"));
   }
+  std::vector<lp::LogicalPlanNodePtr> inputs;
+  inputs.push_back(std::move(l_state.root));
+  inputs.push_back(std::move(r_state.root));
+  FindCommonTypeAndApplyCoercions(inputs, set_operation_name);
   state.resolver = std::move(l_state.resolver);
   state.resolver.ClearTables();
   SDB_ASSERT(!state.root);
-  state.root = std::make_shared<lp::SetNode>(_id_generator.NextPlanId(),
-                                             std::vector{
-                                               std::move(l_state.root),
-                                               std::move(r_state.root),
-                                             },
-                                             set_operation_type);
+  state.root = std::make_shared<lp::SetNode>(
+    _id_generator.NextPlanId(), std::move(inputs), set_operation_type);
 }
 
 void SqlAnalyzer::ProcessFromList(State& state, const List* list) {
@@ -3875,14 +4063,12 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
   return {table_alias, std::move(column_names)};
 }
 
-State SqlAnalyzer::ProcessInvertedIndex(State* parent,
-                                        const Objects::ObjectData& object,
-                                        const RangeVar* node) {
+State SqlAnalyzer::ProcessIndex(State* parent,
+                                const Objects::ObjectData& object,
+                                const RangeVar* node) {
   SDB_ASSERT(object.object);
-  const auto& inverted_index =
-    basics::downCast<const catalog::InvertedIndex>(*object.object);
-  SDB_ASSERT(object.catalog_table);
-  const auto& table = *object.catalog_table;
+  const auto& index = basics::downCast<const catalog::Index>(*object.object);
+  const auto& table = object.CatalogTable();
   auto type = table.RowType();
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
@@ -3895,46 +4081,45 @@ State SqlAnalyzer::ProcessInvertedIndex(State* parent,
   }
 
   if (!object.table) {
-    object.table = std::make_shared<connector::InvertedIndexTable>(
-      _transaction, std::move(scan_table), inverted_index);
+    object.table = std::make_shared<connector::IndexTable>(
+      _transaction, std::move(scan_table), index);
   } else {
-    auto table = object.table.get();
-    SDB_ASSERT(dynamic_cast<connector::InvertedIndexTable*>(table));
+    SDB_ASSERT(dynamic_cast<connector::IndexTable*>(object.table.get()));
   }
 
-  SDB_ASSERT(
-    !table.Columns().empty(),
-    "Column with inverted index should have at least one column to index");
+  if (index.GetIndexType() == IndexType::Inverted) {
+    SDB_ASSERT(!table.Columns().empty());
 
-  if (_expr_for_scorer) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("Only one inverted index scan can produce a score per query"));
+    if (_expr_for_scorer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Only one inverted index scan can produce a score per query"));
+    }
+
+    if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
+      basics::downCast<connector::IndexTable>(*object.table).SetScorer(scorer);
+
+      auto score_name = catalog::Column::GenerateScoreName(type->names());
+      auto unique_score_name = _id_generator.NextColumnName(score_name);
+
+      std::vector types = type->children();
+      std::vector type_names = type->names();
+      types.push_back(velox::REAL());
+      type_names.emplace_back(score_name);
+      type = velox::ROW(std::move(type_names), std::move(types));
+
+      column_names.emplace_back(std::move(unique_score_name));
+      _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
+        velox::REAL(), column_names.back());
+    }
   }
-
-  if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
-    basics::downCast<connector::InvertedIndexTable>(*object.table)
-      .SetScorer(scorer);
-
-    auto score_name = catalog::Column::GenerateScoreName(type->names());
-    auto unique_score_name = _id_generator.NextColumnName(score_name);
-
-    std::vector types = type->children();
-    std::vector type_names = type->names();
-    types.push_back(velox::REAL());
-    type_names.emplace_back(score_name);
-    type = velox::ROW(std::move(type_names), std::move(types));
-
-    column_names.emplace_back(std::move(unique_score_name));
-    _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
-      velox::REAL(), column_names.back());
-  }
+  scan_table = object.table;
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type->children()), object.table,
-    type->names());
+    velox::ROW(std::move(column_names), type->children()),
+    std::move(scan_table), type->names());
 
   state.resolver.CreateTable(table_alias,
                              MakePtrView(state.root->outputType()));
@@ -4034,15 +4219,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
   } else if (logical_object.GetType() == catalog::ObjectType::Index) {
-    const auto& index = basics::downCast<catalog::Index>(logical_object);
-    if (index.GetIndexType() != IndexType::Inverted) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      CURSOR_POS(ErrorPosition(ExprLocation(node))),
-                      ERR_MSG("Index '", name, "' of type '",
-                              magic_enum::enum_name(index.GetIndexType()),
-                              "' cannot be used in FROM clause"));
-    }
-    return ProcessInvertedIndex(parent, *object, node);
+    return ProcessIndex(parent, *object, node);
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -5176,7 +5353,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
 
   // bm25()/tfidf() are not registered catalog functions -- they are
   // scorer directives resolved during collection. Return the injected
-  // score column reference that was set up in ProcessInvertedIndex.
+  // score column reference that was set up in ProcessIndex.
   if (schema.empty() &&
       (name == irs::BM25::type_name() || name == irs::TFIDF::type_name())) {
     if (!_expr_for_scorer) {

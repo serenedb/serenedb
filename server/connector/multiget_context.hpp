@@ -25,7 +25,7 @@
 
 #include "rocksdb/db.h"
 
-namespace sdb::connector {
+namespace sdb::connector::tmp {
 
 class MultiGetContext {
  public:

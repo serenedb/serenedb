@@ -1097,7 +1097,7 @@ Result LocalCatalog::CreateIndex(
 
   auto index = MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
                          table.GetId(), std::move(options),
-                         std::move(create_columns), _snapshot);
+                         std::move(create_columns), _snapshot, shard_options);
   if (!index) {
     return std::move(index).error();
   }

@@ -306,7 +306,7 @@ void RocksDBMaterializer::DispatchColumnRead(
       SeekIterateColumnKeys(column_key, column_id, row_keys, *_transaction,
                             func);
     }
-  } else if (row_keys.size() > MultiGetContext::kMultiGetThreshold) {
+  } else if (row_keys.size() > tmp::MultiGetContext::kMultiGetThreshold) {
     if (_db) {
       MultiGetIterateColumnKeys(column_key, row_keys, *_db, func);
     } else {

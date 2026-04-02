@@ -73,7 +73,7 @@ std::optional<MatchedPoints> TryMatchPointFilters(
 class SecondaryIndexes {
  public:
   SecondaryIndexes(const catalog::Table& table, query::Transaction& trx)
-    : _id2col{table.IdToColumn()},
+    : _table{table},
       _snapshot{trx.EnsureCatalogSnapshot()},
       _indexes{_snapshot->GetIndexesByTable(table.GetId())} {}
 
@@ -86,10 +86,10 @@ class SecondaryIndexes {
   class Iterator {
    public:
     Iterator(std::span<const std::shared_ptr<catalog::Index>> indexes,
-             const catalog::Table::IdToColumnMap& id2col,
+             const catalog::Table& table,
              const std::shared_ptr<const catalog::Snapshot>& snapshot,
              size_t idx)
-      : _indexes{indexes}, _id2col{id2col}, _snapshot{snapshot}, _idx{idx} {
+      : _indexes{indexes}, _table{table}, _snapshot{snapshot}, _idx{idx} {
       SkipNonSecondary();
     }
 
@@ -98,7 +98,7 @@ class SecondaryIndexes {
       const auto& sec_index =
         basics::downCast<const catalog::SecondaryIndex>(index);
       return {_snapshot->GetIndexShard(index.GetId())->GetId(),
-              _id2col.MakeTypeFromColIds(index.GetColumnIds()),
+              _table.MakeTypeFromColIds(index.GetColumnIds()),
               sec_index.IsUnique()};
     }
 
@@ -119,18 +119,18 @@ class SecondaryIndexes {
     }
 
     std::span<const std::shared_ptr<catalog::Index>> _indexes;
-    const catalog::Table::IdToColumnMap& _id2col;
+    const catalog::Table& _table;
     const std::shared_ptr<const catalog::Snapshot>& _snapshot;
     size_t _idx;
   };
 
-  Iterator begin() const { return {_indexes, _id2col, _snapshot, 0}; }
+  Iterator begin() const { return {_indexes, _table, _snapshot, 0}; }
   Iterator end() const {
-    return {_indexes, _id2col, _snapshot, _indexes.size()};
+    return {_indexes, _table, _snapshot, _indexes.size()};
   }
 
  private:
-  const catalog::Table::IdToColumnMap& _id2col;
+  const catalog::Table& _table;
   std::shared_ptr<const catalog::Snapshot> _snapshot;
   std::vector<std::shared_ptr<catalog::Index>> _indexes;
 };
@@ -251,8 +251,8 @@ SereneDBTableLayout::createTableHandle(
     auto& transaction = idx_table->GetTransaction();
     auto snapshot = transaction.EnsureCatalogSnapshot();
     auto shard = snapshot->GetIndexShard(sec_index.GetId());
-    auto sk_type = underlying.CatalogTable().IdToColumn().MakeTypeFromColIds(
-      sec_index.GetColumnIds());
+    auto sk_type =
+      underlying.CatalogTable().MakeTypeFromColIds(sec_index.GetColumnIds());
 
     velox::core::TypedExprPtr remaining_filter;
     if (filters.size() == 1) {

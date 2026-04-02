@@ -232,7 +232,6 @@ class PointLookupPKColumnBuilder {
   irs::bitset _present_rows;
 };
 
-// PointLookupSKColumnBuilder for point lookups
 template<typename Materializer>
 class PointLookupSKColumnBuilder {
  public:
@@ -252,7 +251,8 @@ class PointLookupSKColumnBuilder {
     for (const auto& val : values) {
       // we store pk in value only for unique non-null SKs, otherwise
       // pointlookup is not supposed to be used.
-      SDB_ASSERT(val.size() > 1 && val[0] == secondary_key::kPKInValue);
+      SDB_ASSERT(val.size() > 1);
+      SDB_ASSERT(val[0] == secondary_key::kPKInValue);
       _row_keys.emplace_back(val.data() + 1, val.size() - 1);
     }
   }

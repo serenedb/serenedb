@@ -306,29 +306,25 @@ class RocksDBUpdateDataSink final
 };
 
 enum class SSTInsertFlag : uint8_t {
-  PrimaryKey = 0,
-  GeneratedPk = 1 << 0,
-  Secondary = 1 << 1,
-  Unique = 1 << 2,
+  PrimaryKey = 1 << 0,
+  GeneratedPk = 1 << 1,
+  Secondary = 1 << 2,
+  Unique = 1 << 3,
 };
 
-constexpr SSTInsertFlag operator|(SSTInsertFlag a, SSTInsertFlag b) {
-  return static_cast<SSTInsertFlag>(std::underlying_type_t<SSTInsertFlag>(a) |
-                                    std::underlying_type_t<SSTInsertFlag>(b));
-}
-
-constexpr bool operator&(SSTInsertFlag a, SSTInsertFlag b) {
-  return std::underlying_type_t<SSTInsertFlag>(a) &
-         std::underlying_type_t<SSTInsertFlag>(b);
-}
+ENABLE_BITMASK_ENUM(SSTInsertFlag);
 
 template<SSTInsertFlag Flags>
 class SSTInsertDataSink final
   : public RocksDBDataSinkBase<
       SSTSinkWriter<bool(Flags& SSTInsertFlag::GeneratedPk)>> {
-  static constexpr bool kIsGeneratedPK = Flags & SSTInsertFlag::GeneratedPk;
-  static constexpr bool kIsSecondaryIndex = Flags & SSTInsertFlag::Secondary;
-  static constexpr bool kUniqueIndex = Flags & SSTInsertFlag::Unique;
+  static_assert(std::underlying_type_t<SSTInsertFlag>(Flags) != 0,
+                "SSTInsertFlag must not be zero");
+  static constexpr bool kIsGeneratedPK =
+    bool(Flags & SSTInsertFlag::GeneratedPk);
+  static constexpr bool kIsSecondaryIndex =
+    bool(Flags & SSTInsertFlag::Secondary);
+  static constexpr bool kUniqueIndex = bool(Flags & SSTInsertFlag::Unique);
 
   static_assert(!(kIsGeneratedPK && kIsSecondaryIndex),
                 "secondary index cannot have generated flag");

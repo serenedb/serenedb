@@ -108,14 +108,13 @@ class Table : public SchemaObject {
     return _lookup_cache.name2column;
   }
 
-  class IdToColumnMap : public containers::FlatHashMap<catalog::Column::Id,
-                                                       const catalog::Column*> {
-   public:
-    velox::RowTypePtr MakeTypeFromColIds(
-      std::span<const catalog::Column::Id> ids) const;
-  };
+  using IdToColumnMap =
+    containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
 
   const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
+
+  velox::RowTypePtr MakeTypeFromColIds(
+    std::span<const catalog::Column::Id> ids) const;
 
  private:
   struct TableOutput;

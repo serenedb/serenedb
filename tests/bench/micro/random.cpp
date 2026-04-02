@@ -47,7 +47,7 @@
 namespace {
 
 // Seed data to avoid reading random_device() for benchmarks.
-uint32_t gKSeedData[] = {
+constexpr uint32_t kSeedData[] = {
   0x1B510052, 0x9A532915, 0xD60F573F, 0xBC9BC6E4, 0x2B60A476, 0x81E67400,
   0x08BA6FB5, 0x571BE91F, 0xF296EC6B, 0x2A0DD915, 0xB6636521, 0xE7B9F9B6,
   0xFF34052E, 0xC5855664, 0x53B02D5D, 0xA99F8FA1, 0x08BA4799, 0x6E85076A,
@@ -77,18 +77,18 @@ class PrecompiledSeedSeq {
   void generate(OutIterator begin, OutIterator end) {
     static size_t gIdx = 0;
     for (; begin != end; begin++) {
-      *begin = gKSeedData[gIdx++];
-      if (gIdx >= ABSL_ARRAYSIZE(gKSeedData)) {
+      *begin = kSeedData[gIdx++];
+      if (gIdx >= ABSL_ARRAYSIZE(kSeedData)) {
         gIdx = 0;
       }
     }
   }
 
-  size_t size() const { return ABSL_ARRAYSIZE(gKSeedData); }
+  size_t size() const { return ABSL_ARRAYSIZE(kSeedData); }
 
   template<typename OutIterator>
   void param(OutIterator out) const {
-    std::copy(std::begin(gKSeedData), std::end(gKSeedData), out);
+    std::copy(std::begin(kSeedData), std::end(kSeedData), out);
   }
 };
 
@@ -106,7 +106,7 @@ Engine MakeEngine() {
     return Engine();
   } else {
     // Otherwise, use the provided seed sequence.
-    SSeq seq(std::begin(gKSeedData), std::end(gKSeedData));
+    SSeq seq(std::begin(kSeedData), std::end(kSeedData));
     return Engine(seq);
   }
 }

@@ -58,6 +58,9 @@ void Create(std::span<const velox::variant> point,
 void AppendKeyValue(std::string& key, const velox::BaseVector& column,
                     velox::vector_size_t idx);
 
+void AppendVariantValue(std::string& key, const velox::variant& value,
+                        const velox::TypePtr& type);
+
 template<typename T>
 void AppendSigned(std::string& key, T value) {
   SDB_ASSERT(std::is_signed_v<T>,

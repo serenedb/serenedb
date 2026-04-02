@@ -130,23 +130,18 @@ jobs:
           name: tarball-arm
           path: packages/tarball/
 
-      - name: Map tarballs to Docker arch names
+      - name: Check tarballs
         id: map_tarballs
         run: |
           mkdir -p packages/tarball
           cd packages/tarball
-          HAS_TARBALLS=false
-          for f in install-*.tar.gz; do
-            [ -e "$f" ] || continue
-            case "$f" in
-              *x86_64*) ln -sf "$f" install-amd64.tar.gz ;;
-              *arm64*|*aarch64*) ln -sf "$f" install-arm64.tar.gz ;;
-            esac
-            HAS_TARBALLS=true
-          done
-          echo "has_tarballs=$HAS_TARBALLS" >> "$GITHUB_OUTPUT"
           echo "Available tarballs:"
           ls -la install-*.tar.gz 2>/dev/null || echo "  (none)"
+          HAS_TARBALLS=false
+          for f in install-amd64.tar.gz install-arm64.tar.gz; do
+            [ -e "$f" ] && HAS_TARBALLS=true
+          done
+          echo "has_tarballs=$HAS_TARBALLS" >> "$GITHUB_OUTPUT"
 
       # Build multi-arch Docker image
       - name: Setup QEMU

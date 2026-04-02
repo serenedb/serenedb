@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <vector>
-
+#include "basics/down_cast.h"
 #include "catalog/index.h"
+#include "storage_engine/secondary_index_shard.h"
 
 namespace sdb::catalog {
 
@@ -45,9 +45,12 @@ class SecondaryIndex : public Index {
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool, ObjectId, IndexShardOptions&) const final {
-    return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
-                                   "Secondary Index Shard is not supported"};
+    bool is_new, ObjectId id, IndexShardOptions& options) const final {
+    auto& opts = basics::downCast<SecondaryIndexShardOptions>(options);
+    if (is_new) {
+      return std::make_shared<SecondaryIndexShard>(GetId(), std::move(opts));
+    }
+    return std::make_shared<SecondaryIndexShard>(id, GetId(), std::move(opts));
   }
 
  private:

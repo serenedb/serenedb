@@ -26,6 +26,7 @@
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
+#include "catalog/secondary_index.h"
 #include "catalog/types.h"
 
 namespace sdb::catalog {
@@ -78,9 +79,15 @@ ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
       }
       return res;
     }
-    case IndexType::Secondary:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
-                                     "Secondary index is not implemented"};
+    case IndexType::Secondary: {
+      auto res =
+        std::make_unique<SecondaryIndexOptionsWrapper>(std::move(options));
+      if (auto r = vpack::ReadTupleNothrow(impl_options_slice, res->impl);
+          !r.ok()) {
+        return std::unexpected<Result>{std::move(r)};
+      }
+      return res;
+    }
     case IndexType::Unknown:
       SDB_UNREACHABLE();
   }
@@ -95,9 +102,11 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
         database_id, schema_id, id, relation_id,
         std::move(basics::downCast<InvertedIndexOptionsWrapper>(sub_options)));
     }
-    case IndexType::Secondary:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
-                                     "Secondary index is not implemented"};
+    case IndexType::Secondary: {
+      return std::make_shared<SecondaryIndex>(
+        database_id, schema_id, id, relation_id,
+        std::move(basics::downCast<SecondaryIndexOptionsWrapper>(sub_options)));
+    }
     case IndexType::Unknown:
       SDB_UNREACHABLE();
   }
@@ -107,7 +116,8 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, IndexBaseOptions options,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot) {
+  const std::shared_ptr<const Snapshot>& snapshot,
+  IndexShardOptions& shard_options) {
   switch (options.type) {
     case IndexType::Inverted: {
       auto column_validation_res = ValidateInvertedIndexColumns(columns);
@@ -154,9 +164,27 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
       return CreateInvertedIndex(database_id, schema_id, id, relation_id,
                                  std::move(impl_options));
     }
-    case IndexType::Secondary:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
-                                     "Secondary index is not implemented"};
+    case IndexType::Secondary: {
+      for (const auto& c : columns) {
+        SDB_ASSERT(c.catalog_column);
+        if (c.catalog_column->type->providesCustomComparison()) {
+          return std::unexpected<Result>{
+            std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
+            " has type with custom comparison and can not be indexed"};
+        }
+        if (!c.catalog_column->type->isPrimitiveType()) {
+          return std::unexpected<Result>{
+            std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
+            " has non primitive type and can not be indexed"};
+        }
+      }
+      auto& sec_shard_opts =
+        basics::downCast<SecondaryIndexShardOptions>(shard_options);
+      SecondaryIndexOptionsWrapper impl_options(std::move(options));
+      impl_options.impl.unique = sec_shard_opts.base.unique;
+      return std::make_shared<SecondaryIndex>(
+        database_id, schema_id, id, relation_id, std::move(impl_options));
+    }
     case IndexType::Unknown:
       SDB_UNREACHABLE();
   }

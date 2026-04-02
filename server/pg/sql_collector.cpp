@@ -28,6 +28,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "catalog/table.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
@@ -688,6 +689,17 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 }
 
 }  // namespace
+
+const catalog::Table& Objects::ObjectData::CatalogTable() const {
+  SDB_ASSERT(catalog_data);
+  return *static_cast<const CatalogDataImpl*>(catalog_data.get())->table;
+}
+
+const std::vector<std::shared_ptr<catalog::Index>>&
+Objects::ObjectData::Indexes() const {
+  SDB_ASSERT(catalog_data);
+  return static_cast<const CatalogDataImpl*>(catalog_data.get())->indexes;
+}
 
 void Objects::ObjectData::EnsureTable(query::Transaction& transaction) const {
   if (!table) {

@@ -110,6 +110,20 @@ struct Column {
     return absl::StrCat(GetUpdateNamePrefix(), original_name);
   }
 
+  static constexpr std::string_view GetOldValueNamePrefix() {
+    static constexpr std::string_view kOldValuePrefix = "old$";
+    static_assert(kOldValuePrefix.ends_with(query::kReservedSymbol));
+    return kOldValuePrefix;
+  }
+
+  static std::string GenerateOldValueName(std::string_view original_name) {
+    return absl::StrCat(GetOldValueNamePrefix(), original_name);
+  }
+
+  static bool IsOldValueName(std::string_view name) {
+    return absl::StartsWith(name, GetOldValueNamePrefix());
+  }
+
   static std::string_view ExtractColumnName(std::string_view row_child_name) {
     if (absl::StartsWith(row_child_name, GetUpdateNamePrefix())) {
       return row_child_name.substr(GetUpdateNamePrefix().size());

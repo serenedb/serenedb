@@ -1133,7 +1133,7 @@ class SqlAnalyzer {
         }
         resolved = std::move(new_resolved);
       }
-      types.push_back(std::move(resolved));
+      types.push_back(FixupReturnType(std::move(resolved)));
     }
 
     // Wrap each input in a ProjectNode with casts where types differ.
@@ -3317,7 +3317,7 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
         }
         resolved = std::move(new_resolved);
       }
-      types.push_back(std::move(resolved));
+      types.push_back(FixupReturnType(std::move(resolved)));
     }
 
     if (!needs_coercion) {

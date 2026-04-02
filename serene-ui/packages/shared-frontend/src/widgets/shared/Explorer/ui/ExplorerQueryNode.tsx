@@ -1,16 +1,22 @@
 import { toast } from "sonner";
-import { useExecuteQuery } from "@serene-ui/shared-frontend/entities";
+import {
+    useConnection,
+    useDeleteConnection,
+    useExecuteQuery,
+} from "@serene-ui/shared-frontend/entities";
 import { useExplorer, type ExplorerNodeProps } from "../model";
 import { nodeTemplates } from "../model/const";
 import { ExplorerNodeButton } from "./ExplorerNodeButton";
 import {
+    Button,
     ContextMenu,
     ContextMenuContent,
     ContextMenuItem,
     ContextMenuTrigger,
 } from "@serene-ui/shared-frontend/shared";
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import type { QueryExecutionResultSchema } from "@serene-ui/shared-core";
+import { DeleteIcon } from "../../../../shared/ui/icons/index";
 
 export const ExplorerQueryNode = ({
     nodeData,
@@ -18,6 +24,9 @@ export const ExplorerQueryNode = ({
     nodeData: ExplorerNodeProps;
 }) => {
     const [isError, setIsError] = useState(false);
+    const [deletingConnectionId, setDeletingConnectionId] = useState<
+        number | null
+    >(null);
     const { node, style } = nodeData;
     const {
         treeRef,
@@ -31,8 +40,11 @@ export const ExplorerQueryNode = ({
 
     const nodeType = node.data.type as keyof typeof nodeTemplates;
     const pinned = enablePinning && isNodePinned(node.data);
+    const isConnectionNode = nodeType === "connection";
     const { mutateAsync: executeQuery, isPending: isLoading } =
         useExecuteQuery<QueryExecutionResultSchema[]>();
+    const { mutateAsync: deleteConnection } = useDeleteConnection();
+    const { currentConnection, setCurrentConnection } = useConnection();
 
     const handleClick = async () => {
         const rootNodeId = node.id.split("/")[0];
@@ -158,6 +170,42 @@ export const ExplorerQueryNode = ({
         }
     };
 
+    const handleDeleteConnection = async (
+        event: MouseEvent<HTMLButtonElement>,
+    ) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const connectionId = node.data.context?.connectionId;
+
+        if (!isConnectionNode || typeof connectionId !== "number") {
+            return;
+        }
+
+        try {
+            setDeletingConnectionId(connectionId);
+            await deleteConnection({ id: connectionId });
+
+            if (pinned) {
+                togglePinnedNode(node.data);
+            }
+
+            if (currentConnection.connectionId === connectionId) {
+                setCurrentConnection({
+                    connectionId: -1,
+                    database: "",
+                });
+            }
+        } catch (error) {
+            console.error(error);
+            toast.error("Failed to delete connection");
+        } finally {
+            setDeletingConnectionId((currentId) =>
+                currentId === connectionId ? null : currentId,
+            );
+        }
+    };
+
     return (
         <ContextMenu>
             <ContextMenuTrigger>
@@ -169,6 +217,22 @@ export const ExplorerQueryNode = ({
                     style={style}
                     isLoading={isLoading}
                     isError={node.data.isError || isError}
+                    afterPinNode={
+                        isConnectionNode ? (
+                            <Button
+                                variant="ghost"
+                                size="iconSmall"
+                                className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 mr-1"
+                                title="Delete connection"
+                                disabled={
+                                    deletingConnectionId ===
+                                    node.data.context?.connectionId
+                                }
+                                onClick={handleDeleteConnection}>
+                                <DeleteIcon className="size-3" />
+                            </Button>
+                        ) : undefined
+                    }
                     isPinned={pinned}
                     onTogglePin={
                         enablePinning

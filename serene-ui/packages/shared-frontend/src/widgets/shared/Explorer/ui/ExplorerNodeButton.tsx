@@ -23,6 +23,7 @@ interface ExplorerNodeButtonProps {
     rightText?: string;
     rightNode?: React.ReactNode;
     titleBadge?: React.ReactNode;
+    afterPinNode?: React.ReactNode;
     isPinned?: boolean;
     onTogglePin?: () => void;
 }
@@ -40,6 +41,7 @@ export const ExplorerNodeButton = ({
     rightText,
     rightNode,
     titleBadge,
+    afterPinNode,
     isPinned = false,
     onTogglePin,
 }: ExplorerNodeButtonProps) => {
@@ -114,6 +116,7 @@ export const ExplorerNodeButton = ({
                         />
                     </Button>
                 )}
+                {afterPinNode}
             </div>
         </div>
     );

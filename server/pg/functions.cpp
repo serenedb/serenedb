@@ -68,7 +68,8 @@ void RegisterFunctions(const std::string& prefix) {
 
 void RegisterSdbFunctions(const std::string& prefix) {
   RegisterVectorFunctions(prefix);
-  search::functions::RegisterSearchFunctions(prefix);
+  // search functions have sdb_ prefix
+  search::functions::RegisterSearchFunctions();
 }
 
 }  // namespace sdb::pg::functions

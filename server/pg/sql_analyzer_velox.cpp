@@ -1090,6 +1090,78 @@ class SqlAnalyzer {
       _id_generator.NextPlanId(), std::vector{std::move(dummy_row)});
   }
 
+  // Resolve common types across multiple plan nodes (for VALUES, UNION, etc.)
+  // and wrap each node in a ProjectNode with casts where types differ.
+  void FindCommonTypeAndApplyCoercions(
+    std::vector<lp::LogicalPlanNodePtr>& inputs,
+    std::string_view operation_name) {
+    SDB_ASSERT(!inputs.empty());
+    const auto& first_output = *inputs.front()->outputType();
+    const auto col_count = first_output.size();
+
+    SDB_ASSERT(absl::c_all_of(inputs, [&](const lp::LogicalPlanNodePtr& input) {
+      return input->outputType()->size() == col_count;
+    }));
+
+    // treat varchar constants as pg unknown as we do for function coercions.
+    auto col_type_for_resolution = [](const lp::LogicalPlanNodePtr& input,
+                                      uint32_t col) {
+      auto type = input->outputType()->childAt(col);
+      if (type == velox::VARCHAR() && input->kind() == lp::NodeKind::kProject) {
+        auto& proj = basics::downCast<lp::ProjectNode>(*input);
+        if (proj.expressionAt(col)->kind() == lp::ExprKind::kConstant) {
+          return PGUNKNOWN();
+        }
+      }
+      return type;
+    };
+
+    // Resolve the common type per column across all inputs.
+    std::vector<velox::TypePtr> types;
+    types.reserve(col_count);
+    for (uint32_t i = 0; i < col_count; ++i) {
+      velox::TypePtr resolved = col_type_for_resolution(inputs[0], i);
+      for (const auto& input : std::span{inputs}.subspan(1)) {
+        auto input_type = col_type_for_resolution(input, i);
+        auto new_resolved =
+          velox::TypeCoercer::leastCommonSuperType(resolved, input_type);
+        if (!new_resolved) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+            ERR_MSG(operation_name, " types ", ToPgTypeString(resolved),
+                    " and ", ToPgTypeString(input_type), " cannot be matched"));
+        }
+        resolved = std::move(new_resolved);
+      }
+      types.push_back(FixupReturnType(std::move(resolved)));
+    }
+
+    // Wrap each input in a ProjectNode with casts where types differ.
+    for (auto& input : inputs) {
+      const auto& output = *input->outputType();
+      if (output.children() == types) {
+        continue;
+      }
+      std::vector<std::string> names;
+      std::vector<lp::ExprPtr> exprs;
+      names.reserve(col_count);
+      exprs.reserve(col_count);
+      for (const auto& [child_type, name, target_type] :
+           std::views::zip(output.children(), output.names(), types)) {
+        lp::ExprPtr expr =
+          std::make_shared<lp::InputReferenceExpr>(child_type, name);
+        if (child_type != target_type) {
+          expr = MakeCast(target_type, std::move(expr));
+        }
+        names.emplace_back(name);
+        exprs.emplace_back(std::move(expr));
+      }
+      input = std::make_shared<lp::ProjectNode>(
+        _id_generator.NextPlanId(), std::move(input), std::move(names),
+        std::move(exprs));
+    }
+  }
+
   void CrossProduct(State& state, lp::LogicalPlanNodePtr other) {
     if (!state.root) {
       state.root = std::move(other);
@@ -3220,13 +3292,41 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
   if (const_values) {
     std::vector<velox::TypePtr> types;
     types.reserve(row_size);
-    for (const auto& value : values.back()) {
-      types.push_back(value->type());
+    bool needs_coercion = false;
+    auto expr_type = [](const lp::ExprPtr& e) {
+      if (e->type() == velox::VARCHAR() &&
+          e->kind() == lp::ExprKind::kConstant) {
+        return PGUNKNOWN();
+      }
+      return e->type();
+    };
+    for (int i = 0; i < row_size; ++i) {
+      velox::TypePtr resolved = expr_type(values[0][i]);
+      for (size_t r = 1; r < values.size(); ++r) {
+        auto col_type = expr_type(values[r][i]);
+        auto new_resolved =
+          velox::TypeCoercer::leastCommonSuperType(resolved, col_type);
+        if (!new_resolved) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+            ERR_MSG("VALUES types ", ToPgTypeString(resolved), " and ",
+                    ToPgTypeString(col_type), " cannot be matched"));
+        }
+        if (*new_resolved != *resolved || *new_resolved != *col_type) {
+          needs_coercion = true;
+        }
+        resolved = std::move(new_resolved);
+      }
+      types.push_back(FixupReturnType(std::move(resolved)));
     }
-    state.root = std::make_shared<lp::ValuesNode>(
-      _id_generator.NextPlanId(),
-      velox::ROW(std::move(names), std::move(types)), std::move(row_values));
-    return;
+
+    if (!needs_coercion) {
+      auto output_type = velox::ROW(names, types);
+      state.root = std::make_shared<lp::ValuesNode>(_id_generator.NextPlanId(),
+                                                    std::move(output_type),
+                                                    std::move(row_values));
+      return;
+    }
   }
 
   std::vector<lp::LogicalPlanNodePtr> values_nodes;
@@ -3251,6 +3351,7 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
   if (values_nodes.size() == 1) {
     state.root = std::move(values_nodes.front());
   } else {
+    FindCommonTypeAndApplyCoercions(values_nodes, "VALUES");
     state.root = std::make_shared<lp::SetNode>(_id_generator.NextPlanId(),
                                                std::move(values_nodes),
                                                lp::SetOperation::kUnionAll);
@@ -3815,13 +3916,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
 
   _expr_for_scorer = std::move(l_expr_for_scorer);
 
-  const auto set_operation_type = [&] {
+  const auto [set_operation_type, set_operation_name] =
+    [&] -> std::pair<lp::SetOperation, std::string_view> {
     switch (stmt.op) {
       case SETOP_UNION:
         if (stmt.all) {
-          return lp::SetOperation::kUnionAll;
+          return {lp::SetOperation::kUnionAll, "UNION"};
         } else {
-          return lp::SetOperation::kUnion;
+          return {lp::SetOperation::kUnion, "UNION"};
         }
       case SETOP_INTERSECT:
         if (stmt.all) {
@@ -3829,37 +3931,35 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "INTERSECT ALL is not implemented yet");
         } else {
-          return lp::SetOperation::kIntersect;
+          return {lp::SetOperation::kIntersect, "INTERSECT"};
         }
       case SETOP_EXCEPT:
         if (stmt.all) {
           // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED, "EXCEPT ALL is not implemented yet");
         } else {
-          return lp::SetOperation::kExcept;
+          return {lp::SetOperation::kExcept, "EXCEPT"};
         }
       default:
         SDB_THROW(ERROR_NOT_IMPLEMENTED);
     }
   }();
 
-  auto& l_output = l_state.root->outputType();
-  auto& r_output = r_state.root->outputType();
-  if (l_output->children() != r_output->children()) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "UNION ALL requires both sides to have the same number of "
-              "columns and same types, but got: ",
-              l_output->size(), " and ", r_output->size());
+  if (l_state.root->outputType()->size() !=
+      r_state.root->outputType()->size()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("each ", set_operation_name,
+                            " query must have the same number of columns"));
   }
+  std::vector<lp::LogicalPlanNodePtr> inputs;
+  inputs.push_back(std::move(l_state.root));
+  inputs.push_back(std::move(r_state.root));
+  FindCommonTypeAndApplyCoercions(inputs, set_operation_name);
   state.resolver = std::move(l_state.resolver);
   state.resolver.ClearTables();
   SDB_ASSERT(!state.root);
-  state.root = std::make_shared<lp::SetNode>(_id_generator.NextPlanId(),
-                                             std::vector{
-                                               std::move(l_state.root),
-                                               std::move(r_state.root),
-                                             },
-                                             set_operation_type);
+  state.root = std::make_shared<lp::SetNode>(
+    _id_generator.NextPlanId(), std::move(inputs), set_operation_type);
 }
 
 void SqlAnalyzer::ProcessFromList(State& state, const List* list) {

@@ -312,11 +312,6 @@ class SereneDBConnectorTableHandle final
     return _ranges;
   }
 
-  // True when the predicate was contradictory: scan should return 0 rows.
-  bool IsZeroRanges() const noexcept {
-    return !_ranges.empty() && _ranges[0].IsContradictory();
-  }
-
   const containers::FlatHashMap<std::string, FilterColumn>& GetTableColumnMap()
     const noexcept {
     return _table_column_map;

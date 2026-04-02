@@ -326,33 +326,34 @@ std::string SereneDBConnectorTableHandle::toString() const {
   if (!_ranges.empty()) {
     const auto& names = _pk_type->names();
     const auto& types = _pk_type->children();
-    std::string ranges_str;
-    for (const auto& sr : _ranges) {
-      if (sr.IsContradictory()) {
-        continue;
-      }
-      if (!ranges_str.empty()) {
-        absl::StrAppend(&ranges_str, ", ");
-      }
-      absl::StrAppend(&ranges_str, "{");
+    auto format_range = [&](const ResolvedRange& sr) {
+      std::string format_str;
       for (size_t i = 0; i < sr.prefix.size(); ++i) {
         if (i > 0) {
-          absl::StrAppend(&ranges_str, ", ");
+          absl::StrAppend(&format_str, ", ");
         }
-        absl::StrAppend(&ranges_str, names[i], "=",
+        absl::StrAppend(&format_str, names[i], "=",
                         sr.prefix[i].toString(types[i]));
       }
-      const size_t k = sr.prefix.size();
-      if (k < names.size()) {
-        if (k > 0) {
-          absl::StrAppend(&ranges_str, ", ");
+      const size_t prefix_size = sr.prefix.size();
+      if (prefix_size < names.size()) {
+        if (prefix_size > 0) {
+          absl::StrAppend(&format_str, ", ");
         }
-        absl::StrAppend(&ranges_str, names[k], "=", sr.range_column.toString());
+        absl::StrAppend(&format_str, names[prefix_size], "=",
+                        sr.range_column.toString());
       }
-      absl::StrAppend(&ranges_str, "}");
+      return absl::StrCat("{", format_str, "}");
+    };
+
+    std::vector<std::string> parts;
+    for (const auto& sr : _ranges) {
+      if (!sr.IsContradictory()) {
+        parts.push_back(format_range(sr));
+      }
     }
     return absl::StrCat(_name, ", type=rocksdb_range_lookup, ranges=[",
-                        ranges_str, "]", filter_str);
+                        absl::StrJoin(parts, ", "), "]", filter_str);
   }
   return absl::StrCat(_name, ", type=rocksdb_full_scan", filter_str);
 }

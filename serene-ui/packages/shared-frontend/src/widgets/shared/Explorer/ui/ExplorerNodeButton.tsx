@@ -20,6 +20,7 @@ interface ExplorerNodeButtonProps {
     isLoading?: boolean;
     isError?: boolean;
     rightText?: string;
+    rightNode?: React.ReactNode;
 }
 
 export const ExplorerNodeButton = ({
@@ -33,6 +34,7 @@ export const ExplorerNodeButton = ({
     isLoading = false,
     isError = false,
     rightText,
+    rightNode,
 }: ExplorerNodeButtonProps) => {
     return (
         <div
@@ -69,7 +71,8 @@ export const ExplorerNodeButton = ({
                         </TooltipContent>
                     </Tooltip>
                 )}
-                {rightText && (
+                {rightNode && <div className="ml-auto mr-1">{rightNode}</div>}
+                {!rightNode && rightText && (
                     <span className="ml-auto text-xs text-secondary-foreground/50">
                         {rightText}
                     </span>

@@ -8,6 +8,7 @@ import {
     ContextMenuTrigger,
 } from "@serene-ui/shared-frontend/shared";
 import { useState } from "react";
+import { useConnection } from "@serene-ui/shared-frontend/entities";
 
 export const ExplorerStaticNode = ({
     nodeData,
@@ -17,8 +18,13 @@ export const ExplorerStaticNode = ({
     const [isLoading, setIsLoading] = useState(false);
     const { node, style } = nodeData;
     const { addNodes, refreshNode } = useExplorer();
+    const { currentConnection } = useConnection();
 
     const nodeType = node.data.type as keyof typeof nodeTemplates;
+    const isCurrentDatabase =
+        nodeType === "database" &&
+        node.data.context?.connectionId === currentConnection.connectionId &&
+        node.data.context?.database === currentConnection.database;
 
     const handleClick = async () => {
         if (!node.isOpen) {
@@ -63,6 +69,13 @@ export const ExplorerStaticNode = ({
                         nodeType === "column"
                             ? node.data.context?.column_data_type
                             : ""
+                    }
+                    rightNode={
+                        isCurrentDatabase ? (
+                            <div className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] pointer-events-none font-medium leading-none text-emerald-700 dark:text-emerald-300">
+                                current
+                            </div>
+                        ) : undefined
                     }
                 />
             </ContextMenuTrigger>

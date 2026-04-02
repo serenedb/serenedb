@@ -356,17 +356,16 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   MultiGetContext<Source> _ctx;
 };
 
-// Scans a set of pre-sorted KeyConstraint ranges by driving a per-column
-// RocksDB iterator: Seek to each range's lower bound, read until the upper
-// bound, then Seek to the next range. Ranges must be non-overlapping and
-// sorted (e.g. produced by MergeKeyConstraintsPrecise). Only the first PK
-// column's boundary is used at the RocksDB iterator level; predicates on
-// additional PK columns are handled by the remaining_filter.
+// Scans a set of pre-sorted KeyConstraint ranges using N independent RocksDB
+// iterators (one per range per column). Each iterator seeks to its own lower
+// bound and stops when the key no longer matches its prefix or exceeds its
+// explicit upper bound. Bounds are checked in Valid() rather than via
+// iterate_upper_bound.
 template<typename Source>
-class RocksDBMultiRangeLookupDataSource
+class RocksDBPrefixRangeLookupDataSource
   : public RocksDBFullScanDataSource<Source> {
  public:
-  RocksDBMultiRangeLookupDataSource(
+  RocksDBPrefixRangeLookupDataSource(
     velox::memory::MemoryPool& memory_pool, Source& source,
     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
     std::vector<catalog::Column::Id> column_ids,
@@ -379,10 +378,13 @@ class RocksDBMultiRangeLookupDataSource
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
  private:
-  // Pre-sorted SpecificRange list; each entry has K equality prefix values and
-  // one range column constraint.
   std::vector<ResolvedRange> _ranges;
   velox::RowTypePtr _pk_type;
+  // Flat storage for all column prefix keys, rebuilt on each addSplit call.
+  // Iterators hold spans into this vector; it must not be resized while they
+  // are alive.
+  std::vector<std::string> _split_prefix_keys;
+  std::vector<std::string> _split_upper_bound_keys;
 };
 
 // Read Your Own Writes
@@ -390,14 +392,14 @@ using RocksDBRYOWFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::Transaction>;
 using RocksDBRYOWPointLookupDataSource =
   RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
-using RocksDBRYOWMultiRangeLookupDataSource =
-  RocksDBMultiRangeLookupDataSource<rocksdb::Transaction>;
+using RocksDBRYOWPrefixRangeLookupDataSource =
+  RocksDBPrefixRangeLookupDataSource<rocksdb::Transaction>;
 
 using RocksDBSnapshotFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::DB>;
 using RocksDBSnapshotPointLookupDataSource =
   RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
-using RocksDBSnapshotMultiRangeLookupDataSource =
-  RocksDBMultiRangeLookupDataSource<rocksdb::DB>;
+using RocksDBSnapshotPrefixRangeLookupDataSource =
+  RocksDBPrefixRangeLookupDataSource<rocksdb::DB>;
 
 }  // namespace sdb::connector

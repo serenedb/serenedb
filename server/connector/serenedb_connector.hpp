@@ -1116,7 +1116,7 @@ class SereneDBConnector final : public velox::connector::Connector {
 
       const auto& ranges_ryow = serene_table_handle.GetRanges();
       if (!ranges_ryow.empty()) {
-        return std::make_unique<RocksDBRYOWMultiRangeLookupDataSource>(
+        return std::make_unique<RocksDBRYOWPrefixRangeLookupDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
           read_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
           object_key, output_column_count, rocksdb_transaction.GetSnapshot(),
@@ -1143,7 +1143,7 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     const auto& ranges = serene_table_handle.GetRanges();
     if (!ranges.empty()) {
-      return std::make_unique<RocksDBSnapshotMultiRangeLookupDataSource>(
+      return std::make_unique<RocksDBSnapshotPrefixRangeLookupDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
         serene_table_handle.GetEffectiveColumnId(), object_key,
         output_column_count, snapshot, ranges, serene_table_handle.GetPKType(),

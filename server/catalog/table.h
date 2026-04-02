@@ -61,8 +61,6 @@ class Table : public SchemaObject {
 
   void WriteInternal(vpack::Builder& build) const final;
 
-  const auto& PKType() const noexcept { return _pk_type; }
-  const auto& RowType() const noexcept { return _row_type; }
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
@@ -100,9 +98,33 @@ class Table : public SchemaObject {
   }
 #endif
 
+  const auto& PKType() const noexcept { return _lookup_cache.pk_type; }
+  const auto& RowType() const noexcept { return _lookup_cache.row_type; }
+
+  using NameToColumnMap =
+    containers::FlatHashMap<std::string_view, const catalog::Column*>;
+
+  const auto& NameToColumn() const noexcept {
+    return _lookup_cache.name2column;
+  }
+  using IdToColumnMap =
+    containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
+
+  const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
+
  private:
   struct TableOutput;
   TableOutput MakeTableOptions() const;
+
+  struct LookupCache {
+    LookupCache(std::span<const catalog::Column> columns,
+                std::span<const catalog::Column::Id> pk_columns);
+
+    NameToColumnMap name2column;
+    IdToColumnMap id2column;
+    velox::RowTypePtr pk_type;
+    velox::RowTypePtr row_type;
+  };
 
   const TableType _type = TableType::Unknown;
   bool _wait_for_sync = false;
@@ -110,8 +132,6 @@ class Table : public SchemaObject {
   std::vector<Column> _columns;
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;
-  velox::RowTypePtr _pk_type;
-  velox::RowTypePtr _row_type;
   const ObjectId _plan_id;
   const ObjectId _plan_db;
   ObjectId _distribute_shards_like;
@@ -128,6 +148,8 @@ class Table : public SchemaObject {
   // _write_concern <= _replication_factor
   uint32_t _write_concern = 1;
   FileInfo _file_info;
+
+  LookupCache _lookup_cache;
 };
 
 }  // namespace sdb::catalog

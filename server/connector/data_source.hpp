@@ -35,7 +35,10 @@
 #include "basics/containers/bitset.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/common.h"
+#include "connector/key_builder.hpp"
 #include "connector/rocksdb_filter.hpp"
+#include "connector/rocksdb_materializer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -211,17 +214,95 @@ class RocksDBFullScanDataSource : public RocksDBBaseDataSource {
   catalog::Column::Id _effective_column_id;
 };
 
-template<typename Source>
+class PrimaryKeyColumnBuilder {
+ public:
+  static constexpr bool kIsSecondaryIndex = false;
+
+  void Init(const velox::TypePtr& type, size_t capacity,
+            velox::memory::MemoryPool& pool);
+  void Fill(size_t batch_idx, size_t found_idx,
+            std::span<const rocksdb::PinnableSlice> values);
+  velox::VectorPtr Finish(size_t found_count);
+  const irs::bitset& PresentRows() const { return _present_rows; }
+
+ private:
+  velox::TypeKind _type_kind;
+  velox::VectorPtr _vec;
+  irs::bitset _present_rows;
+};
+
+template<typename Materializer>
+class SecondaryKeyColumnBuilder {
+ public:
+  static constexpr bool kIsSecondaryIndex = true;
+
+  SecondaryKeyColumnBuilder(Materializer materializer,
+                            velox::memory::MemoryPool& pool)
+    : _materializer{std::move(materializer)}, _row_keys{pool} {}
+
+  void Init(const velox::TypePtr& type, size_t capacity,
+            velox::memory::MemoryPool& pool) {
+    _row_keys.reserve(capacity);
+  }
+
+  void Fill(size_t batch_idx, size_t found_idx,
+            std::span<const rocksdb::PinnableSlice> values) {
+    for (const auto& val : values) {
+      _row_keys.emplace_back(val.data(), val.size());
+    }
+  }
+
+  velox::RowVectorPtr Finish(size_t found_count) {
+    return _materializer.ReadRows(_row_keys, nullptr);
+  }
+
+  const irs::bitset& PresentRows() const { return _dummy; }
+
+ private:
+  irs::bitset _dummy;
+  Materializer _materializer;
+  primary_key::Keys _row_keys;
+};
+
+template<bool ReadYourOwnWrites>
+struct PrimaryLookupPolicy {
+  using Source =
+    std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
+
+  using KeyBuilder = PrimaryKeyBuilder;
+
+  using ResultCollector = PrimaryKeyColumnBuilder;
+};
+
+template<bool ReadYourOwnWrites, typename Materializer>
+struct SecondaryLookupPolicy {
+  using Source =
+    std::conditional_t<ReadYourOwnWrites, rocksdb::Transaction, rocksdb::DB>;
+
+  using KeyBuilder = SecondaryKeyBuilder;
+
+  using ResultCollector = SecondaryKeyColumnBuilder<Materializer>;
+};
+
+template<typename Policy>
 class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
+  using Source = typename Policy::Source;
+
+  using KeyBuilder = typename Policy::KeyBuilder;
+
+  using ResultCollector = typename Policy::ResultCollector;
+
+  static constexpr bool kIsSecondaryIndex = ResultCollector::kIsSecondaryIndex;
+
  public:
   RocksDBPointLookupDataSource(
     velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr read_type, std::vector<catalog::Column::Id> column_ids,
-    ObjectId object_key, const std::vector<SpecificPoint>& values,
-    velox::RowTypePtr pk_type, size_t output_column_count,
-    velox::core::TypedExprPtr remaining_filter,
+    ObjectId object_key, std::vector<SpecificPoint> values,
+    size_t output_column_count, velox::core::TypedExprPtr remaining_filter,
     const rocksdb::Snapshot* snapshot,
-    velox::core::ExpressionEvaluator* evaluator, Source& source)
+    velox::core::ExpressionEvaluator* evaluator, Source& source,
+    KeyBuilder key_builder, ResultCollector collector)
     : RocksDBBaseDataSource{memory_pool,
                             cf,
                             std::move(read_type),
@@ -230,8 +311,9 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
                             output_column_count,
                             std::move(remaining_filter),
                             evaluator},
-      _values{values},
-      _pk_type{std::move(pk_type)},
+      _values{std::move(values)},
+      _key_builder{std::move(key_builder)},
+      _collector{std::move(collector)},
       _ctx{source, [snapshot] {
              rocksdb::ReadOptions ro;
              ro.async_io = IsIOUringEnabled();
@@ -240,9 +322,9 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
            }()} {
     _sorted_col_indices.resize(_column_ids.size());
     std::iota(_sorted_col_indices.begin(), _sorted_col_indices.end(), 0);
-    std::sort(
-      _sorted_col_indices.begin(), _sorted_col_indices.end(),
-      [&](size_t a, size_t b) { return _column_ids[a] < _column_ids[b]; });
+    std::ranges::sort(_sorted_col_indices, [&](size_t a, size_t b) {
+      return _column_ids[a] < _column_ids[b];
+    });
   }
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
@@ -263,14 +345,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
   // end of bitset).
   size_t BuildBatchKeysUsingMask(catalog::Column::Id col_id, size_t batch_size);
 
-  const std::vector<SpecificPoint>& _values;
-  velox::RowTypePtr _pk_type;
+  std::vector<SpecificPoint> _values;
+  KeyBuilder _key_builder;
+  ResultCollector _collector;
   std::vector<size_t> _sorted_col_indices;
-  // presence mask for the current batch window
-  irs::bitset _present_rows_batch;
-  // current position within _present_rows_batch for BuildBatchKeysUsingMask
   size_t _in_batch_offset = 0;
-  // index into _values for the start of the current batch
   size_t _values_offset = 0;
   MultiGetContext<Source> _ctx;
 };
@@ -279,11 +358,11 @@ class RocksDBPointLookupDataSource : public RocksDBBaseDataSource {
 using RocksDBRYOWFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::Transaction>;
 using RocksDBRYOWPointLookupDataSource =
-  RocksDBPointLookupDataSource<rocksdb::Transaction>;
+  RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
 
 using RocksDBSnapshotFullScanDataSource =
   RocksDBFullScanDataSource<rocksdb::DB>;
 using RocksDBSnapshotPointLookupDataSource =
-  RocksDBPointLookupDataSource<rocksdb::DB>;
+  RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
 
 }  // namespace sdb::connector

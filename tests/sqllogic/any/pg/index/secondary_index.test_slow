@@ -1,0 +1,122 @@
+show-column-names false
+hash-threshold 100
+
+
+statement count 10000
+CREATE TABLE clickclack_bigcrew AS
+SELECT
+  crook.id AS id,
+  crook.id % 100 AS boss,
+  crook.id % 10 AS team,
+  'crook_' || crook.id::text AS nickname
+FROM
+  generate_series(1, 10000) AS crook(id);
+
+statement ok
+CREATE INDEX clickclack_bigcrew_boss_idx ON clickclack_bigcrew(boss);
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
+----
+100
+
+query
+SELECT * FROM clickclack_bigcrew WHERE boss = 0 ORDER BY id LIMIT 5;
+----
+100	0	0	crook_100
+200	0	0	crook_200
+300	0	0	crook_300
+400	0	0	crook_400
+500	0	0	crook_500
+
+statement ok
+CREATE INDEX clickclack_bigcrew_team_idx ON clickclack_bigcrew(team);
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE team = 7;
+----
+1000
+
+statement count 1000
+INSERT INTO clickclack_bigcrew
+SELECT
+  10000 + vedernikoff.id AS id,
+  42 AS boss,
+  7 AS team,
+  'vedernikoff_' || vedernikoff.id::text AS nickname
+FROM
+  generate_series(1, 1000) AS vedernikoff(id);
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
+----
+1100
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE team = 7;
+----
+2000
+
+statement count 500
+UPDATE clickclack_bigcrew SET boss = 99 WHERE id > 10500;
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
+----
+600
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE boss = 99;
+----
+600
+
+statement count 500
+DELETE FROM clickclack_bigcrew WHERE id > 10500;
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE boss = 99;
+----
+100
+
+query
+SELECT count(*) FROM clickclack_bigcrew WHERE boss = 42;
+----
+600
+
+statement ok
+DROP TABLE clickclack_bigcrew;
+
+statement count 10000
+CREATE TABLE clickclack_division AS
+SELECT
+  cutelooked.id AS id,
+  CASE cutelooked.id % 5
+    WHEN 0 THEN 'vedernikoff'
+    WHEN 1 THEN 'cutelooked'
+    WHEN 2 THEN 'crookface'
+    WHEN 3 THEN 'bossmann'
+    WHEN 4 THEN 'stockpiler'
+  END AS leader
+FROM
+  generate_series(1, 10000) AS cutelooked(id);
+
+statement ok
+CREATE INDEX clickclack_division_leader_idx ON clickclack_division(leader);
+
+query
+SELECT count(*) FROM clickclack_division WHERE leader = 'vedernikoff';
+----
+2000
+
+query
+SELECT count(*) FROM clickclack_division WHERE leader = 'stockpiler';
+----
+2000
+
+query
+SELECT count(*) FROM clickclack_division WHERE leader = 'nobody';
+----
+0
+
+statement ok
+DROP TABLE clickclack_division;

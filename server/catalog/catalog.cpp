@@ -66,6 +66,7 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/secondary_index_shard.h"
 #include "vpack/value.h"
 #include "vpack/value_type.h"
 
@@ -458,19 +459,31 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
 }
 
 Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
+  auto load_shard = [&]<typename Options>(DefinitionKey key,
+                                          vpack::Slice slice) -> Result {
+    Options options;
+    if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
+      return r;
+    }
+    auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
+    if (!shard) {
+      return std::move(shard.error());
+    }
+    SDB_ASSERT(*shard);
+    return _catalog.RegisterIndexShard(std::move(*shard));
+  };
   return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      search::InvertedIndexShardOptions options;
-      if (auto r = vpack::ReadTupleNothrow(slice, options.base); !r.ok()) {
-        return r;
+      switch (index->GetIndexType()) {
+        case IndexType::Inverted:
+          return load_shard.operator()<search::InvertedIndexShardOptions>(
+            key, slice);
+        case IndexType::Secondary:
+          return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
+        case IndexType::Unknown:
+          SDB_UNREACHABLE();
       }
-      auto shard = index->CreateIndexShard(false, key.GetObjectId(), options);
-      if (!shard) {
-        return std::move(shard.error());
-      }
-      SDB_ASSERT(*shard);
-      return _catalog.RegisterIndexShard(std::move(*shard));
     });
 }
 

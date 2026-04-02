@@ -305,7 +305,7 @@ class RocksDBUpdateDataSink final
   absl::ReaderMutexLock _table_lock_guard;
 };
 
-template<bool IsGeneratedPK>
+template<bool IsGeneratedPK, bool IsSecondaryIndex, bool UniqueIndex>
 class SSTInsertDataSink final
   : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>> {
   using Base = RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>>;
@@ -317,16 +317,23 @@ class SSTInsertDataSink final
     std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    absl::Mutex& table_lock);
+    absl::Mutex& table_lock, std::vector<velox::column_index_t> sk_children);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
   absl::ReaderMutexLock _table_lock_guard;
+  std::vector<velox::column_index_t> _sk_children;
+
+  // TODO: Write directly to SST file without buffering whole key in memory.
+  std::string _sk_buffer;
+  std::string _pk_buffer;
 };
 
-extern template class SSTInsertDataSink<true>;
-extern template class SSTInsertDataSink<false>;
+extern template class SSTInsertDataSink<true, false, false>;
+extern template class SSTInsertDataSink<false, false, false>;
+extern template class SSTInsertDataSink<false, true, false>;
+extern template class SSTInsertDataSink<false, true, true>;
 
 class RocksDBIndexBackfillDataSink final
   : public RocksDBDataSinkBase<NoopSinkWriter> {
@@ -349,6 +356,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   RocksDBDeleteDataSink(
     rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
     velox::RowTypePtr row_type, ObjectId object_key,
+    std::span<const velox::column_index_t> pk_indices,
     std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
     std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
     absl::Mutex& table_lock);

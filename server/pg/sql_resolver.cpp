@@ -213,6 +213,15 @@ void ResolveRelation(ObjectId database,
                          default_value_objects, config);
       }
     }
+    auto snapshot = config.EnsureCatalogSnapshot();
+    auto impl = std::make_shared<Objects::ObjectData::CatalogDataImpl>();
+    for (auto& shard : snapshot->GetIndexShardsByTable(table.GetId())) {
+      auto index = snapshot->GetObject<catalog::Index>(shard->GetIndexId());
+      if (index) {
+        impl->indexes.emplace_back(std::move(index));
+      }
+    }
+    data.catalog_data = std::move(impl);
   } else if (data.object->GetType() == catalog::ObjectType::View) {
     resolve_view();
   } else if (data.object->GetType() == catalog::ObjectType::Index) {
@@ -220,8 +229,10 @@ void ResolveRelation(ObjectId database,
     auto snapshot = config.EnsureCatalogSnapshot();
     auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
     SDB_ASSERT(table);
-    SDB_ASSERT(!data.catalog_table);
-    data.catalog_table = std::move(table);
+    SDB_ASSERT(!data.catalog_data);
+    auto impl = std::make_shared<Objects::ObjectData::CatalogDataImpl>();
+    impl->table = std::move(table);
+    data.catalog_data = std::move(impl);
   }
 }
 

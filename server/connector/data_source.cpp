@@ -114,7 +114,7 @@ velox::VectorPtr PrimaryKeyColumnBuilder::Finish(size_t found_count) {
 }
 
 template<typename Source>
-RocksDBFullScanDataSource<Source>::RocksDBFullScanDataSource(
+RocksDBPerColumnIteratorDataSource<Source>::RocksDBPerColumnIteratorDataSource(
   velox::memory::MemoryPool& memory_pool, Source& source,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
   std::vector<catalog::Column::Id> column_oids,
@@ -179,20 +179,20 @@ template<typename Source>
 void RocksDBFullScanDataSource<Source>::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
-  if (_current_split) {
+  if (this->_current_split) {
     SDB_THROW(ERROR_INTERNAL,
               "RocksDBDataSource: a split is already being processed");
   }
-  _current_split = std::move(split);
+  this->_current_split = std::move(split);
   if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
     InitIterators([&](const rocksdb::ReadOptions& options) {
       return std::unique_ptr<rocksdb::Iterator>(
-        _source.GetIterator(options, &_cf));
+        this->_source.GetIterator(options, &this->_cf));
     });
   } else {
     InitIterators([&](const rocksdb::ReadOptions& options) {
       return std::unique_ptr<rocksdb::Iterator>(
-        _source.NewIterator(options, &_cf));
+        this->_source.NewIterator(options, &this->_cf));
     });
   }
 }
@@ -203,23 +203,24 @@ void RocksDBFullScanDataSource<Source>::InitIterators(CreateFn&& create_iter) {
   // Creating iterator API expects options by const reference, but all
   // implementations copies this argument, so it should be safe.
   rocksdb::ReadOptions options;
-  options.snapshot = _snapshot;
+  options.snapshot = this->_snapshot;
   options.async_io = false;
   options.adaptive_readahead = true;
   options.auto_prefix_mode = true;
 
-  _iterators.clear();
-  _iterators.reserve(_column_keys.size());
-  for (size_t i = 0; i < _column_keys.size(); ++i) {
-    options.iterate_upper_bound = &_upper_bound_slices[i];
+  this->_iterators.clear();
+  this->_iterators.reserve(this->_column_keys.size());
+  for (size_t i = 0; i < this->_column_keys.size(); ++i) {
+    options.iterate_upper_bound = &this->_upper_bound_slices[i];
     auto it = create_iter(options);
-    it->Seek(_column_keys[i]);
-    _iterators.push_back(std::move(it));
+    it->Seek(this->_column_keys[i]);
+    this->_iterators.push_back(std::move(it));
   }
 }
 
 template<typename Source>
-std::optional<velox::RowVectorPtr> RocksDBFullScanDataSource<Source>::next(
+std::optional<velox::RowVectorPtr>
+RocksDBPerColumnIteratorDataSource<Source>::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
   if (!_current_split) {
@@ -295,7 +296,7 @@ void RocksDBBaseDataSource::cancel() {
 }
 
 template<typename Source>
-velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumn(
+velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadColumn(
   velox::column_index_t col_idx, uint64_t max_size) {
   auto& it = *_iterators[col_idx];
   auto column_id = _column_ids[col_idx];
@@ -319,7 +320,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumn(
 
 template<typename Source>
 template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarColumn(
+velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadScalarColumn(
   rocksdb::Iterator& it, uint64_t max_size) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
@@ -345,7 +346,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarColumn(
 }
 
 template<typename Source>
-velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadUnknownColumn(
+velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadUnknownColumn(
   rocksdb::Iterator& it, uint64_t max_size) {
   uint64_t vector_size = IterateColumn(
     it, max_size, [](uint64_t, std::string_view, std::string_view) {});
@@ -354,7 +355,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadUnknownColumn(
 }
 
 template<typename Source>
-velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadArrayColumn(
+velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadArrayColumn(
   rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
   const auto elem_kind = array_type->asArray().elementType()->kind();
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
@@ -363,7 +364,8 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadArrayColumn(
 
 template<typename Source>
 template<velox::TypeKind ElemKind>
-velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
+velox::VectorPtr
+RocksDBPerColumnIteratorDataSource<Source>::ReadScalarArrayColumn(
   rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
   using ElemT = typename velox::TypeTraits<ElemKind>::NativeType;
   static_assert(!std::is_same_v<ElemT, void>,
@@ -509,7 +511,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadScalarArrayColumn(
 }
 
 template<typename Source>
-velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumnFromKey(
+velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadColumnFromKey(
   rocksdb::Iterator& it, uint64_t max_size) {
   // For now only generated PK column is supported
   auto result = velox::BaseVector::create<velox::FlatVector<int64_t>>(
@@ -534,7 +536,7 @@ velox::VectorPtr RocksDBFullScanDataSource<Source>::ReadColumnFromKey(
 
 template<typename Source>
 template<std::invocable<uint64_t, std::string_view, std::string_view> Callback>
-uint64_t RocksDBFullScanDataSource<Source>::IterateColumn(
+uint64_t RocksDBPerColumnIteratorDataSource<Source>::IterateColumn(
   rocksdb::Iterator& it, uint64_t max_size, const Callback& func) {
   uint64_t vector_size = 0;
 
@@ -1086,7 +1088,7 @@ class RocksDBPrefixRangeColumnIterator : public rocksdb::Iterator {
 };
 
 template<typename Source>
-RocksDBPrefixRangeLookupDataSource<Source>::RocksDBPrefixRangeLookupDataSource(
+RocksDBPrefixRangeDataSource<Source>::RocksDBPrefixRangeDataSource(
   velox::memory::MemoryPool& memory_pool, Source& source,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr read_type,
   std::vector<catalog::Column::Id> column_ids,
@@ -1095,20 +1097,19 @@ RocksDBPrefixRangeLookupDataSource<Source>::RocksDBPrefixRangeLookupDataSource(
   std::vector<ResolvedRange> ranges, velox::RowTypePtr pk_type,
   velox::core::TypedExprPtr remaining_filter,
   velox::core::ExpressionEvaluator* evaluator)
-  : RocksDBFullScanDataSource<Source>{memory_pool,
-                                      source,
-                                      cf,
-                                      std::move(read_type),
-                                      std::move(column_ids),
-                                      effective_column_id,
-                                      object_key,
-                                      output_column_count,
-                                      snapshot,
-                                      std::move(remaining_filter),
-                                      evaluator},
-    _ranges{std::move(ranges)},
+  : RocksDBPerColumnIteratorDataSource<Source>{memory_pool,
+                                               source,
+                                               cf,
+                                               std::move(read_type),
+                                               std::move(column_ids),
+                                               effective_column_id,
+                                               object_key,
+                                               output_column_count,
+                                               snapshot,
+                                               std::move(remaining_filter),
+                                               evaluator},
     _pk_type{std::move(pk_type)} {
-  SDB_ASSERT(absl::c_is_sorted(_ranges), "ranges must be sorted");
+  SDB_ASSERT(absl::c_is_sorted(ranges), "ranges must be sorted");
 
   // Build per-range lower and upper keys (column-independent suffixes).
   // These encode the seek target and exclusive upper bound for each range.
@@ -1116,70 +1117,68 @@ RocksDBPrefixRangeLookupDataSource<Source>::RocksDBPrefixRangeLookupDataSource(
     std::string lower;
     std::string upper;  // empty = no right bound, use column-level fallback
   };
+
   std::vector<RangeBounds> range_bounds;
-  for (const auto& sr : _ranges) {
-    if (sr.IsContradictory()) {
+  for (const auto& range : ranges) {
+    if (range.IsContradictory()) {
       continue;
     }
-    const size_t k = sr.prefix.size();
+    const size_t prefix_size = range.prefix.size();
 
-    // Encode equality prefix.
-    std::string prefix;
-    for (size_t i = 0; i < k; ++i) {
+    std::string lower;
+    for (size_t i = 0; i < prefix_size; ++i) {
       const auto col_type =
         velox::ROW({_pk_type->nameOf(i)}, {_pk_type->childAt(i)});
-      primary_key::Create({sr.prefix[i]}, *col_type, prefix);
+      primary_key::Create({range.prefix[i]}, *col_type, lower);
     }
+    const size_t prefix_len = lower.size();
 
-    // Lower bound: prefix + range_column lower value (exclusive -> increment).
-    std::string lower = prefix;
-    if (sr.range_column.HasLeft()) {
-      const auto col_type =
-        velox::ROW({_pk_type->nameOf(k)}, {_pk_type->childAt(k)});
-      primary_key::Create({sr.range_column.LeftValue()}, *col_type, lower);
-      if (!sr.range_column.IsLeftInclusive()) {
+    if (range.range_column.HasLeft()) {
+      const auto column_type = velox::ROW({_pk_type->nameOf(prefix_size)},
+                                          {_pk_type->childAt(prefix_size)});
+      primary_key::Create({range.range_column.LeftValue()}, *column_type,
+                          lower);
+      if (!range.range_column.IsLeftInclusive()) {
         MakeExclusiveUpperBound(lower);
       }
     }
 
-    // Upper bound (exclusive): range_column right value, or end of prefix
-    // group.
     std::string upper;
-    if (sr.range_column.HasRight()) {
-      upper = prefix;
-      const auto col_type =
-        velox::ROW({_pk_type->nameOf(k)}, {_pk_type->childAt(k)});
-      primary_key::Create({sr.range_column.RightValue()}, *col_type, upper);
-      if (sr.range_column.IsRightInclusive()) {
+    upper.assign(lower, 0, prefix_len);
+
+    if (range.range_column.HasRight()) {
+      const auto column_type = velox::ROW({_pk_type->nameOf(prefix_size)},
+                                          {_pk_type->childAt(prefix_size)});
+      primary_key::Create({range.range_column.RightValue()}, *column_type,
+                          upper);
+      if (range.range_column.IsRightInclusive()) {
         MakeExclusiveUpperBound(upper);
       }
-    } else if (k > 0) {
-      upper = prefix;
+    } else if (prefix_size > 0) {
       MakeExclusiveUpperBound(upper);
-      // Empty after increment (all 0xff) -> use column-level bound as fallback.
     }
 
     range_bounds.push_back({std::move(lower), std::move(upper)});
   }
 
-  // Build full lower/upper keys for all columns in flat parallel vectors.
-  // Each column gets a contiguous slice of _n_prefixes entries.
   const size_t ranges_count = range_bounds.size();
   const size_t n_cols = this->_column_keys.size();
   _split_prefix_keys.reserve(n_cols * ranges_count);
   _split_upper_bound_keys.reserve(n_cols * ranges_count);
   for (size_t col_i = 0; col_i < n_cols; ++col_i) {
-    for (const auto& rb : range_bounds) {
-      _split_prefix_keys.push_back(this->_column_keys[col_i] + rb.lower);
-      _split_upper_bound_keys.push_back(
-        rb.upper.empty() ? std::string{}
-                         : this->_column_keys[col_i] + rb.upper);
+    for (const auto& range_bound : range_bounds) {
+      _split_prefix_keys.push_back(this->_column_keys[col_i] +
+                                   range_bound.lower);
+      _split_upper_bound_keys.push_back(range_bound.upper.empty()
+                                          ? std::string{}
+                                          : this->_column_keys[col_i] +
+                                              range_bound.upper);
     }
   }
 }
 
 template<typename Source>
-void RocksDBPrefixRangeLookupDataSource<Source>::addSplit(
+void RocksDBPrefixRangeDataSource<Source>::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
   if (this->_current_split) {
@@ -1187,38 +1186,38 @@ void RocksDBPrefixRangeLookupDataSource<Source>::addSplit(
               "RocksDBDataSource: a split is already being processed");
   }
   this->_current_split = std::move(split);
+  if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
+    InitIterators([&](const rocksdb::ReadOptions& options) {
+      return std::unique_ptr<rocksdb::Iterator>(
+        this->_source.GetIterator(options, &this->_cf));
+    });
+  } else {
+    InitIterators([&](const rocksdb::ReadOptions& options) {
+      return std::unique_ptr<rocksdb::Iterator>(
+        this->_source.NewIterator(options, &this->_cf));
+    });
+  }
+}
 
+template<typename Source>
+template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
+void RocksDBPrefixRangeDataSource<Source>::InitIterators(
+  CreateFn&& create_iter) {
   SDB_ASSERT(!_pk_type->names().empty(),
-             "RocksDBPrefixRangeLookupDataSource: pk_type has no columns");
-
-  const rocksdb::Snapshot* snapshot = this->_snapshot;
-  auto make_iter =
-    [&](rocksdb::ReadOptions opts) -> std::unique_ptr<rocksdb::Iterator> {
-    opts.snapshot = snapshot;
-    opts.async_io = false;
-    opts.adaptive_readahead = true;
-    opts.auto_prefix_mode = true;
-    if constexpr (std::is_same_v<Source, rocksdb::Transaction>) {
-      return std::unique_ptr<rocksdb::Iterator>(
-        this->_source.GetIterator(opts, &this->_cf));
-    } else {
-      return std::unique_ptr<rocksdb::Iterator>(
-        this->_source.NewIterator(opts, &this->_cf));
-    }
-  };
+             "RocksDBPrefixRangeDataSource: pk_type has no columns");
 
   rocksdb::ReadOptions base_opts;
-  base_opts.snapshot = snapshot;
+  base_opts.snapshot = this->_snapshot;
   base_opts.async_io = false;
   base_opts.adaptive_readahead = true;
   base_opts.auto_prefix_mode = true;
 
-  const size_t n_cols = this->_column_keys.size();
+  const size_t columns_count = this->_column_keys.size();
   const size_t ranges_count =
-    n_cols > 0 ? _split_prefix_keys.size() / n_cols : 0;
+    columns_count > 0 ? _split_prefix_keys.size() / columns_count : 0;
   this->_iterators.clear();
-  this->_iterators.reserve(n_cols);
-  for (size_t column_index = 0; column_index < n_cols; ++column_index) {
+  this->_iterators.reserve(columns_count);
+  for (size_t column_index = 0; column_index < columns_count; ++column_index) {
     const size_t off = column_index * ranges_count;
     std::span<const std::string> lower_span{_split_prefix_keys.data() + off,
                                             ranges_count};
@@ -1226,16 +1225,20 @@ void RocksDBPrefixRangeLookupDataSource<Source>::addSplit(
       _split_upper_bound_keys.data() + off, ranges_count};
     this->_iterators.push_back(
       std::make_unique<RocksDBPrefixRangeColumnIterator>(
-        make_iter, base_opts, lower_span, upper_bound_span,
+        create_iter, base_opts, lower_span, upper_bound_span,
         this->_upper_bound_slices[column_index]));
   }
 }
 
-template class RocksDBPrefixRangeLookupDataSource<rocksdb::Transaction>;
-template class RocksDBPrefixRangeLookupDataSource<rocksdb::DB>;
+template class RocksDBPerColumnIteratorDataSource<rocksdb::Transaction>;
+template class RocksDBPerColumnIteratorDataSource<rocksdb::DB>;
 
 template class RocksDBFullScanDataSource<rocksdb::Transaction>;
 template class RocksDBFullScanDataSource<rocksdb::DB>;
+
+template class RocksDBPrefixRangeDataSource<rocksdb::Transaction>;
+template class RocksDBPrefixRangeDataSource<rocksdb::DB>;
+
 template class RocksDBPointLookupDataSource<PrimaryLookupPolicy<true>>;
 template class RocksDBPointLookupDataSource<PrimaryLookupPolicy<false>>;
 template class RocksDBPointLookupDataSource<

@@ -190,7 +190,6 @@ class InvertedIndexShard final
   Stats GetStats() const;
 
   auto& GetMutex() { return _mutex; }
-  Snapshot GetSnapshot() const;
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);

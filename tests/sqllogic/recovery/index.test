@@ -213,3 +213,17 @@ INSERT INTO t VALUES ('one'), ('two'), ('three');
 connection new2
 statement ok
 DROP TABLE t;
+
+
+# wait for drop
+system ok
+sleep 2
+
+
+connection new2
+query
+SELECT * FROM sdb_search_tasks_status;
+----
+task_type	active_tasks	pending_tasks	threads
+Commit	0	0	<slt:ignore>
+Consolidation	0	0	<slt:ignore>

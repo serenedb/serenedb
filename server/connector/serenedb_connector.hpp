@@ -284,7 +284,7 @@ class SereneDBConnectorTableHandle final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
     std::vector<ResolvedPoint> points, std::vector<ResolvedRange> ranges,
-    velox::core::TypedExprPtr remaining_filter, bool zero_ranges = false);
+    velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -313,7 +313,9 @@ class SereneDBConnectorTableHandle final
   }
 
   // True when the predicate was contradictory: scan should return 0 rows.
-  bool IsZeroRanges() const noexcept { return _zero_ranges; }
+  bool IsZeroRanges() const noexcept {
+    return !_ranges.empty() && _ranges[0].IsContradictory();
+  }
 
   const containers::FlatHashMap<std::string, FilterColumn>& GetTableColumnMap()
     const noexcept {
@@ -328,7 +330,6 @@ class SereneDBConnectorTableHandle final
   velox::RowTypePtr _pk_type;
   std::vector<ResolvedPoint> _points;
   std::vector<ResolvedRange> _ranges;
-  bool _zero_ranges = false;  // true -> contradictory predicate, 0-range scan
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
@@ -1119,7 +1120,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 
       const auto& ranges_ryow = serene_table_handle.GetRanges();
-      if (!ranges_ryow.empty() || serene_table_handle.IsZeroRanges()) {
+      if (!ranges_ryow.empty()) {
         return std::make_unique<RocksDBRYOWMultiRangeLookupDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
           read_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
@@ -1146,7 +1147,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
 
     const auto& ranges = serene_table_handle.GetRanges();
-    if (!ranges.empty() || serene_table_handle.IsZeroRanges()) {
+    if (!ranges.empty()) {
       return std::make_unique<RocksDBSnapshotMultiRangeLookupDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
         serene_table_handle.GetEffectiveColumnId(), object_key,

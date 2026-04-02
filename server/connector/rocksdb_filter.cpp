@@ -1029,6 +1029,9 @@ std::vector<ResolvedPoint> ToResolvedPoints(
 
 std::vector<ResolvedRange> ToResolvedRanges(
   const std::vector<KeyBounds>& ranges, const velox::RowType& pk_type) {
+  if (ranges.empty()) {
+    return {ResolvedRange::Contradictory()};
+  }
 #ifdef SDB_DEV
   for (size_t i = 0; i < ranges.size(); ++i) {
     for (size_t j = i + 1; j < ranges.size(); ++j) {

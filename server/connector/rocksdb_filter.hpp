@@ -49,6 +49,9 @@ struct ColumnRange {
   static constexpr uint8_t kLeftInclusive = 0x2;
   static constexpr uint8_t kRightBounded = 0x4;
   static constexpr uint8_t kRightInclusive = 0x8;
+  // Contradictory: the range is empty (no value satisfies it, e.g. a>5 AND
+  // a<3). A contradictory ColumnRange is disjoint from every other range.
+  static constexpr uint8_t kContradictory = 0x10;
 
   [[nodiscard]] bool HasLeft() const noexcept { return _flags & kLeftBounded; }
   [[nodiscard]] bool IsLeftInclusive() const noexcept {
@@ -59,6 +62,9 @@ struct ColumnRange {
   }
   [[nodiscard]] bool IsRightInclusive() const noexcept {
     return _flags & kRightInclusive;
+  }
+  [[nodiscard]] bool IsContradictory() const noexcept {
+    return _flags & kContradictory;
   }
 
   [[nodiscard]] const velox::variant& LeftValue() const noexcept {
@@ -85,6 +91,11 @@ struct ColumnRange {
                                               bool inclusive) {
     return Make(kRightBounded | (inclusive ? kRightInclusive : kZero), {},
                 std::move(v));
+  }
+
+  // Empty range -- matches no value.
+  [[nodiscard]] static ColumnRange Contradictory() {
+    return Make(kContradictory, {}, {});
   }
 
   // Full two-sided interval
@@ -239,13 +250,26 @@ struct ResolvedRange {
   std::vector<velox::variant> prefix;  // exact values for columns 0..K-1
   ColumnRange range_column;            // constraint on column K
 
+  // A sentinel that represents a contradictory predicate (no rows match).
+  [[nodiscard]] static ResolvedRange Contradictory() {
+    return {{}, ColumnRange::Contradictory()};
+  }
+
+  [[nodiscard]] bool IsContradictory() const noexcept {
+    return range_column.IsContradictory();
+  }
+
   // Ordering: compare the leftmost key covered by each range.
+  // Contradictory ranges sort before all real ranges.
   // Walk column by column; a prefix value is exact (inclusive point), and at
   // the range column we compare the range_col left bound.  When the two ranges
   // have different prefix depths but share the common prefix, the shorter
   // range's range_col is compared against the exact prefix value of the longer
   // range at that position.
   bool operator<(const ResolvedRange& other) const {
+    if (IsContradictory() || other.IsContradictory()) {
+      return IsContradictory() && !other.IsContradictory();
+    }
     const size_t min_depth = std::min(prefix.size(), other.prefix.size());
     for (size_t i = 0; i < min_depth; ++i) {
       if (prefix[i] < other.prefix[i]) {

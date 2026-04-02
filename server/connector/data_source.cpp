@@ -817,6 +817,9 @@ class RocksDBMultiRangeIterator : public rocksdb::Iterator {
     // iterator is created with opts.iterate_upper_bound = &entry.upper_slice.
     _entries.reserve(ranges.size());
     for (const auto& sr : ranges) {
+      if (sr.IsContradictory()) {
+        continue;  // contradictory predicate -- no rows, skip
+      }
       _entries.push_back(BuildBounds(col_prefix, col_upper_bound, sr, pk_type));
       // BuildBounds set upper_slice to point into a temporary Entry's
       // upper_key. After the move into _entries the string buffer may be at a

@@ -120,7 +120,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout,
   std::vector<ResolvedPoint> points, std::vector<ResolvedRange> ranges,
-  velox::core::TypedExprPtr remaining_filter, bool zero_ranges)
+  velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
@@ -128,7 +128,6 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
       basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
     _points{std::move(points)},
     _ranges{std::move(ranges)},
-    _zero_ranges{zero_ranges},
     _remaining_filter{std::move(remaining_filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
@@ -265,7 +264,6 @@ SereneDBTableLayout::createTableHandle(
 
   std::vector<ResolvedPoint> points;
   std::vector<ResolvedRange> ranges;
-  bool zero_ranges = false;
   if (remaining_filter) {
     // 1. Try PK point lookup.
     auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
@@ -276,16 +274,12 @@ SereneDBTableLayout::createTableHandle(
       absl::c_sort(points);
       remaining_filter = std::move(res.remaining_filter);
     } else if (res.kind == ConstraintKind::Ranges) {
-      if (!res.constraints.empty()) {
-        ranges = ToResolvedRanges(res.constraints, *pk_type);
-      } else {
-        zero_ranges = true;  // contradictory predicate -> 0-range scan
-      }
+      ranges = ToResolvedRanges(res.constraints, *pk_type);
       remaining_filter = std::move(res.remaining_filter);
     }
 
     // 2. No PK match -- try secondary index.
-    if (points.empty() && ranges.empty() && !zero_ranges) {
+    if (points.empty() && ranges.empty()) {
       velox::core::TypedExprPtr remaining;
       if (auto handle =
             TryMatchSecondaryIndex(remaining_filter, *table,
@@ -304,7 +298,7 @@ SereneDBTableLayout::createTableHandle(
              "SereneDBFullScanTableHandle: need a column for count field");
   return std::make_shared<SereneDBConnectorTableHandle>(
     session, *table->layouts().front(), std::move(points), std::move(ranges),
-    std::move(remaining_filter), zero_ranges);
+    std::move(remaining_filter));
 }
 
 std::string SereneDBConnectorTableHandle::toString() const {
@@ -329,27 +323,34 @@ std::string SereneDBConnectorTableHandle::toString() const {
     return absl::StrCat(_name, ", type=rocksdb_point_lookup, points=[",
                         points_str, "]", filter_str);
   }
-  if (!_ranges.empty() || _zero_ranges) {
+  if (!_ranges.empty()) {
     const auto& names = _pk_type->names();
     const auto& types = _pk_type->children();
-    std::string ranges_str = absl::StrJoin(
-      _ranges, ", ", [&](std::string* out, const ResolvedRange& sr) {
-        absl::StrAppend(out, "{");
-        for (size_t i = 0; i < sr.prefix.size(); ++i) {
-          if (i > 0) {
-            absl::StrAppend(out, ", ");
-          }
-          absl::StrAppend(out, names[i], "=", sr.prefix[i].toString(types[i]));
+    std::string ranges_str;
+    for (const auto& sr : _ranges) {
+      if (sr.IsContradictory()) {
+        continue;
+      }
+      if (!ranges_str.empty()) {
+        absl::StrAppend(&ranges_str, ", ");
+      }
+      absl::StrAppend(&ranges_str, "{");
+      for (size_t i = 0; i < sr.prefix.size(); ++i) {
+        if (i > 0) {
+          absl::StrAppend(&ranges_str, ", ");
         }
-        const size_t k = sr.prefix.size();
-        if (k < names.size()) {
-          if (k > 0) {
-            absl::StrAppend(out, ", ");
-          }
-          absl::StrAppend(out, names[k], "=", sr.range_column.toString());
+        absl::StrAppend(&ranges_str, names[i], "=",
+                        sr.prefix[i].toString(types[i]));
+      }
+      const size_t k = sr.prefix.size();
+      if (k < names.size()) {
+        if (k > 0) {
+          absl::StrAppend(&ranges_str, ", ");
         }
-        absl::StrAppend(out, "}");
-      });
+        absl::StrAppend(&ranges_str, names[k], "=", sr.range_column.toString());
+      }
+      absl::StrAppend(&ranges_str, "}");
+    }
     return absl::StrCat(_name, ", type=rocksdb_range_lookup, ranges=[",
                         ranges_str, "]", filter_str);
   }

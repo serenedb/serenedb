@@ -110,9 +110,7 @@ jobs:
 
             - name: Update file ownership
               if: always()
-              run: |
-                  export RUNNER_ID="$(id -u):$(id -g)"
-                  bash ./scripts/update_ownership.sh
+              run: bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS

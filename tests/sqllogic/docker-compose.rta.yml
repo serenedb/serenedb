@@ -1,11 +1,14 @@
 services:
   serenedb-single:
     image: "$RTA_IMAGE"
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     security_opt:
       - seccomp:unconfined
     volumes:
       - "$WORKSPACE:/serenedb"
       - "$WORKSPACE/logs:/var/log/serenedb"
+    environment:
+      - HOME=/tmp
     networks:
       - test-network
     command: >
@@ -20,10 +23,14 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    group_add:
+      - "${DOCKER_SOCK_GID:-999}"
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "$WORKSPACE/logs:/logs"
+      - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - serenedb-single
@@ -31,6 +38,9 @@ services:
       - COMPOSE_NETWORK=${COMPOSE_PROJECT_NAME}_test-network
       - LOG_DIR=/logs
       - RESOURCES
+      - HOME=/sqllogic
+      - CARGO_HOME=/tmp/cargo
+      - CARGO_TARGET_DIR=/cargo-target
     networks:
       - test-network
     command: >

@@ -6,11 +6,15 @@ if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
 	eval "$(echo "$BUILD_CONFIG" | jq -r 'to_entries | .[] | "export \(.key)=\"\(.value)\""')"
 fi
 
+DOCKER_USER="$(id -u):$(id -g)"
+
 # Release build
 if [[ "${ENABLE_RELEASE_BUILD:-false}" == "true" && ("$SANITIZERS" == "None" || -z "$SANITIZERS") ]]; then
 	docker run --rm \
+		--user "$DOCKER_USER" \
+		-e HOME=/serenedb \
+		-e CCACHE_DIR=/.ccache \
 		--cap-add=SYS_PTRACE \
-		--privileged \
 		--security-opt seccomp=unconfined \
 		--env-file ./docker.env \
 		-e SDB_GTEST="${RELEASE_SDB_GTEST:-Off}" \
@@ -24,8 +28,6 @@ if [[ "${ENABLE_RELEASE_BUILD:-false}" == "true" && ("$SANITIZERS" == "None" || 
 		-e BUILD_DIR="${RELEASE_BUILD_DIR:-build}" \
 		-v "${WORKSPACE}:/serenedb" \
 		-v /mnt/data/.ccache:/.ccache \
-		-v /etc/passwd:/etc/passwd:ro \
-		-v /etc/group:/etc/group:ro \
 		"${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
 else
 	echo "Release build skipped because SANITIZERS flag is set."
@@ -34,8 +36,10 @@ fi
 # Build gtest
 if [[ "${ENABLE_GTEST_BUILD:-false}" == "true" ]]; then
 	docker run --rm \
+		--user "$DOCKER_USER" \
+		-e HOME=/serenedb \
+		-e CCACHE_DIR=/.ccache \
 		--cap-add=SYS_PTRACE \
-		--privileged \
 		--security-opt seccomp=unconfined \
 		--env-file ./docker.env \
 		-e SDB_GTEST="${GTEST_SDB_GTEST:-On}" \
@@ -49,16 +53,16 @@ if [[ "${ENABLE_GTEST_BUILD:-false}" == "true" ]]; then
 		-e BUILD_DIR="${GTEST_BUILD_DIR:-build_gtest}" \
 		-v "${WORKSPACE}:/serenedb" \
 		-v /mnt/data/.ccache:/.ccache \
-		-v /etc/passwd:/etc/passwd:ro \
-		-v /etc/group:/etc/group:ro \
 		"${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests
 fi
 
 # Build tests
 if [[ "${ENABLE_TESTS_BUILD:-false}" == "true" ]]; then
 	docker run --rm \
+		--user "$DOCKER_USER" \
+		-e HOME=/serenedb \
+		-e CCACHE_DIR=/.ccache \
 		--cap-add=SYS_PTRACE \
-		--privileged \
 		--security-opt seccomp=unconfined \
 		--env-file ./docker.env \
 		-e SDB_GTEST="${TESTS_SDB_GTEST:-Off}" \
@@ -72,8 +76,6 @@ if [[ "${ENABLE_TESTS_BUILD:-false}" == "true" ]]; then
 		-e BUILD_DIR="${TESTS_BUILD_DIR:-build_tests}" \
 		-v "${WORKSPACE}:/serenedb" \
 		-v /mnt/data/.ccache:/.ccache \
-		-v /etc/passwd:/etc/passwd:ro \
-		-v /etc/group:/etc/group:ro \
 		"${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
 fi
 

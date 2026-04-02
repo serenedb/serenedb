@@ -20,10 +20,6 @@
 
 #pragma once
 
-#include <string>
-
-#include "basics/string_utils.h"
-
 namespace sdb::functions {
 
 // TODO(codeworse): add constexpr prefix + function name

@@ -193,7 +193,7 @@ inline void RegisterVeloxFunctionsAndTypes() {
   pg::RegisterTypes();
   pg::functions::RegisterFunctions("pg_");
   velox::TypeCoercer::registerCoercions(AllowedCoercions());
-  pg::functions::RegisterSdbFunctions("sdb_");
+  pg::functions::RegisterSdbFunctions();
 }
 
 }  // namespace sdb::pg

@@ -66,9 +66,9 @@ void RegisterFunctions(const std::string& prefix) {
   RegisterUtilFunctions(prefix);
 }
 
-void RegisterSdbFunctions(const std::string& prefix) {
+void RegisterSdbFunctions() {
+  // always have sdb_ prefix
   sdb::functions::RegisterVectorFunctions();
-  // search functions have sdb_ prefix
   sdb::functions::RegisterSearchFunctions();
 }
 

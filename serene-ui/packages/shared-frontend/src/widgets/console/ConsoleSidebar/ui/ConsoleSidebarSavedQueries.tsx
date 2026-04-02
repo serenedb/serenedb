@@ -94,7 +94,7 @@ export const ConsoleSidebarSavedQueries: React.FC = () => {
                     return (
                         <div
                             key={savedQuery.id}
-                            className="flex items-center gap-1 p-1 pl-3.5 hover:bg-accent"
+                            className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent"
                             title={savedQuery.name}
                             draggable
                             onDragStart={(event) => {
@@ -133,37 +133,43 @@ export const ConsoleSidebarSavedQueries: React.FC = () => {
                             <p className="min-w-0 flex-1 truncate text-xs ml-1">
                                 {savedQuery.name}
                             </p>
-                            <Button
-                                variant="ghost"
-                                size="iconSmall"
-                                className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5"
-                                title={isPinned ? "Unpin query" : "Pin query"}
-                                draggable={false}
-                                onClick={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    togglePinnedSavedQuery(savedQuery);
-                                }}>
-                                <PinIcon
-                                    className={
+                            <div className="flex items-center gap-0">
+                                <Button
+                                    variant="ghost"
+                                    size="xsIcon"
+                                    className={`text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 transition-none duration-0 ${
                                         isPinned
-                                            ? "size-3 text-foreground fill-current"
-                                            : "size-3"
-                                    }
-                                />
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                size="iconSmall"
-                                className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5"
-                                title="Delete query"
-                                disabled={deletingSavedQueryId === savedQuery.id}
-                                draggable={false}
-                                onClick={(event) =>
-                                    handleDeleteSavedQuery(event, savedQuery)
-                                }>
-                                <TrashIcon className="size-3" />
-                            </Button>
+                                            ? "opacity-100 pointer-events-auto"
+                                            : "opacity-0 pointer-events-none group-hover/explorer-node:opacity-100 group-hover/explorer-node:pointer-events-auto group-focus-within/explorer-node:opacity-100 group-focus-within/explorer-node:pointer-events-auto"
+                                    }`}
+                                    title={isPinned ? "Unpin query" : "Pin query"}
+                                    draggable={false}
+                                    onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        togglePinnedSavedQuery(savedQuery);
+                                    }}>
+                                    <PinIcon
+                                        className={
+                                            isPinned
+                                                ? "size-3 text-foreground fill-current"
+                                                : "size-3"
+                                        }
+                                    />
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="xsIcon"
+                                    className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 transition-none duration-0 opacity-0 pointer-events-none group-hover/explorer-node:opacity-100 group-hover/explorer-node:pointer-events-auto group-focus-within/explorer-node:opacity-100 group-focus-within/explorer-node:pointer-events-auto"
+                                    title="Delete query"
+                                    disabled={deletingSavedQueryId === savedQuery.id}
+                                    draggable={false}
+                                    onClick={(event) =>
+                                        handleDeleteSavedQuery(event, savedQuery)
+                                    }>
+                                    <TrashIcon className="size-3" />
+                                </Button>
+                            </div>
                         </div>
                     );
                 })}

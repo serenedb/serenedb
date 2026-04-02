@@ -71,7 +71,6 @@ fi
 if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
 	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=$STATIC_EXECUTABLES" "-DSDB_ALLOC=$SDB_ALLOC")
 else
-	sysctl kernel.randomize_va_space=0 || true
 	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=Off" "-DSDB_ALLOC=SYS" "-DSDB_IOURING=Off" "-DSDB_SANITIZE=$SANITIZERS")
 fi
 
@@ -96,5 +95,3 @@ fi
 print_banner "BUILDING TARGETS" "${TARGETS[*]}"
 ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/make_${LOG_SUFFIX}.log || exit 1
 ccache -s | tee -a /serenedb/ccache_${LOG_SUFFIX}.log
-
-chown "${RUNNER_ID}" -R /serenedb

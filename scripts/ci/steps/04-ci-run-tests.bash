@@ -29,10 +29,21 @@ if [[ ${#SCRIPTS[@]} -gt 0 ]]; then
 fi
 
 # Run SQLLOGIC_TESTS & RECOVERY_TESTS separately
-SERIAL_RC=0
+SQLLOGIC_RC=0
+SQLLOGIC_TIME=0
+RECOVERY_RC=0
+RECOVERY_TIME=0
 if [[ $PARALLEL_RC -eq 0 ]]; then
-	[[ "${SQLLOGIC_TESTS:-true}" == "true" ]] && { BUILD_DIR=build_tests ./scripts/ci/steps/044-ci-in-docker-run-sqllogic-tests.bash || SERIAL_RC=$?; }
-	[[ $SERIAL_RC -eq 0 && "${RECOVERY_TESTS:-true}" == "true" ]] && { BUILD_DIR=build_tests ./scripts/ci/steps/045-ci-in-docker-run-recovery-tests.bash || SERIAL_RC=$?; }
+	if [[ "${SQLLOGIC_TESTS:-true}" == "true" ]]; then
+		SQLLOGIC_START=$(date +%s)
+		BUILD_DIR=build_tests ./scripts/ci/steps/044-ci-in-docker-run-sqllogic-tests.bash || SQLLOGIC_RC=$?
+		SQLLOGIC_TIME=$(($(date +%s) - SQLLOGIC_START))
+	fi
+	if [[ $SQLLOGIC_RC -eq 0 && "${RECOVERY_TESTS:-true}" == "true" ]]; then
+		RECOVERY_START=$(date +%s)
+		BUILD_DIR=build_tests ./scripts/ci/steps/045-ci-in-docker-run-recovery-tests.bash || RECOVERY_RC=$?
+		RECOVERY_TIME=$(($(date +%s) - RECOVERY_START))
+	fi
 fi
 
 # Print summary
@@ -54,9 +65,28 @@ if [[ -s "$JOBLOG" ]]; then
 	done <"$JOBLOG"
 fi
 rm -f "$JOBLOG"
-if [[ $PARALLEL_RC -ne 0 || $SERIAL_RC -ne 0 ]]; then
+# Serial tests
+if [[ "${SQLLOGIC_TESTS:-true}" == "true" ]]; then
+	if [[ $PARALLEL_RC -ne 0 ]]; then
+		echo "  SKIPPED sqllogic-tests (parallel tests failed)"
+	elif [[ $SQLLOGIC_RC -eq 0 ]]; then
+		echo "  PASSED  sqllogic-tests (${SQLLOGIC_TIME}s)"
+	else
+		echo "  FAILED  sqllogic-tests (${SQLLOGIC_TIME}s, exit code ${SQLLOGIC_RC})"
+	fi
+fi
+if [[ "${RECOVERY_TESTS:-true}" == "true" ]]; then
+	if [[ $PARALLEL_RC -ne 0 || $SQLLOGIC_RC -ne 0 ]]; then
+		echo "  SKIPPED recovery-tests (previous tests failed)"
+	elif [[ $RECOVERY_RC -eq 0 ]]; then
+		echo "  PASSED  recovery-tests (${RECOVERY_TIME}s)"
+	else
+		echo "  FAILED  recovery-tests (${RECOVERY_TIME}s, exit code ${RECOVERY_RC})"
+	fi
+fi
+if [[ $PARALLEL_RC -ne 0 || $SQLLOGIC_RC -ne 0 || $RECOVERY_RC -ne 0 ]]; then
 	echo "========================================"
-	echo "  SOME TESTS FAILED (see above)"
+	echo "  SOME TESTS FAILED"
 	echo "========================================"
 	exit 1
 fi

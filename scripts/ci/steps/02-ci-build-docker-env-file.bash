@@ -15,7 +15,6 @@ SDB_ALLOC=${SDB_ALLOC}
 ENSURE_VTUNE_SYMBOLS=${ENSURE_VTUNE_SYMBOLS}
 SANITIZERS=${SANITIZERS}
 USE_COVERAGE=${USE_COVERAGE}
-RUNNER_ID=$(id -u):$(id -g)
 DEB_TAR_PACKAGES=${DEB_TAR_PACKAGES}
 STRIP_TARBALL=${STRIP_TARBALL}
 DEBUG_SYMBOLS=${DEBUG_SYMBOLS}
@@ -37,19 +36,3 @@ for i in 1 2 3; do
 	echo "Pull attempt $i failed, retrying in 10s..."
 	sleep 10
 done
-
-docker run --rm \
-	--cap-add=SYS_PTRACE \
-	--privileged \
-	--security-opt seccomp=unconfined \
-	--env-file ./docker.env \
-	-v /etc/passwd:/etc/passwd:ro \
-	-v /etc/group:/etc/group:ro \
-	-v "${WORKSPACE}:/serenedb" \
-	--pull=never \
-	"${BUILD_IMAGE}" bash -c '
-    echo "Image pulled successfully"
-    chown "$1" /serenedb
-    chmod g+s /serenedb
-    echo "Workspace permissions set successfully"
-  ' -- "${RUNNER_ID}"

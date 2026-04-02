@@ -58,21 +58,21 @@ query
 SELECT ARRAY[0.0, 1.0, 2.0] <#> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
-1
+-1
 
 
 query
 SELECT inner_product(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
 ----
 inner_product
-1
+-1
 
 
 query
 SELECT inner_product(ARRAY[0, 1, 2], ARRAY[2, 1, 0]);
 ----
 inner_product
-1
+-1
 
 
 query error
@@ -193,10 +193,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <#> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	sdb
-pablo	clickclack
 vedernikoff	clickclack
+pablo	clickclack
+pablo	sdb
+vedernikoff	sdb
 
 
 statement ok
@@ -258,7 +258,7 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <#> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	sdb
-pablo	clickclack
 vedernikoff	clickclack
+pablo	clickclack
+pablo	sdb
+vedernikoff	sdb

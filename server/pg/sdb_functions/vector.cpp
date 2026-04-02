@@ -110,7 +110,7 @@ struct ComputeDistanceBase {
                       const velox::exec::ArrayView<false, T>& r, size_t size) {
     const auto* l_data = GetArrayDataOrCopy(l, lbuf);
     const auto* r_data = GetArrayDataOrCopy(r, rbuf);
-    return irs::vector::DotProductImpl<T, R>::Compute(
+    return -irs::vector::DotProductImpl<T, R>::Compute(
       reinterpret_cast<const irs::byte_type*>(l_data),
       reinterpret_cast<const irs::byte_type*>(r_data),
       static_cast<uint16_t>(l.size()));

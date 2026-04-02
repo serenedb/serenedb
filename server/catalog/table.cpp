@@ -57,14 +57,13 @@ namespace sdb::catalog {
 Table::Table(const catalog::Table& other, NewOptions options)
   : SchemaObject{other.GetOwnerId(), other.GetDatabaseId(), other.GetSchemaId(),
                  other.GetId(),      options.name,          ObjectType::Table},
+
     _type{other.GetTableType()},
     _wait_for_sync{options.wait_for_sync},
     _shard_keys{other.shardKeys()},
     _columns{other._columns},
     _pk_columns{other._pk_columns},
     _check_constraints{other._check_constraints},
-    _pk_type{other._pk_type},
-    _row_type{other._row_type},
     _plan_id{other.planId()},
     _plan_db{other.planDb()},
     _distribute_shards_like{other.distributeShardsLike()},
@@ -77,38 +76,8 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _number_of_shards{options.number_of_shards},
     _replication_factor{options.replication_factor},
     _write_concern{options.write_concern},
-    _file_info{other._file_info} {}
-
-velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
-                              const std::vector<Column::Id>& pk_columns) {
-  std::vector<std::string> names;
-  std::vector<velox::TypePtr> types;
-  names.reserve(pk_columns.size());
-  types.reserve(pk_columns.size());
-
-  for (auto pk_col_id : pk_columns) {
-    auto it = absl::c_find_if(
-      columns, [&](const Column& col) { return col.id == pk_col_id; });
-    SDB_ASSERT(it != columns.end());
-    names.push_back(it->name);
-    types.push_back(it->type);
-  }
-
-  return velox::ROW(std::move(names), std::move(types));
-}
-
-velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
-  std::vector<std::string> names;
-  std::vector<velox::TypePtr> types;
-  names.reserve(columns.size());
-  types.reserve(columns.size());
-  for (const auto& col : columns) {
-    names.push_back(col.name);
-    types.push_back(col.type);
-  }
-
-  return velox::ROW(std::move(names), std::move(types));
-}
+    _file_info{other._file_info},
+    _lookup_cache{_columns, _pk_columns} {}
 
 Table::Table(TableOptions&& options, ObjectId database_id)
   : SchemaObject{{},
@@ -123,8 +92,6 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _columns{std::move(options.columns)},
     _pk_columns{std::move(options.pkColumns)},
     _check_constraints{std::move(options.checkConstraints)},
-    _pk_type{BuildPkType(_columns, _pk_columns)},
-    _row_type{BuildRowType(_columns)},
     _plan_id{[&] {
       auto plan_id = options.planId.value_or(Identifier{});
       return plan_id.isSet() ? plan_id : GetId();
@@ -142,7 +109,8 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _number_of_shards{options.numberOfShards},
     _replication_factor{options.replicationFactor},
     _write_concern{options.writeConcern},
-    _file_info{std::move(options.file_info)} {
+    _file_info{std::move(options.file_info)},
+    _lookup_cache{_columns, _pk_columns} {
   SDB_ASSERT(_shard_ids);
 
   _sharding_strategy = [&] -> std::unique_ptr<ShardingStrategy> {
@@ -251,9 +219,8 @@ Result Table::RenameColumn(std::shared_ptr<Table>& result,
   auto& target = new_table->_columns[std::distance(_columns.begin(), col_it)];
   target.name = std::string{new_name};
 
-  new_table->_row_type = BuildRowType(new_table->_columns);
-  new_table->_pk_type =
-    BuildPkType(new_table->_columns, new_table->_pk_columns);
+  new_table->_lookup_cache =
+    LookupCache{new_table->_columns, new_table->_pk_columns};
 
   result = std::move(new_table);
   return {};
@@ -318,6 +285,37 @@ Result Table::AddConstraint(std::shared_ptr<Table>& result,
 
   result = std::move(new_table);
   return {};
+}
+
+Table::LookupCache::LookupCache(
+  std::span<const catalog::Column> columns,
+  std::span<const catalog::Column::Id> pk_columns) {
+  std::vector<std::string> row_names;
+  std::vector<velox::TypePtr> row_types;
+  row_names.reserve(columns.size());
+  row_types.reserve(columns.size());
+  name2column.reserve(columns.size());
+  id2column.reserve(columns.size());
+  for (const auto& col : columns) {
+    name2column.emplace(col.name, &col);
+    id2column.emplace(col.id, &col);
+    row_names.emplace_back(col.name);
+    row_types.emplace_back(col.type);
+  }
+  row_type = velox::ROW(std::move(row_names), std::move(row_types));
+
+  std::vector<std::string> pk_names;
+  std::vector<velox::TypePtr> pk_types;
+  pk_names.reserve(pk_columns.size());
+  pk_types.reserve(pk_columns.size());
+  for (auto id : pk_columns) {
+    auto it = id2column.find(id);
+    SDB_ASSERT(it != id2column.end());
+    const auto& col = *it->second;
+    pk_names.emplace_back(col.name);
+    pk_types.emplace_back(col.type);
+  }
+  pk_type = velox::ROW(std::move(pk_names), std::move(pk_types));
 }
 
 }  // namespace sdb::catalog

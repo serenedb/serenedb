@@ -232,4 +232,9 @@ void Create(std::span<const velox::variant> point,
   }
 }
 
+void AppendVariantValue(std::string& key, const velox::variant& value,
+                        const velox::TypePtr& type) {
+  VELOX_DYNAMIC_TYPE_DISPATCH(AppendVariantValue, type->kind(), key, value);
+}
+
 }  // namespace sdb::connector::primary_key

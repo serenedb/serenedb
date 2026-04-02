@@ -5,20 +5,13 @@ PROJECT_ROOT="${PROJECT_ROOT:-/serenedb}"
 source "${PROJECT_ROOT}/packages/find_version.bash"
 
 VERSION="${SERENEDB_TGZ_UPSTREAM}"
-ARCH=$(uname -m)
 
-case "$ARCH" in
-x86_64)
-	arch="_$ARCH"
-	;;
-
+case "$(uname -m)" in
+x86_64) ARCH="amd64" ;;
+aarch64 | arm64) ARCH="arm64" ;;
 *)
-	if [[ "$ARCH" =~ ^arm64$|^aarch64$ ]]; then
-		arch="_arm64"
-	else
-		echo "fatal, unknown architecture $ARCH for TGZ"
-		exit 1
-	fi
+	echo "fatal, unknown architecture $(uname -m) for TGZ"
+	exit 1
 	;;
 esac
 
@@ -75,15 +68,6 @@ if [[ "${DEBUG_SYMBOLS:-false}" == "true" ]]; then
 	echo "Created: ${NAME}-dbgsym.tar.gz ($(du -h "${NAME}-dbgsym.tar.gz" | cut -f1))"
 fi
 
-# Create arch-specific symlink for multi-arch build_docker.bash
+# Create symlink for multi-arch build_docker.bash
 mkdir -p "${PROJECT_ROOT}/packages/tarball"
-cd "${PROJECT_ROOT}/packages/tarball"
-case "$ARCH" in
-x86_64) DOCKER_ARCH="amd64" ;;
-aarch64) DOCKER_ARCH="arm64" ;;
-*)
-	echo "fatal, unknown architecture $ARCH for Docker symlink"
-	exit 1
-	;;
-esac
-ln -sf "../../${NAME}.tar.gz" "install-${DOCKER_ARCH}.tar.gz"
+ln -sf "../../${NAME}.tar.gz" "${PROJECT_ROOT}/packages/tarball/install-${ARCH}.tar.gz"

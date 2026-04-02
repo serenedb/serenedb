@@ -188,14 +188,18 @@ void catalog::Table::WriteInternal(vpack::Builder& build) const {
 
 velox::RowTypePtr Table::MakeTypeFromColIds(
   std::span<const catalog::Column::Id> ids) const {
-  const auto& id2col = _lookup_cache.id2column;
+  return _lookup_cache.MakeTypeFromColIds(ids);
+}
+
+velox::RowTypePtr Table::LookupCache::MakeTypeFromColIds(
+  std::span<const catalog::Column::Id> ids) const {
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
   names.reserve(ids.size());
   types.reserve(ids.size());
   for (auto id : ids) {
-    auto it = id2col.find(id);
-    SDB_ASSERT(it != id2col.end());
+    auto it = id2column.find(id);
+    SDB_ASSERT(it != id2column.end());
     const auto& column = *it->second;
     names.push_back(column.name);
     types.push_back(column.type);
@@ -219,19 +223,7 @@ Table::LookupCache::LookupCache(
     row_types.emplace_back(col.type);
   }
   row_type = velox::ROW(std::move(row_names), std::move(row_types));
-
-  std::vector<std::string> pk_names;
-  std::vector<velox::TypePtr> pk_types;
-  pk_names.reserve(pk_columns.size());
-  pk_types.reserve(pk_columns.size());
-  for (auto id : pk_columns) {
-    auto it = id2column.find(id);
-    SDB_ASSERT(it != id2column.end());
-    const auto& column = *it->second;
-    pk_names.push_back(column.name);
-    pk_types.push_back(column.type);
-  }
-  pk_type = velox::ROW(std::move(pk_names), std::move(pk_types));
+  pk_type = MakeTypeFromColIds(pk_columns);
 }
 
 }  // namespace sdb::catalog

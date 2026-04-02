@@ -124,6 +124,9 @@ class Table : public SchemaObject {
     LookupCache(std::span<const catalog::Column> columns,
                 std::span<const catalog::Column::Id> pk_columns);
 
+    velox::RowTypePtr MakeTypeFromColIds(
+      std::span<const catalog::Column::Id> ids) const;
+
     NameToColumnMap name2column;
     IdToColumnMap id2column;
     velox::RowTypePtr pk_type;

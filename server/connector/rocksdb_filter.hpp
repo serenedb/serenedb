@@ -41,7 +41,6 @@ namespace sdb::connector {
 
 enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
-// TODO make empty range transparent
 // A possibly-bounded interval on a single column value.
 struct ColumnRange {
   static constexpr uint8_t kZero = 0x0;

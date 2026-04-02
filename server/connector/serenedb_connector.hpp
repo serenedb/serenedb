@@ -60,7 +60,6 @@
 #include "connector/search_scan_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/secondary_data_source.hpp"
-#include "connector/secondary_index_full_scan_data_source.hpp"
 #include "connector/secondary_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "connector/text_materializer.hpp"

@@ -282,7 +282,8 @@ void ObjectCollector::CollectFuncCall(const State& state,
       limit =
         v > 0 ? static_cast<size_t>(v) : std::numeric_limits<size_t>::max();
     }
-    auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
+    auto field_name =
+      std::string{strVal(llast(castNode(ColumnRef, arg)->fields))};
     if (!_objects.AddOffsetsField(field_name, limit)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("OFFSETS() called multiple times for field '",

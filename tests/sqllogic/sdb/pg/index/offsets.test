@@ -1,0 +1,374 @@
+statement ok
+CREATE TABLE offsets_test (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, wordcount INTEGER);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY offsets_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX offsets_test_idx ON offsets_test
+    USING inverted(title offsets_en, body offsets_en, wordcount);
+
+# row 1: 'fox' in body at offset 6 (after 'quick '), 'quick' at 0
+statement ok
+INSERT INTO offsets_test VALUES (1, 'hello world', 'quick fox jumps', 3);
+
+# row 2: 'fox' in body at offset 0
+statement ok
+INSERT INTO offsets_test VALUES (2, 'hello again', 'fox runs fast', 3);
+
+# row 3: no 'fox' in body; 'world' in title at offset 0
+statement ok
+INSERT INTO offsets_test VALUES (3, 'world peace', 'quick cat jumps', 3);
+
+# row 4: 12 occurrences of 'fox' in body to exercise the limit
+statement ok
+INSERT INTO offsets_test VALUES (4, 'good day', 'fox fox fox fox fox fox fox fox fox fox fox fox', 12);
+
+statement ok
+VACUUM (UPDATE_INDEXES) offsets_test;
+
+# second table used only to produce a second inverted index scan in JOIN tests
+statement ok
+CREATE TABLE offsets_test2 (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX offsets_test2_idx ON offsets_test2 USING inverted(id, body offsets_en);
+
+statement ok
+INSERT INTO offsets_test2 VALUES (1, 'fox'), (2, 'cat');
+
+statement ok
+VACUUM (UPDATE_INDEXES) offsets_test2;
+
+# ---------------------------------------------------------------------------
+# Basic: single OFFSETS() with alias, PHRASE WHERE condition
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id;
+----
+id	bo
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+
+
+# ---------------------------------------------------------------------------
+# Qualified field name: OFFSETS(offsets_test_idx.body) must resolve the same
+# as OFFSETS(body) — the index/table qualifier is stripped
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(offsets_test_idx.body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id;
+----
+id	bo
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+
+
+# ---------------------------------------------------------------------------
+# Multiple OFFSETS for different fields in one query
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(title) AS to_, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+ORDER BY id;
+----
+id	to_	bo
+1	{0,5}	{6,9}
+2	{0,5}	{0,3}
+
+
+# ---------------------------------------------------------------------------
+# TERM_EQ WHERE condition
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body, 0) AS bo
+FROM offsets_test_idx
+WHERE TERM_EQ(body, 'fox')
+ORDER BY id;
+----
+id	bo
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39,40,43,44,47}
+
+
+# ---------------------------------------------------------------------------
+# Boolean AND: offsets include all matched terms in the field
+# body='quick fox jumps' matches both 'quick' (0-5) and 'fox' (6-9)
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox') AND PHRASE(body, 'quick')
+ORDER BY id;
+----
+id	bo
+1	{0,5,6,9}
+
+
+# ---------------------------------------------------------------------------
+# Boolean OR: offsets include only matched terms per document
+# row 1: matches both 'hello' (0-5) and 'world' (6-11)
+# rows 2,3: match only one term each
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(title) AS to_
+FROM offsets_test_idx
+WHERE PHRASE(title, 'hello') OR PHRASE(title, 'world')
+ORDER BY id;
+----
+id	to_
+1	{0,5,6,11}
+2	{0,5}
+3	{0,5}
+
+
+# ---------------------------------------------------------------------------
+# Same OFFSETS field in SELECT and ORDER BY (same default limit) -- no error
+# ORDER BY array: {0,3} < {0,3,4,7,...} (prefix) < {6,9}
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY OFFSETS(body), id;
+----
+id	bo
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+1	{6,9}
+
+
+# ---------------------------------------------------------------------------
+# ORDER BY alias of OFFSETS
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY bo, id;
+----
+id	bo
+2	{0,3}
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+1	{6,9}
+
+
+# ---------------------------------------------------------------------------
+# Limit parameter: OFFSETS(body, 3) returns at most 3 pairs
+# row 4 has 12 foxes but only first 3 are returned
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body, 3) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id;
+----
+id	bo
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7,8,11}
+
+
+# ---------------------------------------------------------------------------
+# Limit = 1: return only the first offset pair
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body, 1) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id;
+----
+id	bo
+1	{6,9}
+2	{0,3}
+4	{0,3}
+
+
+# ---------------------------------------------------------------------------
+# Limit = 0: no limit, all 12 fox occurrences returned (24 bigints)
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, array_length(OFFSETS(body, 0), 1) AS num_offsets
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox') AND id = 4;
+----
+id	num_offsets
+4	24
+
+
+# ---------------------------------------------------------------------------
+# Same field + same explicit limit in SELECT and ORDER BY: not an error
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(body, 2) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY OFFSETS(body, 2), id;
+----
+id	bo
+2	{0,3}
+4	{0,3,4,7}
+1	{6,9}
+
+
+# ---------------------------------------------------------------------------
+# Numeric (integer) column in the index: OFFSETS returns empty array since
+# numeric fields have no positional offsets, but the query must not fail
+# ---------------------------------------------------------------------------
+
+query
+SELECT id, OFFSETS(wordcount) AS wo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id;
+----
+id	wo
+1	{}
+2	{}
+4	{}
+
+
+# ---------------------------------------------------------------------------
+# ERROR: two inverted index scans in one query both trying to emit OFFSETS
+# ---------------------------------------------------------------------------
+
+query error
+SELECT offsets_test_idx.id, OFFSETS(offsets_test_idx.body) AS bo
+FROM offsets_test_idx
+JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
+WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox');
+----
+db error: ERROR: Only one inverted index scan can produce offsets per query
+
+
+# ---------------------------------------------------------------------------
+# ERROR: OFFSETS() with no arguments
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS() FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() requires one or two arguments
+
+
+# ---------------------------------------------------------------------------
+# ERROR: OFFSETS() with three arguments
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() requires one or two arguments
+
+
+# ---------------------------------------------------------------------------
+# ERROR: OFFSETS() first argument is not a column reference
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS('literal') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() first argument must be a column reference
+
+
+# ---------------------------------------------------------------------------
+# ERROR: OFFSETS() second argument is not an integer constant
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() second argument must be an integer constant
+
+
+# ---------------------------------------------------------------------------
+# ERROR: OFFSETS() with negative limit
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(body, -1) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() limit must be greater than zero or 0 for no limit
+
+
+# ---------------------------------------------------------------------------
+# ERROR: same field with different limits in same query
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(body, 3) AS bo3, OFFSETS(body, 5) AS bo5
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() called multiple times for field 'body' with different limits
+
+
+# ---------------------------------------------------------------------------
+# ERROR: column does not exist in the table
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS(): column 'nonexistent' not found in table
+
+
+# ---------------------------------------------------------------------------
+# ERROR: column exists in table but is not covered by the inverted index
+# (id is the primary key and is not part of the inverted index definition)
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS(): column 'id' not found in index
+
+
+# ---------------------------------------------------------------------------
+# ERROR: OFFSETS() without an inverted index scan
+# ---------------------------------------------------------------------------
+
+query error
+SELECT OFFSETS(body) FROM offsets_test;
+----
+db error: ERROR: OFFSETS(body) requires an inverted index scan in the same query
+
+
+statement ok
+DROP TABLE offsets_test;
+
+statement ok
+DROP TABLE offsets_test2;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY offsets_en;

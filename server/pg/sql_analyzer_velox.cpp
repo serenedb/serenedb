@@ -4112,6 +4112,8 @@ State SqlAnalyzer::ProcessIndex(State* parent,
         ERR_MSG("Only one inverted index scan can produce a score per query"));
     }
 
+    // TODO(Dronplane): looks like this restriction could be lifted if we make
+    // _exprs_for_offsets kind of map by index_id->offsets.
     if (!_exprs_for_offsets.empty()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -5456,7 +5458,8 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
     const auto* arg = linitial_node(Node, expr.args);
     // ensured by collector
     SDB_ASSERT(IsA(arg, ColumnRef));
-    const auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
+    const auto field_name =
+      std::string_view{strVal(llast(castNode(ColumnRef, arg)->fields))};
     auto it = _exprs_for_offsets.find(field_name);
     if (it == _exprs_for_offsets.end()) {
       THROW_SQL_ERROR(

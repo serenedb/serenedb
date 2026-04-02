@@ -2,6 +2,7 @@ target_sources(
     sereneserver
     PRIVATE
         array_extra.cpp
+        enum.cpp
         datetime_extra.cpp
         extract.cpp
         inout.cpp

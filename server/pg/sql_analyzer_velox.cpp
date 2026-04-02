@@ -89,7 +89,6 @@
 #include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_catalog/pg_attribute.h"
-#include "pg/system_catalog.h"
 #include "pg/pg_list_utils.h"
 #include "pg/progress_tracker.h"
 #include "pg/protocol.h"
@@ -97,6 +96,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_statement.h"
 #include "pg/sql_utils.h"
+#include "pg/system_catalog.h"
 #include "query/context.h"
 #include "query/transaction.h"
 #include "query/types.h"
@@ -1004,7 +1004,19 @@ class SqlAnalyzer {
       }
     }
 
-    const bool from_varchar = from->type() == velox::VARCHAR();
+    const bool from_varchar =
+      from->type() == velox::VARCHAR() || pg::IsUnknown(from->type());
+
+    if (from_varchar && pg::IsEnum(*to)) {
+      const auto* enum_type = pg::AsEnum(to);
+      auto enum_name =
+        MakeConst(velox::StringView{enum_type->EnumName()}, velox::VARCHAR());
+      auto call = std::make_shared<lp::CallExpr>(
+        velox::DOUBLE(), "pg_enum_in",
+        std::vector<lp::ExprPtr>{std::move(from), std::move(enum_name)});
+      return std::make_shared<lp::SpecialFormExpr>(
+        std::move(to), lp::SpecialForm::kCast, std::move(call));
+    }
 
     if (from_varchar && IsInterval(to)) {
       return std::make_shared<lp::CallExpr>(
@@ -2419,9 +2431,9 @@ void SqlAnalyzer::ProcessCreateFunctionStmt(State& state,
 
       State::FuncParamToExpr dummy_args;
       dummy_args.reserve(list_length(stmt.parameters));
-      auto signature = ToSignature(
-        stmt.parameters, stmt.returnType,
-        &basics::downCast<const ConnectionContext>(_transaction));
+      auto signature =
+        ToSignature(stmt.parameters, stmt.returnType,
+                    &basics::downCast<const ConnectionContext>(_transaction));
       for (const auto& param : signature.parameters) {
         auto expr =
           std::make_shared<lp::InputReferenceExpr>(param.type, param.name);
@@ -6703,7 +6715,8 @@ velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
     }
     auto enum_type = snapshot->GetEnumType(db_id, type_schema, name);
     if (enum_type) {
-      return wrap_in_array(velox::VARCHAR());
+      return wrap_in_array(
+        pg::PGENUM(std::string{name}, enum_type->GetLabels()));
     }
     auto composite_type = snapshot->GetCompositeType(db_id, type_schema, name);
     if (composite_type) {
@@ -6712,6 +6725,11 @@ velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
     if (auto* sys_table = GetSystemTable(type_schema, name)) {
       return wrap_in_array(sys_table->RowType());
     }
+  }
+
+  // System table types are available regardless of connection context
+  if (auto* sys_table = GetSystemTable("pg_catalog", name)) {
+    return wrap_in_array(sys_table->RowType());
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

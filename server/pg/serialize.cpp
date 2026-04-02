@@ -618,6 +618,21 @@ void SerializeRegnamespaceText(SerializationContext context,
   context.buffer->WriteUncommitted(RegnamespaceOut(*context.snapshot, oid));
 }
 
+void SerializeEnumText(SerializationContext context,
+                       const velox::DecodedVector& decoded_vector,
+                       velox::vector_size_t row) {
+  const auto* enum_type = context.current_enum_type;
+  SDB_ASSERT(enum_type);
+  const auto ordinal = decoded_vector.valueAt<double>(row);
+  auto label = enum_type->OrdinalToLabel(ordinal);
+  if (label) {
+    context.buffer->WriteUncommitted(*label);
+  } else {
+    context.buffer->WriteUncommitted(
+      absl::StrCat("<invalid_enum:", ordinal, ">"));
+  }
+}
+
 // Binary serialization for oid-like types:
 // truncate 64-bit OID to 32-bit for PG wire protocol compatibility.
 void SerializeOidBinary(SerializationContext context,
@@ -782,6 +797,12 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
     RETURN_ARRAY_SERIALIZATION(SerializeDate<VarFormat::Text>,
                                SerializeDate<VarFormat::Binary>,
                                PgTypeOID::kDate);
+  }
+
+  if (pg::IsEnum(type)) {
+    // current_enum_type is set per-column before each serializer call
+    RETURN_ARRAY_SERIALIZATION(SerializeEnumText, SerializeEnumText,
+                               PgTypeOID::kText);
   }
 
   if (pg::IsOid(type)) {
@@ -1139,6 +1160,11 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
   }
   if (pg::IsRegnamespace(type)) {
     RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
+  }
+
+  if (pg::IsEnum(type)) {
+    // current_enum_type is set per-column before each serializer call
+    RETURN_SERIALIZATION(SerializeEnumText, SerializeEnumText);
   }
 
   // TODO(mbkkt) pg::IsXid8 is it expected to be serialized as bigint?

@@ -28,6 +28,8 @@
 
 namespace sdb::pg {
 
+class PgEnumType;
+
 enum class VarFormat : int16_t {
   Text = 0,
   Binary = 1,
@@ -38,6 +40,7 @@ struct SerializationContext {
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   std::shared_ptr<const catalog::Snapshot> snapshot;
+  const PgEnumType* current_enum_type = nullptr;
 };
 
 using SerializationFunction = void (*)(

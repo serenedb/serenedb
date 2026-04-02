@@ -22,6 +22,7 @@
 
 #include <velox/type/SimpleFunctionApi.h>
 
+#include <cmath>
 #include <memory>
 
 namespace sdb::aql {
@@ -182,6 +183,84 @@ SDB_DEFINE_PG_TYPE(velox::BigintType, PGXID, Xid, "PG_XID");
 SDB_DEFINE_PG_TYPE(velox::BigintType, PGXID8, Xid8, "PG_XID8");
 
 #undef SDB_DEFINE_PG_TYPE
+
+// PgEnumType implementation
+
+PgEnumType::PgEnumType(std::string enum_name, std::vector<std::string> labels)
+  : _enum_name{std::move(enum_name)}, _labels{std::move(labels)} {}
+
+std::string PgEnumType::toString() const {
+  return std::string{kTypeName} + "(" + _enum_name + ")";
+}
+
+bool PgEnumType::equivalent(const Type& other) const {
+  if (auto* o = dynamic_cast<const PgEnumType*>(&other)) {
+    return _enum_name == o->_enum_name && _labels == o->_labels;
+  }
+  return false;
+}
+
+folly::dynamic PgEnumType::serialize() const {
+  folly::dynamic obj = folly::dynamic::object;
+  obj["name"] = "PgEnumType";
+  obj["type"] = std::string{kTypeName};
+  obj["enum_name"] = _enum_name;
+  folly::dynamic labels_arr = folly::dynamic::array;
+  for (const auto& label : _labels) {
+    labels_arr.push_back(label);
+  }
+  obj["labels"] = std::move(labels_arr);
+  return obj;
+}
+
+std::optional<double> EnumLabelToOrdinal(const std::vector<std::string>& labels,
+                                         std::string_view label) {
+  for (size_t i = 0; i < labels.size(); ++i) {
+    if (labels[i] == label) {
+      return static_cast<double>((i + 1) * PgEnumType::kOrdinalStep);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string_view> EnumOrdinalToLabel(
+  const std::vector<std::string>& labels, double ordinal) {
+  auto idx =
+    static_cast<size_t>(std::lround(ordinal / PgEnumType::kOrdinalStep)) - 1;
+  if (idx < labels.size()) {
+    return labels[idx];
+  }
+  return std::nullopt;
+}
+
+std::optional<double> PgEnumType::LabelToOrdinal(std::string_view label) const {
+  return EnumLabelToOrdinal(_labels, label);
+}
+
+std::optional<std::string_view> PgEnumType::OrdinalToLabel(
+  double ordinal) const {
+  return EnumOrdinalToLabel(_labels, ordinal);
+}
+
+velox::TypePtr PGENUM(std::string name, std::vector<std::string> labels) {
+  return std::make_shared<PgEnumType>(std::move(name), std::move(labels));
+}
+
+bool IsEnum(const velox::TypePtr& type) {
+  return type && dynamic_cast<const PgEnumType*>(type.get()) != nullptr;
+}
+
+bool IsEnum(const velox::Type& type) {
+  return dynamic_cast<const PgEnumType*>(&type) != nullptr;
+}
+
+const PgEnumType* AsEnum(const velox::TypePtr& type) {
+  return dynamic_cast<const PgEnumType*>(type.get());
+}
+
+const PgEnumType* AsEnum(const velox::Type& type) {
+  return dynamic_cast<const PgEnumType*>(&type);
+}
 
 void RegisterTypes() {
   velox::registerCustomType(IntervalTrait::typeName,

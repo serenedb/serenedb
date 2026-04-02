@@ -111,6 +111,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
     BindInfo bind_info;
     SerializationContext serialization_context;
     std::vector<SerializationFunction> columns_serializers;
+    std::vector<const PgEnumType*> column_enum_types;
   };
 
   virtual void SetIOTimeoutImpl() = 0;

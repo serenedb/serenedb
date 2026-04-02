@@ -8,6 +8,7 @@ CREATE TYPE diagnosis AS ENUM ('something');
 db error: ERROR: type "diagnosis" already exists
 
 
+onlyif serenedb
 query error
 CREATE TYPE bad_enum AS ENUM ('kek', 'lol', 'kek');
 ----
@@ -42,6 +43,9 @@ INSERT INTO vedernikoff_patients VALUES (4, 'osadchy', 'depression');
 statement count 1
 INSERT INTO vedernikoff_patients VALUES (5, 'misterbist', 'norma');
 
+statement count 1
+INSERT INTO vedernikoff_patients VALUES (6, 'nullguy', NULL);
+
 
 query
 SELECT * FROM vedernikoff_patients ORDER BY id;
@@ -52,6 +56,29 @@ id	name	illness
 3	clickclack	panicataka
 4	osadchy	depression
 5	misterbist	norma
+6	nullguy	NULL
+
+
+query
+SELECT name FROM vedernikoff_patients WHERE illness IS NULL;
+----
+name
+nullguy
+
+
+query
+SELECT name FROM vedernikoff_patients WHERE illness IS NOT NULL ORDER BY illness;
+----
+name
+ivansolo2003
+deadinside
+clickclack
+osadchy
+misterbist
+
+
+statement count 1
+DELETE FROM vedernikoff_patients WHERE id = 6;
 
 
 query
@@ -74,27 +101,176 @@ SELECT name, illness FROM vedernikoff_patients ORDER BY illness;
 ----
 name	illness
 ivansolo2003	bipolyarka
+deadinside	shiza
+clickclack	panicataka
 osadchy	depression
 misterbist	norma
-clickclack	panicataka
-deadinside	shiza
 
 
 query
-SELECT illness FROM vedernikoff_patients WHERE illness > 'norma' ORDER BY illness;
+SELECT illness FROM vedernikoff_patients WHERE illness > 'panicataka' ORDER BY illness;
 ----
 illness
-panicataka
-shiza
+depression
+norma
 
 
 query
-SELECT illness FROM vedernikoff_patients WHERE illness >= 'norma' AND illness <= 'shiza' ORDER BY illness;
+SELECT illness FROM vedernikoff_patients WHERE illness >= 'shiza' AND illness <= 'depression' ORDER BY illness;
+----
+illness
+shiza
+panicataka
+depression
+
+
+query error
+INSERT INTO vedernikoff_patients VALUES (99, 'nobody', 'invalid_value');
+----
+db error: ERROR: invalid input value for enum diagnosis: "invalid_value"
+
+
+
+query
+SELECT illness FROM vedernikoff_patients ORDER BY illness DESC;
 ----
 illness
 norma
+depression
 panicataka
 shiza
+bipolyarka
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness < 'shiza' ORDER BY illness;
+----
+illness
+bipolyarka
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness > 'depression' ORDER BY illness;
+----
+illness
+norma
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness < 'bipolyarka';
+----
+illness
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness > 'norma';
+----
+illness
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness <= 'shiza' ORDER BY illness;
+----
+illness
+bipolyarka
+shiza
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness >= 'depression' ORDER BY illness;
+----
+illness
+depression
+norma
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness != 'panicataka' ORDER BY illness;
+----
+illness
+bipolyarka
+shiza
+depression
+norma
+
+
+query
+SELECT MIN(illness), MAX(illness) FROM vedernikoff_patients;
+----
+min	max
+bipolyarka	norma
+
+
+query
+SELECT illness, COUNT(*) AS cnt FROM vedernikoff_patients GROUP BY illness ORDER BY illness;
+----
+illness	cnt
+bipolyarka	1
+shiza	1
+panicataka	1
+depression	1
+norma	1
+
+
+query
+SELECT DISTINCT illness FROM vedernikoff_patients ORDER BY illness;
+----
+illness
+bipolyarka
+shiza
+panicataka
+depression
+norma
+
+
+query
+SELECT illness FROM vedernikoff_patients ORDER BY illness LIMIT 3;
+----
+illness
+bipolyarka
+shiza
+panicataka
+
+
+query
+SELECT illness FROM vedernikoff_patients ORDER BY illness LIMIT 2 OFFSET 2;
+----
+illness
+panicataka
+depression
+
+
+query
+SELECT illness FROM vedernikoff_patients WHERE illness BETWEEN 'shiza' AND 'depression' ORDER BY illness;
+----
+illness
+shiza
+panicataka
+depression
+
+
+query
+SELECT name, CASE illness WHEN 'bipolyarka' THEN 'bp' WHEN 'shiza' THEN 'sz' ELSE 'other' END AS short FROM vedernikoff_patients ORDER BY id;
+----
+name	short
+ivansolo2003	bp
+deadinside	sz
+clickclack	other
+osadchy	other
+misterbist	other
+
+
+query
+SELECT name FROM vedernikoff_patients WHERE illness = (SELECT illness FROM vedernikoff_patients WHERE name = 'deadinside');
+----
+name
+deadinside
+
+
+query
+SELECT a.name, b.name FROM vedernikoff_patients a JOIN vedernikoff_patients b ON a.illness = b.illness WHERE a.id < b.id;
+----
+name	name
 
 
 query
@@ -145,6 +321,60 @@ room	patient	dept	illness
 101	vedernikoff	buiniy	bipolyarka
 202	kostya	tikhiy	depression
 303	bigfgun	nabludenie	shiza
+
+
+query
+SELECT patient, dept FROM psycho_hospital ORDER BY dept;
+----
+patient	dept
+vedernikoff	buiniy
+kostya	tikhiy
+bigfgun	nabludenie
+
+
+query
+SELECT patient, dept, illness FROM psycho_hospital ORDER BY illness, dept;
+----
+patient	dept	illness
+vedernikoff	buiniy	bipolyarka
+bigfgun	nabludenie	shiza
+kostya	tikhiy	depression
+
+
+query
+SELECT patient, dept FROM psycho_hospital WHERE illness >= 'shiza' ORDER BY dept;
+----
+patient	dept
+kostya	tikhiy
+bigfgun	nabludenie
+
+
+query
+SELECT patient FROM psycho_hospital WHERE dept = 'buiniy' AND illness = 'bipolyarka';
+----
+patient
+vedernikoff
+
+
+statement count 1
+UPDATE psycho_hospital SET dept = 'reabilitacia' WHERE room = 101;
+
+query
+SELECT room, patient, dept FROM psycho_hospital WHERE room = 101;
+----
+room	patient	dept
+101	vedernikoff	reabilitacia
+
+
+statement count 1
+DELETE FROM psycho_hospital WHERE dept = 'reabilitacia';
+
+query
+SELECT room, patient FROM psycho_hospital ORDER BY room;
+----
+room	patient
+202	kostya
+303	bigfgun
 
 
 statement ok

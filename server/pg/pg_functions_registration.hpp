@@ -60,9 +60,8 @@ inline velox::AllowedCoercions AllowedCoercions() {
                  const std::vector<velox::TypePtr>& to) {
     velox::CallableCost cost = kNullCoercionCost;
     for (const auto& to_type : to) {
-      coercions.emplace(
-        std::make_pair<std::string, std::string>(from->name(), to_type->name()),
-        velox::Coercion{.type = to_type, .cost = ++cost});
+      coercions.emplace(std::pair{from->name(), to_type->name()},
+                        velox::Coercion{.type = to_type, .cost = ++cost});
     }
   };
 
@@ -70,9 +69,8 @@ inline velox::AllowedCoercions AllowedCoercions() {
                            const std::vector<velox::TypePtr>& to,
                            velox::CallableCost cost) {
     for (const auto& to_type : to) {
-      coercions.emplace(
-        std::make_pair<std::string, std::string>(from->name(), to_type->name()),
-        velox::Coercion{.type = to_type, .cost = cost});
+      coercions.emplace(std::pair{from->name(), to_type->name()},
+                        velox::Coercion{.type = to_type, .cost = cost});
     }
   };
 
@@ -127,6 +125,10 @@ inline velox::AllowedCoercions AllowedCoercions() {
   add(PGNAME(), {velox::VARCHAR()});
 
   // PG_UNKNOWN kludge
+  // PG_ENUM needs a dummy instance for coercion registration (name-based)
+  static const auto kENUM = PGENUM("", {});
+  add(velox::VARCHAR(), {kENUM});
+
   add_same_cost(PGUNKNOWN(),
                 {
                   velox::BOOLEAN(),
@@ -153,6 +155,8 @@ inline velox::AllowedCoercions AllowedCoercions() {
                   PGCID(),
                   PGXID(),
                   PGXID8(),
+
+                  kENUM,
                 },
                 kNullCoercionCost + 1);
   add_same_cost(PGUNKNOWN(), kRegTypes, kNullCoercionCost + 1);

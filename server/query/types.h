@@ -24,6 +24,10 @@
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/type/Type.h>
 
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "basics/fwd.h"
 
 namespace sdb::aql {
@@ -86,6 +90,47 @@ SDB_DECLARE_PG_TYPE(int64_t, PGXID, Xid, "PG_XID");
 SDB_DECLARE_PG_TYPE(int64_t, PGXID8, Xid8, "PG_XID8");
 
 #undef SDB_DECLARE_PG_TYPE
+
+// Custom Velox type for PG ENUM, backed by double storage.
+// Each enum definition gets its own instance carrying name + labels.
+// Ordinals are spaced by kOrdinalStep (16) to leave room for future
+// ALTER TYPE ... ADD VALUE BEFORE/AFTER midpoint insertions.
+class PgEnumType final : public velox::DoubleType {
+ public:
+  static constexpr double kOrdinalStep = 16.0;
+
+  PgEnumType(std::string enum_name, std::vector<std::string> labels);
+
+  const std::string& EnumName() const noexcept { return _enum_name; }
+  const std::vector<std::string>& Labels() const noexcept { return _labels; }
+
+  std::optional<double> LabelToOrdinal(std::string_view label) const;
+  std::optional<std::string_view> OrdinalToLabel(double ordinal) const;
+
+  const char* name() const final { return kTypeName.data(); }
+  std::string toString() const final;
+  bool equivalent(const Type& other) const final;
+  folly::dynamic serialize() const final;
+
+ private:
+  static constexpr std::string_view kTypeName = "PG_ENUM";
+
+  std::string _enum_name;
+  std::vector<std::string> _labels;
+};
+
+velox::TypePtr PGENUM(std::string name, std::vector<std::string> labels);
+bool IsEnum(const velox::TypePtr& type);
+bool IsEnum(const velox::Type& type);
+const PgEnumType* AsEnum(const velox::TypePtr& type);
+const PgEnumType* AsEnum(const velox::Type& type);
+
+// Free functions for ordinal math on raw label vectors (e.g. from
+// catalog::EnumType)
+std::optional<double> EnumLabelToOrdinal(const std::vector<std::string>& labels,
+                                         std::string_view label);
+std::optional<std::string_view> EnumOrdinalToLabel(
+  const std::vector<std::string>& labels, double ordinal);
 
 void RegisterTypes();
 

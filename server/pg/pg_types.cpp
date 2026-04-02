@@ -124,6 +124,9 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
 }  // namespace
 
 int32_t Type2Oid(const velox::TypePtr& type, bool in_array) {
+  if (IsEnum(type)) {
+    return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
+  }
   int32_t composite_oid = GetCompositeOID(type, in_array);
   if (composite_oid >= 0) {
     return composite_oid;
@@ -223,6 +226,9 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
   if (IsInterval(type)) {
     return "interval";
+  }
+  if (auto* e = AsEnum(type)) {
+    return e->EnumName();
   }
   if (IsOid(type)) {
     return "oid";

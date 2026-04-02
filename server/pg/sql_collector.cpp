@@ -272,16 +272,20 @@ void ObjectCollector::CollectFuncCall(const State& state,
           ERR_MSG("OFFSETS() second argument must be an integer constant"));
       }
       const auto v = intVal(&castNode(A_Const, limit_arg)->val);
-      if (v <= 0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("OFFSETS() limit must be greater than zero"));
+      if (v < 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG(
+            "OFFSETS() limit must be greater than zero or 0 for no limit"));
       }
-      limit = static_cast<size_t>(v);
+      limit =
+        v > 0 ? static_cast<size_t>(v) : std::numeric_limits<size_t>::max();
     }
     auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
-    if (!_objects.AddOffsetsField(std::move(field_name), limit)) {
+    if (!_objects.AddOffsetsField(field_name, limit)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("Duplicate OFFSETS() call for the same field"));
+                      ERR_MSG("OFFSETS() called multiple times for field '",
+                              field_name, "' with different limits"));
     }
     return;
   }

@@ -140,12 +140,13 @@ class Objects : public irs::memory::Managed {
     size_t limit = kDefaultOffsetsLimit;
   };
 
-  // Adds field_name to the offsets request list if not already present.
-  // Returns false if the same field was already requested.
+  // Adds field_name to the offsets request list.
+  // Returns true if the field was added or already present with the same limit.
+  // Returns false if the field was already requested with a different limit.
   bool AddOffsetsField(std::string field_name, size_t limit) noexcept {
     for (const auto& f : _offsets_field_names) {
       if (f.name == field_name) {
-        return false;
+        return f.limit == limit;
       }
     }
     _offsets_field_names.push_back({std::move(field_name), limit});

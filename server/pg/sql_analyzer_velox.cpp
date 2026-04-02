@@ -5274,18 +5274,11 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   // resolved during collection. Return the injected offsets column reference
   // set up in ProcessInvertedIndex for the given field.
   if (schema.empty() && name == search::functions::kOffsets) {
-    if (list_length(expr.args) < 1) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-                      ERR_MSG("OFFSETS() requires at least one argument"));
-    }
+    // ensured by collector
+    SDB_ASSERT(list_length(expr.args) > 0);
     const auto* arg = linitial_node(Node, expr.args);
-    if (!IsA(arg, ColumnRef)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG("OFFSETS() first argument must be a column reference"));
-    }
+    // ensured by collector
+    SDB_ASSERT(IsA(arg, ColumnRef));
     const auto field_name = NameToStr(castNode(ColumnRef, arg)->fields);
     auto it = _exprs_for_offsets.find(field_name);
     if (it == _exprs_for_offsets.end()) {

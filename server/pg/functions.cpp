@@ -32,6 +32,8 @@
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/vector/ComplexVector.h>
 
+#include "functions/search.h"
+#include "functions/vector.h"
 #include "pg/functions/array_extra.h"
 #include "pg/functions/datetime_extra.h"
 #include "pg/functions/extract.h"
@@ -48,20 +50,26 @@
 
 namespace sdb::pg::functions {
 
-void registerFunctions(const std::string& prefix) {
-  registerInOutFunctions(prefix);
-  registerJsonFunctions(prefix);
-  registerSizeFunctions(prefix);
-  registerRegexpFunctions(prefix);
-  registerStringExtraFunctions(prefix);
-  registerMathExtraFunctions(prefix);
-  registerDatetimeExtraFunctions(prefix);
-  registerArrayExtraFunctions(prefix);
-  registerExtractFunctions(prefix);
-  registerStubFunctions(prefix);
-  registerSystemFunctions(prefix);
-  registerGenerateFunctions(prefix);
-  registerUtilFunctions(prefix);
+void RegisterFunctions(const std::string& prefix) {
+  RegisterInOutFunctions(prefix);
+  RegisterJsonFunctions(prefix);
+  RegisterSizeFunctions(prefix);
+  RegisterRegexpFunctions(prefix);
+  RegisterStringExtraFunctions(prefix);
+  RegisterMathExtraFunctions(prefix);
+  RegisterDatetimeExtraFunctions(prefix);
+  RegisterArrayExtraFunctions(prefix);
+  RegisterExtractFunctions(prefix);
+  RegisterStubFunctions(prefix);
+  RegisterSystemFunctions(prefix);
+  RegisterGenerateFunctions(prefix);
+  RegisterUtilFunctions(prefix);
+}
+
+void RegisterSdbFunctions() {
+  // always have sdb_ prefix
+  sdb::functions::RegisterVectorFunctions();
+  sdb::functions::RegisterSearchFunctions();
 }
 
 }  // namespace sdb::pg::functions

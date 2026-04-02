@@ -1,0 +1,49 @@
+services:
+  serenedb-recovery:
+    image: "$BUILD_IMAGE"
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - "$WORKSPACE:/serenedb"
+      - "$WORKSPACE/logs:/var/log/serenedb"
+      - type: tmpfs
+        target: /serenedb_datadir
+        tmpfs:
+          size: 16G
+    env_file:
+      - "$WORKSPACE/docker.env"
+    environment:
+      - BUILD_DIR
+      - HOME=/serenedb
+    networks:
+      - recovery-network
+    command: /serenedb/tests/sqllogic/run_serened_loop.sh /serenedb_datadir
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    group_add:
+      - "${DOCKER_SOCK_GID:-999}"
+    volumes:
+      - "$SQLLOGIC_DIR:/sqllogic"
+      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "$WORKSPACE/logs:/logs"
+      - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+    depends_on:
+      - serenedb-recovery
+    environment:
+      - SERVICE_HOST=serenedb-recovery
+      - LOG_DIR=/logs
+      - RESOURCES
+      - HOME=/sqllogic
+      - CARGO_HOME=/tmp/cargo
+      - CARGO_TARGET_DIR=/cargo-target
+    networks:
+      - recovery-network
+    command: sqllogic/run_recovery.sh
+
+networks:
+  recovery-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_recovery-network

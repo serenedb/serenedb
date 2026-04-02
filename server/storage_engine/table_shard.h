@@ -21,10 +21,10 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
 #include <rocksdb/types.h>
 
 #include <atomic>
+#include <shared_mutex>
 
 #include "catalog/fwd.h"
 #include "catalog/object.h"
@@ -85,7 +85,10 @@ class TableShard : public catalog::Object {
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
   // TODO: remove table lock when we have a proper create index
-  absl::Mutex _table_lock;
+  // Using std::shared_mutex instead of absl::Mutex because DataSink objects
+  // may be destroyed on a different thread than they were created on (e.g.
+  // during query cancellation), and absl::Mutex forbids cross-thread unlock.
+  std::shared_mutex _table_lock;
 };
 
 }  // namespace sdb

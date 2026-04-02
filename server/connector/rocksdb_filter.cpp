@@ -130,8 +130,7 @@ std::vector<Point> ExtractFilterAnd(const velox::core::CallTypedExpr* func_call,
     next.reserve(result.size() * rhs_pts.size());
     for (const auto& lhs : result) {
       for (const auto& rhs : rhs_pts) {
-        if (auto merged = Point::Intersect(lhs, rhs);
-            merged && !merged->IsUnconstrained()) {
+        if (auto merged = Point::Intersect(lhs, rhs)) {
           next.push_back(std::move(*merged));
         }
       }
@@ -281,14 +280,14 @@ std::optional<Point> Point::Intersect(const Point& lhs, const Point& rhs) {
   return result;
 }
 
-std::vector<SpecificPoint> ToSpecificPoints(const std::vector<Point>& points,
-                                            const velox::RowType& pk_type) {
+std::vector<SpecificPoint> ToSpecificPoints(
+  const std::vector<Point>& points, std::span<const std::string> column_names) {
   std::vector<SpecificPoint> result;
   result.reserve(points.size());
   for (const auto& p : points) {
     SpecificPoint sp;
-    sp.reserve(pk_type.size());
-    for (const auto& name : pk_type.names()) {
+    sp.reserve(column_names.size());
+    for (const auto& name : column_names) {
       const auto* filter = p.FindFilter(name);
       SDB_ASSERT(filter != nullptr, "pk column not found in specific point");
       sp.push_back(ToVariant(*filter));
@@ -342,7 +341,7 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   return {std::move(pts), RewriteExpr(expr, sources)};
 }
 
-void SortPoints(std::vector<SpecificPoint>& points) {
+void SortAndDedupPoints(std::vector<SpecificPoint>& points) {
   absl::c_sort(points, [](const SpecificPoint& lhs, const SpecificPoint& rhs) {
     for (size_t i = 0; i < lhs.size(); ++i) {
       if (lhs[i] != rhs[i]) {
@@ -351,6 +350,8 @@ void SortPoints(std::vector<SpecificPoint>& points) {
     }
     return false;
   });
+  auto [first, last] = std::ranges::unique(points);
+  points.erase(first, last);
 }
 
 }  // namespace sdb::connector

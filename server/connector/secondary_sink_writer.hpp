@@ -128,21 +128,34 @@ inline void AppendPK(const velox::RowVector& input,
 // Unique + non-NULL:
 //   key = [shard][marker][SK values]       value = [PK]
 //   (PK as value -- uniqueness enforced)
+inline constexpr char kPKInKey = '\x00';
+inline constexpr char kPKInValue = '\x01';
+
+// Builds sk_buffer (key) and value_buffer (value) for a secondary index entry.
+// value_buffer format: <flag byte> <PK bytes or pk_size byte>.
+// value_buffer is cleared and rebuilt each call.
 template<bool Unique>
 inline void Create(const velox::RowVector& input,
                    std::span<const velox::column_index_t> pk_children,
                    std::span<const velox::column_index_t> sk_children,
                    velox::vector_size_t row_idx, std::string& sk_buffer,
-                   std::string& pk_buffer) {
+                   std::string& value_buffer) {
   bool has_null = AppendSKValue(sk_buffer, input, sk_children, row_idx);
-  if constexpr (Unique) {
-    if (has_null) {
-      AppendPK(input, pk_children, row_idx, sk_buffer);
-    } else {
-      AppendPK(input, pk_children, row_idx, pk_buffer);
-    }
+  constexpr bool kAlwaysPKInKey = !Unique;
+  bool pk_in_key = kAlwaysPKInKey || has_null;
+
+  value_buffer.clear();
+  value_buffer.push_back(pk_in_key ? kPKInKey : kPKInValue);
+  if (pk_in_key) {
+    auto size_pos = value_buffer.size();
+    value_buffer.push_back(0);
+    AppendPK(input, pk_children, row_idx, value_buffer);
+    value_buffer[size_pos] =
+      static_cast<char>(value_buffer.size() - size_pos - 1);
+    sk_buffer.append(value_buffer.data() + size_pos + 1,
+                     value_buffer.size() - size_pos - 1);
   } else {
-    AppendPK(input, pk_children, row_idx, sk_buffer);
+    AppendPK(input, pk_children, row_idx, value_buffer);
   }
 }
 
@@ -183,15 +196,20 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
     secondary_key::AppendDummyColumnId(_key_buffer);
     bool has_null = secondary_key::AppendSKValue(_key_buffer, *_input,
                                                  _sk_children, _row_idx);
-    if constexpr (Unique) {
-      if (has_null) {
-        _key_buffer.append(pk_bytes);
-      } else {
-        value = pk_bytes;
-      }
-    } else {
+    constexpr bool kAlwaysPKInKey = !Unique;
+    bool pk_in_key = kAlwaysPKInKey || has_null;
+    // TODO: reuse pk buffer to rewrite column id for pkinvalue / pkinkey byte
+    // and restore it
+    _value_buffer.clear();
+    _value_buffer.push_back(pk_in_key ? secondary_key::kPKInKey
+                                      : secondary_key::kPKInValue);
+    if (pk_in_key) {
+      _value_buffer.push_back(static_cast<char>(pk_bytes.size()));
       _key_buffer.append(pk_bytes);
+    } else {
+      _value_buffer.append(pk_bytes);
     }
+    value = _value_buffer;
     ++_row_idx;
     return has_null;
   }
@@ -223,6 +241,7 @@ class SecondarySinkWriteBase : public SinkIndexWriter,
   velox::vector_size_t _row_idx;
   velox::vector_size_t _del_row_idx;
   std::string _key_buffer;
+  std::string _value_buffer;
 };
 
 template<bool Unique>

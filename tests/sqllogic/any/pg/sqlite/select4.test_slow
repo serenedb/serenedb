@@ -3137,67 +3137,51 @@ SELECT * FROM t9
 ----
 588 values hashing to be47bb47837e44b32abdcfb5f1645153
 
-skipif serenedb
 statement ok
 CREATE INDEX t1i0 ON t1(a1,b1,c1,d1,e1,x1)
 
-skipif serenedb
 statement ok
 CREATE INDEX t1i1 ON t1(b1,c1,d1,e1,x1)
 
-skipif serenedb
 statement ok
 CREATE INDEX t1i2 ON t1(c1,d1,e1,x1)
 
-skipif serenedb
 statement ok
 CREATE INDEX t1i3 ON t1(d1,e1,x1)
 
-skipif serenedb
 statement ok
 CREATE INDEX t1i4 ON t1(e1,x1)
 
-skipif serenedb
 statement ok
 CREATE INDEX t2a2 ON t2(a2)
 
-skipif serenedb
 statement ok
 CREATE INDEX t2b2 ON t2(b2)
 
-skipif serenedb
 statement ok
 CREATE INDEX t2c2 ON t2(c2)
 
-skipif serenedb
 statement ok
 CREATE INDEX t2d2 ON t2(d2)
 
-skipif serenedb
 statement ok
 CREATE INDEX t2e2 ON t2(e2)
 
-skipif serenedb
 statement ok
 CREATE INDEX t3a3 ON t3(a3)
 
-skipif serenedb
 statement ok
 CREATE INDEX t4b4 ON t4(b4)
 
-skipif serenedb
 statement ok
 CREATE INDEX t5c5 ON t5(c5)
 
-skipif serenedb
 statement ok
 CREATE INDEX t6d6 ON t6(d6)
 
-skipif serenedb
 statement ok
 CREATE INDEX t7e7 ON t7(e7)
 
-skipif serenedb
 statement ok
 CREATE INDEX t8all ON t8(e8 DESC, d8 ASC, c8 DESC, b8 ASC, a8 DESC)
 

@@ -24,6 +24,6 @@
 
 namespace sdb::pg::functions {
 
-void registerDatetimeExtraFunctions(const std::string& prefix);
+void RegisterDatetimeExtraFunctions(const std::string& prefix);
 
 }  // namespace sdb::pg::functions

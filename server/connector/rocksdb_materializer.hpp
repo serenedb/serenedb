@@ -114,7 +114,7 @@ class RocksDBMaterializer {
   size_t _produced = 0;
   std::string _value_buffer;
   rocksdb::ReadOptions _read_options;
-  tmp::MultiGetContext _multiget_ctx;
+  MultiGetContext _multiget_ctx;
   std::unique_ptr<velox::HashStringAllocator> _multiget_buffer_allocator;
   velox::HashStringAllocator::Header* _multi_get_buffer = nullptr;
   containers::FlatHashMap<catalog::Column::Id,

@@ -24,7 +24,10 @@
 #include <velox/type/Variant.h>
 
 #include <span>
+#include <string>
+#include <vector>
 
+#include "basics/containers/bitset.hpp"
 #include "basics/fwd.h"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
@@ -44,8 +47,58 @@ class PrimaryKeyBuilder {
     primary_key::Create(values, *_pk_type, key);
   }
 
+  // Builds keys for all values into internal storage.
+  // Storage grows monotonically -- first (largest) call allocates, subsequent
+  // calls with smaller counts are no-ops on the underlying storage.
+  // Returns a span of slices valid until the next BuildKeys/BuildPresentKeys
+  // call.
+  std::span<const rocksdb::Slice> BuildKeys(
+    catalog::Column::Id col_id,
+    std::span<const std::vector<velox::variant>> values) {
+    GrowStorage(values.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+      _key_storage[i].clear();
+      BuildFullKey(_key_storage[i], col_id, values[i]);
+      _slice_storage[i] = _key_storage[i];
+    }
+    return {_slice_storage.data(), values.size()};
+  }
+
+  // Patches the prefix of already-built keys for present rows only.
+  // Must be called after BuildKeys for the same batch -- reuses the PK tail
+  // already written into _key_storage[i], overwriting only the fixed-size
+  // prefix (table + column id) with the new col_id via a single memcpy.
+  // Returns a compact span of found_count slices (non-contiguous in storage).
+  std::span<const rocksdb::Slice> BuildPresentKeys(
+    catalog::Column::Id col_id, const irs::bitset& present_rows) {
+    std::string prefix;
+    key_utils::AppendTableKey(prefix, _table_id);
+    key_utils::AppendColumnKey(prefix, col_id);
+    SDB_ASSERT(prefix.size() == key_utils::kKeyPrefixSize);
+    size_t key_idx = 0;
+    for (size_t i = 0; i < present_rows.size(); ++i) {
+      if (present_rows.test(i)) {
+        std::memcpy(_key_storage[i].data(), prefix.data(),
+                    key_utils::kKeyPrefixSize);
+        _slice_storage[key_idx++] = _key_storage[i];
+      }
+    }
+    return {_slice_storage.data(), key_idx};
+  }
+
   ObjectId _table_id;
   velox::RowTypePtr _pk_type;
+
+ private:
+  void GrowStorage(size_t n) {
+    if (n > _key_storage.size()) {
+      _key_storage.resize(n);
+      _slice_storage.resize(n);
+    }
+  }
+
+  std::vector<std::string> _key_storage;
+  std::vector<rocksdb::Slice> _slice_storage;
 };
 
 class SecondaryKeyBuilder {
@@ -67,8 +120,35 @@ class SecondaryKeyBuilder {
     }
   }
 
+  // Builds keys for all values into internal storage.
+  // Storage grows monotonically -- first (largest) call allocates, subsequent
+  // calls with smaller counts are no-ops on the underlying storage.
+  // Returns a span of slices valid until the next BuildKeys call.
+  std::span<const rocksdb::Slice> BuildKeys(
+    catalog::Column::Id col_id,
+    std::span<const std::vector<velox::variant>> values) {
+    GrowStorage(values.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+      _key_storage[i].clear();
+      BuildFullKey(_key_storage[i], col_id, values[i]);
+      _slice_storage[i] = _key_storage[i];
+    }
+    return {_slice_storage.data(), values.size()};
+  }
+
   ObjectId _shard_id;
   velox::RowTypePtr _sk_type;
+
+ private:
+  void GrowStorage(size_t n) {
+    if (n > _key_storage.size()) {
+      _key_storage.resize(n);
+      _slice_storage.resize(n);
+    }
+  }
+
+  std::vector<std::string> _key_storage;
+  std::vector<rocksdb::Slice> _slice_storage;
 };
 
 }  // namespace sdb::connector

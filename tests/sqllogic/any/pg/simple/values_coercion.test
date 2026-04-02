@@ -122,7 +122,8 @@ DROP TABLE vedernikoff_mixed;
 query
 SELECT 1 AS kostya, 'clickclack' AS vedernikoff
 UNION ALL
-SELECT NULL, 'deadinside';
+SELECT NULL, 'deadinside'
+ORDER BY vedernikoff;
 ----
 kostya	vedernikoff
 1	clickclack
@@ -132,17 +133,19 @@ NULL	deadinside
 query
 SELECT NULL AS kostya, NULL AS vedernikoff
 UNION ALL
-SELECT 42, 'pudge';
+SELECT 42, 'pudge'
+ORDER BY kostya;
 ----
 kostya	vedernikoff
-NULL	NULL
 42	pudge
+NULL	NULL
 
 
 query
 SELECT 1::smallint AS kostya
 UNION ALL
-SELECT 2::bigint;
+SELECT 2::bigint
+ORDER BY kostya;
 ----
 kostya
 1
@@ -154,7 +157,8 @@ SELECT 1::integer AS kostya, 'clickclack' AS vedernikoff
 UNION ALL
 SELECT 2::bigint, 'deadinside'
 UNION ALL
-SELECT 3::smallint, 'gul';
+SELECT 3::smallint, 'gul'
+ORDER BY kostya;
 ----
 kostya	vedernikoff
 1	clickclack
@@ -165,7 +169,8 @@ kostya	vedernikoff
 query
 SELECT 1.5 AS kostya
 UNION ALL
-SELECT 2;
+SELECT 2
+ORDER BY kostya;
 ----
 kostya
 1.5
@@ -177,16 +182,17 @@ SELECT 1::bigint AS kostya, NULL AS vedernikoff
 UNION ALL
 SELECT NULL, 'pudge'
 UNION ALL
-SELECT 3::smallint, 'arelav';
+SELECT 3::smallint, 'arelav'
+ORDER BY kostya;
 ----
 kostya	vedernikoff
 1	NULL
-NULL	pudge
 3	arelav
+NULL	pudge
 
 
 query
-SELECT 1 AS kostya UNION SELECT NULL;
+SELECT 1 AS kostya UNION SELECT NULL ORDER BY kostya;
 ----
 kostya
 1
@@ -194,7 +200,7 @@ NULL
 
 
 query
-SELECT NULL AS kostya UNION SELECT 42;
+SELECT NULL AS kostya UNION SELECT 42 ORDER BY kostya;
 ----
 kostya
 42
@@ -236,3 +242,229 @@ SELECT * FROM (VALUES (1984, '228'), ('1337', 14.999));
 column1	column2
 1984	228
 1337	14.999
+
+
+query error
+SELECT * FROM (VALUES (228), (true)) AS vedernikoff(iq);
+----
+db error: ERROR: VALUES types integer and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (1337, 'clickclack'), (true, 'deadinside')) AS lol(iq, kostya);
+----
+db error: ERROR: VALUES types integer and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (666, true), (993, 42)) AS pudge(vedernikoff, kostya);
+----
+db error: ERROR: VALUES types boolean and integer cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (1), (2), (true)) AS gul(iq);
+----
+db error: ERROR: VALUES types integer and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (228::bigint), (true)) AS vedernikoff(iq);
+----
+db error: ERROR: VALUES types bigint and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (4::smallint), (false)) AS kostya(pencil_size);
+----
+db error: ERROR: VALUES types smallint and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (3.14::real), (true)) AS androed(weight);
+----
+db error: ERROR: VALUES types real and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (2.71::double precision), (false)) AS arelav(grade);
+----
+db error: ERROR: VALUES types double precision and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES ('clickclack'::text), (42)) AS lol(kostya);
+----
+db error: ERROR: VALUES types text and integer cannot be matched
+
+
+query error
+SELECT * FROM (VALUES ('deadinside'::text), (true)) AS kek(vedernikoff);
+----
+db error: ERROR: VALUES types text and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (1, true), (true, 1)) AS babsky(iq, kostya);
+----
+db error: ERROR: VALUES types integer and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (1, 'vedernikoff', true), (2, 'kostya', 42)) AS lmao(iq, name, grade);
+----
+db error: ERROR: VALUES types boolean and integer cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (228), (666), (993), (true)) AS gul(vedernikoff);
+----
+db error: ERROR: VALUES types integer and boolean cannot be matched
+
+
+query error
+SELECT * FROM (VALUES (228), (666, 993)) AS vedernikoff(iq);
+----
+db error: ERROR: VALUES lists must all be the same length
+
+
+query error
+SELECT * FROM (VALUES (228, 666), (993)) AS kostya(iq, grade);
+----
+db error: ERROR: VALUES lists must all be the same length
+
+
+query error
+SELECT * FROM (VALUES (1, 'clickclack'), (2, 'deadinside'), (3)) AS pudge(iq, name);
+----
+db error: ERROR: VALUES lists must all be the same length
+
+
+query error
+SELECT * FROM (VALUES (228), (1, 2, 3)) AS babsky(iq);
+----
+db error: ERROR: VALUES lists must all be the same length
+
+
+query error
+SELECT 228 AS vedernikoff_iq UNION SELECT true;
+----
+db error: ERROR: UNION types integer and boolean cannot be matched
+
+
+query error
+SELECT 228 AS vedernikoff_iq UNION ALL SELECT true;
+----
+db error: ERROR: UNION types integer and boolean cannot be matched
+
+
+query error
+SELECT 'clickclack', 1 UNION SELECT 'deadinside', true;
+----
+db error: ERROR: UNION types integer and boolean cannot be matched
+
+
+query error
+SELECT true, 'kostya' UNION SELECT 42, 'vedernikoff';
+----
+db error: ERROR: UNION types boolean and integer cannot be matched
+
+
+query error
+SELECT 228::bigint AS vedernikoff UNION SELECT true;
+----
+db error: ERROR: UNION types bigint and boolean cannot be matched
+
+
+query error
+SELECT 4::smallint AS kostya UNION SELECT false;
+----
+db error: ERROR: UNION types smallint and boolean cannot be matched
+
+
+query error
+SELECT 2.71::double precision AS arelav UNION SELECT true;
+----
+db error: ERROR: UNION types double precision and boolean cannot be matched
+
+
+query error
+SELECT 3.14::real AS androed UNION SELECT false;
+----
+db error: ERROR: UNION types real and boolean cannot be matched
+
+
+query error
+SELECT 1 AS gul
+UNION ALL
+SELECT 2
+UNION ALL
+SELECT true;
+----
+db error: ERROR: UNION types integer and boolean cannot be matched
+
+
+query error
+SELECT 228 AS vedernikoff INTERSECT SELECT true;
+----
+db error: ERROR: INTERSECT types integer and boolean cannot be matched
+
+
+query error
+SELECT 1337::bigint AS clickclack INTERSECT SELECT false;
+----
+db error: ERROR: INTERSECT types bigint and boolean cannot be matched
+
+
+query error
+SELECT 993 AS deadinside EXCEPT SELECT true;
+----
+db error: ERROR: EXCEPT types integer and boolean cannot be matched
+
+
+query error
+SELECT 4::smallint AS kostya EXCEPT SELECT true;
+----
+db error: ERROR: EXCEPT types smallint and boolean cannot be matched
+
+
+query error
+SELECT 228, 666 UNION SELECT 993;
+----
+db error: ERROR: each UNION query must have the same number of columns
+
+
+query error
+SELECT 228 UNION SELECT 666, 993;
+----
+db error: ERROR: each UNION query must have the same number of columns
+
+
+query error
+SELECT 228 AS vedernikoff, 666 AS kostya UNION SELECT 993;
+----
+db error: ERROR: each UNION query must have the same number of columns
+
+
+query error
+SELECT 228 INTERSECT SELECT 666, 993;
+----
+db error: ERROR: each INTERSECT query must have the same number of columns
+
+
+query error
+SELECT 228 EXCEPT SELECT 666, 993;
+----
+db error: ERROR: each EXCEPT query must have the same number of columns
+
+
+query error
+SELECT 228, 'vedernikoff', true UNION ALL SELECT 1, 'kostya';
+----
+db error: ERROR: each UNION query must have the same number of columns
+
+
+query error
+SELECT 1, 2, 3 UNION SELECT 42;
+----
+db error: ERROR: each UNION query must have the same number of columns

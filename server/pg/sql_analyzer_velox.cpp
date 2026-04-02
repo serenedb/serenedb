@@ -1096,13 +1096,14 @@ class SqlAnalyzer {
   // Resolve common types across multiple plan nodes (for VALUES, UNION, etc.)
   // and wrap each node in a ProjectNode with casts where types differ.
   void FindCommonTypeAndApplyCoercions(
-    std::vector<lp::LogicalPlanNodePtr>& inputs) {
+    std::vector<lp::LogicalPlanNodePtr>& inputs,
+    std::string_view operation_name) {
     SDB_ASSERT(!inputs.empty());
     const auto& first_output = *inputs[0]->outputType();
     const auto col_count = first_output.size();
 
     SDB_ASSERT(absl::c_all_of(inputs, [&](const lp::LogicalPlanNodePtr& input) {
-      return *input->outputType() == first_output;
+      return input->outputType()->size() == col_count;
     }));
 
     // Resolve the common type per column across all inputs.
@@ -1111,13 +1112,16 @@ class SqlAnalyzer {
     for (uint32_t i = 0; i < col_count; ++i) {
       velox::TypePtr resolved = first_output.childAt(i);
       for (const auto& input : std::span{inputs}.subspan(1)) {
-        resolved = velox::TypeCoercer::leastCommonSuperType(
-          resolved, input->outputType()->childAt(i));
-        if (!resolved) {
+        const auto& input_type = input->outputType()->childAt(i);
+        auto new_resolved =
+          velox::TypeCoercer::leastCommonSuperType(resolved, input_type);
+        if (!new_resolved) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-            ERR_MSG("set operation types cannot be matched in column ", i + 1));
+            ERR_MSG(operation_name, " types ", ToPgTypeString(resolved),
+                    " and ", ToPgTypeString(input_type), " cannot be matched"));
         }
+        resolved = std::move(new_resolved);
       }
       types.push_back(std::move(resolved));
     }
@@ -3184,30 +3188,6 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
     names.emplace_back(std::move(name));
   }
 
-  if (const_values) {
-    std::vector<velox::TypePtr> types;
-    types.reserve(row_size);
-    for (int i = 0; i < row_size; ++i) {
-      velox::TypePtr resolved = values[0][i]->type();
-      for (size_t r = 1; r < values.size(); ++r) {
-        resolved = velox::TypeCoercer::leastCommonSuperType(
-          resolved, values[r][i]->type());
-        if (!resolved) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-            ERR_MSG("VALUES types cannot be matched in column ", i + 1));
-        }
-      }
-      types.push_back(std::move(resolved));
-    }
-
-    auto output_type = velox::ROW(names, types);
-    state.root = std::make_shared<lp::ValuesNode>(_id_generator.NextPlanId(),
-                                                  std::move(output_type),
-                                                  std::move(row_values));
-    return;
-  }
-
   std::vector<lp::LogicalPlanNodePtr> values_nodes;
   values_nodes.reserve(values.size());
   for (auto& value : values) {
@@ -3230,7 +3210,7 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
   if (values_nodes.size() == 1) {
     state.root = std::move(values_nodes.front());
   } else {
-    FindCommonTypeAndApplyCoercions(values_nodes);
+    FindCommonTypeAndApplyCoercions(values_nodes, "VALUES");
     state.root = std::make_shared<lp::SetNode>(_id_generator.NextPlanId(),
                                                std::move(values_nodes),
                                                lp::SetOperation::kUnionAll);
@@ -3795,13 +3775,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
 
   _expr_for_scorer = std::move(l_expr_for_scorer);
 
-  const auto set_operation_type = [&] {
+  const auto [set_operation_type, set_operation_name] =
+    [&] -> std::pair<lp::SetOperation, std::string_view> {
     switch (stmt.op) {
       case SETOP_UNION:
         if (stmt.all) {
-          return lp::SetOperation::kUnionAll;
+          return {lp::SetOperation::kUnionAll, "UNION"};
         } else {
-          return lp::SetOperation::kUnion;
+          return {lp::SetOperation::kUnion, "UNION"};
         }
       case SETOP_INTERSECT:
         if (stmt.all) {
@@ -3809,14 +3790,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "INTERSECT ALL is not implemented yet");
         } else {
-          return lp::SetOperation::kIntersect;
+          return {lp::SetOperation::kIntersect, "INTERSECT"};
         }
       case SETOP_EXCEPT:
         if (stmt.all) {
           // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED, "EXCEPT ALL is not implemented yet");
         } else {
-          return lp::SetOperation::kExcept;
+          return {lp::SetOperation::kExcept, "EXCEPT"};
         }
       default:
         SDB_THROW(ERROR_NOT_IMPLEMENTED);
@@ -3825,16 +3806,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
 
   if (l_state.root->outputType()->size() !=
       r_state.root->outputType()->size()) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "set operation requires both sides to have the same number of "
-              "columns, but got: ",
-              l_state.root->outputType()->size(), " and ",
-              r_state.root->outputType()->size());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("each ", set_operation_name,
+                            " query must have the same number of columns"));
   }
   std::vector<lp::LogicalPlanNodePtr> inputs;
   inputs.push_back(std::move(l_state.root));
   inputs.push_back(std::move(r_state.root));
-  FindCommonTypeAndApplyCoercions(inputs);
+  FindCommonTypeAndApplyCoercions(inputs, set_operation_name);
   state.resolver = std::move(l_state.resolver);
   state.resolver.ClearTables();
   SDB_ASSERT(!state.root);
@@ -5205,7 +5184,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
     }
     case T_String: {
       std::string_view v = strVal(&expr.val);
-      return MakeConst(v);
+      return MakeConst(v, PGUNKNOWN());
     }
     case T_BitString:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

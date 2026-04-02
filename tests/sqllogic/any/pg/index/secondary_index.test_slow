@@ -120,3 +120,384 @@ SELECT count(*) FROM clickclack_division WHERE leader = 'nobody';
 
 statement ok
 DROP TABLE clickclack_division;
+
+statement count 10000
+CREATE TABLE vedernikoff_or_and_bulk AS
+SELECT
+  g.id AS id,
+  g.id % 50 AS score,
+  g.id % 7 AS tag,
+  g.id % 3 AS level
+FROM
+  generate_series(1, 10000) AS g(id);
+
+statement ok
+CREATE INDEX vedernikoff_or_and_bulk_score_idx ON vedernikoff_or_and_bulk(score);
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score = 10;
+----
+200
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score = 10 OR score = 20;
+----
+400
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score = 10 OR score = 20 OR score = 30;
+----
+600
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score IN (10, 20, 30);
+----
+600
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score IN (10, 20, 30, 10, 20, 30);
+----
+600
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score IN (10, 10, 10, 10);
+----
+200
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score = 10 OR score IN (10, 20);
+----
+400
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk WHERE score IN (10, 20) OR score = 20 OR score = 10;
+----
+400
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE (tag = 0 AND score = 10) OR score = 20;
+----
+228
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE (tag = 0 AND level = 0 AND score = 10) OR score = 20;
+----
+210
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE score = 10 OR (score = 20 AND tag = 1) OR (score = 30 AND tag = 2 AND level = 0);
+----
+239
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE (level = 0 AND tag = 0 AND score = 10) OR (level = 1 AND tag = 1 AND score = 20)
+  OR (level = 2 AND tag = 2 AND score = 30);
+----
+29
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE score = 10 OR tag = 0;
+----
+1600
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE (score = 10 AND tag = 999) OR score = 20;
+----
+200
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE (score = 10 OR score = 20) AND tag = 0;
+----
+57
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE score IN (10, 20) AND tag = 0;
+----
+57
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE score IN (10, 20, 30, 40) AND tag IN (0, 1);
+----
+228
+
+query
+SELECT count(*) FROM vedernikoff_or_and_bulk
+WHERE (score = 0 AND tag = 0) OR (score = 1 AND tag = 1) OR (score = 2 AND tag = 2)
+  OR (score = 3 AND tag = 3) OR (score = 4 AND tag = 4) OR (score = 5 AND tag = 5)
+  OR (score = 6 AND tag = 6);
+----
+202
+
+query
+SELECT id, score, tag, level FROM vedernikoff_or_and_bulk
+WHERE (tag = 0 AND score = 10) OR score = 20
+ORDER BY id LIMIT 10;
+----
+20	20	6	2
+70	20	0	1
+120	20	1	0
+170	20	2	2
+210	10	0	0
+220	20	3	1
+270	20	4	0
+320	20	5	2
+370	20	6	1
+420	20	0	0
+
+query
+SELECT id, score, tag, level FROM vedernikoff_or_and_bulk
+WHERE score = 10 OR (score = 20 AND tag = 1) OR (score = 30 AND tag = 2 AND level = 0)
+ORDER BY id LIMIT 10;
+----
+10	10	3	1
+30	30	2	0
+60	10	4	0
+110	10	5	2
+120	20	1	0
+160	10	6	1
+210	10	0	0
+260	10	1	2
+310	10	2	1
+360	10	3	0
+
+query
+SELECT id, score, tag, level FROM vedernikoff_or_and_bulk
+WHERE (level = 0 AND tag = 0 AND score = 10) OR (level = 1 AND tag = 1 AND score = 20)
+  OR (level = 2 AND tag = 2 AND score = 30)
+ORDER BY id;
+----
+116 values hashing to 1c1c3b0d6cde1bf0717d3ca69d3694c7
+
+query
+SELECT id, score, tag, level FROM vedernikoff_or_and_bulk
+WHERE (score = 0 AND tag = 0) OR (score = 1 AND tag = 1) OR (score = 2 AND tag = 2)
+  OR (score = 3 AND tag = 3) OR (score = 4 AND tag = 4) OR (score = 5 AND tag = 5)
+  OR (score = 6 AND tag = 6)
+ORDER BY id LIMIT 15;
+----
+1	1	1	1
+2	2	2	2
+3	3	3	0
+4	4	4	1
+5	5	5	2
+6	6	6	0
+350	0	0	2
+351	1	1	0
+352	2	2	1
+353	3	3	2
+354	4	4	0
+355	5	5	1
+356	6	6	2
+700	0	0	1
+701	1	1	2
+
+query
+SELECT id, score, tag, level FROM vedernikoff_or_and_bulk
+WHERE score IN (10, 20, 10, 20, 10) AND tag = 0
+ORDER BY id LIMIT 10;
+----
+70	20	0	1
+210	10	0	0
+420	20	0	0
+560	10	0	2
+770	20	0	2
+910	10	0	1
+1120	20	0	1
+1260	10	0	0
+1470	20	0	0
+1610	10	0	2
+
+statement ok
+DROP TABLE vedernikoff_or_and_bulk;
+
+statement count 10000
+CREATE TABLE babsky_or_and_comp_bulk AS
+SELECT
+  g.id AS id,
+  g.id % 20 AS a,
+  g.id % 30 AS b,
+  g.id % 7 AS c
+FROM
+  generate_series(1, 10000) AS g(id);
+
+statement ok
+CREATE INDEX babsky_or_and_comp_bulk_ab_idx ON babsky_or_and_comp_bulk(a, b);
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk WHERE a = 10 AND b = 10;
+----
+167
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk WHERE a IN (10, 11) AND b = 10;
+----
+167
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk WHERE a = 10 AND b IN (10, 20);
+----
+333
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk
+WHERE (a = 10 AND b = 10) OR (a = 11 AND b = 11);
+----
+334
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk
+WHERE a = 10 AND b IN (10, 10, 20, 20);
+----
+333
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk
+WHERE (a = 10 AND b = 10 AND c = 0) OR (a = 11 AND b = 11);
+----
+191
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk
+WHERE (a = 10 AND b = 10) OR (a = 10 AND b = 20) OR (a = 11 AND b = 10) OR (a = 11 AND b = 20);
+----
+333
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk
+WHERE a IN (10, 11) AND b IN (10, 20);
+----
+333
+
+query
+SELECT count(*) FROM babsky_or_and_comp_bulk
+WHERE (c = 0 AND a = 10 AND b = 10) OR (c = 1 AND a = 11 AND b = 11);
+----
+48
+
+query
+SELECT id, a, b, c FROM babsky_or_and_comp_bulk
+WHERE (c = 0 AND a = 10 AND b = 10) OR (c = 1 AND a = 11 AND b = 11)
+ORDER BY id;
+----
+192 values hashing to b593a998a454ccfe3fcedbc2d3b70be6
+
+query
+SELECT id, a, b, c FROM babsky_or_and_comp_bulk
+WHERE (a = 10 AND b = 10) OR (a = 10 AND b = 20) OR (a = 11 AND b = 10) OR (a = 11 AND b = 20)
+ORDER BY id LIMIT 10;
+----
+10	10	10	3
+50	10	20	1
+70	10	10	0
+110	10	20	5
+130	10	10	4
+170	10	20	2
+190	10	10	1
+230	10	20	6
+250	10	10	5
+290	10	20	3
+
+statement ok
+DROP TABLE babsky_or_and_comp_bulk;
+
+statement count 5000
+CREATE TABLE clickclack_null_or_bulk AS
+SELECT
+  g.id AS id,
+  CASE WHEN g.id % 10 = 0 THEN NULL ELSE g.id % 50 END AS score,
+  g.id % 7 AS tag
+FROM
+  generate_series(1, 5000) AS g(id);
+
+statement ok
+CREATE INDEX clickclack_null_or_bulk_score_idx ON clickclack_null_or_bulk(score);
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk WHERE score IS NULL;
+----
+500
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk WHERE score = 1;
+----
+100
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk WHERE score IS NULL OR score = 1;
+----
+600
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk
+WHERE (score IS NULL AND tag = 0) OR score = 1;
+----
+171
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk
+WHERE score IS NULL OR score = 1 OR score = 2;
+----
+700
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk
+WHERE score IN (1, 2, 3, 1, 2, 3);
+----
+300
+
+query
+SELECT count(*) FROM clickclack_null_or_bulk
+WHERE (tag = 0 AND score = 1) OR (tag = 1 AND score = 2) OR (tag = 2 AND score = 3);
+----
+42
+
+query
+SELECT id, score, tag FROM clickclack_null_or_bulk
+WHERE (score IS NULL AND tag = 0) OR score = 1
+ORDER BY id LIMIT 10;
+----
+1	1	1
+51	1	2
+70	NULL	0
+101	1	3
+140	NULL	0
+151	1	4
+201	1	5
+210	NULL	0
+251	1	6
+280	NULL	0
+
+query
+SELECT id, score, tag FROM clickclack_null_or_bulk
+WHERE (tag = 0 AND score = 1) OR (tag = 1 AND score = 2) OR (tag = 2 AND score = 3)
+ORDER BY id;
+----
+126 values hashing to 3c9a8e3e957ae56600532c33439b2a53
+
+query
+SELECT id, score, tag FROM clickclack_null_or_bulk
+WHERE score IN (1, 2, 3, 1, 2, 3)
+ORDER BY id LIMIT 10;
+----
+1	1	1
+2	2	2
+3	3	3
+51	1	2
+52	2	3
+53	3	4
+101	1	3
+102	2	4
+103	3	5
+151	1	4
+
+statement ok
+DROP TABLE clickclack_null_or_bulk;

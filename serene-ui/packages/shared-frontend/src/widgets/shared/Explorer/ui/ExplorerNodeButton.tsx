@@ -3,6 +3,7 @@ import {
     Button,
     cn,
     LoaderIcon,
+    PinIcon,
     Tooltip,
     TooltipContent,
     TooltipTrigger,
@@ -21,6 +22,8 @@ interface ExplorerNodeButtonProps {
     isError?: boolean;
     rightText?: string;
     rightNode?: React.ReactNode;
+    isPinned?: boolean;
+    onTogglePin?: () => void;
 }
 
 export const ExplorerNodeButton = ({
@@ -35,6 +38,8 @@ export const ExplorerNodeButton = ({
     isError = false,
     rightText,
     rightNode,
+    isPinned = false,
+    onTogglePin,
 }: ExplorerNodeButtonProps) => {
     return (
         <div
@@ -76,6 +81,29 @@ export const ExplorerNodeButton = ({
                     <span className="ml-auto text-xs text-secondary-foreground/50">
                         {rightText}
                     </span>
+                )}
+                {onTogglePin && (
+                    <Button
+                        variant="ghost"
+                        size="iconSmall"
+                        className={cn(
+                            "text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5",
+                            !rightText && !rightNode && "ml-auto",
+                        )}
+                        title={isPinned ? "Unpin" : "Pin"}
+                        onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onTogglePin();
+                        }}>
+                        <PinIcon
+                            className={
+                                isPinned
+                                    ? "size-3 text-foreground fill-current"
+                                    : "size-3"
+                            }
+                        />
+                    </Button>
                 )}
             </div>
         </div>

@@ -19,9 +19,18 @@ export const ExplorerQueryNode = ({
 }) => {
     const [isError, setIsError] = useState(false);
     const { node, style } = nodeData;
-    const { treeRef, addNodes, refreshNode, updateNodeData } = useExplorer();
+    const {
+        treeRef,
+        addNodes,
+        refreshNode,
+        updateNodeData,
+        enablePinning,
+        isNodePinned,
+        togglePinnedNode,
+    } = useExplorer();
 
     const nodeType = node.data.type as keyof typeof nodeTemplates;
+    const pinned = enablePinning && isNodePinned(node.data);
     const { mutateAsync: executeQuery, isPending: isLoading } =
         useExecuteQuery<QueryExecutionResultSchema[]>();
 
@@ -160,9 +169,25 @@ export const ExplorerQueryNode = ({
                     style={style}
                     isLoading={isLoading}
                     isError={node.data.isError || isError}
+                    isPinned={pinned}
+                    onTogglePin={
+                        enablePinning
+                            ? () => {
+                                  togglePinnedNode(node.data);
+                              }
+                            : undefined
+                    }
                 />
             </ContextMenuTrigger>
             <ContextMenuContent className="w-52">
+                {enablePinning ? (
+                    <ContextMenuItem
+                        onClick={() => {
+                            togglePinnedNode(node.data);
+                        }}>
+                        {pinned ? "Unpin" : "Pin"}
+                    </ContextMenuItem>
+                ) : null}
                 <ContextMenuItem onClick={handleRefresh}>
                     Refresh
                 </ContextMenuItem>

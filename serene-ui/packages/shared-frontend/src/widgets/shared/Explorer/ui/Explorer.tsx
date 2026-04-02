@@ -6,12 +6,16 @@ import React, {
     type ReactElement,
 } from "react";
 import { NodeApi, Tree } from "react-arborist";
-import type { ExplorerNodeData, ExplorerNodeProps } from "../model";
+import type {
+    ExplorerNodeData,
+    ExplorerNodeProps,
+    ExplorerPinningOptions,
+} from "../model";
 import { ExplorerNode } from "./ExplorerNode";
 import { ExplorerProvider, useExplorer } from "../model/ExplorerProvider";
 import { Skeleton, useResizeObserver } from "@serene-ui/shared-frontend/shared";
 
-interface ExplorerProps {
+interface ExplorerProps extends ExplorerPinningOptions {
     initialData: ExplorerNodeData[];
     searchTerm?: string;
     isDataFetched?: boolean;
@@ -84,9 +88,22 @@ const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
 );
 
 export const Explorer = forwardRef<HTMLDivElement, ExplorerProps>(
-    ({ initialData, searchTerm, isDataFetched }, ref) => {
+    (
+        {
+            initialData,
+            searchTerm,
+            isDataFetched,
+            enablePinning,
+            isNodePinned,
+            onTogglePinned,
+        },
+        ref,
+    ) => {
         return (
-            <ExplorerProvider>
+            <ExplorerProvider
+                enablePinning={enablePinning}
+                isNodePinned={isNodePinned}
+                onTogglePinned={onTogglePinned}>
                 <WrappedExplorer
                     ref={ref}
                     initialData={initialData}

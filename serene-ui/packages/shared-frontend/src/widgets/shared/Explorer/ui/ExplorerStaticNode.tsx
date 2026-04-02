@@ -17,7 +17,13 @@ export const ExplorerStaticNode = ({
 }) => {
     const [isLoading, setIsLoading] = useState(false);
     const { node, style } = nodeData;
-    const { addNodes, refreshNode } = useExplorer();
+    const {
+        addNodes,
+        refreshNode,
+        enablePinning,
+        isNodePinned,
+        togglePinnedNode,
+    } = useExplorer();
     const { currentConnection } = useConnection();
 
     const nodeType = node.data.type as keyof typeof nodeTemplates;
@@ -25,6 +31,7 @@ export const ExplorerStaticNode = ({
         nodeType === "database" &&
         node.data.context?.connectionId === currentConnection.connectionId &&
         node.data.context?.database === currentConnection.database;
+    const pinned = enablePinning && isNodePinned(node.data);
 
     const handleClick = async () => {
         if (!node.isOpen) {
@@ -77,9 +84,25 @@ export const ExplorerStaticNode = ({
                             </div>
                         ) : undefined
                     }
+                    isPinned={pinned}
+                    onTogglePin={
+                        enablePinning
+                            ? () => {
+                                  togglePinnedNode(node.data);
+                              }
+                            : undefined
+                    }
                 />
             </ContextMenuTrigger>
             <ContextMenuContent className="w-52">
+                {enablePinning ? (
+                    <ContextMenuItem
+                        onClick={() => {
+                            togglePinnedNode(node.data);
+                        }}>
+                        {pinned ? "Unpin" : "Pin"}
+                    </ContextMenuItem>
+                ) : null}
                 <ContextMenuItem onClick={handleRefresh}>
                     Refresh
                 </ContextMenuItem>

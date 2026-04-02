@@ -7,13 +7,15 @@ import {
 import { ConsoleSidebarTopbar } from "./ConsoleSidebarTopbar";
 import { ConsoleSidebarHeader } from "./ConsoleSidebarHeader";
 import { ConsoleSidebarSavedQueries } from "./ConsoleSidebarSavedQueries";
+import { ConsoleSidebarPinned } from "./ConsoleSidebarPinned";
 import {
     EntitiesIcon,
     SavedQueriesIcon,
-    StarIcon,
 } from "@serene-ui/shared-frontend";
+import { PinIcon } from "../../../../shared/ui/icons/index";
 import { ConsoleExplorer } from "../../ConsoleExplorer";
 import { useDockviewLayoutSync } from "../../../../shared/hooks";
+import { ConsoleSidebarPinnedProvider } from "../model";
 
 interface ConsoleSidebarProps {}
 
@@ -21,8 +23,8 @@ const components = {
     entities: () => {
         return <ConsoleExplorer />;
     },
-    favorites: () => {
-        return <></>;
+    pinned: () => {
+        return <ConsoleSidebarPinned />;
     },
     savedQueries: () => {
         return <ConsoleSidebarSavedQueries />;
@@ -66,6 +68,36 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
         [],
     );
 
+    const equalizeEntitiesAndSavedQueries = React.useCallback(
+        (event: PaneviewReadyEvent) => {
+            const entitiesPanel = event.api.panels.find(
+                (panel) => panel.params?.kind === "entities",
+            );
+            const savedQueriesPanel = event.api.panels.find(
+                (panel) => panel.params?.kind === "savedQueries",
+            );
+
+            if (!entitiesPanel || !savedQueriesPanel) {
+                return;
+            }
+
+            if (!entitiesPanel.api.isExpanded || !savedQueriesPanel.api.isExpanded) {
+                return;
+            }
+
+            const targetPanelHeight =
+                (entitiesPanel.height + savedQueriesPanel.height) / 2;
+
+            entitiesPanel.api.setSize({
+                size: Math.max(targetPanelHeight, entitiesPanel.minimumSize),
+            });
+            savedQueriesPanel.api.setSize({
+                size: Math.max(targetPanelHeight, savedQueriesPanel.minimumSize),
+            });
+        },
+        [],
+    );
+
     const onReady = (event: PaneviewReadyEvent) => {
         setApi(event.api);
         const expansionListeners = new Map<string, DockviewIDisposable>();
@@ -82,20 +114,21 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
                     }
 
                     equalizeExpandedPanels(event);
+                    equalizeEntitiesAndSavedQueries(event);
                 }),
             );
         };
 
         event.api.addPanel({
             id: "panel_1",
-            component: "favorites",
+            component: "pinned",
             headerComponent: "default",
             params: {
-                title: "Favorites",
-                icon: <StarIcon className="size-3.5" />,
-                kind: "favorites",
+                title: "Pinned",
+                icon: <PinIcon className="size-3.5" />,
+                kind: "pinned",
             },
-            title: "Favorites",
+            title: "Pinned",
             headerSize: 36,
         });
 
@@ -128,6 +161,10 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
         event.api.panels.forEach(bindPanelExpansionListener);
         event.api.onDidAddView(bindPanelExpansionListener);
 
+        requestAnimationFrame(() => {
+            equalizeEntitiesAndSavedQueries(event);
+        });
+
         event.api.onDidRemoveView((panel) => {
             expansionListeners.get(panel.id)?.dispose();
             expansionListeners.delete(panel.id);
@@ -135,13 +172,15 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
     };
 
     return (
-        <div ref={containerRef} className="flex flex-col h-full w-full">
-            <ConsoleSidebarTopbar />
-            <PaneviewReact
-                onReady={onReady}
-                components={components}
-                headerComponents={headerComponents}
-            />
-        </div>
+        <ConsoleSidebarPinnedProvider>
+            <div ref={containerRef} className="flex flex-col h-full w-full">
+                <ConsoleSidebarTopbar />
+                <PaneviewReact
+                    onReady={onReady}
+                    components={components}
+                    headerComponents={headerComponents}
+                />
+            </div>
+        </ConsoleSidebarPinnedProvider>
     );
 };

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState } from "react";
 import type { TreeApi } from "react-arborist";
-import type { ExplorerNodeData } from "./types";
+import type { ExplorerNodeData, ExplorerPinningOptions } from "./types";
 
 interface ExplorerContextType {
     currentTree: ExplorerNodeData[];
@@ -17,6 +17,9 @@ interface ExplorerContextType {
         nodeId: string,
         updates: Partial<ExplorerNodeData>,
     ) => void;
+    enablePinning: boolean;
+    isNodePinned: (node: ExplorerNodeData) => boolean;
+    togglePinnedNode: (node: ExplorerNodeData) => void;
 }
 
 const ExplorerContext = createContext<ExplorerContextType | undefined>(
@@ -25,9 +28,12 @@ const ExplorerContext = createContext<ExplorerContextType | undefined>(
 
 export const ExplorerProvider = ({
     children,
+    enablePinning = false,
+    isNodePinned,
+    onTogglePinned,
 }: {
     children: React.ReactNode;
-}) => {
+} & ExplorerPinningOptions) => {
     const [tree, setTree] = useState<ExplorerNodeData[]>([]);
     const treeRef = React.useRef<TreeApi<ExplorerNodeData> | null>(null);
 
@@ -198,6 +204,9 @@ export const ExplorerProvider = ({
                 removeNode,
                 refreshNode,
                 updateNodeData,
+                enablePinning,
+                isNodePinned: isNodePinned || (() => false),
+                togglePinnedNode: onTogglePinned || (() => {}),
             }}>
             {children}
         </ExplorerContext.Provider>

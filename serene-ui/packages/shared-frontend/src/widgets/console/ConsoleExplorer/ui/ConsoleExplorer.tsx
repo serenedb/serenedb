@@ -2,15 +2,16 @@ import { Explorer } from "@serene-ui/shared-frontend/widgets";
 import type { ExplorerNodeData } from "../../../shared/Explorer";
 import { useEffect, useState } from "react";
 import { useGetConnections } from "@serene-ui/shared-frontend/entities";
-import { Input } from "@serene-ui/shared-frontend/shared";
+import { useConsoleSidebarPinned } from "../../ConsoleSidebar/model";
 
 interface ConsoleExplorerProps {
     explorerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export const ConsoleExplorer = ({ explorerRef }: ConsoleExplorerProps) => {
-    const [searchTerm, setSearchTerm] = useState<string>();
+    const [searchTerm] = useState<string>();
     const [initialData, setInitialData] = useState<ExplorerNodeData[]>();
+    const { isNodePinned, togglePinnedNode } = useConsoleSidebarPinned();
     const {
         data: connections,
         isFetched: isDataFetched,
@@ -39,6 +40,9 @@ export const ConsoleExplorer = ({ explorerRef }: ConsoleExplorerProps) => {
                 searchTerm={searchTerm}
                 initialData={initialData || []}
                 isDataFetched={isDataFetched && !isDataLoading}
+                enablePinning
+                isNodePinned={isNodePinned}
+                onTogglePinned={togglePinnedNode}
             />
         </>
     );

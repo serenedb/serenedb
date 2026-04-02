@@ -491,9 +491,8 @@ void ObjectCollector::CollectValuesLists(const State& state,
     if (tuple_length < 0) {
       tuple_length = list_length(&tuple);
     } else if (tuple_length != list_length(&tuple)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("VALUES lists must have the same number of columns"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("VALUES lists must all be the same length"));
     }
     VisitNodes(&tuple,
                [&](const Node& expr) { CollectExprNode(state, &expr); });

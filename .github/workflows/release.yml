@@ -1,6 +1,6 @@
-name: SereneDB-Release
+name: serenedb | make release
 
-run-name: "SereneDB Release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
+run-name: "serenedb | make release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
 
 on:
   workflow_dispatch:
@@ -69,10 +69,11 @@ jobs:
   build-x64:
     if: inputs.BUILD_X64
     needs: [resolve-version]
-    uses: ./.github/workflows/build-reusable.yml
+    uses: ./.github/workflows/make-package.yml
     with:
-      PRESET: release
       LOCATION: X64
+      RUN_RTA: true
+      UPLOAD_ARTIFACTS: true
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
@@ -80,10 +81,11 @@ jobs:
   build-arm64:
     if: inputs.BUILD_ARM64
     needs: [resolve-version]
-    uses: ./.github/workflows/build-reusable.yml
+    uses: ./.github/workflows/make-package.yml
     with:
-      PRESET: release
       LOCATION: arm
+      RUN_RTA: true
+      UPLOAD_ARTIFACTS: true
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
@@ -236,7 +238,7 @@ jobs:
                   || 'failure'
             }}
           ACTOR: ${{ github.actor }}
-          RUN_NAME: "SereneDB [release]"
+          RUN_NAME: "serenedb | make release"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash

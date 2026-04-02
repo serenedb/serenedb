@@ -1,53 +1,240 @@
-name: SereneDB-Build-Manual
+name: serenedb | build & test
 
-run-name: "SereneDB [${{ inputs.PRESET }}]"
+run-name: "serenedb | build & test [${{ inputs.LOCATION }}]"
 
 on:
   workflow_dispatch:
     inputs:
-      PRESET:
-        description: 'Build preset'
-        type: choice
-        required: true
-        default: 'build'
-        options:
-          - asan
-          - tsan
-          - msan
-          - ubsan
-          - coverage
-          - build
       LOCATION:
-        description: 'Where the load is executed'
+        description: 'Runner label (all = X64 + arm in parallel)'
         type: choice
         required: true
+        default: 'self-hosted'
         options:
+          - self-hosted
           - X64
           - arm
-          - self-hosted
-        default: 'X64'
-      EXTRA_ARTIFACTS:
-        description: 'Keep these artifacts additionally'
-        type: string
-        required: false
-        default: ''
+          - all
+      ENABLE_ASAN:
+        description: 'Run ASAN tests'
+        type: boolean
+        default: false
+      ENABLE_TSAN:
+        description: 'Run TSAN tests'
+        type: boolean
+        default: false
+      ENABLE_MSAN:
+        description: 'Run MSAN tests'
+        type: boolean
+        default: false
+      VALIDATE_PG_TESTS:
+        description: 'Validate tests with Postgres'
+        type: boolean
+        default: true
       BUILD_CONFIG:
-        description: 'JSON configuration for builds and job settings'
+        description: 'Internal: PR metadata (set by trigger bot)'
         type: string
         required: false
-        default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
+        default: '{}'
 
 permissions:
   statuses: write
   contents: write
 
 jobs:
-  call-reusable:
+  # ==================== BASE JOBS (always) ====================
+  test-unit:
+    name: Unit Tests (${{ matrix.location }})
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
-      PRESET: ${{ inputs.PRESET }}
-      LOCATION: ${{ inputs.LOCATION }}
-      EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
-      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-
+      LOCATION: ${{ matrix.location }}
+      KIND: unit
+      DEV: true
+      INSTRUMENTATION: none
     secrets: inherit
+
+  test-functional:
+    name: Functional Tests (${{ matrix.location }})
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: functional_fast
+      DEV: true
+      INSTRUMENTATION: none
+    secrets: inherit
+
+  compile-check:
+    name: Release Compile Check (${{ matrix.location }})
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: none
+      DEV: false
+      INSTRUMENTATION: none
+    secrets: inherit
+
+  validate-pg:
+    name: Validate PG Tests (${{ matrix.location }})
+    if: inputs.VALIDATE_PG_TESTS
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/validate-pg-tests.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      FAST: false
+      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+    secrets: inherit
+
+  # ==================== OPTIONAL SANITIZER JOBS ====================
+  test-unit-asan:
+    name: Unit Tests ASAN (${{ matrix.location }})
+    if: inputs.ENABLE_ASAN
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: unit
+      DEV: true
+      INSTRUMENTATION: asan
+    secrets: inherit
+
+  test-functional-asan:
+    name: Functional Tests ASAN (${{ matrix.location }})
+    if: inputs.ENABLE_ASAN
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: functional_fast
+      DEV: true
+      INSTRUMENTATION: asan
+    secrets: inherit
+
+  test-unit-tsan:
+    name: Unit Tests TSAN (${{ matrix.location }})
+    if: inputs.ENABLE_TSAN
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: unit
+      DEV: true
+      INSTRUMENTATION: tsan
+    secrets: inherit
+
+  test-functional-tsan:
+    name: Functional Tests TSAN (${{ matrix.location }})
+    if: inputs.ENABLE_TSAN
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: functional_fast
+      DEV: true
+      INSTRUMENTATION: tsan
+    secrets: inherit
+
+  test-unit-msan:
+    name: Unit Tests MSAN (${{ matrix.location }})
+    if: inputs.ENABLE_MSAN
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: unit
+      DEV: true
+      INSTRUMENTATION: msan
+    secrets: inherit
+
+  test-functional-msan:
+    name: Functional Tests MSAN (${{ matrix.location }})
+    if: inputs.ENABLE_MSAN
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ matrix.location }}
+      KIND: functional_fast
+      DEV: true
+      INSTRUMENTATION: msan
+    secrets: inherit
+
+  # ==================== REPORT ====================
+  report:
+    name: Report Status
+    needs: [test-unit, test-functional, compile-check, validate-pg, test-unit-asan, test-functional-asan, test-unit-tsan, test-functional-tsan, test-unit-msan, test-functional-msan]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for notify script)
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Send Telegram notification
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID_MAIN: "51"
+          TG_THREAD_ID_BUILD: "53"
+          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+          BRANCH: ${{ github.ref_name }}
+          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
+          RUN_NAME: "serenedb | build & test [${{ inputs.LOCATION }}]"
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/notify_telegram.bash
+
+      - name: Update PR commit status
+        if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const config = JSON.parse(process.env.BUILD_CONFIG);
+            const state = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: config.PR_SHA,
+              state: state,
+              description: state === 'success' ? 'All checks passed' : 'Some checks failed',
+              context: config.PR_STATUS_CONTEXT || 'serenedb | build & test',
+              target_url: runUrl,
+            });
+        env:
+          BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}

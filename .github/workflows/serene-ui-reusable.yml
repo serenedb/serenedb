@@ -1,4 +1,4 @@
-name: SereneUI-Build-Base
+name: task | sereneui build & tests
 
 on:
     workflow_call:
@@ -134,16 +134,10 @@ jobs:
                   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
               run: ./scripts/build_docker.sh
 
-            - name: Cleanup workspace & Docker
-              if: always()
-              run: |
-                  docker system prune -f 2>/dev/null || true
-                  docker volume prune -f 2>/dev/null || true
-
     build-linux-app:
         name: Build Linux App
         if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-latest # TODO: move to X64 when Node available on self-hosted
         permissions:
             contents: read
         timeout-minutes: 30
@@ -367,49 +361,45 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-    release:
-        name: Publish GitHub Release
-        needs: [build-linux-app, build-windows-app, build-macos-app, build-docker]
-        if: >-
-            always()
-            && inputs.PUSH_RELEASE
-            && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP)
-            && !contains(needs.*.result, 'failure')
-        runs-on: X64
+    release-and-notify:
+        name: Release & Notify
+        needs: [build-docker, build-linux-app, build-windows-app, build-macos-app]
+        if: always()
+        runs-on: ubuntu-latest
         permissions:
             contents: write
+        timeout-minutes: 10
         steps:
+            # ==================== RELEASE (conditional) ====================
             - name: Validate release inputs
               if: inputs.PUSH_RELEASE && inputs.VERSION == ''
               run: |
                   echo "VERSION is required when PUSH_RELEASE=true"
                   exit 1
 
-            - name: Clean release-assets directory
-              run: rm -rf "${{ github.workspace }}/release-assets"
-
             - name: Download Linux artifacts
-              if: inputs.BUILD_LINUX_APP
+              if: inputs.PUSH_RELEASE && inputs.BUILD_LINUX_APP && !contains(needs.*.result, 'failure')
               uses: actions/download-artifact@v4
               with:
                   name: serene-ui-linux
                   path: release-assets/linux
 
             - name: Download Windows artifacts
-              if: inputs.BUILD_WINDOWS_APP
+              if: inputs.PUSH_RELEASE && inputs.BUILD_WINDOWS_APP && !contains(needs.*.result, 'failure')
               uses: actions/download-artifact@v4
               with:
                   name: serene-ui-windows
                   path: release-assets/windows
 
             - name: Download macOS artifacts
-              if: inputs.BUILD_MACOS_APP
+              if: inputs.PUSH_RELEASE && inputs.BUILD_MACOS_APP && !contains(needs.*.result, 'failure')
               uses: actions/download-artifact@v4
               with:
                   name: serene-ui-macos
                   path: release-assets/macos
 
             - name: Create GitHub Release
+              if: inputs.PUSH_RELEASE && !contains(needs.*.result, 'failure')
               uses: softprops/action-gh-release@v2
               with:
                   tag_name: v${{ inputs.VERSION }}-ui
@@ -421,32 +411,13 @@ jobs:
                   token: ${{ secrets.GITHUB_TOKEN }}
                   files: release-assets/**/*
 
-    notify:
-        name: Send Notification
-        needs:
-            [
-                build-docker,
-                build-linux-app,
-                build-windows-app,
-                build-macos-app,
-                release,
-            ]
-        if: always()
-        runs-on: X64
-        timeout-minutes: 5
-        steps:
-            - name: Resolve branch
-              run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
-
+            # ==================== NOTIFY (always) ====================
             - name: Checkout (for notify script)
               uses: actions/checkout@v6
               with:
                   repository: serenedb/serenedb
-                  ref: ${{ env.BRANCH }}
                   token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      scripts
+                  sparse-checkout: scripts
                   sparse-checkout-cone-mode: true
 
             - name: Send Telegram notification
@@ -456,15 +427,14 @@ jobs:
                   TG_THREAD_ID_MAIN: "51"
                   TG_THREAD_ID_BUILD: "53"
                   TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ env.BRANCH }}
-                  JOB_STATUS: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
+                  BRANCH: ${{ github.ref_name }}
+                  JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
                   ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
+                  WORKFLOW: "sereneui | build & test"
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
                   JOB_STATUS_DOCKER: ${{ needs.build-docker.result }}
                   JOB_STATUS_LINUX: ${{ needs.build-linux-app.result }}
                   JOB_STATUS_WINDOWS: ${{ needs.build-windows-app.result }}
                   JOB_STATUS_MACOS: ${{ needs.build-macos-app.result }}
-                  JOB_STATUS_RELEASE: ${{ needs.release.result }}
               run: ./scripts/notify_telegram_serene-ui.bash

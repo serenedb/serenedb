@@ -41,7 +41,7 @@ services:
       - CARGO_TARGET_DIR=/cargo-target
     networks:
       - recovery-network
-    command: sqllogic/run_recovery.sh
+    command: sqllogic/run_recovery_tests.sh
 
 networks:
   recovery-network:

@@ -181,22 +181,17 @@ jobs:
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
-      # ==================== GTEST PARALLEL CACHE ====================
-      - name: Restore gtest-parallel timing cache
-        id: gtest-cache
-        uses: actions/cache@v4
-        with:
-          path: .gtest-parallel-cache
-          key: gtest-times-${{ inputs.PRESET }}-${{ env.BRANCH }}-${{ github.run_number }}
-          restore-keys: |
-            gtest-times-${{ inputs.PRESET }}-${{ env.BRANCH }}-
-            gtest-times-${{ inputs.PRESET }}-main-
-            gtest-times-${{ inputs.PRESET }}-
-
-      - name: Prepare gtest-parallel cache directory
+      # ==================== SHARED CACHES ====================
+      # One-time setup required on each CI machine:
+      #   sudo install -d -m 2777 /mnt/data/.ccache /mnt/data/.gtest-parallel-cache /mnt/data/.cargo-target-sqllogic /mnt/data/cores
+      #   echo 'kernel.core_pattern=/mnt/data/cores/%e.%p.%t' | sudo tee /etc/sysctl.d/99-serenedb-ci.conf
+      #   echo 'kernel.randomize_va_space=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf
+      #   sudo sysctl --system
+      - name: Prepare shared cache directories
         run: |
-          mkdir -p .gtest-parallel-cache
-          echo "GTEST_PARALLEL_CACHE_DIR=${WORKSPACE}/.gtest-parallel-cache" >> $GITHUB_ENV
+          mkdir -p /mnt/data/.gtest-parallel-cache/${{ inputs.PRESET }}
+          echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/.gtest-parallel-cache/${{ inputs.PRESET }}" >> $GITHUB_ENV
+          echo "CARGO_TARGET_CACHE=/mnt/data/.cargo-target-sqllogic" >> $GITHUB_ENV
 
       # ==================== BUILD ====================
       - name: SereneDB build
@@ -235,45 +230,6 @@ jobs:
           name: tarball-${{ inputs.LOCATION }}
           path: packages/tarball/install-*.tar.gz
           retention-days: 1
-
-      # ==================== UPDATE FILE OWNERSHIP ====================
-      - name: Update file ownership
-        if: always()
-        run: ./scripts/ci/steps/07-ci-in-docker-update-file-ownership.bash
-
-      # ==================== DETERMINE FINAL STATUS ====================
-      - name: Determine final job status
-        id: final_status
-        if: always() && !cancelled()
-        run: |
-          HAS_FAILURES=false
-
-          if [[ "${{ steps.serenedb_build.outcome }}" == "failure" ]]; then
-            echo "Build failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.run_tests.outcome }}" == "failure" ]]; then
-            echo "Tests failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.serenedb_packages.outcome }}" == "failure" ]]; then
-            echo "Packages failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.coverage_report.outcome }}" == "failure" ]]; then
-            echo "Coverage report generation failed"
-            HAS_FAILURES=true
-          fi
-
-          if [[ "${{ steps.rta.outcome }}" == "failure" ]]; then
-            echo "RTA failed"
-            HAS_FAILURES=true
-          fi
-
-          echo "HAS_FAILURES=$HAS_FAILURES" >> $GITHUB_ENV
 
       # ==================== ARTIFACTS ====================
       - name: Upload build artifacts
@@ -362,7 +318,7 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ env.BRANCH }}
-          JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
+          JOB_STATUS: ${{ job.status }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
           RUN_NAME: "SereneDB [${{ inputs.PRESET }}]"
           RUN_NUMBER: ${{ github.run_number }}
@@ -376,7 +332,7 @@ jobs:
         with:
           script: |
             const config = JSON.parse(process.env.BUILD_CONFIG);
-            const state = process.env.HAS_FAILURES === 'true' ? 'failure' : 'success';
+            const state = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
@@ -389,9 +345,9 @@ jobs:
             });
         env:
           BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-          HAS_FAILURES: ${{ env.HAS_FAILURES }}
+          JOB_STATUS: ${{ job.status }}
 
       # ==================== FAIL JOB IF ANY STAGE FAILED ====================
       - name: Fail job if any stage failed
-        if: always() && !cancelled() && env.HAS_FAILURES == 'true'
+        if: always() && !cancelled() && job.status == 'failure'
         run: exit 1

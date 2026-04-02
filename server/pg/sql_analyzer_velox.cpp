@@ -1103,13 +1103,26 @@ class SqlAnalyzer {
       return input->outputType()->size() == col_count;
     }));
 
+    // treat varchar constants as pg unknown as we do for function coercions.
+    auto col_type_for_resolution = [](const lp::LogicalPlanNodePtr& input,
+                                      uint32_t col) {
+      auto type = input->outputType()->childAt(col);
+      if (type == velox::VARCHAR() && input->kind() == lp::NodeKind::kProject) {
+        auto& proj = basics::downCast<lp::ProjectNode>(*input);
+        if (proj.expressionAt(col)->kind() == lp::ExprKind::kConstant) {
+          return PGUNKNOWN();
+        }
+      }
+      return type;
+    };
+
     // Resolve the common type per column across all inputs.
     std::vector<velox::TypePtr> types;
     types.reserve(col_count);
     for (uint32_t i = 0; i < col_count; ++i) {
-      velox::TypePtr resolved = first_output.childAt(i);
+      velox::TypePtr resolved = col_type_for_resolution(inputs[0], i);
       for (const auto& input : std::span{inputs}.subspan(1)) {
-        const auto& input_type = input->outputType()->childAt(i);
+        auto input_type = col_type_for_resolution(input, i);
         auto new_resolved =
           velox::TypeCoercer::leastCommonSuperType(resolved, input_type);
         if (!new_resolved) {
@@ -3280,18 +3293,26 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
     std::vector<velox::TypePtr> types;
     types.reserve(row_size);
     bool needs_coercion = false;
+    auto expr_type = [](const lp::ExprPtr& e) {
+      if (e->type() == velox::VARCHAR() &&
+          e->kind() == lp::ExprKind::kConstant) {
+        return PGUNKNOWN();
+      }
+      return e->type();
+    };
     for (int i = 0; i < row_size; ++i) {
-      velox::TypePtr resolved = values[0][i]->type();
+      velox::TypePtr resolved = expr_type(values[0][i]);
       for (size_t r = 1; r < values.size(); ++r) {
-        auto new_resolved = velox::TypeCoercer::leastCommonSuperType(
-          resolved, values[r][i]->type());
+        auto col_type = expr_type(values[r][i]);
+        auto new_resolved =
+          velox::TypeCoercer::leastCommonSuperType(resolved, col_type);
         if (!new_resolved) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                          ERR_MSG("VALUES types ", ToPgTypeString(resolved),
-                                  " and ", ToPgTypeString(values[r][i]->type()),
-                                  " cannot be matched"));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+            ERR_MSG("VALUES types ", ToPgTypeString(resolved), " and ",
+                    ToPgTypeString(col_type), " cannot be matched"));
         }
-        if (new_resolved != resolved || new_resolved != values[r][i]->type()) {
+        if (*new_resolved != *resolved || *new_resolved != *col_type) {
           needs_coercion = true;
         }
         resolved = std::move(new_resolved);
@@ -5293,7 +5314,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
     }
     case T_String: {
       std::string_view v = strVal(&expr.val);
-      return MakeConst(v, PGUNKNOWN());
+      return MakeConst(v);
     }
     case T_BitString:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

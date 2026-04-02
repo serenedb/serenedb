@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace sdb::functions {
 
 // TODO(codeworse): add constexpr prefix + function name

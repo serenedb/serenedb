@@ -22,6 +22,7 @@ interface ExplorerNodeButtonProps {
     isError?: boolean;
     rightText?: string;
     rightNode?: React.ReactNode;
+    titleBadge?: React.ReactNode;
     isPinned?: boolean;
     onTogglePin?: () => void;
 }
@@ -38,6 +39,7 @@ export const ExplorerNodeButton = ({
     isError = false,
     rightText,
     rightNode,
+    titleBadge,
     isPinned = false,
     onTogglePin,
 }: ExplorerNodeButtonProps) => {
@@ -50,7 +52,7 @@ export const ExplorerNodeButton = ({
             <div
                 className={cn(
                     className,
-                    "pl-4 flex w-full h-full items-center justify-start border-none text-foreground dark:hover:bg-accent",
+                    "group/explorer-node pl-4 flex w-full h-full items-center justify-start border-none text-foreground dark:hover:bg-accent",
                 )}
                 onClick={onClick}>
                 {showArrow && onClick && (
@@ -58,6 +60,9 @@ export const ExplorerNodeButton = ({
                 )}
                 <div className="ml-2">{icon && icon}</div>
                 <p className="text-xs ml-1.5">{title}</p>
+                {titleBadge ? (
+                    <div className="ml-1 shrink-0">{titleBadge}</div>
+                ) : null}
                 {isLoading && (
                     <LoaderIcon className="size-3.5 ml-1 animate-spin" />
                 )}
@@ -87,8 +92,12 @@ export const ExplorerNodeButton = ({
                         variant="ghost"
                         size="iconSmall"
                         className={cn(
-                            "text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5",
+                            "text-foreground/50 hover:text-foreground bg-transparent hover:bg-white/5 transition-none duration-0",
+                            "opacity-0 pointer-events-none",
+                            "group-hover/explorer-node:opacity-100 group-hover/explorer-node:pointer-events-auto",
+                            "group-focus-within/explorer-node:opacity-100 group-focus-within/explorer-node:pointer-events-auto",
                             !rightText && !rightNode && "ml-auto",
+                            isPinned && "opacity-100 pointer-events-auto",
                         )}
                         title={isPinned ? "Unpin" : "Pin"}
                         onClick={(event) => {

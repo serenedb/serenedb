@@ -124,8 +124,8 @@ struct L2Squared : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void callNullFree(
-    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
-    const velox::exec::ArrayView<false, Elem>& r) {
+    out_type<Res>& result, const null_free_arg_type<velox::Array<Elem>>& l,
+    const null_free_arg_type<velox::Array<Elem>>& r) {
     CheckVectors(l, r);
     result = this->ComputeL2(l, r, l.size());
   }
@@ -145,8 +145,8 @@ struct L1Distance : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void callNullFree(
-    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
-    const velox::exec::ArrayView<false, Elem>& r) {
+    out_type<Res>& result, const null_free_arg_type<velox::Array<Elem>>& l,
+    const null_free_arg_type<velox::Array<Elem>>& r) {
     CheckVectors(l, r);
     result = this->ComputeL1(l, r, l.size());
   }
@@ -166,8 +166,8 @@ struct CosineSimilarity : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void callNullFree(
-    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
-    const velox::exec::ArrayView<false, Elem>& r) {
+    out_type<Res>& result, const null_free_arg_type<velox::Array<Elem>>& l,
+    const null_free_arg_type<velox::Array<Elem>>& r) {
     CheckVectors(l, r);
     result = this->ComputeCosine(l, r, l.size());
   }
@@ -184,8 +184,8 @@ struct DotProduct : public ComputeDistanceBase<Elem, Res> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void callNullFree(
-    out_type<Res>& result, const velox::exec::ArrayView<false, Elem>& l,
-    const velox::exec::ArrayView<false, Elem>& r) {
+    out_type<Res>& result, const null_free_arg_type<velox::Array<Elem>>& l,
+    const null_free_arg_type<velox::Array<Elem>>& r) {
     CheckVectors(l, r);
     result = this->ComputeDotProduct(l, r, l.size());
   }

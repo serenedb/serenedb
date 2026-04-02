@@ -218,7 +218,8 @@ echo "Iterations: $iterations"
 echo "Cancellation: $cancellation"
 
 if [[ "$fast" == "true" ]]; then
-	test='./tests/sqllogic/sdb/**/*.test'
+	# Strip trailing * to exclude .test_slow files (*.test* -> *.test)
+	test="${test%\*}"
 fi
 
 launch_external
@@ -313,12 +314,19 @@ final_exit_code=0
 build_type="release"
 [[ "$debug" == "true" ]] && build_type="debug"
 
+# Use workspace-local target dir so builds are incremental across runs
+SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-${SCRIPT_DIR}/../../.cache/cargo-target}"
+mkdir -p "$SQLLOGIC_TARGET"
+
+build_start=$(date +%s)
 if [[ "$debug" == "true" ]]; then
-	cargo install --debug --path $runner/sqllogictest-bin --quiet --force
+	cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet
 else
-	cargo install --path $runner/sqllogictest-bin --quiet --force
+	cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --release --quiet
 fi
 test_exit_code=$?
+echo "sqllogictest build: $(($(date +%s) - build_start))s"
+export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
 cancel_pid=""
@@ -364,8 +372,17 @@ for iter in $(seq 1 "$iterations"); do
 done
 
 if [[ "$cancellation" == "true" ]]; then
+	# Stop the SIGINT sender before the health check so pg_isready isn't killed
+	kill "$cancel_pid" 2>/dev/null || true
+	wait "$cancel_pid" 2>/dev/null || true
+	cancel_pid=""
+
 	local_port="${single_port:-$cluster_port}"
-	if pg_isready -h "$host" -p "$local_port" -q; then
+	# TODO: pg_isready -h "$host" -p "$local_port" returns "no attempt" (exit 3)
+	# inside the docker test container, even though the server is up. Works fine
+	# outside docker. Needs investigation into what pg_isready expects from the
+	# container environment (HOME, user mapping, pg_service.conf, etc.).
+	if bash -c "echo > /dev/tcp/$host/$local_port" 2>/dev/null; then
 		echo "[cancellation] Health check OK"
 	else
 		echo "[cancellation] ERROR: DB is not responsive!"

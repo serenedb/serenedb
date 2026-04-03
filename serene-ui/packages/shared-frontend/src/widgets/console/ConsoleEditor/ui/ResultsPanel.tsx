@@ -1,8 +1,7 @@
-import { useCallback } from "react";
 import type { FC } from "react";
 import { type IDockviewPanelProps } from "dockview";
-import { Button } from "../../../../shared";
 import { QueryResults } from "../../../shared/QueryResults";
+import { useConsole } from "../../Console/model";
 import {
     getSelectedResultIndex,
     normalizePanelParams,
@@ -14,18 +13,12 @@ import {
 export const ResultsPanel: FC<IDockviewPanelProps<ResultsPanelParams>> = (
     props,
 ) => {
+    const { colorfulTypesInResults, showJsonByDefault } = useConsole();
     const { sourceState, setSourceState } = useSourcePanelState({
         api: props.api,
         containerApi: props.containerApi,
         params: props.params,
     });
-
-    const hideResults = useCallback(() => {
-        const currentPanel = props.containerApi.getPanel(props.api.id);
-        if (currentPanel) {
-            props.containerApi.removePanel(currentPanel);
-        }
-    }, [props.api.id, props.containerApi]);
 
     const selectedResultIndex = getSelectedResultIndex(
         sourceState.results,
@@ -38,6 +31,8 @@ export const ResultsPanel: FC<IDockviewPanelProps<ResultsPanelParams>> = (
                 <QueryResults
                     results={sourceState.results}
                     selectedResultIndex={selectedResultIndex}
+                    colorfulTypes={colorfulTypesInResults}
+                    showJsonByDefault={showJsonByDefault}
                     onSelectResult={(index) => {
                         const sourcePanel = props.containerApi.getPanel(
                             props.params.sourcePanelId,

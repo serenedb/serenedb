@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { IDockviewPanelProps } from "dockview";
 import { useNotifications } from "../../../../entities";
+import type { ConsoleExecutionAlertMode } from "../../Console/model";
 import {
     CONSOLE_RESULTS_PANEL_COMPONENT,
     createResultsPanelTitle,
@@ -15,17 +16,70 @@ import { useResultsPanelVisibility } from "./useResultsPanelVisibility";
 
 interface UseResultsPanelManagerParams {
     api: IDockviewPanelProps<EditorPanelParams>["api"];
+    alertOnExecution: ConsoleExecutionAlertMode;
     containerApi: IDockviewPanelProps<EditorPanelParams>["containerApi"];
     getPanelState: () => NormalizedEditorPanelParams;
+    spawnResultsInFirstTab: boolean;
 }
+
+const RESULTS_PANEL_SUFFIX = "__results";
+
+const getPanelCreationTime = (panelId: string) => {
+    const normalizedPanelId = panelId.endsWith(RESULTS_PANEL_SUFFIX)
+        ? panelId.slice(0, -RESULTS_PANEL_SUFFIX.length)
+        : panelId;
+    const match = normalizedPanelId.match(/^console-panel-(\d+)-/);
+    const createdAt = Number(match?.[1]);
+
+    return Number.isFinite(createdAt) ? createdAt : Number.MAX_SAFE_INTEGER;
+};
 
 export const useResultsPanelManager = ({
     api,
+    alertOnExecution,
     containerApi,
     getPanelState,
+    spawnResultsInFirstTab,
 }: UseResultsPanelManagerParams) => {
     const { addNotification } = useNotifications();
     const resultsPanelId = getResultsPanelId(api.id);
+    const getFirstResultsPanelId = useCallback(() => {
+        const ids = containerApi.panels
+            .map((panel) => panel.id)
+            .filter((id) => id.endsWith(RESULTS_PANEL_SUFFIX));
+
+        if (!ids.length) {
+            return undefined;
+        }
+
+        return ids.sort((left, right) => {
+            const leftCreatedAt = getPanelCreationTime(left);
+            const rightCreatedAt = getPanelCreationTime(right);
+
+            if (leftCreatedAt !== rightCreatedAt) {
+                return leftCreatedAt - rightCreatedAt;
+            }
+
+            return left.localeCompare(right);
+        })[0];
+    }, [containerApi]);
+    const resolveResultsPosition = useCallback(() => {
+        if (spawnResultsInFirstTab) {
+            const firstResultsPanelId = getFirstResultsPanelId();
+
+            if (firstResultsPanelId && firstResultsPanelId !== resultsPanelId) {
+                return {
+                    referencePanel: firstResultsPanelId,
+                    direction: "within" as const,
+                };
+            }
+        }
+
+        return {
+            referencePanel: api.id,
+            direction: "below" as const,
+        };
+    }, [api.id, getFirstResultsPanelId, resultsPanelId, spawnResultsInFirstTab]);
     const isResultsPanelVisible = useResultsPanelVisibility({
         containerApi,
         resultsPanelId,
@@ -69,10 +123,7 @@ export const useResultsPanelManager = ({
                 component: CONSOLE_RESULTS_PANEL_COMPONENT,
                 title: resultsPanelTitle,
                 params,
-                position: {
-                    referencePanel: api.id,
-                    direction: "below",
-                },
+                position: resolveResultsPosition(),
             });
 
             if (activate) {
@@ -83,12 +134,22 @@ export const useResultsPanelManager = ({
 
             api.setActive();
         },
-        [api, containerApi, getPanelState, resultsPanelId],
+        [api, containerApi, getPanelState, resolveResultsPosition, resultsPanelId],
     );
 
     const notifyResultsReady = useCallback(
         (status: "success" | "failed") => {
-            if (getResultsPanelVisibility()) {
+            if (alertOnExecution === "never") {
+                return;
+            }
+
+            const isPageHidden =
+                typeof document !== "undefined" &&
+                document.visibilityState === "hidden";
+            const resultsPanelCurrentlyVisible = getResultsPanelVisibility();
+            const isUnseen = !resultsPanelCurrentlyVisible || isPageHidden;
+
+            if (alertOnExecution === "onlyUnseen" && !isUnseen) {
                 return;
             }
 
@@ -107,7 +168,12 @@ export const useResultsPanelManager = ({
                 createdAt: Date.now(),
             });
         },
-        [addNotification, api.title, getResultsPanelVisibility],
+        [
+            addNotification,
+            alertOnExecution,
+            api.title,
+            getResultsPanelVisibility,
+        ],
     );
 
     const hideResultsPanel = useCallback(() => {

@@ -30,7 +30,8 @@ interface PGSQLEditorProps {
     onChange?: (value: string) => void;
     readOnly?: boolean;
     onExecute?: (mode: "sequential" | "transaction") => void;
-    onExecuteInNewTab?: () => void;
+    onExecuteInNewTab?: (mode?: "sequential" | "transaction") => void;
+    autocompleteEnabled?: boolean;
     autocomplete?: {
         tables: string[];
         systemTables: string[];
@@ -55,6 +56,7 @@ interface PGSQLEditorProps {
 
 let pgsqlCompletionProvider: Monaco.IDisposable | null = null;
 let pgsqlInlineCompletionProvider: Monaco.IDisposable | null = null;
+let pgsqlAutocompleteEnabled = true;
 
 const EMPTY_AUTOCOMPLETE: NonNullable<PGSQLEditorProps["autocomplete"]> = {
     tables: [],
@@ -626,6 +628,12 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                     model: Monaco.editor.ITextModel,
                     position: Monaco.IPosition,
                 ) => {
+                    if (!pgsqlAutocompleteEnabled) {
+                        return {
+                            suggestions: [],
+                        };
+                    }
+
                     const autocomplete = pgsqlAutocompleteData;
                     const word = model.getWordUntilPosition(position);
                     const typedText = word.word.toLowerCase();
@@ -864,6 +872,12 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
                     model: Monaco.editor.ITextModel,
                     position: Monaco.Position,
                 ) => {
+                    if (!pgsqlAutocompleteEnabled) {
+                        return {
+                            items: [],
+                        };
+                    }
+
                     if (!isCursorAtModelEnd(model, position)) {
                         return {
                             items: [],
@@ -950,6 +964,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             readOnly,
             onExecute,
             onExecuteInNewTab,
+            autocompleteEnabled = true,
             autocomplete: autocompleteProp,
             highlightRange,
             highlightRanges,
@@ -957,7 +972,10 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
         },
         ref,
     ) => {
-        const autocomplete = autocompleteProp ?? EMPTY_AUTOCOMPLETE;
+        const autocomplete =
+            autocompleteEnabled && autocompleteProp
+                ? autocompleteProp
+                : EMPTY_AUTOCOMPLETE;
         const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(
             null,
         );
@@ -1027,14 +1045,17 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
         }, []);
 
         useEffect(() => {
+            pgsqlAutocompleteEnabled = autocompleteEnabled;
             pgsqlAutocompleteData = autocomplete;
             updatePendingInlineAutocompleteRef.current();
             editorRef.current?.trigger(
                 "serene-pgsql-autocomplete",
-                "editor.action.inlineSuggest.trigger",
+                autocompleteEnabled
+                    ? "editor.action.inlineSuggest.trigger"
+                    : "editor.action.inlineSuggest.hide",
                 {},
             );
-        }, [autocomplete]);
+        }, [autocomplete, autocompleteEnabled]);
 
         useEffect(() => {
             const editor = editorRef.current;
@@ -1233,7 +1254,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                 const pendingInlineAutocomplete =
                     pendingInlineAutocompleteRef.current;
 
-                if (!pendingInlineAutocomplete) {
+                if (!pgsqlAutocompleteEnabled || !pendingInlineAutocomplete) {
                     return;
                 }
 
@@ -1324,15 +1345,17 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                     editorRef.current = editor;
                 }}
                 options={{
-                    suggestOnTriggerCharacters: true,
-                    quickSuggestions: true,
+                    suggestOnTriggerCharacters: autocompleteEnabled,
+                    quickSuggestions: autocompleteEnabled,
                     inlineSuggest: {
-                        enabled: true,
+                        enabled: autocompleteEnabled,
                         mode: "prefix",
                         showToolbar: "onHover",
                     },
-                    tabCompletion: "on",
-                    wordBasedSuggestions: "allDocuments",
+                    tabCompletion: autocompleteEnabled ? "on" : "off",
+                    wordBasedSuggestions: autocompleteEnabled
+                        ? "allDocuments"
+                        : "off",
                     minimap: {
                         enabled: false,
                     },

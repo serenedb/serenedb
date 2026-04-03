@@ -17,7 +17,11 @@ interface ExecuteQueryButtonProps {
     handleJobId?: (jobId: number) => void;
     onExecute?: (mode: "sequential" | "transaction") => Promise<void> | void;
     onBeforeExecute?: () => void;
-    onExecuteInNewTab?: () => void;
+    onExecuteInNewTab?: (
+        mode?: "sequential" | "transaction",
+    ) => Promise<void> | void;
+    executeSequentiallyByDefault?: boolean;
+    executeInNewTabByDefault?: boolean;
 }
 
 export const ExecuteQueryButton = ({
@@ -29,6 +33,8 @@ export const ExecuteQueryButton = ({
     onExecute,
     onBeforeExecute,
     onExecuteInNewTab,
+    executeSequentiallyByDefault = false,
+    executeInNewTabByDefault = false,
 }: ExecuteQueryButtonProps) => {
     const { executeQuery } = useQueryResults();
     const { currentConnection } = useConnection();
@@ -36,14 +42,23 @@ export const ExecuteQueryButton = ({
         !query ||
         !currentConnection.connectionId ||
         !currentConnection.database;
+    const defaultExecutionMode = executeSequentiallyByDefault
+        ? "sequential"
+        : "transaction";
+
     return (
         <div className="inline-flex">
             <Button
                 className="rounded-r-none"
                 onClick={async () => {
                     onBeforeExecute?.();
+                    if (executeInNewTabByDefault && onExecuteInNewTab) {
+                        await onExecuteInNewTab(defaultExecutionMode);
+                        return;
+                    }
+
                     if (onExecute) {
-                        await onExecute("transaction");
+                        await onExecute(defaultExecutionMode);
                         return;
                     }
                     const result = await executeQuery(
@@ -85,7 +100,7 @@ export const ExecuteQueryButton = ({
                         onSelect={(event) => {
                             event.preventDefault();
                             if (!disabled && onExecuteInNewTab) {
-                                onExecuteInNewTab();
+                                onExecuteInNewTab("sequential");
                             }
                         }}>
                         Execute in new tab

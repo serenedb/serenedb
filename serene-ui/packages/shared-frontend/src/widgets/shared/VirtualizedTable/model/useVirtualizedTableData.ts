@@ -30,6 +30,7 @@ const getRowStripeColor = (theme: UseVirtualizedTableDataOptions["theme"]) =>
 
 export const useVirtualizedTableData = ({
     data,
+    colorfulTypes,
     theme,
 }: UseVirtualizedTableDataOptions): UseVirtualizedTableDataResult => {
     const [columnWidths, setColumnWidths] = useState<Record<string, number>>(
@@ -71,8 +72,30 @@ export const useVirtualizedTableData = ({
     );
 
     const valueColors = useMemo(
-        () => (theme === "dark" ? DARK_VALUE_COLORS : LIGHT_VALUE_COLORS),
-        [theme],
+        () => {
+            if (colorfulTypes) {
+                return theme === "dark" ? DARK_VALUE_COLORS : LIGHT_VALUE_COLORS;
+            }
+
+            const neutralColor =
+                theme === "dark"
+                    ? DARK_GRID_THEME.textDark ?? "#d5d8df"
+                    : LIGHT_GRID_THEME.textDark ?? "#11121d";
+            const mutedNullColor =
+                theme === "dark"
+                    ? DARK_GRID_THEME.textMedium ?? "#98a0b3"
+                    : LIGHT_GRID_THEME.textMedium ?? "#506182";
+
+            return {
+                null: mutedNullColor,
+                true: neutralColor,
+                false: neutralColor,
+                number: neutralColor,
+                object: neutralColor,
+                string: neutralColor,
+            };
+        },
+        [colorfulTypes, theme],
     );
 
     const gridLineColor = useMemo(

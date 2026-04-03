@@ -12,7 +12,7 @@ import {
     TreeColumnsIcon,
     cn,
 } from "@serene-ui/shared-frontend/shared";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TimelineCard, type TimelineItem } from "../../TimelineCard";
 
 interface QueryResultsFooterProps {
@@ -28,6 +28,7 @@ interface QueryResultsFooterProps {
     execution_started_at?: string;
     execution_finished_at?: string;
     received_at?: string;
+    showJsonByDefault?: boolean;
 }
 
 export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
@@ -40,10 +41,13 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
     execution_started_at,
     execution_finished_at,
     received_at,
+    showJsonByDefault = false,
 }) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [searchValue, setSearchValue] = useState("");
-    const [viewMode, setViewMode] = useState<"viewer" | "json">("viewer");
+    const [viewMode, setViewMode] = useState<"viewer" | "json">(
+        showJsonByDefault ? "json" : "viewer",
+    );
     const queueTime =
         created_at && execution_started_at
             ? new Date(execution_started_at).getTime() -
@@ -70,6 +74,10 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
         { name: "Transfer", time: transferTime, color: "rgb(59, 130, 246)" },
     ];
     const showViewModes = Boolean(rows?.length);
+    useEffect(() => {
+        setViewMode(showJsonByDefault ? "json" : "viewer");
+    }, [showJsonByDefault]);
+
     const filteredResults = useMemo(() => {
         const normalizedSearch = searchValue.trim().toLowerCase();
         if (!normalizedSearch) {

@@ -158,17 +158,20 @@ export const useConsoleQueryExecution = ({
         [appendPendingResults, executeQuery, executeQueryBatch, limit, paramsRef],
     );
 
-    const handleExecuteInNewTab = useCallback(() => {
-        const current = paramsRef.current;
-        const panel = addEditorPanel(containerApi, {
-            query: current.query,
-            results: [],
-            selectedResultIndex: 0,
-            runOnMountMode: "sequential",
-        });
+    const handleExecuteInNewTab = useCallback(
+        (mode: ConsoleExecutionMode = "sequential") => {
+            const current = paramsRef.current;
+            const panel = addEditorPanel(containerApi, {
+                query: current.query,
+                results: [],
+                selectedResultIndex: 0,
+                runOnMountMode: mode,
+            });
 
-        panel.api.setActive();
-    }, [containerApi, paramsRef]);
+            panel.api.setActive();
+        },
+        [containerApi, paramsRef],
+    );
 
     const pendingJobIds = useMemo(
         () =>
@@ -186,8 +189,10 @@ export const useConsoleQueryExecution = ({
         const receivedAt = new Date().toISOString();
         let nextPanelState: NormalizedEditorPanelParams | undefined;
         let shouldNotifyResultsReady = false;
+        let notificationStatus: "success" | "failed" = "success";
 
         updatePanelParams((current) => {
+            const hadPendingResults = current.results.some(isPendingResult);
             let nextSelectedResultIndex = current.selectedResultIndex;
 
             const nextResults = current.results.flatMap(
@@ -256,7 +261,16 @@ export const useConsoleQueryExecution = ({
                     nextResults.length - 1,
                 ),
             };
-            shouldNotifyResultsReady = !nextResults.some(isPendingResult);
+            const hasPendingResults = nextResults.some(isPendingResult);
+
+            if (hadPendingResults && !hasPendingResults) {
+                shouldNotifyResultsReady = true;
+                notificationStatus = nextResults.some(
+                    (currentResult) => currentResult.status === "failed",
+                )
+                    ? "failed"
+                    : "success";
+            }
 
             return {
                 results: nextResults,
@@ -264,12 +278,8 @@ export const useConsoleQueryExecution = ({
             };
         });
 
-        if (
-            nextPanelState &&
-            shouldNotifyResultsReady &&
-            (result.status === "success" || result.status === "failed")
-        ) {
-            notifyResultsReady(result.status);
+        if (nextPanelState && shouldNotifyResultsReady) {
+            notifyResultsReady(notificationStatus);
         }
     });
 

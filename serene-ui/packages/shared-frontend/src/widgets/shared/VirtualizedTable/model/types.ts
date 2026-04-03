@@ -16,6 +16,7 @@ export type VirtualizedTableTheme = "dark" | "light" | "system";
 
 export interface VirtualizedTableProps {
     data: DataRow[];
+    colorfulTypes?: boolean;
 }
 
 export interface SortState {
@@ -62,6 +63,7 @@ export interface ValueColors {
 
 export interface UseVirtualizedTableDataOptions {
     data: DataRow[];
+    colorfulTypes: boolean;
     theme: VirtualizedTableTheme;
 }
 

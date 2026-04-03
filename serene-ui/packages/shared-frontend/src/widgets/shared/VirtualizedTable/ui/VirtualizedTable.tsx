@@ -68,7 +68,10 @@ const SortButtonIcon = ({
         </svg>
     );
 
-export const VirtualizedTable = ({ data }: VirtualizedTableProps) => {
+export const VirtualizedTable = ({
+    data,
+    colorfulTypes = true,
+}: VirtualizedTableProps) => {
     const { theme } = useChangeTheme();
     const { ref: resizeRef, size } = useResizeObserver<HTMLDivElement>();
     const rootRef = useRef<HTMLDivElement | null>(null);
@@ -81,7 +84,11 @@ export const VirtualizedTable = ({ data }: VirtualizedTableProps) => {
         [resizeRef],
     );
 
-    const tableData = useVirtualizedTableData({ data, theme });
+    const tableData = useVirtualizedTableData({
+        data,
+        colorfulTypes,
+        theme,
+    });
     const tableSelection = useVirtualizedTableSelection({
         columnCount: tableData.columns.length,
         columnKeys: tableData.columnKeys,

@@ -26,12 +26,16 @@ interface QueryResultsProps {
     }[];
     selectedResultIndex: number;
     onSelectResult?: (index: number) => void;
+    showJsonByDefault?: boolean;
+    colorfulTypes?: boolean;
 }
 
 export const QueryResults: React.FC<QueryResultsProps> = ({
     results,
     selectedResultIndex,
     onSelectResult,
+    showJsonByDefault = false,
+    colorfulTypes = true,
 }) => {
     if (
         selectedResultIndex < 0 ||
@@ -79,6 +83,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                     className="flex flex-1 w-full h-full min-h-0 overflow-auto"
                     value="viewer">
                     <QueryViewerResults
+                        colorfulTypes={colorfulTypes}
                         results={results}
                         selectedResultIndex={selectedResultIndex}
                     />
@@ -93,6 +98,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                 results={results}
                 selectedResultIndex={selectedResultIndex}
                 onSelectResult={onSelectResult}
+                showJsonByDefault={showJsonByDefault}
                 rows={rows}
                 created_at={created_at}
                 execution_started_at={started_at}

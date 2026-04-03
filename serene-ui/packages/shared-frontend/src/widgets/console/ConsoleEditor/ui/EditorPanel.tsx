@@ -55,16 +55,51 @@ const getStatementHighlightPriority = (variant: StatementHighlightVariant) => {
 export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
     props,
 ) => {
-    const { limit } = useConsole();
+    const {
+        alertOnExecution,
+        executeInNewTabByDefault,
+        executeSequentiallyByDefault,
+        limit,
+        showAutocomplete,
+        showExecutionHistoryInAutocomplete,
+        showSavedQueriesInAutocomplete,
+        spawnResultsInFirstTab,
+    } = useConsole();
     const autocomplete = useConnectionAutocomplete();
+    const editorAutocomplete = useMemo(() => {
+        if (!showAutocomplete) {
+            return {
+                ...autocomplete,
+                savedQueries: [],
+                queryHistory: [],
+            };
+        }
+
+        return {
+            ...autocomplete,
+            savedQueries: showSavedQueriesInAutocomplete
+                ? autocomplete.savedQueries
+                : [],
+            queryHistory: showExecutionHistoryInAutocomplete
+                ? autocomplete.queryHistory
+                : [],
+        };
+    }, [
+        autocomplete,
+        showAutocomplete,
+        showExecutionHistoryInAutocomplete,
+        showSavedQueriesInAutocomplete,
+    ]);
     const { panelState, paramsRef, updatePanelParams } = useEditorPanelState({
         api: props.api,
         params: props.params,
     });
     const { notifyResultsReady, showResultsPanel } = useResultsPanelManager({
         api: props.api,
+        alertOnExecution,
         containerApi: props.containerApi,
         getPanelState: () => paramsRef.current,
+        spawnResultsInFirstTab,
     });
     const { handleExecute, handleExecuteInNewTab } = useConsoleQueryExecution({
         containerApi: props.containerApi,
@@ -75,6 +110,9 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
         notifyResultsReady,
         limit,
     });
+    const defaultExecutionMode = executeSequentiallyByDefault
+        ? "sequential"
+        : "transaction";
 
     const selectedResultIndex = getSelectedResultIndex(
         panelState.results,
@@ -227,7 +265,8 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
             <div className="relative h-full w-full">
                 <PGSQLEditor
                     value={panelState.query}
-                    autocomplete={autocomplete}
+                    autocomplete={editorAutocomplete}
+                    autocompleteEnabled={showAutocomplete}
                     onChange={(query) => {
                         updatePanelParams({ query });
                     }}
@@ -236,14 +275,27 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
                     highlightVariant={
                         highlightRange ? highlightVariant : undefined
                     }
-                    onExecute={handleExecute}
-                    onExecuteInNewTab={handleExecuteInNewTab}
+                    onExecute={() => {
+                        if (executeInNewTabByDefault) {
+                            handleExecuteInNewTab(defaultExecutionMode);
+                            return;
+                        }
+
+                        void handleExecute(defaultExecutionMode);
+                    }}
+                    onExecuteInNewTab={() => {
+                        handleExecuteInNewTab(defaultExecutionMode);
+                    }}
                 />
                 <div className="absolute right-5.5 bottom-2 flex gap-2">
                     <ExecuteQueryButton
                         query={panelState.query}
                         limit={limit}
                         saveToHistory={true}
+                        executeSequentiallyByDefault={
+                            executeSequentiallyByDefault
+                        }
+                        executeInNewTabByDefault={executeInNewTabByDefault}
                         onExecute={handleExecute}
                         onExecuteInNewTab={handleExecuteInNewTab}
                     />

@@ -17,11 +17,13 @@ import {
     CONSOLE_EDITOR_PANEL_COMPONENT,
     CONSOLE_RESULTS_PANEL_COMPONENT,
     INITIAL_CONSOLE_EDITOR_PANELS,
+    type ResultsPanelParams,
     addEditorPanel,
     createEditorPanelParams,
     createPanelId,
     createPanelTitle,
 } from "../model";
+import { useConsole } from "../../Console/model";
 import { EditorPanel } from "./EditorPanel";
 import { ConsoleEditorTopbar } from "./ConsoleEditorTopbar";
 import { ResultsPanel } from "./ResultsPanel";
@@ -119,6 +121,35 @@ const sanitizeResultEntry = (entry: unknown) => {
     return result;
 };
 
+const RESULTS_PANEL_SUFFIX = "__results";
+
+const getPanelGroupId = (panel: unknown) => {
+    if (!panel || typeof panel !== "object") {
+        return undefined;
+    }
+
+    const panelRecord = panel as Record<string, unknown>;
+    const directGroup = panelRecord.group;
+
+    if (directGroup && typeof directGroup === "object") {
+        const groupId = (directGroup as Record<string, unknown>).id;
+        return typeof groupId === "string" ? groupId : undefined;
+    }
+
+    const panelApi = panelRecord.api;
+    if (!panelApi || typeof panelApi !== "object") {
+        return undefined;
+    }
+
+    const apiGroup = (panelApi as Record<string, unknown>).group;
+    if (!apiGroup || typeof apiGroup !== "object") {
+        return undefined;
+    }
+
+    const groupId = (apiGroup as Record<string, unknown>).id;
+    return typeof groupId === "string" ? groupId : undefined;
+};
+
 const sanitizeLayout = (value: unknown): unknown => {
     if (Array.isArray(value)) {
         return value.map((entry) => sanitizeLayout(entry));
@@ -172,6 +203,7 @@ const sanitizeLayout = (value: unknown): unknown => {
 };
 
 export const ConsoleEditor: FC = () => {
+    const { selectRelatedResultOnTabChange } = useConsole();
     const [api, setApi] = useState<DockviewReadyEvent["api"]>();
     const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
 
@@ -219,6 +251,58 @@ export const ConsoleEditor: FC = () => {
 
         return () => disposable.dispose();
     }, [api]);
+
+    useEffect(() => {
+        if (!api || !selectRelatedResultOnTabChange) {
+            return;
+        }
+
+        let syncing = false;
+        const subscription = api.onDidActivePanelChange((activePanel) => {
+            if (syncing || !activePanel) {
+                return;
+            }
+
+            const activePanelId = activePanel.id;
+            if (typeof activePanelId !== "string") {
+                return;
+            }
+
+            const isResultsPanel = activePanelId.endsWith(RESULTS_PANEL_SUFFIX);
+            const relatedPanelId = isResultsPanel
+                ? activePanel.api.getParameters<ResultsPanelParams>()
+                      ?.sourcePanelId ?? activePanelId.slice(0, -RESULTS_PANEL_SUFFIX.length)
+                : `${activePanelId}${RESULTS_PANEL_SUFFIX}`;
+
+            if (!relatedPanelId || relatedPanelId === activePanelId) {
+                return;
+            }
+
+            const relatedPanel = api.getPanel(relatedPanelId);
+
+            if (!relatedPanel) {
+                return;
+            }
+
+            const sourceGroupId = getPanelGroupId(activePanel);
+            const relatedGroupId = getPanelGroupId(relatedPanel);
+
+            if (sourceGroupId && relatedGroupId && sourceGroupId === relatedGroupId) {
+                return;
+            }
+
+            syncing = true;
+
+            try {
+                relatedPanel.api.setActive();
+                activePanel.api.setActive();
+            } finally {
+                syncing = false;
+            }
+        });
+
+        return () => subscription.dispose();
+    }, [api, selectRelatedResultOnTabChange]);
 
     return (
         <div ref={containerRef} className="relative flex h-dvh w-full flex-col">

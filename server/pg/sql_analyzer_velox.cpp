@@ -1012,7 +1012,7 @@ class SqlAnalyzer {
       auto enum_name =
         MakeConst(velox::StringView{enum_type->EnumName()}, velox::VARCHAR());
       auto call = std::make_shared<lp::CallExpr>(
-        velox::DOUBLE(), "pg_enum_in",
+        velox::BIGINT(), "pg_enum_in",
         std::vector<lp::ExprPtr>{std::move(from), std::move(enum_name)});
       return std::make_shared<lp::SpecialFormExpr>(
         std::move(to), lp::SpecialForm::kCast, std::move(call));

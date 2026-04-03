@@ -22,7 +22,6 @@
 
 #include <velox/type/SimpleFunctionApi.h>
 
-#include <cmath>
 #include <memory>
 
 namespace sdb::aql {
@@ -187,7 +186,9 @@ SDB_DEFINE_PG_TYPE(velox::BigintType, PGXID8, Xid8, "PG_XID8");
 // PgEnumType implementation
 
 PgEnumType::PgEnumType(std::string enum_name, std::vector<std::string> labels)
-  : _enum_name{std::move(enum_name)}, _labels{std::move(labels)} {}
+  : velox::BigintType{velox::ProvideCustomComparison{}},
+    _enum_name{std::move(enum_name)},
+    _labels{std::move(labels)} {}
 
 std::string PgEnumType::toString() const {
   return std::string{kTypeName} + "(" + _enum_name + ")";
@@ -213,33 +214,41 @@ folly::dynamic PgEnumType::serialize() const {
   return obj;
 }
 
-std::optional<double> EnumLabelToOrdinal(const std::vector<std::string>& labels,
-                                         std::string_view label) {
+std::optional<int64_t> EnumLabelToOrdinal(
+  const std::vector<std::string>& labels, std::string_view label) {
   for (size_t i = 0; i < labels.size(); ++i) {
     if (labels[i] == label) {
-      return static_cast<double>((i + 1) * PgEnumType::kOrdinalStep);
+      return static_cast<int64_t>(i + 1);
     }
   }
   return std::nullopt;
 }
 
 std::optional<std::string_view> EnumOrdinalToLabel(
-  const std::vector<std::string>& labels, double ordinal) {
-  auto idx =
-    static_cast<size_t>(std::lround(ordinal / PgEnumType::kOrdinalStep)) - 1;
+  const std::vector<std::string>& labels, int64_t ordinal) {
+  auto idx = static_cast<size_t>(ordinal) - 1;
   if (idx < labels.size()) {
     return labels[idx];
   }
   return std::nullopt;
 }
 
-std::optional<double> PgEnumType::LabelToOrdinal(std::string_view label) const {
+std::optional<int64_t> PgEnumType::LabelToOrdinal(
+  std::string_view label) const {
   return EnumLabelToOrdinal(_labels, label);
 }
 
 std::optional<std::string_view> PgEnumType::OrdinalToLabel(
-  double ordinal) const {
+  int64_t ordinal) const {
   return EnumOrdinalToLabel(_labels, ordinal);
+}
+
+int32_t PgEnumType::compare(const int64_t& left, const int64_t& right) const {
+  return left < right ? -1 : left == right ? 0 : 1;
+}
+
+uint64_t PgEnumType::hash(const int64_t& value) const {
+  return folly::hasher<int64_t>()(value);
 }
 
 velox::TypePtr PGENUM(std::string name, std::vector<std::string> labels) {

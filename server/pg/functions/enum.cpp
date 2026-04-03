@@ -39,7 +39,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 
-// pg_enum_in(label VARCHAR, enum_name VARCHAR) -> DOUBLE
+// pg_enum_in(label VARCHAR, enum_name VARCHAR) -> BIGINT
 // Looks up the enum definition from the catalog in initialize(),
 // then converts labels to ordinals in call().
 template<typename T>
@@ -60,7 +60,7 @@ struct PgEnumIn {
     SDB_ASSERT(_enum_type);
   }
 
-  FOLLY_ALWAYS_INLINE bool call(double& result,
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result,
                                 const arg_type<velox::Varchar>& label,
                                 const arg_type<velox::Varchar>&) {
     std::string_view val{label.data(), label.size()};
@@ -78,7 +78,7 @@ struct PgEnumIn {
   std::shared_ptr<catalog::EnumType> _enum_type;
 };
 
-// pg_enum_out(ordinal DOUBLE, enum_name VARCHAR) -> VARCHAR
+// pg_enum_out(ordinal BIGINT, enum_name VARCHAR) -> VARCHAR
 // Looks up the enum definition from the catalog in initialize(),
 // then converts ordinals to labels in call().
 template<typename T>
@@ -87,7 +87,7 @@ struct PgEnumOut {
 
   void initialize(const std::vector<velox::TypePtr>&,
                   const velox::core::QueryConfig& config,
-                  const double*,
+                  const int64_t*,
                   const arg_type<velox::Varchar>* enum_name_ptr) {
     auto* ctx =
       basics::downCast<const ConnectionContext>(config.config().get());
@@ -100,7 +100,7 @@ struct PgEnumOut {
   }
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& result,
-                                double ordinal,
+                                int64_t ordinal,
                                 const arg_type<velox::Varchar>&) {
     auto label = EnumOrdinalToLabel(_enum_type->GetLabels(), ordinal);
     if (!label) {
@@ -116,9 +116,9 @@ struct PgEnumOut {
 };
 
 void registerEnumFunctions(const std::string& prefix) {
-  velox::registerFunction<PgEnumIn, double, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<PgEnumIn, int64_t, velox::Varchar, velox::Varchar>(
     {prefix + "enum_in"});
-  velox::registerFunction<PgEnumOut, velox::Varchar, double, velox::Varchar>(
+  velox::registerFunction<PgEnumOut, velox::Varchar, int64_t, velox::Varchar>(
     {prefix + "enum_out"});
 }
 

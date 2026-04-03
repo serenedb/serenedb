@@ -623,7 +623,7 @@ void SerializeEnumText(SerializationContext context,
                        velox::vector_size_t row) {
   const auto* enum_type = context.current_enum_type;
   SDB_ASSERT(enum_type);
-  const auto ordinal = decoded_vector.valueAt<double>(row);
+  const auto ordinal = decoded_vector.valueAt<int64_t>(row);
   auto label = enum_type->OrdinalToLabel(ordinal);
   if (label) {
     context.buffer->WriteUncommitted(*label);

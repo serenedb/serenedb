@@ -91,21 +91,23 @@ SDB_DECLARE_PG_TYPE(int64_t, PGXID8, Xid8, "PG_XID8");
 
 #undef SDB_DECLARE_PG_TYPE
 
-// Custom Velox type for PG ENUM, backed by double storage.
+// Custom Velox type for PG ENUM, backed by int64 (OID) storage.
 // Each enum definition gets its own instance carrying name + labels.
-// Ordinals are spaced by kOrdinalStep (16) to leave room for future
-// ALTER TYPE ... ADD VALUE BEFORE/AFTER midpoint insertions.
-class PgEnumType final : public velox::DoubleType {
+// OIDs are 1-based indices into the labels vector.
+// Provides custom comparison: == uses OID directly, < / > use sort order.
+class PgEnumType final : public velox::BigintType {
  public:
-  static constexpr double kOrdinalStep = 16.0;
 
   PgEnumType(std::string enum_name, std::vector<std::string> labels);
 
   const std::string& EnumName() const noexcept { return _enum_name; }
   const std::vector<std::string>& Labels() const noexcept { return _labels; }
 
-  std::optional<double> LabelToOrdinal(std::string_view label) const;
-  std::optional<std::string_view> OrdinalToLabel(double ordinal) const;
+  std::optional<int64_t> LabelToOrdinal(std::string_view label) const;
+  std::optional<std::string_view> OrdinalToLabel(int64_t ordinal) const;
+
+  int32_t compare(const int64_t& left, const int64_t& right) const override;
+  uint64_t hash(const int64_t& value) const override;
 
   const char* name() const final { return kTypeName.data(); }
   std::string toString() const final;
@@ -125,12 +127,12 @@ bool IsEnum(const velox::Type& type);
 const PgEnumType* AsEnum(const velox::TypePtr& type);
 const PgEnumType* AsEnum(const velox::Type& type);
 
-// Free functions for ordinal math on raw label vectors (e.g. from
+// Free functions for OID<->label conversion on raw label vectors (e.g. from
 // catalog::EnumType)
-std::optional<double> EnumLabelToOrdinal(const std::vector<std::string>& labels,
-                                         std::string_view label);
+std::optional<int64_t> EnumLabelToOrdinal(const std::vector<std::string>& labels,
+                                          std::string_view label);
 std::optional<std::string_view> EnumOrdinalToLabel(
-  const std::vector<std::string>& labels, double ordinal);
+  const std::vector<std::string>& labels, int64_t ordinal);
 
 void RegisterTypes();
 

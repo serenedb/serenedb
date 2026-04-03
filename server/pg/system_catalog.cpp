@@ -772,6 +772,7 @@ const VirtualTable* GetSystemTable(std::string_view schema,
   } else if (schema == StaticStrings::kInformationSchema) {
     return GetTableFromSchema(name, kInformationSchema);
   } else {
+      return nullptr; // debug 
     SDB_UNREACHABLE();
   }
 }

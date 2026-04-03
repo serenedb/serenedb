@@ -87,7 +87,6 @@ SELECT name, illness FROM vedernikoff_patients WHERE illness = 'bipolyarka';
 name	illness
 ivansolo2003	bipolyarka
 
-
 query
 SELECT name FROM vedernikoff_patients WHERE illness IN ('shiza', 'panicataka') ORDER BY id;
 ----
@@ -375,6 +374,12 @@ SELECT room, patient FROM psycho_hospital ORDER BY room;
 room	patient
 202	kostya
 303	bigfgun
+
+
+query
+SELECT '{bipolyarka}'::text[]::diagnosis[];
+----
+
 
 
 statement ok

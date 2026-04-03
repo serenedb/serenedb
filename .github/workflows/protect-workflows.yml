@@ -1,30 +1,48 @@
-name: Protect Workflow Files
+name: auto | pr security
 
 on:
   pull_request_target:
-    paths:
-      - '.github/workflows/**'
-      - '.github/actions/**'
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
 
 jobs:
-  check-workflow-changes:
-    runs-on: ubuntu-latest  # Use GitHub-hosted runner for this check
+  check:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
     steps:
-      - name: Check if PR is from fork
-        id: check-fork
-        run: |
-          if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
-            echo "is_fork=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_fork=false" >> $GITHUB_OUTPUT
-          fi
+      - name: Label fork PR
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['from-fork', 'needs-security-review']
+            });
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `👋 Thank you for your contribution!\n\nThis PR is from a fork and requires maintainer approval before CI workflows will run.\n\nA maintainer will review your changes and approve the workflow run if everything looks good.\n\n**Please do not modify any files in \`.github/workflows/\` as those changes will not be accepted from forks.**`
+            });
 
-      - name: Block workflow changes from forks
-        if: steps.check-fork.outputs.is_fork == 'true'
-        run: |
-          echo "::error::Workflow file changes from forks are not allowed. Please contact maintainers."
-          exit 1
-
-      - name: Workflow changes allowed
-        if: steps.check-fork.outputs.is_fork == 'false'
-        run: echo "Workflow changes from same repo are allowed."
+      - name: Block workflow file changes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const workflowFiles = files.filter(f =>
+              f.filename.startsWith('.github/workflows/') || f.filename.startsWith('.github/actions/')
+            );
+            if (workflowFiles.length > 0) {
+              core.setFailed(`Workflow file changes from forks are not allowed: ${workflowFiles.map(f => f.filename).join(', ')}`);
+            }

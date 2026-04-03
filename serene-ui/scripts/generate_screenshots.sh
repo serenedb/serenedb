@@ -1,16 +1,19 @@
 #!/bin/bash
-set -e # Stop on error
+set -e
 set -o pipefail
 
-echo "ℹ️ Starting serene-ui Docker container..."
-docker compose -f docker-compose.test-docker.yaml up --build -d serene-ui
+COMPOSE_FILE="docker-compose.test-docker.yaml"
 
-sleep 10 # Wait for it to start
+cleanup() {
+	echo "Stopping serene-ui Docker container..."
+	docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
-echo "ℹ️ Generating screenshots..."
+echo "Starting serene-ui Docker container..."
+docker compose -f "$COMPOSE_FILE" up --build -d serene-ui
+sleep 10
+
+echo "Generating screenshots..."
 docker exec serene-ui npm run --prefix /test-app/apps/web test-storybook:renew
-echo "✅ Screenshots generated successfully"
-
-echo "ℹ️ Stopping serene-ui Docker container..."
-docker compose -f docker-compose.test-docker.yaml down
-echo "✅ Serene-ui Docker container stopped"
+echo "Screenshots generated successfully"

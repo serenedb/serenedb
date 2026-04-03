@@ -98,10 +98,13 @@ class PositionImpl final : public PosAttr {
 
   void reset() final {
     Clear();
-    if (_cookie.file_pointer != std::numeric_limits<uint64_t>::max()) {
+    if (_cookie.pos_file_pointer != std::numeric_limits<uint64_t>::max()) {
       _buf_pos = doc_limits::kBlockSize;
       _pend_pos = _cookie.pend_pos;
-      _pos_in->Seek(_cookie.file_pointer);
+      _pos_in->Seek(_cookie.pos_file_pointer);
+      if constexpr (IteratorTraits::Offset()) {
+        _pay_in->Seek(_cookie.pay_file_pointer);
+      }
     }
   }
 
@@ -118,7 +121,7 @@ class PositionImpl final : public PosAttr {
       throw IoError("failed to reopen positions input");
     }
 
-    _cookie.file_pointer = state.term_state->pos_start;
+    _cookie.pos_file_pointer = state.term_state->pos_start;
     _cookie.pend_pos = state.term_state->pos_offset;
     sdb::basics::downCast<InputType>(*_pos_in).Seek(
       state.term_state->pos_start);
@@ -136,6 +139,7 @@ class PositionImpl final : public PosAttr {
         throw IoError("failed to reopen payload input");
       }
 
+      _cookie.pay_file_pointer = state.term_state->pay_start;
       sdb::basics::downCast<InputType>(*_pay_in).Seek(
         state.term_state->pay_start);
     }
@@ -147,10 +151,11 @@ class PositionImpl final : public PosAttr {
     sdb::basics::downCast<InputType>(*_pos_in).Seek(state.pos_ptr);
     _pend_pos = state.pos_offset;
     _buf_pos = doc_limits::kBlockSize;
-    _cookie.file_pointer = state.pos_ptr;
+    _cookie.pos_file_pointer = state.pos_ptr;
     _cookie.pend_pos = _pend_pos;
 
     if constexpr (IteratorTraits::Offset()) {
+      _cookie.pay_file_pointer = state.pay_ptr;
       sdb::basics::downCast<InputType>(*_pay_in).Seek(state.pay_ptr);
     }
   }
@@ -222,7 +227,9 @@ class PositionImpl final : public PosAttr {
 
   struct Cookie {
     uint64_t pend_pos = 0;
-    uint64_t file_pointer = std::numeric_limits<uint64_t>::max();
+    uint64_t pos_file_pointer = std::numeric_limits<uint64_t>::max();
+    [[no_unique_address]] utils::Need<IteratorTraits::Offset(), uint64_t>
+      pay_file_pointer;
   };
 
   template<typename T>

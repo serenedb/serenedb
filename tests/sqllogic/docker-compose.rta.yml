@@ -52,7 +52,7 @@ services:
           --test "sdb/**/*.test*" \
           --single-port-ssl 7778 \
           --junit /logs/rta-tests \
-          --protocol both \
+          --engines pg-wire-simple,pg-wire-extended \
           --runner /sqllogictest-rs
       '
 

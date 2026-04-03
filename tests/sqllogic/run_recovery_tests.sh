@@ -39,7 +39,7 @@ for test_file in "${test_files[@]}"; do
 		--single-port "$SERVICE_PORT" \
 		--test "$test_file" \
 		--junit "tests-serenedb-recovery" \
-		--protocol simple \
+		--engines pg-wire-simple \
 		--runner=/sqllogictest-rs
 
 	exit_code=$?

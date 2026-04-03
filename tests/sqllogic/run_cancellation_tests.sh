@@ -17,7 +17,7 @@ exit 0
 # exec ./run.sh \
 # 	--test "sdb/**/*.test*" \
 # 	--junit "tests-cancellation" \
-# 	--protocol simple \
+# 	--engines pg-wire-simple \
 # 	--fast \
 # 	--cancellation \
 # 	--iterations 30 \

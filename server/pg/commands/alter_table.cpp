@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"
+#include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
 #include "pg/commands.h"
@@ -66,12 +67,15 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
           });
 
         if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+          auto actual_type =
+            basics::string_utils::GetPluralFormLowerCase(r.errorMessage());
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
             ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
                     "relation \"",
                     table_name, "\""),
-            ERR_DETAIL("This operation is not supported for views."));
+            ERR_DETAIL("This operation is not supported for ", actual_type,
+                       "."));
         }
 
         if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
@@ -82,8 +86,7 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
           }
           conn_ctx.AddNotice(SQL_ERROR_DATA(
             ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-            ERR_MSG("relation \"", table_name,
-                    "\" does not exist, skipping")));
+            ERR_MSG("relation \"", table_name, "\" does not exist, skipping")));
           return;
         }
 

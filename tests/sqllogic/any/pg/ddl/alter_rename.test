@@ -213,14 +213,20 @@ ALTER INDEX deadinside RENAME TO pudge;
 db error: ERROR: relation "pudge" already exists
 
 
-statement ok
+statement error
 ALTER TABLE pudge RENAME TO pudge;
+----
+db error: ERROR: relation "pudge" already exists
 
-statement ok
+statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
+----
+db error: ERROR: relation "pudge_view" already exists
 
-statement ok
+statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
+----
+db error: ERROR: relation "clickclack" already exists
 
 
 statement error
@@ -327,6 +333,16 @@ ALTER TABLE IF EXISTS vedernikoff RENAME COLUMN a TO b;
 statement ok
 ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
 
+statement error
+ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
+----
+db error: ERROR: cannot rename columns of a non-table relation
+
+statement error
+ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
+----
+db error: ERROR: constraint "foo" for table "pudge_view" does not exist
+
 
 statement ok
 DROP FUNCTION clickclack;
@@ -349,76 +365,3 @@ DROP TABLE invoker;
 
 statement ok
 DROP TABLE pudge;
-
-
-statement ok
-CREATE SCHEMA alpha;
-
-statement ok
-CREATE SCHEMA beta;
-
-statement ok
-CREATE TABLE alpha.mover(a integer, b text);
-
-statement ok
-INSERT INTO alpha.mover VALUES (1, 'hello');
-
-statement ok
-ALTER TABLE alpha.mover SET SCHEMA beta;
-
-query
-SELECT * FROM beta.mover;
-----
-a	b
-1	hello
-
-statement error
-SELECT * FROM alpha.mover;
-----
-db error: ERROR: relation "alpha.mover" does not exist
-
-
-statement ok
-ALTER TABLE beta.mover SET SCHEMA alpha;
-
-query
-SELECT * FROM alpha.mover;
-----
-a	b
-1	hello
-
-
-statement error
-ALTER TABLE alpha.nonexistent SET SCHEMA beta;
-----
-db error: ERROR: relation "nonexistent" does not exist
-
-statement error
-ALTER TABLE alpha.mover SET SCHEMA nonexistent;
-----
-db error: ERROR: schema "nonexistent" does not exist
-
-
-statement ok
-CREATE TABLE beta.mover(x integer);
-
-statement error
-ALTER TABLE alpha.mover SET SCHEMA beta;
-----
-db error: ERROR: relation "mover" already exists in schema "beta"
-
-statement ok
-DROP TABLE beta.mover;
-
-
-statement ok
-ALTER TABLE alpha.mover SET SCHEMA alpha;
-
-statement ok
-DROP TABLE alpha.mover;
-
-statement ok
-DROP SCHEMA beta;
-
-statement ok
-DROP SCHEMA alpha;

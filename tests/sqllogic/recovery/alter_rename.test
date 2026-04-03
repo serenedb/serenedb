@@ -108,52 +108,19 @@ SELECT * FROM s1.f_renamed();
 db error: ERROR: function "s1.f_renamed" does not exist
 
 
-# Crash before SET SCHEMA is persisted
-connection after_rename_func
-statement ok
-CREATE SCHEMA s2;
-
-connection after_rename_func
-statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
-
-connection after_rename_func
-statement error connection closed
-ALTER TABLE s1.t SET SCHEMA s2;
-
-
-connection after_set_schema
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM s1.t ORDER BY id;
-----
-id	val
-1	hello
-2	world
-
-connection after_set_schema
-statement error
-SELECT * FROM s2.t;
-----
-db error: ERROR: relation "s2.t" does not exist
-
-
 # Cleanup
-connection after_set_schema
+connection after_rename_func
 statement ok
 DROP FUNCTION s1.f;
 
-connection after_set_schema
+connection after_rename_func
 statement ok
 DROP VIEW s1.v;
 
-connection after_set_schema
+connection after_rename_func
 statement ok
 DROP TABLE s1.t;
 
-connection after_set_schema
-statement ok
-DROP SCHEMA s2;
-
-connection after_set_schema
+connection after_rename_func
 statement ok
 DROP SCHEMA s1;

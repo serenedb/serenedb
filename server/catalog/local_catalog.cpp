@@ -1388,7 +1388,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
   }
 
   if (old_obj->GetName() == new_name) {
-    return {};
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
   }
 
   std::shared_ptr<T> new_obj;
@@ -1499,98 +1499,6 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
                                     std::string_view name,
                                     std::string_view new_name) {
   return RenameObjectImpl<Function>(database_id, schema, name, new_name);
-}
-
-Result LocalCatalog::RenameTableSchema(ObjectId database_id,
-                                      std::string_view old_schema,
-                                      std::string_view name,
-                                      std::string_view new_schema) {
-  auto old_schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, old_schema);
-  if (!old_schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
-  }
-
-  auto new_schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, new_schema);
-  if (!new_schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
-  }
-
-  if (*old_schema_id == *new_schema_id) {
-    return {};
-  }
-
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*old_schema_id, name);
-  if (!object_id) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  auto obj = _snapshot->GetObject(*object_id);
-  if (!obj) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  auto schema_obj = basics::downCast<SchemaObject>(std::move(obj));
-  schema_obj->SetSchemaId(*new_schema_id);
-
-  auto dispatch = [&](auto fn) {
-    switch (schema_obj->GetType()) {
-      case ObjectType::Table:
-        return fn(basics::downCast<Table>(schema_obj));
-      case ObjectType::View:
-        return fn(basics::downCast<View>(schema_obj));
-      case ObjectType::Index:
-        return fn(basics::downCast<Index>(schema_obj));
-      default:
-        SDB_UNREACHABLE();
-    }
-  };
-
-  auto entry_type = [&]() {
-    switch (schema_obj->GetType()) {
-      case ObjectType::Table:
-        return RocksDBEntryType::Table;
-      case ObjectType::View:
-        return RocksDBEntryType::View;
-      case ObjectType::Index:
-        return RocksDBEntryType::Index;
-      default:
-        SDB_UNREACHABLE();
-    }
-  }();
-
-  absl::MutexLock lock{&_mutex};
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      dispatch([&](auto typed) { clone->UnregisterObject(typed, *old_schema_id); });
-      auto r = dispatch([&](auto typed) {
-        return clone->RegisterObject(typed, *new_schema_id, false);
-      });
-      if (!r.ok()) {
-        return r;
-      }
-
-      vpack::Builder b;
-      b.openObject();
-      schema_obj->WriteInternal(b);
-      b.close();
-
-      return _engine->ReplaceDefinition(*old_schema_id, *new_schema_id,
-                                        entry_type, schema_obj->GetId(),
-                                        [&](bool) { return b.slice(); });
-    },
-    [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      dispatch(
-        [&](auto typed) { clone->UnregisterObject(typed, *new_schema_id, true); });
-      auto r = dispatch([&](auto typed) {
-        return clone->RegisterObject(typed, *old_schema_id, true);
-      });
-      SDB_ASSERT(r.ok());
-      schema_obj->SetSchemaId(*old_schema_id);
-    });
 }
 
 Result LocalCatalog::ChangeRole(std::string_view name,

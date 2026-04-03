@@ -3010,8 +3010,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     case T_CreateSchemaStmt:
     case T_DropStmt:
     case T_RenameStmt:
-    case T_AlterTableStmt:
-    case T_AlterObjectSchemaStmt: {
+    case T_AlterTableStmt: {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }

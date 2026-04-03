@@ -93,9 +93,6 @@ class LocalCatalog final : public LogicalCatalog,
                     std::string_view name, std::string_view new_name) final;
   Result RenameTable(ObjectId database_id, std::string_view schema,
                      std::string_view name, std::string_view new_name) final;
-  Result RenameTableSchema(ObjectId database_id, std::string_view old_schema,
-                           std::string_view name,
-                           std::string_view new_schema) final;
   Result RenameIndex(ObjectId database_id, std::string_view schema,
                      std::string_view name, std::string_view new_name) final;
   Result RenameRelation(ObjectId database_id, std::string_view schema,

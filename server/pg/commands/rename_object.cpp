@@ -23,6 +23,7 @@
 #include "app/app_server.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"
+#include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
 #include "pg/commands.h"
@@ -55,9 +56,26 @@ yaclib::Future<> RenameColumnOrConstraint(
                        : table.RenameConstraint(updated, old_name, new_name);
     });
 
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    if (is_column) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("cannot rename columns of a non-table relation"));
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("constraint \"", old_name, "\" for table \"",
+                            table_name, "\" does not exist"));
+  }
+
   if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+    if (!stmt.missing_ok) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("relation \"", table_name, "\" does not exist"));
+    }
+    auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", table_name, "\" does not exist, skipping")));
+    return {};
   }
 
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
@@ -146,9 +164,22 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   }
 
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    auto object_name = stmt.renameType == OBJECT_VIEW ? "a view" : "an index";
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", name, "\" is not ", object_name));
+    auto object_name = [&]() -> std::string_view {
+      switch (stmt.renameType) {
+        case OBJECT_TABLE:
+          return "table";
+        case OBJECT_VIEW:
+          return "view";
+        case OBJECT_INDEX:
+          return "index";
+        default:
+          return "relation";
+      }
+    }();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", name, "\" is not ",
+              basics::string_utils::GetArticle(object_name), " ", object_name));
   }
 
   if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||

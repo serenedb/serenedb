@@ -32,7 +32,7 @@ namespace {
 
 // RAII wrapper for re2::Regexp* (ref-counted via Decref)
 struct RegexpDeleter {
-  void operator()(re2::Regexp* re) const {
+  void operator()(re2::Regexp* re) const noexcept {
     if (re) {
       re->Decref();
     }
@@ -51,7 +51,7 @@ bool HasMetacharacters(bytes_view pattern) noexcept {
     if (escaped) {
       escaped = false;
       // After \, only actual regexp metacharacters are "simple escapes"
-      // (e.g. \. \* \( \{ — just remove special meaning).
+      // (e.g. \. \* \( \{ - just remove special meaning).
       // Everything else (\d, \w, \s, \b, \p, \Q, etc.) is an RE2
       // feature that changes matching semantics.
       if (!IsSimpleEscape(c)) {
@@ -194,7 +194,9 @@ automaton BuildUtf8RangeAutomaton(uint32_t lo, uint32_t hi) {
     byte_type lo_buf[utf8_utils::kMaxCharSize];
     byte_type hi_buf[utf8_utils::kMaxCharSize];
     auto byte_len = utf8_utils::FromChar32(cur, lo_buf);
-    utf8_utils::FromChar32(end, hi_buf);
+    [[maybe_unused]] auto hi_byte_len = utf8_utils::FromChar32(end, hi_buf);
+    // kBoundaries split guarantees both endpoints use the same byte length
+    SDB_ASSERT(byte_len == hi_byte_len);
 
     automaton a;
     auto start = a.AddState();
@@ -272,18 +274,18 @@ automaton BuildCharClassFromRe2(re2::CharClass* cc) {
   return result;
 }
 
-// RE2 AST → FST automaton walker
+// RE2 AST -> FST automaton walker
 //
 // After RE2 Parse() + Simplify(), the tree contains only simple ops.
 // kRegexpRepeat ({n,m}) is eliminated by Simplify() and expanded
 // into Concat/Quest combinations, so we don't need to handle it.
 //
 // Error handling strategy:
-//   RE2 AST invariants (e.g. Star has 1 child): SDB_ASSERT — these
+//   RE2 AST invariants (e.g. Star has 1 child): SDB_ASSERT - these
 //   indicate a bug in RE2 or in our code, not a user error.
-//   kRegexpRepeat after Simplify, unknown RegexpOp: SDB_ASSERT — should
+//   kRegexpRepeat after Simplify, unknown RegexpOp: SDB_ASSERT - should
 //   never happen; indicates version mismatch or corruption.
-//   kRegexpNoMatch: returns empty automaton (no final states) — legitimate
+//   kRegexpNoMatch: returns empty automaton (no final states) - legitimate
 //   AST node, not an error.
 class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
  public:
@@ -316,17 +318,23 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
         if (nchild_args == 1) {
           return std::move(child_args[0]);
         }
-        automaton result;
-        result.SetStart(result.AddState());
-        result.SetFinal(0, true);
+
+        // Build concatenation by prepending children in reverse order.
+        // fst::Concat(A, &B) prepends A before B (modifying B in place),
+        // so to build child[0]·child[1]·...·child[N-1] we start from
+        // child[N-1] and prepend child[N-2], child[N-3], ..., child[0].
+        // This matches the wildcard approach and avoids the overhead of
+        // the appending alternative (which would need to rewire growing
+        // final states on each step).
+        automaton result = std::move(child_args[nchild_args - 1]);
 
         size_t total_states = result.NumStates();
-        for (int i = 0; i < nchild_args; ++i) {
+        for (int i = 0; i < nchild_args - 1; ++i) {
           total_states += child_args[i].NumStates();
         }
         result.ReserveStates(total_states);
 
-        for (int i = nchild_args - 1; i >= 0; --i) {
+        for (int i = nchild_args - 2; i >= 0; --i) {
           fst::Concat(child_args[i], &result);
         }
         return result;
@@ -365,7 +373,7 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
         return MakeAny();
 
       case re2::kRegexpAnyByte: {
-        // \C in RE2 — matches a single raw byte (0x00–0xFF).
+        // \C in RE2 - matches a single raw byte (0x00-0xFF).
         // This can split multi-byte UTF-8 sequences, but we handle it
         // faithfully at the byte level.
         automaton a;
@@ -390,7 +398,7 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
         return {};
 
       // Anchors: the automaton matches terms whole (from start to end),
-      // so anchors add no additional constraint — epsilon is correct.
+      // so anchors add no additional constraint - epsilon is correct.
       // (?m) multiline mode produces BeginLine/EndLine instead of
       // BeginText/EndText, but for whole-term matching the semantics
       // are identical: the term has no internal newlines to anchor on.
@@ -400,14 +408,23 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
       case re2::kRegexpEndText:
         return MakeEpsilon();
 
-      // \b — word boundary. In whole-term matching the start and end
+      // \b - word boundary. In whole-term matching the start and end
       // of the term are always word boundaries, so this is a no-op.
       case re2::kRegexpWordBoundary:
         return MakeEpsilon();
 
-      // \B — not-a-word-boundary. In whole-term matching the start and
-      // end of the term are always word boundaries, so \B at those
-      // positions can never be satisfied → matches nothing.
+      // \B - not-a-word-boundary. Zero-width assertions cannot be
+      // faithfully modeled in our DFA without doubling the state space
+      // to track "previous character was word/non-word".  We conservatively
+      // return an empty automaton - any pattern containing \B matches
+      // nothing.  This is acceptable because:
+      //   1) Terms are typically tokenizer output (whole words), making
+      //      intra-term \B largely meaningless.
+      //   2) \B in user-facing regexp filters is extremely rare.
+      //   3) Underapproximation (no false positives) is safer for a
+      //      search engine than overapproximation.
+      // If full \b/\B support is ever needed, the approach is to split
+      // each automaton state into (state, prev_was_word_char) pairs.
       case re2::kRegexpNoWordBoundary:
         return {};
 
@@ -453,7 +470,7 @@ bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
   for (byte_type c : in) {
     if (escaped) {
       // Should only be called for patterns classified as
-      // LiteralEscaped/PrefixEscaped — only simple escapes allowed.
+      // LiteralEscaped/PrefixEscaped - only simple escapes allowed.
       SDB_ASSERT(IsSimpleEscape(c));
       out.push_back(c);
       escaped = false;
@@ -493,9 +510,9 @@ bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
   return bytes_view{pattern.data(), pattern.size() - 2};
 }
 
-// RE2-based regexp → automaton
+// RE2-based regexp -> automaton
 
-automaton FromRegexpRe2(bytes_view pattern) {
+automaton FromRegexpRe2(bytes_view pattern, int64_t max_dfa_states) {
   // ComputeRegexpType routes empty patterns to ByTerm (Literal path),
   // so FromRegexpRe2 should never be called with an empty pattern.
   SDB_ASSERT(!pattern.empty());
@@ -506,15 +523,49 @@ automaton FromRegexpRe2(bytes_view pattern) {
   absl::string_view sv(reinterpret_cast<const char*>(pattern.data()),
                        pattern.size());
 
-  // Step 1: Parse pattern → AST.
-  // TODO: make dialect configurable (LikePerl / POSIX / custom flags)
+  // Parse pattern -> AST.
+  //
+  // We use LikePerl which is the most permissive built-in mode:
+  //   LikePerl = ClassNL | OneLine | PerlB | PerlX | UnicodeGroups
+  //
+  // Why LikePerl and not individual flags:
+  //   - PerlX: enables (?:...), (?i:...), (?P<name>...) - essential for
+  //     advanced users.  Without it these are parse errors.
+  //   - UnicodeGroups: enables \p{Cyrillic}, \P{Latin} etc. - essential
+  //     for i18n.  Without it these are parse errors.
+  //   - PerlB: enables \b/\B.  \b is correct for whole-term matching
+  //     (boundaries are always word boundaries).  \B is a documented
+  //     underapproximation (matches nothing).  Without PerlB both are
+  //     parse errors, which is worse.
+  //   - OneLine: ^ and $ match only start/end of text.  Redundant for
+  //     whole-term matching (always effectively on), but harmless.
+  //   - ClassNL: [^a] can match \n.  Irrelevant - indexed terms
+  //     typically don't contain newlines.
+  //
+  // Flags we intentionally do NOT set:
+  //   - FoldCase: case folding is handled by the analyzer at index time,
+  //     not by the regexp engine.  Users can still use (?i:...) inline.
+  //   - DotNL: let . match \n - irrelevant, terms don't contain \n.
+  //   - NonGreedy: greedy vs non-greedy doesn't affect DFA acceptance
+  //     (only matters for capturing, which we don't do).
+  //   - NeverNL: never match \n - irrelevant for same reason as DotNL.
+  //   - NeverCapture: minor parser optimization, walker already ignores
+  //     captures.
+  //   - Literal: redundant - ComputeRegexpType already fast-paths literals.
+  //   - Latin1: exotic, UTF-8 is the standard.
+  //
+  // TODO: consider adding POSIX ERE mode as an alternative syntax for
+  //   users who need standards compliance (different grouping rules,
+  //   no \d/\w/\p extensions, leftmost-longest semantics).
   re2::RegexpStatus status;
   RegexpPtr re{re2::Regexp::Parse(sv, re2::Regexp::LikePerl, &status)};
   if (!re) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              absl::StrCat("RE2 regexp parse error: ", status.Text()));
     return {};
   }
 
-  // Step 2: Simplify/optimize AST.
+  // Simplify/optimize AST.
   // Rewrites {n,m} into Star/Plus/Quest, coalesces runs, normalizes classes.
   RegexpPtr sre{re->Simplify()};
   SDB_ASSERT(sre != nullptr);
@@ -522,7 +573,7 @@ automaton FromRegexpRe2(bytes_view pattern) {
     return {};
   }
 
-  // Step 3: Walk the simplified AST → build FST automaton.
+  // Walk the simplified AST -> build FST automaton.
   Re2ToAutomatonWalker walker;
   auto nfa = walker.Walk(sre.get(), MakeEpsilon());
 
@@ -533,11 +584,23 @@ automaton FromRegexpRe2(bytes_view pattern) {
     return {};
   }
 
-  // Step 4: Determinize NFA → DFA.
+  // Determinize NFA -> DFA.
   nfa.SetProperties(fst::kILabelSorted, fst::kILabelSorted);
 
   automaton dfa;
   if (fst::DeterminizeStar(nfa, &dfa)) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "RE2 regexp determinization failed");
+    return {};
+  }
+
+  // Guard against exponential state blowup from pathological
+  // patterns (e.g. [ab]{20} can produce 2^20 DFA states).
+  if (max_dfa_states > 0 &&
+      dfa.NumStates() > max_dfa_states) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              absl::StrCat("RE2 regexp DFA too large: ", dfa.NumStates(),
+                           " states (limit: ", max_dfa_states, ")"));
     return {};
   }
 

@@ -82,16 +82,26 @@ constexpr bool IsSimpleEscape(byte_type c) noexcept {
   return IsRegexpMeta(c);
 }
 
+// Default maximum number of DFA states after determinization.
+// Patterns that produce a larger DFA are rejected (return empty automaton).
+// 10 000 is generous for real-world patterns (most produce < 1 000)
+// while guarding against exponential blowup from pathological input
+// (e.g. [ab]{20} → up to 2^20 states).
+// 0 means no limit.
+inline constexpr int64_t kDefaultMaxDfaStates = 10'000;
+
 RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 bytes_view UnescapeRegexp(bytes_view in, bstring& out);
 
-automaton FromRegexpRe2(bytes_view pattern);
+automaton FromRegexpRe2(bytes_view pattern,
+                        int64_t max_dfa_states = kDefaultMaxDfaStates);
 
-inline automaton FromRegexpRe2(std::string_view pattern) {
-  return FromRegexpRe2(ViewCast<byte_type>(pattern));
+inline automaton FromRegexpRe2(std::string_view pattern,
+                               int64_t max_dfa_states = kDefaultMaxDfaStates) {
+  return FromRegexpRe2(ViewCast<byte_type>(pattern), max_dfa_states);
 }
 
 }  // namespace irs

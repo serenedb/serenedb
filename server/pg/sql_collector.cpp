@@ -31,11 +31,11 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/serenedb_connector.hpp"
+#include "functions/search.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/transaction.h"
-#include "search/functions.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -251,7 +251,7 @@ void ObjectCollector::CollectFuncCall(const State& state,
   // OFFSETS(field [, limit]) produces an offsets column in the output --
   // not a catalog function, resolved during analysis similarly to
   // BM25()/TFIDF().
-  if (name.schema.empty() && name.relation == search::functions::kOffsets) {
+  if (name.schema.empty() && name.relation == sdb::functions::kOffsets) {
     const auto nargs = list_length(expr.args);
     if (nargs < 1 || nargs > 2) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

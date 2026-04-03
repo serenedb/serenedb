@@ -99,7 +99,6 @@
 #include "query/transaction.h"
 #include "query/types.h"
 #include "query/utils.h"
-#include "search/functions.hpp"
 #include "utils/elog.h"
 #include "utils/query_string.h"
 
@@ -5454,7 +5453,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   // OFFSETS(field) is not a catalog function -- it is an offsets directive
   // resolved during collection. Return the injected offsets column reference
   // set up in ProcessInvertedIndex for the given field.
-  if (schema.empty() && name == search::functions::kOffsets) {
+  if (schema.empty() && name == sdb::functions::kOffsets) {
     // ensured by collector
     SDB_ASSERT(list_length(expr.args) > 0);
     const auto* arg = linitial_node(Node, expr.args);

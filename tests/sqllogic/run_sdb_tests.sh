@@ -16,6 +16,7 @@ fi
 exec ./run.sh \
 	--test "sdb/**/*.test*" \
 	--junit "tests-serenedb" \
-	--protocol both \
+	--engines "pg-wire-simple,pg-wire-extended" \
+	--database serenedb \
 	$FAST_FLAG \
 	"$@"

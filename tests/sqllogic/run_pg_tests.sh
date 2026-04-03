@@ -16,7 +16,7 @@ fi
 exec ./run.sh \
 	--test "pg/**/*.test*" \
 	--junit "tests-pg" \
-	--protocol both \
+	--engines "pg-wire-simple,pg-wire-extended" \
 	--database postgres \
 	$FAST_FLAG \
 	"$@"

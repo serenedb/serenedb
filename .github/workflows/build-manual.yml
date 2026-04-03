@@ -92,16 +92,11 @@ jobs:
     secrets: inherit
 
   validate-pg:
-    name: validate pg (${{ matrix.location }})
+    name: validate pg
     if: inputs.VALIDATE_PG_TESTS
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
-      LOCATION: ${{ matrix.location }}
-      FAST: false
+      LOCATION: self-hosted
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 

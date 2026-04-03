@@ -31,7 +31,6 @@ services:
       - HOME=/sqllogic
       - CARGO_HOME=/tmp/cargo
       - CARGO_TARGET_DIR=/cargo-target
-      - SKIP_SLOW_TESTS=${FAST:-false}
     networks:
       - test-network
     command: >

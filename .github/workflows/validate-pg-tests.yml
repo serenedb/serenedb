@@ -8,11 +8,6 @@ on:
         type: string
         required: false
         default: "self-hosted"
-      FAST:
-        description: "Skip .test_slow files"
-        type: boolean
-        required: false
-        default: false
       BUILD_CONFIG:
         description: "Internal: JSON overrides (PR_SHA presence triggers diff-only mode)"
         type: string
@@ -92,7 +87,6 @@ jobs:
           export DOCKER_UID="$(id -u)"
           export DOCKER_GID="$(id -g)"
           export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
-          export FAST="${{ inputs.FAST }}"
           export CARGO_TARGET_CACHE="/mnt/data/.cargo-target-sqllogic"
 
           cd tests/sqllogic

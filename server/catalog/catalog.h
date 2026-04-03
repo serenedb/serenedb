@@ -224,7 +224,7 @@ struct LogicalCatalog {
                                 std::string_view name,
                                 std::string_view new_name) = 0;
 
-  virtual Result AlterTableSchema(ObjectId database_id,
+  virtual Result RenameTableSchema(ObjectId database_id,
                                   std::string_view old_schema,
                                   std::string_view name,
                                   std::string_view new_schema) = 0;

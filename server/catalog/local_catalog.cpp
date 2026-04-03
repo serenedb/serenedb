@@ -1501,7 +1501,7 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
   return RenameObjectImpl<Function>(database_id, schema, name, new_name);
 }
 
-Result LocalCatalog::AlterTableSchema(ObjectId database_id,
+Result LocalCatalog::RenameTableSchema(ObjectId database_id,
                                       std::string_view old_schema,
                                       std::string_view name,
                                       std::string_view new_schema) {
@@ -1535,6 +1535,19 @@ Result LocalCatalog::AlterTableSchema(ObjectId database_id,
   auto schema_obj = basics::downCast<SchemaObject>(std::move(obj));
   schema_obj->SetSchemaId(*new_schema_id);
 
+  auto dispatch = [&](auto fn) {
+    switch (schema_obj->GetType()) {
+      case ObjectType::Table:
+        return fn(basics::downCast<Table>(schema_obj));
+      case ObjectType::View:
+        return fn(basics::downCast<View>(schema_obj));
+      case ObjectType::Index:
+        return fn(basics::downCast<Index>(schema_obj));
+      default:
+        SDB_UNREACHABLE();
+    }
+  };
+
   auto entry_type = [&]() {
     switch (schema_obj->GetType()) {
       case ObjectType::Table:
@@ -1552,8 +1565,10 @@ Result LocalCatalog::AlterTableSchema(ObjectId database_id,
   return Apply(
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      clone->UnregisterObject(schema_obj, *old_schema_id);
-      auto r = clone->RegisterObject(schema_obj, *new_schema_id, false);
+      dispatch([&](auto typed) { clone->UnregisterObject(typed, *old_schema_id); });
+      auto r = dispatch([&](auto typed) {
+        return clone->RegisterObject(typed, *new_schema_id, false);
+      });
       if (!r.ok()) {
         return r;
       }
@@ -1568,8 +1583,11 @@ Result LocalCatalog::AlterTableSchema(ObjectId database_id,
                                         [&](bool) { return b.slice(); });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      clone->UnregisterObject(schema_obj, *new_schema_id, true);
-      auto r = clone->RegisterObject(schema_obj, *old_schema_id, true);
+      dispatch(
+        [&](auto typed) { clone->UnregisterObject(typed, *new_schema_id, true); });
+      auto r = dispatch([&](auto typed) {
+        return clone->RegisterObject(typed, *old_schema_id, true);
+      });
       SDB_ASSERT(r.ok());
       schema_obj->SetSchemaId(*old_schema_id);
     });
@@ -1683,11 +1701,16 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto table = basics::downCast<Table>(_snapshot->GetObject(*object_id));
-  if (!table) {
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
+  if (obj->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  magic_enum::enum_name(obj->GetType())};
+  }
 
+  auto table = basics::downCast<Table>(std::move(obj));
   std::shared_ptr<Table> updated;
   auto r = new_table(*table, updated);
   if (!r.ok()) {

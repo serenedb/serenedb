@@ -315,12 +315,12 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
   }
 
   auto key = make_key();
-  auto value = make_value();
-  std::string value_str{reinterpret_cast<const char*>(value.start()),
-                        value.byteSize()};
+  auto vpack_value = make_value();
+  rocksdb::Slice value{reinterpret_cast<const char*>(vpack_value.start()),
+                       vpack_value.byteSize()};
   batch.Put(RocksDBColumnFamilyManager::get(
               RocksDBColumnFamilyManager::Family::Definitions),
-            key.GetBuffer(), value_str);
+            key.GetBuffer(), value);
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
@@ -346,10 +346,12 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 
   auto old_key = make_old_key();
   auto new_key = make_new_key();
-  auto value = make_value();
+  auto vpack_value = make_value();
+  rocksdb::Slice value{reinterpret_cast<const char*>(vpack_value.start()),
+                       vpack_value.byteSize()};
 
-  batch.Delete(column, old_key.string());
-  batch.Put(column, new_key.string(), value.string());
+  batch.Delete(column, old_key.GetBuffer());
+  batch.Put(column, new_key.GetBuffer(), value);
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));

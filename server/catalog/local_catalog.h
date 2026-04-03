@@ -65,7 +65,6 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
-
   ResultOr<std::shared_ptr<Index>> RegisterIndex(
     ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
     IndexImplOptionsBaseWrapper&& impl_options) final;
@@ -82,13 +81,11 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
-
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
                      std::vector<CreateIndexColumn>&& columns,
                      IndexBaseOptions options, IndexShardOptions& shard_options,
                      CreateIndexOperationOptions operation_options = {}) final;
-
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
 
@@ -96,19 +93,16 @@ class LocalCatalog final : public LogicalCatalog,
                     std::string_view name, std::string_view new_name) final;
   Result RenameTable(ObjectId database_id, std::string_view schema,
                      std::string_view name, std::string_view new_name) final;
+  Result RenameTableSchema(ObjectId database_id, std::string_view old_schema,
+                           std::string_view name,
+                           std::string_view new_schema) final;
   Result RenameIndex(ObjectId database_id, std::string_view schema,
                      std::string_view name, std::string_view new_name) final;
   Result RenameRelation(ObjectId database_id, std::string_view schema,
                         std::string_view name, std::string_view new_name) final;
   Result RenameFunction(ObjectId database_id, std::string_view schema,
                         std::string_view name, std::string_view new_name) final;
-  Result AlterTableSchema(ObjectId database_id, std::string_view old_schema,
-                          std::string_view name,
-                          std::string_view new_schema) final;
 
-  template<typename T>
-  Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
-                          std::string_view name, std::string_view new_name);
   Result ChangeView(ObjectId database_id, std::string_view schema,
                     std::string_view name, ChangeCallback<View> callback) final;
   Result ChangeTable(ObjectId database_id, std::string_view schema,
@@ -126,13 +120,13 @@ class LocalCatalog final : public LogicalCatalog,
                       std::string_view name) final;
   Result DropTokenizer(ObjectId database_id, std::string_view schema,
                        std::string_view name) final;
-
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
-  Result RemoveTombstone(ObjectId database_id, std::string_view schema,
-                         std::string_view name) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
+
+  Result RemoveTombstone(ObjectId database_id, std::string_view schema,
+                         std::string_view name) final;
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {
@@ -140,6 +134,10 @@ class LocalCatalog final : public LogicalCatalog,
   }
 
  private:
+  template<typename T>
+  Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
+                          std::string_view name, std::string_view new_name);
+
   mutable absl::Mutex _mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;

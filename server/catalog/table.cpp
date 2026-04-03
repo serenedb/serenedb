@@ -203,23 +203,23 @@ Result Table::Rename(std::shared_ptr<Table>& result,
 Result Table::RenameColumn(std::shared_ptr<Table>& result,
                            std::string_view old_name,
                            std::string_view new_name) const {
-  auto col_it = _columns.end();
+  auto column_it = _columns.end();
   for (auto it = _columns.begin(); it != _columns.end(); ++it) {
     if (it->name == new_name) {
       return Result{ERROR_SERVER_DUPLICATE_NAME};
     }
     if (it->name == old_name) {
-      col_it = it;
+      column_it = it;
     }
   }
-  if (col_it == _columns.end()) {
+  if (column_it == _columns.end()) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
   auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
-  const size_t idx = std::distance(_columns.begin(), col_it);
-  auto& target = new_table->_columns[idx];
-  target.name = new_name;
+  const size_t idx = std::distance(_columns.begin(), column_it);
+  auto& column = new_table->_columns[idx];
+  column.name = new_name;
 
   new_table->_lookup_cache =
     LookupCache{new_table->_columns, new_table->_pk_columns};
@@ -231,9 +231,9 @@ Result Table::RenameColumn(std::shared_ptr<Table>& result,
 Result Table::RenameConstraint(std::shared_ptr<Table>& result,
                                std::string_view old_name,
                                std::string_view new_name) const {
-  auto constraint_it = _check_constraints.end();
-  for (auto it = _check_constraints.begin(); it != _check_constraints.end();
-       ++it) {
+  auto& constraints = _check_constraints;
+  auto constraint_it = constraints.end();
+  for (auto it = constraints.begin(); it != constraints.end(); ++it) {
     if (it->name == new_name) {
       return Result{ERROR_SERVER_DUPLICATE_NAME};
     }
@@ -241,14 +241,14 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
       constraint_it = it;
     }
   }
-  if (constraint_it == _check_constraints.end()) {
+  if (constraint_it == constraints.end()) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
   auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
-  const size_t idx = std::distance(_check_constraints.begin(), constraint_it);
-  auto& target = new_table->_check_constraints[idx];
-  target.name = new_name;
+  const size_t idx = std::distance(constraints.begin(), constraint_it);
+  auto& constraint = new_table->_check_constraints[idx];
+  constraint.name = new_name;
 
   result = std::move(new_table);
   return {};

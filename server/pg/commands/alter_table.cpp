@@ -24,7 +24,6 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
-#include "catalog/column_expr.h"
 #include "catalog/table.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
@@ -40,23 +39,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-namespace {
-
-std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {
-  auto column_expr = std::make_shared<ColumnExpr>();
-  auto r = column_expr->Init(database_id, expr);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-  return column_expr;
-}
-
-void HandleTableNotFound(std::string_view table_name) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                  ERR_MSG("relation \"", table_name, "\" does not exist"));
-}
-
-}  // namespace
 
 yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
   auto& catalogs =
@@ -83,8 +65,26 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
             return table.DropConstraint(updated, constraint_name);
           });
 
+        if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+            ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
+                    "relation \"",
+                    table_name, "\""),
+            ERR_DETAIL("This operation is not supported for views."));
+        }
+
         if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-          HandleTableNotFound(table_name);
+          if (!stmt.missing_ok) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+              ERR_MSG("relation \"", table_name, "\" does not exist"));
+          }
+          conn_ctx.AddNotice(SQL_ERROR_DATA(
+            ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+            ERR_MSG("relation \"", table_name,
+                    "\" does not exist, skipping")));
+          return;
         }
 
         if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
@@ -99,48 +99,6 @@ yaclib::Future<> AlterTable(ExecContext& context, const AlterTableStmt& stmt) {
             ERR_MSG("constraint \"", constraint_name, "\" of relation \"",
                     table_name, "\" does not exist, skipping")));
           return;
-        }
-
-        if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
-        return;
-      }
-      case AT_AddConstraint: {
-        auto* constraint = castNode(Constraint, cmd.def);
-        if (constraint->contype != CONSTR_CHECK) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                          ERR_MSG("only CHECK constraints are supported"));
-        }
-
-        std::string name;
-        if (constraint->conname) {
-          name = constraint->conname;
-        } else {
-          name = absl::StrCat(table_name, "_check");
-        }
-
-        auto expr = MakeColumnExpr(db, constraint->raw_expr);
-
-        Result r = catalog.ChangeTable(
-          db, schema, table_name,
-          [&](const catalog::Table& table,
-              std::shared_ptr<catalog::Table>& updated) {
-            return table.AddConstraint(updated, catalog::CheckConstraint{
-                                                  .id = catalog::NextId(),
-                                                  .name = std::move(name),
-                                                  .expr = std::move(expr),
-                                                });
-          });
-
-        if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-          HandleTableNotFound(table_name);
-        }
-
-        if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                          ERR_MSG("constraint \"", name, "\" for relation \"",
-                                  table_name, "\" already exists"));
         }
 
         if (!r.ok()) {

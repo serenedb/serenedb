@@ -53,7 +53,7 @@ yaclib::Future<> AlterObjectSchema(ExecContext& context,
   std::string_view name{rel->relname};
   std::string_view new_schema{stmt.newschema};
 
-  Result r = catalog.AlterTableSchema(db, schema, name, new_schema);
+  Result r = catalog.RenameTableSchema(db, schema, name, new_schema);
 
   if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
     if (!stmt.missing_ok) {

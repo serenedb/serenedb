@@ -1,4 +1,4 @@
-name: task | sereneui build & tests
+name: task | sereneui build & test
 
 on:
     workflow_call:

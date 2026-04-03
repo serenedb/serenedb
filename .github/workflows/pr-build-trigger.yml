@@ -124,7 +124,7 @@ jobs:
               workflow_id: 'build-manual.yml',
               ref: branch,
               inputs: {
-                LOCATION: allArch ? 'all' : 'self-hosted',
+                LOCATION: allArch ? 'all' : 'linux-amd64',
                 ENABLE_ASAN: enableAsan.toString(),
                 ENABLE_TSAN: enableTsan.toString(),
                 ENABLE_MSAN: enableMsan.toString(),

@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       LOCATION:
-        description: 'Runner label (all = X64 + arm in parallel)'
+        description: 'Runner label (all = linux-amd64 + linux-arm64 in parallel)'
         type: choice
         required: true
-        default: 'self-hosted'
+        default: 'linux'
         options:
-          - self-hosted
-          - X64
-          - arm
+          - linux
+          - linux-amd64
+          - linux-arm64
           - all
       ENABLE_ASAN:
         description: 'Run tests with Address Sanitizer'
@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
         instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
         instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
@@ -82,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["X64","arm"]' || format('["{0}"]', inputs.LOCATION)) }}
+        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
@@ -96,7 +96,7 @@ jobs:
     if: inputs.VALIDATE_PG_TESTS
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
-      LOCATION: self-hosted
+      LOCATION: linux
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 

@@ -10,10 +10,10 @@ on:
         type: choice
         required: true
         options:
-          - X64
-          - arm
-          - self-hosted
-        default: 'X64'
+          - linux-amd64
+          - linux-arm64
+          - linux
+        default: 'linux-amd64'
       PUSH_IMAGES_2_REGISTRY:
         description: 'Push build images to Docker Hub'
         required: true

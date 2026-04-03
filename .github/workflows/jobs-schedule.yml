@@ -19,7 +19,7 @@ jobs:
     if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: both
       DEV: true
       INSTRUMENTATION: coverage
@@ -31,7 +31,7 @@ jobs:
     if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/make-package.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       RUN_RTA: true
       UPLOAD_ARTIFACTS: false
     secrets:
@@ -42,7 +42,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 1'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: unit
       DEV: true
       INSTRUMENTATION: msan
@@ -53,7 +53,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 1'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: functional
       DEV: true
       INSTRUMENTATION: msan
@@ -65,7 +65,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 2'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: unit
       DEV: true
       INSTRUMENTATION: asan
@@ -76,7 +76,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 2'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: functional
       DEV: true
       INSTRUMENTATION: asan
@@ -88,7 +88,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 3'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: unit
       DEV: true
       INSTRUMENTATION: ubsan
@@ -99,7 +99,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 3'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: functional
       DEV: true
       INSTRUMENTATION: ubsan
@@ -111,7 +111,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 4'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: unit
       DEV: true
       INSTRUMENTATION: tsan
@@ -122,7 +122,7 @@ jobs:
     if: github.event.schedule == '0 1 * * 4'
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: X64
+      LOCATION: linux-amd64
       KIND: functional
       DEV: true
       INSTRUMENTATION: tsan

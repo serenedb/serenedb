@@ -288,14 +288,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
       stream.reset(value);
       stream.next();
       term.mutable_options()->term.assign(token->value);
-    } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
+    } else {
+      static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
+                    "Unexpected term type");
       irs::NumericTokenizer stream;
       const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
       stream.reset(value);
       stream.next();
       term.mutable_options()->term.assign(token->value);
-    } else {
-      ASSERT_FALSE(true) << "Unexpected term type";
     }
     return term;
   }
@@ -333,7 +333,9 @@ class SearchFilterBuilderTest : public ::testing::Test {
         options.max_type = irs::BoundType::Unbounded;
       }
       return range;
-    } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
+    } else {
+      static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
+                    "Unexpected range type");
       // Use ByGranularRange for numerics
       auto& range = AddFilter<irs::ByGranularRange>(root);
       *range.mutable_field() = MakeFieldName<T>(column);
@@ -357,9 +359,6 @@ class SearchFilterBuilderTest : public ::testing::Test {
         options.max_type = irs::BoundType::Unbounded;
       }
       return range;
-    } else {
-      ASSERT_FALSE(true) << "Range queries on bool type not supported";
-      __builtin_unreachable();
     }
   }
 
@@ -379,15 +378,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
         stream.reset(value);
         stream.next();
         terms.mutable_options()->terms.emplace(token->value);
-      } else if constexpr (std::is_floating_point_v<T> ||
-                           std::is_integral_v<T>) {
+      } else {
+        static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
+                      "Unexpected term type");
         irs::NumericTokenizer stream;
         const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
         stream.reset(value);
         stream.next();
         terms.mutable_options()->terms.emplace(token->value);
-      } else {
-        ASSERT_FALSE(true) << "Unexpected term type";
       }
     }
     return terms;
@@ -2081,7 +2079,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_NgramMatch) {
     std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE BOOST(NGRAM_MATCH(b, 'foo'), 2.5)",
-               std::move(columns), true);
+               std::move(columns), true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_LevenshteinMatch) {

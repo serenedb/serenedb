@@ -736,14 +736,7 @@ Result FromSearchBoost(irs::BooleanFilter& filter,
     return {ERROR_BAD_PARAMETER, "Failed to evaluate boost value as constant"};
   }
 
-  constexpr auto kRequiredKind = velox::CppToType<irs::score_t>::typeKind;
-
-  if (boost_val->kind() != kRequiredKind) {
-    return {ERROR_BAD_PARAMETER, "BOOST value must be a ",
-            velox::TypeKindName::toName(kRequiredKind)};
-  }
-
-  const auto boost = boost_val->value<irs::score_t>();
+  const auto boost = static_cast<irs::score_t>(boost_val->value<double>());
   if (boost < 0.0) {
     return {ERROR_BAD_PARAMETER, "BOOST value must be >= 0, got ", boost};
   }

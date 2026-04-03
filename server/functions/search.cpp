@@ -85,7 +85,7 @@ struct SearchStubFunction {
   }
 
   // BOOST(expr, boost_value)
-  void call(bool& out, const bool&, const irs::score_t&) {
+  void call(bool& out, const bool&, const double&) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
@@ -138,7 +138,7 @@ void RegisterSearchFunctions() {
                           velox::Varchar>({std::string{kLevenshteinMatch}});
 
   // BOOST(expr, boost_value)
-  velox::registerFunction<SearchStubFunction, bool, bool, irs::score_t>(
+  velox::registerFunction<SearchStubFunction, bool, bool, double>(
     {std::string{kBoost}});
 }
 

@@ -1,6 +1,6 @@
-name: SereneDB-Release
+name: serenedb | make release
 
-run-name: "SereneDB Release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
+run-name: "serenedb | make release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
 
 on:
   workflow_dispatch:
@@ -69,10 +69,11 @@ jobs:
   build-x64:
     if: inputs.BUILD_X64
     needs: [resolve-version]
-    uses: ./.github/workflows/build-reusable.yml
+    uses: ./.github/workflows/make-package.yml
     with:
-      PRESET: release
-      LOCATION: X64
+      LOCATION: linux-amd64
+      RUN_RTA: true
+      UPLOAD_ARTIFACTS: true
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
@@ -80,10 +81,11 @@ jobs:
   build-arm64:
     if: inputs.BUILD_ARM64
     needs: [resolve-version]
-    uses: ./.github/workflows/build-reusable.yml
+    uses: ./.github/workflows/make-package.yml
     with:
-      PRESET: release
-      LOCATION: arm
+      LOCATION: linux-arm64
+      RUN_RTA: true
+      UPLOAD_ARTIFACTS: true
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
@@ -95,7 +97,7 @@ jobs:
       always() && !cancelled() &&
       (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
     runs-on:
-      - X64
+      - linux-amd64
     permissions:
       contents: write
       actions: write
@@ -120,14 +122,14 @@ jobs:
         if: needs.build-x64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: tarball-X64
+          name: tarball-linux-amd64
           path: packages/tarball/
 
       - name: Download arm64 tarball
         if: needs.build-arm64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: tarball-arm
+          name: tarball-linux-arm64
           path: packages/tarball/
 
       - name: Check tarballs
@@ -164,14 +166,14 @@ jobs:
         if: inputs.CREATE_GITHUB_RELEASE && needs.build-x64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: packages-X64-${{ github.run_number }}
+          name: packages-linux-amd64-${{ github.run_number }}
           path: release-packages/
 
       - name: Download arm64 packages
         if: inputs.CREATE_GITHUB_RELEASE && needs.build-arm64.outputs.packages_ok == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: packages-arm-${{ github.run_number }}
+          name: packages-linux-arm64-${{ github.run_number }}
           path: release-packages/
 
       # Create GitHub Release
@@ -207,7 +209,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for name in tarball-X64 tarball-arm; do
+          for name in tarball-linux-amd64 tarball-linux-arm64; do
             ARTIFACT_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
               --jq ".artifacts[] | select(.name == \"${name}\") | .id" 2>/dev/null || true)
             if [[ -n "$ARTIFACT_ID" ]]; then
@@ -236,7 +238,7 @@ jobs:
                   || 'failure'
             }}
           ACTOR: ${{ github.actor }}
-          RUN_NAME: "SereneDB [release]"
+          RUN_NAME: "serenedb | make release"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash

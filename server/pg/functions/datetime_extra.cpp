@@ -354,7 +354,7 @@ struct TimestampMinusIntervalFunction {
 
 }  // namespace
 
-void registerDatetimeExtraFunctions(const std::string& prefix) {
+void RegisterDatetimeExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgMakeDate, velox::Date, int32_t, int32_t, int32_t>(
     {prefix + "make_date"});
   velox::registerFunction<PgMakeTimestamp, velox::Timestamp, int32_t, int32_t,

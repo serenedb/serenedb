@@ -1,6 +1,6 @@
-name: SereneDB-Build-Images
+name: serenedb | create infra
 
-run-name: "SereneDB [build image]"
+run-name: "serenedb | create infra"
 
 on:
   workflow_dispatch:
@@ -10,10 +10,10 @@ on:
         type: choice
         required: true
         options:
-          - X64
-          - arm
-          - self-hosted
-        default: 'X64'
+          - linux-amd64
+          - linux-arm64
+          - linux
+        default: 'linux-amd64'
       PUSH_IMAGES_2_REGISTRY:
         description: 'Push build images to Docker Hub'
         required: true
@@ -47,12 +47,6 @@ jobs:
           PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
         run: ./build_images.sh
 
-      - name: Docker cleanup
-        if: always()
-        run: |
-          docker system prune -f || true
-          docker volume prune -f || true
-
       - name: Send Telegram notification
         if: always() && !cancelled()
         env:
@@ -64,7 +58,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           JOB_STATUS: ${{ job.status }}
           ACTOR: ${{ github.actor }}
-          RUN_NAME: "SereneDB [build image]"
+          RUN_NAME: "serenedb | create infra"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash

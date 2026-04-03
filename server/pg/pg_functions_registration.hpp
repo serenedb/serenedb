@@ -48,7 +48,6 @@
 #include "basics/fwd.h"
 #include "pg/functions.h"
 #include "query/types.h"
-#include "search/functions.hpp"
 
 namespace sdb::pg {
 
@@ -192,9 +191,9 @@ inline void RegisterVeloxFunctionsAndTypes() {
   axiom::optimizer::FunctionRegistry::registerPrestoFunctions("presto_");
 
   pg::RegisterTypes();
-  pg::functions::registerFunctions("pg_");
+  pg::functions::RegisterFunctions("pg_");
   velox::TypeCoercer::registerCoercions(AllowedCoercions());
-  search::functions::registerSearchFunctions();
+  pg::functions::RegisterSdbFunctions();
 }
 
 }  // namespace sdb::pg

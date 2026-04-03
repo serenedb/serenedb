@@ -24,6 +24,6 @@
 
 namespace sdb::pg::functions {
 
-void registerUtilFunctions(const std::string& prefix);
+void RegisterUtilFunctions(const std::string& prefix);
 
 }  // namespace sdb::pg::functions

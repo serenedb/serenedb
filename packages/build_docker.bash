@@ -72,7 +72,7 @@ fi
 
 # --- Prepare build context ---
 BUILD_DIR=$(mktemp -d)
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 log "=== SereneDB Docker Build ==="
 log "Version:  ${VERSION}"

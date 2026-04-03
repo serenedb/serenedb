@@ -1,4 +1,4 @@
-name: SereneUI-Build-Manual
+name: sereneui | build & test
 
 run-name: "SereneUI [${{ inputs.PUSH_RELEASE && 'release' || 'build' }}]"
 

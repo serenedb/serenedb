@@ -2135,3 +2135,1132 @@ pid	tag
 
 statement ok
 DROP TABLE clickclack_null_combo;
+
+statement ok
+CREATE TABLE vedernikoff_range (pid INTEGER PRIMARY KEY, score INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX vedernikoff_range_idx ON vedernikoff_range(score);
+
+statement ok
+INSERT INTO vedernikoff_range VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta'),
+  (3, 30, 'gamma'),
+  (4, 40, 'delta'),
+  (5, 50, 'epsilon');
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score > 30 ORDER BY pid;
+----
+pid	tag
+4	delta
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score >= 30 ORDER BY pid;
+----
+pid	tag
+3	gamma
+4	delta
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score < 20;
+----
+pid	tag
+1	alpha
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score BETWEEN 20 AND 40 ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+4	delta
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score > 10 AND score < 50 ORDER BY pid;
+----
+pid	tag
+2	beta
+3	gamma
+4	delta
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score = 30 AND tag = 'gamma';
+----
+pid	tag
+3	gamma
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score IN (10, 30) AND tag > 'b' ORDER BY pid;
+----
+pid	tag
+3	gamma
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE score = 20 OR score > 40 ORDER BY pid;
+----
+pid	tag
+2	beta
+5	epsilon
+
+query
+SELECT pid, tag FROM vedernikoff_range WHERE (score = 10 AND tag = 'alpha') OR score = 50 ORDER BY pid;
+----
+pid	tag
+1	alpha
+5	epsilon
+
+statement ok
+DROP TABLE vedernikoff_range;
+
+
+statement ok
+CREATE TABLE babsky_null_heavy (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX babsky_null_heavy_idx ON babsky_null_heavy(val);
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (1, NULL, 'a');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (2, NULL, 'b');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (3, NULL, 'c');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (4, NULL, 'd');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (5, NULL, 'e');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (6, 10, 'f');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (7, 10, 'g');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (8, 20, 'h');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (9, NULL, 'i');
+
+statement ok
+INSERT INTO babsky_null_heavy VALUES (10, NULL, 'j');
+
+query
+SELECT count(*) FROM babsky_null_heavy WHERE val IS NULL;
+----
+count
+7
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val IS NULL ORDER BY pid;
+----
+pid	tag
+1	a
+2	b
+3	c
+4	d
+5	e
+9	i
+10	j
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val = 10 ORDER BY pid;
+----
+pid	tag
+6	f
+7	g
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val IN (10, 20) ORDER BY pid;
+----
+pid	tag
+6	f
+7	g
+8	h
+
+statement ok
+DELETE FROM babsky_null_heavy WHERE pid IN (1, 3, 5);
+
+query
+SELECT count(*) FROM babsky_null_heavy WHERE val IS NULL;
+----
+count
+4
+
+statement ok
+UPDATE babsky_null_heavy SET val = 30 WHERE pid = 2;
+
+query
+SELECT count(*) FROM babsky_null_heavy WHERE val IS NULL;
+----
+count
+3
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val = 30;
+----
+pid	tag
+2	b
+
+statement ok
+UPDATE babsky_null_heavy SET val = NULL WHERE pid = 6;
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val IS NULL ORDER BY pid;
+----
+pid	tag
+4	d
+6	f
+9	i
+10	j
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val = 10;
+----
+pid	tag
+7	g
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val IS NULL AND tag > 'f' ORDER BY pid;
+----
+pid	tag
+9	i
+10	j
+
+query
+SELECT pid, tag FROM babsky_null_heavy WHERE val IS NULL OR val = 30 ORDER BY pid;
+----
+pid	tag
+2	b
+4	d
+6	f
+9	i
+10	j
+
+query
+SELECT count(*) FROM babsky_null_heavy;
+----
+count
+7
+
+statement ok
+DROP TABLE babsky_null_heavy;
+
+
+statement ok
+CREATE TABLE clickclack_mixed_filter (pid INTEGER PRIMARY KEY, city VARCHAR, score INTEGER, active BOOLEAN);
+
+statement ok
+CREATE INDEX clickclack_mixed_city_idx ON clickclack_mixed_filter(city);
+
+statement ok
+CREATE INDEX clickclack_mixed_score_idx ON clickclack_mixed_filter(score);
+
+statement ok
+INSERT INTO clickclack_mixed_filter VALUES
+  (1, 'berlin', 100, true),
+  (2, 'berlin', 200, false),
+  (3, 'moscow', 100, true),
+  (4, 'moscow', 300, false),
+  (5, 'tokyo', 100, true),
+  (6, 'berlin', 100, false);
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city = 'berlin' AND score = 100 ORDER BY pid;
+----
+pid
+1
+6
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city = 'berlin' AND active = true;
+----
+pid
+1
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE score = 100 AND active = true ORDER BY pid;
+----
+pid
+1
+3
+5
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city IN ('berlin', 'moscow') AND score = 100 AND active = true ORDER BY pid;
+----
+pid
+1
+3
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city = 'berlin' OR score = 300 ORDER BY pid;
+----
+pid
+1
+2
+4
+6
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE (city = 'berlin' AND score > 150) OR (city = 'tokyo') ORDER BY pid;
+----
+pid
+2
+5
+
+statement ok
+DELETE FROM clickclack_mixed_filter WHERE pid = 2;
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city = 'berlin' ORDER BY pid;
+----
+pid
+1
+6
+
+statement ok
+UPDATE clickclack_mixed_filter SET city = 'berlin' WHERE pid = 3;
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city = 'berlin' ORDER BY pid;
+----
+pid
+1
+3
+6
+
+query
+SELECT pid FROM clickclack_mixed_filter WHERE city = 'moscow';
+----
+pid
+4
+
+statement ok
+DROP TABLE clickclack_mixed_filter;
+
+
+statement ok
+CREATE TABLE vedernikoff_big_null (pid INTEGER PRIMARY KEY, category INTEGER, val INTEGER);
+
+statement ok
+CREATE INDEX vedernikoff_big_null_cat_idx ON vedernikoff_big_null(category);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (1, 1, 100), (2, 1, 200), (3, 1, 300);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (4, 2, 100), (5, 2, 200), (6, 2, 300);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (7, NULL, 100);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (8, NULL, 200);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (9, NULL, 300);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (10, 3, 100), (11, 3, 200);
+
+statement ok
+INSERT INTO vedernikoff_big_null VALUES (12, NULL, 400);
+
+query
+SELECT count(*) FROM vedernikoff_big_null WHERE category IS NULL;
+----
+count
+4
+
+query
+SELECT count(*) FROM vedernikoff_big_null WHERE category = 1;
+----
+count
+3
+
+query
+SELECT count(*) FROM vedernikoff_big_null WHERE category IN (1, 2);
+----
+count
+6
+
+query
+SELECT pid FROM vedernikoff_big_null WHERE category IS NULL AND val >= 200 ORDER BY pid;
+----
+pid
+8
+9
+12
+
+query
+SELECT pid FROM vedernikoff_big_null WHERE category = 1 OR category IS NULL ORDER BY pid;
+----
+pid
+1
+2
+3
+7
+8
+9
+12
+
+query
+SELECT pid FROM vedernikoff_big_null WHERE category IN (1, 3) AND val = 100 ORDER BY pid;
+----
+pid
+1
+10
+
+statement ok
+DELETE FROM vedernikoff_big_null WHERE category IS NULL AND val = 100;
+
+query
+SELECT count(*) FROM vedernikoff_big_null WHERE category IS NULL;
+----
+count
+3
+
+statement ok
+UPDATE vedernikoff_big_null SET category = 1 WHERE pid = 8;
+
+query
+SELECT count(*) FROM vedernikoff_big_null WHERE category IS NULL;
+----
+count
+2
+
+query
+SELECT count(*) FROM vedernikoff_big_null WHERE category = 1;
+----
+count
+4
+
+query
+SELECT pid, category, val FROM vedernikoff_big_null ORDER BY pid;
+----
+pid	category	val
+1	1	100
+2	1	200
+3	1	300
+4	2	100
+5	2	200
+6	2	300
+8	1	200
+9	NULL	300
+10	3	100
+11	3	200
+12	NULL	400
+
+statement ok
+DROP TABLE vedernikoff_big_null;
+
+statement ok
+CREATE TABLE vedernikoff_or_and_edge (pid INTEGER PRIMARY KEY, score INTEGER, tag INTEGER, level INTEGER);
+
+statement ok
+CREATE INDEX vedernikoff_or_and_edge_score_idx ON vedernikoff_or_and_edge(score);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (1, 10, 100, 1);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (2, 10, 200, 2);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (3, 20, 100, 1);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (4, 20, 200, 2);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (5, 30, 300, 3);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (6, 30, 100, 1);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (7, 40, 400, 4);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (8, 40, 100, 1);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (9, 50, 500, 5);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (10, NULL, 100, 1);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (11, NULL, 200, 2);
+
+statement ok
+INSERT INTO vedernikoff_or_and_edge VALUES (12, 10, 300, 3);
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (tag = 300 AND score = 30) OR score = 40 ORDER BY pid;
+----
+pid	score	tag	level
+5	30	300	3
+7	40	400	4
+8	40	100	1
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (tag = 100 AND level = 1 AND score = 20) OR score = 50 ORDER BY pid;
+----
+pid	score	tag	level
+3	20	100	1
+9	50	500	5
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score = 10 OR score = 30 OR score = 50 ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+2	10	200	2
+5	30	300	3
+6	30	100	1
+9	50	500	5
+12	10	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (score = 10 AND tag = 100) OR (score = 30 AND tag = 300) ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+5	30	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (tag = 500 AND level = 5 AND score = 50) OR (tag = 100 AND score = 10) OR score = 40
+ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+7	40	400	4
+8	40	100	1
+9	50	500	5
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (score = 10 AND tag = 999) OR score = 20 ORDER BY pid;
+----
+pid	score	tag	level
+3	20	100	1
+4	20	200	2
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score = 10 OR (score = 20 AND tag = 100) OR (score = 30 AND tag = 300 AND level = 3)
+ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+2	10	200	2
+3	20	100	1
+5	30	300	3
+12	10	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (score = 10 OR score = 20) AND tag = 100 ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+3	20	100	1
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score IN (10, 20) AND tag = 100 ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+3	20	100	1
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score = 10 OR tag = 400 ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+2	10	200	2
+7	40	400	4
+12	10	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (score IS NULL AND tag = 100) OR score = 30 ORDER BY pid;
+----
+pid	score	tag	level
+5	30	300	3
+6	30	100	1
+10	NULL	100	1
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score IS NULL OR score = 10 ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+2	10	200	2
+10	NULL	100	1
+11	NULL	200	2
+12	10	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score IN (10, 20) OR (tag = 400 AND level = 4 AND score = 40) ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+2	10	200	2
+3	20	100	1
+4	20	200	2
+7	40	400	4
+12	10	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE (level = 1 AND tag = 100 AND score = 10) OR (level = 3 AND tag = 300 AND score = 30)
+ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+5	30	300	3
+
+query
+SELECT pid, score, tag, level FROM vedernikoff_or_and_edge
+WHERE score = 10 OR (score = 20 AND tag = 200 AND level = 2)
+  OR (score = 30 AND tag = 300 AND level = 3) OR score = 50
+ORDER BY pid;
+----
+pid	score	tag	level
+1	10	100	1
+2	10	200	2
+4	20	200	2
+5	30	300	3
+9	50	500	5
+12	10	300	3
+
+statement ok
+DROP TABLE vedernikoff_or_and_edge;
+
+statement ok
+CREATE TABLE babsky_dedup_in (pid INTEGER PRIMARY KEY, val INTEGER, extra INTEGER);
+
+statement ok
+CREATE INDEX babsky_dedup_in_val_idx ON babsky_dedup_in(val);
+
+statement ok
+INSERT INTO babsky_dedup_in VALUES (1, 10, 1);
+
+statement ok
+INSERT INTO babsky_dedup_in VALUES (2, 20, 2);
+
+statement ok
+INSERT INTO babsky_dedup_in VALUES (3, 30, 3);
+
+statement ok
+INSERT INTO babsky_dedup_in VALUES (4, 10, 4);
+
+statement ok
+INSERT INTO babsky_dedup_in VALUES (5, 20, 5);
+
+statement ok
+INSERT INTO babsky_dedup_in VALUES (6, NULL, 6);
+
+query
+SELECT pid, val FROM babsky_dedup_in WHERE val IN (10, 20, 10) ORDER BY pid;
+----
+pid	val
+1	10
+2	20
+4	10
+5	20
+
+query
+SELECT pid, val FROM babsky_dedup_in WHERE val IN (10, 10, 10) ORDER BY pid;
+----
+pid	val
+1	10
+4	10
+
+query
+SELECT pid, val FROM babsky_dedup_in WHERE val IN (10, 20, 30, 10, 20, 30) ORDER BY pid;
+----
+pid	val
+1	10
+2	20
+3	30
+4	10
+5	20
+
+query
+SELECT pid, val FROM babsky_dedup_in WHERE val IN (10, 20, 10, 20, 10, 20) ORDER BY pid;
+----
+pid	val
+1	10
+2	20
+4	10
+5	20
+
+query
+SELECT pid, val FROM babsky_dedup_in WHERE val = 10 OR val IN (10, 20) ORDER BY pid;
+----
+pid	val
+1	10
+2	20
+4	10
+5	20
+
+query
+SELECT pid, val FROM babsky_dedup_in WHERE val IN (10, 20) OR val = 20 OR val = 10 ORDER BY pid;
+----
+pid	val
+1	10
+2	20
+4	10
+5	20
+
+statement ok
+DROP TABLE babsky_dedup_in;
+
+statement ok
+CREATE TABLE clickclack_comp_or_and (pid INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER);
+
+statement ok
+CREATE INDEX clickclack_comp_or_and_ab_idx ON clickclack_comp_or_and(a, b);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (1, 10, 100, 1);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (2, 10, 200, 2);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (3, 20, 100, 3);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (4, 20, 200, 4);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (5, 10, 100, 5);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (6, 30, 300, 6);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (7, NULL, 100, 7);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (8, 10, NULL, 8);
+
+statement ok
+INSERT INTO clickclack_comp_or_and VALUES (9, NULL, NULL, 9);
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and WHERE a = 10 AND b = 100 ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+5	10	100	5
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and WHERE a IN (10, 20) AND b = 100 ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+3	20	100	3
+5	10	100	5
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and WHERE a = 10 AND b IN (100, 200) ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+2	10	200	2
+5	10	100	5
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and
+WHERE (a = 10 AND b = 100) OR (a = 20 AND b = 200) ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+4	20	200	4
+5	10	100	5
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and
+WHERE a = 10 AND b IN (100, 100, 200) ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+2	10	200	2
+5	10	100	5
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and
+WHERE (a = 10 AND b = 100 AND c = 1) OR (a = 20 AND b = 200) ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+4	20	200	4
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and WHERE a IS NULL AND b = 100 ORDER BY pid;
+----
+pid	a	b	c
+7	NULL	100	7
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and WHERE a = 10 AND b IS NULL ORDER BY pid;
+----
+pid	a	b	c
+8	10	NULL	8
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and
+WHERE (a IS NULL AND b IS NULL) OR (a = 10 AND b = 100) ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+5	10	100	5
+9	NULL	NULL	9
+
+query
+SELECT pid, a, b, c FROM clickclack_comp_or_and
+WHERE (a = 10 AND b = 100) OR (a = 10 AND b = 200) OR (a = 20 AND b = 100) ORDER BY pid;
+----
+pid	a	b	c
+1	10	100	1
+2	10	200	2
+3	20	100	3
+5	10	100	5
+
+statement ok
+DROP TABLE clickclack_comp_or_and;
+
+statement ok
+CREATE TABLE vedernikoff_idx_scan (pid INTEGER PRIMARY KEY, score INTEGER, name VARCHAR);
+
+statement ok
+CREATE INDEX vedernikoff_idx_scan_score_idx ON vedernikoff_idx_scan(score);
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (1, 30, 'c');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (2, 10, 'a');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (3, 10, 'b');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (4, 20, 'd');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (5, NULL, 'e');
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+----
+pid	score	name
+5	NULL	e
+2	10	a
+3	10	b
+4	20	d
+1	30	c
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 10;
+----
+pid	score	name
+2	10	a
+3	10	b
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+----
+pid	score	name
+5	NULL	e
+
+statement ok
+UPDATE vedernikoff_idx_scan SET score = 5 WHERE pid = 1;
+
+statement ok
+DELETE FROM vedernikoff_idx_scan WHERE pid = 4;
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+----
+pid	score	name
+5	NULL	e
+1	5	c
+2	10	a
+3	10	b
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff_idx_scan_score_idx;
+----
+count
+4
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (6, 10, 'f');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (7, 40, 'g');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (8, NULL, 'h');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (9, 5, 'i');
+
+statement ok
+INSERT INTO vedernikoff_idx_scan VALUES (10, 50, 'j');
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+----
+pid	score	name
+5	NULL	e
+8	NULL	h
+1	5	c
+9	5	i
+2	10	a
+3	10	b
+6	10	f
+7	40	g
+10	50	j
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10);
+----
+pid	score	name
+1	5	c
+9	5	i
+2	10	a
+3	10	b
+6	10	f
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 5 OR score = 40;
+----
+pid	score	name
+1	5	c
+9	5	i
+7	40	g
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (10, 10, 5);
+----
+pid	score	name
+1	5	c
+9	5	i
+2	10	a
+3	10	b
+6	10	f
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+----
+pid	score	name
+5	NULL	e
+8	NULL	h
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL OR score = 50;
+----
+pid	score	name
+5	NULL	e
+8	NULL	h
+10	50	j
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 10 AND name = 'a';
+----
+pid	score	name
+2	10	a
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE (score = 5 AND name = 'c') OR score = 40;
+----
+pid	score	name
+1	5	c
+7	40	g
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10) AND name >= 'c';
+----
+pid	score	name
+1	5	c
+9	5	i
+6	10	f
+
+onlyif serenedb
+query
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 999;
+----
+pid	score	name
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10);
+----
+count
+5
+
+onlyif serenedb
+query
+SELECT count(*) FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+----
+count
+2
+
+statement ok
+DROP TABLE vedernikoff_idx_scan;
+
+statement ok
+CREATE TABLE babsky_idx_scan_comp (pid INTEGER PRIMARY KEY, a INTEGER, b VARCHAR, c INTEGER);
+
+statement ok
+CREATE INDEX babsky_idx_scan_comp_ab_idx ON babsky_idx_scan_comp(a, b);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (1, 2, 'foo', 10);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (2, 1, 'bar', 20);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (3, 1, 'foo', 30);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (4, NULL, 'foo', 40);
+
+statement ok
+INSERT INTO babsky_idx_scan_comp VALUES (5, 1, NULL, 50);
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx;
+----
+pid	a	b	c
+4	NULL	foo	40
+5	1	NULL	50
+2	1	bar	20
+3	1	foo	30
+1	2	foo	10
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b = 'foo';
+----
+pid	a	b	c
+3	1	foo	30
+
+onlyif serenedb
+query
+SELECT count(*) FROM babsky_idx_scan_comp_ab_idx;
+----
+count
+5
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a IN (1, 2) AND b = 'foo';
+----
+pid	a	b	c
+3	1	foo	30
+1	2	foo	10
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx
+WHERE (a = 1 AND b = 'foo') OR (a = 2 AND b = 'foo');
+----
+pid	a	b	c
+3	1	foo	30
+1	2	foo	10
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b IN ('foo', 'bar');
+----
+pid	a	b	c
+2	1	bar	20
+3	1	foo	30
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a IS NULL AND b = 'foo';
+----
+pid	a	b	c
+4	NULL	foo	40
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b IS NULL;
+----
+pid	a	b	c
+5	1	NULL	50
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx
+WHERE (a IS NULL AND b = 'foo') OR (a = 1 AND b = 'bar');
+----
+pid	a	b	c
+4	NULL	foo	40
+2	1	bar	20
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b = 'foo' AND c = 30;
+----
+pid	a	b	c
+3	1	foo	30
+
+onlyif serenedb
+query
+SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b = 'foo' AND c = 999;
+----
+pid	a	b	c
+
+onlyif serenedb
+query
+SELECT count(*) FROM babsky_idx_scan_comp_ab_idx WHERE a = 1 AND b IN ('foo', 'bar');
+----
+count
+2
+
+statement ok
+DROP TABLE babsky_idx_scan_comp;

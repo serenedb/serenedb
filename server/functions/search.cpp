@@ -24,6 +24,8 @@
 #include <velox/functions/Registerer.h>
 #include <velox/type/SimpleFunctionApi.h>
 
+#include <iresearch/types.hpp>
+
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
@@ -83,7 +85,7 @@ struct SearchStubFunction {
   }
 
   // BOOST(expr, boost_value)
-  void call(bool& out, const bool&, const double&) {
+  void call(bool& out, const bool&, const irs::score_t&) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
@@ -136,7 +138,7 @@ void RegisterSearchFunctions() {
                           velox::Varchar>({std::string{kLevenshteinMatch}});
 
   // BOOST(expr, boost_value)
-  velox::registerFunction<SearchStubFunction, bool, bool, double>(
+  velox::registerFunction<SearchStubFunction, bool, bool, irs::score_t>(
     {std::string{kBoost}});
 }
 

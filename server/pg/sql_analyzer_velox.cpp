@@ -79,6 +79,8 @@
 #include "catalog/virtual_table.h"
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
+#include "functions/search.h"
+#include "functions/vector.h"
 #include "pg/copy_file.h"
 #include "pg/create_index_options.h"
 #include "pg/explain_options.h"
@@ -4802,10 +4804,10 @@ constexpr containers::TrivialBiMap kOpToFunc = [](auto selector) {
     .Case("IS DISTINCT FROM", "presto_distinct_from")
     .Case("count_star", "presto_count")
     // https://github.com/pgvector/pgvector?tab=readme-ov-file#querying
-    .Case("<->", "presto_l2_squared")
-    .Case("<#>", "presto_dot_product")
-    .Case("<=>", "presto_cosine_similarity")
-    .Case("<+>", "presto_l1_distance");
+    .Case("<->", "sdb_l2_distance")
+    .Case("<#>", "sdb_inner_product_distance")
+    .Case("<=>", "sdb_cosine_distance")
+    .Case("<+>", "sdb_l1_distance");
 };
 
 constexpr containers::TrivialBiMap kDateIntervalOp = [](auto selector) {

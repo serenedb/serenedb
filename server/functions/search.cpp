@@ -17,7 +17,8 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-#include "search/functions.hpp"
+
+#include "functions/search.h"
 
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
@@ -27,7 +28,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 
-namespace sdb::search::functions {
+namespace sdb::functions {
 namespace {
 
 template<typename T>
@@ -88,7 +89,7 @@ struct SearchStubFunction {
 // fail query.
 // TODO(Dronplane): maybe add naive implementation to run without index on best
 // effort basis?
-void registerSearchFunctions() {
+void RegisterSearchFunctions() {
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar>({std::string{kPhrase}});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
@@ -129,4 +130,4 @@ void registerSearchFunctions() {
                           velox::Varchar>({std::string{kLevenshteinMatch}});
 }
 
-}  // namespace sdb::search::functions
+}  // namespace sdb::functions

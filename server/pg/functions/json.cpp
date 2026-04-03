@@ -417,7 +417,7 @@ simdjson::ondemand::document JsonParser::GetJsonDocument() {
   return doc;
 }
 
-void registerJsonFunctions(const std::string& prefix) {
+void RegisterJsonFunctions(const std::string& prefix) {
   velox::registerFunction<PgJsonExtractIndex, velox::Json, velox::Json,
                           int64_t>({prefix + "json_extract_index"});
   velox::registerFunction<PgJsonExtractIndexText, velox::Varchar, velox::Json,

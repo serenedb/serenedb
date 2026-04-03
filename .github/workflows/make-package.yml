@@ -1,0 +1,176 @@
+name: task | serenedb make & test package
+
+on:
+  workflow_call:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      RUN_RTA:
+        description: "Run RTA tests after packaging"
+        type: boolean
+        required: false
+        default: false
+      UPLOAD_ARTIFACTS:
+        description: "Upload tarball + deb for release"
+        type: boolean
+        required: false
+        default: false
+      SERENEDB_VERSION_PATCH:
+        description: "Version patch number"
+        type: string
+        required: false
+        default: ""
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags"
+        type: string
+        required: false
+        default: ""
+      BUILD_CONFIG:
+        description: "Internal: JSON overrides (e.g. BUILD_IMAGE)"
+        type: string
+        required: false
+        default: '{}'
+    outputs:
+      packages_ok:
+        description: "Whether packaging succeeded"
+        value: ${{ jobs.package.outputs.packages_ok }}
+    secrets:
+      PAT_TOKEN:
+        required: true
+
+env:
+  WORKSPACE: ${{ github.workspace }}
+  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+
+jobs:
+  package:
+    name: "package (${{ inputs.LOCATION }})"
+    outputs:
+      packages_ok: ${{ steps.package.outcome == 'success' }}
+    runs-on:
+      - ${{ inputs.LOCATION }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Set build flags
+        run: |
+          # Hardcoded release configuration
+          echo "BUILDMODE=Release" >> $GITHUB_ENV
+          echo "USE_DEBUG_INFO=NONE" >> $GITHUB_ENV
+          echo "SDB_DEV=Off" >> $GITHUB_ENV
+          echo "SDB_GTEST=Off" >> $GITHUB_ENV
+          echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
+          echo "USE_IPO=On" >> $GITHUB_ENV
+          echo "USE_COVERAGE=" >> $GITHUB_ENV
+          echo "SANITIZERS=" >> $GITHUB_ENV
+          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
+          echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
+          echo "SDB_CLUSTER=" >> $GITHUB_ENV
+          echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
+          echo "STRIP_TARBALL=true" >> $GITHUB_ENV
+          echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
+          echo "STATIC_EXECUTABLES=On" >> $GITHUB_ENV
+
+          # Version
+          PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
+          if [[ -z "$PATCH" ]]; then
+            PATCH="0"
+          fi
+          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
+
+          # Parse BUILD_CONFIG overrides
+          BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
+          if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
+            echo "$BUILD_CONFIG" | docker run --rm -i ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
+          fi
+
+          git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: serenedb/serenedb
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+          submodules: true
+          clean: true
+
+      - name: Build Docker environment file
+        run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
+
+      # ==================== BUILD ====================
+      - name: Build release
+        id: build
+        run: |
+          DOCKER_USER="$(id -u):$(id -g)"
+          EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
+          docker run --rm \
+            --user "$DOCKER_USER" \
+            -e HOME=/serenedb \
+            -e CCACHE_DIR=/.ccache \
+            --cap-add=SYS_PTRACE \
+            --security-opt seccomp=unconfined \
+            --env-file ./docker.env \
+            -e SDB_GTEST=Off \
+            -e BUILDMODE=Release \
+            -e USE_DEBUG_INFO=NONE \
+            -e SDB_DEV=Off \
+            -e SDB_FAULT_INJECTION=Off \
+            -e USE_IPO=On \
+            -e USE_COVERAGE= \
+            -e ENSURE_VTUNE_SYMBOLS=Off \
+            -e BUILD_DIR=build \
+            ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+            -v "${WORKSPACE}:/serenedb" \
+            -v /mnt/data/.ccache:/.ccache \
+            "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
+
+      # ==================== PACKAGE ====================
+      - name: Package
+        id: package
+        if: steps.build.outcome == 'success'
+        run: ./scripts/ci/steps/05-ci-in-docker-package.bash
+
+      # ==================== RTA ====================
+      - name: Release Test Automation (RTA)
+        id: rta
+        if: inputs.RUN_RTA && steps.package.outcome == 'success'
+        run: ./scripts/ci/steps/08-ci-rta.bash
+
+      # ==================== UPLOAD ====================
+      - name: Upload release tarball
+        if: inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ inputs.LOCATION }}
+          path: packages/tarball/install-*.tar.gz
+          retention-days: 1
+
+      - name: Upload packages
+        if: inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
+          path: |
+            *.deb
+            *.tar.gz
+          if-no-files-found: ignore
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
+          path: |
+            cmake*.log
+            make*.log
+            ccache*.log
+            install.log
+            rta-tests.log
+            logs/*
+          if-no-files-found: ignore
+          retention-days: 30

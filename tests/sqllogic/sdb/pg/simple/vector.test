@@ -6,10 +6,31 @@ SELECT ARRAY[0.0, 1.0, 2.0] <-> ARRAY[2.0, 1.0, 0.0];
 
 
 query
+SELECT ARRAY[0, 1, 2] <-> ARRAY[2, 1, 0];
+----
+?column?
+8
+
+
+query
+SELECT l2_distance(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+----
+l2_distance
+8
+
+
+query
 SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
-0.2000<slt:ignore>
+0.2<slt:ignore>
+
+
+query
+SELECT cosine_distance(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+----
+cosine_distance
+0.2<slt:ignore>
 
 
 query
@@ -19,11 +40,39 @@ SELECT ARRAY[0.0, 1.0, 2.0] <+> ARRAY[2.0, 1.0, 0.0];
 4
 
 
-query ?
+query
+SELECT l1_distance(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+----
+l1_distance
+4
+
+
+query
+SELECT l1_distance(ARRAY[0, 1, 2], ARRAY[2, 1, 0]);
+----
+l1_distance
+4
+
+
+query
 SELECT ARRAY[0.0, 1.0, 2.0] <#> ARRAY[2.0, 1.0, 0.0];
 ----
 ?column?
-1
+-1
+
+
+query
+SELECT inner_product(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+----
+inner_product
+-1
+
+
+query
+SELECT inner_product(ARRAY[0, 1, 2], ARRAY[2, 1, 0]);
+----
+inner_product
+-1
 
 
 query error
@@ -144,10 +193,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <#> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	sdb
-pablo	clickclack
 vedernikoff	clickclack
+pablo	clickclack
+pablo	sdb
+vedernikoff	sdb
 
 
 statement ok
@@ -209,7 +258,7 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <#> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	sdb
-pablo	clickclack
 vedernikoff	clickclack
+pablo	clickclack
+pablo	sdb
+vedernikoff	sdb

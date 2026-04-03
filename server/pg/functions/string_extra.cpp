@@ -221,7 +221,6 @@ template<typename T>
 struct PgStringToArray {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  static constexpr bool is_default_null_behavior = false;
   static constexpr int32_t reuse_strings_from_arg = 0;
 
   FOLLY_ALWAYS_INLINE bool callNullable(
@@ -292,7 +291,6 @@ template<typename T>
 struct PgStringToArray3 {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  static constexpr bool is_default_null_behavior = false;
   static constexpr int32_t reuse_strings_from_arg = 0;
 
   FOLLY_ALWAYS_INLINE bool callNullable(
@@ -615,8 +613,6 @@ template<typename T>
 struct ConcatWsFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  static constexpr bool is_default_null_behavior = false;
-
   FOLLY_ALWAYS_INLINE bool callNullable(
     out_type<velox::Varchar>& result, const arg_type<velox::Varchar>* separator,
     const arg_type<velox::Variadic<velox::Varchar>>* args) {
@@ -727,17 +723,14 @@ template<typename T>
 struct QuoteNullableFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  static constexpr bool is_default_null_behavior = false;
-
-  FOLLY_ALWAYS_INLINE bool callNullable(out_type<velox::Varchar>& result,
+  FOLLY_ALWAYS_INLINE void callNullable(out_type<velox::Varchar>& result,
                                         const arg_type<velox::Varchar>* input) {
     if (!input) {
       result = "NULL";
-      return true;
+      return;
     }
     QuoteLiteralFunction<T> literal;
     literal.call(result, *input);
-    return true;
   }
 };
 
@@ -747,8 +740,6 @@ struct QuoteNullableFunction {
 template<typename T>
 struct PgFormat {
   VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  static constexpr bool is_default_null_behavior = false;
 
   FOLLY_ALWAYS_INLINE bool callNullable(
     out_type<velox::Varchar>& result, const arg_type<velox::Varchar>* formatstr,
@@ -1139,7 +1130,7 @@ struct PgClientEncoding {
 
 }  // namespace
 
-void registerStringExtraFunctions(const std::string& prefix) {
+void RegisterStringExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgMd5, velox::Varchar, velox::Varchar>(
     {prefix + "md5"});
   velox::registerFunction<PgToHex, velox::Varchar, int32_t>(

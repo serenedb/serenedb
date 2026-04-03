@@ -34,7 +34,7 @@ cleanup() {
 	docker rmi "$RTA_IMAGE" 2>/dev/null || true
 	rm -f "${WORKSPACE}/serenedb-rta.deb"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 if cd "${WORKSPACE}" && RTA_IMAGE="$RTA_IMAGE" ./tests/sqllogic/run_in_docker.sh rta 2>&1 | tee -a ./rta-tests.log; then
 	test_result="PASSED"

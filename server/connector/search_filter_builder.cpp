@@ -29,6 +29,7 @@
 // NOLINTEND
 
 #include <velox/expression/ExprConstants.h>
+#include <velox/type/Type.h>
 
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
@@ -44,6 +45,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "catalog/mangling.h"
@@ -733,17 +735,21 @@ Result FromSearchBoost(irs::BooleanFilter& filter,
   if (!boost_val.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate boost value as constant"};
   }
-  if (boost_val->kind() != velox::TypeKind::DOUBLE) {
-    return {ERROR_BAD_PARAMETER, "BOOST value must be a DOUBLE"};
+
+  constexpr auto kRequiredKind = velox::CppToType<irs::score_t>::typeKind;
+
+  if (boost_val->kind() != kRequiredKind) {
+    return {ERROR_BAD_PARAMETER, "BOOST value must be a ",
+            velox::TypeKindName::toName(kRequiredKind)};
   }
 
-  const double boost = boost_val->value<double>();
+  const auto boost = boost_val->value<irs::score_t>();
   if (boost < 0.0) {
     return {ERROR_BAD_PARAMETER, "BOOST value must be >= 0, got ", boost};
   }
 
   auto boosted_ctx = ctx;
-  boosted_ctx.boost = static_cast<irs::score_t>(boost);
+  boosted_ctx.boost = boost;
   return FromVeloxExpression(filter, boosted_ctx, call.inputs()[0]);
 }
 

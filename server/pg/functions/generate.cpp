@@ -178,7 +178,7 @@ class GenerateSubscriptsFunction final : public velox::exec::VectorFunction {
 
 }  // namespace
 
-void registerGenerateFunctions(const std::string& prefix) {
+void RegisterGenerateFunctions(const std::string& prefix) {
   velox::exec::registerVectorFunction(
     prefix + "generate_series",
     {

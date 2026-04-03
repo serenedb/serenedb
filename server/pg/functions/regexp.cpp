@@ -459,7 +459,7 @@ struct PgRegexpSubstr3 {
 
 }  // namespace
 
-void registerRegexpFunctions(const std::string& prefix) {
+void RegisterRegexpFunctions(const std::string& prefix) {
   velox::registerFunction<PgRegexpMatch, velox::Array<velox::Varchar>,
                           velox::Varchar, velox::Varchar>(
     {prefix + "regexp_match"});

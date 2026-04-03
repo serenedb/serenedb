@@ -43,7 +43,7 @@ if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
 	docker buildx rm "$BUILDER_NAME" >/dev/null
 fi
 docker buildx create --name "$BUILDER_NAME" --use --driver-opt network=host >/dev/null
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 LABEL_ARGS=(
 	--label "org.opencontainers.image.version=${DOCKER_TAG}"

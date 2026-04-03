@@ -86,7 +86,7 @@ for os in ubuntu; do
 		# Login and push (same pattern as serenedb/sereneui)
 		echo "[*] Logging in to Docker Hub as $DOCKER_USERNAME..."
 		echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-		trap 'docker logout' EXIT
+		trap 'docker logout' EXIT INT TERM
 
 		for arch in amd64 arm64; do
 			echo "    > Pushing ${REPO}:${IMAGE_TAG}-${arch}..."

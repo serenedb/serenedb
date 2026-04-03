@@ -86,7 +86,7 @@ template<typename T>
 struct ByteaInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varbinary>& result,
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varbinary>& result,
                                 const arg_type<velox::Varchar>& value) {
     std::string_view input{value};
     if (input.starts_with("\\x")) {
@@ -111,7 +111,6 @@ struct ByteaInFunction {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("invalid hexadecimal data: odd number of digits"));
-          return false;
         }
 
         const char h2 = absl::kHexValueStrict[payload[i + 1] & 0xFF];
@@ -168,7 +167,6 @@ struct ByteaInFunction {
       const size_t new_size = out - result.data();
       result.resize(new_size);
     }
-    return true;
   }
 };
 
@@ -315,7 +313,7 @@ struct RegnamespaceOutFunction {
 
 }  // namespace
 
-void registerInOutFunctions(const std::string& prefix) {
+void RegisterInOutFunctions(const std::string& prefix) {
   // Internal type I/O and operator functions (not in 9.27)
 
   velox::registerFunction<ByteaInFunction, velox::Varbinary, velox::Varchar>(

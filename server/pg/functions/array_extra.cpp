@@ -74,7 +74,7 @@ template<typename T>
 struct PgArrayPositions {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
     out_type<velox::Array<int32_t>>& result,
     const arg_type<velox::Array<velox::Varchar>>& arr,
     const arg_type<velox::Varchar>& elem) {
@@ -83,10 +83,9 @@ struct PgArrayPositions {
         result.add_item() = i + 1;
       }
     }
-    return true;
   }
 
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<int32_t>>& result,
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<int32_t>>& result,
                                 const arg_type<velox::Array<int64_t>>& arr,
                                 const int64_t& elem) {
     for (auto i = 0; i < arr.size(); ++i) {
@@ -94,7 +93,6 @@ struct PgArrayPositions {
         result.add_item() = i + 1;
       }
     }
-    return true;
   }
 };
 
@@ -104,7 +102,7 @@ template<typename T>
 struct PgArrayReplace {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
     out_type<velox::Array<velox::Varchar>>& result,
     const arg_type<velox::Array<velox::Varchar>>& arr,
     const arg_type<velox::Varchar>& from_val,
@@ -116,10 +114,9 @@ struct PgArrayReplace {
         result.add_null();
       }
     }
-    return true;
   }
 
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Array<int64_t>>& result,
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Array<int64_t>>& result,
                                 const arg_type<velox::Array<int64_t>>& arr,
                                 const int64_t& from_val,
                                 const int64_t& to_val) {
@@ -130,7 +127,6 @@ struct PgArrayReplace {
         result.add_null();
       }
     }
-    return true;
   }
 };
 
@@ -405,7 +401,7 @@ struct ArrayDimsFunction {
 
 }  // namespace
 
-void registerArrayExtraFunctions(const std::string& prefix) {
+void RegisterArrayExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgArrayPosition, int64_t,
                           velox::Array<velox::Varchar>, velox::Varchar>(
     {prefix + "array_position"});

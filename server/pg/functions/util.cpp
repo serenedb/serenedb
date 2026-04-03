@@ -93,7 +93,6 @@ struct PgErrorFunction {
 template<typename T>
 struct NumNonNullsFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
-  static constexpr bool is_default_null_behavior = false;
 
   FOLLY_ALWAYS_INLINE void callNullable(
     int32_t& result, const arg_type<velox::Variadic<velox::Any>>* args) {
@@ -112,7 +111,6 @@ struct NumNonNullsFunction {
 template<typename T>
 struct NumNullsFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
-  static constexpr bool is_default_null_behavior = false;
 
   FOLLY_ALWAYS_INLINE void callNullable(
     int32_t& result, const arg_type<velox::Variadic<velox::Any>>* args) {
@@ -178,7 +176,7 @@ struct PgTsLexize {
 
 }  // namespace
 
-void registerUtilFunctions(const std::string& prefix) {
+void RegisterUtilFunctions(const std::string& prefix) {
   // pg_error(message)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, velox::Varchar>(
     {prefix + "error"});

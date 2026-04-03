@@ -721,6 +721,32 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
   return {};
 }
 
+Result FromSearchBoost(irs::BooleanFilter& filter,
+                       const VeloxFilterContext& ctx,
+                       const velox::core::CallTypedExpr& call) {
+  if (call.inputs().size() != 2) {
+    return {ERROR_BAD_PARAMETER, "BOOST has ", call.inputs().size(),
+            " inputs but 2 expected"};
+  }
+
+  auto boost_val = EvaluateConstant(call.inputs()[1]);
+  if (!boost_val.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate boost value as constant"};
+  }
+  if (boost_val->kind() != velox::TypeKind::DOUBLE) {
+    return {ERROR_BAD_PARAMETER, "BOOST value must be a DOUBLE"};
+  }
+
+  const double boost = boost_val->value<double>();
+  if (boost < 0.0) {
+    return {ERROR_BAD_PARAMETER, "BOOST value must be >= 0, got ", boost};
+  }
+
+  auto boosted_ctx = ctx;
+  boosted_ctx.boost = static_cast<irs::score_t>(boost);
+  return FromVeloxExpression(filter, boosted_ctx, call.inputs()[0]);
+}
+
 Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
                            const velox::core::CallTypedExpr& call) {
@@ -992,6 +1018,10 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 
   if (call.name() == functions::kLevenshteinMatch) {
     return FromVeloxLevenshteinMatch(filter, ctx, call);
+  }
+
+  if (call.name() == functions::kBoost) {
+    return FromSearchBoost(filter, ctx, call);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};

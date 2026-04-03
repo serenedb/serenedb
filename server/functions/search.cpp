@@ -81,6 +81,12 @@ struct SearchStubFunction {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
+
+  // BOOST(expr, boost_value)
+  void call(bool& out, const bool&, const double&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
 };
 
 }  // namespace
@@ -128,6 +134,10 @@ void RegisterSearchFunctions() {
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar, int64_t, bool, int64_t,
                           velox::Varchar>({std::string{kLevenshteinMatch}});
+
+  // BOOST(expr, boost_value)
+  velox::registerFunction<SearchStubFunction, bool, bool, double>(
+    {std::string{kBoost}});
 }
 
 }  // namespace sdb::functions

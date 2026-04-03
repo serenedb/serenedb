@@ -749,6 +749,7 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("term_like", VeloxFunction{functions::kTermLike, false})
     .Case("ngram_match", {functions::kNgramMatch, false})
     .Case("levenshtein_match", {functions::kLevenshteinMatch, false})
+    .Case("boost", VeloxFunction{functions::kBoost, false})
     // Vector functions
     .Case("l2_distance", VeloxFunction{functions::kL2Distance, false})
     .Case("l1_distance", VeloxFunction{functions::kL1Distance, false})

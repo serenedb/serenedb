@@ -3,6 +3,7 @@ import {
     DockviewIDisposable,
     PaneviewReact,
     PaneviewReadyEvent,
+    type SerializedPaneview,
 } from "dockview";
 import { ConsoleSidebarTopbar } from "./ConsoleSidebarTopbar";
 import { ConsoleSidebarHeader } from "./ConsoleSidebarHeader";
@@ -69,7 +70,8 @@ const restoreLayout = (event: PaneviewReadyEvent, storageKey: string) => {
     }
 
     try {
-        event.api.fromJSON(sanitizeLayout(JSON.parse(rawLayout)));
+        const sanitizedLayout = sanitizeLayout(JSON.parse(rawLayout));
+        event.api.fromJSON(sanitizedLayout as SerializedPaneview);
         return true;
     } catch (error) {
         console.warn("Failed to restore console sidebar layout:", error);

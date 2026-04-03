@@ -203,21 +203,23 @@ Result Table::Rename(std::shared_ptr<Table>& result,
 Result Table::RenameColumn(std::shared_ptr<Table>& result,
                            std::string_view old_name,
                            std::string_view new_name) const {
-  auto col_it = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.name == old_name; });
+  auto col_it = _columns.end();
+  for (auto it = _columns.begin(); it != _columns.end(); ++it) {
+    if (it->name == new_name) {
+      return Result{ERROR_SERVER_DUPLICATE_NAME};
+    }
+    if (it->name == old_name) {
+      col_it = it;
+    }
+  }
   if (col_it == _columns.end()) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  if (absl::c_any_of(_columns,
-                     [&](const Column& c) { return c.name == new_name; })) {
-    return Result{ERROR_SERVER_DUPLICATE_NAME};
-  }
-
   auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
-
-  auto& target = new_table->_columns[std::distance(_columns.begin(), col_it)];
-  target.name = std::string{new_name};
+  const size_t idx = std::distance(_columns.begin(), col_it);
+  auto& target = new_table->_columns[idx];
+  target.name = new_name;
 
   new_table->_lookup_cache =
     LookupCache{new_table->_columns, new_table->_pk_columns};
@@ -229,25 +231,24 @@ Result Table::RenameColumn(std::shared_ptr<Table>& result,
 Result Table::RenameConstraint(std::shared_ptr<Table>& result,
                                std::string_view old_name,
                                std::string_view new_name) const {
-  auto it = absl::c_find_if(_check_constraints, [&](const CheckConstraint& c) {
-    return c.name == old_name;
-  });
-  if (it == _check_constraints.end()) {
+  auto constraint_it = _check_constraints.end();
+  for (auto it = _check_constraints.begin(); it != _check_constraints.end();
+       ++it) {
+    if (it->name == new_name) {
+      return Result{ERROR_SERVER_DUPLICATE_NAME};
+    }
+    if (it->name == old_name) {
+      constraint_it = it;
+    }
+  }
+  if (constraint_it == _check_constraints.end()) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  if (absl::c_any_of(_check_constraints, [&](const CheckConstraint& c) {
-        return c.name == new_name;
-      })) {
-    return Result{ERROR_SERVER_DUPLICATE_NAME};
-  }
-
   auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
-
-  auto& target =
-    new_table
-      ->_check_constraints[std::distance(_check_constraints.begin(), it)];
-  target.name = std::string{new_name};
+  const size_t idx = std::distance(_check_constraints.begin(), constraint_it);
+  auto& target = new_table->_check_constraints[idx];
+  target.name = new_name;
 
   result = std::move(new_table);
   return {};
@@ -263,25 +264,9 @@ Result Table::DropConstraint(std::shared_ptr<Table>& result,
   }
 
   auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
-
   auto idx = std::distance(_check_constraints.begin(), it);
-  new_table->_check_constraints.erase(new_table->_check_constraints.begin() +
-                                      idx);
-
-  result = std::move(new_table);
-  return {};
-}
-
-Result Table::AddConstraint(std::shared_ptr<Table>& result,
-                            CheckConstraint constraint) const {
-  if (absl::c_any_of(_check_constraints, [&](const CheckConstraint& c) {
-        return c.name == constraint.name;
-      })) {
-    return Result{ERROR_SERVER_DUPLICATE_NAME};
-  }
-
-  auto new_table = std::make_shared<Table>(*this, MakeNewOptions());
-  new_table->_check_constraints.push_back(std::move(constraint));
+  auto& constraints = new_table->_check_constraints;
+  constraints.erase(constraints.begin() + idx);
 
   result = std::move(new_table);
   return {};

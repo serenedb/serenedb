@@ -97,8 +97,7 @@ class Table : public SchemaObject {
                           std::string_view new_name) const;
   Result DropConstraint(std::shared_ptr<Table>& result,
                         std::string_view constraint_name) const;
-  Result AddConstraint(std::shared_ptr<Table>& result,
-                       CheckConstraint constraint) const;
+
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {

@@ -21,8 +21,10 @@
 #pragma once
 
 #include <velox/common/memory/HashStringAllocator.h>
+#include <velox/vector/ComplexVector.h>
 
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "basics/bit_utils.hpp"
@@ -57,5 +59,14 @@ static_assert(
 
 template<typename T>
 using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
+
+std::string BuildUniqueViolationDetail(
+  std::span<const velox::column_index_t> key_indices,
+  std::span<const ColumnInfo> columns, const velox::RowVectorPtr& input,
+  velox::vector_size_t row_idx);
+
+std::string BuildUniqueViolationDetail(
+  std::span<const velox::column_index_t> key_indices,
+  const velox::RowVector& input, velox::vector_size_t row_idx);
 
 }  // namespace sdb::connector

@@ -53,6 +53,8 @@ class Params {
 
   std::vector<velox::TypePtr> types;
   std::vector<std::shared_ptr<velox::Variant>> values;
+  // Type OIDs provided by the client in the Parse message (0 = unspecified).
+  std::vector<int32_t> oids;
 };
 
 struct SqlStatement {

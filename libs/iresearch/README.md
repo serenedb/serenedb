@@ -12,11 +12,11 @@
 
 </div>
 
-IResearch is an open-source (Apache 2.0) C++ information retrieval library designed to be embedded into transactional database systems. It provides a feature set comparable to Lucene — inverted indexes with BM25 scoring, columnar storage, vector search, S2 geospatial indexing and semi-structured filtering — while integrating natively with the host database's write-ahead log and transaction protocol. There is no separate process, no JVM dependency and no consistency gap between the search index and the primary store.
+IResearch is an open-source (Apache 2.0) C++ information retrieval library designed to be embedded into transactional database systems. It provides a feature set comparable to Lucene -- inverted indexes with BM25 scoring, columnar storage, vector search, S2 geospatial indexing and semi-structured filtering -- while integrating natively with the host database's write-ahead log and transaction protocol. There is no separate process, no JVM dependency and no consistency gap between the search index and the primary store.
 
 ## Performance
 
-Benchmarked against Lucene and Tantivy on the [search-benchmark-game](https://github.com/serenedb/search-benchmark-game) — a standard benchmark built by the Tantivy team using the English Wikipedia corpus and the AOL query dataset.
+Benchmarked against Lucene and Tantivy on the [search-benchmark-game](https://github.com/serenedb/search-benchmark-game) -- a standard benchmark built by the Tantivy team using the English Wikipedia corpus and the AOL query dataset.
 Results, methodology and per-query breakdowns are available in the [benchmark overview post](https://serenedb.com/blog/search-benchmark-game-overview).
 [Detailed benchmark results](https://serenedb.com/search-benchmark-game).
 
@@ -28,7 +28,7 @@ Results, methodology and per-query breakdowns are available in the [benchmark ov
 
 **Lazy evaluation.** The `LazySeek` iterator contract allows non-lead iterators in conjunctions, exclusions and two-phase queries to defer work until strictly necessary. Position intersection uses frequency-sorted zigzag traversal, bounding cost to the rarest term in the query and document.
 
-**Pluggable scoring.** The scoring function is a composable component configurable at query time. BM25 parameters are tunable without recompilation. Custom scorers can be registered and receive the same block buffers — frequencies, norms, filter boosts and columnar signals — as the built-in implementation.
+**Pluggable scoring.** The scoring function is a composable component configurable at query time. BM25 parameters are tunable without recompilation. Custom scorers can be registered and receive the same block buffers -- frequencies, norms, filter boosts and columnar signals -- as the built-in implementation.
 
 **Columnar storage.** Document field values are stored alongside the inverted index. Numeric attributes, timestamps and other per-document signals are first-class inputs to the scoring pipeline, not afterthoughts.
 
@@ -44,7 +44,7 @@ Results, methodology and per-query breakdowns are available in the [benchmark ov
 
 The [examples/](examples/) directory contains self-contained programs demonstrating common iresearch workflows:
 
-- **[basic.cpp](examples/basic.cpp)** — Index documents with text fields, run term queries, boolean queries, top-K retrieval with BM25 scoring, read stored fields and delete documents.
+- **[basic.cpp](examples/basic.cpp)** -- Index documents with text fields, run term queries, boolean queries, top-K retrieval with BM25 scoring, read stored fields and delete documents.
 
 To build the examples, enable the `IRESEARCH_BUILD_EXAMPLES` CMake option:
 
@@ -60,7 +60,7 @@ The library exposes two primary interfaces: a **IndexWriter** that accepts docum
 
 Internally, the index is organized into segments. Each segment contains an inverted index, columnar storage and optional skip structures. Segments are immutable once written; updates and deletions are tracked as new revisions, allowing readers to hold a consistent view while writers continue to ingest data.
 
-Query trees are constructed directly from API building blocks — terms, phrases, booleans, ranges, geospatial filters — and evaluated by a pipeline of iterator objects that merge posting lists and feed candidates into the scoring pipeline.
+Query trees are constructed directly from API building blocks -- terms, phrases, booleans, ranges, geospatial filters -- and evaluated by a pipeline of iterator objects that merge posting lists and feed candidates into the scoring pipeline.
 
 ## Production history
 
@@ -72,8 +72,8 @@ Both deployments have stress-tested the embedding design across architecturally 
 
 Apache 2.0. See [LICENSE.md](LICENSE.md).
 
-Copyright (c) 2024–2026 SereneDB<br>
-Copyright (c) 2017–2023 ArangoDB GmbH<br>
-Copyright (c) 2016–2017 EMC Corporation<br>
+Copyright (c) 2024-2026 SereneDB<br>
+Copyright (c) 2017-2023 ArangoDB GmbH<br>
+Copyright (c) 2016-2017 EMC Corporation<br>
 
 Licensing information for third-party components is in [LICENSES.md](../../third_party/LICENSES.md).

@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - type: tmpfs
+        target: /var/lib/postgresql
+        tmpfs:
+          size: 16G
+    networks:
+      - test-network
+    command: ["postgres", "-c", "max_connections=900"]
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    volumes:
+      - "$SQLLOGIC_DIR:/sqllogic"
+      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "$WORKSPACE/logs:/logs"
+      - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+    depends_on:
+      - postgres
+    environment:
+      - LOG_DIR=/logs
+      - HOME=/sqllogic
+      - CARGO_HOME=/tmp/cargo
+      - CARGO_TARGET_DIR=/cargo-target
+    networks:
+      - test-network
+    command: >
+      sh -c '
+        cd /sqllogic &&
+        exec ./run_pg_tests.sh \
+          --host postgres \
+          --single-port 5432 \
+          --runner=/sqllogictest-rs
+      '
+
+networks:
+  test-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_test-network

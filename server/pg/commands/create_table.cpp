@@ -239,6 +239,7 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
       name = choose_constraint_name(table, column_name, "check");
     }
     request.checkConstraints.emplace_back(catalog::CheckConstraint{
+      .id = catalog::NextId(),
       .name = std::move(name),
       .expr = MakeColumnExpr(db, constraint.raw_expr),
     });
@@ -246,6 +247,7 @@ yaclib::Future<> CreateTable(ExecContext& context, const CreateStmt& stmt) {
 
   auto append_not_null_constraint = [&](std::string_view column_name) {
     request.checkConstraints.emplace_back(catalog::CheckConstraint{
+      .id = catalog::NextId(),
       .name = choose_constraint_name(table, column_name, "not_null"),
       .expr = MakeColumnExpr(db, absl::StrCat(column_name, " IS NOT NULL")),
     });

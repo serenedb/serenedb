@@ -275,7 +275,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
   }
 
   template<typename T, typename Filter>
-  void AddTermFilter(Filter& root, catalog::Column::Id column, const T& value) {
+  irs::ByTerm& AddTermFilter(Filter& root, catalog::Column::Id column,
+                             const T& value) {
     auto& term = AddFilter<irs::ByTerm>(root);
     *term.mutable_field() = MakeFieldName<T>(column);
     if constexpr (std::is_same_v<T, bool>) {
@@ -287,21 +288,24 @@ class SearchFilterBuilderTest : public ::testing::Test {
       stream.reset(value);
       stream.next();
       term.mutable_options()->term.assign(token->value);
-    } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
+    } else {
+      static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
+                    "Unexpected term type");
       irs::NumericTokenizer stream;
       const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
       stream.reset(value);
       stream.next();
       term.mutable_options()->term.assign(token->value);
-    } else {
-      ASSERT_FALSE(true) << "Unexpected term type";
     }
+    return term;
   }
 
   template<typename T, typename Filter>
-  void AddRangeFilter(Filter& root, catalog::Column::Id column,
-                      const std::optional<T>& min_value, bool min_inclusive,
-                      const std::optional<T>& max_value, bool max_inclusive) {
+  irs::FilterWithBoost& AddRangeFilter(Filter& root, catalog::Column::Id column,
+                                       const std::optional<T>& min_value,
+                                       bool min_inclusive,
+                                       const std::optional<T>& max_value,
+                                       bool max_inclusive) {
     if constexpr (std::is_same_v<T, velox::StringView>) {
       // Use ByRange for strings
       auto& range = AddFilter<irs::ByRange>(root);
@@ -328,7 +332,10 @@ class SearchFilterBuilderTest : public ::testing::Test {
       } else {
         options.max_type = irs::BoundType::Unbounded;
       }
-    } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
+      return range;
+    } else {
+      static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
+                    "Unexpected range type");
       // Use ByGranularRange for numerics
       auto& range = AddFilter<irs::ByGranularRange>(root);
       *range.mutable_field() = MakeFieldName<T>(column);
@@ -351,17 +358,13 @@ class SearchFilterBuilderTest : public ::testing::Test {
       } else {
         options.max_type = irs::BoundType::Unbounded;
       }
-    } else if constexpr (std::is_same_v<T, bool>) {
-      // For bool, use term filter as there's no meaningful range
-      ASSERT_FALSE(true) << "Range queries on bool type not supported";
-    } else {
-      ASSERT_FALSE(true) << "Unexpected range type";
+      return range;
     }
   }
 
   template<typename T, typename Filter>
-  void AddTermsFilter(Filter& root, catalog::Column::Id column,
-                      const std::vector<T>& values) {
+  irs::ByTerms& AddTermsFilter(Filter& root, catalog::Column::Id column,
+                               const std::vector<T>& values) {
     auto& terms = AddFilter<irs::ByTerms>(root);
     *terms.mutable_field() = MakeFieldName<T>(column);
 
@@ -375,21 +378,21 @@ class SearchFilterBuilderTest : public ::testing::Test {
         stream.reset(value);
         stream.next();
         terms.mutable_options()->terms.emplace(token->value);
-      } else if constexpr (std::is_floating_point_v<T> ||
-                           std::is_integral_v<T>) {
+      } else {
+        static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
+                      "Unexpected term type");
         irs::NumericTokenizer stream;
         const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
         stream.reset(value);
         stream.next();
         terms.mutable_options()->terms.emplace(token->value);
-      } else {
-        ASSERT_FALSE(true) << "Unexpected term type";
       }
     }
+    return terms;
   }
 
   template<typename Filter>
-  void AddNullFilter(Filter& root, catalog::Column::Id column) {
+  irs::ByTerm& AddNullFilter(Filter& root, catalog::Column::Id column) {
     auto& term = AddFilter<irs::ByTerm>(root);
     std::string field_name;
     basics::StrResize(field_name, sizeof(column));
@@ -398,20 +401,22 @@ class SearchFilterBuilderTest : public ::testing::Test {
     *term.mutable_field() = field_name;
     term.mutable_options()->term.assign(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    return term;
   }
 
   template<typename Filter>
-  void AddLikeFilter(Filter& root, catalog::Column::Id column,
-                     std::string_view value) {
+  irs::ByWildcard& AddLikeFilter(Filter& root, catalog::Column::Id column,
+                                 std::string_view value) {
     auto& wc = AddFilter<irs::ByWildcard>(root);
     *wc.mutable_field() = MakeFieldName<velox::StringView>(column);
     wc.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
+    return wc;
   }
 
   template<typename Filter>
-  void AddNgramSimilarityFilter(Filter& root, catalog::Column::Id column,
-                                std::vector<std::string_view> ngrams,
-                                float_t threshold = 0.7f) {
+  irs::ByNGramSimilarity& AddNgramSimilarityFilter(
+    Filter& root, catalog::Column::Id column,
+    std::vector<std::string_view> ngrams, float_t threshold = 0.7f) {
     auto& ngf = AddFilter<irs::ByNGramSimilarity>(root);
     *ngf.mutable_field() = MakeFieldName<velox::StringView>(column);
     ngf.mutable_options()->threshold = threshold;
@@ -419,14 +424,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
       ngf.mutable_options()->ngrams.emplace_back(
         irs::ViewCast<irs::byte_type>(ngram));
     }
+    return ngf;
   }
 
   template<typename Filter>
-  void AddEditDistanceFilter(Filter& root, catalog::Column::Id column,
-                             std::string_view term, uint8_t max_distance,
-                             bool with_transpositions = true,
-                             size_t max_terms = 64,
-                             std::string_view prefix = "") {
+  irs::ByEditDistance& AddEditDistanceFilter(
+    Filter& root, catalog::Column::Id column, std::string_view term,
+    uint8_t max_distance, bool with_transpositions = true,
+    size_t max_terms = 64, std::string_view prefix = "") {
     auto& ed = AddFilter<irs::ByEditDistance>(root);
     *ed.mutable_field() = MakeFieldName<velox::StringView>(column);
     ed.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(term));
@@ -437,17 +442,19 @@ class SearchFilterBuilderTest : public ::testing::Test {
       ed.mutable_options()->prefix.assign(
         irs::ViewCast<irs::byte_type>(prefix));
     }
+    return ed;
   }
 
   template<typename Filter>
-  void AddPhraseFilter(Filter& root, catalog::Column::Id column,
-                       std::vector<std::string_view> values) {
+  irs::ByPhrase& AddPhraseFilter(Filter& root, catalog::Column::Id column,
+                                 std::vector<std::string_view> values) {
     auto& wc = AddFilter<irs::ByPhrase>(root);
     *wc.mutable_field() = MakeFieldName<velox::StringView>(column);
     for (auto value : values) {
       wc.mutable_options()->template push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(value);
     }
+    return wc;
   }
 
  protected:
@@ -544,9 +551,7 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
   }
 }
 
-// ============================================================================
 // Basic OR Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_SimpleDisjunction) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -587,9 +592,7 @@ TEST_F(SearchFilterBuilderTest, test_MultipleOr) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Basic AND Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_SimpleConjunction) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -621,9 +624,7 @@ TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // NOT Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_NotTerm) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -664,9 +665,7 @@ TEST_F(SearchFilterBuilderTest, test_NotAnd) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Less Than
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_LessThanInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -689,9 +688,7 @@ TEST_F(SearchFilterBuilderTest, test_LessThanString) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Less Than or Equal
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -723,9 +720,7 @@ TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualStringNotIdentity) {
                std::move(columns), false, SegmentationAnalyzerProvider);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Greater Than
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -748,9 +743,7 @@ TEST_F(SearchFilterBuilderTest, test_GreaterThanString) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Comparison Operator Tests - Greater Than or Equal
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -773,9 +766,7 @@ TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualString) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // BETWEEN Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_BetweenInteger) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -827,9 +818,7 @@ TEST_F(SearchFilterBuilderTest, test_NotBetween) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Combined AND/OR Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_AndWithOr) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -867,9 +856,7 @@ TEST_F(SearchFilterBuilderTest, test_OrWithAnd) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Combined with Comparison Operators
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_AndWithComparison) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -919,9 +906,7 @@ TEST_F(SearchFilterBuilderTest, test_ComparisonNotConst) {
                std::move(columns), false);
 }
 
-// ============================================================================
 // Combined with NOT
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_NotWithComparison) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1013,9 +998,7 @@ TEST_F(SearchFilterBuilderTest, test_DoubleNegation) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Complex Nested Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_ComplexNested1) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1133,9 +1116,7 @@ TEST_F(SearchFilterBuilderTest, test_NestedNotWithOr) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Implicit Cast Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_ImplicitCastIntegerToString) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1168,9 +1149,7 @@ TEST_F(SearchFilterBuilderTest, test_ImplicitCastInBetween) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // Multiple Comparisons on Same Field
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_MultipleComparisonsOnSameField) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1195,9 +1174,7 @@ TEST_F(SearchFilterBuilderTest, test_MixedOperatorsOnSameField) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // IN Operator Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorIntegers) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1395,9 +1372,7 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorOnlyNulls) {
                std::move(columns), true);
 }
 
-// ============================================================================
 // IS NULL Tests
-// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_IsNull) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -1640,21 +1615,21 @@ TEST_F(SearchFilterBuilderTest, test_FieldCastError) {
   {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
     columns.emplace_back(
-      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+      std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
     AssertFilter(expected, "SELECT * FROM foo WHERE b = 999999999999 ",
                  std::move(columns), false);
   }
   {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
     columns.emplace_back(
-      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+      std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
     AssertFilter(expected, "SELECT * FROM foo WHERE b <= 999999999999 ",
                  std::move(columns), false);
   }
   {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
     columns.emplace_back(
-      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+      std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
     AssertFilter(expected, "SELECT * FROM foo WHERE b IN (1.24, 3.0, 4.5) ",
                  std::move(columns), false);
   }
@@ -2059,6 +2034,150 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatch_NotNegation) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT LEVENSHTEIN_MATCH(name, 'test', 2)",
                std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_TermEq) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<velox::StringView>(expected, 1, velox::StringView{"foo"})
+    .boost(2.0f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'foo'), 2.0)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_Phrase) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"}).boost(1.5f);
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE BOOST(PHRASE(category, 'quick brown fox'), 1.5)",
+    std::move(columns), true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_Like) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddLikeFilter(expected, 1, "foo%").boost(3.0f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_LIKE(b, 'foo%'), 3.0)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_NgramMatch) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"fo", "oo"}).boost(2.5f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(NGRAM_MATCH(b, 'foo'), 2.5)",
+               std::move(columns), true, NgramAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_LevenshteinMatch) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2).boost(1.5f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE BOOST(LEVENSHTEIN_MATCH(b, 'test', 2), 1.5)",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_TermIn) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermsFilter<velox::StringView>(
+    expected, 1, {velox::StringView{"foo"}, velox::StringView{"bar"}})
+    .boost(2.0f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_IN(b, 'foo', 'bar'), 2.0)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_RangeComparison) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<velox::StringView>(expected, 1, std::nullopt, false,
+                                    velox::StringView{"foo"}, false)
+    .boost(1.5f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_LT(b, 'foo'), 1.5)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_AndGroup) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  {
+    auto& group = expected.add<irs::And>();
+    group.boost(3.0f);
+    AddTermFilter<velox::StringView>(group, 1, velox::StringView{"x"});
+    AddTermFilter<velox::StringView>(group, 1, velox::StringView{"y"});
+  }
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'x') AND TERM_EQ(b, 'y'), 3.0)",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_OrGroup) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  {
+    auto& group = expected.add<irs::Or>();
+    group.boost(2.0f);
+    AddTermFilter<velox::StringView>(group, 1, velox::StringView{"x"});
+    AddTermFilter<velox::StringView>(group, 1, velox::StringView{"y"});
+  }
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'x') OR TERM_EQ(b, 'y'), 2.0)",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_Zero) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<velox::StringView>(expected, 1, velox::StringView{"foo"})
+    .boost(0.0f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'foo'), 0.0)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'foo'), -1.0)",
+               std::move(columns), false);
 }
 
 }  // namespace

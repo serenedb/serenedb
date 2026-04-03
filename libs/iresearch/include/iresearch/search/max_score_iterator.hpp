@@ -20,7 +20,9 @@
 
 #pragma once
 
+#ifdef __AVX2__
 #include <immintrin.h>
+#endif
 
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
@@ -247,6 +249,7 @@ class MaxScoreIterator : public DocIterator {
     size_t out = 0;
     size_t i = 0;
 
+#ifdef __AVX2__
     const auto threshold = _mm256_set1_ps(score_threshold);
     for (; i + 8 <= n; i += 8) {
       auto vscores = _mm256_loadu_ps(&scores[i]);
@@ -260,6 +263,7 @@ class MaxScoreIterator : public DocIterator {
         ++out;
       }
     }
+#endif
 
     for (; i < n; ++i) {
       if (scores[i] > score_threshold) {

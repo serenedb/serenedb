@@ -1,0 +1,1018 @@
+# Tests that all system views defined in system_views.h can be queried without errors
+#
+# Each view is tested with SELECT COUNT(*) >= 0 to verify it is queryable
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_roles
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_shadow
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_group
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_user
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_policies
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_rules
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_views
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_matviews
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_sequences
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stats
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stats_ext
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stats_ext_exprs
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_publication_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_locks
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_cursors
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_available_extensions
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_available_extension_versions
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_prepared_xacts
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_prepared_statements
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_seclabels
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_settings
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_file_settings
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_hba_file_rules
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_ident_file_mappings
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_timezone_abbrevs
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_timezone_names
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_config
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_shmem_allocations
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_shmem_allocations_numa
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_backend_memory_contexts
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_all_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_xact_all_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_sys_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_xact_sys_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_user_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_xact_user_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_all_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_sys_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_user_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_all_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_sys_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_user_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_all_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_sys_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_user_indexes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_all_sequences
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_sys_sequences
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_statio_user_sequences
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_activity
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_replication
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_slru
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_wal_receiver
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_recovery_prefetch
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_subscription
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_ssl
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_gssapi
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_replication_slots
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_replication_slots
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_database
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_database_conflicts
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_user_functions
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_xact_user_functions
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_archiver
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_bgwriter
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_checkpointer
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_io
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_wal
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_analyze
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_vacuum
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_cluster
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_create_index
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_basebackup
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_progress_copy
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_user_mappings
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_replication_origin_status
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_subscription_stats
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_wait_events
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM pg_catalog.pg_aios
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.information_schema_catalog_name
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.applicable_roles
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.administrable_role_authorizations
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.attributes
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.character_sets
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.check_constraint_routine_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.check_constraints
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.collations
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.collation_character_set_applicability
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.column_column_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.column_domain_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.column_privileges
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.column_udt_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.columns
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.constraint_column_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.constraint_table_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.domain_constraints
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.domain_udt_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.domains
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.enabled_roles
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.key_column_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.parameters
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.referential_constraints
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.role_column_grants
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.routine_column_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.routine_privileges
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.role_routine_grants
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.routine_routine_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.routine_sequence_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.routine_table_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.routines
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.schemata
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.sequences
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.table_constraints
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.table_privileges
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.role_table_grants
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.transforms
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.triggered_update_columns
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.triggers
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.udt_privileges
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.role_udt_grants
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.usage_privileges
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.role_usage_grants
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.user_defined_types
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.view_column_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.view_routine_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.view_table_usage
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.views
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.data_type_privileges
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.element_types
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema._pg_foreign_table_columns
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.column_options
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema._pg_foreign_data_wrappers
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.foreign_data_wrapper_options
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.foreign_data_wrappers
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema._pg_foreign_servers
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.foreign_server_options
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.foreign_servers
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema._pg_foreign_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.foreign_table_options
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.foreign_tables
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema._pg_user_mappings
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.user_mapping_options
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) >= 0 FROM information_schema.user_mappings
+----
+?column?
+t

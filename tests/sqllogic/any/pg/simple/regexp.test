@@ -1,0 +1,227 @@
+# regexp_match: no capture groups — returns full match
+query
+SELECT regexp_match('foobarbequebaz', 'bar.*que');
+----
+regexp_match
+{barbeque}
+
+
+# regexp_match: capture groups — returns groups
+query
+SELECT regexp_match('foobarbequebaz', '(bar)(beque)');
+----
+regexp_match
+{bar,beque}
+
+
+# regexp_match: no match — returns NULL
+query
+SELECT regexp_match('foobarbequebaz', 'xyz');
+----
+regexp_match
+NULL
+
+
+# regexp_match: single capture group
+query
+SELECT regexp_match('abc01234xyz', '(\d+)');
+----
+regexp_match
+{01234}
+
+
+# regexp_match: subscript into result
+query
+SELECT (regexp_match('foobarbequebaz', '(bar)(beque)'))[1];
+----
+regexp_match
+bar
+
+
+query
+SELECT (regexp_match('foobarbequebaz', '(bar)(beque)'))[2];
+----
+regexp_match
+beque
+
+
+# regexp_count: count matches
+query
+SELECT regexp_count('ABCABCAXYaxy', 'A.');
+----
+regexp_count
+3
+
+
+query
+SELECT regexp_count('hello world', 'o');
+----
+regexp_count
+2
+
+
+query
+SELECT regexp_count('hello', 'xyz');
+----
+regexp_count
+0
+
+
+# regexp_instr: position of first match (1-based)
+query
+SELECT regexp_instr('number of your street, town zip, FR', '[^,]+', 1, 2);
+----
+regexp_instr
+23
+
+
+query
+SELECT regexp_instr('hello world', 'world');
+----
+regexp_instr
+7
+
+
+query
+SELECT regexp_instr('hello', 'xyz');
+----
+regexp_instr
+0
+
+
+# regexp_substr: first matching substring
+query
+SELECT regexp_substr('number of your street, town zip, FR', '[^,]+');
+----
+regexp_substr
+number of your street
+
+
+query
+SELECT regexp_substr('hello world', '\w+');
+----
+regexp_substr
+hello
+
+
+# regexp_substr: no match — returns NULL
+query
+SELECT regexp_substr('hello', 'xyz');
+----
+regexp_substr
+NULL
+
+
+# regexp_split_to_array
+query
+SELECT regexp_split_to_array('the quick brown fox', '\s+');
+----
+regexp_split_to_array
+{the,quick,brown,fox}
+
+
+query
+SELECT regexp_split_to_array('one-two-three', '-');
+----
+regexp_split_to_array
+{one,two,three}
+
+
+# regexp_count with start position (3-arg)
+query
+SELECT regexp_count('123456789012', '\d\d\d', 2);
+----
+regexp_count
+3
+
+
+# regexp_substr with start position (3-arg)
+query
+SELECT regexp_substr('hello world hello', 'hello', 2);
+----
+regexp_substr
+hello
+
+
+# regexp_instr with UTF-8 multi-byte strings
+
+query
+SELECT regexp_instr('абвгд', 'вг');
+----
+regexp_instr
+3
+
+query
+SELECT regexp_instr('hello мир world', 'мир');
+----
+regexp_instr
+7
+
+
+# regexp_instr4 with UTF-8 start position
+
+query
+SELECT regexp_instr('абвгд абвгд', 'абв', 3, 1);
+----
+regexp_instr
+7
+
+
+# regexp_count with UTF-8 start position
+
+query
+SELECT regexp_count('абв абв абв', 'абв', 5);
+----
+regexp_count
+2
+
+
+# regexp_substr with UTF-8 start position
+
+query
+SELECT regexp_substr('абв деф абв', 'абв', 2);
+----
+regexp_substr
+абв
+
+
+# empty-match advancement must step by 1 UTF-8 character, not 1 byte
+
+# regexp_count with empty pattern on multi-byte UTF-8 string:
+# An empty pattern matches before every character and after the last one,
+# so the count should equal char_length + 1.
+query
+SELECT regexp_count('абв', '');
+----
+regexp_count
+4
+
+
+query
+SELECT regexp_count('café', '');
+----
+regexp_count
+5
+
+
+# regexp_instr with empty pattern: Nth empty match on a UTF-8 string
+# Empty pattern matches at positions 1, 2, 3, ... (before each character)
+query
+SELECT regexp_instr('абвгд', '', 1, 3);
+----
+regexp_instr
+3
+
+
+query
+SELECT regexp_instr('абвгд', '', 1, 5);
+----
+regexp_instr
+5
+
+# regexp_count with empty pattern and UTF-8 start position
+query
+SELECT regexp_count('абвгд', '', 3);
+----
+regexp_count
+4

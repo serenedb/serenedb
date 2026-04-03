@@ -79,13 +79,13 @@ class Point {
 };
 
 // A fully resolved point: one variant per PK column, ordered by pk_type.
-// Used after filter extraction — no expression metadata, no names.
+// Used after filter extraction -- no expression metadata, no names.
 using SpecificPoint = std::vector<velox::variant>;
 
 // Converts specific (fully constrained) Points to SpecificPoint, ordered by
 // pk_type column order.
 [[nodiscard]] std::vector<SpecificPoint> ToSpecificPoints(
-  const std::vector<Point>& points, const velox::RowType& pk_type);
+  const std::vector<Point>& points, std::span<const std::string> column_names);
 
 [[nodiscard]] std::vector<Point> ExtractFilterExpr(
   const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
@@ -98,11 +98,12 @@ struct ExtractAndRewriteResult {
 };
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
-  const velox::core::TypedExprPtr& expr, std::span<const std::string> pk_names);
+  const velox::core::TypedExprPtr& expr,
+  std::span<const std::string> column_names);
 
-// Sorts points in-place by PK key order. Column order matches the pk_type used
-// during ToSpecificPoints. Comparison uses velox::variant::operator<.
-void SortPoints(std::vector<SpecificPoint>& points);
+// Sorts and deduplicates points in-place by key order. Column order matches
+// the pk_type used during ToSpecificPoints.
+void SortAndDedupPoints(std::vector<SpecificPoint>& points);
 
 // Returns true if `call` matches a velox function named either `suffix[1:]`
 // (bare name, e.g. "eq") or anything ending with `suffix` (prefixed name, e.g.

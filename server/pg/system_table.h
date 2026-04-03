@@ -26,6 +26,8 @@
 #include <velox/vector/BaseVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <array>
+#include <span>
 #include <type_traits>
 
 #include "basics/down_cast.h"
@@ -33,6 +35,7 @@
 #include "catalog/virtual_table.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
+#include "query/types.h"
 
 namespace sdb::pg {
 
@@ -43,6 +46,8 @@ template<typename Field>
 auto GetField(const Field& field) {
   if constexpr (std::is_enum_v<Field>) {
     return GetField(std::to_underlying(field));
+  } else if constexpr (std::is_same_v<Field, Name>) {
+    return velox::StringView{field.v};
   } else if constexpr (std::is_same_v<Field, std::string_view>) {
     return velox::StringView{field};
   } else if constexpr (std::is_same_v<Field, std::string>) {
@@ -67,6 +72,15 @@ auto GetField(const Field& field) {
     return static_cast<int16_t>(field);
   } else if constexpr (std::is_same_v<Field, int32_t>) {
     return static_cast<int32_t>(field);
+  } else if constexpr (std::is_same_v<Field, Oid> ||
+                       std::is_same_v<Field, Xid> ||
+                       std::is_same_v<Field, Regproc> ||
+                       std::is_same_v<Field, Regtype> ||
+                       std::is_same_v<Field, Regclass> ||
+                       std::is_same_v<Field, Cid> ||
+                       std::is_same_v<Field, Xid8> ||
+                       std::is_same_v<Field, Tid>) {
+    return static_cast<int64_t>(static_cast<uint64_t>(field));
   } else if constexpr (std::is_same_v<Field, int64_t> ||
                        std::is_same_v<Field, uint64_t>) {
     return static_cast<int64_t>(field);
@@ -80,7 +94,19 @@ auto GetField(const Field& field) {
 template<typename Field>
 velox::TypePtr GetFieldType() {
   using OutputType = decltype(GetField(std::declval<Field>()));
-  if constexpr (std::is_same_v<Field, Bytea>) {
+  if constexpr (std::is_same_v<Field, Oid>) {
+    return PGOID();
+  } else if constexpr (std::is_same_v<Field, Regproc>) {
+    return REGPROC();
+  } else if constexpr (std::is_same_v<Field, Regtype>) {
+    return REGTYPE();
+  } else if constexpr (std::is_same_v<Field, Regclass>) {
+    return REGCLASS();
+  } else if constexpr (std::is_same_v<Field, Xid>) {
+    return PGXID();
+  } else if constexpr (std::is_same_v<Field, Name>) {
+    return PGNAME();
+  } else if constexpr (std::is_same_v<Field, Bytea>) {
     // Since Bytea is mapped to velox::StringView, we need to explicitly
     // return VARBINARY type here to avoid confusion with VARCHAR.
     return velox::VARBINARY();
@@ -94,24 +120,64 @@ velox::TypePtr GetFieldType() {
 template<typename Field>
 velox::VectorPtr CreateColumn(velox::vector_size_t size,
                               velox::memory::MemoryPool* pool) {
-  auto type = GetFieldType<Field>();
   using OutputType = decltype(GetField(std::declval<Field>()));
+  static_assert(!IsArray<OutputType>::value,
+                "Use CreateColumn with elements_size for array fields");
   static_assert(!std::is_reference_v<OutputType>);
   static_assert(!std::is_const_v<OutputType>);
-  velox::VectorPtr column;
-  if constexpr (IsArray<OutputType>::value) {
-    column = std::make_shared<velox::ArrayVector>(
-      pool, type, nullptr, size,
-      velox::AlignedBuffer::allocate<velox::vector_size_t>(size, pool),
-      velox::AlignedBuffer::allocate<velox::vector_size_t>(size, pool),
-      velox::BaseVector::create<
-        velox::FlatVector<typename OutputType::value_type>>(type->childAt(0),
-                                                            size, pool));
-  } else {
-    column = velox::BaseVector::create<velox::FlatVector<OutputType>>(
-      type, size, pool);
+  auto type = GetFieldType<Field>();
+  return velox::BaseVector::create<velox::FlatVector<OutputType>>(type, size,
+                                                                  pool);
+}
+
+template<typename Field>
+velox::VectorPtr CreateColumn(velox::vector_size_t size,
+                              velox::memory::MemoryPool* pool,
+                              velox::vector_size_t elements_size) {
+  using OutputType = decltype(GetField(std::declval<Field>()));
+  static_assert(IsArray<OutputType>::value,
+                "Use CreateColumn without elements_size for non-array fields");
+  static_assert(!std::is_reference_v<OutputType>);
+  static_assert(!std::is_const_v<OutputType>);
+  auto type = GetFieldType<Field>();
+  return std::make_shared<velox::ArrayVector>(
+    pool, type, nullptr, size,
+    velox::AlignedBuffer::allocate<velox::vector_size_t>(size, pool),
+    velox::AlignedBuffer::allocate<velox::vector_size_t>(size, pool),
+    velox::BaseVector::create<
+      velox::FlatVector<typename OutputType::value_type>>(type->childAt(0),
+                                                          elements_size, pool));
+}
+
+template<typename T>
+std::vector<velox::VectorPtr> CreateColumns(std::span<const T> values,
+                                            velox::memory::MemoryPool* pool) {
+  std::array<velox::vector_size_t, boost::pfr::tuple_size_v<T>>
+    element_counts{};
+  for (const auto& value : values) {
+    uint32_t column = 0;
+    boost::pfr::for_each_field(value, [&]<typename Field>(const Field& field) {
+      using OutputType = decltype(GetField(field));
+      if constexpr (IsArray<OutputType>::value) {
+        element_counts[column] += field.size();
+      }
+      ++column;
+    });
   }
-  return column;
+  std::vector<velox::VectorPtr> result;
+  result.reserve(boost::pfr::tuple_size_v<T>);
+  uint32_t column = 0;
+  boost::pfr::for_each_field(T{}, [&]<typename Field>(const Field& field) {
+    using OutputType = decltype(GetField(field));
+    if constexpr (IsArray<OutputType>::value) {
+      result.push_back(
+        CreateColumn<Field>(values.size(), pool, element_counts[column]));
+    } else {
+      result.push_back(CreateColumn<Field>(values.size(), pool));
+    }
+    ++column;
+  });
+  return result;
 }
 
 template<typename T>

@@ -1,0 +1,126 @@
+# Tests for additional aggregate functions
+
+
+# Setup
+
+statement ok
+CREATE TABLE agg_data (id INT PRIMARY KEY, x FLOAT8, y FLOAT8, flag BOOLEAN)
+
+
+statement ok
+INSERT INTO agg_data VALUES
+  (1, 1.0, 2.0, true),
+  (2, 2.0, 4.0, false),
+  (3, 3.0, 6.0, true),
+  (4, 4.0, 8.0, true),
+  (5, 5.0, 10.0, false)
+
+
+# corr: perfect linear correlation
+
+query
+SELECT corr(y, x)::float8 + 0.1 FROM agg_data
+----
+?column?
+1.<slt:ignore>
+
+
+# regr_slope
+
+query
+SELECT regr_slope(y, x)::float8 FROM agg_data
+----
+regr_slope
+2
+
+
+# regr_intercept
+
+query
+SELECT regr_intercept(y, x)::float8 FROM agg_data
+----
+regr_intercept
+0
+
+
+# regr_count
+
+query
+SELECT regr_count(y, x)::int8 FROM agg_data
+----
+regr_count
+5
+
+
+# regr_r2: coefficient of determination
+
+query
+SELECT regr_r2(y, x)::float8 FROM agg_data
+----
+regr_r2
+1
+
+
+# regr_avgx
+
+query
+SELECT regr_avgx(y, x)::float8 FROM agg_data
+----
+regr_avgx
+3
+
+
+# regr_avgy
+
+query
+SELECT regr_avgy(y, x)::float8 FROM agg_data
+----
+regr_avgy
+6
+
+
+# bool_and / bool_or / every
+
+query
+SELECT bool_and(flag), bool_or(flag), every(flag) FROM agg_data
+----
+bool_and	bool_or	every
+f	t	f
+
+
+# any_value
+
+query
+SELECT any_value(flag) IS NOT NULL AS has_value FROM agg_data
+----
+has_value
+t
+
+
+# Aggregate function coercions: integer arg coerced to bigint
+# Presto's sum is registered for bigint but should accept integer via coercion
+
+query
+SELECT sum(id) FROM agg_data
+----
+sum
+15
+
+
+# Aggregate function as window with coercions
+
+query
+SELECT id, sum(id) OVER (ORDER BY id) AS running_sum FROM agg_data ORDER BY id
+----
+id	running_sum
+1	1
+2	3
+3	6
+4	10
+5	15
+
+
+# Cleanup
+
+statement ok
+DROP TABLE agg_data

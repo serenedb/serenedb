@@ -355,7 +355,7 @@ struct ExtractTimezoneMinuteFunction {
 
 // Some of them are taken from presto but registered with convinient
 // name to make mappings easier.
-void registerExtractFunctions(const std::string& prefix) {
+void RegisterExtractFunctions(const std::string& prefix) {
   velox::registerFunction<ExtractMillenniumFunction, int64_t, Date>(
     {prefix + "extract_millennium"});
   velox::registerFunction<ExtractMillenniumFunction, int64_t, Timestamp>(

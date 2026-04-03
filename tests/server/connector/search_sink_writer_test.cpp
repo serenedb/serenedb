@@ -136,7 +136,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     std::string_view{"\xc\x0\x0\x0\x0\x0\x0\x0", 8}};
 
   // First batch: rows 0 and 1
-  sink.Init(2);
+  sink.Init(2, nullptr);
   sink.SwitchColumn(*velox::INTEGER(), false, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(integer_data[1])}, pk[1]);
@@ -155,7 +155,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   sink.Finish();
 
   // Second batch: rows 2 and 3 - reusing the same sink (tests document reset)
-  sink.Init(2);
+  sink.Init(2, nullptr);
   sink.SwitchColumn(*velox::INTEGER(), false, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
@@ -273,7 +273,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     // in local block to make sure remove filters ownership is properly
     // transferred
     SearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(2);
+    delete_sink.Init(2, nullptr);
     delete_sink.DeleteRow("pk2");
     delete_sink.DeleteRow("pk4");
     delete_sink.Finish();
@@ -306,7 +306,7 @@ TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
                                                   std::string_view{"bar", 3}};
 
   SearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
-  sink.Init(4);
+  sink.Init(4, nullptr);
 
   sink.SwitchColumn(*velox::VARCHAR(), true, col_id[0]);
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
@@ -469,7 +469,7 @@ TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
   auto trx = _data_writer->GetBatch();
   const catalog::Column::Id col_id = 1;
   SearchSinkInsertWriter sink{trx, AnalyzerProvider, {col_id}};
-  sink.Init(1);
+  sink.Init(1, nullptr);
 
   const std::vector<std::string_view> pk{
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
@@ -518,7 +518,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(2);
+    sink.Init(2, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     // second document to keep segment around
@@ -531,7 +531,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   {
     auto delete_trx = _data_writer->GetBatch();
     SearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(1);
+    delete_sink.Init(1, nullptr);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
     ASSERT_TRUE(delete_trx.Commit());
@@ -539,7 +539,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(1);
+    sink.Init(1, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
@@ -550,7 +550,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   {
     auto delete_trx = _data_writer->GetBatch();
     SearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(1);
+    delete_sink.Init(1, nullptr);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
     ASSERT_TRUE(delete_trx.Commit());
@@ -559,7 +559,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(1);
+    sink.Init(1, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value3", 6)}, kPk);
     sink.Finish();
@@ -624,7 +624,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(1);
+    sink.Init(1, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     sink.Finish();
@@ -635,7 +635,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   {
     auto delete_trx = _data_writer->GetBatch();
     SearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(1);
+    delete_sink.Init(1, nullptr);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
     ASSERT_TRUE(delete_trx.Commit());
@@ -644,7 +644,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(1);
+    sink.Init(1, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
@@ -655,7 +655,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   {
     auto delete_trx = _data_writer->GetBatch();
     SearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(1);
+    delete_sink.Init(1, nullptr);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
     ASSERT_TRUE(delete_trx.Commit());
@@ -664,7 +664,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(1);
+    sink.Init(1, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value3", 6)}, kPk);
     sink.Finish();
@@ -755,7 +755,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-      sink.Init(2);
+      sink.Init(2, nullptr);
       sink.SwitchColumn(*velox::VARCHAR(), false, 1);
       sink.Write({rocksdb::Slice("value1", 6)}, kPk);
       sink.Write({rocksdb::Slice("value8", 6)}, kPk3);
@@ -767,7 +767,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     {
       auto delete_trx = limited_data_writer->GetBatch();
       SearchSinkDeleteWriter delete_sink{delete_trx};
-      delete_sink.Init(1);
+      delete_sink.Init(1, nullptr);
       delete_sink.DeleteRow("pk1");
       delete_sink.Finish();
       ASSERT_TRUE(delete_trx.Commit());
@@ -776,7 +776,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-      sink.Init(2);
+      sink.Init(2, nullptr);
       sink.SwitchColumn(*velox::VARCHAR(), false, 1);
       sink.Write({rocksdb::Slice("value2", 6)}, kPk);
       // we need this doc to keep flushed segment from discarding as empty
@@ -789,7 +789,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     {
       auto delete_trx = limited_data_writer->GetBatch();
       SearchSinkDeleteWriter delete_sink{delete_trx};
-      delete_sink.Init(1);
+      delete_sink.Init(1, nullptr);
       delete_sink.DeleteRow("pk1");
       delete_sink.Finish();
       ASSERT_TRUE(delete_trx.Commit());
@@ -798,7 +798,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-      sink.Init(1);
+      sink.Init(1, nullptr);
       sink.SwitchColumn(*velox::VARCHAR(), false, 1);
       sink.Write({rocksdb::Slice("value3", 6)}, kPk);
       sink.Finish();
@@ -869,7 +869,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(2);
+    sink.Init(2, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     // second document to keep segment around
@@ -884,7 +884,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
     // and successfully delete value1.
     auto delete_trx = _data_writer->GetBatch();
     SearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(1);
+    delete_sink.Init(1, nullptr);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
     ASSERT_TRUE(delete_trx.Commit());
@@ -892,7 +892,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
   {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
-    sink.Init(1);
+    sink.Init(1, nullptr);
     sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();

@@ -42,4 +42,8 @@ struct PgLanguage {
 };
 // NOLINTEND
 
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgLanguage>::GetTableData(
+  velox::memory::MemoryPool& pool);
+
 }  // namespace sdb::pg

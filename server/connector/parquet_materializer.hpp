@@ -46,6 +46,10 @@ class ParquetMaterializer {
                                velox::VectorPtr scores);
 
  private:
+  uint32_t FindRowGroup(int64_t row_number, uint32_t search_from) const;
+
+  int64_t RowGroupEnd(uint32_t rg) const;
+
   velox::memory::MemoryPool& _pool;
   std::shared_ptr<velox::ReadFile> _source;
   std::unique_ptr<velox::dwio::common::Reader> _reader;
@@ -54,6 +58,8 @@ class ParquetMaterializer {
   int64_t _score_column_idx = -1;
   std::vector<int64_t> _row_group_starts;
   int64_t _total_rows = 0;
+  std::vector<uint64_t> _bitmap_buf;
+  std::vector<int64_t> _decoded_rows;
 };
 
 }  // namespace sdb::connector

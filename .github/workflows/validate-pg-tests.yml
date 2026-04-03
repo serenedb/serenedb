@@ -1,0 +1,117 @@
+name: task | validate pg tests
+
+on:
+  workflow_call:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      BUILD_CONFIG:
+        description: "Internal: JSON overrides (PR_SHA presence triggers diff-only mode)"
+        type: string
+        required: false
+        default: '{}'
+    secrets:
+      PAT_TOKEN:
+        required: true
+
+env:
+  WORKSPACE: ${{ github.workspace }}
+  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+
+jobs:
+  validate:
+    name: "validate-pg-tests"
+    runs-on:
+      - ${{ inputs.LOCATION }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: serenedb/serenedb
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+          submodules: false
+          clean: true
+
+      - name: Checkout test submodules
+        run: git submodule update --init --depth=1 third_party/sqllogictest-rs
+
+      - name: Check for PG test changes
+        id: detect
+        run: |
+          # PR bot trigger (has PR_SHA) → only run if pg test files changed
+          # Manual/nightly (no PR_SHA) → run all
+          # TODO: consider using GitHub API (pulls.listFiles) instead of git fetch+diff
+          #   for faster detection without needing git history
+          BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
+          if ! echo "$BUILD_CONFIG" | grep -q 'PR_SHA'; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Not a PR build, running all PG tests"
+            exit 0
+          fi
+
+          git fetch origin main --depth=1
+          CHANGED=$(git diff --name-only origin/main -- \
+            'tests/sqllogic/pg/' \
+            'tests/sqllogic/any/pg/' || true)
+
+          if [[ -z "$CHANGED" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No PG test changes, skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "PG test files changed:"
+            echo "$CHANGED"
+          fi
+
+      - name: Prepare
+        if: steps.detect.outputs.skip != 'true'
+        run: |
+          mkdir -p logs
+          mkdir -p "${HOME}/.cache/serenedb-cargo-target"
+          for i in 1 2 3; do
+            docker pull "${BUILD_IMAGE}" && break
+            echo "Pull attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+      - name: Run PG validation tests
+        if: steps.detect.outputs.skip != 'true'
+        run: |
+          export DOCKER_UID="$(id -u)"
+          export DOCKER_GID="$(id -g)"
+          export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
+          export CARGO_TARGET_CACHE="/mnt/data/.cargo-target-sqllogic"
+
+          cd tests/sqllogic
+          PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+
+          cleanup() {
+            docker compose -p "${PREFIX}" -f docker-compose.validate-pg-tests.yml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT INT TERM
+
+          docker compose \
+            -p "${PREFIX}" \
+            -f docker-compose.validate-pg-tests.yml \
+            up \
+            --attach tests \
+            --exit-code-from tests \
+            --remove-orphans
+
+      - name: Upload test results
+        if: always() && !cancelled() && steps.detect.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-pg-results-${{ inputs.LOCATION }}-${{ github.run_number }}
+          path: |
+            logs/*
+            **/tests/sqllogic/*.xml
+          if-no-files-found: ignore
+          retention-days: 30

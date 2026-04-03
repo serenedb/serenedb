@@ -1,178 +1,148 @@
-name: SereneDB-Build-Base
+name: task | serenedb build & test
 
 on:
   workflow_call:
     inputs:
-      PRESET:
-        description: "Build preset"
-        type: string
-        required: true
-        default: "build"
       LOCATION:
-        description: "Where the load is executed"
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      KIND:
+        description: "What to test"
         type: string
         required: true
-        default: "X64"
-      BRANCH:
-        description: "SereneDB branch to test (defaults to current branch)"
+        # none: build only (compile check)
+        # unit: gtest suites (vpack, iresearch, serenedb-tests)
+        # functional: sqllogic + recovery (all tests including slow)
+        # functional_fast: sqllogic + recovery (skip .test_slow)
+        # both: unit + functional (for coverage)
+      DEV:
+        description: "Enable assertions (SDB_DEV)"
+        type: boolean
+        required: false
+        default: true
+      INSTRUMENTATION:
+        description: "Sanitizer or coverage"
+        type: string
+        required: false
+        default: "none"
+        # none, asan, msan, tsan, ubsan, coverage
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags (rare overrides)"
         type: string
         required: false
         default: ""
-      EXTRA_ARTIFACTS:
-        description: "Keep these artifacts additionally"
-        type: string
-        required: false
-        default: ""
-      BUILD_CONFIG:
-        description: "JSON configuration for builds and job settings"
-        type: string
-        required: false
-        default: '{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:latest","DEBUG_PRINT_ENV":"false"}'
-      SERENEDB_VERSION_PATCH:
-        description: "Version patch number for release builds (>0). Leave empty to auto-increment from latest GitHub release."
-        required: false
-        type: string
-        default: ""
-    outputs:
-      packages_ok:
-        description: "Whether build and packaging succeeded (independent of test results)"
-        value: ${{ jobs.build-test-package.outputs.packages_ok }}
     secrets:
       PAT_TOKEN:
-        required: true
-      TG_TOKEN:
-        required: true
-      TG_CHAT_ID:
-        required: true
-      TG_USER_MAP:
         required: true
 
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-  # Defaults from BUILD_CONFIG (overridden at runtime by the Load preset step)
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
-  DEBUG_PRINT_ENV: "false"
 
 jobs:
-  build-test-package:
-    name: Build, Test & Package
-    outputs:
-      packages_ok: ${{ steps.serenedb_packages.outcome == 'success' }}
-    permissions:
-      statuses: write
-      contents: write
+  test:
+    name: "test (${{ inputs.KIND }}, ${{ inputs.INSTRUMENTATION }})"
     runs-on:
       - ${{ inputs.LOCATION }}
+    permissions:
+      contents: read
 
     steps:
-      # ==================== CHECKOUT ====================
-      - name: Load preset & fix git
+      - name: Derive build flags
         run: |
-          case "${{ inputs.PRESET }}" in
+          # KIND → build targets and test scripts
+          case "${{ inputs.KIND }}" in
+            none)
+              echo "SDB_GTEST=Off" >> $GITHUB_ENV
+              echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
+              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_UNIT_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_INTEGRATION_TESTS=false" >> $GITHUB_ENV
+              ;;
+            unit)
+              echo "SDB_GTEST=On" >> $GITHUB_ENV
+              echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
+              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_UNIT_TESTS=true" >> $GITHUB_ENV
+              echo "RUN_INTEGRATION_TESTS=false" >> $GITHUB_ENV
+              ;;
+            functional)
+              echo "SDB_GTEST=Off" >> $GITHUB_ENV
+              echo "SDB_FAULT_INJECTION=On" >> $GITHUB_ENV
+              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_UNIT_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_INTEGRATION_TESTS=true" >> $GITHUB_ENV
+              ;;
+            functional_fast)
+              echo "SDB_GTEST=Off" >> $GITHUB_ENV
+              echo "SDB_FAULT_INJECTION=On" >> $GITHUB_ENV
+              echo "SKIP_SLOW_TESTS=true" >> $GITHUB_ENV
+              echo "RUN_UNIT_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_INTEGRATION_TESTS=true" >> $GITHUB_ENV
+              ;;
+            both)
+              echo "SDB_GTEST=On" >> $GITHUB_ENV
+              echo "SDB_FAULT_INJECTION=On" >> $GITHUB_ENV
+              echo "SKIP_SLOW_TESTS=false" >> $GITHUB_ENV
+              echo "RUN_UNIT_TESTS=true" >> $GITHUB_ENV
+              echo "RUN_INTEGRATION_TESTS=true" >> $GITHUB_ENV
+              ;;
+          esac
+
+          # DEV → assertions
+          echo "SDB_DEV=${{ inputs.DEV && 'On' || 'Off' }}" >> $GITHUB_ENV
+
+          # INSTRUMENTATION → sanitizer/coverage
+          case "${{ inputs.INSTRUMENTATION }}" in
+            none)
+              echo "SANITIZERS=" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
             asan)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Address" >> $GITHUB_ENV
               echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
-            tsan)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
-              echo "SANITIZERS=Thread" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
             msan)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV
               echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
+            tsan)
+              echo "SANITIZERS=Thread" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
             ubsan)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Undefined" >> $GITHUB_ENV
               echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
             coverage)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=" >> $GITHUB_ENV
               echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
               ;;
-            build)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
-              echo "SANITIZERS=" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
-            release)
-              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
-              echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
-              echo "SANITIZERS=" >> $GITHUB_ENV
-              echo "USE_COVERAGE=" >> $GITHUB_ENV
-              ;;
           esac
 
-          BRANCH="${{ inputs.BRANCH }}"
-          if [[ -z "$BRANCH" ]]; then
-            BRANCH="$GITHUB_REF_NAME"
-          fi
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-
-          BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
-          if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
-            echo "$BUILD_CONFIG" | docker run --rm -i ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
-          fi
+          # Common defaults
+          echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
+          echo "USE_DEBUG_INFO=COLUMNS" >> $GITHUB_ENV
+          echo "USE_IPO=Off" >> $GITHUB_ENV
+          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
+          echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
+          echo "SDB_CLUSTER=" >> $GITHUB_ENV
+          echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+          echo "STRIP_TARBALL=false" >> $GITHUB_ENV
+          echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
 
           git config --global --add safe.directory '*'
 
-      - name: Resolve version patch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
-          if [[ "${{ inputs.PRESET }}" == "release" ]]; then
-            if [[ -z "$PATCH" ]]; then
-              MAJOR=$(date -u +%y)
-              MINOR=$(date -u +%m)
-              LAST=$(gh release list --limit 100 --json tagName \
-                --jq "[.[] | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
-                2>/dev/null || echo "0")
-              PATCH=$(( LAST + 1 ))
-            fi
-          else
-            PATCH="0"
-          fi
-          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
-
-      - name: Checkout SereneDB
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           repository: serenedb/serenedb
-          ref: ${{ env.BRANCH }}
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
           clean: true
-
-      - name: Print environment
-        if: env.DEBUG_PRINT_ENV == 'true'
-        run: printenv
 
       - name: Set sanitizer options
         if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
@@ -181,107 +151,134 @@ jobs:
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
-      # ==================== SHARED CACHES ====================
       # One-time setup required on each CI machine:
       #   sudo install -d -m 2777 /mnt/data/.ccache /mnt/data/.gtest-parallel-cache /mnt/data/.cargo-target-sqllogic /mnt/data/cores
       #   echo 'kernel.core_pattern=/mnt/data/cores/%e.%p.%t' | sudo tee /etc/sysctl.d/99-serenedb-ci.conf
       #   echo 'kernel.randomize_va_space=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf
       #   sudo sysctl --system
-      - name: Prepare shared cache directories
+      - name: Prepare caches
         run: |
-          mkdir -p /mnt/data/.gtest-parallel-cache/${{ inputs.PRESET }}
-          echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/.gtest-parallel-cache/${{ inputs.PRESET }}" >> $GITHUB_ENV
+          mkdir -p /mnt/data/.gtest-parallel-cache/${{ inputs.INSTRUMENTATION }}
+          echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/.gtest-parallel-cache/${{ inputs.INSTRUMENTATION }}" >> $GITHUB_ENV
           echo "CARGO_TARGET_CACHE=/mnt/data/.cargo-target-sqllogic" >> $GITHUB_ENV
 
       # ==================== BUILD ====================
-      - name: SereneDB build
-        id: serenedb_build
-        run: ./scripts/ci/steps/03-ci-in-docker-build-targets.bash
+      - name: Build
+        id: build
+        run: |
+          DOCKER_USER="$(id -u):$(id -g)"
+          EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
+
+          # Build gtest targets
+          if [[ "$SDB_GTEST" == "On" ]]; then
+            docker run --rm \
+              --user "$DOCKER_USER" \
+              -e HOME=/serenedb \
+              -e CCACHE_DIR=/.ccache \
+              --cap-add=SYS_PTRACE \
+              --security-opt seccomp=unconfined \
+              --env-file ./docker.env \
+              -e SDB_GTEST=On \
+              -e BUILDMODE="$BUILDMODE" \
+              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+              -e SDB_DEV="$SDB_DEV" \
+              -e SDB_FAULT_INJECTION=Off \
+              -e USE_IPO=Off \
+              -e USE_COVERAGE="$USE_COVERAGE" \
+              -e ENSURE_VTUNE_SYMBOLS=Off \
+              -e BUILD_DIR=build_gtest \
+              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+              -v "${WORKSPACE}:/serenedb" \
+              -v /mnt/data/.ccache:/.ccache \
+              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests
+          fi
+
+          # Build serened for functional tests
+          if [[ "$SDB_FAULT_INJECTION" == "On" ]]; then
+            docker run --rm \
+              --user "$DOCKER_USER" \
+              -e HOME=/serenedb \
+              -e CCACHE_DIR=/.ccache \
+              --cap-add=SYS_PTRACE \
+              --security-opt seccomp=unconfined \
+              --env-file ./docker.env \
+              -e SDB_GTEST=Off \
+              -e BUILDMODE="$BUILDMODE" \
+              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+              -e SDB_DEV="$SDB_DEV" \
+              -e SDB_FAULT_INJECTION=On \
+              -e USE_IPO=Off \
+              -e USE_COVERAGE="$USE_COVERAGE" \
+              -e ENSURE_VTUNE_SYMBOLS=Off \
+              -e BUILD_DIR=build_tests \
+              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+              -v "${WORKSPACE}:/serenedb" \
+              -v /mnt/data/.ccache:/.ccache \
+              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
+          fi
+
+          # Build-only compile check (KIND=none)
+          if [[ "$SDB_GTEST" == "Off" && "$SDB_FAULT_INJECTION" == "Off" ]]; then
+            docker run --rm \
+              --user "$DOCKER_USER" \
+              -e HOME=/serenedb \
+              -e CCACHE_DIR=/.ccache \
+              --cap-add=SYS_PTRACE \
+              --security-opt seccomp=unconfined \
+              --env-file ./docker.env \
+              -e SDB_GTEST=Off \
+              -e BUILDMODE="$BUILDMODE" \
+              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+              -e SDB_DEV="$SDB_DEV" \
+              -e SDB_FAULT_INJECTION=Off \
+              -e USE_IPO=Off \
+              -e USE_COVERAGE= \
+              -e ENSURE_VTUNE_SYMBOLS=Off \
+              -e BUILD_DIR=build \
+              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+              -v "${WORKSPACE}:/serenedb" \
+              -v /mnt/data/.ccache:/.ccache \
+              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
+          fi
+
+          mkdir -p cores
 
       # ==================== TESTS ====================
-      - name: Run tests
-        id: run_tests
-        if: steps.serenedb_build.outcome == 'success'
-        run: ./scripts/ci/steps/04-ci-run-tests.bash
+      - name: Run gtest suites
+        id: gtest
+        if: steps.build.outcome == 'success' && env.RUN_UNIT_TESTS == 'true'
+        run: BUILD_DIR=build_gtest ./scripts/ci/steps/04a-ci-run-gtest-suites.bash
 
-      # ==================== PACKAGES ====================
-      - name: SereneDB Packages
-        id: serenedb_packages
-        if: always() && !cancelled() && steps.serenedb_build.outcome == 'success' && env.ENABLE_RELEASE_BUILD == 'true'
-        run: ./scripts/ci/steps/05-ci-in-docker-package.bash
+      - name: Run integration tests
+        id: integration
+        if: steps.build.outcome == 'success' && env.RUN_INTEGRATION_TESTS == 'true'
+        run: BUILD_DIR=build_tests ./scripts/ci/steps/04b-ci-run-integration-tests.bash
 
-      # ==================== RELEASE TEST AUTOMATION ====================
-      - name: Release Test Automation (RTA)
-        id: rta
-        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
-        run: ./scripts/ci/steps/08-ci-rta.bash
-
-      # ==================== COVERAGE REPORT ====================
+      # ==================== COVERAGE ====================
       - name: Generate coverage report
-        id: coverage_report
-        if: steps.serenedb_build.outcome == 'success' && env.USE_COVERAGE != ''
+        if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
         run: ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
-
-      # ==================== UPLOAD RELEASE TARBALL ====================
-      - name: Upload release tarball
-        if: always() && !cancelled() && steps.serenedb_packages.outcome == 'success' && env.DEB_TAR_PACKAGES == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarball-${{ inputs.LOCATION }}
-          path: packages/tarball/install-*.tar.gz
-          retention-days: 1
 
       # ==================== ARTIFACTS ====================
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
+          name: test-artifacts-${{ inputs.KIND }}-${{ inputs.INSTRUMENTATION }}-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
-            binaries.tar.gz
-            build_description.txt
             cmake*.log
             make*.log
             ccache*.log
-            check-log-ids.log
-            clang-format.log
-            clang-format.diff
             vpack-tests.log
             iresearch-tests.log
             sqllogic-tests.log
             recovery-tests.log
-            rta-tests.log
             serenedb-tests*.log
             fuerte-tests.log
-            tests.log
-            testfailures.txt
-            testreport-*.tar*
-            testRuns.html
-            testProtocol.txt
-            test.log
             crashreport-*.tar*
             sanitizers/**/*
-            build/coverage/**/*
+            build*/coverage/**/*
             logs/*
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Archive package artifacts
-        if: steps.serenedb_packages.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
-          path: |
-            *.deb
-            *.tar.gz
-          if-no-files-found: ignore
-
-      - name: Upload extra artifacts
-        if: always() && !cancelled() && inputs.EXTRA_ARTIFACTS != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: extra-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
-          path: ${{ inputs.EXTRA_ARTIFACTS }}
           if-no-files-found: ignore
           retention-days: 30
 
@@ -289,65 +286,12 @@ jobs:
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ inputs.LOCATION }}-${{ github.run_number }}
+          name: test-results-${{ inputs.KIND }}-${{ inputs.INSTRUMENTATION }}-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             **/vpack-tests.xml
             **/iresearch-tests.xml
             **/serenedb-tests*.xml
             **/fuerte-testsXml/*.xml
-            **/testrunXml/**/*.xml
             **/tests/sqllogic/*.xml
-            logs/rta-tests*.xml
           if-no-files-found: ignore
           retention-days: 30
-
-      # ==================== CLEANUP ====================
-      - name: Docker cleanup
-        if: always() && !cancelled()
-        run: |
-          docker system prune -f || true
-          docker volume prune -f || true
-
-      # ==================== TELEGRAM NOTIFICATION ====================
-      - name: Send Telegram notification
-        if: always() && !cancelled()
-        env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID_MAIN: "51"
-          TG_THREAD_ID_BUILD: "53"
-          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: ${{ env.BRANCH }}
-          JOB_STATUS: ${{ job.status }}
-          ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
-          RUN_NAME: "SereneDB [${{ inputs.PRESET }}]"
-          RUN_NUMBER: ${{ github.run_number }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
-
-      # ==================== REPORT PR COMMIT STATUS ====================
-      - name: Update PR commit status
-        if: always() && !cancelled() && contains(inputs.BUILD_CONFIG, 'PR_SHA')
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const config = JSON.parse(process.env.BUILD_CONFIG);
-            const state = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: config.PR_SHA,
-              state: state,
-              description: state === 'success' ? 'Build succeeded' : 'Build failed',
-              context: config.PR_STATUS_CONTEXT,
-              target_url: runUrl,
-            });
-        env:
-          BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-          JOB_STATUS: ${{ job.status }}
-
-      # ==================== FAIL JOB IF ANY STAGE FAILED ====================
-      - name: Fail job if any stage failed
-        if: always() && !cancelled() && job.status == 'failure'
-        run: exit 1

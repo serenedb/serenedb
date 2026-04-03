@@ -4,8 +4,8 @@
 # Expects serened to auto-restart on crash (e.g. via run_serened_loop.sh).
 #
 # Usage (local dev, from another terminal):
-#   ./run_recovery.sh
-#   SERVICE_HOST=serenedb-recovery SERVICE_PORT=7777 ./run_recovery.sh
+#   ./run_recovery_tests.sh
+#   SERVICE_HOST=serenedb-recovery SERVICE_PORT=7777 ./run_recovery_tests.sh
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 

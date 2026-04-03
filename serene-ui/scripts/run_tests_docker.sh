@@ -8,7 +8,7 @@ cleanup() {
 	echo "🧹 Tearing down..."
 	docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 wait_for_service() {
 	echo "⏳ Waiting for serene-ui..."

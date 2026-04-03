@@ -330,7 +330,7 @@ export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
 cancel_pid=""
-trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT
+trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT TERM
 if [[ "$cancellation" == "true" ]]; then
 	trap '' INT
 	# One background process that keeps sending SIGINT at random intervals

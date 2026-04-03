@@ -630,10 +630,12 @@ class InvertedIndexTableHandle final
   const std::string& name() const final { return _name; }
 
   std::string toString() const final {
-    return absl::StrCat(_name, ", type=search_lookup",
-                        _search_filter_str.empty()
-                          ? ""
-                          : absl::StrCat(", filter=", _search_filter_str));
+    return absl::StrCat(
+      _name, ", type=search_lookup",
+      _topk_limit > 0 ? absl::StrCat(", topk=", _topk_limit) : "",
+      _search_filter_str.empty()
+        ? ""
+        : absl::StrCat(", filter=", _search_filter_str));
   }
 
   ObjectId TableId() const noexcept { return _table_id; }
@@ -656,6 +658,10 @@ class InvertedIndexTableHandle final
     return *_underlying_table;
   }
 
+  size_t GetTopKLimit() const noexcept { return _topk_limit; }
+
+  void SetTopKLimit(size_t limit) noexcept { _topk_limit = limit; }
+
  private:
   std::string _name;
   ObjectId _table_id;
@@ -667,6 +673,7 @@ class InvertedIndexTableHandle final
   axiom::connector::TablePtr _underlying_table;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
   std::string _search_filter_str;
+  size_t _topk_limit{0};
 };
 
 class SecondaryIndexTableHandle final
@@ -1527,6 +1534,13 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto reader_type =
       velox::ROW(std::move(reader_names), std::move(reader_types));
 
+    // Read top-k limit: from the table handle (axiom pushdown) or session
+    // variable fallback.
+    size_t topk_limit = handle.GetTopKLimit();
+    if (topk_limit == 0) {
+      topk_limit = transaction.Get<VariableType::U32>("sdb_force_topk");
+    }
+
     return CreateWithMaterializer(
       handle, output_type, reader_type, column_oids, column_handles, pool,
       search_snapshot.snapshot->GetSnapshot(),
@@ -1535,7 +1549,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         using Mat = decltype(mat);
         return std::make_unique<SearchDataSource<Mat>>(
           pool, std::move(mat), search_snapshot.reader, handle.GetSearchQuery(),
-          handle.GetScorer());
+          handle.GetScorer(), topk_limit);
       });
   }
 

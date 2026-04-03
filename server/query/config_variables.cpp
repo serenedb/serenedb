@@ -63,6 +63,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         "true",
       },
     },
+    {
+      "sdb_force_topk",
+      {
+        VariableType::U32,
+        "Forces top-k collection limit for search queries on inverted indexes. "
+        "When set to a value > 0, the search scan uses a top-k collector to "
+        "return only the highest-scoring documents. 0 = disabled.",
+        "0",
+      },
+    },
     // axiom specific variables
     {
       "execution_threads",

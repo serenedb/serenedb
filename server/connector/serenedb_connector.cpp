@@ -237,9 +237,18 @@ SereneDBTableLayout::createTableHandle(
       return "unknown";
     };
 
-    return std::make_shared<InvertedIndexTableHandle>(
+    auto table_handle = std::make_shared<InvertedIndexTableHandle>(
       *inv_index, index.GetId(), std::move(prepared), scorer,
       irs::ToStringDemangled(conjunct_root, column_id_to_name));
+
+    // Apply session-forced top-k limit for testing/debugging.
+    auto force_topk =
+      inv_index->GetTransaction().Get<VariableType::U32>("sdb_force_topk");
+    if (force_topk > 0) {
+      table_handle->SetTopKLimit(force_topk);
+    }
+
+    return table_handle;
   }
 
   if (idx_table &&

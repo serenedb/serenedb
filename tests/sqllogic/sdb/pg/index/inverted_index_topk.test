@@ -1,0 +1,275 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_topk(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# ---- EXPLAIN tests: verify topk appears in plan ----
+
+statement ok
+SET sdb_force_topk = 3;
+
+
+query
+EXPLAIN (EXECUTION) SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[1][BM25() DESC NULLS LAST] -> "id":INTEGER, "bm25()":REAL
+  -- TableScan[0][docs, type=search_lookup, topk=3, filter=PHRASE[body(string) = <Term:fox(0, 0); >]] -> "id":INTEGER, "bm25()":REAL
+
+
+statement ok
+SET sdb_force_topk = 0;
+
+
+# topk should NOT appear when sdb_force_topk = 0
+query
+EXPLAIN (EXECUTION) SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[1][BM25() DESC NULLS LAST] -> "id":INTEGER, "bm25()":REAL
+  -- TableScan[0][docs, type=search_lookup, filter=PHRASE[body(string) = <Term:fox(0, 0); >]] -> "id":INTEGER, "bm25()":REAL
+
+
+# ---- Correctness tests: topk results match full scan + sort + limit ----
+
+# First get the expected results without topk (full scan path)
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id LIMIT 3;
+----
+id
+4
+2
+1
+
+
+# Now same query with topk=3 — should produce identical results
+statement ok
+SET sdb_force_topk = 3;
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id LIMIT 3;
+----
+id
+4
+2
+1
+
+
+# topk=10 with only 4 matching docs — should return all 4
+statement ok
+SET sdb_force_topk = 10;
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id;
+----
+id
+4
+2
+1
+5
+
+
+# topk=1 — only the single highest-scoring doc
+statement ok
+SET sdb_force_topk = 1;
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 1;
+----
+id
+4
+
+
+statement ok
+SET sdb_force_topk = 0;
+
+
+# ---- Multi-segment correctness: insert more data, create second segment ----
+
+statement count 1
+INSERT INTO docs VALUES (10, 'red fox');
+
+statement count 1
+INSERT INTO docs VALUES (11, 'blue fox');
+
+statement count 1
+INSERT INTO docs VALUES (12, 'green fox');
+
+statement count 1
+INSERT INTO docs VALUES (13, 'white fox');
+
+statement count 1
+INSERT INTO docs VALUES (14, 'black fox');
+
+statement count 1
+INSERT INTO docs VALUES (15, 'grey fox');
+
+statement count 1
+INSERT INTO docs VALUES (16, 'pink fox');
+
+statement count 1
+INSERT INTO docs VALUES (17, 'orange fox');
+
+statement count 1
+INSERT INTO docs VALUES (18, 'yellow fox');
+
+statement count 1
+INSERT INTO docs VALUES (19, 'purple fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Get expected results from full scan across two segments
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id LIMIT 5;
+----
+id
+10
+11
+12
+13
+14
+
+
+# Same query with topk=5 — should match
+statement ok
+SET sdb_force_topk = 5;
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id LIMIT 5;
+----
+id
+10
+11
+12
+13
+14
+
+
+# Larger topk across segments
+statement ok
+SET sdb_force_topk = 20;
+
+
+query
+SELECT COUNT(*) FROM (SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC) t;
+----
+count
+14
+
+
+statement ok
+SET sdb_force_topk = 0;
+
+
+# ---- Edge case: no matching docs with topk ----
+statement ok
+SET sdb_force_topk = 5;
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'nonexistent_term_xyz') ORDER BY BM25() DESC;
+----
+id
+
+
+statement ok
+SET sdb_force_topk = 0;
+
+
+# ---- Verify scores are returned correctly with topk ----
+statement ok
+SET sdb_force_topk = 3;
+
+
+query
+SELECT id, BM25() > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id LIMIT 3;
+----
+id	has_score
+10	t
+11	t
+12	t
+
+
+statement ok
+SET sdb_force_topk = 0;
+
+
+# ---- Different search terms with topk ----
+statement ok
+SET sdb_force_topk = 2;
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC, id LIMIT 2;
+----
+id
+3
+1
+
+
+statement ok
+SET sdb_force_topk = 0;
+
+
+# Clean up
+statement ok
+DROP INDEX docs_topk_idx;
+
+statement ok
+DROP TABLE docs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_topk;

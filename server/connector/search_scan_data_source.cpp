@@ -35,12 +35,13 @@ template<typename Materializer>
 SearchDataSource<Materializer>::SearchDataSource(
   velox::memory::MemoryPool& memory_pool, Materializer materializer,
   const irs::IndexReader& reader, const irs::Filter::Query& query,
-  const irs::Scorer* scorer)
+  const irs::Scorer* scorer, size_t topk_limit)
   : _memory_pool{memory_pool},
     _materializer{std::move(materializer)},
     _reader{reader},
     _query{query},
-    _scorer{scorer} {}
+    _scorer{scorer},
+    _topk_limit{topk_limit} {}
 
 template<typename Materializer>
 void SearchDataSource<Materializer>::addSplit(
@@ -56,12 +57,151 @@ void SearchDataSource<Materializer>::addSplit(
 }
 
 template<typename Materializer>
+void SearchDataSource<Materializer>::collectTopK() {
+  SDB_ASSERT(_topk_limit > 0);
+  SDB_ASSERT(_scorer);
+
+  const size_t k = _topk_limit;
+
+  // Segment-level collector: reuses hits buffer, threshold persists across
+  // segments via the seg_threshold variable.
+  irs::score_t seg_threshold = std::numeric_limits<irs::score_t>::min();
+  std::vector<irs::ScoreDoc> seg_hits(irs::BlockSize(k));
+
+  // Index-level collector: maintains global top-k with segment attribution.
+  TopKScoreCollector index_collector{k};
+
+  irs::ColumnArgsFetcher fetcher;
+
+  for (size_t seg_idx = 0; seg_idx < _reader.size(); ++seg_idx) {
+    auto& segment = _reader[seg_idx];
+
+    // Clear stale data from previous segment before reusing the buffer.
+    std::memset(seg_hits.data(), 0, seg_hits.size() * sizeof(irs::ScoreDoc));
+
+    // Create a fresh segment-level collector reusing the hits buffer.
+    // It reads seg_threshold by reference, which carries over from previous
+    // segments and from the index-level collector.
+    irs::NthPartitionScoreCollector seg_collector{seg_threshold, k,
+                                                  std::span{seg_hits}};
+
+    fetcher.Clear();
+    auto it = segment.mask(_query.execute({
+      .segment = segment,
+      .scorer = _scorer,
+    }));
+
+    auto score_func = it->PrepareScore({
+      .scorer = _scorer,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
+
+    it->Collect(score_func, fetcher, seg_collector);
+
+    // Finalize segment: sorts hits by score desc, returns total count.
+    auto seg_count = seg_collector.Finalize();
+    auto result_count = std::min<size_t>(seg_count, k);
+
+    // Push segment results into the index-level collector.
+    index_collector.AddFromSegment(
+      std::span{seg_hits.data(), result_count}, seg_idx);
+
+    // Sync threshold: take the max of segment and index thresholds so the
+    // next segment benefits from pruning.
+    seg_threshold = std::max(seg_threshold, index_collector.threshold());
+  }
+
+  index_collector.Finalize();
+  auto top_results = index_collector.results();
+
+  // Resolve PKs: group by segment for efficient sequential seeks.
+  struct RankedDoc {
+    uint32_t segment_index;
+    irs::doc_id_t doc_id;
+    irs::score_t score;
+    size_t rank;  // original position in score-sorted order
+  };
+  std::vector<RankedDoc> ranked;
+  ranked.reserve(top_results.size());
+  for (size_t i = 0; i < top_results.size(); ++i) {
+    const auto& r = top_results[i];
+    ranked.push_back({r.segment_index, r.doc_id, r.score, i});
+  }
+
+  // Sort by (segment_index, doc_id) for sequential PK column seeks.
+  std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
+    return std::tie(a.segment_index, a.doc_id) <
+           std::tie(b.segment_index, b.doc_id);
+  });
+
+  _topk_results.resize(top_results.size());
+  uint32_t prev_seg = std::numeric_limits<uint32_t>::max();
+  irs::DocIterator::ptr pk_iterator;
+  const irs::PayAttr* pk_value = nullptr;
+
+  for (const auto& rd : ranked) {
+    if (rd.segment_index != prev_seg) {
+      auto& segment = _reader[rd.segment_index];
+      const auto* pk_column = segment.column(connector::kPkFieldName);
+      pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);
+      SDB_ASSERT(pk_iterator);
+      pk_value = irs::get<irs::PayAttr>(*pk_iterator);
+      SDB_ASSERT(pk_value);
+      prev_seg = rd.segment_index;
+    }
+
+    SDB_ENSURE(rd.doc_id == pk_iterator->seek(rd.doc_id), ERROR_INTERNAL,
+               "PK column missing document in topk result");
+    _topk_results[rd.rank] = {
+      std::string{irs::ViewCast<char>(pk_value->value)},
+      rd.score,
+    };
+  }
+
+  _topk_collected = true;
+}
+
+template<typename Materializer>
 std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
   uint64_t size, velox::ContinueFuture& future) {
   SDB_ASSERT(size);
   SDB_ASSERT(_current_split,
              "RocksDBDataSource: inconsistent state, addSplit call missing");
 
+  // Top-k path: collect all top-k results upfront, then serve batches.
+  if (_topk_limit > 0 && _scorer) {
+    if (!_topk_collected) {
+      collectTopK();
+    }
+
+    if (_topk_cursor >= _topk_results.size()) {
+      _current_split.reset();
+      return nullptr;
+    }
+
+    auto batch_size =
+      std::min<size_t>(size, _topk_results.size() - _topk_cursor);
+
+    velox::VectorPtr scores =
+      velox::BaseVector::create<velox::FlatVector<float>>(
+        velox::REAL(), batch_size, &_memory_pool);
+    auto* score_raw = scores->asFlatVector<float>()->mutableRawValues();
+
+    primary_key::Keys index_keys{_memory_pool};
+    index_keys.reserve(batch_size);
+
+    for (size_t i = 0; i < batch_size; ++i) {
+      const auto& result = _topk_results[_topk_cursor + i];
+      index_keys.emplace_back(result.pk);
+      score_raw[i] = result.score;
+    }
+    _topk_cursor += batch_size;
+
+    return _materializer.ReadRows(index_keys, std::move(scores));
+  }
+
+  // Normal path: iterate all documents.
   velox::VectorPtr scores;
   float* score_raw = nullptr;
   size_t score_idx = 0;

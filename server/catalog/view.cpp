@@ -1,7 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,7 +16,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is SereneDB GmbH, Berlin, Germany
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "catalog/view.h"
@@ -74,6 +75,9 @@ Result ParseQuery(View::State& state, ObjectId database_id,
     SDB_ASSERT(state.stmt);
     SDB_ASSERT(state.objects.empty());
 
+    // Currently collector checks cross-database references and
+    // needs the name of the current database for this purpose.
+    // It looks like it'd be better to do it in resolver.
     auto database = catalog::GetDatabase(database_id);
     if (!database) {
       return std::move(database).error();
@@ -150,6 +154,14 @@ ResultOr<std::shared_ptr<View>> View::Create(ObjectId database_id,
 
   return std::make_shared<View>(database_id, ObjectId{}, name, std::move(query),
                                 std::move(state));
+}
+
+std::shared_ptr<Object> View::Clone() const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 
 }  // namespace sdb::catalog

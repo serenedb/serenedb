@@ -1398,8 +1398,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
     return Result{ERROR_SERVER_DUPLICATE_NAME};
   }
 
-  auto b = WriteCatalogObject(*old_obj);
-  auto new_obj = basics::downCast<T>(old_obj->Clone(b.slice()));
+  auto new_obj = basics::downCast<T>(old_obj->Clone());
   if (!new_obj) {
     return Result{ERROR_INTERNAL, "Failed to clone object"};
   }

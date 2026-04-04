@@ -35,12 +35,14 @@ namespace sdb::catalog {
 
 enum class ObjectType : uint8_t {
   Invalid = 0,
+
+  // Tombstone must be scanned first so deleted objects are known
+  // before live objects are loaded.
   Tombstone = 1,
+  Settings = 2,
 
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
-  // Tombstones must be scanned first (value 1) so deleted objects are known
-  // before live objects are loaded.
   // Shards must come after their parent definition so the parent exists
   // when the shard is registered.
   Database = 128,
@@ -116,7 +118,7 @@ class Object {
   ObjectId GetId() const noexcept { return _id; }
 
   virtual void WriteInternal(vpack::Builder&) const = 0;
-  virtual std::shared_ptr<Object> Clone(vpack::Slice) const { return nullptr; }
+  virtual std::shared_ptr<Object> Clone() const = 0;
 
   void SetName(std::string_view name) { _name = name; }
 

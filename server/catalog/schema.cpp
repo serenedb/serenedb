@@ -46,4 +46,12 @@ void Schema::WriteInternal(vpack::Builder& b) const {
   });
 }
 
+std::shared_ptr<Object> Schema::Clone() const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
+}
+
 }  // namespace sdb::catalog

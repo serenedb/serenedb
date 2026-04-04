@@ -98,4 +98,12 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
   });
 }
 
+std::shared_ptr<Object> Tokenizer::Clone() const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+  return ReadInternal(b.slice(), {.id = GetId()});
+}
+
 }  // namespace sdb::catalog

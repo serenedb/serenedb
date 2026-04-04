@@ -35,6 +35,7 @@ class IndexShard : public catalog::Object {
   IndexShard(ObjectId id, ObjectId index_id, catalog::ObjectType type);
   IndexShard(ObjectId index_id, catalog::ObjectType type);
   virtual ~IndexShard() = default;
+  std::shared_ptr<Object> Clone() const final { return nullptr; }
 
   virtual void WriteInternal(vpack::Builder& builder) const = 0;
 

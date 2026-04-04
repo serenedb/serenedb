@@ -60,4 +60,12 @@ void Database::WriteInternal(vpack::Builder& b) const {
   });
 }
 
+std::shared_ptr<Object> Database::Clone() const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+  return ReadInternal(b.slice(), {.id = GetId()});
+}
+
 }  // namespace sdb::catalog

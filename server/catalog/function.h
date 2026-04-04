@@ -182,9 +182,7 @@ class Function final : public SchemaObject {
   ~Function() final;
 
   void WriteInternal(vpack::Builder&) const final;
-  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.database_id = GetDatabaseId()});
-  }
+  std::shared_ptr<Object> Clone() const final;
 
   const FunctionSignature& Signature() const noexcept { return _signature; }
 

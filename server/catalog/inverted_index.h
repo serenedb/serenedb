@@ -61,12 +61,7 @@ class InvertedIndex final : public Index {
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
   void WriteInternal(vpack::Builder& builder) const final;
-  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.id = GetId(),
-                            .database_id = GetDatabaseId(),
-                            .schema_id = GetSchemaId(),
-                            .relation_id = GetRelationId()});
-  }
+  std::shared_ptr<Object> Clone() const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 

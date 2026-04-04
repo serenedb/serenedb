@@ -257,6 +257,7 @@ std::shared_ptr<Role> Role::ReadInternal(vpack::Slice slice, ReadContext) {
   if (databases_slice.isObject()) {
     fromDocumentDatabases(*role, databases_slice);
   }
+  // ensure the root user always has the right to change permissions
   if (role->_name == StaticStrings::kDefaultUser) {
     role->grantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
   }
@@ -352,6 +353,14 @@ auth::Level catalog::Role::databaseAuthLevel(std::string_view database) const {
   }
 
   return std::max(lvl, auth::Level::None);
+}
+
+std::shared_ptr<Object> Role::Clone() const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+  return ReadInternal(b.slice(), {});
 }
 
 }  // namespace sdb::catalog

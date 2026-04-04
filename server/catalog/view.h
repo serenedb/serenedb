@@ -1,7 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,7 +16,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is SereneDB GmbH, Berlin, Germany
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -50,9 +51,7 @@ class View final : public SchemaObject {
        std::string query, std::shared_ptr<const State> state);
 
   void WriteInternal(vpack::Builder& b) const final;
-  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.database_id = GetDatabaseId()});
-  }
+  std::shared_ptr<Object> Clone() const final;
 
   std::string_view GetQuery() const noexcept { return _query; }
   auto GetState() const noexcept { return _state; }

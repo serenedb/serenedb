@@ -60,9 +60,7 @@ class Table : public SchemaObject {
   static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
                                              ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
-  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.database_id = GetDatabaseId()});
-  }
+  std::shared_ptr<Object> Clone() const final;
 
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }

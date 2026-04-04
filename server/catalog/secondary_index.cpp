@@ -78,4 +78,15 @@ void SecondaryIndex::WriteInternal(vpack::Builder& b) const {
   });
 }
 
+std::shared_ptr<Object> SecondaryIndex::Clone() const {
+  vpack::Builder b;
+  b.openObject();
+  WriteInternal(b);
+  b.close();
+  return ReadInternal(b.slice(), {.id = GetId(),
+                                  .database_id = GetDatabaseId(),
+                                  .schema_id = GetSchemaId(),
+                                  .relation_id = GetRelationId()});
+}
+
 }  // namespace sdb::catalog

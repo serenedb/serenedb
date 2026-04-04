@@ -53,9 +53,7 @@ class Database final : public Object {
   static std::shared_ptr<Database> ReadInternal(vpack::Slice slice,
                                                 ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
-  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.id = GetId()});
-  }
+  std::shared_ptr<Object> Clone() const final;
 
   auto GetReplicationFactor() const noexcept { return _replication_factor; }
   auto GetWriteConcern() const noexcept { return _write_concern; }

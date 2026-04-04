@@ -54,6 +54,7 @@ class TableShard : public catalog::Object {
   static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
 
   virtual ~TableShard() = default;
+  std::shared_ptr<Object> Clone() const final { return nullptr; }
 
   auto GetTableId() const noexcept { return _table_id; }
 

@@ -20,8 +20,6 @@ target_sources(
         view.cpp
         function.cpp
         native_functions.cpp
-        base_query_view.cpp
-        sql_query_view.cpp
         validators.cpp
         sharding_strategy.cpp
         replication_common.cpp

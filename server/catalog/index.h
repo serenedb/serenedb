@@ -33,9 +33,6 @@ struct IndexShardOptions;
 
 namespace catalog {
 
-inline constexpr std::string_view kIndexBaseOptions = "base";
-inline constexpr std::string_view kIndexImplOptions = "impl";
-
 // Aggregated info about column for index creation.
 // Filled on different levels during creaton to gather all
 // necessary info for building and validating new index.
@@ -55,17 +52,6 @@ struct IndexBaseOptions {
   std::vector<Column::Id> column_ids;
 };
 
-// polymorfic wrapper for concrete index wrappers
-// so we can make generic parsing/creating code.
-struct IndexImplOptionsBaseWrapper {
-  IndexImplOptionsBaseWrapper(IndexBaseOptions&& options) : base{options} {}
-  virtual ~IndexImplOptionsBaseWrapper() = default;
-
-  IndexBaseOptions base;
-};
-
-using ImplOptsPtr = std::unique_ptr<IndexImplOptionsBaseWrapper>;
-
 class Index : public SchemaObject {
  public:
   auto GetIndexType() const noexcept { return _type; }
@@ -80,32 +66,20 @@ class Index : public SchemaObject {
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions& options) const = 0;
 
-  Result Rename(std::shared_ptr<Index>& result,
-                std::string_view new_name) const;
-
   virtual ~Index() = default;
 
  protected:
-  void WriteInternalImpl(vpack::Builder& builder,
-                         absl::FunctionRef<void()> impl_write) const;
-
   struct IndexOutput;
   IndexOutput MakeIndexOutput() const;
 
   Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-        ObjectId relation_id, IndexBaseOptions options);
+        ObjectId relation_id, std::string name,
+        std::vector<Column::Id> column_ids, IndexType type);
 
   ObjectId _relation_id;
   IndexType _type;
   std::vector<Column::Id> _column_ids;
 };
-
-ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
-                                     vpack::Slice impl_options_slice);
-
-ResultOr<std::shared_ptr<Index>> MakeIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexImplOptionsBaseWrapper&& impl_options);
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
@@ -116,21 +90,3 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
 
 }  // namespace catalog
 }  // namespace sdb
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t customize::enum_name<sdb::IndexType>(
-  sdb::IndexType type) noexcept {
-  switch (type) {
-    case sdb::IndexType::Unknown:
-      return "unknown";
-    case sdb::IndexType::Secondary:
-      return "secondary";
-    case sdb::IndexType::Inverted:
-      return "inverted";
-    default:
-      return invalid_tag;
-  }
-}
-
-}  // namespace magic_enum

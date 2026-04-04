@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,62 +15,141 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "view.h"
+#include "catalog/view.h"
 
 #include <vpack/serializer.h>
+#include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/errors.h"
+#include "basics/exceptions.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "catalog/sql_query_view.h"
-#include "general_server/state.h"
+#include "catalog/identifiers/identifier.h"
+#include "pg/sql_parser.h"
+#include "pg/sql_resolver.h"
+#include "utils/query_string.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/parsenodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 
-ViewMeta ViewMeta::Make(const View& view) {
-  return {
-    .id = Identifier{view.GetId().id()},
-    .name = std::string{view.GetName()},
-    .type = view.GetViewType(),
-  };
+PgView::PgView(ObjectId database_id, ObjectId id, std::string_view name,
+               std::string query, std::shared_ptr<const State> state)
+  : SchemaObject{{}, database_id, {}, id, name, ObjectType::View},
+    _query{std::move(query)},
+    _state{std::move(state)} {}
+
+void PgView::WriteInternal(vpack::Builder& b) const {
+  WriteObject(b, [&](vpack::Builder& b) {
+    b.add("id", GetId().id());
+    b.add("query", _query);
+  });
 }
 
-Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
-  auto r = vpack::ReadObjectNothrow(slice, options.meta,
-                                    {.skip_unknown = true, .strict = true});
-  if (!r.ok()) {
-    return r;
-  }
+namespace {
 
-  options.properties = slice;
-  return {};
+std::shared_ptr<PgView::State> CreateState() {
+  return std::make_shared<PgView::State>();
 }
 
-View::View(ViewMeta&& options, ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 *options.id,
-                 std::move(options.name),
-                 ObjectType::View},
-    _type{options.type} {}
+Result ParseQuery(PgView::State& state, ObjectId database_id,
+                  std::string_view query) {
+  return basics::SafeCall([&] -> Result {
+    const QueryString query_string{query};
+    state.memory_context = pg::CreateMemoryContext();
+    auto* tree = pg::Parse(*state.memory_context, query_string);
+    if (list_length(tree) != 1) {
+      return {ERROR_BAD_PARAMETER,
+              "sql query view should contains single statement"};
+    }
+    state.stmt = list_nth_node(RawStmt, tree, 0);
+    SDB_ASSERT(state.stmt);
+    SDB_ASSERT(state.objects.empty());
 
-Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx) {
-  SDB_ASSERT(ServerState::instance()->IsClientNode());
+    auto database = catalog::GetDatabase(database_id);
+    if (!database) {
+      return std::move(database).error();
+    }
 
-  switch (options.meta.type) {
-    case ViewType::ViewSqlQuery:
-      SDB_ASSERT(ctx != ViewContext::User);
-      return SqlQueryView::Make(view, database_id, std::move(options), ctx,
-                                nullptr);
-    case ViewType::ViewSearch:
-      break;
+    pg::Collect((*database)->GetName(), *state.stmt, state.objects);
+
+    return {};
+  });
+}
+
+Result CheckView(ObjectId database, std::string_view name,
+                 const PgView::State& state, const Config& config) {
+  SDB_ASSERT(state.stmt);
+  if (state.stmt->stmt->type != T_SelectStmt) {
+    return {ERROR_BAD_PARAMETER,
+            "sql query view should contains select statement"};
   }
-  return {};
+
+  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
+
+  return basics::SafeCall([&] {
+    pg::Objects objects;
+    pg::Disallowed disallowed;
+    disallowed.relations.emplace(pg::Objects::ObjectName{{}, name});
+    pg::ResolveQueryView(database, search_path, objects, disallowed,
+                         state.objects, config);
+  });
+}
+
+}  // namespace
+
+std::shared_ptr<PgView> PgView::ReadInternal(vpack::Slice slice,
+                                             ReadContext ctx) {
+  auto name =
+    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
+  auto query_slice = slice.get("query");
+  if (!query_slice.isString()) {
+    return nullptr;
+  }
+  auto query = std::string{query_slice.stringView()};
+  if (query.empty()) {
+    return nullptr;
+  }
+
+  auto state = CreateState();
+  if (auto r = ParseQuery(*state, ctx.database_id, query); !r.ok()) {
+    return nullptr;
+  }
+
+  return std::make_shared<PgView>(ctx.database_id, ObjectId{}, name,
+                                  std::move(query), std::move(state));
+}
+
+ResultOr<std::shared_ptr<PgView>> PgView::Create(ObjectId database_id,
+                                                 std::string_view name,
+                                                 std::string query,
+                                                 const Config* config) {
+  if (query.empty()) {
+    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
+                                   "Query can't be empty"};
+  }
+
+  auto state = CreateState();
+  if (auto r = ParseQuery(*state, database_id, query); !r.ok()) {
+    return std::unexpected(std::move(r));
+  }
+
+  if (config) {
+    if (auto r = CheckView(database_id, name, *state, *config); !r.ok()) {
+      return std::unexpected(std::move(r));
+    }
+  }
+
+  return std::make_shared<PgView>(database_id, ObjectId{}, name,
+                                  std::move(query), std::move(state));
 }
 
 }  // namespace sdb::catalog

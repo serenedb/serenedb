@@ -57,7 +57,12 @@ class Table : public SchemaObject {
   Table(TableOptions&& options, ObjectId database_id);
   Table(const catalog::Table& other, NewOptions options);
 
-  void WriteInternal(vpack::Builder& build) const final;
+  static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
+                                                       ReadContext ctx);
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
+    return ReadInternal(s, {.database_id = GetDatabaseId()});
+  }
 
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
@@ -88,8 +93,6 @@ class Table : public SchemaObject {
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
 
-  Result Rename(std::shared_ptr<Table>& result,
-                std::string_view new_name) const;
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
   Result RenameConstraint(std::shared_ptr<Table>& result,

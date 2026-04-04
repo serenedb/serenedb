@@ -129,7 +129,6 @@ struct Table::TableOutput {
   std::span<const Column::Id> pkColumns;
   std::span<const CheckConstraint> checkConstraints;
   std::string_view shardingStrategy;
-  std::string_view name;
   // TODO make them just pointers if catalog::Table became immutable
   vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
   const KeyGenerator* keyOptions;
@@ -156,7 +155,6 @@ Table::TableOutput Table::MakeTableOptions() const {
     .pkColumns = _pk_columns,
     .checkConstraints = _check_constraints,
     .shardingStrategy = _sharding_strategy->name(),
-    .name = GetName(),
     .schema = _schema,
     .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
@@ -175,10 +173,23 @@ Table::TableOutput Table::MakeTableOptions() const {
   };
 }
 
-void catalog::Table::WriteInternal(vpack::Builder& build) const {
-  SDB_ASSERT(build.isOpenObject());
-  vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
-                     ObjectInternal{_database_id});
+std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
+                                           ReadContext ctx) {
+  CreateTableOptions options;
+  if (auto r = vpack::ReadObjectNothrow<TableOptions>(
+        slice, options, {.skip_unknown = true, .strict = false},
+        ObjectInternal{ctx.database_id});
+      !r.ok()) {
+    return nullptr;
+  }
+  return std::make_shared<Table>(std::move(options), ctx.database_id);
+}
+
+void catalog::Table::WriteInternal(vpack::Builder& b) const {
+  WriteObject(b, [&](vpack::Builder& build) {
+    vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
+                       ObjectInternal{_database_id});
+  });
 }
 
 NewOptions Table::MakeNewOptions() const {
@@ -190,14 +201,6 @@ NewOptions Table::MakeNewOptions() const {
     .write_concern = _write_concern,
     .wait_for_sync = _wait_for_sync,
   };
-}
-
-Result Table::Rename(std::shared_ptr<Table>& result,
-                     std::string_view new_name) const {
-  auto opts = MakeNewOptions();
-  opts.name = new_name;
-  result = std::make_shared<Table>(*this, std::move(opts));
-  return {};
 }
 
 Result Table::RenameColumn(std::shared_ptr<Table>& result,

@@ -28,7 +28,7 @@ class SchemaObject;
 class Function;
 class Table;
 class Role;
-class View;
+class PgView;
 class Index;
 class Schema;
 class Database;

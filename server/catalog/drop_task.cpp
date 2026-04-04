@@ -114,12 +114,24 @@ AsyncResult TableShardDrop::Execute() {
 
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(_id, RocksDBEntryType::IndexShard);
+  auto [entry_type, shard_type] = [&] {
+    switch (_type) {
+      case IndexType::Secondary:
+        return std::pair{RocksDBEntryType::SecondaryIndex,
+                         RocksDBEntryType::SecondaryIndexShard};
+      case IndexType::Inverted:
+        return std::pair{RocksDBEntryType::InvertedIndex,
+                         RocksDBEntryType::InvertedIndexShard};
+      default:
+        SDB_UNREACHABLE();
+    }
+  }();
+  auto r = server.DropEntry(_id, shard_type);
   if (!r.ok()) {
     return r;
   }
   if (_is_root) {
-    r = server.DropDefinition(_parent_id, RocksDBEntryType::Index, _id);
+    r = server.DropDefinition(_parent_id, entry_type, _id);
     if (!r.ok()) {
       return r;
     }

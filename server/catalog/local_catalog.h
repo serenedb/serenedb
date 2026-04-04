@@ -57,23 +57,22 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId schema_id, std::shared_ptr<View> view) final;
+  Result RegisterView(ObjectId schema_id, std::shared_ptr<PgView> view) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                            std::shared_ptr<Tokenizer> tokenizer) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
-                       CreateTableOptions table) final;
+                       std::shared_ptr<Table> table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
-  ResultOr<std::shared_ptr<Index>> RegisterIndex(
-    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexImplOptionsBaseWrapper&& impl_options) final;
+  Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                       std::shared_ptr<Index> index) final;
   Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<View> view, bool replace) final;
+                    std::shared_ptr<PgView> view, bool replace) final;
   Result CreateSchema(ObjectId database_id,
                       std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
@@ -101,7 +100,7 @@ class LocalCatalog final : public LogicalCatalog,
                         std::string_view name, std::string_view new_name) final;
 
   Result ChangeView(ObjectId database_id, std::string_view schema,
-                    std::string_view name, ChangeCallback<View> callback) final;
+                    std::string_view name, ChangeCallback<PgView> callback) final;
   Result ChangeTable(ObjectId database_id, std::string_view schema,
                      std::string_view name,
                      ChangeCallback<Table> callback) final;

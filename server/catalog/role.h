@@ -45,13 +45,16 @@ class Role final : public catalog::Object {
  public:
   explicit Role(PrivateTag, ObjectId id, std::string_view name);
 
-  void WriteInternal(vpack::Builder& build) const final;
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
+    return ReadInternal(s, {});
+  }
 
   static std::shared_ptr<catalog::Role> NewUser(std::string_view name,
                                                 std::string_view password,
                                                 ObjectId id = {});
-  static Result Instantiate(std::shared_ptr<catalog::Role>& role,
-                            vpack::Slice slice, bool is_user_request);
+  static std::shared_ptr<Role> ReadInternal(vpack::Slice slice,
+                                            ReadContext ctx);
 
   std::string_view username() const { return GetName(); }
   std::string_view passwordMethod() const { return _password_method; }

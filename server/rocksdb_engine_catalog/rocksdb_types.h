@@ -43,15 +43,17 @@ enum class RocksDBEntryType : char {
   Database = '0',
   Schema = '+',
   Function = '_',
-  View = '>',
+  PgView = '>',
   Table = '1',
-  Index = '?',
+  SecondaryIndex = '?',
   Tokenizer = '2',
+  InvertedIndex = 'I',
 
   Tombstone = '~',
 
   TableShard = '@',
-  IndexShard = '!',
+  SecondaryIndexShard = '!',
+  InvertedIndexShard = 'i',
 };
 
 ////////////////////////////////////////////////////////////////////////////////

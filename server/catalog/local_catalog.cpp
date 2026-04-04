@@ -117,6 +117,14 @@ Result Apply(
   return {};
 }
 
+vpack::Builder WriteCatalogObject(const Object& obj) {
+  vpack::Builder b;
+  b.openObject();
+  obj.WriteInternal(b);
+  b.close();
+  return b;
+}
+
 }  // namespace
 
 class SnapshotImpl : public Snapshot {
@@ -213,7 +221,7 @@ class SnapshotImpl : public Snapshot {
       }
       return AddObjectDefinition<SchemaDependency>(parent_id,
                                                    std::move(object));
-    } else if constexpr (std::is_same_v<T, View>) {
+    } else if constexpr (std::is_same_v<T, PgView>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
@@ -269,7 +277,7 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Schema>) {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
-    } else if constexpr (std::is_same_v<T, View>) {
+    } else if constexpr (std::is_same_v<T, PgView>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Function>) {
@@ -428,7 +436,7 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<Table>>{});
   }
 
-  std::vector<std::shared_ptr<View>> GetViews(
+  std::vector<std::shared_ptr<PgView>> GetViews(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
@@ -437,11 +445,11 @@ class SnapshotImpl : public Snapshot {
                std::views::transform([&](ObjectId view_id) {
                  auto it = _objects.find(view_id);
                  SDB_ASSERT(it != _objects.end());
-                 return basics::downCast<View>(*it);
+                 return basics::downCast<PgView>(*it);
                }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<View>>{});
+      .value_or(std::vector<std::shared_ptr<PgView>>{});
   }
 
   std::vector<std::shared_ptr<Function>> GetFunctions(
@@ -889,7 +897,7 @@ Result LocalCatalog::RegisterSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::RegisterView(ObjectId schema_id,
-                                  std::shared_ptr<View> view) {
+                                  std::shared_ptr<PgView> view) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(view), schema_id, false);
@@ -897,9 +905,7 @@ Result LocalCatalog::RegisterView(ObjectId schema_id,
 }
 
 Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
-                                   CreateTableOptions options) {
-  auto table = std::make_shared<Table>(std::move(options), database_id);
-
+                                   std::shared_ptr<Table> table) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(table, schema_id, false);
@@ -938,8 +944,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {
-        vpack::Builder builder;
-        database->WriteInternal(builder);
+        auto builder = WriteCatalogObject(*database);
         auto r = _engine->CreateDefinition(
           id::kInstance, RocksDBEntryType::Database, database_id,
           [&](bool) { return builder.slice(); });
@@ -956,9 +961,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
                      });
       r = clone->RegisterObject(schema, database_id, false);
       SDB_ASSERT(r.ok());
-      vpack::Builder builder;
-      schema->WriteInternal(builder);
-
+      auto builder = WriteCatalogObject(*schema);
       return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -978,9 +981,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder builder;
-      schema->WriteInternal(builder);
-
+      auto builder = WriteCatalogObject(*schema);
       return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -998,10 +999,7 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b;
-      b.openObject();
-      role->WriteInternal(b);
-      b.close();
+      auto b = WriteCatalogObject(*role);
       return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
                                        role->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1016,25 +1014,12 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
   return {};
 }
 
-ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexImplOptionsBaseWrapper&& impl_options) {
-  auto index =
-    MakeIndex(database_id, schema_id, id, relation_id, std::move(impl_options));
-  if (!index) {
-    return std::unexpected<Result>(std::in_place, std::move(index).error());
-  }
-
+Result LocalCatalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                                   std::shared_ptr<Index> index) {
   absl::MutexLock lock{&_mutex};
-
-  auto r = Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(*index, relation_id, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(index, index->GetRelationId(), false);
   });
-  if (!r.ok()) {
-    return std::unexpected<Result>(std::in_place, r.errorNumber(),
-                                   r.errorMessage());
-  }
-  return *index;
 }
 
 Result LocalCatalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
@@ -1087,7 +1072,6 @@ Result LocalCatalog::CreateIndex(
     return it != table_columns.end() ? &*it : nullptr;
   };
 
-  options.column_ids.reserve(create_columns.size());
   for (auto& c : create_columns) {
     const auto* column = find_column(c.name);
     if (!column) {
@@ -1095,7 +1079,6 @@ Result LocalCatalog::CreateIndex(
                     "\" does not exist"};
     }
     c.catalog_column = column;
-    options.column_ids.push_back(column->id);
   }
 
   auto index = MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
@@ -1128,14 +1111,23 @@ Result LocalCatalog::CreateIndex(
         (*index)->SetTombstoned(true);
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      auto [idx_entry, shard_entry] = [&] {
+        switch ((*index)->GetIndexType()) {
+          case IndexType::Secondary:
+            return std::pair{RocksDBEntryType::SecondaryIndex,
+                             RocksDBEntryType::SecondaryIndexShard};
+          case IndexType::Inverted:
+            return std::pair{RocksDBEntryType::InvertedIndex,
+                             RocksDBEntryType::InvertedIndexShard};
+          default:
+            SDB_UNREACHABLE();
+        }
+      }();
       {  // Write index definition
-        vpack::Builder b;
-        b.openObject();
-        (*index)->WriteInternal(b);
-        b.close();
-        r = _engine->CreateDefinition(
-          (*index)->GetRelationId(), RocksDBEntryType::Index, (*index)->GetId(),
-          [&](bool) { return b.slice(); });
+        auto b = WriteCatalogObject(**index);
+        r = _engine->CreateDefinition((*index)->GetRelationId(), idx_entry,
+                                      (*index)->GetId(),
+                                      [&](bool) { return b.slice(); });
         if (!r.ok()) {
           return r;
         }
@@ -1144,9 +1136,9 @@ Result LocalCatalog::CreateIndex(
         vpack::Builder b;
         (*shard)->WriteInternal(b);
 
-        r = _engine->CreateDefinition(
-          (*index)->GetId(), RocksDBEntryType::IndexShard, (*shard)->GetId(),
-          [&](bool) { return b.slice(); });
+        r = _engine->CreateDefinition((*index)->GetId(), shard_entry,
+                                      (*shard)->GetId(),
+                                      [&](bool) { return b.slice(); });
         if (!r.ok()) {
           return r;
         }
@@ -1159,7 +1151,7 @@ Result LocalCatalog::CreateIndex(
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
-                                std::shared_ptr<View> view, bool replace) {
+                                std::shared_ptr<PgView> view, bool replace) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1192,14 +1184,10 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      vpack::Builder builder;
-      builder.openObject();
-      view->WriteInternal(builder);
-      builder.close();
-
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::View, view->GetId(),
-        [&](bool internal) { return builder.slice(); });
+      auto builder = WriteCatalogObject(*view);
+      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::PgView,
+                                       view->GetId(),
+                                       [&](bool) { return builder.slice(); });
     },
     [&](auto clone) { clone->UnregisterObject(view, *schema_id, true); });
 }
@@ -1223,10 +1211,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder builder;
-      builder.openObject();
-      function->WriteInternal(builder);
-      builder.close();
+      auto builder = WriteCatalogObject(*function);
       return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
                                        function->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -1285,10 +1270,7 @@ Result LocalCatalog::CreateTable(
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      vpack::Builder b;
-      b.openObject();
-      table->WriteInternal(b);
-      b.close();
+      auto b = WriteCatalogObject(*table);
       r = _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
                                     table->GetId(),
                                     [&](bool) { return b.slice(); });
@@ -1296,12 +1278,11 @@ Result LocalCatalog::CreateTable(
         return r;
       }
 
-      b.clear();
-      shard->WriteInternal(b);
-
+      vpack::Builder shard_b;
+      shard->WriteInternal(shard_b);
       r = _engine->CreateDefinition(
         shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
-        [&](bool) -> vpack::Slice { return b.slice(); });
+        [&](bool) -> vpack::Slice { return shard_b.slice(); });
       return r;
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
@@ -1324,10 +1305,7 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b;
-      b.openObject();
-      dict->WriteInternal(b);
-      b.close();
+      auto b = WriteCatalogObject(*dict);
       return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Tokenizer,
                                        dict->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1370,7 +1348,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
     constexpr auto kExpectedType = []() {
       if constexpr (std::is_same_v<T, Table>) {
         return ObjectType::Table;
-      } else if constexpr (std::is_same_v<T, View>) {
+      } else if constexpr (std::is_same_v<T, PgView>) {
         return ObjectType::View;
       } else if constexpr (std::is_same_v<T, Index>) {
         return ObjectType::Index;
@@ -1391,18 +1369,27 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
     return Result{ERROR_SERVER_DUPLICATE_NAME};
   }
 
-  std::shared_ptr<T> new_obj;
-  if (auto r = old_obj->Rename(new_obj, new_name); !r.ok()) {
-    return r;
+  auto b = WriteCatalogObject(*old_obj);
+  auto new_obj = basics::downCast<T>(old_obj->Clone(b.slice()));
+  if (!new_obj) {
+    return Result{ERROR_INTERNAL, "Failed to clone object"};
   }
+  new_obj->SetName(new_name);
 
-  constexpr auto kEntryType = []() {
+  auto kEntryType = [&]() {
     if constexpr (std::is_same_v<T, Table>) {
       return RocksDBEntryType::Table;
-    } else if constexpr (std::is_same_v<T, View>) {
-      return RocksDBEntryType::View;
+    } else if constexpr (std::is_same_v<T, PgView>) {
+      return RocksDBEntryType::PgView;
     } else if constexpr (std::is_same_v<T, Index>) {
-      return RocksDBEntryType::Index;
+      switch (old_obj->GetIndexType()) {
+        case IndexType::Secondary:
+          return RocksDBEntryType::SecondaryIndex;
+        case IndexType::Inverted:
+          return RocksDBEntryType::InvertedIndex;
+        default:
+          SDB_UNREACHABLE();
+      }
     } else if constexpr (std::is_same_v<T, Function>) {
       return RocksDBEntryType::Function;
     }
@@ -1417,10 +1404,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
         return r;
       }
 
-      vpack::Builder b;
-      b.openObject();
-      new_obj->WriteInternal(b);
-      b.close();
+      auto b = WriteCatalogObject(*new_obj);
 
       ObjectId parent_id;
       if constexpr (std::is_same_v<T, Index>) {
@@ -1445,7 +1429,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
                                 std::string_view new_name) {
-  return RenameObjectImpl<View>(database_id, schema, name, new_name);
+  return RenameObjectImpl<PgView>(database_id, schema, name, new_name);
 }
 
 Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
@@ -1521,10 +1505,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b;
-      b.openObject();
-      new_role_ptr->WriteInternal(b);
-      b.close();
+      auto b = WriteCatalogObject(*new_role_ptr);
       return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
                                        new_role_ptr->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1548,7 +1529,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
 
 Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
-                                ChangeCallback<View> new_view) {
+                                ChangeCallback<PgView> new_view) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1562,12 +1543,12 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
+  auto view = basics::downCast<PgView>(_snapshot->GetObject(*object_id));
   if (!view) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  std::shared_ptr<View> updated;
+  std::shared_ptr<PgView> updated;
   auto r = new_view(*view, updated);
   if (!r.ok()) {
     return r;
@@ -1582,14 +1563,10 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
       return r;
     }
 
-    vpack::Builder builder;
-    builder.openObject();
-    updated->WriteInternal(builder);
-    builder.close();
-
-    return _engine->CreateDefinition(
-      *schema_id, RocksDBEntryType::View, updated->GetId(),
-      [&](bool internal) { return builder.slice(); });
+    auto builder = WriteCatalogObject(*updated);
+    return _engine->CreateDefinition(*schema_id, RocksDBEntryType::PgView,
+                                     updated->GetId(),
+                                     [&](bool) { return builder.slice(); });
   });
 }
 
@@ -1636,10 +1613,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     }
 
     return basics::SafeCall([&] {
-      vpack::Builder b;
-      b.openObject();
-      updated->WriteInternal(b);
-      b.close();
+      auto b = WriteCatalogObject(*updated);
       return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
                                        updated->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1855,8 +1829,8 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
                     magic_enum::enum_name(obj->GetType())};
     }
-    auto view = basics::downCast<View>(std::move(obj));
-    auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::View,
+    auto view = basics::downCast<PgView>(std::move(obj));
+    auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::PgView,
                                      view->GetId());
     if (!r.ok()) {
       return r;

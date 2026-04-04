@@ -72,13 +72,30 @@ Tokenizer::Tokenizer(ObjectId id, std::string_view name,
     _data{std::move(data)},
     _features{features} {}
 
-void Tokenizer::WriteInternal(vpack::Builder& b) const {
-  auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
+std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
+                                                    ReadContext ctx) {
+  auto name = slice.get("name");
+  if (!name.isString()) {
+    return nullptr;
+  }
+  auto features_slice = slice.get("features");
+  search::Features features;
+  if (auto r = features.FromVPack(features_slice); !r.ok()) {
+    return nullptr;
+  }
+  return std::make_shared<Tokenizer>(
+    ctx.id, name.stringView(), std::move(features),
+    std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
+                slice.byteSize()});
+}
 
-  b.add("name", GetName());
-  b.add("analyzer", slice.get("analyzer"));
-  b.add("features");
-  _features.ToVPack(b);
+void Tokenizer::WriteInternal(vpack::Builder& b) const {
+  WriteObject(b, [&](vpack::Builder& b) {
+    auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
+    b.add("analyzer", slice.get("analyzer"));
+    b.add("features");
+    _features.ToVPack(b);
+  });
 }
 
 }  // namespace sdb::catalog

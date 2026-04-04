@@ -68,14 +68,13 @@ namespace {
 // NOLINTBEGIN
 struct FunctionMeta {
   Identifier id;
-  std::string_view name;
 };
 // NOLINTEND
 
 }  // namespace
 
 Result FunctionProperties::Read(FunctionProperties& properties,
-                                vpack::Slice slice, bool is_user_request) {
+                                vpack::Slice slice) {
   if (!slice.isObject()) {
     return {ERROR_BAD_PARAMETER, "Function definition must be an object"};
   }
@@ -90,14 +89,14 @@ Result FunctionProperties::Read(FunctionProperties& properties,
   properties.id = Identifier{basics::VPackHelper::extractIdValue(slice)};
   properties.implementation = slice.get("implementation");
 
-  if (auto r = vpack::ReadNothrow(is_user_request, slice.get("signature"),
-                                  properties.signature);
+  if (auto r = vpack::ReadTupleNothrow(slice.get("signature"),
+                                       properties.signature);
       !r.ok()) {
     return r;
   }
 
-  if (auto r = vpack::ReadNothrow(is_user_request, slice.get("options"),
-                                  properties.options);
+  if (auto r = vpack::ReadTupleNothrow(slice.get("options"),
+                                       properties.options);
       !r.ok()) {
     return r;
   }
@@ -105,42 +104,35 @@ Result FunctionProperties::Read(FunctionProperties& properties,
   return {};
 }
 
-Result catalog::Function::Instantiate(
-  std::shared_ptr<catalog::Function>& function, ObjectId database,
-  vpack::Slice definition, bool is_user_request) {
+std::shared_ptr<Function> Function::ReadInternal(vpack::Slice slice,
+                                                  ReadContext ctx) {
   FunctionProperties properties;
-  auto r = FunctionProperties::Read(properties, definition, is_user_request);
-  if (!r.ok()) {
-    return r;
+  if (auto r = FunctionProperties::Read(properties, slice); !r.ok()) {
+    return nullptr;
   }
 
-  if (is_user_request) {
-    properties.id = {};
-  }
+  auto database = ctx.database_id;
 
-  auto from_vpack = [&]<typename T> {
+  auto from_vpack = [&]<typename T> -> std::shared_ptr<Function> {
     std::unique_ptr<T> impl;
 
-    Result r;
     if constexpr (std::is_same_v<T, pg::FunctionImpl>) {
-      r = T::FromVPack(ObjectId{database}, properties.implementation, impl,
-                       properties.signature.IsProcedure());
+      auto r = T::FromVPack(ObjectId{database}, properties.implementation, impl,
+                            properties.signature.IsProcedure());
+      if (!r.ok()) {
+        return nullptr;
+      }
     }
 
-    if (!r.ok()) {
-      return r;
-    }
-    function = std::make_shared<catalog::Function>(std::move(properties),
-                                                   std::move(impl), database);
-    return Result{};
+    return std::make_shared<catalog::Function>(std::move(properties),
+                                               std::move(impl), database);
   };
 
   switch (properties.options.language) {
     case FunctionLanguage::SQL:
       return from_vpack.operator()<pg::FunctionImpl>();
     default:
-      return {ERROR_BAD_PARAMETER,
-              "Unsupported function language: ", properties.options.language};
+      return nullptr;
   }
 }
 
@@ -178,47 +170,25 @@ catalog::Function::Function(FunctionProperties&& properties,
 
 catalog::Function::~Function() = default;
 
-void catalog::Function::WriteInternal(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
-  vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{
-                                .id = Identifier{GetId().id()},
-                                .name = GetName(),
-                              }});
-  builder.add("signature");
-  vpack::WriteTuple(builder, _signature);
-  builder.add("options");
-  vpack::WriteTuple(builder, _options);
-  builder.add("implementation");
-  switch (_options.language) {
-    case FunctionLanguage::SQL:
-      _sql_impl->ToVPack(builder);
-      break;
-    default:
-      SDB_ENSURE(false, ERROR_BAD_PARAMETER,
-                 "Unsupported function language: ", _options.language);
-  }
-}
-
-Result Function::Rename(std::shared_ptr<Function>& result,
-                        std::string_view new_name) const {
-  vpack::Builder b;
-  b.openObject();
-  WriteInternal(b);
-  b.close();
-
-  vpack::Builder modified;
-  modified.openObject();
-  for (auto pair : vpack::ObjectIterator(b.slice())) {
-    if (pair.key.stringView() == StaticStrings::kDataSourceName) {
-      modified.add(StaticStrings::kDataSourceName, new_name);
-    } else {
-      modified.add(pair.key);
-      modified.add(pair.value());
+void catalog::Function::WriteInternal(vpack::Builder& b) const {
+  WriteObject(b, [&](vpack::Builder& b) {
+    vpack::WriteObject(b, vpack::Embedded{FunctionMeta{
+                              .id = Identifier{GetId().id()},
+                            }});
+    b.add("signature");
+    vpack::WriteTuple(b, _signature);
+    b.add("options");
+    vpack::WriteTuple(b, _options);
+    b.add("implementation");
+    switch (_options.language) {
+      case FunctionLanguage::SQL:
+        _sql_impl->ToVPack(b);
+        break;
+      default:
+        SDB_ENSURE(false, ERROR_BAD_PARAMETER,
+                   "Unsupported function language: ", _options.language);
     }
-  }
-  modified.close();
-
-  return Instantiate(result, GetDatabaseId(), modified.slice(), false);
+  });
 }
 
 }  // namespace sdb::catalog

@@ -22,6 +22,7 @@
 
 #include <vpack/serializer.h>
 
+#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
@@ -31,13 +32,6 @@
 
 namespace sdb::catalog {
 namespace {
-
-ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  InvertedIndexOptionsWrapper&& options) {
-  return std::make_shared<InvertedIndex>(database_id, schema_id, id,
-                                         relation_id, options);
-}
 
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
@@ -67,57 +61,18 @@ Result ValidateInvertedIndexColumns(
 
 }  // namespace
 
-ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
-                                     vpack::Slice impl_options_slice) {
-  switch (options.type) {
-    case IndexType::Inverted: {
-      auto res =
-        std::make_unique<InvertedIndexOptionsWrapper>(std::move(options));
-      if (auto r = vpack::ReadTupleNothrow(impl_options_slice, res->impl);
-          !r.ok()) {
-        return std::unexpected<Result>{std::move(r)};
-      }
-      return res;
-    }
-    case IndexType::Secondary: {
-      auto res =
-        std::make_unique<SecondaryIndexOptionsWrapper>(std::move(options));
-      if (auto r = vpack::ReadTupleNothrow(impl_options_slice, res->impl);
-          !r.ok()) {
-        return std::unexpected<Result>{std::move(r)};
-      }
-      return res;
-    }
-    case IndexType::Unknown:
-      SDB_UNREACHABLE();
-  }
-}
-
-ResultOr<std::shared_ptr<Index>> MakeIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexImplOptionsBaseWrapper&& sub_options) {
-  switch (sub_options.base.type) {
-    case IndexType::Inverted: {
-      return CreateInvertedIndex(
-        database_id, schema_id, id, relation_id,
-        std::move(basics::downCast<InvertedIndexOptionsWrapper>(sub_options)));
-    }
-    case IndexType::Secondary: {
-      return std::make_shared<SecondaryIndex>(
-        database_id, schema_id, id, relation_id,
-        std::move(basics::downCast<SecondaryIndexOptionsWrapper>(sub_options)));
-    }
-    case IndexType::Unknown:
-      SDB_UNREACHABLE();
-  }
-}
-
 ResultOr<std::shared_ptr<Index>> MakeIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, IndexBaseOptions options,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot,
   IndexShardOptions& shard_options) {
+  options.column_ids.reserve(columns.size());
+  for (const auto& c : columns) {
+    SDB_ASSERT(c.catalog_column);
+    options.column_ids.push_back(c.catalog_column->id);
+  }
+
   switch (options.type) {
     case IndexType::Inverted: {
       auto column_validation_res = ValidateInvertedIndexColumns(columns);
@@ -125,19 +80,12 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
         return std::unexpected<Result>(std::move(column_validation_res));
       }
 
-      InvertedIndexOptionsWrapper impl_options(std::move(options));
-
+      InvertedIndex::ColumnOptions inverted_columns;
       for (const auto& c : columns) {
         InvertedIndexColumnInfo index_col;
         if (!c.opclass.empty()) {
           auto object_name = pg::ParseObjectName(c.opclass, schema_name);
           if (object_name.schema != schema_name) {
-            // Technically nothing prevents us from allowing so.
-            // But that will make shema drop more complicated as we will need to
-            // check if any dictionaries are used in the indexes from other
-            // schemas and even fail schema drops on this case. For now if we
-            // drop text dictionary as a child entity we can be sure that
-            // indexes will also be dropped along with tables from same schema.
             return std::unexpected<Result>{
               std::in_place, ERROR_BAD_PARAMETER,
               "Accessing text dictionary from different schema is not "
@@ -146,23 +94,19 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
           auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
                                              object_name.relation);
           if (!dict) {
-            // clang-format off
-            // TODO(Dronplane) check if newer versions would format it without
-            // putting everything in the single column
             return std::unexpected<Result>{
               std::in_place, ERROR_BAD_PARAMETER,
               "Text search dictionary '", c.opclass, "' does not exist.",
               " Required by column '", c.name, "'"};
-            // clang-format on
           }
           index_col.text_dictionary = dict->GetId();
           index_col.features = dict->GetFeatures();
         }
-        impl_options.impl.columns.emplace(c.catalog_column->id,
-                                          std::move(index_col));
+        inverted_columns.emplace(c.catalog_column->id, std::move(index_col));
       }
-      return CreateInvertedIndex(database_id, schema_id, id, relation_id,
-                                 std::move(impl_options));
+      return std::make_shared<InvertedIndex>(
+        database_id, schema_id, id, relation_id, std::move(options.name),
+        std::move(options.column_ids), std::move(inverted_columns));
     }
     case IndexType::Secondary: {
       for (const auto& c : columns) {
@@ -178,12 +122,11 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
             " has non primitive type and can not be indexed"};
         }
       }
-      auto& sec_shard_opts =
+      auto& sec_opts =
         basics::downCast<SecondaryIndexShardOptions>(shard_options);
-      SecondaryIndexOptionsWrapper impl_options(std::move(options));
-      impl_options.impl.unique = sec_shard_opts.base.unique;
       return std::make_shared<SecondaryIndex>(
-        database_id, schema_id, id, relation_id, std::move(impl_options));
+        database_id, schema_id, id, relation_id, std::move(options.name),
+        std::move(options.column_ids), sec_opts.base.unique);
     }
     case IndexType::Unknown:
       SDB_UNREACHABLE();
@@ -191,9 +134,7 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(
 }
 
 // NOLINTBEGIN
-// View wrapper for IndexBaseOptions for light-weight serialization
 struct Index::IndexOutput {
-  std::string_view name;
   IndexType type;
   std::span<const Column::Id> column_ids;
 };
@@ -201,64 +142,20 @@ struct Index::IndexOutput {
 
 Index::IndexOutput Index::MakeIndexOutput() const {
   return {
-    .name = GetName(),
     .type = GetIndexType(),
     .column_ids = _column_ids,
   };
 }
 
-void Index::WriteInternalImpl(vpack::Builder& builder,
-                              absl::FunctionRef<void()> impl_write) const {
-  SDB_ASSERT(builder.isOpenObject());
-  builder.add(kIndexBaseOptions);
-  vpack::WriteTuple(builder, MakeIndexOutput());
-  builder.add(kIndexImplOptions);
-  impl_write();
-}
-
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-             ObjectId relation_id, IndexBaseOptions options)
-  : SchemaObject{{},
-                 database_id,
-                 schema_id,
-                 id,
-                 std::move(options.name),
-                 ObjectType::Index},
+             ObjectId relation_id, std::string name,
+             std::vector<Column::Id> column_ids, IndexType type)
+  : SchemaObject{{}, database_id,     schema_id,
+                 id, std::move(name), ObjectType::Index},
     _relation_id{relation_id},
-    _type(options.type),
-    _column_ids{std::move(options.column_ids)} {
+    _type(type),
+    _column_ids{std::move(column_ids)} {
   SDB_ASSERT(GetId().isSet());
-}
-
-Result Index::Rename(std::shared_ptr<Index>& result,
-                     std::string_view new_name) const {
-  vpack::Builder b;
-  b.openObject();
-  WriteInternal(b);
-  b.close();
-
-  IndexBaseOptions options;
-  if (auto r =
-        vpack::ReadTupleNothrow(b.slice().get(kIndexBaseOptions), options);
-      !r.ok()) {
-    return r;
-  }
-  options.name = std::string{new_name};
-
-  auto impl_parsed =
-    ParseImplSlice(std::move(options), b.slice().get(kIndexImplOptions));
-  if (!impl_parsed) {
-    return std::move(impl_parsed.error());
-  }
-
-  auto new_index = MakeIndex(GetDatabaseId(), GetSchemaId(), GetId(),
-                             _relation_id, std::move(**impl_parsed));
-  if (!new_index) {
-    return std::move(new_index.error());
-  }
-
-  result = std::move(*new_index);
-  return {};
 }
 
 }  // namespace sdb::catalog

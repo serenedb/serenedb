@@ -164,16 +164,14 @@ struct FunctionProperties {
   ObjectId id;
   vpack::Slice implementation;
 
-  static Result Read(FunctionProperties& options, vpack::Slice slice,
-                     bool is_user_request = false);
+  static Result Read(FunctionProperties& options, vpack::Slice slice);
 };
 // NOLINTEND
 
 class Function final : public SchemaObject {
  public:
-  static Result Instantiate(std::shared_ptr<catalog::Function>& function,
-                            ObjectId database_id, vpack::Slice definition,
-                            bool is_user_request);
+  static std::shared_ptr<Function> ReadInternal(vpack::Slice slice,
+                                                          ReadContext ctx);
 
   Function(std::string_view name, FunctionSignature signature,
            FunctionOptions options);
@@ -183,7 +181,10 @@ class Function final : public SchemaObject {
 
   ~Function() final;
 
-  void WriteInternal(vpack::Builder& build) const final;
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone(vpack::Slice s) const final {
+    return ReadInternal(s, {.database_id = GetDatabaseId()});
+  }
 
   const FunctionSignature& Signature() const noexcept { return _signature; }
 
@@ -195,8 +196,6 @@ class Function final : public SchemaObject {
     return *_sql_impl;
   }
 
-  Result Rename(std::shared_ptr<Function>& result,
-                std::string_view new_name) const;
 
  private:
   FunctionSignature _signature;

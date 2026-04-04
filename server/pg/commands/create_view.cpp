@@ -27,7 +27,7 @@
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "catalog/sql_query_view.h"
+#include "catalog/view.h"
 #include "catalog/view.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
@@ -83,25 +83,15 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
 
-  catalog::ViewOptions options;
-  options.meta.name = stmt.view->relname;
-  options.meta.type = catalog::ViewType::ViewSqlQuery;
+  std::string_view name = stmt.view->relname;
+  auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  vpack::Builder builder;
-  builder.openObject();
-  builder.add("query",
-              DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases));
-  builder.close();
-  options.properties = builder.slice();
-
-  std::shared_ptr<catalog::View> view;
-  auto r = SqlQueryView::Make(view, db, std::move(options),
-                              catalog::ViewContext::User, &conn_ctx);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  auto view = catalog::PgView::Create(db, name, std::move(query), &conn_ctx);
+  if (!view) {
+    SDB_THROW(std::move(view.error()));
   }
 
-  r = catalog.CreateView(db, schema, view, stmt.replace);
+  auto r = catalog.CreateView(db, schema, *view, stmt.replace);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (stmt.replace) {
@@ -119,35 +109,18 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   return {};
 }
 
-std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {
+std::shared_ptr<catalog::PgView> CreateSystemView(const ViewStmt& stmt) {
   SDB_ASSERT(stmt.view);
   SDB_ASSERT(stmt.view->relname);
 
-  catalog::ViewOptions options;
-  options.meta.name = stmt.view->relname;
-  options.meta.type = catalog::ViewType::ViewSqlQuery;
+  std::string_view name = stmt.view->relname;
+  auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  vpack::Builder builder;
-  builder.openObject();
-  {
-    vpack::Builder tuple_builder;
-    tuple_builder.openArray();
-    vpack::WriteTuple(
-      tuple_builder,
-      DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases));
-    tuple_builder.close();
-    builder.add("internal", tuple_builder.slice());
-  }
-  builder.close();
-  options.properties = builder.slice();
+  auto view = catalog::PgView::Create(id::kSystemDB, name, std::move(query),
+                                       nullptr);
+  SDB_ASSERT(view.has_value(), "Cannot make system view");
 
-  std::shared_ptr<catalog::View> view;
-  auto r = SqlQueryView::Make(view, id::kSystemDB, std::move(options),
-                              catalog::ViewContext::Internal, nullptr);
-
-  SDB_ASSERT(r.ok(), "Cannot make system view");
-
-  return view;
+  return std::move(*view);
 }
 
 }  // namespace sdb::pg

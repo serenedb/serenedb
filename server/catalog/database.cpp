@@ -42,13 +42,22 @@ DatabaseOptions MakeSystemDatabaseOptions() {
   return MakeDatabaseOptions(StaticStrings::kDefaultDatabase, id::kSystemDB);
 }
 
+std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
+                                                          ReadContext ctx) {
+  DatabaseOptions options;
+  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+    return nullptr;
+  }
+  return std::make_shared<Database>(ctx.id, std::move(options));
+}
+
 void Database::WriteInternal(vpack::Builder& b) const {
-  const DatabaseOptions options{
-    .name = _name,
-    .replicationFactor = _replication_factor,
-    .writeConcern = _write_concern,
-  };
-  vpack::WriteTuple(b, options);
+  WriteObject(b, [&](vpack::Builder& b) {
+    vpack::WriteTuple(b, DatabaseOptions{
+      .replicationFactor = _replication_factor,
+      .writeConcern = _write_concern,
+    });
+  });
 }
 
 }  // namespace sdb::catalog

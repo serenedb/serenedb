@@ -73,7 +73,7 @@
 #include "catalog/function.h"
 #include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
-#include "catalog/sql_query_view.h"
+#include "catalog/view.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/virtual_table.h"
@@ -763,7 +763,7 @@ class SqlAnalyzer {
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
   State ProcessView(State* parent, std::string_view view_name,
-                    const SqlQueryView& view, const RangeVar* node);
+                    const catalog::PgView& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
@@ -4015,7 +4015,7 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 }
 
 State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
-                               const SqlQueryView& view, const RangeVar* node) {
+                               const catalog::PgView& view, const RangeVar* node) {
   auto view_state = view.GetState();
   SDB_ASSERT(view_state->stmt);
   SDB_ASSERT(view_state->stmt->stmt);
@@ -4210,7 +4210,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   auto& logical_object = *object->object;
 
   if (logical_object.GetType() == catalog::ObjectType::View) {
-    const auto& view = basics::downCast<SqlQueryView>(*object->object);
+    const auto& view = basics::downCast<catalog::PgView>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {
     return ProcessTable(parent, schema_name, name, *object, node);

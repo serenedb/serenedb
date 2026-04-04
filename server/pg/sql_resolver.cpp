@@ -28,7 +28,7 @@
 #include "catalog/index.h"
 #include "catalog/native_functions.h"
 #include "catalog/sql_function_impl.h"
-#include "catalog/sql_query_view.h"
+#include "catalog/view.h"
 #include "catalog/virtual_table.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -169,7 +169,7 @@ void ResolveRelation(ObjectId database,
   auto resolve_view = [&] {
     bool changed = disallowed.relations.emplace(name).second;
     SDB_ASSERT(changed);
-    auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
+    auto state = basics::downCast<catalog::PgView>(*data.object).GetState();
     ResolveQueryView(database, search_path, objects, disallowed, state->objects,
                      config);
     changed = disallowed.relations.erase(name) != 0;

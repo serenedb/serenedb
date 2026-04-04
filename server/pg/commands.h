@@ -57,7 +57,7 @@ yaclib::Future<> CreateIndex(ExecContext& ctx, query::Query& query,
 
 yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
-std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt);
+std::shared_ptr<catalog::PgView> CreateSystemView(const ViewStmt& stmt);
 
 yaclib::Future<> DropObject(ExecContext& ctx, const DropStmt& stmt);
 

@@ -29,7 +29,6 @@
 
 #include <string_view>
 
-#include "basics/logger/logger.h"
 #include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -82,6 +81,7 @@ bool ParseVPackOptions(const vpack::Slice slice,
   options.reverse = temp.reverse;
   options.skip = temp.skip;
 
+  SDB_ASSERT(!options.delimiter.empty());
   return true;
 }
 
@@ -197,13 +197,15 @@ class ForwardPathHierarchyTokenizer final : public PathHierarchyTokenizer {
   bool next() final;
 
  private:
-  std::string_view _data = "";
-  std::string _buffer = "";
-  size_t _start = 0;
-  size_t _curr_start_raw = 0;
-  size_t _last_raw_end = 0;
-  size_t _delim_size = 0;
-  bool _passthrough = false;
+  std::string_view _data;  // input
+  std::string _buffer;     // buffer for case delimiter != replacement
+  size_t _prefix_start_in_input =
+    0;  // left edge of prefix; every token's offset.start
+  size_t _prefix_end_in_input =
+    0;  // input merged into _buffer ends before this index
+  size_t _delimiter_search_from = 0;  // find(next delimiter) starts here
+  size_t _delimiter_size = 0;         // delimiter length
+  bool _need_replacement = false;     // delimiter != replacement, using _buffer
 };
 
 bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
@@ -214,41 +216,45 @@ bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
     return true;
   }
 
-  std::string_view delim = _options.delimiter;
-  std::string_view repl = _options.replacement;
+  _delimiter_size = _options.delimiter.size();
+  _need_replacement = _options.delimiter != _options.replacement;
+  SDB_ASSERT(_delimiter_size > 0);
 
-  _delim_size = delim.size();
-  _passthrough = delim == repl;
-
-  _start = 0;
+  _prefix_start_in_input = 0;
   if (_options.skip > 0) {
-    size_t pos = 0;
-    size_t hit = 0;
+    size_t skip_step_idx = 0;
+    size_t scan_from = 0;
+    // leading delimiter counts as one skip step: (/a/b/c equal a/b/c)
+    // without +1, skip would line up wrong on paths that start with a delimiter
+    size_t delimiter_steps_to_skip =
+      _options.skip + (_data.find(_options.delimiter) == 0);
 
-    bool leading = (_data.find(delim) == 0);
-    size_t needed = _options.skip + leading;
-
-    while (hit < needed) {
-      size_t find_pos = _data.find(delim, pos);
-      if (find_pos == std::string_view::npos) {
+    while (skip_step_idx < delimiter_steps_to_skip) {
+      size_t next_delimiter_position =
+        _data.find(_options.delimiter, scan_from);
+      if (next_delimiter_position == std::string_view::npos) {
         _term_eof = true;
         return true;
       }
-      _start = find_pos;
-      pos = find_pos + _delim_size;
-      ++hit;
+
+      _prefix_start_in_input = next_delimiter_position;
+      scan_from = next_delimiter_position + _delimiter_size;
+      ++skip_step_idx;
     }
   }
 
-  _last_raw_end = _start;
-  _curr_start_raw = _start;
+  _prefix_end_in_input = _prefix_start_in_input;
+  _delimiter_search_from = _prefix_start_in_input;
 
-  if (_curr_start_raw + _delim_size <= _data.size() &&
-      _data.compare(_curr_start_raw, _delim_size, delim) == 0) {
-    _curr_start_raw += _delim_size;
+  // for leading delimiter: /a/b/c
+  // bump search cursor past it so the first segment token isn't empty
+  if (_delimiter_search_from + _delimiter_size <= _data.size() &&
+      _data.substr(_delimiter_search_from, _delimiter_size) ==
+        _options.delimiter) {
+    _delimiter_search_from += _delimiter_size;
   }
 
-  if (!_passthrough) {
+  if (_need_replacement) {
     _buffer.clear();
     _buffer.reserve(_options.buffer_size);
   }
@@ -265,44 +271,46 @@ bool ForwardPathHierarchyTokenizer::next() {
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  std::string_view delim = _options.delimiter;
-  std::string_view repl = _options.replacement;
+  size_t token_end_position = _data.size();
+  size_t next_delimiter_position =
+    _data.find(_options.delimiter, _delimiter_search_from);
 
-  size_t end_in = _data.size();
-  size_t find_pos = _data.find(delim, _curr_start_raw);
-
-  if (find_pos != std::string_view::npos) {
-    end_in = find_pos;
-    _curr_start_raw = find_pos + _delim_size;
+  if (next_delimiter_position != std::string_view::npos) {
+    token_end_position = next_delimiter_position;
+    _delimiter_search_from = next_delimiter_position + _delimiter_size;
   } else {
     _term_eof = true;
   }
 
-  if (_passthrough) {
-    term_attr.value =
-      ViewCast<byte_type>(_data.substr(_start, end_in - _start));
-  } else {
-    if (_last_raw_end < end_in) {
-      bool delim_at_from = false;
-      if (_last_raw_end + _delim_size <= end_in) {
-        delim_at_from = (_data.compare(_last_raw_end, _delim_size, delim) == 0);
-      }
+  SDB_ASSERT(_prefix_start_in_input <= token_end_position);
+  SDB_ASSERT(token_end_position <= _data.size());
 
-      if (delim_at_from) {
-        _buffer.append(repl);
-        _buffer.append(_data.data() + _last_raw_end + _delim_size,
-                       end_in - _last_raw_end - _delim_size);
-      } else {
-        _buffer.append(_data.data() + _last_raw_end, end_in - _last_raw_end);
-      }
+  if (!_need_replacement) {
+    term_attr.value = ViewCast<byte_type>(_data.substr(
+      _prefix_start_in_input, token_end_position - _prefix_start_in_input));
+  } else {
+    SDB_ASSERT(_prefix_end_in_input <= token_end_position);
+
+    // when first character isn't delimiter: a/b/c
+    // if cursor is on delimiter, emit replacement then tail; else append input
+    if (_data.substr(_prefix_end_in_input, _delimiter_size) ==
+        _options.delimiter) {
+      _buffer.append(_options.replacement);
+
+      size_t segment_len = _prefix_end_in_input + _delimiter_size;
+      _buffer.append(_data.data() + segment_len,
+                     token_end_position - segment_len);
+    } else {
+      _buffer.append(_data.data() + _prefix_end_in_input,
+                     token_end_position - _prefix_end_in_input);
     }
 
-    _last_raw_end = end_in;
+    _prefix_end_in_input = token_end_position;
     term_attr.value = ViewCast<byte_type>(std::string_view(_buffer));
   }
 
-  offset_attr.start = static_cast<uint32_t>(_start);
-  offset_attr.end = static_cast<uint32_t>(end_in);
+  offset_attr.start = static_cast<uint32_t>(_prefix_start_in_input);
+  offset_attr.end = static_cast<uint32_t>(token_end_position);
   inc_attr.value = 1;
 
   return true;
@@ -317,13 +325,15 @@ class ReversePathHierarchyTokenizer final : public PathHierarchyTokenizer {
   bool next() final;
 
  private:
-  std::string_view _data = "";
-  std::string _buffer = "";
-  size_t _trim_end = 0;
-  size_t _curr_start_buf = 0;
-  size_t _curr_start_raw = 0;
-  size_t _delim_size = 0;
-  bool _passthrough = false;
+  std::string_view _data;  // input
+  std::string _buffer;     // buffer for case delimiter != replacement
+  size_t _suffix_start_in_buffer = 0;  // current token's left edge in _buffer
+  size_t _suffix_start_in_input =
+    0;  // current token's left edge in input (for offset.start)
+  size_t _suffix_window_end =
+    0;  // path ends here after skip-from-right (past last byte)
+  size_t _delimiter_size = 0;      // delimiter length
+  bool _need_replacement = false;  // delimiter != replacement, using _buffer
 };
 
 bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
@@ -334,33 +344,33 @@ bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
     return true;
   }
 
-  std::string_view delim = _options.delimiter;
-  std::string_view repl = _options.replacement;
+  _delimiter_size = _options.delimiter.size();
+  _need_replacement = _options.delimiter != _options.replacement;
+  SDB_ASSERT(_delimiter_size > 0);
 
-  _delim_size = delim.size();
-  _passthrough = delim == repl;
-
-  size_t end = data.size();
-  for (size_t s = 0; s < _options.skip; ++s) {
-    if (end <= _delim_size) {
+  // walk right-to-left: each skip drops one trailing segment
+  size_t trimmed_window_end = data.size();
+  for (size_t skip_idx = 0; skip_idx < _options.skip; ++skip_idx) {
+    if (trimmed_window_end <= _delimiter_size) {
       _term_eof = true;
       return true;
     }
 
-    size_t find_pos = data.rfind(delim, end - _delim_size - 1);
-    if (find_pos == std::string_view::npos) {
+    size_t rfind_delimiter_position =
+      data.rfind(_options.delimiter, trimmed_window_end - _delimiter_size - 1);
+    if (rfind_delimiter_position == std::string_view::npos) {
       _term_eof = true;
       return true;
     }
-    end = find_pos + _delim_size;
+    trimmed_window_end = rfind_delimiter_position + _delimiter_size;
   }
-  _trim_end = end;
+  _suffix_window_end = trimmed_window_end;
 
-  _curr_start_raw = 0;
-  _curr_start_buf = 0;
+  _suffix_start_in_input = 0;
+  _suffix_start_in_buffer = 0;
 
-  if (_passthrough) {
-    if (_trim_end == 0) {
+  if (!_need_replacement) {
+    if (_suffix_window_end == 0) {
       _term_eof = true;
     }
     return true;
@@ -369,16 +379,23 @@ bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
   _buffer.clear();
   _buffer.reserve(_options.buffer_size);
 
-  size_t pos = 0;
-  while (pos < _trim_end) {
-    size_t find_pos = data.find(delim, pos);
-    if (find_pos == std::string_view::npos) {
-      _buffer.append(data.data() + pos, _trim_end - pos);
+  // left-to-right: segments joined with replacement (offsets still use input
+  // indices)
+  size_t scan_from = 0;
+  while (scan_from < _suffix_window_end) {
+    size_t next_delimiter_position = data.find(_options.delimiter, scan_from);
+    if (next_delimiter_position == std::string_view::npos) {
+      SDB_ASSERT(scan_from <= _suffix_window_end);
+      _buffer.append(data.data() + scan_from, _suffix_window_end - scan_from);
       break;
     }
-    _buffer.append(data.data() + pos, find_pos - pos);
-    _buffer.append(repl);
-    pos = find_pos + _delim_size;
+    SDB_ASSERT(next_delimiter_position + _delimiter_size <= _suffix_window_end);
+
+    _buffer.append(data.data() + scan_from,
+                   next_delimiter_position - scan_from);
+    _buffer.append(_options.replacement);
+
+    scan_from = next_delimiter_position + _delimiter_size;
   }
 
   if (_buffer.size() == 0) {
@@ -393,37 +410,44 @@ bool ReversePathHierarchyTokenizer::next() {
     return false;
   }
 
+  SDB_ASSERT(_suffix_window_end <= _data.size());
+  SDB_ASSERT(_suffix_start_in_input <= _suffix_window_end);
+
   auto& term_attr = std::get<TermAttr>(_attrs);
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  std::string_view delim = _options.delimiter;
-
-  if (_passthrough) {
-    term_attr.value = ViewCast<byte_type>(
-      _data.substr(_curr_start_raw, _trim_end - _curr_start_raw));
+  if (!_need_replacement) {
+    term_attr.value = ViewCast<byte_type>(_data.substr(
+      _suffix_start_in_input, _suffix_window_end - _suffix_start_in_input));
   } else {
-    term_attr.value =
-      ViewCast<byte_type>(std::string_view(_buffer).substr(_curr_start_buf));
+    SDB_ASSERT(_suffix_start_in_buffer <= _buffer.size());
+    term_attr.value = ViewCast<byte_type>(
+      std::string_view(_buffer).substr(_suffix_start_in_buffer));
   }
 
-  offset_attr.start = static_cast<uint32_t>(_curr_start_raw);
-  offset_attr.end = static_cast<uint32_t>(_trim_end);
+  offset_attr.start = static_cast<uint32_t>(_suffix_start_in_input);
+  offset_attr.end = static_cast<uint32_t>(_suffix_window_end);
   inc_attr.value = 1;
 
-  size_t find_pos = _data.find(delim, _curr_start_raw);
+  size_t next_delimiter_position =
+    _data.find(_options.delimiter, _suffix_start_in_input);
 
-  if (find_pos == std::string_view::npos || find_pos >= _trim_end) {
+  if (next_delimiter_position == std::string_view::npos ||
+      next_delimiter_position >= _suffix_window_end) {
     _term_eof = true;
   } else {
-    size_t raw_segment_len = find_pos - _curr_start_raw;
-    _curr_start_raw = find_pos + delim.size();
+    SDB_ASSERT(next_delimiter_position >= _suffix_start_in_input);
+    SDB_ASSERT(next_delimiter_position + _delimiter_size <= _suffix_window_end);
 
-    if (!_passthrough) {
-      _curr_start_buf += (raw_segment_len + _options.replacement.size());
+    size_t segment_len = next_delimiter_position - _suffix_start_in_input;
+    _suffix_start_in_input = next_delimiter_position + _delimiter_size;
+
+    if (_need_replacement) {
+      _suffix_start_in_buffer += segment_len + _options.replacement.size();
     }
 
-    if (_curr_start_raw >= _trim_end) {
+    if (_suffix_start_in_input >= _suffix_window_end) {
       _term_eof = true;
     }
   }

@@ -43,9 +43,9 @@ class CompositeType : public SchemaObject {
   static Result Instantiate(std::shared_ptr<CompositeType>& result, ObjectId id,
                             vpack::Slice slice);
 
- private:
   CompositeType(ObjectId id, std::string_view name, velox::RowTypePtr row_type);
 
+ private:
   velox::RowTypePtr _row_type;
 };
 

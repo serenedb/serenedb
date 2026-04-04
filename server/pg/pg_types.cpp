@@ -314,8 +314,10 @@ std::string ToPgTypeString(const velox::TypePtr& type,
       return "unknown";
     default:
       if (IsEnum(type)) {
-        const auto* pgenum = basics::downCast<PgEnumType>(type.get());
-        return EnumTypeOut(snapshot, pgenum->Oid());
+        auto* pgenum = basics::downCast<PgEnumType>(type.get());
+        auto obj = snapshot.GetObject(ObjectId{pgenum->Oid()});
+        SDB_ASSERT(obj);
+        return std::string{obj->GetName()};
       }
       SDB_ASSERT(false);  // better to specify the name
       return "unknown";
@@ -783,14 +785,6 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
     return schema->GetId();
   }
   return kInvalidOid;
-}
-
-std::string EnumTypeOut(const catalog::Snapshot& snapshot, uint64_t oid) {
-  auto object = snapshot.GetObject(ObjectId{oid});
-  if (object && object->GetType() == catalog::ObjectType::EnumType) {
-    return std::string{object->GetName()};
-  }
-  return absl::StrCat(oid);
 }
 
 std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,

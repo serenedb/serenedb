@@ -174,8 +174,6 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);
 
-std::string EnumTypeOut(const catalog::Snapshot& snapshot, uint64_t oid);
-
 std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,
                     int64_t enum_value_oid);
 int64_t EnumIn(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,

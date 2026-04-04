@@ -46,9 +46,9 @@ class EnumType : public SchemaObject {
   static Result Instantiate(std::shared_ptr<EnumType>& result, ObjectId id,
                             vpack::Slice slice);
 
- private:
   EnumType(ObjectId id, std::string_view name, std::vector<EnumLabel> entries);
 
+ private:
   std::vector<EnumLabel> _entries;
 };
 

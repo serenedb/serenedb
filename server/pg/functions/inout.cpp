@@ -330,7 +330,7 @@ template<typename T>
 struct EnumInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>& type,
                                       const velox::core::QueryConfig& config,
                                       const arg_type<velox::Varchar>*,
                                       const int64_t* enum_type_oid) {
@@ -344,12 +344,14 @@ struct EnumInFunction {
                                 const arg_type<velox::Varchar>& label,
                                 const int64_t&) {
     std::string_view val{label};
-    result = EnumIn(*_snapshot, _enum_type_oid, label);
+    result = EnumIn(*_snapshot, _enum_type_oid, val);
     if (result == kInvalidOid) {
+      auto obj = _snapshot->GetObject(ObjectId{_enum_type_oid});
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
         ERR_MSG("invalid input value for enum ",
-                EnumTypeOut(*_snapshot, _enum_type_oid), ": \"", val, "\""));
+                obj ? obj->GetName() : absl::StrCat(_enum_type_oid), ": \"",
+                val, "\""));
     }
   }
 

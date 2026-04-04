@@ -38,13 +38,13 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgEnum>::GetTableData(
     for (const auto& et :
          catalog->GetEnumTypes(database_id, schema->GetName())) {
       auto type_oid = et->GetId().id();
-      const auto& labels = et->GetLabels();
-      for (size_t i = 0; i < labels.size(); ++i) {
+      const auto& entries = et->GetEntries();
+      for (size_t i = 0; i < entries.size(); ++i) {
         values.push_back(PgEnum{
-          .oid = i + 1,
+          .oid = i,
           .enumtypid = type_oid,
-          .enumsortorder = static_cast<float>(i + 1),
-          .enumlabel = labels[i],
+          .enumsortorder = entries[i].sortorder,
+          .enumlabel = entries[i].label,
         });
       }
     }

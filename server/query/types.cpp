@@ -185,10 +185,11 @@ SDB_DEFINE_PG_TYPE(velox::BigintType, PGXID8, Xid8, "PG_XID8");
 
 // PgEnumType implementation
 
-PgEnumType::PgEnumType(std::string enum_name, std::vector<std::string> labels)
+PgEnumType::PgEnumType(std::string enum_name,
+                       std::vector<catalog::EnumLabel> entries)
   : velox::BigintType{velox::ProvideCustomComparison{}},
     _enum_name{std::move(enum_name)},
-    _labels{std::move(labels)} {}
+    _entries{std::move(entries)} {}
 
 std::string PgEnumType::toString() const {
   return std::string{kTypeName} + "(" + _enum_name + ")";
@@ -196,7 +197,16 @@ std::string PgEnumType::toString() const {
 
 bool PgEnumType::equivalent(const Type& other) const {
   if (auto* o = dynamic_cast<const PgEnumType*>(&other)) {
-    return _enum_name == o->_enum_name && _labels == o->_labels;
+    if (_enum_name != o->_enum_name || _entries.size() != o->_entries.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < _entries.size(); ++i) {
+      if (_entries[i].sortorder != o->_entries[i].sortorder ||
+          _entries[i].label != o->_entries[i].label) {
+        return false;
+      }
+    }
+    return true;
   }
   return false;
 }
@@ -206,53 +216,65 @@ folly::dynamic PgEnumType::serialize() const {
   obj["name"] = "PgEnumType";
   obj["type"] = std::string{kTypeName};
   obj["enum_name"] = _enum_name;
-  folly::dynamic labels_arr = folly::dynamic::array;
-  for (const auto& label : _labels) {
-    labels_arr.push_back(label);
+  folly::dynamic entries_arr = folly::dynamic::array;
+  for (const auto& entry : _entries) {
+    folly::dynamic e = folly::dynamic::object;
+    e["sortorder"] = static_cast<double>(entry.sortorder);
+    e["label"] = entry.label;
+    entries_arr.push_back(std::move(e));
   }
-  obj["labels"] = std::move(labels_arr);
+  obj["entries"] = std::move(entries_arr);
   return obj;
 }
 
-std::optional<int64_t> EnumLabelToOrdinal(
-  const std::vector<std::string>& labels, std::string_view label) {
-  for (size_t i = 0; i < labels.size(); ++i) {
-    if (labels[i] == label) {
-      return static_cast<int64_t>(i + 1);
+std::optional<int64_t> EnumLabelToOid(
+  const std::vector<catalog::EnumLabel>& entries, std::string_view label) {
+  for (size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].label == label) {
+      return static_cast<int64_t>(i);
     }
   }
   return std::nullopt;
 }
 
-std::optional<std::string_view> EnumOrdinalToLabel(
-  const std::vector<std::string>& labels, int64_t ordinal) {
-  auto idx = static_cast<size_t>(ordinal) - 1;
-  if (idx < labels.size()) {
-    return labels[idx];
+std::optional<std::string_view> EnumOidToLabel(
+  const std::vector<catalog::EnumLabel>& entries, int64_t oid) {
+  auto idx = static_cast<size_t>(oid);
+  if (idx < entries.size()) {
+    return entries[idx].label;
   }
   return std::nullopt;
 }
 
-std::optional<int64_t> PgEnumType::LabelToOrdinal(
-  std::string_view label) const {
-  return EnumLabelToOrdinal(_labels, label);
+std::optional<int64_t> PgEnumType::LabelToOid(std::string_view label) const {
+  return EnumLabelToOid(_entries, label);
 }
 
-std::optional<std::string_view> PgEnumType::OrdinalToLabel(
-  int64_t ordinal) const {
-  return EnumOrdinalToLabel(_labels, ordinal);
+std::optional<std::string_view> PgEnumType::OidToLabel(int64_t oid) const {
+  return EnumOidToLabel(_entries, oid);
 }
 
 int32_t PgEnumType::compare(const int64_t& left, const int64_t& right) const {
-  return left < right ? -1 : left == right ? 0 : 1;
+  if (left == right) {
+    return 0;
+  }
+  auto li = static_cast<size_t>(left);
+  auto ri = static_cast<size_t>(right);
+  if (li < _entries.size() && ri < _entries.size()) {
+    float ls = _entries[li].sortorder;
+    float rs = _entries[ri].sortorder;
+    return ls < rs ? -1 : ls > rs ? 1 : 0;
+  }
+  return left < right ? -1 : 1;
 }
 
 uint64_t PgEnumType::hash(const int64_t& value) const {
   return folly::hasher<int64_t>()(value);
 }
 
-velox::TypePtr PGENUM(std::string name, std::vector<std::string> labels) {
-  return std::make_shared<PgEnumType>(std::move(name), std::move(labels));
+velox::TypePtr PGENUM(std::string name,
+                      std::vector<catalog::EnumLabel> entries) {
+  return std::make_shared<PgEnumType>(std::move(name), std::move(entries));
 }
 
 bool IsEnum(const velox::TypePtr& type) {

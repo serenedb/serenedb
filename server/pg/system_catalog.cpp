@@ -772,10 +772,21 @@ const VirtualTable* GetSystemTable(std::string_view schema,
   } else if (schema == StaticStrings::kInformationSchema) {
     return GetTableFromSchema(name, kInformationSchema);
   } else {
-      return nullptr; // debug 
     SDB_UNREACHABLE();
   }
 }
+
+velox::RowTypePtr GetSystemTableType(std::string_view schema,
+                                     std::string_view name) {
+  velox::RowTypePtr type;
+  if (schema == StaticStrings::kPgCatalogSchema) {
+    type = GetTableFromSchema(name, kPgCatalog)->RowType();
+  } else if (schema == StaticStrings::kInformationSchema) {
+    type = GetTableFromSchema(name, kInformationSchema)->RowType();
+  }
+  return type;
+}
+
 const VirtualTable* GetTable(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 

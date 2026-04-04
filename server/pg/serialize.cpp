@@ -623,13 +623,12 @@ void SerializeEnumText(SerializationContext context,
                        velox::vector_size_t row) {
   const auto* enum_type = context.current_enum_type;
   SDB_ASSERT(enum_type);
-  const auto ordinal = decoded_vector.valueAt<int64_t>(row);
-  auto label = enum_type->OrdinalToLabel(ordinal);
+  const auto oid = decoded_vector.valueAt<int64_t>(row);
+  auto label = enum_type->OidToLabel(oid);
   if (label) {
     context.buffer->WriteUncommitted(*label);
   } else {
-    context.buffer->WriteUncommitted(
-      absl::StrCat("<invalid_enum:", ordinal, ">"));
+    context.buffer->WriteUncommitted(absl::StrCat("<invalid_enum:", oid, ">"));
   }
 }
 

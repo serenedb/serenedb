@@ -44,21 +44,26 @@ yaclib::Future<> CreateEnum(ExecContext& ctx, const CreateEnumStmt& stmt) {
   const auto type_name =
     ParseObjectName(stmt.typeName, ctx.GetDatabase(), current_schema);
 
-  std::vector<std::string> labels;
+  std::vector<catalog::EnumLabel> entries;
+  float sortorder = 1.0f;
   VisitNodes(stmt.vals, [&](const String& val) {
     std::string_view label = strVal(&val);
-    for (const auto& existing : labels) {
-      if (existing == label) {
+    for (const auto& existing : entries) {
+      if (existing.label == label) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
                         ERR_MSG("invalid enum label \"", label, "\""),
                         ERR_DETAIL("Labels must be unique for the enum type."));
       }
     }
-    labels.emplace_back(label);
+    entries.push_back(catalog::EnumLabel{
+      .sortorder = sortorder,
+      .label = std::string{label},
+    });
+    sortorder += 1.0f;
   });
 
   auto enum_type = std::make_shared<catalog::EnumType>(
-    ObjectId{0}, type_name.relation, std::move(labels));
+    ObjectId{0}, type_name.relation, std::move(entries));
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();

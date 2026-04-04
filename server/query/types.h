@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "basics/fwd.h"
+#include "catalog/enum_type.h"
 
 namespace sdb::aql {
 
@@ -92,19 +93,20 @@ SDB_DECLARE_PG_TYPE(int64_t, PGXID8, Xid8, "PG_XID8");
 #undef SDB_DECLARE_PG_TYPE
 
 // Custom Velox type for PG ENUM, backed by int64 (OID) storage.
-// Each enum definition gets its own instance carrying name + labels.
-// OIDs are 1-based indices into the labels vector.
+// Each enum definition gets its own instance carrying name + entries.
+// OID is a 0-based index into the entries vector.
 // Provides custom comparison: == uses OID directly, < / > use sort order.
 class PgEnumType final : public velox::BigintType {
  public:
-
-  PgEnumType(std::string enum_name, std::vector<std::string> labels);
+  PgEnumType(std::string enum_name, std::vector<catalog::EnumLabel> entries);
 
   const std::string& EnumName() const noexcept { return _enum_name; }
-  const std::vector<std::string>& Labels() const noexcept { return _labels; }
+  const std::vector<catalog::EnumLabel>& Entries() const noexcept {
+    return _entries;
+  }
 
-  std::optional<int64_t> LabelToOrdinal(std::string_view label) const;
-  std::optional<std::string_view> OrdinalToLabel(int64_t ordinal) const;
+  std::optional<int64_t> LabelToOid(std::string_view label) const;
+  std::optional<std::string_view> OidToLabel(int64_t oid) const;
 
   int32_t compare(const int64_t& left, const int64_t& right) const override;
   uint64_t hash(const int64_t& value) const override;
@@ -118,21 +120,22 @@ class PgEnumType final : public velox::BigintType {
   static constexpr std::string_view kTypeName = "PG_ENUM";
 
   std::string _enum_name;
-  std::vector<std::string> _labels;
+  std::vector<catalog::EnumLabel> _entries;
 };
 
-velox::TypePtr PGENUM(std::string name, std::vector<std::string> labels);
+velox::TypePtr PGENUM(std::string name,
+                      std::vector<catalog::EnumLabel> entries);
 bool IsEnum(const velox::TypePtr& type);
 bool IsEnum(const velox::Type& type);
 const PgEnumType* AsEnum(const velox::TypePtr& type);
 const PgEnumType* AsEnum(const velox::Type& type);
 
-// Free functions for OID<->label conversion on raw label vectors (e.g. from
+// Free functions for OID<->label conversion on raw entry vectors (e.g. from
 // catalog::EnumType)
-std::optional<int64_t> EnumLabelToOrdinal(const std::vector<std::string>& labels,
-                                          std::string_view label);
-std::optional<std::string_view> EnumOrdinalToLabel(
-  const std::vector<std::string>& labels, int64_t ordinal);
+std::optional<int64_t> EnumLabelToOid(
+  const std::vector<catalog::EnumLabel>& entries, std::string_view label);
+std::optional<std::string_view> EnumOidToLabel(
+  const std::vector<catalog::EnumLabel>& entries, int64_t oid);
 
 void RegisterTypes();
 

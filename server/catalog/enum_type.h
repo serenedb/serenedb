@@ -30,18 +30,23 @@
 
 namespace sdb::catalog {
 
+struct EnumLabel {
+  float sortorder;
+  std::string label;
+};
+
 class EnumType : public SchemaObject {
  public:
-  EnumType(ObjectId id, std::string_view name, std::vector<std::string> labels);
+  EnumType(ObjectId id, std::string_view name, std::vector<EnumLabel> entries);
 
-  const auto& GetLabels() const noexcept { return _labels; }
+  const auto& GetEntries() const noexcept { return _entries; }
 
   void WriteInternal(vpack::Builder& b) const final;
 
   static std::shared_ptr<EnumType> FromVPack(ObjectId id, vpack::Slice slice);
 
  private:
-  std::vector<std::string> _labels;
+  std::vector<EnumLabel> _entries;
 };
 
 }  // namespace sdb::catalog

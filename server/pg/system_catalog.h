@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <velox/type/Type.h>
 
 #include <string_view>
 
@@ -31,6 +32,8 @@ namespace sdb::pg {
 
 const catalog::VirtualTable* GetSystemTable(std::string_view schema,
                                             std::string_view name);
+velox::RowTypePtr GetSystemTableType(std::string_view schema,
+                                     std::string_view name);
 const catalog::VirtualTable* GetTable(std::string_view name);
 
 void VisitSystemTables(

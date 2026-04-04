@@ -31,15 +31,18 @@
 namespace sdb::catalog {
 
 EnumType::EnumType(ObjectId id, std::string_view name,
-                   std::vector<std::string> labels)
+                   std::vector<EnumLabel> entries)
   : SchemaObject{{}, {}, {}, id, name, ObjectType::EnumType},
-    _labels{std::move(labels)} {}
+    _entries{std::move(entries)} {}
 
 void EnumType::WriteInternal(vpack::Builder& b) const {
   b.add("name", GetName());
   b.add("labels", vpack::Value{vpack::ValueType::Array});
-  for (const auto& label : _labels) {
-    b.add(label);
+  for (const auto& entry : _entries) {
+    b.openObject();
+    b.add("sortorder", entry.sortorder);
+    b.add("label", entry.label);
+    b.close();
   }
   b.close();
 }
@@ -48,15 +51,26 @@ std::shared_ptr<EnumType> EnumType::FromVPack(ObjectId id, vpack::Slice slice) {
   auto name = slice.get("name");
   SDB_ASSERT(name.isString());
 
-  std::vector<std::string> labels;
+  std::vector<EnumLabel> entries;
   auto labels_slice = slice.get("labels");
   if (labels_slice.isArray()) {
-    for (auto entry : vpack::ArrayIterator(labels_slice)) {
-      labels.emplace_back(entry.stringView());
+    for (auto it : vpack::ArrayIterator(labels_slice)) {
+      if (it.isObject()) {
+        entries.push_back(EnumLabel{
+          .sortorder = static_cast<float>(it.get("sortorder").getDouble()),
+          .label = std::string{it.get("label").stringView()},
+        });
+      } else {
+        // Legacy format: plain string -- synthesize sortorder
+        entries.push_back(EnumLabel{
+          .sortorder = static_cast<float>(entries.size() + 1),
+          .label = std::string{it.stringView()},
+        });
+      }
     }
   }
 
-  return std::make_shared<EnumType>(id, name.stringView(), std::move(labels));
+  return std::make_shared<EnumType>(id, name.stringView(), std::move(entries));
 }
 
 }  // namespace sdb::catalog

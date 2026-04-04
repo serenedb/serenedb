@@ -1007,17 +1007,6 @@ class SqlAnalyzer {
     const bool from_varchar =
       from->type() == velox::VARCHAR() || pg::IsUnknown(from->type());
 
-    if (from_varchar && pg::IsEnum(*to)) {
-      const auto* enum_type = pg::AsEnum(to);
-      auto enum_name =
-        MakeConst(velox::StringView{enum_type->EnumName()}, velox::VARCHAR());
-      auto call = std::make_shared<lp::CallExpr>(
-        velox::BIGINT(), "pg_enum_in",
-        std::vector<lp::ExprPtr>{std::move(from), std::move(enum_name)});
-      return std::make_shared<lp::SpecialFormExpr>(
-        std::move(to), lp::SpecialForm::kCast, std::move(call));
-    }
-
     if (from_varchar && IsInterval(to)) {
       return std::make_shared<lp::CallExpr>(
         std::move(to), "pg_intervalin", std::move(from),
@@ -1045,6 +1034,13 @@ class SqlAnalyzer {
         velox::ARRAY(velox::VARCHAR()), "pg_array_text_in", std::move(from));
       return std::make_shared<lp::SpecialFormExpr>(
         std::move(to), lp::SpecialForm::kCast, std::move(varchar_array));
+    }
+
+    if (from_varchar && pg::IsEnum(*to)) {
+      const auto& enum_type = basics::downCast<pg::PgEnumType>(*to);
+      return std::make_shared<lp::CallExpr>(std::move(to), "pg_enum_in",
+                                            std::move(from),
+                                            MakeConst(enum_type.EnumName()));
     }
 
     return std::make_shared<lp::SpecialFormExpr>(
@@ -6716,14 +6712,14 @@ velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
     auto enum_type = snapshot->GetEnumType(db_id, type_schema, name);
     if (enum_type) {
       return wrap_in_array(
-        pg::PGENUM(std::string{name}, enum_type->GetLabels()));
+        pg::PGENUM(std::string{name}, enum_type->GetEntries()));
     }
     auto composite_type = snapshot->GetCompositeType(db_id, type_schema, name);
     if (composite_type) {
       return wrap_in_array(composite_type->GetRowType());
     }
-    if (auto* sys_table = GetSystemTable(type_schema, name)) {
-      return wrap_in_array(sys_table->RowType());
+    if (auto type = GetSystemTableType(type_schema, name)) {
+      return wrap_in_array(type);
     }
   }
 

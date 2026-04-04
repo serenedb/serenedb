@@ -41,7 +41,7 @@ namespace sdb::pg::functions {
 
 // pg_enum_in(label VARCHAR, enum_name VARCHAR) -> BIGINT
 // Looks up the enum definition from the catalog in initialize(),
-// then converts labels to ordinals in call().
+// then converts labels to OIDs in call().
 template<typename T>
 struct PgEnumIn {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -64,13 +64,13 @@ struct PgEnumIn {
                                 const arg_type<velox::Varchar>& label,
                                 const arg_type<velox::Varchar>&) {
     std::string_view val{label.data(), label.size()};
-    auto ordinal = EnumLabelToOrdinal(_enum_type->GetLabels(), val);
-    if (!ordinal) {
+    auto oid = EnumLabelToOid(_enum_type->GetEntries(), val);
+    if (!oid) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       ERR_MSG("invalid input value for enum ",
                               _enum_type->GetName(), ": \"", val, "\""));
     }
-    result = *ordinal;
+    result = *oid;
     return true;
   }
 
@@ -78,16 +78,15 @@ struct PgEnumIn {
   std::shared_ptr<catalog::EnumType> _enum_type;
 };
 
-// pg_enum_out(ordinal BIGINT, enum_name VARCHAR) -> VARCHAR
+// pg_enum_out(oid BIGINT, enum_name VARCHAR) -> VARCHAR
 // Looks up the enum definition from the catalog in initialize(),
-// then converts ordinals to labels in call().
+// then converts OIDs to labels in call().
 template<typename T>
 struct PgEnumOut {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   void initialize(const std::vector<velox::TypePtr>&,
-                  const velox::core::QueryConfig& config,
-                  const int64_t*,
+                  const velox::core::QueryConfig& config, const int64_t*,
                   const arg_type<velox::Varchar>* enum_name_ptr) {
     auto* ctx =
       basics::downCast<const ConnectionContext>(config.config().get());
@@ -99,10 +98,9 @@ struct PgEnumOut {
     SDB_ASSERT(_enum_type);
   }
 
-  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& result,
-                                int64_t ordinal,
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& result, int64_t oid,
                                 const arg_type<velox::Varchar>&) {
-    auto label = EnumOrdinalToLabel(_enum_type->GetLabels(), ordinal);
+    auto label = EnumOidToLabel(_enum_type->GetEntries(), oid);
     if (!label) {
       return false;
     }

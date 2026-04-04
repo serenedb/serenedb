@@ -25,6 +25,7 @@
 #include "catalog/enum_type.h"
 #include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/system_catalog.h"
 
 namespace sdb::pg {
 namespace {

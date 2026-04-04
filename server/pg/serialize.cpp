@@ -964,6 +964,173 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
   }
 }
 
+bool CompositeFieldNeedsQuoting(std::string_view data) {
+  if (data.empty()) {
+    return true;
+  }
+  for (char c : data) {
+    if (c == '(' || c == ')' || c == ',' || c == '"' || c == '\\' ||
+        absl::ascii_isspace(c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void WriteCompositeFieldQuoted(message::Buffer* buffer, std::string_view data) {
+  const auto required_size = 2 + data.size() * 2;
+  buffer->WriteContiguousData(required_size, [&](uint8_t* out) {
+    char* buf = reinterpret_cast<char*>(out);
+    *buf++ = '"';
+    for (char c : data) {
+      if (c == '"' || c == '\\') [[unlikely]] {
+        *buf++ = '\\';
+      }
+      *buf++ = c;
+    }
+    *buf++ = '"';
+    return buf - reinterpret_cast<char*>(out);
+  });
+}
+
+void WriteCompositeField(message::Buffer* buffer, std::string_view data) {
+  if (CompositeFieldNeedsQuoting(data)) {
+    WriteCompositeFieldQuoted(buffer, data);
+  } else {
+    buffer->WriteUncommitted(data);
+  }
+}
+
+std::string FieldToText(SerializationContext context,
+                        const velox::DecodedVector& decoded,
+                        velox::vector_size_t row, const velox::Type& type) {
+  switch (type.kind()) {
+    case velox::TypeKind::BOOLEAN:
+      return decoded.valueAt<bool>(row) ? "t" : "f";
+    case velox::TypeKind::TINYINT:
+      return absl::StrCat(decoded.valueAt<int8_t>(row));
+    case velox::TypeKind::SMALLINT:
+      return absl::StrCat(decoded.valueAt<int16_t>(row));
+    case velox::TypeKind::INTEGER: {
+      if (type.isDate()) {
+        auto days = decoded.valueAt<int32_t>(row);
+        auto date = absl::CivilDay{} + days;
+        return absl::FormatCivilTime(date);
+      }
+      return absl::StrCat(decoded.valueAt<int32_t>(row));
+    }
+    case velox::TypeKind::BIGINT: {
+      if (pg::IsEnum(type)) {
+        auto& enum_type =
+          basics::downCast<const pg::PgEnumType>(type);
+        return std::string{enum_type.Label(decoded.valueAt<int64_t>(row))};
+      }
+      return absl::StrCat(decoded.valueAt<int64_t>(row));
+    }
+    case velox::TypeKind::REAL: {
+      char buf[basics::kNumberStrMaxLen];
+      char* ptr = basics::dtoa_literals<basics::kPgDtoaLiterals>(
+        decoded.valueAt<float>(row), buf);
+      if (ptr) {
+        return {buf, static_cast<size_t>(ptr - buf)};
+      }
+      return absl::StrCat(decoded.valueAt<float>(row));
+    }
+    case velox::TypeKind::DOUBLE: {
+      char buf[basics::kNumberStrMaxLen];
+      char* ptr = basics::dtoa_literals<basics::kPgDtoaLiterals>(
+        decoded.valueAt<double>(row), buf);
+      if (ptr) {
+        return {buf, static_cast<size_t>(ptr - buf)};
+      }
+      return absl::StrCat(decoded.valueAt<double>(row));
+    }
+    case velox::TypeKind::VARCHAR: {
+      auto sv = decoded.valueAt<velox::StringView>(row);
+      return {sv.data(), sv.size()};
+    }
+    case velox::TypeKind::TIMESTAMP: {
+      auto ts = decoded.valueAt<velox::Timestamp>(row);
+      static constexpr auto kOptions = velox::TimestampToStringOptions{
+        .skipTrailingZeros = true, .dateTimeSeparator = ' '};
+      static constexpr auto kMaxLen = velox::getMaxStringLength(kOptions);
+      char buf[kMaxLen];
+      auto sv = velox::Timestamp::tsToStringView(ts, kOptions, buf);
+      return std::string{sv};
+    }
+    case velox::TypeKind::HUGEINT: {
+      if (pg::IsInterval(type)) {
+        auto interval = decoded.valueAt<velox::int128_t>(row);
+        return pg::IntervalOut(interval);
+      }
+      auto value = decoded.valueAt<velox::int128_t>(row);
+      return velox::DecimalUtil::toString(value, decoded.base()->type());
+    }
+    default:
+      SDB_ASSERT(false, "unsupported composite field type: ",
+                 type.toString());
+      return {};
+  }
+}
+
+void SerializeRowText(SerializationContext context,
+                      const velox::DecodedVector& decoded_vector,
+                      velox::vector_size_t row) {
+  const auto* row_vector =
+    dynamic_cast<const velox::RowVector*>(decoded_vector.base());
+  SDB_ASSERT(row_vector, "expected RowVector for composite serialization");
+  const auto actual_row = decoded_vector.index(row);
+  const auto& row_type = *context.column_type;
+  const auto field_count = row_type.size();
+
+  context.buffer->WriteUncommitted("(");
+  for (uint32_t i = 0; i < field_count; ++i) {
+    if (i > 0) {
+      context.buffer->WriteUncommitted(",");
+    }
+    const auto& child_vector = row_vector->childAt(i);
+    velox::DecodedVector decoded_child;
+    decoded_child.decode(*child_vector, true);
+    if (decoded_child.isNullAt(actual_row)) {
+      continue;
+    }
+    auto text = FieldToText(context, decoded_child, actual_row,
+                            *row_type.childAt(i));
+    WriteCompositeField(context.buffer, text);
+  }
+  context.buffer->WriteUncommitted(")");
+}
+
+void SerializeRowBinary(SerializationContext context,
+                        const velox::DecodedVector& decoded_vector,
+                        velox::vector_size_t row) {
+  const auto* row_vector =
+    dynamic_cast<const velox::RowVector*>(decoded_vector.base());
+  SDB_ASSERT(row_vector, "expected RowVector for composite serialization");
+  const auto actual_row = decoded_vector.index(row);
+  const auto& row_type = *context.column_type;
+  const auto field_count = row_type.size();
+
+  absl::big_endian::Store32(context.buffer->GetContiguousData(4), field_count);
+
+  auto* saved_column_type = context.column_type;
+  for (uint32_t i = 0; i < field_count; ++i) {
+    auto child_type = row_type.childAt(i);
+    absl::big_endian::Store32(context.buffer->GetContiguousData(4),
+                              Type2Oid(child_type));
+
+    context.column_type = child_type.get();
+    auto child_serializer =
+      GetSerialization(child_type, VarFormat::Binary, context);
+
+    const auto& child_vector = row_vector->childAt(i);
+    velox::DecodedVector decoded_child;
+    decoded_child.decode(*child_vector, true);
+    child_serializer(context, decoded_child, actual_row);
+  }
+  context.column_type = saved_column_type;
+}
+
 }  // namespace
 
 template<bool NeedArrayEscaping>
@@ -1214,9 +1381,10 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
     case velox::TypeKind::MAP:
       SDB_ASSERT(false, "TODO(mkornaukhov): Map is not supported yet");
       return nullptr;
-    case velox::TypeKind::ROW:
-      SDB_ASSERT(false, "TODO(mkornaukhov): Row is not supported yet");
-      return nullptr;
+    case velox::TypeKind::ROW: {
+      context.column_type = type.get();
+      RETURN_SERIALIZATION(SerializeRowText, SerializeRowBinary);
+    }
     default:
       if (pg::IsEnum(type)) {
         RETURN_SERIALIZATION(SerializeEnumText, SerializeOidBinary);

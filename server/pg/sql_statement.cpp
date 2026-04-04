@@ -191,7 +191,8 @@ bool SqlStatement::ProcessNextRoot(
   }
   for (size_t i = 0; i < params.oids.size() && i < params.types.size(); ++i) {
     if (params.oids[i] != 0 && !params.types[i]) {
-      params.types[i] = Oid2Type(params.oids[i]);
+      params.types[i] =
+        Oid2Type(params.oids[i], *connection_ctx->EnsureCatalogSnapshot());
     }
   }
 

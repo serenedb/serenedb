@@ -24,8 +24,8 @@
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/type/Type.h>
 
+#include <span>
 #include <string>
-#include <vector>
 
 #include "basics/fwd.h"
 #include "catalog/enum_type.h"
@@ -97,15 +97,15 @@ SDB_DECLARE_PG_TYPE(int64_t, PGXID8, Xid8, "PG_XID8");
 // Provides custom comparison: == uses OID directly, < / > use sort order.
 class PgEnumType final : public velox::BigintType {
  public:
-  PgEnumType(uint64_t oid, std::vector<catalog::EnumLabel> entries);
+  PgEnumType(uint64_t oid, std::span<const catalog::EnumLabel> entries);
 
   uint64_t Oid() const noexcept { return _oid; }
-  const std::vector<catalog::EnumLabel>& Entries() const noexcept {
+  std::span<const catalog::EnumLabel> Entries() const noexcept {
     return _entries;
   }
 
   std::string_view Label(int64_t oid) const;
-  int64_t Oid(std::string_view label) const;
+  int64_t LabelOid(std::string_view label) const;
 
   int32_t compare(const int64_t& left, const int64_t& right) const override;
   uint64_t hash(const int64_t& value) const override;
@@ -119,12 +119,33 @@ class PgEnumType final : public velox::BigintType {
   static constexpr std::string_view kTypeName = "PG_ENUM";
 
   uint64_t _oid;
-  std::vector<catalog::EnumLabel> _entries;
+  std::span<const catalog::EnumLabel> _entries;
 };
 
-velox::TypePtr PGENUM(uint64_t oid, std::vector<catalog::EnumLabel> entries);
+velox::TypePtr PGENUM(uint64_t oid,
+                      std::span<const catalog::EnumLabel> entries);
 bool IsEnum(const velox::TypePtr& type);
 bool IsEnum(const velox::Type& type);
+
+// Custom Velox type for PG composite types (CREATE TYPE ... AS),
+// wrapping RowType with the catalog OID.
+class PgCompositeType final : public velox::RowType {
+ public:
+  PgCompositeType(uint64_t oid, const velox::RowType& row_type);
+
+  uint64_t Oid() const noexcept { return _oid; }
+
+  bool operator==(const Type& other) const final;
+  std::string toString() const final;
+  bool equivalent(const Type& other) const final;
+  folly::dynamic serialize() const final;
+
+ private:
+  uint64_t _oid;
+};
+
+bool IsComposite(const velox::TypePtr& type);
+bool IsComposite(const velox::Type& type);
 
 void RegisterTypes();
 

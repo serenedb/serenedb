@@ -25,6 +25,7 @@
 #include <vpack/value_type.h>
 
 #include "basics/errors.h"
+#include "query/types.h"
 
 namespace sdb::catalog {
 
@@ -34,12 +35,15 @@ EnumType::EnumType(std::string_view name, std::vector<std::string> labels)
   for (uint64_t i = 0; i < labels.size(); ++i) {
     _entries.emplace_back(i + 1, std::move(labels[i]));
   }
+  _pg_type = std::make_shared<const pg::PgEnumType>(GetId(), _entries);
 }
 
 EnumType::EnumType(ObjectId id, std::string_view name,
                    std::vector<EnumLabel> entries)
   : SchemaObject{{}, {}, {}, id, name, ObjectType::EnumType},
-    _entries{std::move(entries)} {}
+    _entries{std::move(entries)} {
+  _pg_type = std::make_shared<const pg::PgEnumType>(GetId(), _entries);
+}
 
 void EnumType::WriteInternal(vpack::Builder& b) const {
   b.add("name", GetName());

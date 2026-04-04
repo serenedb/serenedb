@@ -23,16 +23,28 @@
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
+#include <compare>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "catalog/object.h"
+
+// Forward declaration -- circular include: query/types.h includes enum_type.h
+namespace sdb::pg {
+
+class PgEnumType;
+}
 
 namespace sdb::catalog {
 
 struct EnumLabel {
   uint64_t sortorder;
   std::string label;
+
+  auto operator<=>(const EnumLabel& other) const {
+    return sortorder <=> other.sortorder;
+  }
 };
 
 class EnumType : public SchemaObject {
@@ -40,6 +52,9 @@ class EnumType : public SchemaObject {
   EnumType(std::string_view name, std::vector<std::string> labels);
 
   const auto& GetEntries() const noexcept { return _entries; }
+  const std::shared_ptr<const pg::PgEnumType>& GetPgType() const noexcept {
+    return _pg_type;
+  }
 
   void WriteInternal(vpack::Builder& b) const final;
 
@@ -50,6 +65,7 @@ class EnumType : public SchemaObject {
 
  private:
   std::vector<EnumLabel> _entries;
+  std::shared_ptr<const pg::PgEnumType> _pg_type;
 };
 
 }  // namespace sdb::catalog

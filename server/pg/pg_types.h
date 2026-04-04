@@ -76,6 +76,7 @@ enum PgTypeOID : int32_t {
   kRegrole = 4096,
   kRegcollation = 4191,
   kXid8 = 5069,
+  kRecord = 2249,
 
   // Array types
   kBoolArray = 1000,
@@ -156,7 +157,7 @@ constexpr int32_t Kind2Oid(velox::TypeKind kind, bool in_array) {
 }
 
 int32_t Type2Oid(const velox::TypePtr& type, bool in_array = false);
-velox::TypePtr Oid2Type(int32_t oid);
+velox::TypePtr Oid2Type(int32_t oid, const catalog::Snapshot& snapshot);
 
 std::string ToPgTypeString(const velox::Type& type,
                            const catalog::Snapshot& snapshot);

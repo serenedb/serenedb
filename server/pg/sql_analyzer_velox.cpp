@@ -6739,12 +6739,11 @@ velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
     }
     auto enum_type = snapshot->GetEnumType(db_id, type_schema, name);
     if (enum_type) {
-      return wrap_in_array(
-        pg::PGENUM(enum_type->GetId(), enum_type->GetEntries()));
+      return wrap_in_array(enum_type->GetPgType());
     }
     auto composite_type = snapshot->GetCompositeType(db_id, type_schema, name);
     if (composite_type) {
-      return wrap_in_array(composite_type->GetRowType());
+      return wrap_in_array(composite_type->GetPgType());
     }
     if (auto type = GetSystemTableType(type_schema, name)) {
       return wrap_in_array(type);

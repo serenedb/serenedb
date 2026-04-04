@@ -25,6 +25,7 @@
 
 #include <string_view>
 
+#include "basics/fwd.h"
 #include "catalog/fwd.h"
 #include "pg/pg_catalog/fwd.h"
 

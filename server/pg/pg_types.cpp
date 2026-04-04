@@ -28,6 +28,7 @@
 #include <velox/functions/prestosql/types/UuidType.h>
 #include <velox/type/Timestamp.h>
 
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/virtual_table.h"
 #include "pg/connection_context.h"
@@ -124,17 +125,25 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
 }  // namespace
 
 int32_t Type2Oid(const velox::TypePtr& type, bool in_array) {
-  if (IsEnum(type)) {
-    return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
-  }
   int32_t composite_oid = GetCompositeOID(type, in_array);
   if (composite_oid >= 0) {
     return composite_oid;
   }
+  if (IsEnum(type)) {
+    auto* pgenum = basics::downCast<PgEnumType>(type.get());
+    return static_cast<int32_t>(pgenum->Oid());
+  }
+  if (IsComposite(type)) {
+    auto* pgcomp = basics::downCast<PgCompositeType>(type.get());
+    return static_cast<int32_t>(pgcomp->Oid());
+  }
+  if (type->isRow()) {
+    return PgTypeOID::kRecord;
+  }
   return Kind2Oid(type->kind(), in_array);
 }
 
-velox::TypePtr Oid2Type(int32_t oid) {
+velox::TypePtr Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
   switch (oid) {
       // clang-format off
     case PgTypeOID::kBool:                return velox::BOOLEAN();
@@ -202,7 +211,20 @@ velox::TypePtr Oid2Type(int32_t oid) {
     case PgTypeOID::kUuidArray:           return velox::ARRAY(velox::UUID());
     case PgTypeOID::kTimestampTzArray:    return velox::ARRAY(velox::TIMESTAMP_WITH_TIME_ZONE());
     case PgTypeOID::kIntervalArray:       return velox::ARRAY(INTERVAL());
-    default:                              return nullptr;
+    default: {
+      auto id = ObjectId{static_cast<uint64_t>(oid)};
+      auto obj = snapshot.GetObject(id);
+      if (!obj) {
+        return nullptr;
+      }
+      if (obj->GetType() == catalog::ObjectType::EnumType) {
+        return basics::downCast<catalog::EnumType>(obj)->GetPgType();
+      }
+      if (obj->GetType() == catalog::ObjectType::CompositeType) {
+        return basics::downCast<catalog::CompositeType>(obj)->GetPgType();
+      }
+      return nullptr;
+    }
       // clang-format on
   }
 }
@@ -289,6 +311,21 @@ std::string ToPgTypeString(const velox::TypePtr& type,
   if (isTimestampWithTimeZoneType(type)) {
     return "timestamp with time zone";
   }
+  if (IsEnum(type)) {
+    auto* pgenum = basics::downCast<PgEnumType>(type.get());
+    auto obj = snapshot.GetObject(ObjectId{pgenum->Oid()});
+    SDB_ASSERT(obj);
+    return std::string{obj->GetName()};
+  }
+  if (IsComposite(type)) {
+    auto* pgcomp = basics::downCast<PgCompositeType>(type.get());
+    auto obj = snapshot.GetObject(ObjectId{pgcomp->Oid()});
+    SDB_ASSERT(obj);
+    return std::string{obj->GetName()};
+  }
+  if (type->isRow()) {
+    return "record";
+  }
   switch (type->kind()) {
     case velox::TypeKind::BOOLEAN:
       return "boolean";
@@ -313,12 +350,6 @@ std::string ToPgTypeString(const velox::TypePtr& type,
     case velox::TypeKind::UNKNOWN:
       return "unknown";
     default:
-      if (IsEnum(type)) {
-        auto* pgenum = basics::downCast<PgEnumType>(type.get());
-        auto obj = snapshot.GetObject(ObjectId{pgenum->Oid()});
-        SDB_ASSERT(obj);
-        return std::string{obj->GetName()};
-      }
       SDB_ASSERT(false);  // better to specify the name
       return "unknown";
   }
@@ -364,6 +395,7 @@ std::string RegtypeOut(uint64_t oid) {
     REGTYPE_OUT(kRegnamespace, "regnamespace")
     REGTYPE_OUT(kRegrole, "regrole")
     REGTYPE_OUT(kRegcollation, "regcollation")
+    case PgTypeOID::kRecord: return "record";
   }
   return absl::StrCat(oid);
 }

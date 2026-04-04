@@ -1,0 +1,234 @@
+statement ok
+CREATE TYPE diagnosis AS ENUM ('bipolyarka', 'shiza', 'panicataka', 'depression', 'norma');
+
+
+statement ok
+CREATE TYPE patient_info AS (
+  name VARCHAR,
+  age INTEGER,
+  illness diagnosis
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_ward (
+  room INTEGER PRIMARY KEY,
+  patient patient_info
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (101, ROW('vedernikoff', 33, 'bipolyarka'));
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (202, ROW('kostya', 25, 'depression'));
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (303, ROW('bigfgun', 40, 'shiza'));
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (404, NULL);
+
+
+query
+SELECT room, patient FROM vedernikoff_ward ORDER BY room;
+----
+room	patient
+101	(vedernikoff,33,bipolyarka)
+202	(kostya,25,depression)
+303	(bigfgun,40,shiza)
+404	NULL
+
+
+query
+SELECT room FROM vedernikoff_ward WHERE patient IS NULL;
+----
+room
+404
+
+
+query
+SELECT room FROM vedernikoff_ward WHERE patient IS NOT NULL ORDER BY room;
+----
+room
+101
+202
+303
+
+
+statement ok
+DROP TABLE vedernikoff_ward;
+
+
+# composite with fields that need quoting: spaces, commas, parens, quotes, backslashes
+
+statement ok
+CREATE TYPE messy_record AS (
+  label VARCHAR,
+  value VARCHAR
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_notes (
+  id INTEGER PRIMARY KEY,
+  note messy_record
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (1, ROW('simple', 'hello'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (2, ROW('has space', 'dom kolotushkina'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (3, ROW('has,comma', 'a,b'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (4, ROW('has(paren)', 'x(y)'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (5, ROW('has"quote', 'say "hi"'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (6, ROW('has\backslash', 'path\to'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (7, ROW('', 'empty label'));
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (8, ROW('null_value', NULL));
+
+
+query
+SELECT id, note FROM vedernikoff_notes ORDER BY id;
+----
+id	note
+1	(simple,hello)
+2	("has space","dom kolotushkina")
+3	("has,comma","a,b")
+4	("has(paren)","x(y)")
+5	("has\"quote","say \"hi\"")
+6	("has\\backslash","path\\to")
+7	("","empty label")
+8	(null_value,)
+
+
+statement ok
+DROP TABLE vedernikoff_notes;
+
+statement ok
+DROP TYPE messy_record;
+
+
+# composite with various numeric types
+
+statement ok
+CREATE TYPE vitals AS (
+  heart_rate INTEGER,
+  temperature DOUBLE PRECISION,
+  systolic SMALLINT,
+  is_stable BOOLEAN
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_checkup (
+  id INTEGER PRIMARY KEY,
+  patient_name VARCHAR,
+  readings vitals
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_checkup VALUES (1, 'vedernikoff', ROW(120, 38.5, 180, false));
+
+statement count 1
+INSERT INTO vedernikoff_checkup VALUES (2, 'kostya', ROW(72, 36.6, 120, true));
+
+statement count 1
+INSERT INTO vedernikoff_checkup VALUES (3, 'bigfgun', ROW(95, 37.2, 140, true));
+
+
+query
+SELECT id, patient_name, readings FROM vedernikoff_checkup ORDER BY id;
+----
+id	patient_name	readings
+1	vedernikoff	(120,38.5,180,f)
+2	kostya	(72,36.6,120,t)
+3	bigfgun	(95,37.2,140,t)
+
+
+statement ok
+DROP TABLE vedernikoff_checkup;
+
+statement ok
+DROP TYPE vitals;
+
+
+# composite with timestamp field
+
+statement ok
+CREATE TYPE visit_record AS (
+  doctor VARCHAR,
+  visited_at TIMESTAMP
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_visits (
+  id INTEGER PRIMARY KEY,
+  visit visit_record
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_visits VALUES (1, ROW('dr_psikh', '2025-03-15 14:30:00'));
+
+statement count 1
+INSERT INTO vedernikoff_visits VALUES (2, ROW('dr_tabletkin', '2025-03-16 09:00:00'));
+
+
+query
+SELECT id, visit FROM vedernikoff_visits ORDER BY id;
+----
+id	visit
+1	("dr_psikh","2025-03-15 14:30:00")
+2	("dr_tabletkin","2025-03-16 09:00:00")
+
+
+statement ok
+DROP TABLE vedernikoff_visits;
+
+statement ok
+DROP TYPE visit_record;
+
+
+# anonymous ROW constructors
+
+query
+SELECT ROW(1, 'vedernikoff', true);
+----
+f1	f2	f3
+1	vedernikoff	true
+
+
+query
+SELECT ROW(42, 'bipolyarka', 3.14);
+----
+f1	f2	f3
+42	bipolyarka	3.14
+
+
+query
+SELECT ROW('has space', 'has,comma', 'has"quote');
+----
+f1	f2	f3
+has space	has,comma	has"quote
+
+
+# cleanup
+
+statement ok
+DROP TYPE diagnosis;

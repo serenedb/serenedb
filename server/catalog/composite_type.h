@@ -24,11 +24,17 @@
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "basics/fwd.h"
 #include "catalog/object.h"
+
+namespace sdb::pg {
+
+class PgCompositeType;
+}
 
 namespace sdb::catalog {
 
@@ -36,7 +42,9 @@ class CompositeType : public SchemaObject {
  public:
   CompositeType(std::string_view name, velox::RowTypePtr row_type);
 
-  const velox::RowTypePtr& GetRowType() const noexcept { return _row_type; }
+  const std::shared_ptr<const pg::PgCompositeType>& GetPgType() const noexcept {
+    return _pg_type;
+  }
 
   void WriteInternal(vpack::Builder& b) const final;
 
@@ -46,7 +54,7 @@ class CompositeType : public SchemaObject {
   CompositeType(ObjectId id, std::string_view name, velox::RowTypePtr row_type);
 
  private:
-  velox::RowTypePtr _row_type;
+  std::shared_ptr<const pg::PgCompositeType> _pg_type;
 };
 
 }  // namespace sdb::catalog

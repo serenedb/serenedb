@@ -183,12 +183,11 @@ SDB_DEFINE_PG_TYPE(velox::BigintType, PGXID8, Xid8, "PG_XID8");
 
 #undef SDB_DEFINE_PG_TYPE
 
-// PgEnumType implementation
-
-PgEnumType::PgEnumType(uint64_t oid, std::vector<catalog::EnumLabel> entries)
+PgEnumType::PgEnumType(uint64_t oid,
+                       std::span<const catalog::EnumLabel> entries)
   : velox::BigintType{velox::ProvideCustomComparison{}},
     _oid{oid},
-    _entries{std::move(entries)} {}
+    _entries{entries} {}
 
 std::string PgEnumType::toString() const {
   return std::string{kTypeName} + "(" + absl::StrCat(_oid) + ")";
@@ -202,19 +201,7 @@ bool PgEnumType::equivalent(const Type& other) const {
 }
 
 folly::dynamic PgEnumType::serialize() const {
-  folly::dynamic obj = folly::dynamic::object;
-  obj["name"] = "PgEnumType";
-  obj["type"] = std::string{kTypeName};
-  obj["oid"] = _oid;
-  folly::dynamic entries_arr = folly::dynamic::array;
-  for (const auto& entry : _entries) {
-    folly::dynamic e = folly::dynamic::object;
-    e["sortorder"] = entry.sortorder;
-    e["label"] = entry.label;
-    entries_arr.push_back(std::move(e));
-  }
-  obj["entries"] = std::move(entries_arr);
-  return obj;
+  return velox::BigintType::serialize();
 }
 
 std::string_view PgEnumType::Label(int64_t oid) const {
@@ -223,7 +210,7 @@ std::string_view PgEnumType::Label(int64_t oid) const {
   return _entries[idx].label;
 }
 
-int64_t PgEnumType::Oid(std::string_view label) const {
+int64_t PgEnumType::LabelOid(std::string_view label) const {
   for (size_t i = 0; i < _entries.size(); ++i) {
     if (_entries[i].label == label) {
       return static_cast<int64_t>(i);
@@ -251,8 +238,9 @@ uint64_t PgEnumType::hash(const int64_t& value) const {
   return folly::hasher<int64_t>()(value);
 }
 
-velox::TypePtr PGENUM(uint64_t oid, std::vector<catalog::EnumLabel> entries) {
-  return std::make_shared<PgEnumType>(oid, std::move(entries));
+velox::TypePtr PGENUM(uint64_t oid,
+                      std::span<const catalog::EnumLabel> entries) {
+  return std::make_shared<PgEnumType>(oid, entries);
 }
 
 bool IsEnum(const velox::TypePtr& type) {
@@ -261,6 +249,50 @@ bool IsEnum(const velox::TypePtr& type) {
 
 bool IsEnum(const velox::Type& type) {
   return dynamic_cast<const PgEnumType*>(&type) != nullptr;
+}
+
+PgCompositeType::PgCompositeType(uint64_t oid, const velox::RowType& row_type)
+  : velox::RowType(std::vector<std::string>(row_type.names()),
+                   std::vector<velox::TypePtr>(row_type.children())),
+    _oid{oid} {}
+
+std::string PgCompositeType::toString() const {
+  return "PG_COMPOSITE(" + absl::StrCat(_oid) + ")";
+}
+
+bool PgCompositeType::operator==(const Type& other) const {
+  if (auto* o = dynamic_cast<const PgCompositeType*>(&other)) {
+    return _oid == o->_oid;
+  }
+  if (!other.isRow()) {
+    return false;
+  }
+  const auto& o = other.asRow();
+  if (o.size() != size()) {
+    return false;
+  }
+  for (uint32_t i = 0; i < size(); ++i) {
+    if (!childAt(i)->equivalent(*o.childAt(i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool PgCompositeType::equivalent(const Type& other) const {
+  return *this == other;
+}
+
+folly::dynamic PgCompositeType::serialize() const {
+  return velox::RowType::serialize();
+}
+
+bool IsComposite(const velox::TypePtr& type) {
+  return type && dynamic_cast<const PgCompositeType*>(type.get()) != nullptr;
+}
+
+bool IsComposite(const velox::Type& type) {
+  return dynamic_cast<const PgCompositeType*>(&type) != nullptr;
 }
 
 void RegisterTypes() {

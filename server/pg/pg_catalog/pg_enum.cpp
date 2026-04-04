@@ -43,7 +43,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgEnum>::GetTableData(
         values.push_back(PgEnum{
           .oid = i,
           .enumtypid = type_oid,
-          .enumsortorder = entries[i].sortorder,
+          .enumsortorder = static_cast<float>(entries[i].sortorder),
           .enumlabel = entries[i].label,
         });
       }

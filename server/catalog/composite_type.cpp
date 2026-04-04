@@ -23,6 +23,7 @@
 #include <vpack/serializer.h>
 
 #include "basics/errors.h"
+#include "query/types.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
@@ -37,24 +38,25 @@ struct VPackData {
 
 CompositeType::CompositeType(std::string_view name, velox::RowTypePtr row_type)
   : SchemaObject{{}, {}, {}, {}, name, ObjectType::CompositeType},
-    _row_type{std::move(row_type)} {}
+    _pg_type{std::make_shared<const pg::PgCompositeType>(GetId(), *row_type)} {}
 
 CompositeType::CompositeType(ObjectId id, std::string_view name,
                              velox::RowTypePtr row_type)
   : SchemaObject{{}, {}, {}, id, name, ObjectType::CompositeType},
-    _row_type{std::move(row_type)} {}
+    _pg_type{std::make_shared<const pg::PgCompositeType>(id, *row_type)} {}
 
 void CompositeType::WriteInternal(vpack::Builder& b) const {
-  vpack::WriteTuple(b, VPackData{
-                         .name = GetName(),
-                         .row_type = _row_type,
-                       });
+  velox::RowTypePtr row_type = _pg_type;
+  vpack::WriteObject(b, vpack::Embedded{VPackData{
+                          .name = GetName(),
+                          .row_type = std::move(row_type),
+                        }});
 }
 
 Result CompositeType::Instantiate(std::shared_ptr<CompositeType>& result,
                                   ObjectId id, vpack::Slice slice) {
   VPackData data;
-  auto r = vpack::ReadTupleNothrow(slice, data);
+  auto r = vpack::ReadObjectNothrow(slice, data);
   if (!r.ok()) {
     return {ERROR_BAD_PARAMETER,
             "invalid composite type definition: ", r.errorMessage()};

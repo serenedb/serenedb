@@ -63,8 +63,8 @@ yaclib::Future<> CreateComposite(ExecContext& ctx,
   });
 
   auto row_type = velox::ROW(std::move(field_names), std::move(field_types));
-  auto composite = std::make_shared<catalog::CompositeType>(
-    ObjectId{0}, type_name, std::move(row_type));
+  auto composite =
+    std::make_shared<catalog::CompositeType>(type_name, std::move(row_type));
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();

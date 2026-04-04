@@ -423,8 +423,11 @@ Result OpenDatabase::RegisterCompositeTypes(ObjectId db_id,
   return GetServerEngine().VisitDefinitions(
     schema_id, RocksDBEntryType::CompositeType,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto ct = CompositeType::FromVPack(key.GetObjectId(), slice);
-      SDB_ASSERT(ct);
+      std::shared_ptr<CompositeType> ct;
+      auto r = CompositeType::Instantiate(ct, key.GetObjectId(), slice);
+      if (!r.ok()) {
+        return r;
+      }
       return _catalog.RegisterCompositeType(db_id, schema_id, std::move(ct));
     });
 }

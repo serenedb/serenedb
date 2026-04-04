@@ -64,18 +64,8 @@ Result EnumType::Instantiate(std::shared_ptr<EnumType>& result, ObjectId id,
   auto labels_slice = slice.get("labels");
   if (labels_slice.isArray()) {
     for (auto it : vpack::ArrayIterator(labels_slice)) {
-      if (it.isObject()) {
-        entries.push_back(EnumLabel{
-          .sortorder = it.get("sortorder").getUInt(),
-          .label = std::string{it.get("label").stringView()},
-        });
-      } else {
-        // Legacy format: plain string -- synthesize sortorder
-        entries.push_back(EnumLabel{
-          .sortorder = entries.size() + 1,
-          .label = std::string{it.stringView()},
-        });
-      }
+      entries.emplace_back(it.get("sortorder").getUInt(),
+                           std::string{it.get("label").stringView()});
     }
   }
 

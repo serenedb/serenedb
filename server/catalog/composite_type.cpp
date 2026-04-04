@@ -22,29 +22,47 @@
 
 #include <vpack/serializer.h>
 
-#include "basics/assert.h"
+#include "basics/errors.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
+namespace {
 
-CompositeType::CompositeType(ObjectId id, Options options)
-  : SchemaObject{{}, {}, {}, id, options.name, ObjectType::CompositeType},
-    _row_type{std::move(options.row_type)} {}
+struct VPackData {
+  std::string_view name;
+  velox::RowTypePtr row_type;
+};
+
+}  // namespace
+
+CompositeType::CompositeType(std::string_view name, velox::RowTypePtr row_type)
+  : SchemaObject{{}, {}, {}, {}, name, ObjectType::CompositeType},
+    _row_type{std::move(row_type)} {}
+
+CompositeType::CompositeType(ObjectId id, std::string_view name,
+                             velox::RowTypePtr row_type)
+  : SchemaObject{{}, {}, {}, id, name, ObjectType::CompositeType},
+    _row_type{std::move(row_type)} {}
 
 void CompositeType::WriteInternal(vpack::Builder& b) const {
-  vpack::WriteTuple(b, Options{
+  vpack::WriteTuple(b, VPackData{
                          .name = GetName(),
                          .row_type = _row_type,
                        });
 }
 
-std::shared_ptr<CompositeType> CompositeType::FromVPack(ObjectId id,
-                                                        vpack::Slice slice) {
-  Options options;
-  auto r = vpack::ReadTupleNothrow(slice, options);
-  SDB_ASSERT(r.ok());
+Result CompositeType::Instantiate(std::shared_ptr<CompositeType>& result,
+                                  ObjectId id, vpack::Slice slice) {
+  VPackData data;
+  auto r = vpack::ReadTupleNothrow(slice, data);
+  if (!r.ok()) {
+    return {ERROR_BAD_PARAMETER,
+            "invalid composite type definition: ", r.errorMessage()};
+  }
 
-  return std::make_shared<CompositeType>(id, std::move(options));
+  result =
+    std::make_shared<CompositeType>(id, data.name, std::move(data.row_type));
+  return {};
 }
 
 }  // namespace sdb::catalog

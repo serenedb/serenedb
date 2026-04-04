@@ -34,21 +34,18 @@ namespace sdb::catalog {
 
 class CompositeType : public SchemaObject {
  public:
-  struct Options {
-    std::string_view name;
-    velox::RowTypePtr row_type;
-  };
-
-  CompositeType(ObjectId id, Options options);
+  CompositeType(std::string_view name, velox::RowTypePtr row_type);
 
   const velox::RowTypePtr& GetRowType() const noexcept { return _row_type; }
 
   void WriteInternal(vpack::Builder& b) const final;
 
-  static std::shared_ptr<CompositeType> FromVPack(ObjectId id,
-                                                  vpack::Slice slice);
+  static Result Instantiate(std::shared_ptr<CompositeType>& result, ObjectId id,
+                            vpack::Slice slice);
 
  private:
+  CompositeType(ObjectId id, std::string_view name, velox::RowTypePtr row_type);
+
   velox::RowTypePtr _row_type;
 };
 

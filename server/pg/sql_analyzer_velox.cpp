@@ -336,21 +336,26 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
 using query::ToAlias;
 
 std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
-                                std::string_view sep) {
+                                std::string_view sep,
+                                const catalog::Snapshot& snapshot) {
   const auto types = GetExprsTypes(args);
-  return absl::StrJoin(types, sep, [](std::string* out, const auto& type) {
-    out->append(ToPgTypeString(type));
-  });
+  return absl::StrJoin(types, sep,
+                       [&snapshot](std::string* out, const auto& type) {
+                         out->append(ToPgTypeString(type, snapshot));
+                       });
 }
 
 std::string ToPgOperatorString(std::string_view name,
-                               const std::vector<lp::ExprPtr>& args) {
-  return ToPgSignatureString(args, absl::StrCat(" ", name, " "));
+                               const std::vector<lp::ExprPtr>& args,
+                               const catalog::Snapshot& snapshot) {
+  return ToPgSignatureString(args, absl::StrCat(" ", name, " "), snapshot);
 }
 
 std::string ToPgFunctionString(std::string_view name,
-                               const std::vector<lp::ExprPtr>& args) {
-  return absl::StrCat(name, "(", ToPgSignatureString(args, ", "), ")");
+                               const std::vector<lp::ExprPtr>& args,
+                               const catalog::Snapshot& snapshot) {
+  return absl::StrCat(name, "(", ToPgSignatureString(args, ", ", snapshot),
+                      ")");
 }
 
 static const velox::TypePtr kUncastedParamPlaceholder =
@@ -1038,9 +1043,9 @@ class SqlAnalyzer {
 
     if (from_varchar && pg::IsEnum(*to)) {
       const auto& enum_type = basics::downCast<pg::PgEnumType>(*to);
-      return std::make_shared<lp::CallExpr>(std::move(to), "pg_enum_in",
-                                            std::move(from),
-                                            MakeConst(enum_type.EnumName()));
+      return std::make_shared<lp::CallExpr>(
+        std::move(to), "pg_enum_in", std::move(from),
+        MakeConst(static_cast<int64_t>(enum_type.Oid())));
     }
 
     return std::make_shared<lp::SpecialFormExpr>(
@@ -1144,10 +1149,10 @@ class SqlAnalyzer {
   [[noreturn]] void ErrorIsProcedure(std::string_view name,
                                      const std::vector<lp::ExprPtr>& args,
                                      int location) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                    CURSOR_POS(ErrorPosition(location)),
-                    ERR_MSG(ToPgFunctionString(name, args), " is a procedure"),
-                    ERR_HINT("To call a procedure, use CALL."));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FUNCTION), CURSOR_POS(ErrorPosition(location)),
+      ERR_MSG(ToPgFunctionString(name, args, Snapshot()), " is a procedure"),
+      ERR_HINT("To call a procedure, use CALL."));
   }
 
   [[noreturn]] void ErrorUnsupportedLanguage(
@@ -1157,6 +1162,10 @@ class SqlAnalyzer {
       ERR_CODE(ERROR_NOT_IMPLEMENTED), CURSOR_POS(ErrorPosition(location)),
       ERR_MSG("unsupported function language for PG, function: ", name,
               ", language: ", magic_enum::enum_name(lang)));
+  }
+
+  const catalog::Snapshot& Snapshot() const {
+    return *_transaction.EnsureCatalogSnapshot();
   }
 
   const Objects& _objects;
@@ -1910,11 +1919,13 @@ class CopyRowRejector {
   using LogVerbosity = file_options::CopyLogVerbosity;
 
   CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
-                  std::string_view table_name, uint64_t reject_limit)
+                  std::string_view table_name, uint64_t reject_limit,
+                  const catalog::Snapshot& snapshot)
     : _send{send},
       _table_name{table_name},
       _verbosity{verbosity},
-      _reject_limit{reject_limit} {
+      _reject_limit{reject_limit},
+      _snapshot{snapshot} {
     SDB_ASSERT(!_table_name.empty());
   }
 
@@ -1932,9 +1943,9 @@ class CopyRowRejector {
       errmsg = absl::StrCat("skipped more than REJECT_LIMIT (", _reject_limit,
                             ") rows due to data type incompatibility");
     } else {
-      errmsg =
-        absl::StrCat("invalid input syntax for type ",
-                     ToPgTypeString(row.columnType), ": \"", row.value, "\"");
+      errmsg = absl::StrCat("invalid input syntax for type ",
+                            ToPgTypeString(row.columnType, _snapshot), ": \"",
+                            row.value, "\"");
     }
 
     _report_summary = false;
@@ -1974,6 +1985,7 @@ class CopyRowRejector {
   bool _report_summary = true;
   LogVerbosity _verbosity;
   const uint64_t _reject_limit;
+  const catalog::Snapshot& _snapshot;
 };
 
 // COPY FROM STDIN / TO STDOUT
@@ -2012,7 +2024,8 @@ class CopyOptionsParser : public FileOptionsParser {
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
-                    explain_options::ExplainOptions& explain_options)
+                    explain_options::ExplainOptions& explain_options,
+                    const catalog::Snapshot& snapshot)
     : FileOptionsParser{file_path,
                         options,
                         file_options::kCopyGroup,
@@ -2027,7 +2040,8 @@ class CopyOptionsParser : public FileOptionsParser {
       _is_writer{is_writer},
       _send_buffer{send_buffer},
       _copy_queue{copy_queue},
-      _table_name{table_name} {
+      _table_name{table_name},
+      _snapshot{snapshot} {
     if (_is_writer) {
       _writer_options = std::make_shared<connector::WriterOptions>();
     } else {
@@ -2127,7 +2141,7 @@ class CopyOptionsParser : public FileOptionsParser {
         _reader_options->Reader().get());
       text_options->setOnRowReject(
         [rejector = CopyRowRejector{log_verbosity, _send_buffer, _table_name,
-                                    reject_limit}](
+                                    reject_limit, _snapshot}](
           const RejectedRow& row) mutable { rejector.Process(row); });
     }
   }
@@ -2150,6 +2164,7 @@ class CopyOptionsParser : public FileOptionsParser {
   message::Buffer& _send_buffer;
   CopyMessagesQueue* _copy_queue;
   std::string_view _table_name;
+  const catalog::Snapshot& _snapshot;
 
   std::shared_ptr<connector::WriterOptions> _writer_options;
   std::shared_ptr<connector::ReaderOptions> _reader_options;
@@ -2253,10 +2268,16 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
     SDB_ASSERT(_send_buffer);
-    return CopyOptionsParser{
-      type,        !stmt.is_from, _query_string.view(),
-      file_path,   stmt.options,  *_send_buffer,
-      _copy_queue, table_name,    _query_ctx.explain_params};
+    return CopyOptionsParser{type,
+                             !stmt.is_from,
+                             _query_string.view(),
+                             file_path,
+                             stmt.options,
+                             *_send_buffer,
+                             _copy_queue,
+                             table_name,
+                             _query_ctx.explain_params,
+                             *_transaction.EnsureCatalogSnapshot()};
   };
 
   auto setup_progress_tracking = [&](auto& options, bool is_from,
@@ -2522,7 +2543,7 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
         ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
         CURSOR_POS(ErrorPosition(ExprLocation(&constraint))),
         ERR_MSG("check constraint expression must return type boolean, not ",
-                ToPgTypeString(expr->type())));
+                ToPgTypeString(expr->type(), Snapshot())));
     }
   };
 
@@ -2554,9 +2575,9 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
                 ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                 CURSOR_POS(ErrorPosition(ExprLocation(&constraint))),
                 ERR_MSG("column \"", col_def.colname, "\" is of type ",
-                        ToPgTypeString(column_type),
+                        ToPgTypeString(column_type, Snapshot()),
                         " but default expression is of type ",
-                        ToPgTypeString(expr->type())),
+                        ToPgTypeString(expr->type(), Snapshot())),
                 ERR_HINT("You will need to rewrite or cast the expression."));
             }
           } break;
@@ -4882,10 +4903,10 @@ lp::ExprPtr SqlAnalyzer::ProcessPrefixUnaryOp(std::string_view name,
     return ResolveVeloxFunctionAndInferArgsCommonType("presto_bitwise_not",
                                                       {std::move(arg)});
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                  CURSOR_POS(ErrorPosition(location)),
-                  ERR_MSG("operator does not exist: ",
-                          ToPgOperatorString(name, {std::move(arg)})));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_UNDEFINED_FUNCTION), CURSOR_POS(ErrorPosition(location)),
+    ERR_MSG("operator does not exist: ",
+            ToPgOperatorString(name, {std::move(arg)}, Snapshot())));
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
@@ -4913,8 +4934,9 @@ lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
 
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_UNDEFINED_FUNCTION), CURSOR_POS(ErrorPosition(location)),
-    ERR_MSG("operator does not exist: ",
-            ToPgOperatorString(name, {std::move(lhs), std::move(rhs)})));
+    ERR_MSG(
+      "operator does not exist: ",
+      ToPgOperatorString(name, {std::move(lhs), std::move(rhs)}, Snapshot())));
 }
 
 // TODO(Pasha) good name instead of x.
@@ -5517,7 +5539,8 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
       CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
       ERR_HINT("No function matches the given name and argument types. "
                "You might need to add explicit type casts."),
-      ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
+      ERR_MSG("function ", ToPgFunctionString(name, args, Snapshot()),
+              " does not exist"));
   };
 
   auto type = resolve_window_function();
@@ -5726,7 +5749,7 @@ void SqlAnalyzer::ProcessFunctionBody(
         ERR_CODE(ERRCODE_INVALID_FUNCTION_DEFINITION),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_body))),
         ERR_MSG("return type mismatch in function declared to return ",
-                ToPgTypeString(signature.return_type)),
+                ToPgTypeString(signature.return_type, Snapshot())),
         ERR_DETAIL("Final statement must return exactly one column."));
     }
 
@@ -5735,9 +5758,9 @@ void SqlAnalyzer::ProcessFunctionBody(
         ERR_CODE(ERRCODE_INVALID_FUNCTION_DEFINITION),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_body))),
         ERR_MSG("return type mismatch in function declared to return ",
-                ToPgTypeString(signature.return_type)),
+                ToPgTypeString(signature.return_type, Snapshot())),
         ERR_DETAIL("Actual return type is", " ",
-                   ToPgTypeString(actual_type.childAt(0)), "."));
+                   ToPgTypeString(actual_type.childAt(0), Snapshot()), "."));
     }
 
     state.root = std::make_shared<lp::LimitNode>(_id_generator.NextPlanId(),
@@ -5764,9 +5787,10 @@ void SqlAnalyzer::ProcessFunctionBody(
         ERR_CODE(ERRCODE_INVALID_FUNCTION_DEFINITION),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_body))),
         ERR_MSG("return type mismatch in function declared to return record"),
-        ERR_DETAIL("Final statement returns ", ToPgTypeString(actual_col_type),
-                   " instead of ", ToPgTypeString(expected_col_type),
-                   " at column ", i + 1, "."));
+        ERR_DETAIL("Final statement returns ",
+                   ToPgTypeString(actual_col_type, Snapshot()), " instead of ",
+                   ToPgTypeString(expected_col_type, Snapshot()), " at column ",
+                   i + 1, "."));
     }
 
     names.emplace_back(_id_generator.NextColumnName(expected_row.nameOf(i)));
@@ -5818,7 +5842,7 @@ lp::ExprPtr SqlAnalyzer::ProcessBoolExpr(State& state, const BoolExpr& expr) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR), CURSOR_POS(err_pos),
                       ERR_MSG("argument of ", ToString(expr.boolop),
                               " must be type boolean, not type ",
-                              ToPgTypeString(args[i]->type())));
+                              ToPgTypeString(args[i]->type(), Snapshot())));
     }
   }
 
@@ -5903,9 +5927,10 @@ lp::ExprPtr SqlAnalyzer::ProcessCoalesceExpr(State& state,
 // the first argument
 lp::ExprPtr SqlAnalyzer::ResolveExtract(std::vector<lp::ExprPtr> args) {
   if (args.size() != 2) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                    ERR_MSG("function ", ToPgFunctionString("extract", args),
-                            " does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+      ERR_MSG("function ", ToPgFunctionString("extract", args, Snapshot()),
+              " does not exist"));
   }
 
   auto& field_expr = args[0];
@@ -5934,14 +5959,14 @@ lp::ExprPtr SqlAnalyzer::ResolveExtract(std::vector<lp::ExprPtr> args) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
             ERR_MSG("unit \"", field, "\" not supported for type ",
-                    ToPgTypeString(from_type)));
+                    ToPgTypeString(from_type, Snapshot())));
       }
     }
 
     if (unit_type != UNITS) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("unit \"", field, "\" not recognized for type ",
-                              ToPgTypeString(from_type)));
+                              ToPgTypeString(from_type, Snapshot())));
     }
 
     switch (val) {
@@ -5982,7 +6007,7 @@ lp::ExprPtr SqlAnalyzer::ResolveExtract(std::vector<lp::ExprPtr> args) {
       default:
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("unit \"", field, "\" not supported for type ",
-                                ToPgTypeString(from_type)));
+                                ToPgTypeString(from_type, Snapshot())));
     }
   }();
 
@@ -5991,7 +6016,7 @@ lp::ExprPtr SqlAnalyzer::ResolveExtract(std::vector<lp::ExprPtr> args) {
   if (!type) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("unit \"", field, "\" not supported for type ",
-                            ToPgTypeString(from_type)));
+                            ToPgTypeString(from_type, Snapshot())));
   }
   ApplyCoercions(args, coercions);
 
@@ -6036,7 +6061,8 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
       ERR_HINT("No function matches the given name and argument types. "
                "You might need to add explicit type casts."),
-      ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
+      ERR_MSG("function ", ToPgFunctionString(name, args, Snapshot()),
+              " does not exist"));
   }
 
   for (auto& coercion : coercions) {
@@ -6064,9 +6090,10 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   if (!signature.Matches(GetExprsTypes(args))) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION), CURSOR_POS(ErrorPosition(location)),
-      ERR_HINT("maybe you intended to call ", ToPgFunctionString(name, args),
-               "?"),
-      ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
+      ERR_HINT("maybe you intended to call ",
+               ToPgFunctionString(name, args, Snapshot()), "?"),
+      ERR_MSG("function ", ToPgFunctionString(name, args, Snapshot()),
+              " does not exist"));
   }
 
   const auto& params = signature.parameters;
@@ -6173,7 +6200,8 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
             CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
             ERR_HINT("No function matches the given name and argument types. "
                      "You might need to add explicit type casts."),
-            ERR_MSG("function ", fname, "(", ToPgTypeString(arg_expr->type()),
+            ERR_MSG("function ", fname, "(",
+                    ToPgTypeString(arg_expr->type(), Snapshot()),
                     ") does not exist"));
         }
         arg_expr = MakeCast(param.type, std::move(arg_expr));
@@ -6712,7 +6740,7 @@ velox::TypePtr NameToType(const TypeName& type_name, const ExecContext* ctx) {
     auto enum_type = snapshot->GetEnumType(db_id, type_schema, name);
     if (enum_type) {
       return wrap_in_array(
-        pg::PGENUM(std::string{name}, enum_type->GetEntries()));
+        pg::PGENUM(enum_type->GetId(), enum_type->GetEntries()));
     }
     auto composite_type = snapshot->GetCompositeType(db_id, type_schema, name);
     if (composite_type) {

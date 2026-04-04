@@ -185,28 +185,18 @@ SDB_DEFINE_PG_TYPE(velox::BigintType, PGXID8, Xid8, "PG_XID8");
 
 // PgEnumType implementation
 
-PgEnumType::PgEnumType(std::string enum_name,
-                       std::vector<catalog::EnumLabel> entries)
+PgEnumType::PgEnumType(uint64_t oid, std::vector<catalog::EnumLabel> entries)
   : velox::BigintType{velox::ProvideCustomComparison{}},
-    _enum_name{std::move(enum_name)},
+    _oid{oid},
     _entries{std::move(entries)} {}
 
 std::string PgEnumType::toString() const {
-  return std::string{kTypeName} + "(" + _enum_name + ")";
+  return std::string{kTypeName} + "(" + absl::StrCat(_oid) + ")";
 }
 
 bool PgEnumType::equivalent(const Type& other) const {
   if (auto* o = dynamic_cast<const PgEnumType*>(&other)) {
-    if (_enum_name != o->_enum_name || _entries.size() != o->_entries.size()) {
-      return false;
-    }
-    for (size_t i = 0; i < _entries.size(); ++i) {
-      if (_entries[i].sortorder != o->_entries[i].sortorder ||
-          _entries[i].label != o->_entries[i].label) {
-        return false;
-      }
-    }
-    return true;
+    return _oid == o->_oid;
   }
   return false;
 }
@@ -215,11 +205,11 @@ folly::dynamic PgEnumType::serialize() const {
   folly::dynamic obj = folly::dynamic::object;
   obj["name"] = "PgEnumType";
   obj["type"] = std::string{kTypeName};
-  obj["enum_name"] = _enum_name;
+  obj["oid"] = _oid;
   folly::dynamic entries_arr = folly::dynamic::array;
   for (const auto& entry : _entries) {
     folly::dynamic e = folly::dynamic::object;
-    e["sortorder"] = static_cast<double>(entry.sortorder);
+    e["sortorder"] = entry.sortorder;
     e["label"] = entry.label;
     entries_arr.push_back(std::move(e));
   }
@@ -261,8 +251,8 @@ int32_t PgEnumType::compare(const int64_t& left, const int64_t& right) const {
   auto li = static_cast<size_t>(left);
   auto ri = static_cast<size_t>(right);
   if (li < _entries.size() && ri < _entries.size()) {
-    float ls = _entries[li].sortorder;
-    float rs = _entries[ri].sortorder;
+    uint64_t ls = _entries[li].sortorder;
+    uint64_t rs = _entries[ri].sortorder;
     return ls < rs ? -1 : ls > rs ? 1 : 0;
   }
   return left < right ? -1 : 1;
@@ -272,9 +262,8 @@ uint64_t PgEnumType::hash(const int64_t& value) const {
   return folly::hasher<int64_t>()(value);
 }
 
-velox::TypePtr PGENUM(std::string name,
-                      std::vector<catalog::EnumLabel> entries) {
-  return std::make_shared<PgEnumType>(std::move(name), std::move(entries));
+velox::TypePtr PGENUM(uint64_t oid, std::vector<catalog::EnumLabel> entries) {
+  return std::make_shared<PgEnumType>(oid, std::move(entries));
 }
 
 bool IsEnum(const velox::TypePtr& type) {
@@ -283,14 +272,6 @@ bool IsEnum(const velox::TypePtr& type) {
 
 bool IsEnum(const velox::Type& type) {
   return dynamic_cast<const PgEnumType*>(&type) != nullptr;
-}
-
-const PgEnumType* AsEnum(const velox::TypePtr& type) {
-  return dynamic_cast<const PgEnumType*>(type.get());
-}
-
-const PgEnumType* AsEnum(const velox::Type& type) {
-  return dynamic_cast<const PgEnumType*>(&type);
 }
 
 void RegisterTypes() {

@@ -45,7 +45,7 @@ yaclib::Future<> CreateEnum(ExecContext& ctx, const CreateEnumStmt& stmt) {
     ParseObjectName(stmt.typeName, ctx.GetDatabase(), current_schema);
 
   std::vector<catalog::EnumLabel> entries;
-  float sortorder = 1.0f;
+  uint64_t sortorder = 1;
   VisitNodes(stmt.vals, [&](const String& val) {
     std::string_view label = strVal(&val);
     for (const auto& existing : entries) {
@@ -59,7 +59,7 @@ yaclib::Future<> CreateEnum(ExecContext& ctx, const CreateEnumStmt& stmt) {
       .sortorder = sortorder,
       .label = std::string{label},
     });
-    sortorder += 1.0f;
+    sortorder += 1;
   });
 
   auto enum_type = std::make_shared<catalog::EnumType>(

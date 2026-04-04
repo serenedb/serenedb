@@ -31,7 +31,7 @@
 namespace sdb::catalog {
 
 struct EnumLabel {
-  float sortorder;
+  uint64_t sortorder;
   std::string label;
 };
 

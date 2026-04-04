@@ -20,36 +20,31 @@
 
 #include "catalog/composite_type.h"
 
-#include <velox/type/Type.h>
-#include <velox/type/parser/TypeParser.h>
+#include <vpack/serializer.h>
 
 #include "basics/assert.h"
+#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
-CompositeType::CompositeType(ObjectId id, std::string_view name,
-                             velox::RowTypePtr row_type)
-  : SchemaObject{{}, {}, {}, id, name, ObjectType::CompositeType},
-    _row_type{std::move(row_type)} {}
+CompositeType::CompositeType(ObjectId id, Options options)
+  : SchemaObject{{}, {}, {}, id, options.name, ObjectType::CompositeType},
+    _row_type{std::move(options.row_type)} {}
 
 void CompositeType::WriteInternal(vpack::Builder& b) const {
-  b.add("name", GetName());
-  b.add("row_type", _row_type->toString());
+  vpack::WriteTuple(b, Options{
+                         .name = GetName(),
+                         .row_type = _row_type,
+                       });
 }
 
 std::shared_ptr<CompositeType> CompositeType::FromVPack(ObjectId id,
                                                         vpack::Slice slice) {
-  auto name = slice.get("name");
-  SDB_ASSERT(name.isString());
+  Options options;
+  auto r = vpack::ReadTupleNothrow(slice, options);
+  SDB_ASSERT(r.ok());
 
-  auto row_type_str = slice.get("row_type");
-  SDB_ASSERT(row_type_str.isString());
-  auto row_type = std::dynamic_pointer_cast<const velox::RowType>(
-    velox::parseType(std::string{row_type_str.stringView()}));
-  SDB_ASSERT(row_type);
-
-  return std::make_shared<CompositeType>(id, name.stringView(),
-                                         std::move(row_type));
+  return std::make_shared<CompositeType>(id, std::move(options));
 }
 
 }  // namespace sdb::catalog

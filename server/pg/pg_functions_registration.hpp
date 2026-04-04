@@ -124,9 +124,7 @@ inline velox::AllowedCoercions AllowedCoercions() {
   add(velox::VARCHAR(), {REGCLASS(), PGNAME()});
   add(PGNAME(), {velox::VARCHAR()});
 
-  // PG_UNKNOWN kludge
-  // PG_ENUM needs a dummy instance for coercion registration (name-based)
-  static const auto kENUM = PGENUM("", {});
+  static const auto kENUM = PGENUM(0, {});
   add(velox::VARCHAR(), {kENUM});
 
   add_same_cost(PGUNKNOWN(),

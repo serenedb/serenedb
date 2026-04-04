@@ -1031,16 +1031,12 @@ void PgSQLCommTaskBase::BuildColumnSerializers(SqlPortal& portal) {
     return;
   }
   portal.columns_serializers.reserve(columns_count);
-  portal.column_enum_types.resize(columns_count, nullptr);
 
   const auto& formats = portal.bind_info.output_formats;
   const auto default_format = formats.empty() ? VarFormat::Text : formats[0];
 
   for (uint16_t i = 0; i < columns_count; ++i) {
     const auto& column_type = output_type->childAt(i);
-    if (pg::IsEnum(column_type)) {
-      portal.column_enum_types[i] = pg::AsEnum(column_type);
-    }
     const auto format = i < formats.size() ? formats[i] : default_format;
     portal.columns_serializers.push_back(
       GetSerialization(column_type, format, portal.serialization_context));
@@ -1091,8 +1087,8 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
     const auto uncommitted_size = _send.GetUncommittedSize();
     auto* prefix_data = _send.GetContiguousData(7);
     for (uint16_t column = 0; column < batch_columns; ++column) {
-      portal.serialization_context.current_enum_type =
-        portal.column_enum_types[column];
+      portal.serialization_context.column_type =
+        output_type->childAt(column).get();
       portal.columns_serializers[column](portal.serialization_context,
                                          decoded_columns[column], row);
     }

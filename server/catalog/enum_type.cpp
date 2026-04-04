@@ -57,13 +57,13 @@ std::shared_ptr<EnumType> EnumType::FromVPack(ObjectId id, vpack::Slice slice) {
     for (auto it : vpack::ArrayIterator(labels_slice)) {
       if (it.isObject()) {
         entries.push_back(EnumLabel{
-          .sortorder = static_cast<float>(it.get("sortorder").getDouble()),
+          .sortorder = it.get("sortorder").getUInt(),
           .label = std::string{it.get("label").stringView()},
         });
       } else {
         // Legacy format: plain string -- synthesize sortorder
         entries.push_back(EnumLabel{
-          .sortorder = static_cast<float>(entries.size() + 1),
+          .sortorder = entries.size() + 1,
           .label = std::string{it.stringView()},
         });
       }

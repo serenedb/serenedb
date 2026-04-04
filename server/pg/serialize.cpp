@@ -51,6 +51,7 @@
 #include <type_traits>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/dtoa.h"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
@@ -621,10 +622,10 @@ void SerializeRegnamespaceText(SerializationContext context,
 void SerializeEnumText(SerializationContext context,
                        const velox::DecodedVector& decoded_vector,
                        velox::vector_size_t row) {
-  const auto* enum_type = context.current_enum_type;
-  SDB_ASSERT(enum_type);
+  const auto& enum_type =
+    basics::downCast<const pg::PgEnumType>(*context.column_type);
   const auto oid = decoded_vector.valueAt<int64_t>(row);
-  auto label = enum_type->OidToLabel(oid);
+  auto label = enum_type.OidToLabel(oid);
   if (label) {
     context.buffer->WriteUncommitted(*label);
   } else {
@@ -798,12 +799,6 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
                                PgTypeOID::kDate);
   }
 
-  if (pg::IsEnum(type)) {
-    // current_enum_type is set per-column before each serializer call
-    RETURN_ARRAY_SERIALIZATION(SerializeEnumText, SerializeEnumText,
-                               PgTypeOID::kText);
-  }
-
   if (pg::IsOid(type)) {
     static constexpr auto kSerializeText =
       SerializePrimitiveType<velox::TypeKind::BIGINT, VarFormat::Text>;
@@ -965,6 +960,10 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
       SDB_ASSERT(false, "TODO(mkornaukhov): Array of Row is not supported yet");
       return nullptr;
     default:
+      if (pg::IsEnum(type)) {
+        RETURN_ARRAY_SERIALIZATION(SerializeEnumText, SerializeOidBinary,
+                                   PgTypeOID::kText);
+      }
       SDB_ASSERT(false);
       return nullptr;
   }
@@ -1161,11 +1160,6 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
     RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
   }
 
-  if (pg::IsEnum(type)) {
-    // current_enum_type is set per-column before each serializer call
-    RETURN_SERIALIZATION(SerializeEnumText, SerializeEnumText);
-  }
-
   // TODO(mbkkt) pg::IsXid8 is it expected to be serialized as bigint?
   // It looks like yes, but we need to check it later.
   switch (type->kind()) {
@@ -1229,6 +1223,9 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
       SDB_ASSERT(false, "TODO(mkornaukhov): Row is not supported yet");
       return nullptr;
     default:
+      if (pg::IsEnum(type)) {
+        RETURN_SERIALIZATION(SerializeEnumText, SerializeOidBinary);
+      }
       SDB_ASSERT(false);
       return nullptr;
   }

@@ -37,6 +37,7 @@
 #include "basics/static_strings.h"
 #include "pg/connection_context.h"
 #include "pg/functions/interval.h"
+#include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -313,6 +314,51 @@ struct RegnamespaceOutFunction {
   const ConnectionContext* _ctx;
 };
 
+template<typename T>
+struct EnumInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<velox::Varchar>*,
+                                      const arg_type<int32_t>*) {
+    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
+                                const arg_type<velox::Varchar>& input,
+                                const arg_type<int32_t>& location) {
+    result = EnumIn(*_ctx, input);
+    if (result == kInvalidOid) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT), CURSOR_POS(location),
+        ERR_MSG("type \"", std::string_view{input}, "\" does not exist"));
+    }
+  }
+
+ private:
+  const ConnectionContext* _ctx;
+};
+
+template<typename T>
+struct EnumOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
+                                      const velox::core::QueryConfig& config,
+                                      const arg_type<int64_t>*) {
+    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
+  }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
+                                const arg_type<int64_t>& input) {
+    result = EnumOut(*_ctx->EnsureCatalogSnapshot(), input);
+  }
+
+ private:
+  const ConnectionContext* _ctx;
+};
+
 }  // namespace
 
 void registerInOutFunctions(const std::string& prefix) {
@@ -342,6 +388,11 @@ void registerInOutFunctions(const std::string& prefix) {
                           velox::Varchar, int32_t>({prefix + "regnamespacein"});
   velox::registerFunction<RegnamespaceOutFunction, velox::Varchar,
                           RegnamespaceCustomType>({prefix + "regnamespaceout"});
+
+  velox::registerFunction<EnumInFunction, int64_t, velox::Varchar, int32_t>(
+    {prefix + "enumin"});
+  velox::registerFunction<EnumOutFunction, velox::Varchar, int64_t>(
+    {prefix + "enumout"});
 }
 
 }  // namespace sdb::pg::functions

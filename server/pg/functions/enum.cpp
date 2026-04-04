@@ -39,7 +39,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 
-// pg_enum_in(label VARCHAR, enum_name VARCHAR) -> BIGINT
+// pg_enum_in(label VARCHAR, enum_oid BIGINT) -> BIGINT
 // Looks up the enum definition from the catalog in initialize(),
 // then converts labels to OIDs in call().
 template<typename T>
@@ -49,20 +49,18 @@ struct PgEnumIn {
   void initialize(const std::vector<velox::TypePtr>&,
                   const velox::core::QueryConfig& config,
                   const arg_type<velox::Varchar>*,
-                  const arg_type<velox::Varchar>* enum_name_ptr) {
+                  const int64_t* enum_oid_ptr) {
     auto* ctx =
       basics::downCast<const ConnectionContext>(config.config().get());
     auto snapshot = ctx->EnsureCatalogSnapshot();
-    auto db_id = ctx->GetDatabaseId();
-    auto current_schema = ctx->GetCurrentSchema();
-    std::string_view name{enum_name_ptr->data(), enum_name_ptr->size()};
-    _enum_type = snapshot->GetEnumType(db_id, current_schema, name);
+    _enum_type = snapshot->GetObject<catalog::EnumType>(
+      ObjectId{static_cast<uint64_t>(*enum_oid_ptr)});
     SDB_ASSERT(_enum_type);
   }
 
   FOLLY_ALWAYS_INLINE bool call(int64_t& result,
                                 const arg_type<velox::Varchar>& label,
-                                const arg_type<velox::Varchar>&) {
+                                const int64_t&) {
     std::string_view val{label.data(), label.size()};
     auto oid = EnumLabelToOid(_enum_type->GetEntries(), val);
     if (!oid) {
@@ -78,7 +76,7 @@ struct PgEnumIn {
   std::shared_ptr<catalog::EnumType> _enum_type;
 };
 
-// pg_enum_out(oid BIGINT, enum_name VARCHAR) -> VARCHAR
+// pg_enum_out(oid BIGINT, enum_oid BIGINT) -> VARCHAR
 // Looks up the enum definition from the catalog in initialize(),
 // then converts OIDs to labels in call().
 template<typename T>
@@ -87,19 +85,17 @@ struct PgEnumOut {
 
   void initialize(const std::vector<velox::TypePtr>&,
                   const velox::core::QueryConfig& config, const int64_t*,
-                  const arg_type<velox::Varchar>* enum_name_ptr) {
+                  const int64_t* enum_oid_ptr) {
     auto* ctx =
       basics::downCast<const ConnectionContext>(config.config().get());
     auto snapshot = ctx->EnsureCatalogSnapshot();
-    auto db_id = ctx->GetDatabaseId();
-    auto current_schema = ctx->GetCurrentSchema();
-    std::string_view name{enum_name_ptr->data(), enum_name_ptr->size()};
-    _enum_type = snapshot->GetEnumType(db_id, current_schema, name);
+    _enum_type = snapshot->GetObject<catalog::EnumType>(
+      ObjectId{static_cast<uint64_t>(*enum_oid_ptr)});
     SDB_ASSERT(_enum_type);
   }
 
   FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& result, int64_t oid,
-                                const arg_type<velox::Varchar>&) {
+                                const int64_t&) {
     auto label = EnumOidToLabel(_enum_type->GetEntries(), oid);
     if (!label) {
       return false;
@@ -114,9 +110,9 @@ struct PgEnumOut {
 };
 
 void registerEnumFunctions(const std::string& prefix) {
-  velox::registerFunction<PgEnumIn, int64_t, velox::Varchar, velox::Varchar>(
+  velox::registerFunction<PgEnumIn, int64_t, velox::Varchar, int64_t>(
     {prefix + "enum_in"});
-  velox::registerFunction<PgEnumOut, velox::Varchar, int64_t, velox::Varchar>(
+  velox::registerFunction<PgEnumOut, velox::Varchar, int64_t, int64_t>(
     {prefix + "enum_out"});
 }
 

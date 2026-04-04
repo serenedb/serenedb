@@ -207,16 +207,18 @@ velox::TypePtr Oid2Type(int32_t oid) {
   }
 }
 
-std::string ToPgTypeString(const velox::Type& type) {
-  return ToPgTypeString(velox::TypePtr{velox::TypePtr{}, &type});
+std::string ToPgTypeString(const velox::Type& type,
+                           const catalog::Snapshot& snapshot) {
+  return ToPgTypeString(velox::TypePtr{velox::TypePtr{}, &type}, snapshot);
 }
 
-std::string ToPgTypeString(const velox::TypePtr& type) {
+std::string ToPgTypeString(const velox::TypePtr& type,
+                           const catalog::Snapshot& snapshot) {
   if (!type || IsUnknown(type)) [[unlikely]] {
     return "unknown";
   }
   if (type->isArray()) {
-    return ToPgTypeString(type->asArray().elementType()) + "[]";
+    return ToPgTypeString(type->asArray().elementType(), snapshot) + "[]";
   }
   if (type->isDecimal()) {
     return "numeric";
@@ -226,9 +228,6 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
   }
   if (IsInterval(type)) {
     return "interval";
-  }
-  if (auto* e = AsEnum(type)) {
-    return e->EnumName();
   }
   if (IsOid(type)) {
     return "oid";
@@ -314,6 +313,10 @@ std::string ToPgTypeString(const velox::TypePtr& type) {
     case velox::TypeKind::UNKNOWN:
       return "unknown";
     default:
+      if (IsEnum(type)) {
+        const auto& pgenum = basics::downCast<PgEnumType>(type.get());
+        return EnumOut(snapshot, pgenum->Oid());
+      }
       SDB_ASSERT(false);  // better to specify the name
       return "unknown";
   }
@@ -778,6 +781,26 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), name);
   if (schema) {
     return schema->GetId();
+  }
+  return kInvalidOid;
+}
+
+std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t oid) {
+  auto object = snapshot.GetObject(ObjectId{oid});
+  if (object && object->GetType() == catalog::ObjectType::EnumType) {
+    return std::string{object->GetName()};
+  }
+  return absl::StrCat(oid);
+}
+
+uint64_t EnumIn(const ConnectionContext& ctx, std::string_view name) {
+  auto snapshot = ctx.EnsureCatalogSnapshot();
+  auto current_schema = ctx.GetCurrentSchema();
+  auto object_name = ParseObjectName(name, current_schema);
+  auto enum_type = snapshot->GetEnumType(
+    ctx.GetDatabaseId(), object_name.schema, object_name.relation);
+  if (enum_type) {
+    return enum_type->GetId();
   }
   return kInvalidOid;
 }

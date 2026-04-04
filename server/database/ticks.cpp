@@ -33,6 +33,9 @@ namespace sdb {
 namespace {
 
 std::atomic<uint64_t> gCurrentTick = id::kMaxSystem.id();
+// we use objectids as oids for PG types, and PG requires user-defined types to
+// have OIDs above 16384
+static_assert(id::kMaxSystem.id() = > 16384);
 basics::HybridLogicalClock gHybridLogicalClock;
 
 }  // namespace

@@ -34,7 +34,12 @@ namespace sdb::catalog {
 
 class CompositeType : public SchemaObject {
  public:
-  CompositeType(ObjectId id, std::string_view name, velox::RowTypePtr row_type);
+  struct Options {
+    std::string_view name;
+    velox::RowTypePtr row_type;
+  };
+
+  CompositeType(ObjectId id, Options options);
 
   const velox::RowTypePtr& GetRowType() const noexcept { return _row_type; }
 

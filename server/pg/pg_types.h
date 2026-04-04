@@ -158,8 +158,10 @@ constexpr int32_t Kind2Oid(velox::TypeKind kind, bool in_array) {
 int32_t Type2Oid(const velox::TypePtr& type, bool in_array = false);
 velox::TypePtr Oid2Type(int32_t oid);
 
-std::string ToPgTypeString(const velox::Type& type);
-std::string ToPgTypeString(const velox::TypePtr& type);
+std::string ToPgTypeString(const velox::Type& type,
+                           const catalog::Snapshot& snapshot);
+std::string ToPgTypeString(const velox::TypePtr& type,
+                           const catalog::Snapshot& snapshot);
 
 inline constexpr uint64_t kInvalidOid = 0;
 
@@ -171,6 +173,9 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 
 std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);
+
+std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t oid);
+uint64_t EnumIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;
 

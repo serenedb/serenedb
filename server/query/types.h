@@ -98,9 +98,9 @@ SDB_DECLARE_PG_TYPE(int64_t, PGXID8, Xid8, "PG_XID8");
 // Provides custom comparison: == uses OID directly, < / > use sort order.
 class PgEnumType final : public velox::BigintType {
  public:
-  PgEnumType(std::string enum_name, std::vector<catalog::EnumLabel> entries);
+  PgEnumType(uint64_t oid, std::vector<catalog::EnumLabel> entries);
 
-  const std::string& EnumName() const noexcept { return _enum_name; }
+  uint64_t Oid() const noexcept { return _oid; }
   const std::vector<catalog::EnumLabel>& Entries() const noexcept {
     return _entries;
   }
@@ -119,16 +119,13 @@ class PgEnumType final : public velox::BigintType {
  private:
   static constexpr std::string_view kTypeName = "PG_ENUM";
 
-  std::string _enum_name;
+  uint64_t _oid;
   std::vector<catalog::EnumLabel> _entries;
 };
 
-velox::TypePtr PGENUM(std::string name,
-                      std::vector<catalog::EnumLabel> entries);
+velox::TypePtr PGENUM(uint64_t oid, std::vector<catalog::EnumLabel> entries);
 bool IsEnum(const velox::TypePtr& type);
 bool IsEnum(const velox::Type& type);
-const PgEnumType* AsEnum(const velox::TypePtr& type);
-const PgEnumType* AsEnum(const velox::Type& type);
 
 // Free functions for OID<->label conversion on raw entry vectors (e.g. from
 // catalog::EnumType)

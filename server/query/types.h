@@ -24,7 +24,6 @@
 #include <velox/type/SimpleFunctionApi.h>
 #include <velox/type/Type.h>
 
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -105,8 +104,8 @@ class PgEnumType final : public velox::BigintType {
     return _entries;
   }
 
-  std::optional<int64_t> LabelToOid(std::string_view label) const;
-  std::optional<std::string_view> OidToLabel(int64_t oid) const;
+  std::string_view Label(int64_t oid) const;
+  int64_t Oid(std::string_view label) const;
 
   int32_t compare(const int64_t& left, const int64_t& right) const override;
   uint64_t hash(const int64_t& value) const override;
@@ -126,13 +125,6 @@ class PgEnumType final : public velox::BigintType {
 velox::TypePtr PGENUM(uint64_t oid, std::vector<catalog::EnumLabel> entries);
 bool IsEnum(const velox::TypePtr& type);
 bool IsEnum(const velox::Type& type);
-
-// Free functions for OID<->label conversion on raw entry vectors (e.g. from
-// catalog::EnumType)
-std::optional<int64_t> EnumLabelToOid(
-  const std::vector<catalog::EnumLabel>& entries, std::string_view label);
-std::optional<std::string_view> EnumOidToLabel(
-  const std::vector<catalog::EnumLabel>& entries, int64_t oid);
 
 void RegisterTypes();
 

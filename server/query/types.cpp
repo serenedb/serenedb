@@ -217,31 +217,20 @@ folly::dynamic PgEnumType::serialize() const {
   return obj;
 }
 
-std::optional<int64_t> EnumLabelToOid(
-  const std::vector<catalog::EnumLabel>& entries, std::string_view label) {
-  for (size_t i = 0; i < entries.size(); ++i) {
-    if (entries[i].label == label) {
+std::string_view PgEnumType::Label(int64_t oid) const {
+  auto idx = static_cast<size_t>(oid);
+  SDB_ASSERT(idx < _entries.size());
+  return _entries[idx].label;
+}
+
+int64_t PgEnumType::Oid(std::string_view label) const {
+  for (size_t i = 0; i < _entries.size(); ++i) {
+    if (_entries[i].label == label) {
       return static_cast<int64_t>(i);
     }
   }
-  return std::nullopt;
-}
-
-std::optional<std::string_view> EnumOidToLabel(
-  const std::vector<catalog::EnumLabel>& entries, int64_t oid) {
-  auto idx = static_cast<size_t>(oid);
-  if (idx < entries.size()) {
-    return entries[idx].label;
-  }
-  return std::nullopt;
-}
-
-std::optional<int64_t> PgEnumType::LabelToOid(std::string_view label) const {
-  return EnumLabelToOid(_entries, label);
-}
-
-std::optional<std::string_view> PgEnumType::OidToLabel(int64_t oid) const {
-  return EnumOidToLabel(_entries, oid);
+  SDB_ASSERT(false, "enum label not found: ", label);
+  return -1;
 }
 
 int32_t PgEnumType::compare(const int64_t& left, const int64_t& right) const {

@@ -792,9 +792,10 @@ std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,
   auto enum_type =
     snapshot.GetObject<catalog::EnumType>(ObjectId{enum_type_oid});
   if (enum_type) {
-    auto label = EnumOidToLabel(enum_type->GetEntries(), value_oid);
-    if (label) {
-      return std::string{*label};
+    auto idx = static_cast<size_t>(value_oid);
+    const auto& entries = enum_type->GetEntries();
+    if (idx < entries.size()) {
+      return std::string{entries[idx].label};
     }
   }
   return absl::StrCat(value_oid);
@@ -805,9 +806,11 @@ int64_t EnumIn(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,
   auto enum_type =
     snapshot.GetObject<catalog::EnumType>(ObjectId{enum_type_oid});
   if (enum_type) {
-    auto oid = EnumLabelToOid(enum_type->GetEntries(), label);
-    if (oid) {
-      return *oid;
+    const auto& entries = enum_type->GetEntries();
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].label == label) {
+        return static_cast<int64_t>(i);
+      }
     }
   }
   return kInvalidOid;

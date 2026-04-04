@@ -625,12 +625,7 @@ void SerializeEnumText(SerializationContext context,
   const auto& enum_type =
     basics::downCast<const pg::PgEnumType>(*context.column_type);
   const auto oid = decoded_vector.valueAt<int64_t>(row);
-  auto label = enum_type.OidToLabel(oid);
-  if (label) {
-    context.buffer->WriteUncommitted(*label);
-  } else {
-    context.buffer->WriteUncommitted(absl::StrCat("<invalid_enum:", oid, ">"));
-  }
+  context.buffer->WriteUncommitted(enum_type.Label(oid));
 }
 
 // Binary serialization for oid-like types:

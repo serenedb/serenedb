@@ -40,7 +40,8 @@ class SearchDataSource final : public velox::connector::DataSource {
  public:
   SearchDataSource(velox::memory::MemoryPool& memory_pool,
                    Materializer materializer, const irs::IndexReader& reader,
-                   const irs::Filter::Query& query, const irs::Scorer* scorer);
+                   const irs::Filter::Query& query, const irs::Scorer* scorer,
+                   size_t topk_limit = 0);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -54,6 +55,8 @@ class SearchDataSource final : public velox::connector::DataSource {
   void cancel() final;
 
  private:
+  void collectTopK();
+
   velox::memory::MemoryPool& _memory_pool;
   Materializer _materializer;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
@@ -69,6 +72,16 @@ class SearchDataSource final : public velox::connector::DataSource {
   const irs::Scorer* _scorer = nullptr;
   irs::ColumnArgsFetcher _fetcher;
   irs::ScoreFunction _score_function;
+
+  // Top-k state
+  size_t _topk_limit{0};
+  bool _topk_collected{false};
+  size_t _topk_cursor{0};
+  struct TopKResult {
+    std::string pk;
+    irs::score_t score;
+  };
+  std::vector<TopKResult> _topk_results;
 };
 
 }  // namespace sdb::connector

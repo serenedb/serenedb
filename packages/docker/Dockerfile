@@ -1,93 +1,48 @@
-# ---- Extract Stage ----
-FROM ubuntu:24.04 AS extractor
-
-ARG TARGETARCH
-COPY install-${TARGETARCH}.tar.gz /tmp/install.tar.gz
-RUN mkdir -p /tmp/serenedb-extract \
-    && tar -xzf /tmp/install.tar.gz -C /tmp/serenedb-extract --strip-components=1 \
-    && rm /tmp/install.tar.gz \
-    && cd /tmp/serenedb-extract \
-    && if [ -d sbin ]; then cp -f sbin/* usr/sbin/; rm -rf sbin; fi \
-    && if [ -d bin ]; then cp -f bin/* usr/bin/; rm -rf bin; fi
-
-# ---- Runtime Stage ----
 FROM ubuntu:24.04
 
-LABEL maintainer="SereneDB"
+LABEL maintainer="SereneDB GmbH <support@serenedb.com>"
 LABEL org.opencontainers.image.title="SereneDB"
 LABEL org.opencontainers.image.description="SereneDB Database Server"
-LABEL org.opencontainers.image.vendor="SereneDB"
+LABEL org.opencontainers.image.vendor="SereneDB GmbH"
 
-# Install runtime dependencies
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        numactl \
-        pwgen \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Extract pre-built binaries into filesystem
+ARG TARGETARCH
+COPY install-${TARGETARCH}.tar.gz /tmp/install.tar.gz
 
-# Copy extracted files from build stage
-COPY --from=extractor /tmp/serenedb-extract/ /
+# All setup in single layer to minimize image size
+RUN \
+  # Extract pre-built binaries (strip top-level dir name from tarball)
+  tar -xzf /tmp/install.tar.gz -C / --strip-components=1 && \
+  rm /tmp/install.tar.gz && \
+  # numactl: NUMA optimization for multi-socket systems
+  # postgresql-client: psql for debugging, pg_isready for health checks
+  apt-get update && \
+  apt-get install -y --no-install-recommends numactl postgresql-client && \
+  # Create non-root user for running serened
+  groupadd -r serenedb && \
+  useradd -r -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin serenedb && \
+  # Create data directory (775 + group 0 for OpenShift compatibility)
+  install -o serenedb -g 0 -m 775 -d /var/lib/serenedb && \
+  # TODO: add /docker-entrypoint-initdb.d for PostgreSQL-style init scripts (.sh/.sql)
+  # Bind to all interfaces and log to stdout (for docker networking and journald)
+  if [ -f /etc/serenedb/serened.conf ]; then \
+    sed -i -e 's~^endpoint.*7890$~endpoint = pgsql+tcp://0.0.0.0:7890~' /etc/serenedb/serened.conf; \
+    sed -i -e 's!^\(file\s*=\s*\).*!\1 -!' /etc/serenedb/serened.conf; \
+  fi && \
+  # Explicitly set UTC timezone (ubuntu:24.04 defaults to UTC, but be safe)
+  echo "UTC" > /etc/timezone && \
+  # Cleanup: remove unused base packages, apt cache, docs, locales
+  apt-get autopurge -y --allow-remove-essential e2fsprogs login passwd mount && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/* \
+         /usr/share/doc/* /usr/share/man/* /usr/share/info/* \
+         /usr/share/locale/* /usr/share/i18n/* /root/.cache /tmp/*
 
-# Setup script (creates directories, patches config, installs rclone)
-COPY setup.sh /tmp/setup.sh
-RUN chmod +x /tmp/setup.sh \
-    && /tmp/setup.sh \
-    && rm -f /tmp/setup.sh
-
-# Remove unnecessary packages and clean up
-RUN apt-get update \
-    && apt-get remove --purge -y \
-        e2fsprogs \
-        login \
-        passwd \
-        mount \
-    ; apt-get autoremove -y \
-    ; apt-get clean \
-    # Delete GPG binaries directly (packages may not be installed)
-    && rm -f \
-        /usr/bin/gpg \
-        /usr/bin/gpgv \
-        /usr/bin/gpg-agent \
-        /usr/bin/gpgconf \
-        /usr/bin/gpgsm \
-        /usr/bin/dirmngr \
-    # Delete caches, docs, logs, locales
-    && rm -rf \
-        /var/lib/apt/lists/* \
-        /var/cache/apt/* \
-        /var/log/* \
-        /usr/share/doc/* \
-        /usr/share/man/* \
-        /usr/share/info/* \
-        /usr/share/locale/* \
-        /usr/share/i18n/* \
-        /usr/share/lintian/* \
-        /usr/share/bug/* \
-        /usr/share/zsh/* \
-        /tmp/* \
-        /var/tmp/* \
-        /root/.cache \
-        /var/lib/dpkg/info/*.md5sums
-
-# Environment
-ENV GLIBCXX_FORCE_NEW=1
-
-# Default timezone
-RUN echo "UTC" > /etc/timezone
-
-# Permissions for OpenShift compatibility
-RUN chgrp -R 0 /var/lib/serenedb \
-    && chmod -R 775 /var/lib/serenedb
-
-# Volumes
 VOLUME ["/var/lib/serenedb"]
+EXPOSE 7890
 
-# Entrypoint
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
-EXPOSE 8529
-
+USER serenedb
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serened"]

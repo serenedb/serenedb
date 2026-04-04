@@ -8,11 +8,11 @@ on:
         type: string
         required: false
         default: "linux"
-      RUN_RTA:
-        description: "Run RTA tests after packaging"
-        type: boolean
+      RTA:
+        description: "RTA mode: off, test (ignore failures), required (block on failure)"
+        type: string
         required: false
-        default: false
+        default: "off"
       UPLOAD_ARTIFACTS:
         description: "Upload tarball + deb for release"
         type: boolean
@@ -40,6 +40,7 @@ on:
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+  CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
 
 jobs:
   package:
@@ -116,7 +117,7 @@ jobs:
             -e USE_COVERAGE= \
             -e ENSURE_VTUNE_SYMBOLS=Off \
             -e BUILD_DIR=build \
-            ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+            -e EXTRA_CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=/usr${EXTRA_FLAGS:+ $EXTRA_FLAGS}" \
             -v "${WORKSPACE}:/serenedb" \
             -v /mnt/data/.ccache:/.ccache \
             "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
@@ -126,30 +127,28 @@ jobs:
         if: steps.build.outcome == 'success'
         run: ./scripts/ci/steps/05-ci-in-docker-package.bash
 
-      # ==================== RTA ====================
-      - name: Release Test Automation (RTA)
-        id: rta
-        if: inputs.RUN_RTA && steps.package.outcome == 'success'
-        run: ./scripts/ci/steps/08-ci-rta.bash
+      - name: Deb RTA
+        id: deb_rta
+        if: inputs.RTA != 'off' && steps.package.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        run: ./scripts/ci/steps/08-ci-deb-rta.bash
 
-      # ==================== UPLOAD ====================
-      - name: Upload release tarball
-        if: inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarball-${{ inputs.LOCATION }}
-          path: packages/tarball/install-*.tar.gz
-          retention-days: 1
+      - name: Tarball RTA
+        id: tarball_rta
+        if: inputs.RTA != 'off' && steps.package.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        run: ./scripts/ci/steps/08-ci-tarball-rta.bash
 
       - name: Upload packages
-        if: inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        if: always() && inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v7
         with:
-          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
+          name: packages-${{ inputs.LOCATION }}
           path: |
-            *.deb
-            *.tar.gz
+            serenedb-*.tar.gz
+            serenedb*.deb
           if-no-files-found: ignore
+          retention-days: 1
 
       - name: Upload build logs
         if: always()

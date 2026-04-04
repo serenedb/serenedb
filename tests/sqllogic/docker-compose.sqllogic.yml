@@ -20,7 +20,6 @@ services:
             --server.endpoint pgsql+tcp://0.0.0.0:7777 \
             --server.endpoint pgsql+ssl://0.0.0.0:7778 \
             --ssl.keyfile /serenedb/resources/ca.pem \
-            --server.endpoint tcp://0.0.0.0:8529 \
             --server.authentication 0
         '
 

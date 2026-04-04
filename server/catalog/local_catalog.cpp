@@ -341,7 +341,7 @@ class SnapshotImpl : public Snapshot {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tables.insert(object->GetId());
       } break;
-      case ObjectType::Function: {
+      case ObjectType::PgFunction: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
       } break;
@@ -349,7 +349,7 @@ class SnapshotImpl : public Snapshot {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tokenizers.insert(object->GetId());
       } break;
-      case ObjectType::View: {
+      case ObjectType::PgView: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->views.insert(object->GetId());
       } break;
@@ -748,7 +748,7 @@ class SnapshotImpl : public Snapshot {
             dep->indexes.erase(obj->GetId());
           }
         } break;
-        case ObjectType::Function: {
+        case ObjectType::PgFunction: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
@@ -763,7 +763,7 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->tables.erase(id);
         } break;
-        case ObjectType::View: {
+        case ObjectType::PgView: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->views.erase(id);
@@ -812,8 +812,8 @@ class SnapshotImpl : public Snapshot {
         }
 
       } break;
-      case ObjectType::Function:
-      case ObjectType::View:
+      case ObjectType::PgFunction:
+      case ObjectType::PgView:
       case ObjectType::Tokenizer:
         break;
       case ObjectType::TableShard:
@@ -1198,7 +1198,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, view->GetName())
         .transform([&](ObjectId existed_id) {
           auto existed_object = _snapshot->GetObject<SchemaObject>(existed_id);
-          return existed_object->GetType() == ObjectType::View
+          return existed_object->GetType() == ObjectType::PgView
                    ? Result{}
                    : Result{ERROR_SERVER_ILLEGAL_NAME, "\"", view->GetName(),
                             "\" is not a view"};
@@ -1219,7 +1219,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       auto builder = WriteCatalogObject(*view);
-      return _engine->CreateDefinition(*schema_id, ObjectType::View,
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgView,
                                        view->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
@@ -1246,7 +1246,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       auto builder = WriteCatalogObject(*function);
-      return _engine->CreateDefinition(*schema_id, ObjectType::Function,
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgFunction,
                                        function->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
@@ -1470,7 +1470,7 @@ Result LocalCatalog::RenameRelation(ObjectId database_id,
   switch (obj->GetType()) {
     case ObjectType::Table:
       return RenameTable(database_id, schema, name, new_name);
-    case ObjectType::View:
+    case ObjectType::PgView:
       return RenameView(database_id, schema, name, new_name);
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
@@ -1567,7 +1567,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
     }
 
     auto builder = WriteCatalogObject(*updated);
-    return _engine->CreateDefinition(*schema_id, ObjectType::View,
+    return _engine->CreateDefinition(*schema_id, ObjectType::PgView,
                                      updated->GetId(),
                                      [&](bool) { return builder.slice(); });
   });
@@ -1828,13 +1828,13 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     }
     auto obj = clone->GetObject(*view_id);
     SDB_ASSERT(obj);
-    if (obj->GetType() != ObjectType::View) {
+    if (obj->GetType() != ObjectType::PgView) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
                     magic_enum::enum_name(obj->GetType())};
     }
     auto view = basics::downCast<View>(std::move(obj));
     auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::View, view->GetId());
+      _engine->DropDefinition(*schema_id, ObjectType::PgView, view->GetId());
     if (!r.ok()) {
       return r;
     }
@@ -1860,7 +1860,7 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
     auto func = clone->GetObject<Function>(*func_id);
     SDB_ASSERT(func);
     auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::Function, *func_id);
+      _engine->DropDefinition(*schema_id, ObjectType::PgFunction, *func_id);
     if (!r.ok()) {
       return r;
     }

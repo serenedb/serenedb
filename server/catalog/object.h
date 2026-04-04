@@ -52,8 +52,8 @@ enum class ObjectType : uint8_t {
   SecondaryIndexShard,
   InvertedIndex,
   InvertedIndexShard,
-  View,
-  Function,
+  PgView,
+  PgFunction,
   Tokenizer,
 
   // Runtime only, not persisted.

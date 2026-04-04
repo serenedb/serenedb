@@ -143,7 +143,7 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
                  {},
                  {},  // TOOD(mbkkt) think about id
                  std::string{name},
-                 ObjectType::Function},
+                 ObjectType::PgFunction},
     _signature{std::move(signature)},
     _options{std::move(options)} {
   SDB_ASSERT(!this->GetName().empty());
@@ -159,7 +159,7 @@ catalog::Function::Function(FunctionProperties&& properties,
                  {},
                  properties.id,
                  std::move(properties.name),
-                 ObjectType::Function},
+                 ObjectType::PgFunction},
     _signature{std::move(properties.signature)},
     _options{std::move(properties.options)},
     _sql_impl{std::move(function)} {

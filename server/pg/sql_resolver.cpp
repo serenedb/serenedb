@@ -147,7 +147,7 @@ void ResolveFunction(ObjectId database,
               name.FullName(), "\" does not exist");
   }
 
-  SDB_ASSERT(data.object->GetType() == catalog::ObjectType::Function);
+  SDB_ASSERT(data.object->GetType() == catalog::ObjectType::PgFunction);
   resolve_sql_func(&basics::downCast<catalog::Function>(*data.object));
 }
 
@@ -187,7 +187,7 @@ void ResolveRelation(ObjectId database,
   if (name.schema == StaticStrings::kInformationSchema) {
     ResolveInformationSchema(database, name.relation, data, config);
     if (data.object) {
-      if (data.object->GetType() == catalog::ObjectType::View) {
+      if (data.object->GetType() == catalog::ObjectType::PgView) {
         resolve_view();
       }
       return;
@@ -222,7 +222,7 @@ void ResolveRelation(ObjectId database,
       }
     }
     data.catalog_data = std::move(impl);
-  } else if (data.object->GetType() == catalog::ObjectType::View) {
+  } else if (data.object->GetType() == catalog::ObjectType::PgView) {
     resolve_view();
   } else if (catalog::IsIndex(data.object->GetType())) {
     auto& index = basics::downCast<catalog::Index>(*data.object);

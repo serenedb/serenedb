@@ -71,13 +71,13 @@ struct CreateIndexOperationOptions {
 template<typename T>
 constexpr ObjectType GetObjectType() noexcept {
   if constexpr (std::is_same_v<T, View>) {
-    return ObjectType::View;
+    return ObjectType::PgView;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
   } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
   } else if constexpr (std::is_same_v<T, Function>) {
-    return ObjectType::Function;
+    return ObjectType::PgFunction;
   } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
   } else if constexpr (std::is_same_v<T, Index> ||

@@ -43,7 +43,7 @@ namespace sdb::catalog {
 
 View::View(ObjectId database_id, ObjectId id, std::string_view name,
            std::string query, std::shared_ptr<const State> state)
-  : SchemaObject{{}, database_id, {}, id, name, ObjectType::View},
+  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgView},
     _query{std::move(query)},
     _state{std::move(state)} {}
 

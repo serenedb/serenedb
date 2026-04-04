@@ -1745,7 +1745,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot insert into view \"", table_name, "\""),
@@ -1844,7 +1844,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
   const std::string_view table_name = relation.relname;
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot update view \"", table_name, "\""),
@@ -1952,7 +1952,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
   const std::string_view table_name = relation.relname;
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot delete from view \"", table_name, "\""),
@@ -2299,7 +2299,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
     SDB_ASSERT(object.object);
-    if (object.object->GetType() == catalog::ObjectType::View) {
+    if (object.object->GetType() == catalog::ObjectType::PgView) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("cannot copy to view \"", relname, "\""),
@@ -4217,7 +4217,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
 
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgView) {
     const auto& view = basics::downCast<catalog::View>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {

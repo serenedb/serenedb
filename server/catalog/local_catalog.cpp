@@ -1071,9 +1071,7 @@ Result LocalCatalog::CreateIndexImpl(
         index->SetTombstoned(true);
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      auto shard_type = index->GetType() == ObjectType::SecondaryIndex
-                          ? ObjectType::SecondaryIndexShard
-                          : ObjectType::InvertedIndexShard;
+      auto shard_type = IndexShardType(index->GetType());
       {  // Write index definition
         auto b = WriteCatalogObject(*index);
         r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),

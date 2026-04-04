@@ -125,9 +125,7 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
       !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  auto shard_type = base_opts.type == ObjectType::InvertedIndex
-                      ? ObjectType::InvertedIndexShard
-                      : ObjectType::SecondaryIndexShard;
+  auto shard_type = IndexShardType(base_opts.type);
   ObjectId shard_id;
   auto r = engine.VisitDefinitions(index_id, shard_type,
                                    [&](DefinitionKey key, vpack::Slice) {
@@ -453,8 +451,7 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   };
 
   auto is_inverted = index->GetType() == ObjectType::InvertedIndex;
-  auto shard_type = is_inverted ? ObjectType::InvertedIndexShard
-                                : ObjectType::SecondaryIndexShard;
+  auto shard_type = IndexShardType(index->GetType());
 
   return GetServerEngine().VisitDefinitions(
     index->GetId(), shard_type,

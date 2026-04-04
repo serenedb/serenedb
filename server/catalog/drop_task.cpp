@@ -114,9 +114,7 @@ AsyncResult TableShardDrop::Execute() {
 
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto shard_type = _type == catalog::ObjectType::SecondaryIndex
-                      ? catalog::ObjectType::SecondaryIndexShard
-                      : catalog::ObjectType::InvertedIndexShard;
+  auto shard_type = catalog::IndexShardType(_type);
   auto r = server.DropEntry(_id, shard_type);
   if (!r.ok()) {
     return r;

@@ -69,6 +69,12 @@ constexpr bool IsIndexShard(ObjectType t) noexcept {
          t == ObjectType::InvertedIndexShard;
 }
 
+constexpr ObjectType IndexShardType(ObjectType index_type) noexcept {
+  return index_type == ObjectType::InvertedIndex
+           ? ObjectType::InvertedIndexShard
+           : ObjectType::SecondaryIndexShard;
+}
+
 // https://www.postgresql.org/docs/current/sql-grant.html
 enum class AclMode : uint64_t {
   NoRights = 0U,

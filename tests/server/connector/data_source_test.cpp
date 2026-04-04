@@ -178,7 +178,7 @@ class DataSourceTest : public ::testing::Test,
   std::vector<rocksdb::ColumnFamilyDescriptor> _cf_families;
   rocksdb::TransactionDB* _db{nullptr};
   std::vector<rocksdb::ColumnFamilyHandle*> _cf_handles;
-  absl::Mutex _table_lock;
+  std::shared_mutex _table_lock;
 };
 
 TEST_F(DataSourceTest, test_tableReadFlatScalar) {

@@ -622,6 +622,15 @@ class SnapshotImpl : public Snapshot {
            std::ranges::to<std::vector>();
   }
 
+  std::vector<std::shared_ptr<Index>> GetIndexesByTable(
+    ObjectId id) const final {
+    auto table_dep = GetDependency<TableDependency>(id);
+    return table_dep->indexes | std::views::transform([&](auto index_id) {
+             return GetObject<Index>(index_id);
+           }) |
+           std::ranges::to<std::vector>();
+  }
+
   template<ResolveType Type>
   std::optional<ObjectId> GetObjectId(ObjectId parent_id,
                                       std::string_view name) const {

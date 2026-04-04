@@ -32,6 +32,8 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sql_function_impl.h"
 #include "catalog/view.h"
+#include "functions/search.h"
+#include "functions/vector.h"
 #include "general_server/state.h"
 #include "pg/commands.h"
 #include "pg/information_schema/sql_features.h"
@@ -110,7 +112,6 @@
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
-#include "search/functions.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -738,16 +739,22 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     // Other scalar stubs
     .Case("getdatabaseencoding", VeloxFunction{"pg_getdatabaseencoding"})
     // Search functions
-    .Case("phrase", VeloxFunction{search::functions::kPhrase, false})
-    .Case("term_eq", VeloxFunction{search::functions::kTermEq, false})
-    .Case("term_lt", VeloxFunction{search::functions::kTermLt, false})
-    .Case("term_lte", VeloxFunction{search::functions::kTermLe, false})
-    .Case("term_gte", VeloxFunction{search::functions::kTermGe, false})
-    .Case("term_gt", VeloxFunction{search::functions::kTermGt, false})
-    .Case("term_in", VeloxFunction{search::functions::kTermIn, false})
-    .Case("term_like", VeloxFunction{search::functions::kTermLike, false})
-    .Case("ngram_match", {search::functions::kNgramMatch, false})
-    .Case("levenshtein_match", {search::functions::kLevenshteinMatch, false});
+    .Case("phrase", VeloxFunction{functions::kPhrase, false})
+    .Case("term_eq", VeloxFunction{functions::kTermEq, false})
+    .Case("term_lt", VeloxFunction{functions::kTermLt, false})
+    .Case("term_lte", VeloxFunction{functions::kTermLe, false})
+    .Case("term_gte", VeloxFunction{functions::kTermGe, false})
+    .Case("term_gt", VeloxFunction{functions::kTermGt, false})
+    .Case("term_in", VeloxFunction{functions::kTermIn, false})
+    .Case("term_like", VeloxFunction{functions::kTermLike, false})
+    .Case("ngram_match", {functions::kNgramMatch, false})
+    .Case("levenshtein_match", {functions::kLevenshteinMatch, false})
+    .Case("boost", VeloxFunction{functions::kBoost, false})
+    // Vector functions
+    .Case("l2_distance", VeloxFunction{functions::kL2Distance, false})
+    .Case("l1_distance", VeloxFunction{functions::kL1Distance, false})
+    .Case("cosine_distance", VeloxFunction{functions::kCosineDistance, false})
+    .Case("inner_product", VeloxFunction{functions::kInnerProduct, false});
 };
 
 const VirtualTable* GetTableFromSchema(std::string_view name,

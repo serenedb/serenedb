@@ -1043,3 +1043,60 @@ id
 
 statement ok
 DROP TABLE bigdocs;
+
+
+statement ok
+CREATE TABLE boost_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY boost_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX boost_docs_idx ON boost_docs USING inverted(id, body boost_en);
+
+
+statement count 1
+INSERT INTO boost_docs VALUES (1, 'alpha');
+
+
+statement count 1
+INSERT INTO boost_docs VALUES (2, 'beta');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) boost_docs;
+
+
+query
+SELECT id FROM boost_docs_idx
+WHERE BOOST(TERM_EQ(body, 'alpha'), 1000.5) OR TERM_EQ(body, 'beta')
+ORDER BY BM25() DESC, id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM boost_docs_idx
+WHERE TERM_EQ(body, 'alpha') OR BOOST(TERM_EQ(body, 'beta'), 1000.5)
+ORDER BY BM25() DESC, id;
+----
+id
+2
+1
+
+
+statement ok
+DROP TABLE boost_docs;

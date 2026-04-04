@@ -77,9 +77,6 @@ echo ":: Generating HTML coverage report..."
 
 echo ":: Coverage reports generated successfully!"
 echo "   HTML: ./combined_coverage/llvm_html"
-
-# Fix ownership for CI runner
-chown "${RUNNER_ID}" -R /serenedb
 '
 
 echo "=========================================="
@@ -89,16 +86,15 @@ echo "Build directories: ${BUILD_DIRS_STR}"
 echo "=========================================="
 
 if docker run --rm \
+	--user "$(id -u):$(id -g)" \
+	-e HOME=/serenedb \
 	--ulimit core=-1 \
 	--ulimit nofile=16384:16384 \
 	--cap-add=SYS_PTRACE \
-	--privileged \
 	--security-opt seccomp=unconfined \
 	--env-file ./docker.env \
 	-e "BUILD_DIRS_STR=${BUILD_DIRS_STR}" \
 	-v "${WORKSPACE}:/serenedb" \
-	-v /etc/passwd:/etc/passwd:ro \
-	-v /etc/group:/etc/group:ro \
 	"${BUILD_IMAGE}" \
 	bash -c "${CONTAINER_SCRIPT}"; then
 	echo "GENERATE_COVERAGE=PASSED"

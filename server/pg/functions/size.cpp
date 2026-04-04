@@ -327,7 +327,7 @@ struct PgSizePretty {
 
 }  // namespace
 
-void registerSizeFunctions(const std::string& prefix) {
+void RegisterSizeFunctions(const std::string& prefix) {
   velox::registerFunction<PgColumnSize, int32_t, velox::Any>(
     {prefix + "column_size"});
   velox::registerFunction<PgColumnCompression, velox::Varchar, velox::Any>(

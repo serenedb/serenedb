@@ -690,7 +690,9 @@ class SecondaryIndexTableHandle final
       _points{std::move(points)},
       _sk_type{std::move(sk_type)},
       _underlying_table{&underlying_table},
-      _unique{unique} {}
+      _unique{unique} {
+    _transaction.AddRocksDBRead();
+  }
 
   bool supportsIndexLookup() const final { return false; }
 
@@ -1106,7 +1108,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           rocksdb_transaction.GetSnapshot(),
           connector_query_ctx->expressionEvaluator(), rocksdb_transaction,
           PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
-          PrimaryKeyColumnBuilder{});
+          PointLookupPKColumnBuilder{});
       }
 
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
@@ -1123,7 +1125,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         object_key, points, output_column_count, compiled_filter, snapshot,
         connector_query_ctx->expressionEvaluator(), _db,
         PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
-        PrimaryKeyColumnBuilder{});
+        PointLookupPKColumnBuilder{});
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(
@@ -1285,12 +1287,14 @@ class SereneDBConnector final : public velox::connector::Connector {
                 sec_index.IsUnique(),
                 [&]<bool UniqueIdx>()
                   -> std::unique_ptr<velox::connector::DataSink> {
-                  return std::make_unique<
-                    SSTInsertDataSink<false, true, UniqueIdx>>(
+                  constexpr auto kFlags =
+                    UniqueIdx ? SSTInsertFlag::Secondary | SSTInsertFlag::Unique
+                              : SSTInsertFlag::Secondary;
+                  return std::make_unique<SSTInsertDataSink<kFlags>>(
                     _db, _cf, *connector_query_ctx->memoryPool(),
                     shard->GetId(), backfill_pk_indices, columns,
                     std::vector<std::unique_ptr<SinkIndexWriter>>{}, table_lock,
-                    std::move(sk_children));
+                    std::move(sk_children), cis->progress);
                 });
             }
 
@@ -1308,15 +1312,17 @@ class SereneDBConnector final : public velox::connector::Connector {
             if (table.BulkInsert()) {
               const bool is_generated_pk = pk_indices.empty();
               if (is_generated_pk) {
-                return std::make_unique<SSTInsertDataSink<true, false, false>>(
+                return std::make_unique<
+                  SSTInsertDataSink<SSTInsertFlag::GeneratedPk>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
                   pk_indices, columns, std::move(insert_sinks), table_lock,
-                  std::vector<velox::column_index_t>{});
+                  std::vector<velox::column_index_t>{}, nullptr);
               } else {
-                return std::make_unique<SSTInsertDataSink<false, false, false>>(
+                return std::make_unique<
+                  SSTInsertDataSink<SSTInsertFlag::PrimaryKey>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
                   pk_indices, columns, std::move(insert_sinks), table_lock,
-                  std::vector<velox::column_index_t>{});
+                  std::vector<velox::column_index_t>{}, nullptr);
               }
             }
 
@@ -1442,9 +1448,6 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& pool = *connector_query_ctx->memoryPool();
 
     const auto& points = handle.GetPoints();
-    bool has_null_filter = absl::c_any_of(points, [](const auto& sp) {
-      return absl::c_any_of(sp, [](const auto& v) { return v.isNull(); });
-    });
 
     return CreateWithMaterializer(
       handle, output_type, output_type, column_oids, column_handles, pool,
@@ -1454,21 +1457,30 @@ class SereneDBConnector final : public velox::connector::Connector {
         using Mat = decltype(mat);
         using Src = std::remove_reference_t<decltype(source)>;
         constexpr bool kRYOW = std::is_same_v<Src, rocksdb::Transaction>;
+
+        if (points.empty()) {
+          return std::make_unique<SecondaryIndexFullScanDataSource<Mat, Src>>(
+            pool, std::move(mat), source, _cf, snapshot, handle.GetShardId(),
+            output_type);
+        }
+
+        bool has_null_filter = absl::c_any_of(points, [](const auto& sp) {
+          return absl::c_any_of(sp, [](const auto& v) { return v.isNull(); });
+        });
         if (handle.IsUnique() && !has_null_filter) {
           SecondaryKeyBuilder key_builder{handle.GetShardId(),
                                           handle.GetSKType()};
           return std::make_unique<
-            RocksDBPointLookupDataSource<SecondaryLookupPolicy<kRYOW, Mat>>>(
+            RocksDBPointLookupDataSource<SKLookupPolicy<kRYOW, Mat>>>(
             pool, _cf, output_type, column_oids, handle.TableId(), points,
             output_type->size(), nullptr, snapshot, nullptr, source,
             std::move(key_builder),
-            SecondaryKeyColumnBuilder<Mat>{std::move(mat), pool});
+            PointLookupSKColumnBuilder<Mat>{std::move(mat), pool});
         }
         return irs::ResolveBool(
           handle.IsUnique(),
           [&]<bool UniqueIdx>()
             -> std::unique_ptr<velox::connector::DataSource> {
-            // Iterator scan path still uses variant values.
             return std::make_unique<
               SecondaryIndexDataSource<Mat, UniqueIdx, Src>>(
               pool, std::move(mat), source, _cf, snapshot, handle.GetShardId(),

@@ -24,6 +24,6 @@
 
 namespace sdb::pg::functions {
 
-void registerStubFunctions(const std::string& prefix);
+void RegisterStubFunctions(const std::string& prefix);
 
 }  // namespace sdb::pg::functions

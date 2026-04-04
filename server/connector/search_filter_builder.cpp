@@ -29,6 +29,7 @@
 // NOLINTEND
 
 #include <velox/expression/ExprConstants.h>
+#include <velox/type/Type.h>
 
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
@@ -44,10 +45,11 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
 #include "catalog/mangling.h"
-#include "search/functions.hpp"
+#include "functions/search.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 #include "velox/type/CppToType.h"
@@ -721,6 +723,29 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
   return {};
 }
 
+Result FromSearchBoost(irs::BooleanFilter& filter,
+                       const VeloxFilterContext& ctx,
+                       const velox::core::CallTypedExpr& call) {
+  if (call.inputs().size() != 2) {
+    return {ERROR_BAD_PARAMETER, "BOOST has ", call.inputs().size(),
+            " inputs but 2 expected"};
+  }
+
+  auto boost_val = EvaluateConstant(call.inputs()[1]);
+  if (!boost_val.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate boost value as constant"};
+  }
+
+  const auto boost = static_cast<irs::score_t>(boost_val->value<double>());
+  if (boost < 0.0) {
+    return {ERROR_BAD_PARAMETER, "BOOST value must be >= 0, got ", boost};
+  }
+
+  auto boosted_ctx = ctx;
+  boosted_ctx.boost = boost;
+  return FromVeloxExpression(filter, boosted_ctx, call.inputs()[0]);
+}
+
 Result FromVeloxNgramMatch(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
                            const velox::core::CallTypedExpr& call) {
@@ -944,7 +969,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return MakeGroup<irs::Or>(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kTermEq) {
+  if (call.name() == functions::kTermEq) {
     return FromVeloxBinaryEq<false>(filter, ctx, call, false);
   }
 
@@ -966,7 +991,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     }
   }
 
-  if (call.name() == search::functions::kTermIn) {
+  if (call.name() == functions::kTermIn) {
     return FromVeloxIn<false>(filter, ctx, call);
   }
 
@@ -974,7 +999,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxIn<true>(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kTermLike) {
+  if (call.name() == functions::kTermLike) {
     return FromVeloxLike<false>(filter, ctx, call);
   }
 
@@ -982,16 +1007,20 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxLike<true>(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kPhrase) {
+  if (call.name() == functions::kPhrase) {
     return FromSearchPhrase(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kNgramMatch) {
+  if (call.name() == functions::kNgramMatch) {
     return FromVeloxNgramMatch(filter, ctx, call);
   }
 
-  if (call.name() == search::functions::kLevenshteinMatch) {
+  if (call.name() == functions::kLevenshteinMatch) {
     return FromVeloxLevenshteinMatch(filter, ctx, call);
+  }
+
+  if (call.name() == functions::kBoost) {
+    return FromSearchBoost(filter, ctx, call);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};

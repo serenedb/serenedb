@@ -37,11 +37,6 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::connector {
 namespace {
 
-// Whether execute push downed into table scan filters or use separate filter
-// operator. When value is changed, some explain tests will be broken (as
-// execution graph may change).
-constexpr bool kExecuteFiltersInTableScan = false;
-
 void RejectFilter(velox::core::TypedExprPtr filter,
                   std::vector<velox::core::TypedExprPtr>& rejected_filters) {
   if (!filter) {
@@ -56,64 +51,89 @@ void RejectFilter(velox::core::TypedExprPtr filter,
   }
 }
 
-std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
-  const velox::core::TypedExprPtr& filter, const axiom::connector::Table& table,
-  query::Transaction& transaction,
-  velox::core::TypedExprPtr& remaining_filter) {
-  auto& rocksdb_table = basics::downCast<const RocksDBTable>(table);
-  auto snapshot = transaction.EnsureCatalogSnapshot();
+struct MatchedPoints {
+  std::vector<SpecificPoint> points;
+  velox::core::TypedExprPtr remaining_filter;
+};
 
-  for (auto index_shard :
-       snapshot->GetIndexShardsByTable(rocksdb_table.TableId())) {
-    if (index_shard->GetType() != catalog::ObjectType::SecondaryIndexShard) {
-      continue;
-    }
-    auto index = snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
-    if (!index) {
-      continue;
-    }
-    auto index_col_ids = index->GetColumnIds();
+std::optional<MatchedPoints> TryMatchPointFilters(
+  const velox::core::TypedExprPtr& filter,
+  std::span<const std::string> column_names) {
+  auto res = ExtractAndRewriteFilterExpr(filter, column_names);
+  if (res.points.empty() || !absl::c_all_of(res.points, [](const Point& p) {
+        return p.IsSpecific();
+      })) {
+    return std::nullopt;
+  }
+  auto points = ToSpecificPoints(res.points, column_names);
+  SortAndDedupPoints(points);
+  return MatchedPoints{std::move(points), std::move(res.remaining_filter)};
+}
 
-    std::vector<std::string> sk_names;
-    std::vector<velox::TypePtr> sk_types;
-    sk_names.reserve(index_col_ids.size());
-    sk_types.reserve(index_col_ids.size());
-    for (auto col_id : index_col_ids) {
-      for (const auto& [name, col_ptr] : table.columnMap()) {
-        const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
-        if (scol->Id() == col_id) {
-          sk_names.push_back(name);
-          sk_types.push_back(scol->type());
-          break;
-        }
+class SecondaryIndexes {
+ public:
+  SecondaryIndexes(const catalog::Table& table, query::Transaction& trx)
+    : _table{table},
+      _snapshot{trx.EnsureCatalogSnapshot()},
+      _indexes{_snapshot->GetIndexesByTable(table.GetId())} {}
+
+  struct SecondaryIndex {
+    ObjectId shard_id;
+    velox::RowTypePtr sk_type;
+    bool unique;
+  };
+
+  class Iterator {
+   public:
+    Iterator(std::span<const std::shared_ptr<catalog::Index>> indexes,
+             const catalog::Table& table,
+             const std::shared_ptr<const catalog::Snapshot>& snapshot,
+             size_t idx)
+      : _indexes{indexes}, _table{table}, _snapshot{snapshot}, _idx{idx} {
+      SkipNonSecondary();
+    }
+
+    SecondaryIndex operator*() const {
+      const auto& index = *_indexes[_idx];
+      const auto& sec_index =
+        basics::downCast<const catalog::SecondaryIndex>(index);
+      return {_snapshot->GetIndexShard(index.GetId())->GetId(),
+              _table.MakeTypeFromColIds(index.GetColumnIds()),
+              sec_index.IsUnique()};
+    }
+
+    Iterator& operator++() {
+      ++_idx;
+      SkipNonSecondary();
+      return *this;
+    }
+
+    bool operator!=(const Iterator& other) const { return _idx != other._idx; }
+
+   private:
+    void SkipNonSecondary() {
+      while (_idx < _indexes.size() &&
+             _indexes[_idx]->GetType() != catalog::ObjectType::SecondaryIndex) {
+        ++_idx;
       }
     }
-    if (sk_names.size() != index_col_ids.size()) {
-      continue;
-    }
 
-    auto res = ExtractAndRewriteFilterExpr(filter, sk_names);
-    if (res.points.empty() || !absl::c_all_of(res.points, [](const Point& p) {
-          return p.IsSpecific();
-        })) {
-      continue;
-    }
+    std::span<const std::shared_ptr<catalog::Index>> _indexes;
+    const catalog::Table& _table;
+    const std::shared_ptr<const catalog::Snapshot>& _snapshot;
+    size_t _idx;
+  };
 
-    auto sk_type = velox::ROW(std::move(sk_names), std::move(sk_types));
-    auto points = ToSpecificPoints(res.points, *sk_type);
-    SortPoints(points);
-
-    const auto& sec_index =
-      basics::downCast<const catalog::SecondaryIndex>(*index);
-
-    remaining_filter = std::move(res.remaining_filter);
-    return std::make_shared<SecondaryIndexTableHandle>(
-      table.name(), rocksdb_table.TableId(), transaction, index_shard->GetId(),
-      std::move(points), std::move(sk_type), table, sec_index.IsUnique());
+  Iterator begin() const { return {_indexes, _table, _snapshot, 0}; }
+  Iterator end() const {
+    return {_indexes, _table, _snapshot, _indexes.size()};
   }
 
-  return nullptr;
-}
+ private:
+  const catalog::Table& _table;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  std::vector<std::shared_ptr<catalog::Index>> _indexes;
+};
 
 }  // namespace
 
@@ -222,6 +242,40 @@ SereneDBTableLayout::createTableHandle(
       irs::ToStringDemangled(conjunct_root, column_id_to_name));
   }
 
+  if (idx_table &&
+      idx_table->GetIndex().GetType() == catalog::ObjectType::SecondaryIndex) {
+    const auto& sec_index =
+      basics::downCast<const catalog::SecondaryIndex>(idx_table->GetIndex());
+    const auto& underlying =
+      basics::downCast<const RocksDBTable>(*idx_table->GetTable());
+    auto& transaction = idx_table->GetTransaction();
+    auto snapshot = transaction.EnsureCatalogSnapshot();
+    auto shard = snapshot->GetIndexShard(sec_index.GetId());
+    auto sk_type =
+      underlying.CatalogTable().MakeTypeFromColIds(sec_index.GetColumnIds());
+
+    velox::core::TypedExprPtr remaining_filter;
+    if (filters.size() == 1) {
+      remaining_filter = filters[0];
+    } else if (filters.size() > 1) {
+      remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+        velox::BOOLEAN(), filters, velox::expression::kAnd);
+    }
+
+    std::vector<SpecificPoint> points;
+    if (remaining_filter) {
+      if (auto sk = TryMatchPointFilters(remaining_filter, sk_type->names())) {
+        points = std::move(sk->points);
+        remaining_filter = std::move(sk->remaining_filter);
+      }
+    }
+
+    RejectFilter(std::move(remaining_filter), rejected_filters);
+    return std::make_shared<SecondaryIndexTableHandle>(
+      underlying.name(), underlying.TableId(), transaction, shard->GetId(),
+      std::move(points), std::move(sk_type), underlying, sec_index.IsUnique());
+  }
+
   if (const auto* read_file_table = dynamic_cast<const ReadFileTable*>(table)) {
     double sample_rate = 1.0;
     velox::common::SubfieldFilters subfield_filters;
@@ -263,31 +317,31 @@ SereneDBTableLayout::createTableHandle(
 
   std::vector<SpecificPoint> points;
   if (remaining_filter) {
-    // 1. Try PK point lookup.
-    auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
-    if (!res.points.empty() && absl::c_all_of(res.points, [](const Point& p) {
-          return p.IsSpecific();
-        })) {
-      points = ToSpecificPoints(res.points, *pk_type);
-      SortPoints(points);
-      remaining_filter = std::move(res.remaining_filter);
-    }
-
-    // 2. No PK match -- try secondary index.
-    if (points.empty()) {
-      velox::core::TypedExprPtr remaining;
-      if (auto handle =
-            TryMatchSecondaryIndex(remaining_filter, *table,
-                                   rocksdb_table.GetTransaction(), remaining)) {
-        RejectFilter(std::move(remaining), rejected_filters);
-        return handle;
+    // Try PK index.
+    if (auto pk = TryMatchPointFilters(remaining_filter, pk_type->names())) {
+      points = std::move(pk->points);
+      remaining_filter = std::move(pk->remaining_filter);
+    } else {
+      // Try SK indexes.
+      SecondaryIndexes indexes{rocksdb_table.CatalogTable(),
+                               rocksdb_table.GetTransaction()};
+      for (auto index : indexes) {
+        if (auto sk =
+              TryMatchPointFilters(remaining_filter, index.sk_type->names())) {
+          velox::core::TypedExprPtr sk_remaining =
+            std::move(sk->remaining_filter);
+          RejectFilter(std::move(sk_remaining), rejected_filters);
+          return std::make_shared<SecondaryIndexTableHandle>(
+            table->name(), rocksdb_table.TableId(),
+            rocksdb_table.GetTransaction(), index.shard_id,
+            std::move(sk->points), std::move(index.sk_type), *table,
+            index.unique);
+        }
       }
     }
   }
 
-  if (!kExecuteFiltersInTableScan) {
-    RejectFilter(std::move(remaining_filter), rejected_filters);
-  }
+  RejectFilter(std::move(remaining_filter), rejected_filters);
 
   SDB_ASSERT(!table->columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");

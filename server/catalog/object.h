@@ -35,21 +35,29 @@ namespace sdb::catalog {
 
 enum class ObjectType : uint8_t {
   Invalid = 0,
-  Function,
-  SecondaryIndex,
-  InvertedIndex,
-  Table,
-  View,
+  Tombstone = 1,
+
+  // Catalog objects start at 128.
+  // Order matters: within the same parent, objects are scanned in enum order.
+  // Tombstones must be scanned first (value 1) so deleted objects are known
+  // before live objects are loaded.
+  // Shards must come after their parent definition so the parent exists
+  // when the shard is registered.
+  Database = 128,
   Role,
   Schema,
-  Database,
-  Virtual,
+  Table,
   TableShard,
+  SecondaryIndex,
   SecondaryIndexShard,
+  InvertedIndex,
   InvertedIndexShard,
+  View,
+  Function,
   Tokenizer,
-  Tombstone,
-  Settings,
+
+  // Runtime only, not persisted.
+  Virtual = 255,
 };
 
 constexpr bool IsIndex(ObjectType t) noexcept {

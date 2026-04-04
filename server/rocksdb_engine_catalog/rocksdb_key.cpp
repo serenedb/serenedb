@@ -97,7 +97,7 @@ std::string SettingsKey::Create(RocksDBSettingsType settings_type) {
   key.reserve(sizeof(ObjectId) + sizeof(catalog::ObjectType) +
               sizeof(RocksDBSettingsType));
   Uint64ToPersistent(key, id::kInstance.id());
-  key.push_back(static_cast<char>(catalog::ObjectType::Settings));
+  key.push_back('S');  // Settings prefix byte
   key.push_back(static_cast<char>(settings_type));
   return key;
 }

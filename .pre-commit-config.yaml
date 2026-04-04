@@ -66,7 +66,7 @@ repos:
         name: Check LLM Unicode symbols
         language: python
         entry: python3 scripts/check_llm_symbols.py
-        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|py|sh|cmake|md|txt)$
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|py|sh|bash|cmake|md|txt|yml|yaml)$
       - id: check-no-anon-namespace-in-headers
         name: Check no anonymous namespace in headers
         language: python
@@ -77,3 +77,13 @@ repos:
         language: python
         entry: python3 scripts/check_no_fault_injection_outside_recovery.py
         files: \.test
+      - id: check-snake-case-filenames
+        name: Check C++ filenames are snake_case
+        language: python
+        entry: python3 scripts/check_snake_case_filenames.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: check-cpp-extensions
+        name: Check C++ file extensions (.hpp/.tpp/.cpp)
+        language: python
+        entry: python3 scripts/check_cpp_extensions.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|c\+\+|h\+\+)$

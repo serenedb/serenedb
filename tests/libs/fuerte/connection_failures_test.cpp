@@ -128,7 +128,7 @@ static void TryToConnectExpectFailure(f::EventLoopService& event_loop_service,
 TEST(ConnectionFailureTest, CannotResolveHttp) {
   f::EventLoopService loop;
   TryToConnectExpectFailure(
-    loop, "http://thishostmustnotexist.invalidaddress.com:8529", false);
+    loop, "http://thishostmustnotexist.invalidaddress.com:7890", false);
 }
 
 // CannotConnect tests try to make a connection to a host with a valid name

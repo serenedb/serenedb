@@ -1,6 +1,6 @@
 name: serenedb | make release
 
-run-name: "serenedb | make release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
+run-name: "serenedb | make release [${{ inputs.BUILD_AMD64 && inputs.BUILD_ARM64 && 'amd64+arm64' || inputs.BUILD_AMD64 && 'amd64' || 'arm64' }}]"
 
 on:
   workflow_dispatch:
@@ -25,13 +25,13 @@ on:
         required: false
         type: string
         default: ''
-      BUILD_X64:
-        description: 'Build for x86_64 (amd64)'
+      BUILD_AMD64:
+        description: 'Build for amd64'
         required: true
         type: boolean
         default: true
       BUILD_ARM64:
-        description: 'Build for aarch64 (arm64)'
+        description: 'Build for arm64'
         required: true
         type: boolean
         default: true
@@ -42,7 +42,6 @@ permissions:
   actions: write
 
 jobs:
-  # ==================== RESOLVE VERSION ====================
   resolve-version:
     name: Resolve version
     runs-on: ubuntu-latest
@@ -65,9 +64,8 @@ jobs:
           fi
           echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
 
-  # ==================== BUILD X64 ====================
-  build-x64:
-    if: inputs.BUILD_X64
+  build-amd64:
+    if: inputs.BUILD_AMD64
     needs: [resolve-version]
     uses: ./.github/workflows/make-package.yml
     with:
@@ -77,7 +75,6 @@ jobs:
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
-  # ==================== BUILD ARM64 ====================
   build-arm64:
     if: inputs.BUILD_ARM64
     needs: [resolve-version]
@@ -89,13 +86,12 @@ jobs:
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
-  # ==================== RELEASE ====================
   release:
     name: Docker & Release
-    needs: [resolve-version, build-x64, build-arm64]
+    needs: [resolve-version, build-amd64, build-arm64]
     if: >-
       always() && !cancelled() &&
-      (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
+      (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
     runs-on:
       - linux-amd64
     permissions:
@@ -203,8 +199,7 @@ jobs:
             --notes "${BODY}" \
             "${ASSETS[@]}"
 
-      # Cleanup artifacts
-      - name: Delete tarball artifacts
+      - name: Delete package artifacts
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,8 +213,7 @@ jobs:
             fi
           done
 
-      # Telegram notification
-      - name: Send Telegram notification
+      - name: Send notification
         if: always() && !cancelled()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -230,10 +224,10 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           JOB_STATUS: >-
             ${{
-              (needs.build-x64.result == 'success' || needs.build-x64.result == 'skipped') &&
+              (needs.build-amd64.result == 'success' || needs.build-amd64.result == 'skipped') &&
               (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
                 && 'success'
-                || (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
+                || (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
                   && 'warning'
                   || 'failure'
             }}
@@ -241,4 +235,4 @@ jobs:
           RUN_NAME: "serenedb | make release"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
+        run: ./scripts/send_notification.bash

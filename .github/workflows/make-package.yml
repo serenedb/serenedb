@@ -37,10 +37,6 @@ on:
       packages_ok:
         description: "Whether packaging succeeded"
         value: ${{ jobs.package.outputs.packages_ok }}
-    secrets:
-      PAT_TOKEN:
-        required: true
-
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
@@ -69,7 +65,6 @@ jobs:
           echo "SANITIZERS=" >> $GITHUB_ENV
           echo "SDB_ALLOC=JE" >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
-          echo "SDB_CLUSTER=" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
           echo "STRIP_TARBALL=true" >> $GITHUB_ENV
           echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
@@ -93,8 +88,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          repository: serenedb/serenedb
-          token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
           clean: true
@@ -102,7 +95,6 @@ jobs:
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
-      # ==================== BUILD ====================
       - name: Build release
         id: build
         run: |
@@ -129,7 +121,6 @@ jobs:
             -v /mnt/data/.ccache:/.ccache \
             "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
 
-      # ==================== PACKAGE ====================
       - name: Package
         id: package
         if: steps.build.outcome == 'success'
@@ -162,15 +153,14 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
-            cmake*.log
-            make*.log
-            ccache*.log
+            cmake_*.log
+            make_*.log
+            ccache_*.log
             install.log
-            rta-tests.log
-            logs/*
+            logs/
           if-no-files-found: ignore
           retention-days: 30

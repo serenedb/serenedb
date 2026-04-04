@@ -34,7 +34,7 @@ def main():
   DEFAULT_BATCH_SIZE = 10000
 
   if len(sys.argv) < 6:
-    print("Usage: host database collection schemaProvider count [batchSize={0}] Example: python BySchemaLoader.py 'http://localhost:8529' _system entities mySchemaProvider.py 10000000".format(DEFAULT_BATCH_SIZE))
+    print("Usage: host database collection schemaProvider count [batchSize={0}] Example: python BySchemaLoader.py 'http://localhost:7890' _system entities mySchemaProvider.py 10000000".format(DEFAULT_BATCH_SIZE))
     return
 
   # script setting

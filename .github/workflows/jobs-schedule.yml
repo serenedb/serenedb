@@ -14,7 +14,6 @@ on:
     - cron: '0 1 * * 4'
 
 jobs:
-  # ==================== DAILY: COVERAGE ====================
   coverage:
     if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/build-reusable.yml
@@ -23,10 +22,8 @@ jobs:
       KIND: both
       DEV: true
       INSTRUMENTATION: coverage
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-  # ==================== DAILY: RELEASE COMPILE + RTA ====================
+
   release-check:
     if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/make-package.yml
@@ -34,10 +31,8 @@ jobs:
       LOCATION: linux-amd64
       RUN_RTA: true
       UPLOAD_ARTIFACTS: false
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-  # ==================== MONDAY: MEMORY SANITIZER ====================
+
   msan-unit:
     if: github.event.schedule == '0 1 * * 1'
     uses: ./.github/workflows/build-reusable.yml
@@ -46,8 +41,7 @@ jobs:
       KIND: unit
       DEV: true
       INSTRUMENTATION: msan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+
 
   msan-functional:
     if: github.event.schedule == '0 1 * * 1'
@@ -57,10 +51,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: msan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-  # ==================== TUESDAY: ADDRESS SANITIZER ====================
+
   asan-unit:
     if: github.event.schedule == '0 1 * * 2'
     uses: ./.github/workflows/build-reusable.yml
@@ -69,8 +61,7 @@ jobs:
       KIND: unit
       DEV: true
       INSTRUMENTATION: asan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+
 
   asan-functional:
     if: github.event.schedule == '0 1 * * 2'
@@ -80,10 +71,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: asan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-  # ==================== WEDNESDAY: UNDEFINED BEHAVIOR SANITIZER ====================
+
   ubsan-unit:
     if: github.event.schedule == '0 1 * * 3'
     uses: ./.github/workflows/build-reusable.yml
@@ -92,8 +81,7 @@ jobs:
       KIND: unit
       DEV: true
       INSTRUMENTATION: ubsan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+
 
   ubsan-functional:
     if: github.event.schedule == '0 1 * * 3'
@@ -103,10 +91,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: ubsan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-  # ==================== THURSDAY: THREAD SANITIZER ====================
+
   tsan-unit:
     if: github.event.schedule == '0 1 * * 4'
     uses: ./.github/workflows/build-reusable.yml
@@ -115,8 +101,7 @@ jobs:
       KIND: unit
       DEV: true
       INSTRUMENTATION: tsan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+
 
   tsan-functional:
     if: github.event.schedule == '0 1 * * 4'
@@ -126,10 +111,8 @@ jobs:
       KIND: functional
       DEV: true
       INSTRUMENTATION: tsan
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-  # ==================== NOTIFICATION ====================
+
   notify:
     needs: [coverage, release-check, msan-unit, msan-functional, asan-unit, asan-functional, ubsan-unit, ubsan-functional, tsan-unit, tsan-functional]
     if: always() && !cancelled()
@@ -138,10 +121,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 1
+          submodules: false
+          clean: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
 
-      - name: Send Telegram notification
+      - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -154,4 +140,4 @@ jobs:
           RUN_NAME: "auto | nightly"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
+        run: ./scripts/send_notification.bash

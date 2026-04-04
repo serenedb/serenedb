@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import type { DockviewApi } from "dockview";
 import { ConsoleContext } from "./ConsoleContext";
-import type { ConsoleExecutionAlertMode } from "./types";
+import type {
+    ConsoleExecutionAlertMode,
+    ConsoleExecutionHistoryEntry,
+    ConsoleExecutionHistoryEntryInput,
+    ConsoleExecutionHistorySidebarTab,
+} from "./types";
 import {
     CONSOLE_ALERT_ON_EXECUTION_STORAGE_KEY,
     CONSOLE_COLORFUL_TYPES_IN_RESULTS_STORAGE_KEY,
@@ -35,6 +41,56 @@ const CONSOLE_ALERT_MODES: ConsoleExecutionAlertMode[] = [
     "onlyUnseen",
     "never",
 ];
+const EXECUTION_HISTORY_ALL_PANELS_FILTER = "__all__";
+const EXECUTION_HISTORY_DEFAULT_TAB: ConsoleExecutionHistorySidebarTab =
+    "running";
+const CONSOLE_EXECUTION_HISTORY_STORAGE_KEY = "console:execution-history:v1";
+
+const getExecutionHistoryEntryId = (
+    entry: Pick<
+        ConsoleExecutionHistoryEntryInput,
+        "panelId" | "jobId" | "statementIndex"
+    >,
+) => `${entry.panelId}:${entry.jobId}:${entry.statementIndex ?? -1}`;
+
+const readStoredExecutionHistoryEntries = (): ConsoleExecutionHistoryEntry[] => {
+    if (typeof window === "undefined") {
+        return [];
+    }
+
+    const rawValue = window.localStorage.getItem(
+        CONSOLE_EXECUTION_HISTORY_STORAGE_KEY,
+    );
+
+    if (!rawValue) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(rawValue);
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+
+        return parsed.filter((entry): entry is ConsoleExecutionHistoryEntry => {
+            if (!entry || typeof entry !== "object") {
+                return false;
+            }
+
+            const typedEntry = entry as Partial<ConsoleExecutionHistoryEntry>;
+            return (
+                typeof typedEntry.id === "string" &&
+                typeof typedEntry.panelId === "string" &&
+                typeof typedEntry.jobId === "number" &&
+                typeof typedEntry.status === "string" &&
+                typeof typedEntry.updated_at === "string"
+            );
+        });
+    } catch (error) {
+        console.warn("Failed to restore console execution history:", error);
+        return [];
+    }
+};
 
 const readStoredLimit = () => {
     if (typeof window === "undefined") {
@@ -436,6 +492,17 @@ export const ConsoleProvider = ({
         executionHistorySidebarCollapsed,
         setExecutionHistorySidebarCollapsedState,
     ] = useState(readStoredExecutionHistorySidebarCollapsed);
+    const [executionHistoryActiveTab, setExecutionHistoryActiveTabState] =
+        useState<ConsoleExecutionHistorySidebarTab>(
+            EXECUTION_HISTORY_DEFAULT_TAB,
+        );
+    const [executionHistoryPanelFilter, setExecutionHistoryPanelFilterState] =
+        useState<string>(EXECUTION_HISTORY_ALL_PANELS_FILTER);
+    const [executionHistoryEntries, setExecutionHistoryEntries] = useState<
+        ConsoleExecutionHistoryEntry[]
+    >(readStoredExecutionHistoryEntries);
+    const [consoleEditorApi, setConsoleEditorApiState] =
+        useState<DockviewApi>();
 
     const setSidebarCollapsed = useCallback((collapsed: boolean) => {
         setSidebarCollapsedState(collapsed);
@@ -464,6 +531,79 @@ export const ConsoleProvider = ({
     const setExecutionHistorySidebarCollapsed = useCallback(
         (collapsed: boolean) => {
             setExecutionHistorySidebarCollapsedState(collapsed);
+        },
+        [],
+    );
+
+    const setExecutionHistoryActiveTab = useCallback(
+        (tab: ConsoleExecutionHistorySidebarTab) => {
+            setExecutionHistoryActiveTabState(tab);
+        },
+        [],
+    );
+
+    const setExecutionHistoryPanelFilter = useCallback((panelId: string) => {
+        setExecutionHistoryPanelFilterState(
+            panelId || EXECUTION_HISTORY_ALL_PANELS_FILTER,
+        );
+    }, []);
+
+    const upsertExecutionHistoryEntries = useCallback(
+        (entries: ConsoleExecutionHistoryEntryInput[]) => {
+            if (!entries.length) {
+                return;
+            }
+
+            const updatedAt = new Date().toISOString();
+
+            setExecutionHistoryEntries((current) => {
+                const byId = new Map(current.map((entry) => [entry.id, entry]));
+
+                entries.forEach((entry) => {
+                    const id = getExecutionHistoryEntryId(entry);
+                    const existing = byId.get(id);
+
+                    byId.set(id, {
+                        ...existing,
+                        ...entry,
+                        id,
+                        updated_at: updatedAt,
+                    });
+                });
+
+                return Array.from(byId.values()).sort(
+                    (left, right) =>
+                        new Date(right.updated_at).getTime() -
+                        new Date(left.updated_at).getTime(),
+                );
+            });
+        },
+        [],
+    );
+
+    const clearExecutionHistoryEntries = useCallback(() => {
+        setExecutionHistoryEntries([]);
+    }, []);
+
+    const setConsoleEditorApi = useCallback((api?: DockviewApi) => {
+        setConsoleEditorApiState(api);
+    }, []);
+
+    const openExecutionHistorySidebar = useCallback(
+        (options?: {
+            tab?: ConsoleExecutionHistorySidebarTab;
+            panelId?: string;
+        }) => {
+            if (options?.tab) {
+                setExecutionHistoryActiveTabState(options.tab);
+            }
+
+            if (options?.panelId) {
+                setExecutionHistoryPanelFilterState(options.panelId);
+            }
+
+            setSettingsSidebarCollapsedState(true);
+            setExecutionHistorySidebarCollapsedState(false);
         },
         [],
     );
@@ -513,10 +653,30 @@ export const ConsoleProvider = ({
         );
     }, [executionHistorySidebarCollapsed]);
 
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        window.localStorage.setItem(
+            CONSOLE_EXECUTION_HISTORY_STORAGE_KEY,
+            JSON.stringify(executionHistoryEntries),
+        );
+    }, [executionHistoryEntries]);
+
     const value = useMemo(
         () => ({
             ...settings,
+            clearExecutionHistoryEntries,
+            consoleEditorApi,
+            executionHistoryActiveTab,
+            executionHistoryEntries,
+            executionHistoryPanelFilter,
             executionHistorySidebarCollapsed,
+            openExecutionHistorySidebar,
+            setConsoleEditorApi,
+            setExecutionHistoryActiveTab,
+            setExecutionHistoryPanelFilter,
             setExecutionHistorySidebarCollapsed,
             setSettingsSidebarCollapsed,
             setSidebarCollapsed,
@@ -525,10 +685,20 @@ export const ConsoleProvider = ({
             toggleExecutionHistorySidebar,
             toggleSettingsSidebar,
             toggleSidebar,
+            upsertExecutionHistoryEntries,
         }),
         [
             settings,
+            clearExecutionHistoryEntries,
+            consoleEditorApi,
+            executionHistoryActiveTab,
+            executionHistoryEntries,
+            executionHistoryPanelFilter,
             executionHistorySidebarCollapsed,
+            openExecutionHistorySidebar,
+            setConsoleEditorApi,
+            setExecutionHistoryActiveTab,
+            setExecutionHistoryPanelFilter,
             setExecutionHistorySidebarCollapsed,
             setSettingsSidebarCollapsed,
             setSidebarCollapsed,
@@ -537,6 +707,7 @@ export const ConsoleProvider = ({
             toggleExecutionHistorySidebar,
             toggleSettingsSidebar,
             toggleSidebar,
+            upsertExecutionHistoryEntries,
         ],
     );
 

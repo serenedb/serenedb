@@ -30,6 +30,7 @@ export const ResultsPanel: FC<IDockviewPanelProps<ResultsPanelParams>> = (
             <div className="min-h-0 flex-1">
                 <QueryResults
                     results={sourceState.results}
+                    sourcePanelId={props.params.sourcePanelId}
                     selectedResultIndex={selectedResultIndex}
                     colorfulTypes={colorfulTypesInResults}
                     showJsonByDefault={showJsonByDefault}

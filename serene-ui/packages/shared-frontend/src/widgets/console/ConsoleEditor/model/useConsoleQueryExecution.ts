@@ -5,6 +5,7 @@ import {
     useQueryResults,
     useQuerySubscription,
 } from "../../../../features/executeQuery";
+import { useConsole } from "../../Console/model/ConsoleContext";
 import { addEditorPanel, isPendingResult, toConsoleResults } from "./utils";
 import type {
     ConsoleExecutionMode,
@@ -16,6 +17,7 @@ import type {
 
 interface UseConsoleQueryExecutionParams {
     containerApi: IDockviewPanelProps<EditorPanelParams>["containerApi"];
+    panelId: string;
     panelState: NormalizedEditorPanelParams;
     paramsRef: MutableRefObject<NormalizedEditorPanelParams>;
     updatePanelParams: (
@@ -35,6 +37,7 @@ interface UseConsoleQueryExecutionParams {
 
 export const useConsoleQueryExecution = ({
     containerApi,
+    panelId,
     panelState,
     paramsRef,
     updatePanelParams,
@@ -43,6 +46,7 @@ export const useConsoleQueryExecution = ({
     limit,
 }: UseConsoleQueryExecutionParams) => {
     const { executeQuery, executeQueryBatch } = useQueryResults();
+    const { upsertExecutionHistoryEntries } = useConsole();
 
     const appendPendingResults = useCallback(
         (
@@ -54,6 +58,8 @@ export const useConsoleQueryExecution = ({
             if (!resultsToAdd.length) {
                 return;
             }
+
+            const panelTitle = containerApi.getPanel(panelId)?.api.title;
 
             let nextPanelState: NormalizedEditorPanelParams | undefined;
 
@@ -91,11 +97,33 @@ export const useConsoleQueryExecution = ({
                 };
             });
 
+            upsertExecutionHistoryEntries(
+                resultsToAdd.map((result) => ({
+                    panelId,
+                    panelTitle,
+                    jobId: result.jobId,
+                    status: "pending",
+                    statementIndex: result.statementIndex,
+                    statementQuery: result.statementQuery,
+                    sourceQuery: result.sourceQuery,
+                    execution_started_at: undefined,
+                    execution_finished_at: undefined,
+                    created_at: undefined,
+                    received_at: undefined,
+                })),
+            );
+
             if (options?.showPanel && nextPanelState) {
                 showResultsPanel(false, nextPanelState);
             }
         },
-        [showResultsPanel, updatePanelParams],
+        [
+            containerApi,
+            panelId,
+            showResultsPanel,
+            updatePanelParams,
+            upsertExecutionHistoryEntries,
+        ],
     );
 
     const handleExecute = useCallback(
@@ -186,10 +214,14 @@ export const useConsoleQueryExecution = ({
     );
 
     useQuerySubscription(pendingJobIds, (_jobId, result) => {
+        const panelTitle = containerApi.getPanel(panelId)?.api.title;
         const receivedAt = new Date().toISOString();
         let nextPanelState: NormalizedEditorPanelParams | undefined;
         let shouldNotifyResultsReady = false;
         let notificationStatus: "success" | "failed" = "success";
+        let historyEntriesToUpsert: Parameters<
+            typeof upsertExecutionHistoryEntries
+        >[0] = [];
 
         updatePanelParams((current) => {
             const hadPendingResults = current.results.some(isPendingResult);
@@ -253,6 +285,22 @@ export const useConsoleQueryExecution = ({
                 };
             }
 
+            historyEntriesToUpsert = nextResults
+                .filter((nextResult) => nextResult.jobId === result.jobId)
+                .map((nextResult) => ({
+                    panelId,
+                    panelTitle,
+                    jobId: nextResult.jobId,
+                    status: nextResult.status,
+                    statementIndex: nextResult.statementIndex,
+                    statementQuery: nextResult.statementQuery,
+                    sourceQuery: nextResult.sourceQuery,
+                    created_at: nextResult.created_at,
+                    execution_started_at: nextResult.execution_started_at,
+                    execution_finished_at: nextResult.execution_finished_at,
+                    received_at: nextResult.received_at,
+                }));
+
             nextPanelState = {
                 ...current,
                 results: nextResults,
@@ -277,6 +325,10 @@ export const useConsoleQueryExecution = ({
                 selectedResultIndex: nextPanelState.selectedResultIndex,
             };
         });
+
+        if (historyEntriesToUpsert.length) {
+            upsertExecutionHistoryEntries(historyEntriesToUpsert);
+        }
 
         if (nextPanelState && shouldNotifyResultsReady) {
             notifyResultsReady(notificationStatus);

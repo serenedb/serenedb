@@ -103,6 +103,7 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
     });
     const { handleExecute, handleExecuteInNewTab } = useConsoleQueryExecution({
         containerApi: props.containerApi,
+        panelId: props.api.id,
         panelState,
         paramsRef,
         updatePanelParams,

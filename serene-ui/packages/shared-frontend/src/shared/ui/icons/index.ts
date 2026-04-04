@@ -15,6 +15,7 @@ export {
     PieChartIcon,
     PinIcon,
     SearchIcon,
+    Eraser as ClearHistoryIcon,
     StarIcon,
     SettingsIcon,
     CheckCircle2 as SuccessIcon,

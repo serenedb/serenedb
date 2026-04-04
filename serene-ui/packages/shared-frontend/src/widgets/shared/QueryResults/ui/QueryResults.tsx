@@ -28,6 +28,7 @@ interface QueryResultsProps {
     onSelectResult?: (index: number) => void;
     showJsonByDefault?: boolean;
     colorfulTypes?: boolean;
+    sourcePanelId?: string;
 }
 
 export const QueryResults: React.FC<QueryResultsProps> = ({
@@ -36,6 +37,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     onSelectResult,
     showJsonByDefault = false,
     colorfulTypes = true,
+    sourcePanelId,
 }) => {
     if (
         selectedResultIndex < 0 ||
@@ -103,7 +105,8 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                 created_at={created_at}
                 execution_started_at={started_at}
                 execution_finished_at={finished_at}
-                received_at={received_at}>
+                received_at={received_at}
+                sourcePanelId={sourcePanelId}>
                 {hasRows ? (
                     content
                 ) : (

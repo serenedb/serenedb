@@ -12,8 +12,9 @@ import {
     TreeColumnsIcon,
     cn,
 } from "@serene-ui/shared-frontend/shared";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { TimelineCard, type TimelineItem } from "../../TimelineCard";
+import { ConsoleContext } from "../../../console/Console/model/ConsoleContext";
 
 interface QueryResultsFooterProps {
     children: React.ReactNode;
@@ -29,6 +30,7 @@ interface QueryResultsFooterProps {
     execution_finished_at?: string;
     received_at?: string;
     showJsonByDefault?: boolean;
+    sourcePanelId?: string;
 }
 
 export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
@@ -42,6 +44,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
     execution_finished_at,
     received_at,
     showJsonByDefault = false,
+    sourcePanelId,
 }) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [searchValue, setSearchValue] = useState("");
@@ -74,6 +77,11 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
         { name: "Transfer", time: transferTime, color: "rgb(59, 130, 246)" },
     ];
     const showViewModes = Boolean(rows?.length);
+    const consoleContext = useContext(ConsoleContext);
+    const canOpenExecutionHistorySidebar = Boolean(
+        consoleContext?.openExecutionHistorySidebar && sourcePanelId,
+    );
+
     useEffect(() => {
         setViewMode(showJsonByDefault ? "json" : "viewer");
     }, [showJsonByDefault]);
@@ -212,105 +220,135 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                     }}>
                                     <ArrowDownIcon className="rotate-90" />
                                 </Button>
-                                <Popover
-                                    open={isPopoverOpen}
-                                    onOpenChange={(open) => {
-                                        setIsPopoverOpen(open);
-                                        if (!open) {
-                                            setSearchValue("");
-                                        }
-                                    }}>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="small"
-                                            className={cn(
-                                                "min-w-18 px-2 rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]",
-                                                getResultButtonClassName(
-                                                    results[selectedResultIndex]
-                                                        ?.status || "",
-                                                    true,
-                                                ),
-                                            )}>
-                                            {selectedResultIndex + 1} /{" "}
-                                            {results.length}
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent
-                                        align="start"
-                                        className="p-1"
-                                        style={{ width: "20rem" }}>
-                                        <div className="flex flex-col gap-1">
-                                            <Input
-                                                value={searchValue}
-                                                onChange={(event) => {
-                                                    setSearchValue(
-                                                        event.target.value,
-                                                    );
-                                                }}
-                                                placeholder="Search query"
-                                                className="h-8"
-                                            />
-                                            <div className="max-h-72 overflow-y-auto">
-                                                <div className="flex flex-col gap-1">
-                                                    {filteredResults.length ===
-                                                    0 ? (
-                                                        <div className="px-2 py-3 text-sm text-muted-foreground">
-                                                            No executions found
-                                                        </div>
-                                                    ) : (
-                                                        filteredResults.map(
-                                                            ({
-                                                                result,
-                                                                index,
-                                                            }) => (
-                                                                <button
-                                                                    key={`${result.status}-${index}`}
-                                                                    type="button"
-                                                                    className={cn(
-                                                                        "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
-                                                                        index ===
-                                                                            selectedResultIndex &&
-                                                                            "bg-accent text-accent-foreground",
-                                                                    )}
-                                                                    onClick={() => {
-                                                                        onSelectResult?.(
-                                                                            index,
-                                                                        );
-                                                                        setIsPopoverOpen(
-                                                                            false,
-                                                                        );
-                                                                    }}>
-                                                                    <div className="flex min-w-0 items-center gap-2">
-                                                                        <span className="w-6 shrink-0 text-xs text-muted-foreground">
-                                                                            {index +
-                                                                                1}
-                                                                        </span>
-                                                                        <span className="truncate">
-                                                                            {getShortQuery(
-                                                                                result.statementQuery,
-                                                                            )}
-                                                                        </span>
-                                                                    </div>
-                                                                    <span
+                                {canOpenExecutionHistorySidebar ? (
+                                    <Button
+                                        variant="ghost"
+                                        size="small"
+                                        className={cn(
+                                            "min-w-18 px-2 rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]",
+                                            getResultButtonClassName(
+                                                results[selectedResultIndex]
+                                                    ?.status || "",
+                                                true,
+                                            ),
+                                        )}
+                                        onClick={() => {
+                                            if (!sourcePanelId) {
+                                                return;
+                                            }
+
+                                            consoleContext?.openExecutionHistorySidebar(
+                                                {
+                                                    tab: "history",
+                                                    panelId: sourcePanelId,
+                                                },
+                                            );
+                                        }}>
+                                        {selectedResultIndex + 1} /{" "}
+                                        {results.length}
+                                    </Button>
+                                ) : (
+                                    <Popover
+                                        open={isPopoverOpen}
+                                        onOpenChange={(open) => {
+                                            setIsPopoverOpen(open);
+                                            if (!open) {
+                                                setSearchValue("");
+                                            }
+                                        }}>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="small"
+                                                className={cn(
+                                                    "min-w-18 px-2 rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]",
+                                                    getResultButtonClassName(
+                                                        results[
+                                                            selectedResultIndex
+                                                        ]?.status || "",
+                                                        true,
+                                                    ),
+                                                )}>
+                                                {selectedResultIndex + 1} /{" "}
+                                                {results.length}
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent
+                                            align="start"
+                                            className="p-1"
+                                            style={{ width: "20rem" }}>
+                                            <div className="flex flex-col gap-1">
+                                                <Input
+                                                    value={searchValue}
+                                                    onChange={(event) => {
+                                                        setSearchValue(
+                                                            event.target.value,
+                                                        );
+                                                    }}
+                                                    placeholder="Search query"
+                                                    className="h-8"
+                                                />
+                                                <div className="max-h-72 overflow-y-auto">
+                                                    <div className="flex flex-col gap-1">
+                                                        {filteredResults.length ===
+                                                        0 ? (
+                                                            <div className="px-2 py-3 text-sm text-muted-foreground">
+                                                                No executions found
+                                                            </div>
+                                                        ) : (
+                                                            filteredResults.map(
+                                                                ({
+                                                                    result,
+                                                                    index,
+                                                                }) => (
+                                                                    <button
+                                                                        key={`${result.status}-${index}`}
+                                                                        type="button"
                                                                         className={cn(
-                                                                            "shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
-                                                                            getStatusBadgeClassName(
-                                                                                result.status,
-                                                                            ),
-                                                                        )}>
-                                                                        {result.status ||
-                                                                            "idle"}
-                                                                    </span>
-                                                                </button>
-                                                            ),
-                                                        )
-                                                    )}
+                                                                            "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
+                                                                            index ===
+                                                                                selectedResultIndex &&
+                                                                                "bg-accent text-accent-foreground",
+                                                                        )}
+                                                                        onClick={() => {
+                                                                            onSelectResult?.(
+                                                                                index,
+                                                                            );
+                                                                            setIsPopoverOpen(
+                                                                                false,
+                                                                            );
+                                                                        }}>
+                                                                        <div className="flex min-w-0 items-center gap-2">
+                                                                            <span className="w-6 shrink-0 text-xs text-muted-foreground">
+                                                                                {index +
+                                                                                    1}
+                                                                            </span>
+                                                                            <span className="truncate">
+                                                                                {getShortQuery(
+                                                                                    result.statementQuery,
+                                                                                )}
+                                                                            </span>
+                                                                        </div>
+                                                                        <span
+                                                                            className={cn(
+                                                                                "shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
+                                                                                getStatusBadgeClassName(
+                                                                                    result.status,
+                                                                                ),
+                                                                            )}>
+                                                                            {result.status ||
+                                                                                "idle"}
+                                                                        </span>
+                                                                    </button>
+                                                                ),
+                                                            )
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    </PopoverContent>
-                                </Popover>
+                                        </PopoverContent>
+                                    </Popover>
+                                )}
                                 <Button
                                     className="rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]"
                                     variant="ghost"

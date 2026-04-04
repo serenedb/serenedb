@@ -203,12 +203,14 @@ const sanitizeLayout = (value: unknown): unknown => {
 };
 
 export const ConsoleEditor: FC = () => {
-    const { selectRelatedResultOnTabChange } = useConsole();
+    const { selectRelatedResultOnTabChange, setConsoleEditorApi } =
+        useConsole();
     const [api, setApi] = useState<DockviewReadyEvent["api"]>();
     const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
 
     const onReady = (event: DockviewReadyEvent) => {
         setApi(event.api);
+        setConsoleEditorApi(event.api);
 
         let restored = false;
         const rawLayout = localStorage.getItem(
@@ -232,6 +234,12 @@ export const ConsoleEditor: FC = () => {
             addEditorPanel(event.api);
         });
     };
+
+    useEffect(() => {
+        return () => {
+            setConsoleEditorApi(undefined);
+        };
+    }, [setConsoleEditorApi]);
 
     useEffect(() => {
         if (!api) {

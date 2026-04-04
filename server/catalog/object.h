@@ -36,7 +36,8 @@ namespace sdb::catalog {
 enum class ObjectType : uint8_t {
   Invalid = 0,
   Function,
-  Index,
+  SecondaryIndex,
+  InvertedIndex,
   Table,
   View,
   Role,
@@ -44,9 +45,21 @@ enum class ObjectType : uint8_t {
   Database,
   Virtual,
   TableShard,
-  IndexShard,
+  SecondaryIndexShard,
+  InvertedIndexShard,
   Tokenizer,
+  Tombstone,
+  Settings,
 };
+
+constexpr bool IsIndex(ObjectType t) noexcept {
+  return t == ObjectType::SecondaryIndex || t == ObjectType::InvertedIndex;
+}
+
+constexpr bool IsIndexShard(ObjectType t) noexcept {
+  return t == ObjectType::SecondaryIndexShard ||
+         t == ObjectType::InvertedIndexShard;
+}
 
 // https://www.postgresql.org/docs/current/sql-grant.html
 enum class AclMode : uint64_t {
@@ -89,9 +102,7 @@ class Object {
   ObjectId GetId() const noexcept { return _id; }
 
   virtual void WriteInternal(vpack::Builder&) const = 0;
-  virtual std::shared_ptr<Object> Clone(vpack::Slice) const {
-    return nullptr;
-  }
+  virtual std::shared_ptr<Object> Clone(vpack::Slice) const { return nullptr; }
 
   void SetName(std::string_view name) { _name = name; }
 
@@ -218,6 +229,5 @@ struct ObjectMeta {
     };
   }
 };
-
 
 }  // namespace sdb::catalog

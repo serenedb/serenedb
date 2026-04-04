@@ -20,9 +20,10 @@
 
 #include "catalog/inverted_index.h"
 
+#include <vpack/serializer.h>
+
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
-#include <vpack/serializer.h>
 
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
@@ -38,8 +39,8 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   return search::InvertedIndexShard::Create(id, *this, shard_options, is_new);
 }
 
-std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(
-  vpack::Slice slice, ReadContext ctx) {
+std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
+                                                           ReadContext ctx) {
   auto name_slice = slice.get("name");
   if (!name_slice.isString()) {
     return nullptr;
@@ -67,11 +68,12 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
     struct BaseOpts {
-      IndexType type;
+      ObjectType type;
       std::span<const Column::Id> column_ids;
     };
     b.add("base");
-    vpack::WriteTuple(b, BaseOpts{.type = GetIndexType(), .column_ids = _column_ids});
+    vpack::WriteTuple(b,
+                      BaseOpts{.type = GetType(), .column_ids = _column_ids});
     b.add("impl");
     vpack::WriteTuple(b, _columns);
   });

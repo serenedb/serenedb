@@ -63,7 +63,7 @@ class Tokenizer : public SchemaObject {
   vpack::Slice Slice() const noexcept;
 
   static std::shared_ptr<Tokenizer> ReadInternal(vpack::Slice slice,
-                                                           ReadContext ctx);
+                                                 ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {
     return ReadInternal(s, {.id = GetId()});

@@ -133,26 +133,26 @@ void catalog::Role::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& build) {
     build.add("id", GetId().id());
     {
-    vpack::ObjectBuilder auth_guard{&build, "authData", true};
-    build.add("active", _active);
-    {
-      vpack::ObjectBuilder password_guard{&build, "simple", true};
-      build.add("hash", _password_hash);
-      build.add("salt", _password_salt);
-      build.add("method", _password_method);
-    }
-  }
-  {
-    vpack::ObjectBuilder databases_guard{&build, "databases", true};
-    for (const auto& [name, context] : _db_access) {
-      vpack::ObjectBuilder database_guard{&build, name, true};
+      vpack::ObjectBuilder auth_guard{&build, "authData", true};
+      build.add("active", _active);
       {
-        vpack::ObjectBuilder permissions_guard{&build, "permissions", true};
-        auto lvl = context.database_auth_level;
-        AddAuthLevel(build, lvl);
+        vpack::ObjectBuilder password_guard{&build, "simple", true};
+        build.add("hash", _password_hash);
+        build.add("salt", _password_salt);
+        build.add("method", _password_method);
       }
     }
-  }
+    {
+      vpack::ObjectBuilder databases_guard{&build, "databases", true};
+      for (const auto& [name, context] : _db_access) {
+        vpack::ObjectBuilder database_guard{&build, name, true};
+        {
+          vpack::ObjectBuilder permissions_guard{&build, "permissions", true};
+          auto lvl = context.database_auth_level;
+          AddAuthLevel(build, lvl);
+        }
+      }
+    }
   });
 }
 
@@ -211,16 +211,24 @@ void catalog::Role::fromDocumentDatabases(catalog::Role& role,
 }
 
 std::shared_ptr<Role> Role::ReadInternal(vpack::Slice slice, ReadContext) {
-  if (!slice.isObject()) return nullptr;
+  if (!slice.isObject()) {
+    return nullptr;
+  }
 
   auto name_slice = slice.get("name");
-  if (!name_slice.isString()) return nullptr;
+  if (!name_slice.isString()) {
+    return nullptr;
+  }
 
   auto auth_data_slice = slice.get("authData");
-  if (!auth_data_slice.isObject()) return nullptr;
+  if (!auth_data_slice.isObject()) {
+    return nullptr;
+  }
 
   auto simple_slice = auth_data_slice.get("simple");
-  if (!simple_slice.isObject()) return nullptr;
+  if (!simple_slice.isObject()) {
+    return nullptr;
+  }
 
   auto method_slice = simple_slice.get("method");
   auto salt_slice = simple_slice.get("salt");
@@ -232,7 +240,9 @@ std::shared_ptr<Role> Role::ReadInternal(vpack::Slice slice, ReadContext) {
   }
 
   auto active_slice = auth_data_slice.get("active");
-  if (!active_slice.isBool()) return nullptr;
+  if (!active_slice.isBool()) {
+    return nullptr;
+  }
 
   const ObjectId id{basics::VPackHelper::extractIdValue(slice)};
   auto role =

@@ -171,7 +171,7 @@ struct FunctionProperties {
 class Function final : public SchemaObject {
  public:
   static std::shared_ptr<Function> ReadInternal(vpack::Slice slice,
-                                                          ReadContext ctx);
+                                                ReadContext ctx);
 
   Function(std::string_view name, FunctionSignature signature,
            FunctionOptions options);
@@ -195,7 +195,6 @@ class Function final : public SchemaObject {
     SDB_ASSERT(_sql_impl);
     return *_sql_impl;
   }
-
 
  private:
   FunctionSignature _signature;

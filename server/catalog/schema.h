@@ -35,7 +35,7 @@ class Schema : public DatabaseObject {
   Schema(ObjectId database_id, SchemaOptions options);
 
   static std::shared_ptr<Schema> ReadInternal(vpack::Slice slice,
-                                                        ReadContext ctx);
+                                              ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {
     return ReadInternal(s, {.database_id = GetDatabaseId()});

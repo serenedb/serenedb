@@ -60,100 +60,90 @@ Result ValidateInvertedIndexColumns(
 }
 
 }  // namespace
+namespace {
 
-ResultOr<std::shared_ptr<Index>> MakeIndex(
-  ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
-  ObjectId id, ObjectId relation_id, IndexBaseOptions options,
-  std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot,
-  IndexShardOptions& shard_options) {
-  options.column_ids.reserve(columns.size());
+std::vector<Column::Id> ExtractColumnIds(
+  std::span<const CreateIndexColumn> columns) {
+  std::vector<Column::Id> ids;
+  ids.reserve(columns.size());
   for (const auto& c : columns) {
     SDB_ASSERT(c.catalog_column);
-    options.column_ids.push_back(c.catalog_column->id);
+    ids.push_back(c.catalog_column->id);
   }
-
-  switch (options.type) {
-    case IndexType::Inverted: {
-      auto column_validation_res = ValidateInvertedIndexColumns(columns);
-      if (column_validation_res.fail()) {
-        return std::unexpected<Result>(std::move(column_validation_res));
-      }
-
-      InvertedIndex::ColumnOptions inverted_columns;
-      for (const auto& c : columns) {
-        InvertedIndexColumnInfo index_col;
-        if (!c.opclass.empty()) {
-          auto object_name = pg::ParseObjectName(c.opclass, schema_name);
-          if (object_name.schema != schema_name) {
-            return std::unexpected<Result>{
-              std::in_place, ERROR_BAD_PARAMETER,
-              "Accessing text dictionary from different schema is not "
-              "supported"};
-          }
-          auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
-                                             object_name.relation);
-          if (!dict) {
-            return std::unexpected<Result>{
-              std::in_place, ERROR_BAD_PARAMETER,
-              "Text search dictionary '", c.opclass, "' does not exist.",
-              " Required by column '", c.name, "'"};
-          }
-          index_col.text_dictionary = dict->GetId();
-          index_col.features = dict->GetFeatures();
-        }
-        inverted_columns.emplace(c.catalog_column->id, std::move(index_col));
-      }
-      return std::make_shared<InvertedIndex>(
-        database_id, schema_id, id, relation_id, std::move(options.name),
-        std::move(options.column_ids), std::move(inverted_columns));
-    }
-    case IndexType::Secondary: {
-      for (const auto& c : columns) {
-        SDB_ASSERT(c.catalog_column);
-        if (c.catalog_column->type->providesCustomComparison()) {
-          return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
-            " has type with custom comparison and can not be indexed"};
-        }
-        if (!c.catalog_column->type->isPrimitiveType()) {
-          return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
-            " has non primitive type and can not be indexed"};
-        }
-      }
-      auto& sec_opts =
-        basics::downCast<SecondaryIndexShardOptions>(shard_options);
-      return std::make_shared<SecondaryIndex>(
-        database_id, schema_id, id, relation_id, std::move(options.name),
-        std::move(options.column_ids), sec_opts.base.unique);
-    }
-    case IndexType::Unknown:
-      SDB_UNREACHABLE();
-  }
+  return ids;
 }
 
-// NOLINTBEGIN
-struct Index::IndexOutput {
-  IndexType type;
-  std::span<const Column::Id> column_ids;
-};
-// NOLINTEND
+}  // namespace
 
-Index::IndexOutput Index::MakeIndexOutput() const {
-  return {
-    .type = GetIndexType(),
-    .column_ids = _column_ids,
-  };
+ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
+  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  std::string name, std::vector<catalog::CreateIndexColumn> columns,
+  bool unique) {
+  for (const auto& c : columns) {
+    SDB_ASSERT(c.catalog_column);
+    if (c.catalog_column->type->providesCustomComparison()) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
+        " has type with custom comparison and can not be indexed"};
+    }
+    if (!c.catalog_column->type->isPrimitiveType()) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_BAD_PARAMETER, "Column ", c.name,
+        " has non primitive type and can not be indexed"};
+    }
+  }
+  return std::make_shared<SecondaryIndex>(database_id, schema_id, id,
+                                          relation_id, std::move(name),
+                                          ExtractColumnIds(columns), unique);
+}
+
+ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
+  ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
+  ObjectId id, ObjectId relation_id, std::string name,
+  std::vector<catalog::CreateIndexColumn> columns,
+  const std::shared_ptr<const Snapshot>& snapshot) {
+  auto column_validation_res = ValidateInvertedIndexColumns(columns);
+  if (column_validation_res.fail()) {
+    return std::unexpected<Result>(std::move(column_validation_res));
+  }
+
+  InvertedIndex::ColumnOptions inverted_columns;
+  for (const auto& c : columns) {
+    InvertedIndexColumnInfo index_col;
+    if (!c.opclass.empty()) {
+      auto object_name = pg::ParseObjectName(c.opclass, schema_name);
+      if (object_name.schema != schema_name) {
+        return std::unexpected<Result>{
+          std::in_place, ERROR_BAD_PARAMETER,
+          "Accessing text dictionary from different schema is not supported"};
+      }
+      auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
+                                         object_name.relation);
+      if (!dict) {
+        return std::unexpected<Result>{std::in_place,
+                                       ERROR_BAD_PARAMETER,
+                                       "Text search dictionary '",
+                                       c.opclass,
+                                       "' does not exist.",
+                                       " Required by column '",
+                                       c.name,
+                                       "'"};
+      }
+      index_col.text_dictionary = dict->GetId();
+      index_col.features = dict->GetFeatures();
+    }
+    inverted_columns.emplace(c.catalog_column->id, std::move(index_col));
+  }
+  return std::make_shared<InvertedIndex>(
+    database_id, schema_id, id, relation_id, std::move(name),
+    ExtractColumnIds(columns), std::move(inverted_columns));
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
              ObjectId relation_id, std::string name,
-             std::vector<Column::Id> column_ids, IndexType type)
-  : SchemaObject{{}, database_id,     schema_id,
-                 id, std::move(name), ObjectType::Index},
+             std::vector<Column::Id> column_ids, ObjectType type)
+  : SchemaObject{{}, database_id, schema_id, id, std::move(name), type},
     _relation_id{relation_id},
-    _type(type),
     _column_ids{std::move(column_ids)} {
   SDB_ASSERT(GetId().isSet());
 }

@@ -58,7 +58,7 @@ class Table : public SchemaObject {
   Table(const catalog::Table& other, NewOptions options);
 
   static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
-                                                       ReadContext ctx);
+                                             ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {
     return ReadInternal(s, {.database_id = GetDatabaseId()});

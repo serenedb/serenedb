@@ -28,7 +28,6 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/view.h"
-#include "catalog/view.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
@@ -86,7 +85,7 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   std::string_view name = stmt.view->relname;
   auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  auto view = catalog::PgView::Create(db, name, std::move(query), &conn_ctx);
+  auto view = catalog::View::Create(db, name, std::move(query), &conn_ctx);
   if (!view) {
     SDB_THROW(std::move(view.error()));
   }
@@ -109,15 +108,15 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   return {};
 }
 
-std::shared_ptr<catalog::PgView> CreateSystemView(const ViewStmt& stmt) {
+std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {
   SDB_ASSERT(stmt.view);
   SDB_ASSERT(stmt.view->relname);
 
   std::string_view name = stmt.view->relname;
   auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  auto view = catalog::PgView::Create(id::kSystemDB, name, std::move(query),
-                                       nullptr);
+  auto view =
+    catalog::View::Create(id::kSystemDB, name, std::move(query), nullptr);
   SDB_ASSERT(view.has_value(), "Cannot make system view");
 
   return std::move(*view);

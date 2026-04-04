@@ -65,7 +65,7 @@ std::shared_ptr<SecondaryIndexTableHandle> TryMatchSecondaryIndex(
 
   for (auto index_shard :
        snapshot->GetIndexShardsByTable(rocksdb_table.TableId())) {
-    if (index_shard->GetType() != IndexType::Secondary) {
+    if (index_shard->GetType() != catalog::ObjectType::SecondaryIndexShard) {
       continue;
     }
     auto index = snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
@@ -155,7 +155,7 @@ SereneDBTableLayout::createTableHandle(
   const auto* table = &this->table();
   const auto* idx_table = dynamic_cast<const IndexTable*>(table);
   if (idx_table &&
-      idx_table->GetIndex().GetIndexType() == IndexType::Inverted) {
+      idx_table->GetIndex().GetType() == catalog::ObjectType::InvertedIndex) {
     const auto* inv_index = idx_table;
     const auto& index =
       basics::downCast<const catalog::InvertedIndex>(inv_index->GetIndex());

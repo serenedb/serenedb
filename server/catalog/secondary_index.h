@@ -32,11 +32,12 @@ class SecondaryIndex : public Index {
                  ObjectId relation_id, std::string name,
                  std::vector<Column::Id> column_ids, bool unique);
 
-  static std::shared_ptr<SecondaryIndex> ReadInternal(
-    vpack::Slice slice, ReadContext ctx);
+  static std::shared_ptr<SecondaryIndex> ReadInternal(vpack::Slice slice,
+                                                      ReadContext ctx);
   void WriteInternal(vpack::Builder& builder) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.id = GetId(), .database_id = GetDatabaseId(),
+    return ReadInternal(s, {.id = GetId(),
+                            .database_id = GetDatabaseId(),
                             .schema_id = GetSchemaId(),
                             .relation_id = GetRelationId()});
   }

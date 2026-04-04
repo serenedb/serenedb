@@ -39,10 +39,10 @@ std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
 
 void Schema::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
-    vpack::WriteTuple(b, SchemaOptions{
-                           .owner_id = GetOwnerId(),
-                           .id = GetId(),
-                         });
+    vpack::WriteObject(b, vpack::Embedded{SchemaOptions{
+                            .owner_id = GetOwnerId(),
+                            .id = GetId(),
+                          }});
   });
 }
 

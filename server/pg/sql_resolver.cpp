@@ -169,7 +169,7 @@ void ResolveRelation(ObjectId database,
   auto resolve_view = [&] {
     bool changed = disallowed.relations.emplace(name).second;
     SDB_ASSERT(changed);
-    auto state = basics::downCast<catalog::PgView>(*data.object).GetState();
+    auto state = basics::downCast<catalog::View>(*data.object).GetState();
     ResolveQueryView(database, search_path, objects, disallowed, state->objects,
                      config);
     changed = disallowed.relations.erase(name) != 0;
@@ -224,7 +224,7 @@ void ResolveRelation(ObjectId database,
     data.catalog_data = std::move(impl);
   } else if (data.object->GetType() == catalog::ObjectType::View) {
     resolve_view();
-  } else if (data.object->GetType() == catalog::ObjectType::Index) {
+  } else if (catalog::IsIndex(data.object->GetType())) {
     auto& index = basics::downCast<catalog::Index>(*data.object);
     auto snapshot = config.EnsureCatalogSnapshot();
     auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());

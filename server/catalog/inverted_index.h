@@ -43,20 +43,27 @@ struct ColumnAnalyzer {
 
 class InvertedIndex final : public Index {
  public:
-  using ColumnOptions = containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo>;
+  using ColumnOptions =
+    containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo>;
 
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
                 std::vector<Column::Id> column_ids, ColumnOptions columns)
-    : Index{database_id, schema_id, id, relation_id, std::move(name),
-            std::move(column_ids), IndexType::Inverted},
+    : Index{database_id,
+            schema_id,
+            id,
+            relation_id,
+            std::move(name),
+            std::move(column_ids),
+            ObjectType::InvertedIndex},
       _columns{std::move(columns)} {}
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
   void WriteInternal(vpack::Builder& builder) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {
-    return ReadInternal(s, {.id = GetId(), .database_id = GetDatabaseId(),
+    return ReadInternal(s, {.id = GetId(),
+                            .database_id = GetDatabaseId(),
                             .schema_id = GetSchemaId(),
                             .relation_id = GetRelationId()});
   }

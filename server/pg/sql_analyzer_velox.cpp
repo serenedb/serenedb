@@ -73,9 +73,9 @@
 #include "catalog/function.h"
 #include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
-#include "catalog/view.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/view.h"
 #include "catalog/virtual_table.h"
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
@@ -204,10 +204,15 @@ constexpr containers::TrivialBiMap kSpecialForms = [](auto selector) {
 };
 
 std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
-  return absl::StrCat(
-    "This operation is not supported for ",
-    basics::string_utils::GetPluralFormLowerCase(magic_enum::enum_name(type)),
-    ".");
+  std::string type_name;
+  if (catalog::IsIndex(type)) {
+    type_name = "index";
+  } else {
+    type_name = magic_enum::enum_name(type);
+  }
+  return absl::StrCat("This operation is not supported for ",
+                      basics::string_utils::GetPluralFormLowerCase(type_name),
+                      ".");
 }
 
 std::shared_ptr<connector::ReadFileTable> MakeReadFileTable(
@@ -763,7 +768,7 @@ class SqlAnalyzer {
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
   State ProcessView(State* parent, std::string_view view_name,
-                    const catalog::PgView& view, const RangeVar* node);
+                    const catalog::View& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
@@ -1647,7 +1652,7 @@ void SqlAnalyzer::AddIndexColumns(State& state, const Node& stmt,
 
   const auto& id2column = table.IdToColumn();
   for (auto& index : object.Indexes()) {
-    if (index->GetIndexType() != IndexType::Secondary) {
+    if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
       continue;
     }
 
@@ -2825,14 +2830,16 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
 
   std::string_view access_method = stmt.accessMethod;
-  auto index_type = magic_enum::enum_cast<IndexType>(
-                      access_method, magic_enum::case_insensitive)
-                      .value_or(IndexType::Unknown);
-  // "btree" is the PostgreSQL default when no USING clause is specified.
-  if (index_type == IndexType::Unknown && access_method == "btree") {
-    index_type = IndexType::Secondary;
-  }
-  const bool is_secondary = (index_type == IndexType::Secondary);
+  auto index_type = [&] {
+    if (access_method == "btree" || access_method == "secondary") {
+      return catalog::ObjectType::SecondaryIndex;
+    }
+    if (access_method == "inverted") {
+      return catalog::ObjectType::InvertedIndex;
+    }
+    return catalog::ObjectType::Invalid;
+  }();
+  const bool is_secondary = (index_type == catalog::ObjectType::SecondaryIndex);
 
   // SST table writer requires all columns to be sorted by.
   // So we put sorting operator as we do it for COPY
@@ -4015,7 +4022,8 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 }
 
 State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
-                               const catalog::PgView& view, const RangeVar* node) {
+                               const catalog::View& view,
+                               const RangeVar* node) {
   auto view_state = view.GetState();
   SDB_ASSERT(view_state->stmt);
   SDB_ASSERT(view_state->stmt->stmt);
@@ -4089,7 +4097,7 @@ State SqlAnalyzer::ProcessIndex(State* parent,
     SDB_ASSERT(dynamic_cast<connector::IndexTable*>(object.table.get()));
   }
 
-  if (index.GetIndexType() == IndexType::Inverted) {
+  if (index.GetType() == catalog::ObjectType::InvertedIndex) {
     SDB_ASSERT(!table.Columns().empty());
 
     if (_expr_for_scorer) {
@@ -4210,7 +4218,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   auto& logical_object = *object->object;
 
   if (logical_object.GetType() == catalog::ObjectType::View) {
-    const auto& view = basics::downCast<catalog::PgView>(*object->object);
+    const auto& view = basics::downCast<catalog::View>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {
     return ProcessTable(parent, schema_name, name, *object, node);
@@ -4220,7 +4228,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
       basics::downCast<catalog::VirtualTableSnapshot>(logical_object);
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
-  } else if (logical_object.GetType() == catalog::ObjectType::Index) {
+  } else if (catalog::IsIndex(logical_object.GetType())) {
     return ProcessIndex(parent, *object, node);
   }
 

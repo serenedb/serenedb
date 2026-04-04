@@ -162,8 +162,8 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
     auto shard = snapshot->GetIndexShard(index->GetId());
     SDB_ASSERT(shard);
 
-    if (shard->GetType() != IndexType::Inverted) {
-      SDB_ASSERT(shard->GetType() == IndexType::Secondary);
+    if (shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+      SDB_ASSERT(shard->GetType() == catalog::ObjectType::SecondaryIndexShard);
       return {};
     }
 

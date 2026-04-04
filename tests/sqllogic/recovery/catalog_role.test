@@ -1,0 +1,22 @@
+control substitution on
+
+statement ok
+CREATE ROLE babsky WITH PASSWORD 'clickclack322';
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT rolname FROM pg_roles WHERE rolname = 'babsky';
+----
+rolname
+babsky
+
+connection after_crash
+statement ok
+DROP ROLE babsky;

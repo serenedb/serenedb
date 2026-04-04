@@ -832,7 +832,7 @@ Result RocksDBEngineCatalog::VisitDefinitionsImpl(
 }
 
 Result RocksDBEngineCatalog::VisitDefinitions(
-  ObjectId parent_id, RocksDBEntryType type,
+  ObjectId parent_id, catalog::ObjectType type,
   absl::FunctionRef<Result(DefinitionKey key, vpack::Slice)> visitor) {
   auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
   return VisitDefinitionsImpl(start, end, visitor);
@@ -862,7 +862,7 @@ Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
   vpack::Builder b;
   shard.WriteInternal(b);
   RocksDBKeyWithBuffer<DefinitionKey> key{
-    table_id, RocksDBEntryType::TableShard, shard_id};
+    table_id, catalog::ObjectType::TableShard, shard_id};
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
 
@@ -1243,7 +1243,7 @@ void RocksDBEngineCatalog::pruneWalFiles() {
 void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
   std::ignore = VisitDefinitions(
-    id::kInstance, RocksDBEntryType::Database,
+    id::kInstance, catalog::ObjectType::Database,
     [&](DefinitionKey key, vpack::Slice result) -> Result {
       catalog::DatabaseOptions options;
 
@@ -1263,8 +1263,8 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   vpack::Builder builder;
   vpack::WriteTuple(builder, database);
   auto r =
-    CreateDefinition(id::kInstance, RocksDBEntryType::Database, id::kSystemDB,
-                     [&](bool) { return builder.slice(); });
+    CreateDefinition(id::kInstance, catalog::ObjectType::Database,
+                     id::kSystemDB, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write database marker: ", r.errorMessage());
@@ -1277,8 +1277,8 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   builder.clear();
   vpack::WriteTuple(builder, schema_options);
   r =
-    CreateDefinition(id::kSystemDB, RocksDBEntryType::Schema, schema_options.id,
-                     [&](bool) { return builder.slice(); });
+    CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema,
+                     schema_options.id, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write schema marker: ", r.errorMessage());
@@ -1286,7 +1286,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
 }
 
 Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
-                                              RocksDBEntryType type,
+                                              catalog::ObjectType type,
                                               ObjectId id,
                                               WriteProperties properties) {
   return WriteDefinition(
@@ -1297,7 +1297,7 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
 
 Result RocksDBEngineCatalog::ReplaceDefinition(ObjectId old_parent_id,
                                                ObjectId new_parent_id,
-                                               RocksDBEntryType type,
+                                               catalog::ObjectType type,
                                                ObjectId id,
                                                WriteProperties properties) {
   return WriteDefinition(
@@ -1312,7 +1312,7 @@ Result RocksDBEngineCatalog::ReplaceDefinition(ObjectId old_parent_id,
 }
 
 Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
-                                            RocksDBEntryType type,
+                                            catalog::ObjectType type,
                                             ObjectId id) {
   return DeleteDefinition(
     _db->GetRootDB(),
@@ -1321,7 +1321,7 @@ Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
 }
 
 Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
-                                       RocksDBEntryType type) {
+                                       catalog::ObjectType type) {
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
   auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
@@ -1382,7 +1382,7 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
     _db->GetRootDB(),
     [&] {
       return RocksDBKeyWithBuffer<DefinitionKey>{
-        parent_id, RocksDBEntryType::Tombstone, id};
+        parent_id, catalog::ObjectType::Tombstone, id};
     },
     [] { return vpack::Slice::emptyStringSlice(); },
     [] { return std::string_view{}; });

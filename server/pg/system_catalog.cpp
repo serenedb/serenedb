@@ -760,8 +760,8 @@ containers::FlatHashMap<std::string, std::shared_ptr<Function>>
   gPgCatalogFunctions;
 containers::FlatHashMap<std::string, std::shared_ptr<Function>>
   gInfoSchemaFunctions;
-containers::FlatHashMap<std::string, std::shared_ptr<PgView>> gPgCatalogViews;
-containers::FlatHashMap<std::string, std::shared_ptr<PgView>> gInfoSchemaViews;
+containers::FlatHashMap<std::string, std::shared_ptr<View>> gPgCatalogViews;
+containers::FlatHashMap<std::string, std::shared_ptr<View>> gInfoSchemaViews;
 
 }  // namespace
 
@@ -798,7 +798,7 @@ void VisitSystemTables(
 }
 
 void VisitSystemViews(
-  absl::FunctionRef<void(const catalog::PgView&, Oid)> visitor) {
+  absl::FunctionRef<void(const catalog::View&, Oid)> visitor) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto& [name, view] : gPgCatalogViews) {
     SDB_ASSERT(view);
@@ -853,7 +853,7 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
     });
 }
 
-std::shared_ptr<PgView> GetInfoSchemaView(std::string_view name) {
+std::shared_ptr<View> GetInfoSchemaView(std::string_view name) {
   auto it = gInfoSchemaViews.find(name);
   if (it == gInfoSchemaViews.end()) {
     return nullptr;
@@ -861,7 +861,7 @@ std::shared_ptr<PgView> GetInfoSchemaView(std::string_view name) {
   return it->second;
 }
 
-std::shared_ptr<PgView> GetView(std::string_view name) {
+std::shared_ptr<View> GetView(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   auto it = gPgCatalogViews.find(name);
   if (it == gPgCatalogViews.end()) {

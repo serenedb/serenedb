@@ -118,7 +118,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
                                        const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
-  : IndexShard{id, index.GetId(), IndexType::Inverted},
+  : IndexShard{id, index.GetId(), catalog::ObjectType::InvertedIndexShard},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},

@@ -51,7 +51,7 @@ class Database final : public Object {
       _write_concern{options.writeConcern} {}
 
   static std::shared_ptr<Database> ReadInternal(vpack::Slice slice,
-                                                          ReadContext ctx);
+                                                ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {
     return ReadInternal(s, {.id = GetId()});

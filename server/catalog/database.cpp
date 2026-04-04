@@ -43,7 +43,7 @@ DatabaseOptions MakeSystemDatabaseOptions() {
 }
 
 std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
-                                                          ReadContext ctx) {
+                                                 ReadContext ctx) {
   DatabaseOptions options;
   if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
     return nullptr;
@@ -53,10 +53,10 @@ std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
 
 void Database::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
-    vpack::WriteTuple(b, DatabaseOptions{
-      .replicationFactor = _replication_factor,
-      .writeConcern = _write_concern,
-    });
+    vpack::WriteObject(b, vpack::Embedded{DatabaseOptions{
+                            .replicationFactor = _replication_factor,
+                            .writeConcern = _write_concern,
+                          }});
   });
 }
 

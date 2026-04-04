@@ -73,7 +73,7 @@ Tokenizer::Tokenizer(ObjectId id, std::string_view name,
     _features{features} {}
 
 std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
-                                                    ReadContext ctx) {
+                                                   ReadContext ctx) {
   auto name = slice.get("name");
   if (!name.isString()) {
     return nullptr;

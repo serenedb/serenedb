@@ -89,14 +89,14 @@ Result FunctionProperties::Read(FunctionProperties& properties,
   properties.id = Identifier{basics::VPackHelper::extractIdValue(slice)};
   properties.implementation = slice.get("implementation");
 
-  if (auto r = vpack::ReadTupleNothrow(slice.get("signature"),
-                                       properties.signature);
+  if (auto r =
+        vpack::ReadTupleNothrow(slice.get("signature"), properties.signature);
       !r.ok()) {
     return r;
   }
 
-  if (auto r = vpack::ReadTupleNothrow(slice.get("options"),
-                                       properties.options);
+  if (auto r =
+        vpack::ReadTupleNothrow(slice.get("options"), properties.options);
       !r.ok()) {
     return r;
   }
@@ -105,7 +105,7 @@ Result FunctionProperties::Read(FunctionProperties& properties,
 }
 
 std::shared_ptr<Function> Function::ReadInternal(vpack::Slice slice,
-                                                  ReadContext ctx) {
+                                                 ReadContext ctx) {
   FunctionProperties properties;
   if (auto r = FunctionProperties::Read(properties, slice); !r.ok()) {
     return nullptr;
@@ -173,8 +173,8 @@ catalog::Function::~Function() = default;
 void catalog::Function::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
     vpack::WriteObject(b, vpack::Embedded{FunctionMeta{
-                              .id = Identifier{GetId().id()},
-                            }});
+                            .id = Identifier{GetId().id()},
+                          }});
     b.add("signature");
     vpack::WriteTuple(b, _signature);
     b.add("options");

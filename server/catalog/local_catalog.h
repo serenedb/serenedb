@@ -57,7 +57,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId schema_id, std::shared_ptr<PgView> view) final;
+  Result RegisterView(ObjectId schema_id, std::shared_ptr<View> view) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
@@ -72,7 +72,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<PgView> view, bool replace) final;
+                    std::shared_ptr<View> view, bool replace) final;
   Result CreateSchema(ObjectId database_id,
                       std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
@@ -80,11 +80,15 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
-  Result CreateIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view relation,
-                     std::vector<CreateIndexColumn>&& columns,
-                     IndexBaseOptions options, IndexShardOptions& shard_options,
-                     CreateIndexOperationOptions operation_options = {}) final;
+  Result CreateSecondaryIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
+    CreateIndexOperationOptions operation_options = {}) final;
+  Result CreateInvertedIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns,
+    IndexShardOptions& shard_options,
+    CreateIndexOperationOptions operation_options = {}) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
 
@@ -100,7 +104,7 @@ class LocalCatalog final : public LogicalCatalog,
                         std::string_view name, std::string_view new_name) final;
 
   Result ChangeView(ObjectId database_id, std::string_view schema,
-                    std::string_view name, ChangeCallback<PgView> callback) final;
+                    std::string_view name, ChangeCallback<View> callback) final;
   Result ChangeTable(ObjectId database_id, std::string_view schema,
                      std::string_view name,
                      ChangeCallback<Table> callback) final;
@@ -130,6 +134,10 @@ class LocalCatalog final : public LogicalCatalog,
   }
 
  private:
+  Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
+                         IndexShardOptions& shard_options,
+                         CreateIndexOperationOptions operation_options);
+
   template<typename T>
   Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
                           std::string_view name, std::string_view new_name);

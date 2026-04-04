@@ -60,15 +60,16 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-IndexType GetIndexType(char* method) {
+catalog::ObjectType GetIndexType(char* method) {
   SDB_ASSERT(method);
-  // Standard PostgreSQL syntax (CREATE INDEX ... ON table(col)) defaults to
-  // "btree".  We map it to Secondary since that is our default index type.
-  if (std::string_view{method} == "btree") {
-    return IndexType::Secondary;
+  std::string_view m{method};
+  if (m == "btree" || m == "secondary") {
+    return catalog::ObjectType::SecondaryIndex;
   }
-  return magic_enum::enum_cast<IndexType>(method, magic_enum::case_insensitive)
-    .value_or(IndexType::Unknown);
+  if (m == "inverted") {
+    return catalog::ObjectType::InvertedIndex;
+  }
+  return catalog::ObjectType::Invalid;
 }
 
 Result ParseIndexOptions(const IndexStmt& index,
@@ -78,7 +79,7 @@ Result ParseIndexOptions(const IndexStmt& index,
     return Result{ERROR_BAD_PARAMETER, "access method is not provided"};
   }
   auto index_type = GetIndexType(index.accessMethod);
-  if (index_type == IndexType::Unknown) {
+  if (index_type == catalog::ObjectType::Invalid) {
     return Result{ERROR_BAD_PARAMETER, "access method \"", index.accessMethod,
                   "\" does not exist"};
   }
@@ -140,19 +141,17 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   }
 
   Result create_result;
-  if (options.type == IndexType::Inverted) {
+  if (options.type == catalog::ObjectType::InvertedIndex) {
     explain_options::ExplainOptions dummy;
     CreateIndexOptionsParser parser{stmt.options, dummy};
     auto shard_options = std::move(parser).GetOptions();
-    create_result = catalog.CreateIndex(
-      db, schema, relation_name, std::move(columns), std::move(options),
+    create_result = catalog.CreateInvertedIndex(
+      db, schema, relation_name, std::move(options.name), std::move(columns),
       shard_options, {.create_with_tombstone = true});
-  } else if (options.type == IndexType::Secondary) {
-    SecondaryIndexShardOptions shard_options;
-    shard_options.base.unique = stmt.unique;
-    create_result = catalog.CreateIndex(
-      db, schema, relation_name, std::move(columns), std::move(options),
-      shard_options, {.create_with_tombstone = true});
+  } else if (options.type == catalog::ObjectType::SecondaryIndex) {
+    create_result = catalog.CreateSecondaryIndex(
+      db, schema, relation_name, std::move(options.name), std::move(columns),
+      stmt.unique, {.create_with_tombstone = true});
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index type is not supported"));
@@ -188,7 +187,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   SDB_ASSERT(shard);
 
   // Inverted indexes need background commit/consolidation tasks.
-  if (shard->GetType() == IndexType::Inverted) {
+  if (shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
     auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
     inverted_index.StartTasks();
   }

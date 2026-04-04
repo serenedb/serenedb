@@ -29,11 +29,11 @@ SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
                                std::string name,
                                std::vector<Column::Id> column_ids, bool unique)
   : Index(database_id, schema_id, id, relation_id, std::move(name),
-          std::move(column_ids), IndexType::Secondary),
+          std::move(column_ids), ObjectType::SecondaryIndex),
     _unique{unique} {}
 
-std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(
-  vpack::Slice slice, ReadContext ctx) {
+std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(vpack::Slice slice,
+                                                             ReadContext ctx) {
   auto name_slice = slice.get("name");
   if (!name_slice.isString()) {
     return nullptr;
@@ -64,11 +64,12 @@ std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(
 void SecondaryIndex::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
     struct BaseOpts {
-      IndexType type;
+      ObjectType type;
       std::span<const Column::Id> column_ids;
     };
     b.add("base");
-    vpack::WriteTuple(b, BaseOpts{.type = GetIndexType(), .column_ids = _column_ids});
+    vpack::WriteTuple(b,
+                      BaseOpts{.type = GetType(), .column_ids = _column_ids});
     struct ImplOpts {
       bool unique;
     };

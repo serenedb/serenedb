@@ -31,7 +31,7 @@
 
 namespace sdb::catalog {
 
-class PgView final : public SchemaObject {
+class View final : public SchemaObject {
  public:
   struct State {
     pg::MemoryContextPtr memory_context;
@@ -39,15 +39,15 @@ class PgView final : public SchemaObject {
     pg::Objects objects;
   };
 
-  static std::shared_ptr<PgView> ReadInternal(vpack::Slice slice,
-                                              ReadContext ctx);
-  static ResultOr<std::shared_ptr<PgView>> Create(ObjectId database_id,
-                                                  std::string_view name,
-                                                  std::string query,
-                                                  const Config* config);
+  static std::shared_ptr<View> ReadInternal(vpack::Slice slice,
+                                            ReadContext ctx);
+  static ResultOr<std::shared_ptr<View>> Create(ObjectId database_id,
+                                                std::string_view name,
+                                                std::string query,
+                                                const Config* config);
 
-  PgView(ObjectId database_id, ObjectId id, std::string_view name,
-         std::string query, std::shared_ptr<const State> state);
+  View(ObjectId database_id, ObjectId id, std::string_view name,
+       std::string query, std::shared_ptr<const State> state);
 
   void WriteInternal(vpack::Builder& b) const final;
   std::shared_ptr<Object> Clone(vpack::Slice s) const final {

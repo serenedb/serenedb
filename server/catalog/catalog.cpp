@@ -119,15 +119,15 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   bool is_root = false) {
   SDB_ASSERT(definition.isObject());
   struct {
-    IndexType type;
+    ObjectType type;
   } base_opts;
   if (auto r = vpack::ReadTupleNothrow(definition.get("base"), base_opts);
       !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  auto shard_type = base_opts.type == IndexType::Inverted
-                      ? RocksDBEntryType::InvertedIndexShard
-                      : RocksDBEntryType::SecondaryIndexShard;
+  auto shard_type = base_opts.type == ObjectType::InvertedIndex
+                      ? ObjectType::InvertedIndexShard
+                      : ObjectType::SecondaryIndexShard;
   ObjectId shard_id;
   auto r = engine.VisitDefinitions(index_id, shard_type,
                                    [&](DefinitionKey key, vpack::Slice) {
@@ -149,7 +149,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
   auto r = engine.VisitDefinitions(
-    table_id, RocksDBEntryType::TableShard,
+    table_id, ObjectType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) {
       SDB_ASSERT(!shard_id.isSet());
       shard_id = key.GetObjectId();
@@ -164,7 +164,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   std::vector<std::shared_ptr<IndexDrop>> indexes;
-  r = engine.VisitDefinitions(table_id, RocksDBEntryType::SecondaryIndex,
+  r = engine.VisitDefinitions(table_id, ObjectType::SecondaryIndex,
                               [&](DefinitionKey key, vpack::Slice slice) {
                                 auto index_drop = CreateIndexDrop(
                                   engine, db_id, schema_id, table_id,
@@ -187,7 +187,7 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
   bool is_root = false) {
   std::vector<std::shared_ptr<TableDrop>> tables;
   auto r = engine.VisitDefinitions(
-    schema_id, RocksDBEntryType::Table,
+    schema_id, ObjectType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto options = GetTableOptionsForDrop(slice);
       if (!options) {
@@ -214,7 +214,7 @@ ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id) {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
   auto r = engine.VisitDefinitions(
-    db_id, RocksDBEntryType::Schema, [&](DefinitionKey key, vpack::Slice) {
+    db_id, ObjectType::Schema, [&](DefinitionKey key, vpack::Slice) {
       auto schema_drop = CreateSchemaDrop(engine, db_id, key.GetObjectId());
       if (!schema_drop) {
         return std::move(schema_drop.error());
@@ -268,7 +268,7 @@ class OpenDatabase {
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   std::shared_ptr<Table> table);
   Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                  ObjectId index_id, RocksDBEntryType entry_type,
+                  ObjectId index_id, ObjectType entry_type,
                   vpack::Slice definition);
 
   Result AddTableShard(ObjectId table_id, ObjectId shard_id,
@@ -288,7 +288,7 @@ class OpenDatabase {
     auto& engine = GetServerEngine();
     auto& deleted = _deleted[magic_enum::enum_integer(scope)];
     SDB_ASSERT(deleted.empty());
-    auto r = engine.VisitDefinitions(id, RocksDBEntryType::Tombstone,
+    auto r = engine.VisitDefinitions(id, ObjectType::Tombstone,
                                      [&](DefinitionKey key, vpack::Slice) {
                                        deleted.insert(key.GetObjectId());
                                        return Result{};
@@ -320,7 +320,7 @@ Result OpenDatabase::AddDatabase(ObjectId database_id,
 
 Result OpenDatabase::RegisterDatabases() {
   return GetServerEngine().VisitDefinitions(
-    id::kInstance, RocksDBEntryType::Database,
+    id::kInstance, ObjectType::Database,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       if (!IsDeleted(key.GetObjectId(), DeletedScope::Root)) {
         return AddDatabase(key.GetObjectId(), slice);
@@ -336,7 +336,7 @@ Result OpenDatabase::RegisterDatabases() {
 
 Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
   return GetServerEngine().VisitDefinitions(
-    database_id, RocksDBEntryType::Schema,
+    database_id, ObjectType::Schema,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto schema_id = key.GetObjectId();
       if (!IsDeleted(key.GetObjectId(), DeletedScope::Database)) {
@@ -355,7 +355,7 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
 
 Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::Function,
+    schema_id, ObjectType::Function,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto function =
         catalog::Function::ReadInternal(slice, {.database_id = db_id});
@@ -369,7 +369,7 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
 
 Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::Tokenizer,
+    schema_id, ObjectType::Tokenizer,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto tokenizer =
         Tokenizer::ReadInternal(slice, {.id = key.GetObjectId()});
@@ -383,9 +383,9 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
 
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::PgView,
+    schema_id, ObjectType::View,
     [&](DefinitionKey, vpack::Slice slice) -> Result {
-      auto view = PgView::ReadInternal(slice, {.database_id = db_id});
+      auto view = View::ReadInternal(slice, {.database_id = db_id});
       if (!view) {
         return ErrorMeta(ERROR_INTERNAL, "view",
                          "Failed to read view definition", slice);
@@ -396,7 +396,7 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
 
 Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
                                      ObjectId table_id) {
-  auto visit = [&](RocksDBEntryType type) {
+  auto visit = [&](ObjectType type) {
     return GetServerEngine().VisitDefinitions(
       table_id, type, [&](DefinitionKey key, vpack::Slice slice) -> Result {
         auto index_id = key.GetObjectId();
@@ -413,10 +413,10 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
         return {};
       });
   };
-  if (auto r = visit(RocksDBEntryType::SecondaryIndex); !r.ok()) {
+  if (auto r = visit(ObjectType::SecondaryIndex); !r.ok()) {
     return r;
   }
-  if (auto r = visit(RocksDBEntryType::InvertedIndex); !r.ok()) {
+  if (auto r = visit(ObjectType::InvertedIndex); !r.ok()) {
     return r;
   }
   return {};
@@ -424,7 +424,7 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
 
 Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
   return GetServerEngine().VisitDefinitions(
-    table_id, RocksDBEntryType::TableShard,
+    table_id, ObjectType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Table));
@@ -452,35 +452,24 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
     return _catalog.RegisterIndexShard(std::move(*shard));
   };
 
-  auto shard_type = [&] {
-    switch (index->GetIndexType()) {
-      case IndexType::Secondary:
-        return RocksDBEntryType::SecondaryIndexShard;
-      case IndexType::Inverted:
-        return RocksDBEntryType::InvertedIndexShard;
-      default:
-        SDB_UNREACHABLE();
-    }
-  }();
+  auto is_inverted = index->GetType() == ObjectType::InvertedIndex;
+  auto shard_type = is_inverted ? ObjectType::InvertedIndexShard
+                                : ObjectType::SecondaryIndexShard;
 
   return GetServerEngine().VisitDefinitions(
     index->GetId(), shard_type,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      switch (index->GetIndexType()) {
-        case IndexType::Inverted:
-          return load_shard.operator()<search::InvertedIndexShardOptions>(
-            key, slice);
-        case IndexType::Secondary:
-          return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
-        case IndexType::Unknown:
-          SDB_UNREACHABLE();
+      if (is_inverted) {
+        return load_shard.operator()<search::InvertedIndexShardOptions>(key,
+                                                                        slice);
       }
+      return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
     });
 }
 
 Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::Table,
+    schema_id, ObjectType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
       if (!IsDeleted(table_id, DeletedScope::Schema)) {
@@ -507,7 +496,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::AddRoles() {
   auto& engine = GetServerEngine();
   auto r = engine.VisitDefinitions(
-    id::kInstance, RocksDBEntryType::Role,
+    id::kInstance, ObjectType::Role,
     [&](DefinitionKey, vpack::Slice slice) -> Result {
       SDB_ASSERT(!slice.get(StaticStrings::kDataSourceId).isNone());
 
@@ -546,14 +535,14 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
 
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                               ObjectId table_id, ObjectId index_id,
-                              RocksDBEntryType entry_type, vpack::Slice slice) {
+                              ObjectType entry_type, vpack::Slice slice) {
   SDB_ASSERT(slice.isObject(), "Index definition is not an object");
   ReadContext ctx{.id = index_id,
                   .database_id = database_id,
                   .schema_id = schema_id,
                   .relation_id = table_id};
   std::shared_ptr<Index> index;
-  if (entry_type == RocksDBEntryType::SecondaryIndex) {
+  if (entry_type == ObjectType::SecondaryIndex) {
     index = SecondaryIndex::ReadInternal(slice, ctx);
   } else {
     index = InvertedIndex::ReadInternal(slice, ctx);
@@ -569,7 +558,7 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
 #ifdef SDB_DEV
   // Check there are no tombstones in index scope
   size_t counter = 0;
-  r = GetServerEngine().VisitDefinitions(index_id, RocksDBEntryType::Tombstone,
+  r = GetServerEngine().VisitDefinitions(index_id, ObjectType::Tombstone,
                                          [&](DefinitionKey, vpack::Slice) {
                                            counter++;
                                            return Result{};

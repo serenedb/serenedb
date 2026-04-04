@@ -90,7 +90,12 @@ class ScoreCollector {
   Tag _tag;
 };
 
-using ScoreDoc = std::pair<score_t, doc_id_t>;
+struct ScoreDoc {
+  score_t score{0};
+  doc_id_t doc_id{0};
+  uint32_t segment_index{0};
+};
+static_assert(sizeof(ScoreDoc) == 12);
 
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
@@ -113,6 +118,10 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     _score_threshold = &score_threshold;
   }
 
+  void SetSegmentIndex(uint32_t segment_index) noexcept {
+    _segment_index = segment_index;
+  }
+
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
     ++_count;
     TryPush(score, doc);
@@ -120,7 +129,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   IRS_FORCE_INLINE uint64_t Finalize() {
     std::sort(_hits_begin, _hits_end, [](const auto& l, const auto& r) {
-      return std::get<score_t>(l) > std::get<score_t>(r);
+      return l.score > r.score;
     });
     return _count;
   }
@@ -204,7 +213,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(*_score_threshold < score);
-    *_hits_it = {score, doc};
+    *_hits_it = {score, doc, _segment_index};
     ++_hits_it;
     if (_hits_it != _hits_end) {
       return false;
@@ -212,9 +221,9 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     _hits_it = _hits_pivot;
     std::nth_element(_hits_begin, _hits_pivot, _hits_end,
                      [](const auto& l, const auto& r) {
-                       return std::get<score_t>(l) > std::get<score_t>(r);
+                       return l.score > r.score;
                      });
-    *_score_threshold = std::get<score_t>(*_hits_pivot);
+    *_score_threshold = _hits_pivot->score;
     return true;
   }
 
@@ -237,6 +246,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   ScoreDoc* IRS_RESTRICT const _hits_begin;
   ScoreDoc* IRS_RESTRICT const _hits_pivot;
   ScoreDoc* IRS_RESTRICT const _hits_end;
+  uint32_t _segment_index{0};
 };
 
 template<typename F>

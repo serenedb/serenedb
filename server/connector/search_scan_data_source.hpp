@@ -31,7 +31,6 @@
 #include <iresearch/search/scorer.hpp>
 
 #include "basics/fwd.h"
-#include "connector/topk_score_collector.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace sdb::connector {

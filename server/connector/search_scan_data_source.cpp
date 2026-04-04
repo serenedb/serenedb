@@ -63,29 +63,22 @@ void SearchDataSource<Materializer>::collectTopK() {
 
   const size_t k = _topk_limit;
 
-  // Segment-level collector: reuses hits buffer, threshold persists across
-  // segments via the seg_threshold variable.
-  irs::score_t seg_threshold = std::numeric_limits<irs::score_t>::min();
-  std::vector<irs::ScoreDoc> seg_hits(irs::BlockSize(k));
-
-  // Index-level collector: maintains global top-k with segment attribution.
-  TopKScoreCollector index_collector{k};
+  // Single collector across all segments. The segment_index is set before
+  // each segment's Collect call, so Push stores it in each ScoreDoc.
+  // The threshold naturally rises across segments, pruning more docs.
+  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(k));
+  irs::NthPartitionScoreCollector collector{score_threshold, k,
+                                            std::span{hits}};
 
   irs::ColumnArgsFetcher fetcher;
 
   for (size_t seg_idx = 0; seg_idx < _reader.size(); ++seg_idx) {
     auto& segment = _reader[seg_idx];
 
-    // Clear stale data from previous segment before reusing the buffer.
-    std::memset(seg_hits.data(), 0, seg_hits.size() * sizeof(irs::ScoreDoc));
-
-    // Create a fresh segment-level collector reusing the hits buffer.
-    // It reads seg_threshold by reference, which carries over from previous
-    // segments and from the index-level collector.
-    irs::NthPartitionScoreCollector seg_collector{seg_threshold, k,
-                                                  std::span{seg_hits}};
-
+    collector.SetSegmentIndex(static_cast<uint32_t>(seg_idx));
     fetcher.Clear();
+
     auto it = segment.mask(_query.execute({
       .segment = segment,
       .scorer = _scorer,
@@ -97,23 +90,11 @@ void SearchDataSource<Materializer>::collectTopK() {
       .fetcher = &fetcher,
     });
 
-    it->Collect(score_func, fetcher, seg_collector);
-
-    // Finalize segment: sorts hits by score desc, returns total count.
-    auto seg_count = seg_collector.Finalize();
-    auto result_count = std::min<size_t>(seg_count, k);
-
-    // Push segment results into the index-level collector.
-    index_collector.AddFromSegment(
-      std::span{seg_hits.data(), result_count}, seg_idx);
-
-    // Sync threshold: take the max of segment and index thresholds so the
-    // next segment benefits from pruning.
-    seg_threshold = std::max(seg_threshold, index_collector.threshold());
+    it->Collect(score_func, fetcher, collector);
   }
 
-  index_collector.Finalize();
-  auto top_results = index_collector.results();
+  auto total_count = collector.Finalize();
+  auto result_count = std::min<size_t>(total_count, k);
 
   // Resolve PKs: group by segment for efficient sequential seeks.
   struct RankedDoc {
@@ -123,10 +104,10 @@ void SearchDataSource<Materializer>::collectTopK() {
     size_t rank;  // original position in score-sorted order
   };
   std::vector<RankedDoc> ranked;
-  ranked.reserve(top_results.size());
-  for (size_t i = 0; i < top_results.size(); ++i) {
-    const auto& r = top_results[i];
-    ranked.push_back({r.segment_index, r.doc_id, r.score, i});
+  ranked.reserve(result_count);
+  for (size_t i = 0; i < result_count; ++i) {
+    ranked.push_back(
+      {hits[i].segment_index, hits[i].doc_id, hits[i].score, i});
   }
 
   // Sort by (segment_index, doc_id) for sequential PK column seeks.
@@ -135,7 +116,7 @@ void SearchDataSource<Materializer>::collectTopK() {
            std::tie(b.segment_index, b.doc_id);
   });
 
-  _topk_results.resize(top_results.size());
+  _topk_results.resize(result_count);
   uint32_t prev_seg = std::numeric_limits<uint32_t>::max();
   irs::DocIterator::ptr pk_iterator;
   const irs::PayAttr* pk_value = nullptr;

@@ -197,26 +197,26 @@ class WandScoringTestCase : public IndexTestBase {
 
     // Compare actual top-K docs and scores
     for (size_t i = 0; i < baseline_k; ++i) {
-      EXPECT_EQ(std::get<irs::doc_id_t>(baseline_hits[i]),
-                std::get<irs::doc_id_t>(wand_hits[i]))
+      EXPECT_EQ(baseline_hits[i].doc_id,
+                wand_hits[i].doc_id)
         << "Doc ID mismatch at position " << i;
-      EXPECT_FLOAT_EQ(std::get<irs::score_t>(baseline_hits[i]),
-                      std::get<irs::score_t>(wand_hits[i]))
+      EXPECT_FLOAT_EQ(baseline_hits[i].score,
+                      wand_hits[i].score)
         << "Score mismatch at position " << i;
     }
   }
 
   void VerifyScoresAndDocs(auto docs, size_t result_count) {
     for (size_t i = 0; i < result_count; ++i) {
-      EXPECT_GT(std::get<irs::score_t>(docs[i]), 0)
+      EXPECT_GT(docs[i].score, 0)
         << "Score at position " << i << " should be positive";
       if (i > 0) {
-        EXPECT_GE(std::get<irs::score_t>(docs[i - 1]),
-                  std::get<irs::score_t>(docs[i]))
+        EXPECT_GE(docs[i - 1].score,
+                  docs[i].score)
           << "Scores should be in descending order at position " << i;
       }
-      ASSERT_TRUE(!irs::doc_limits::eof(std::get<irs::doc_id_t>(docs[i])) &&
-                  std::get<irs::doc_id_t>(docs[i]) !=
+      ASSERT_TRUE(!irs::doc_limits::eof(docs[i].doc_id) &&
+                  docs[i].doc_id !=
                     irs::doc_limits::invalid())
         << "Doc ID at position " << i << " should be valid, got " << docs[i];
     }

@@ -145,6 +145,8 @@ struct Snapshot {
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
     ObjectId table_id) const = 0;
+  virtual std::vector<std::shared_ptr<Index>> GetIndexesByTable(
+    ObjectId table_id) const = 0;
   virtual std::shared_ptr<IndexShard> GetIndexShard(
     ObjectId index_id) const = 0;
 

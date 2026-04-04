@@ -1,4 +1,4 @@
-name: Simple
+name: auto | pre-commit
 
 on:
   pull_request:

@@ -85,8 +85,12 @@ success)
 	EMOJI="✅"
 	RESULT="SUCCESS"
 	;;
-cancelled)
+warning)
 	EMOJI="⚠️"
+	RESULT="WARNING"
+	;;
+cancelled)
+	EMOJI="🚫"
 	RESULT="CANCELLED"
 	;;
 *)

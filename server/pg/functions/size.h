@@ -26,6 +26,6 @@ namespace sdb::pg::functions {
 
 // 9.28.7. Database Object Management Functions
 // https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-DBOBJECT
-void registerSizeFunctions(const std::string& prefix);
+void RegisterSizeFunctions(const std::string& prefix);
 
 }  // namespace sdb::pg::functions

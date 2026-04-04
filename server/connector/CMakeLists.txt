@@ -1,6 +1,7 @@
 add_library(
     serene_connector
     STATIC
+    common.cpp
     data_sink.cpp
     primary_key.cpp
     data_source.cpp

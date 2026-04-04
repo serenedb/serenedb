@@ -187,7 +187,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
-  absl::Mutex _table_lock;
+  std::shared_mutex _table_lock;
 };
 
 TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
@@ -466,9 +466,10 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
     std::unique_ptr<rocksdb::Transaction> transaction_delete{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     size_t rows_affected = 0;
+    std::vector<velox::column_index_t> del_pk = {0};
     RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
                                       velox::ROW(names, types), kObjectKey,
-                                      all_columns, rows_affected,
+                                      del_pk, all_columns, rows_affected,
                                       std::move(delete_writers), _table_lock);
     auto delete_data = makeRowVector({makeFlatVector<int32_t>({100})});
     delete_sink.appendData(delete_data);

@@ -62,6 +62,11 @@ namespace {
 
 IndexType GetIndexType(char* method) {
   SDB_ASSERT(method);
+  // Standard PostgreSQL syntax (CREATE INDEX ... ON table(col)) defaults to
+  // "btree".  We map it to Secondary since that is our default index type.
+  if (std::string_view{method} == "btree") {
+    return IndexType::Secondary;
+  }
   return magic_enum::enum_cast<IndexType>(method, magic_enum::case_insensitive)
     .value_or(IndexType::Unknown);
 }
@@ -133,32 +138,39 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
   if (auto r = ParseIndexOptions(stmt, columns, options); !r.ok()) {
     SDB_THROW(std::move(r));
   }
+
+  Result create_result;
   if (options.type == IndexType::Inverted) {
     explain_options::ExplainOptions dummy;
     CreateIndexOptionsParser parser{stmt.options, dummy};
     auto shard_options = std::move(parser).GetOptions();
-    auto r = catalog.CreateIndex(db, schema, relation_name, std::move(columns),
-                                 std::move(options), shard_options,
-                                 {.create_with_tombstone = true});
-
-    if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
-      conn_ctx.AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("relation \"", stmt.idxname, "\" already exists, skipping")));
-      query::Executor::SetEarlyExit(batch);
-      return {};
-    }
-    if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
-    }
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
+    create_result = catalog.CreateIndex(
+      db, schema, relation_name, std::move(columns), std::move(options),
+      shard_options, {.create_with_tombstone = true});
+  } else if (options.type == IndexType::Secondary) {
+    SecondaryIndexShardOptions shard_options;
+    shard_options.base.unique = stmt.unique;
+    create_result = catalog.CreateIndex(
+      db, schema, relation_name, std::move(columns), std::move(options),
+      shard_options, {.create_with_tombstone = true});
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index type is not supported"));
+  }
+
+  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+      ERR_MSG("relation \"", stmt.idxname, "\" already exists, skipping")));
+    query::Executor::SetEarlyExit(batch);
+    return {};
+  }
+  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
+  }
+  if (!create_result.ok()) {
+    SDB_THROW(std::move(create_result));
   }
 
   state.created = true;
@@ -174,9 +186,12 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
 
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);
-  SDB_ASSERT(shard->GetType() == IndexType::Inverted);
-  auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
-  inverted_index.StartTasks();
+
+  // Inverted indexes need background commit/consolidation tasks.
+  if (shard->GetType() == IndexType::Inverted) {
+    auto& inverted_index = basics::downCast<search::InvertedIndexShard>(*shard);
+    inverted_index.StartTasks();
+  }
 
   const auto& logical_plan = *query.GetLogicalPlan();
   SDB_ASSERT(logical_plan.is(axiom::logical_plan::NodeKind::kTableWrite));

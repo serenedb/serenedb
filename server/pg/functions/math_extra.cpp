@@ -302,7 +302,7 @@ struct PgSetSeed {
 
 }  // namespace
 
-void registerMathExtraFunctions(const std::string& prefix) {
+void RegisterMathExtraFunctions(const std::string& prefix) {
   velox::registerFunction<PgLogBase, double, double, double>({prefix + "log"});
 
   velox::registerFunction<PgDiv, int64_t, int64_t, int64_t>({prefix + "div"});

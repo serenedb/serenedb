@@ -20,21 +20,36 @@
 
 #pragma once
 
-#include <string>
+#include "storage_engine/index_shard.h"
+#include "vpack/vpack.h"
 
-namespace sdb::search::functions {
+namespace sdb {
 
-inline constexpr std::string_view kPhrase = "sdb_phrase";
-inline constexpr std::string_view kTermEq = "sdb_term_eq";
-inline constexpr std::string_view kTermLt = "sdb_term_lt";
-inline constexpr std::string_view kTermLe = "sdb_term_lte";
-inline constexpr std::string_view kTermGe = "sdb_term_gte";
-inline constexpr std::string_view kTermGt = "sdb_term_gt";
-inline constexpr std::string_view kTermIn = "sdb_term_in";
-inline constexpr std::string_view kTermLike = "sdb_term_like";
-inline constexpr std::string_view kNgramMatch = "sdb_ngram_match";
-inline constexpr std::string_view kLevenshteinMatch = "sdb_levenshtein_match";
+struct SecondaryIndexShardOptions : public IndexShardOptions {
+  struct Base {
+    bool unique = false;
+  } base;
+};
 
-void registerSearchFunctions();
+class SecondaryIndexShard : public IndexShard {
+ public:
+  // Existing shard (loaded from catalog)
+  SecondaryIndexShard(ObjectId id, ObjectId index_id,
+                      SecondaryIndexShardOptions options)
+    : IndexShard{id, index_id, IndexType::Secondary},
+      _options{std::move(options)} {}
 
-}  // namespace sdb::search::functions
+  // New shard
+  SecondaryIndexShard(ObjectId index_id, SecondaryIndexShardOptions options)
+    : IndexShard{index_id, IndexType::Secondary},
+      _options{std::move(options)} {}
+
+  void WriteInternal(vpack::Builder& builder) const override {
+    vpack::WriteTuple(builder, _options.base);
+  }
+
+ private:
+  SecondaryIndexShardOptions _options;
+};
+
+}  // namespace sdb

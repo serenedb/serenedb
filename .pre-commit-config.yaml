@@ -72,3 +72,8 @@ repos:
         language: python
         entry: python3 scripts/check_no_anon_namespace_in_headers.py
         files: \.(hpp|hh|h)$
+      - id: check-no-fault-injection-outside-recovery
+        name: Check no fault injection outside recovery folder
+        language: python
+        entry: python3 scripts/check_no_fault_injection_outside_recovery.py
+        files: \.test

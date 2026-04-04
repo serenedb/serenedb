@@ -17,17 +17,20 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-#include "search/functions.hpp"
+
+#include "functions/search.h"
 
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/type/SimpleFunctionApi.h>
 
+#include <iresearch/types.hpp>
+
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 
-namespace sdb::search::functions {
+namespace sdb::functions {
 namespace {
 
 template<typename T>
@@ -80,6 +83,12 @@ struct SearchStubFunction {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
+
+  // BOOST(expr, boost_value)
+  void call(bool& out, const bool&, const double&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
 };
 
 }  // namespace
@@ -88,7 +97,7 @@ struct SearchStubFunction {
 // fail query.
 // TODO(Dronplane): maybe add naive implementation to run without index on best
 // effort basis?
-void registerSearchFunctions() {
+void RegisterSearchFunctions() {
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar>({std::string{kPhrase}});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
@@ -127,6 +136,10 @@ void registerSearchFunctions() {
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar, int64_t, bool, int64_t,
                           velox::Varchar>({std::string{kLevenshteinMatch}});
+
+  // BOOST(expr, boost_value)
+  velox::registerFunction<SearchStubFunction, bool, bool, double>(
+    {std::string{kBoost}});
 }
 
-}  // namespace sdb::search::functions
+}  // namespace sdb::functions

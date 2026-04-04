@@ -24,11 +24,17 @@
 #include <vpack/value.h>
 #include <vpack/value_type.h>
 
-#include <algorithm>
-
-#include "basics/assert.h"
+#include "basics/errors.h"
 
 namespace sdb::catalog {
+
+EnumType::EnumType(std::string_view name, std::vector<std::string> labels)
+  : SchemaObject{{}, {}, {}, {}, name, ObjectType::EnumType} {
+  _entries.reserve(labels.size());
+  for (uint64_t i = 0; i < labels.size(); ++i) {
+    _entries.emplace_back(i + 1, std::move(labels[i]));
+  }
+}
 
 EnumType::EnumType(ObjectId id, std::string_view name,
                    std::vector<EnumLabel> entries)
@@ -47,9 +53,12 @@ void EnumType::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
-std::shared_ptr<EnumType> EnumType::FromVPack(ObjectId id, vpack::Slice slice) {
+Result EnumType::Instantiate(std::shared_ptr<EnumType>& result, ObjectId id,
+                             vpack::Slice slice) {
   auto name = slice.get("name");
-  SDB_ASSERT(name.isString());
+  if (!name.isString()) {
+    return {ERROR_BAD_PARAMETER, "invalid enum type definition: missing name"};
+  }
 
   std::vector<EnumLabel> entries;
   auto labels_slice = slice.get("labels");
@@ -70,7 +79,9 @@ std::shared_ptr<EnumType> EnumType::FromVPack(ObjectId id, vpack::Slice slice) {
     }
   }
 
-  return std::make_shared<EnumType>(id, name.stringView(), std::move(entries));
+  result =
+    std::make_shared<EnumType>(id, name.stringView(), std::move(entries));
+  return {};
 }
 
 }  // namespace sdb::catalog

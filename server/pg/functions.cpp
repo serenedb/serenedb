@@ -34,7 +34,6 @@
 
 #include "pg/functions/array_extra.h"
 #include "pg/functions/datetime_extra.h"
-#include "pg/functions/enum.h"
 #include "pg/functions/extract.h"
 #include "pg/functions/generate.h"
 #include "pg/functions/inout.h"
@@ -63,7 +62,6 @@ void registerFunctions(const std::string& prefix) {
   registerSystemFunctions(prefix);
   registerGenerateFunctions(prefix);
   registerUtilFunctions(prefix);
-  registerEnumFunctions(prefix);
 }
 
 }  // namespace sdb::pg::functions

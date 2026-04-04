@@ -314,8 +314,8 @@ std::string ToPgTypeString(const velox::TypePtr& type,
       return "unknown";
     default:
       if (IsEnum(type)) {
-        const auto& pgenum = basics::downCast<PgEnumType>(type.get());
-        return EnumOut(snapshot, pgenum->Oid());
+        const auto* pgenum = basics::downCast<PgEnumType>(type.get());
+        return EnumTypeOut(snapshot, pgenum->Oid());
       }
       SDB_ASSERT(false);  // better to specify the name
       return "unknown";
@@ -785,7 +785,7 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   return kInvalidOid;
 }
 
-std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t oid) {
+std::string EnumTypeOut(const catalog::Snapshot& snapshot, uint64_t oid) {
   auto object = snapshot.GetObject(ObjectId{oid});
   if (object && object->GetType() == catalog::ObjectType::EnumType) {
     return std::string{object->GetName()};
@@ -793,14 +793,28 @@ std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t oid) {
   return absl::StrCat(oid);
 }
 
-uint64_t EnumIn(const ConnectionContext& ctx, std::string_view name) {
-  auto snapshot = ctx.EnsureCatalogSnapshot();
-  auto current_schema = ctx.GetCurrentSchema();
-  auto object_name = ParseObjectName(name, current_schema);
-  auto enum_type = snapshot->GetEnumType(
-    ctx.GetDatabaseId(), object_name.schema, object_name.relation);
+std::string EnumOut(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,
+                    int64_t value_oid) {
+  auto enum_type =
+    snapshot.GetObject<catalog::EnumType>(ObjectId{enum_type_oid});
   if (enum_type) {
-    return enum_type->GetId();
+    auto label = EnumOidToLabel(enum_type->GetEntries(), value_oid);
+    if (label) {
+      return std::string{*label};
+    }
+  }
+  return absl::StrCat(value_oid);
+}
+
+int64_t EnumIn(const catalog::Snapshot& snapshot, uint64_t enum_type_oid,
+               std::string_view label) {
+  auto enum_type =
+    snapshot.GetObject<catalog::EnumType>(ObjectId{enum_type_oid});
+  if (enum_type) {
+    auto oid = EnumLabelToOid(enum_type->GetEntries(), label);
+    if (oid) {
+      return *oid;
+    }
   }
   return kInvalidOid;
 }

@@ -318,45 +318,59 @@ template<typename T>
 struct EnumInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
-                                      const velox::core::QueryConfig& config,
-                                      const arg_type<velox::Varchar>*,
-                                      const arg_type<int32_t>*) {
-    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
+  void initialize(const std::vector<velox::TypePtr>&,
+                  const velox::core::QueryConfig& config,
+                  const arg_type<velox::Varchar>*,
+                  const int64_t* enum_oid_ptr) {
+    auto* ctx =
+      basics::downCast<const ConnectionContext>(config.config().get());
+    _snapshot = ctx->EnsureCatalogSnapshot();
+    _enum_type_oid = static_cast<uint64_t>(*enum_oid_ptr);
   }
 
-  FOLLY_ALWAYS_INLINE void call(out_type<int64_t>& result,
-                                const arg_type<velox::Varchar>& input,
-                                const arg_type<int32_t>& location) {
-    result = EnumIn(*_ctx, input);
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result,
+                                const arg_type<velox::Varchar>& label,
+                                const int64_t&) {
+    std::string_view val{label.data(), label.size()};
+    result = EnumIn(*_snapshot, _enum_type_oid, val);
     if (result == kInvalidOid) {
       THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT), CURSOR_POS(location),
-        ERR_MSG("type \"", std::string_view{input}, "\" does not exist"));
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("invalid input value for enum ",
+                EnumTypeOut(*_snapshot, _enum_type_oid), ": \"", val, "\""));
     }
+    return true;
   }
 
  private:
-  const ConnectionContext* _ctx;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  uint64_t _enum_type_oid;
 };
 
 template<typename T>
 struct EnumOutFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(const std::vector<velox::TypePtr>&,
-                                      const velox::core::QueryConfig& config,
-                                      const arg_type<int64_t>*) {
-    _ctx = &basics::downCast<const ConnectionContext>(*config.config());
+  void initialize(const std::vector<velox::TypePtr>&,
+                  const velox::core::QueryConfig& config, const int64_t*,
+                  const int64_t* enum_oid_ptr) {
+    auto* ctx =
+      basics::downCast<const ConnectionContext>(config.config().get());
+    _snapshot = ctx->EnsureCatalogSnapshot();
+    _enum_type_oid = static_cast<uint64_t>(*enum_oid_ptr);
   }
 
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& result,
-                                const arg_type<int64_t>& input) {
-    result = EnumOut(*_ctx->EnsureCatalogSnapshot(), input);
+  FOLLY_ALWAYS_INLINE bool call(out_type<velox::Varchar>& result,
+                                int64_t enum_value_oid, const int64_t&) {
+    auto label = EnumOut(*_snapshot, _enum_type_oid, enum_value_oid);
+    result.resize(label.size());
+    std::memcpy(result.data(), label.data(), label.size());
+    return true;
   }
 
  private:
-  const ConnectionContext* _ctx;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  uint64_t _enum_type_oid;
 };
 
 }  // namespace
@@ -389,9 +403,9 @@ void registerInOutFunctions(const std::string& prefix) {
   velox::registerFunction<RegnamespaceOutFunction, velox::Varchar,
                           RegnamespaceCustomType>({prefix + "regnamespaceout"});
 
-  velox::registerFunction<EnumInFunction, int64_t, velox::Varchar, int32_t>(
+  velox::registerFunction<EnumInFunction, int64_t, velox::Varchar, int64_t>(
     {prefix + "enumin"});
-  velox::registerFunction<EnumOutFunction, velox::Varchar, int64_t>(
+  velox::registerFunction<EnumOutFunction, velox::Varchar, int64_t, int64_t>(
     {prefix + "enumout"});
 }
 

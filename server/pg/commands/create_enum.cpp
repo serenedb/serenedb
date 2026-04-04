@@ -44,26 +44,24 @@ yaclib::Future<> CreateEnum(ExecContext& ctx, const CreateEnumStmt& stmt) {
   const auto type_name =
     ParseObjectName(stmt.typeName, ctx.GetDatabase(), current_schema);
 
-  std::vector<catalog::EnumLabel> entries;
-  uint64_t sortorder = 1;
+  std::vector<std::string> labels;
   VisitNodes(stmt.vals, [&](const String& val) {
     std::string_view label = strVal(&val);
-    for (const auto& existing : entries) {
-      if (existing.label == label) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-                        ERR_MSG("invalid enum label \"", label, "\""),
-                        ERR_DETAIL("Labels must be unique for the enum type."));
+    for (const auto& existing : labels) {
+      if (existing == label) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+          ERR_MSG("duplicate key value violates unique constraint "
+                  "\"pg_enum_typid_label_index\""),
+          ERR_DETAIL("Key (enumtypid, enumlabel)=(", type_name.relation, ", ",
+                     label, ") already exists."));
       }
     }
-    entries.push_back(catalog::EnumLabel{
-      .sortorder = sortorder,
-      .label = std::string{label},
-    });
-    sortorder += 1;
+    labels.emplace_back(label);
   });
 
-  auto enum_type = std::make_shared<catalog::EnumType>(
-    ObjectId{0}, type_name.relation, std::move(entries));
+  auto enum_type =
+    std::make_shared<catalog::EnumType>(type_name.relation, std::move(labels));
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();

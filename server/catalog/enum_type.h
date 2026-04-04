@@ -37,15 +37,18 @@ struct EnumLabel {
 
 class EnumType : public SchemaObject {
  public:
-  EnumType(ObjectId id, std::string_view name, std::vector<EnumLabel> entries);
+  EnumType(std::string_view name, std::vector<std::string> labels);
 
   const auto& GetEntries() const noexcept { return _entries; }
 
   void WriteInternal(vpack::Builder& b) const final;
 
-  static std::shared_ptr<EnumType> FromVPack(ObjectId id, vpack::Slice slice);
+  static Result Instantiate(std::shared_ptr<EnumType>& result, ObjectId id,
+                            vpack::Slice slice);
 
  private:
+  EnumType(ObjectId id, std::string_view name, std::vector<EnumLabel> entries);
+
   std::vector<EnumLabel> _entries;
 };
 

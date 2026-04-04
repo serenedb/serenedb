@@ -409,8 +409,11 @@ Result OpenDatabase::RegisterEnumTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, RocksDBEntryType::EnumType,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto enum_type = EnumType::FromVPack(key.GetObjectId(), slice);
-      SDB_ASSERT(enum_type);
+      std::shared_ptr<EnumType> enum_type;
+      auto r = EnumType::Instantiate(enum_type, key.GetObjectId(), slice);
+      if (!r.ok()) {
+        return r;
+      }
       return _catalog.RegisterEnumType(db_id, schema_id, std::move(enum_type));
     });
 }

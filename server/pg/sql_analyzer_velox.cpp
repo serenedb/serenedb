@@ -1044,7 +1044,7 @@ class SqlAnalyzer {
     if (from_varchar && pg::IsEnum(*to)) {
       const auto& enum_type = basics::downCast<pg::PgEnumType>(*to);
       return std::make_shared<lp::CallExpr>(
-        std::move(to), "pg_enum_in", std::move(from),
+        std::move(to), "pg_enumin", std::move(from),
         MakeConst(static_cast<int64_t>(enum_type.Oid())));
     }
 

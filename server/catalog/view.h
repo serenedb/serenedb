@@ -34,31 +34,23 @@ namespace sdb::catalog {
 
 class PgSqlView final : public SchemaObject {
  public:
-  struct State {
-    pg::MemoryContextPtr memory_context;
-    const RawStmt* stmt = nullptr;
-    pg::Objects objects;
-  };
+  PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+            std::string query);
 
   static std::shared_ptr<PgSqlView> ReadInternal(vpack::Slice slice,
                                                  ReadContext ctx);
-  static ResultOr<std::shared_ptr<PgSqlView>> Create(ObjectId database_id,
-                                                     std::string_view name,
-                                                     std::string query,
-                                                     const Config* config);
-
-  PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
-            std::string query, std::shared_ptr<const State> state);
 
   void WriteInternal(vpack::Builder& b) const final;
   std::shared_ptr<Object> Clone() const final;
 
   std::string_view GetQuery() const noexcept { return _query; }
-  auto GetState() const noexcept { return _state; }
+  const RawStmt* GetStatement() const noexcept { return _stmt; }
+  const pg::Objects& GetObjects() const noexcept { return _objects; }
 
- private:
   std::string _query;
-  std::shared_ptr<const State> _state;
+  pg::MemoryContextPtr _memory_context;
+  const RawStmt* _stmt{nullptr};
+  pg::Objects _objects;
 };
 
 }  // namespace sdb::catalog

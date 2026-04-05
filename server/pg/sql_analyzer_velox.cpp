@@ -72,7 +72,6 @@
 #include "basics/string_utils.h"
 #include "catalog/function.h"
 #include "catalog/object.h"
-#include "catalog/sql_function_impl.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/view.h"
@@ -1747,7 +1746,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() == catalog::ObjectType::PgView) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot insert into view \"", table_name, "\""),
@@ -1846,7 +1845,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
   const std::string_view table_name = relation.relname;
-  if (logical_object.GetType() == catalog::ObjectType::PgView) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot update view \"", table_name, "\""),
@@ -1954,7 +1953,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
   const std::string_view table_name = relation.relname;
-  if (logical_object.GetType() == catalog::ObjectType::PgView) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot delete from view \"", table_name, "\""),
@@ -2301,7 +2300,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
     SDB_ASSERT(object.object);
-    if (object.object->GetType() == catalog::ObjectType::PgView) {
+    if (object.object->GetType() == catalog::ObjectType::PgSqlView) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("cannot copy to view \"", relname, "\""),
@@ -4026,12 +4025,11 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
                                const catalog::PgSqlView& view,
                                const RangeVar* node) {
-  auto view_state = view.GetState();
-  SDB_ASSERT(view_state->stmt);
-  SDB_ASSERT(view_state->stmt->stmt);
+  SDB_ASSERT(view.GetStatement());
+  SDB_ASSERT(view.GetStatement()->stmt);
 
   auto state = parent->MakeChild();
-  auto subquery_type = ProcessStmt(state, *view_state->stmt->stmt);
+  auto subquery_type = ProcessStmt(state, *view.GetStatement()->stmt);
   SDB_ASSERT(subquery_type == SqlCommandType::Select);
   SDB_ASSERT(!state.resolver.HasTables());
   // ^ is supposed to be cleared in the project target list
@@ -4219,7 +4217,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
 
-  if (logical_object.GetType() == catalog::ObjectType::PgView) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     const auto& view = basics::downCast<catalog::PgSqlView>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {
@@ -6196,7 +6194,7 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   int location) {
   SDB_ASSERT(logical_function.Options().language ==
              catalog::FunctionLanguage::SQL);
-  const auto& sql_function = logical_function.SqlFunction();
+
   const auto& signature = logical_function.Signature();
 
   std::string_view name = logical_function.GetName();
@@ -6225,7 +6223,7 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   }
 
   State state;
-  const auto& function_body = *sql_function.GetStatement()->stmt;
+  const auto& function_body = *logical_function.GetStatement()->stmt;
   ProcessFunctionBody(state, param2expr, function_body, signature);
   return state;
 }
@@ -6234,7 +6232,7 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
   State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& expr) {
   const auto& signature = logical_function.Signature();
-  const auto& sql_function = logical_function.SqlFunction();
+
   const auto& params = signature.parameters;
 
   const auto num_args = list_length(expr.args);
@@ -6330,7 +6328,7 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
 
   // Extract the body expression from the function's SELECT statement and
   // process it inline in the caller's state with the expanded param mappings.
-  const auto& function_body = *sql_function.GetStatement()->stmt;
+  const auto& function_body = *logical_function.GetStatement()->stmt;
   SDB_ENSURE(IsA(&function_body, SelectStmt), ERROR_BAD_PARAMETER,
              "SQL function body must be a SELECT statement");
   const auto* select_stmt = castNode(SelectStmt, &function_body);

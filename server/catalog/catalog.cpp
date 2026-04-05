@@ -353,7 +353,7 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
 
 Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, ObjectType::PgFunction,
+    schema_id, ObjectType::PgSqlFunction,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto function =
         catalog::PgSqlFunction::ReadInternal(slice, {.database_id = db_id});
@@ -381,7 +381,7 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
 
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, ObjectType::PgView,
+    schema_id, ObjectType::PgSqlView,
     [&](DefinitionKey, vpack::Slice slice) -> Result {
       auto view = PgSqlView::ReadInternal(slice, {.database_id = db_id});
       if (!view) {

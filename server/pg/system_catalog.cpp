@@ -30,7 +30,6 @@
 #include "basics/containers/trivial_map.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/sql_function_impl.h"
 #include "catalog/view.h"
 #include "functions/search.h"
 #include "functions/vector.h"
@@ -852,7 +851,7 @@ std::shared_ptr<catalog::PgSqlFunction> GetFunction(std::string_view name) {
     kind = it->kind;
   }
   return std::make_shared<catalog::PgSqlFunction>(
-    name, FunctionSignature{},
+    ObjectId{}, id::kGenerateNew, name, std::string{}, FunctionSignature{},
     FunctionOptions{
       .language = language,
       .state = FunctionState::Immutable,

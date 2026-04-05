@@ -31,7 +31,6 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/identifier.h"
 #include "pg/sql_parser.h"
-#include "pg/sql_resolver.h"
 #include "utils/query_string.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -43,10 +42,25 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::catalog {
 
 PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
-                     std::string query, std::shared_ptr<const State> state)
-  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgView},
-    _query{std::move(query)},
-    _state{std::move(state)} {}
+                     std::string query)
+  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgSqlView},
+    _query{std::move(query)} {
+  SDB_ASSERT(!_query.empty());
+
+  const QueryString query_string{_query};
+  _memory_context = pg::CreateMemoryContext();
+  auto* tree = pg::Parse(*_memory_context, query_string);
+  SDB_ASSERT(list_length(tree) == 1);
+  _stmt = list_nth_node(RawStmt, tree, 0);
+  SDB_ASSERT(_stmt);
+
+  // Currently collector checks cross-database references and
+  // needs the name of the current database for this purpose.
+  // It looks like it'd be better to do it in resolver.
+  auto database = catalog::GetDatabase(database_id);
+  SDB_ASSERT(database);
+  pg::Collect((*database)->GetName(), *_stmt, _objects);
+}
 
 void PgSqlView::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
@@ -54,61 +68,6 @@ void PgSqlView::WriteInternal(vpack::Builder& b) const {
     b.add("query", _query);
   });
 }
-
-namespace {
-
-std::shared_ptr<PgSqlView::State> CreateState() {
-  return std::make_shared<PgSqlView::State>();
-}
-
-Result ParseQuery(PgSqlView::State& state, ObjectId database_id,
-                  std::string_view query) {
-  return basics::SafeCall([&] -> Result {
-    const QueryString query_string{query};
-    state.memory_context = pg::CreateMemoryContext();
-    auto* tree = pg::Parse(*state.memory_context, query_string);
-    if (list_length(tree) != 1) {
-      return {ERROR_BAD_PARAMETER,
-              "sql query view should contains single statement"};
-    }
-    state.stmt = list_nth_node(RawStmt, tree, 0);
-    SDB_ASSERT(state.stmt);
-    SDB_ASSERT(state.objects.empty());
-
-    // Currently collector checks cross-database references and
-    // needs the name of the current database for this purpose.
-    // It looks like it'd be better to do it in resolver.
-    auto database = catalog::GetDatabase(database_id);
-    if (!database) {
-      return std::move(database).error();
-    }
-
-    pg::Collect((*database)->GetName(), *state.stmt, state.objects);
-
-    return {};
-  });
-}
-
-Result CheckView(ObjectId database, std::string_view name,
-                 const PgSqlView::State& state, const Config& config) {
-  SDB_ASSERT(state.stmt);
-  if (state.stmt->stmt->type != T_SelectStmt) {
-    return {ERROR_BAD_PARAMETER,
-            "sql query view should contains select statement"};
-  }
-
-  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
-
-  return basics::SafeCall([&] {
-    pg::Objects objects;
-    pg::Disallowed disallowed;
-    disallowed.relations.emplace(pg::Objects::ObjectName{{}, name});
-    pg::ResolveQueryView(database, search_path, objects, disallowed,
-                         state.objects, config);
-  });
-}
-
-}  // namespace
 
 std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
                                                    ReadContext ctx) {
@@ -123,38 +82,9 @@ std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  auto state = CreateState();
-  if (auto r = ParseQuery(*state, ctx.database_id, query); !r.ok()) {
-    return nullptr;
-  }
-
   auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
   return std::make_shared<PgSqlView>(ctx.database_id, id, name,
-                                     std::move(query), std::move(state));
-}
-
-ResultOr<std::shared_ptr<PgSqlView>> PgSqlView::Create(ObjectId database_id,
-                                                       std::string_view name,
-                                                       std::string query,
-                                                       const Config* config) {
-  if (query.empty()) {
-    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                   "Query can't be empty"};
-  }
-
-  auto state = CreateState();
-  if (auto r = ParseQuery(*state, database_id, query); !r.ok()) {
-    return std::unexpected(std::move(r));
-  }
-
-  if (config) {
-    if (auto r = CheckView(database_id, name, *state, *config); !r.ok()) {
-      return std::unexpected(std::move(r));
-    }
-  }
-
-  return std::make_shared<PgSqlView>(database_id, ObjectId{}, name,
-                                     std::move(query), std::move(state));
+                                     std::move(query));
 }
 
 std::shared_ptr<Object> PgSqlView::Clone() const {

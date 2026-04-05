@@ -43,18 +43,22 @@ enum class ObjectType : uint8_t {
   // Order matters: within the same parent, objects are scanned in enum order.
   // Shards must come after their parent definition so the parent exists
   // when the shard is registered.
+  // Top-level (parent = instance)
   Database = 128,
   Role,
+  // Under database
   Schema,
+  // Under schema - dependencies first
+  Tokenizer,
+  PgSqlFunction,
+  PgSqlView,
   Table,
+  // Under table - shards after their parent definition
   TableShard,
   SecondaryIndex,
   SecondaryIndexShard,
   InvertedIndex,
   InvertedIndexShard,
-  PgSqlView,
-  PgSqlFunction,
-  Tokenizer,
 
   // Runtime only, not persisted.
   Virtual = 255,

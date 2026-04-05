@@ -85,12 +85,10 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   std::string_view name = stmt.view->relname;
   auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  auto view = catalog::PgSqlView::Create(db, name, std::move(query), &conn_ctx);
-  if (!view) {
-    SDB_THROW(std::move(view.error()));
-  }
+  auto view = std::make_shared<catalog::PgSqlView>(db, id::kGenerateNew, name,
+                                                   std::move(query));
 
-  auto r = catalog.CreateView(db, schema, *view, stmt.replace);
+  auto r = catalog.CreateView(db, schema, view, stmt.replace);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (stmt.replace) {
@@ -115,11 +113,8 @@ std::shared_ptr<catalog::PgSqlView> CreateSystemView(const ViewStmt& stmt) {
   std::string_view name = stmt.view->relname;
   auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  auto view =
-    catalog::PgSqlView::Create(id::kSystemDB, name, std::move(query), nullptr);
-  SDB_ASSERT(view.has_value(), "Cannot make system view");
-
-  return std::move(*view);
+  return std::make_shared<catalog::PgSqlView>(id::kSystemDB, id::kGenerateNew,
+                                              name, std::move(query));
 }
 
 }  // namespace sdb::pg

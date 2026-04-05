@@ -26,7 +26,6 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
-#include "catalog/sql_function_impl.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/options_parser.h"
@@ -185,22 +184,9 @@ std::shared_ptr<catalog::PgSqlFunction> CreateFunctionImpl(
     signature.MarkAsProcedure();
   }
 
-  auto sql_impl = std::make_unique<pg::FunctionImpl>();
-  auto r = sql_impl->Init(database_id, function_name, std::move(function_body),
-                          stmt.is_procedure, config);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  if (config) {
-    // Case for non system views
-    vpack::Builder builder;
-    sql_impl->ToVPack(builder);
-    properties.implementation = builder.slice();
-  }
-
   return std::make_shared<catalog::PgSqlFunction>(
-    std::move(properties), std::move(sql_impl), database_id);
+    database_id, id::kGenerateNew, function_name, std::move(function_body),
+    std::move(properties.signature), std::move(properties.options));
 }
 
 yaclib::Future<> CreateFunction(ExecContext& context,

@@ -118,10 +118,12 @@ std::shared_ptr<Object> InvertedIndex::Clone() const {
   b.openObject();
   WriteInternal(b);
   b.close();
-  return ReadInternal(b.slice(), {.id = GetId(),
-                                  .database_id = GetDatabaseId(),
-                                  .schema_id = GetSchemaId(),
-                                  .relation_id = GetRelationId()});
+  return ReadInternal(b.slice(), {
+                                   .id = GetId(),
+                                   .database_id = GetDatabaseId(),
+                                   .schema_id = GetSchemaId(),
+                                   .relation_id = GetRelationId(),
+                                 });
 }
 
 }  // namespace sdb::catalog

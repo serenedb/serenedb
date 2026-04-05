@@ -115,17 +115,9 @@ ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, ObjectId index_id, vpack::Slice definition,
+  ObjectId table_id, ObjectId index_id, ObjectType index_type,
   bool is_root = false) {
-  SDB_ASSERT(definition.isObject());
-  struct {
-    ObjectType type;
-  } base_opts;
-  if (auto r = vpack::ReadTupleNothrow(definition.get("base"), base_opts);
-      !r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
-  }
-  auto shard_type = IndexShardType(base_opts.type);
+  auto shard_type = IndexShardType(index_type);
   ObjectId shard_id;
   auto r = engine.VisitDefinitions(index_id, shard_type,
                                    [&](DefinitionKey key, vpack::Slice) {
@@ -136,7 +128,7 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return std::make_shared<IndexDrop>(index_id, base_opts.type, db_id, schema_id,
+  return std::make_shared<IndexDrop>(index_id, index_type, db_id, schema_id,
                                      table_id, shard_id, is_root);
 }
 
@@ -162,17 +154,22 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   std::vector<std::shared_ptr<IndexDrop>> indexes;
-  r = engine.VisitDefinitions(table_id, ObjectType::SecondaryIndex,
-                              [&](DefinitionKey key, vpack::Slice slice) {
-                                auto index_drop = CreateIndexDrop(
-                                  engine, db_id, schema_id, table_id,
-                                  key.GetObjectId(), slice);
-                                if (!index_drop) {
-                                  return std::move(index_drop.error());
-                                }
-                                indexes.push_back(std::move(*index_drop));
-                                return Result{};
-                              });
+  auto collect_indexes = [&](ObjectType type) {
+    return engine.VisitDefinitions(
+      table_id, type, [&](DefinitionKey key, vpack::Slice) {
+        auto index_drop = CreateIndexDrop(engine, db_id, schema_id, table_id,
+                                          key.GetObjectId(), type);
+        if (!index_drop) {
+          return std::move(index_drop.error());
+        }
+        indexes.push_back(std::move(*index_drop));
+        return Result{};
+      });
+  };
+  r = collect_indexes(ObjectType::SecondaryIndex);
+  if (r.ok()) {
+    r = collect_indexes(ObjectType::InvertedIndex);
+  }
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -403,7 +400,7 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
         }
 
         auto drop = CreateIndexDrop(GetServerEngine(), db_id, schema_id,
-                                    table_id, key.GetObjectId(), slice, true);
+                                    table_id, key.GetObjectId(), type, true);
         if (!drop) {
           return std::move(drop.error());
         }

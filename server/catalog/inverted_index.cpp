@@ -46,35 +46,29 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  struct BaseOpts {
-    std::vector<Column::Id> column_ids;
-  };
-  BaseOpts base;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("base"), base); !r.ok()) {
+  std::vector<Column::Id> column_ids;
+  if (auto r = vpack::ReadTupleNothrow(slice.get("column_ids"), column_ids);
+      !r.ok()) {
     return nullptr;
   }
 
   ColumnOptions columns;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("impl"), columns); !r.ok()) {
+  if (auto r = vpack::ReadTupleNothrow(slice.get("columns"), columns);
+      !r.ok()) {
     return nullptr;
   }
 
   return std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::string{name_slice.stringView()}, std::move(base.column_ids),
+    std::string{name_slice.stringView()}, std::move(column_ids),
     std::move(columns));
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
-    struct BaseOpts {
-      ObjectType type;
-      std::span<const Column::Id> column_ids;
-    };
-    b.add("base");
-    vpack::WriteTuple(b,
-                      BaseOpts{.type = GetType(), .column_ids = _column_ids});
-    b.add("impl");
+    b.add("column_ids");
+    vpack::WriteTuple(b, _column_ids);
+    b.add("columns");
     vpack::WriteTuple(b, _columns);
   });
 }

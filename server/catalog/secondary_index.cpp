@@ -39,42 +39,25 @@ std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  struct BaseOpts {
-    std::vector<Column::Id> column_ids;
-  };
-  BaseOpts base;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("base"), base); !r.ok()) {
+  std::vector<Column::Id> column_ids;
+  if (auto r = vpack::ReadTupleNothrow(slice.get("column_ids"), column_ids);
+      !r.ok()) {
     return nullptr;
   }
 
-  struct ImplOpts {
-    bool unique = false;
-  };
-  ImplOpts impl;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("impl"), impl); !r.ok()) {
-    return nullptr;
-  }
+  auto unique = slice.get("unique");
 
   return std::make_shared<SecondaryIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::string{name_slice.stringView()}, std::move(base.column_ids),
-    impl.unique);
+    std::string{name_slice.stringView()}, std::move(column_ids),
+    unique.getBool());
 }
 
 void SecondaryIndex::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
-    struct BaseOpts {
-      ObjectType type;
-      std::span<const Column::Id> column_ids;
-    };
-    b.add("base");
-    vpack::WriteTuple(b,
-                      BaseOpts{.type = GetType(), .column_ids = _column_ids});
-    struct ImplOpts {
-      bool unique;
-    };
-    b.add("impl");
-    vpack::WriteTuple(b, ImplOpts{.unique = _unique});
+    b.add("unique", _unique);
+    b.add("column_ids");
+    vpack::WriteTuple(b, _column_ids);
   });
 }
 

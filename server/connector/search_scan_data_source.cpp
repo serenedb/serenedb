@@ -20,12 +20,12 @@
 
 #include "search_scan_data_source.hpp"
 
-#include <absl/container/flat_hash_set.h>
 #include <velox/vector/FlatVector.h>
 
 #include <algorithm>
 #include <array>
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/mangling.h"
 #include "connector/parquet_materializer.hpp"
 #include "connector/primary_key.hpp"
@@ -168,7 +168,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
       }
       for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
         auto& doc_offsets = offsets_data[fi].emplace_back();
-        absl::flat_hash_set<uint64_t> seen_offsets;
+        containers::FlatHashSet<uint64_t> seen_offsets;
 
         const size_t max_offsets = _offsets_fields[fi].limit;
         constexpr auto kFeatures = irs::IndexFeatures::Freq |
@@ -261,7 +261,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
   if (n_offsets_fields > 0) {
     const auto n_docs =
       static_cast<velox::vector_size_t>(offsets_data[0].size());
-    auto offsets_type = catalog::Column::OffsetsType();
+    auto offsets_type = catalog::Column::MakeOffsetsType();
 
     for (size_t fi = 0; fi < n_offsets_fields; ++fi) {
       const auto& field_data = offsets_data[fi];

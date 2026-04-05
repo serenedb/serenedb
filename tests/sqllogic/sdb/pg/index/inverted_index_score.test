@@ -764,7 +764,7 @@ SELECT docs_idx.id, BM25() FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_i
 WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
 LIMIT 3;
 ----
-db error: ERROR: Only one inverted index scan can produce a score per query
+db error: ERROR: Only one inverted index scan can produce a score per sub-query
 
 
 # Works: JOIN two inverted indexes, BM25() scoped inside each subquery (only one subquery scores)

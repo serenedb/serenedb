@@ -265,22 +265,20 @@ void ObjectCollector::CollectFuncCall(const State& state,
     }
     size_t limit = Objects::kDefaultOffsetsLimit;
     if (nargs == 2) {
-      const auto* limit_arg = lsecond_node(Node, expr.args);
-      if (!IsA(limit_arg, A_Const) ||
-          nodeTag(&castNode(A_Const, limit_arg)->val) != T_Integer) {
+      const auto v = TryGet<int>(expr.args, 1);
+      if (!v) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("OFFSETS() second argument must be an integer constant"));
+          ERR_MSG("OFFSETS() second argument must be an integer literal"));
       }
-      const auto v = intVal(&castNode(A_Const, limit_arg)->val);
       if (v < 0) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG(
             "OFFSETS() limit must be greater than zero or 0 for no limit"));
       }
-      limit =
-        v > 0 ? static_cast<size_t>(v) : std::numeric_limits<size_t>::max();
+      limit = v > 0 ? static_cast<size_t>(v.value())
+                    : std::numeric_limits<size_t>::max();
     }
     auto field_name =
       std::string{strVal(llast(castNode(ColumnRef, arg)->fields))};

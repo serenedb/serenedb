@@ -205,7 +205,7 @@ FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
 WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox');
 ----
-db error: ERROR: Only one inverted index scan can produce offsets per query
+db error: ERROR: Only one inverted index scan can produce offsets per sub-query
 
 
 query error
@@ -229,7 +229,12 @@ db error: ERROR: OFFSETS() first argument must be a column reference
 query error
 SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
 ----
-db error: ERROR: OFFSETS() second argument must be an integer constant
+db error: ERROR: OFFSETS() second argument must be an integer literal
+
+query error
+SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+----
+db error: ERROR: OFFSETS() second argument must be an integer literal
 
 
 query error

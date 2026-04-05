@@ -551,7 +551,7 @@ class IndexTable : public axiom::connector::Table {
       // referenced multiple times and first creation of IndexTable object could
       // be without offsets. So we must ensure we always have such columns for
       // every indexed column.
-      auto offsets_type = catalog::Column::OffsetsType();
+      auto offsets_type = catalog::Column::MakeOffsetsType();
       for (const auto& column_id : index.GetColumnIds()) {
         columns.push_back(std::make_unique<SereneDBColumn>(
           catalog::Column::MakeOffsetsName(column_id), offsets_type,

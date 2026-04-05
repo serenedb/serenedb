@@ -4110,7 +4110,8 @@ State SqlAnalyzer::ProcessIndex(State* parent,
     if (_expr_for_scorer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("Only one inverted index scan can produce a score per query"));
+        ERR_MSG(
+          "Only one inverted index scan can produce a score per sub-query"));
     }
 
     // TODO(Dronplane): looks like this restriction could be lifted if we make
@@ -4118,7 +4119,8 @@ State SqlAnalyzer::ProcessIndex(State* parent,
     if (!_exprs_for_offsets.empty()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("Only one inverted index scan can produce offsets per query"));
+        ERR_MSG(
+          "Only one inverted index scan can produce offsets per sub-query"));
     }
 
     if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
@@ -4140,7 +4142,7 @@ State SqlAnalyzer::ProcessIndex(State* parent,
 
     if (!_offsets_fields_for_select.empty()) {
       std::vector<catalog::Column::OffsetsFieldRequest> offsets_requests;
-      auto offsets_type = catalog::Column::OffsetsType();
+      auto offsets_type = catalog::Column::MakeOffsetsType();
       std::vector types = type->children();
       std::vector type_names = type->names();
       const auto& name_to_column = table.NameToColumn();

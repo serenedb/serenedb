@@ -225,7 +225,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Comments
 
-- No license headers in code
+- License headers in code are mandatory for now.
 - No decorative comments (`/*****/`, `///////////`)
 - Simple `//` comments
 - No doxygen for now
@@ -271,7 +271,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Library Preferences
 
-- `absl::Hash` over `std::hash`; `absl::*_hash_*` over `std::unordered_*`
+- `absl::Hash` over `std::hash`; `sdb::containers::*Hash*` over `std::unordered_*`
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
 - `magic_enum` for enum names

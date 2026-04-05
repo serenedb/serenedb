@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/serenedb}"
 source "${PROJECT_ROOT}/packages/find_version.bash"
 
-VERSION="${SERENEDB_TGZ_UPSTREAM}"
+VERSION="${SERENEDB_VERSION}"
 
 case "$(uname -m)" in
 x86_64) ARCH="amd64" ;;
@@ -37,31 +37,29 @@ if [[ "${STRIP_TARBALL:-true}" == "true" ]]; then
 	done
 fi
 
-# Create bin directory with symlinks to usr/sbin
-mkdir -p install/bin
-cd install/bin
-ln -sf ../usr/sbin/serened serened
-cd "$PROJECT_ROOT"
+# Collect dirs to package
+TAR_DIRS=(install/usr/)
+for d in install/etc install/var; do
+	[ -d "$d" ] && TAR_DIRS+=("$d/")
+done
 
-# Packaging - Transform usr/etc and usr/var to top level
-tar -czvf "${NAME}.tar.gz" \
+# Packaging
+tar -czf "${NAME}.tar.gz" \
 	--exclude="install/usr/lib/debug" \
 	--transform="s|^install/usr/etc|${NAME}/etc|" \
 	--transform="s|^install/usr/var|${NAME}/var|" \
-	--transform="s|^install/usr|${NAME}/usr|" \
-	--transform="s|^install/bin|${NAME}/bin|" \
-	install/usr/ \
-	install/bin/
+	--transform="s|^install/|${NAME}/|" \
+	"${TAR_DIRS[@]}"
 
 # Package debug symbols
 if [[ "${DEBUG_SYMBOLS:-false}" == "true" ]]; then
-	tar -czvf "${NAME}-dbgsym.tar.gz" \
+	tar -czf "${NAME}-dbgsym.tar.gz" \
 		--transform="s|^install/usr/lib/debug|${NAME}-dbgsym|" \
 		install/usr/lib/debug/
 fi
 
 # Cleanup
-rm -rf install/bin/ install/usr/lib/debug
+rm -rf install/usr/lib/debug
 
 echo "Created: ${NAME}.tar.gz ($(du -h "${NAME}.tar.gz" | cut -f1))"
 if [[ "${DEBUG_SYMBOLS:-false}" == "true" ]]; then

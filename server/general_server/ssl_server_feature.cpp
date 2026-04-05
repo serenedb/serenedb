@@ -89,7 +89,7 @@ The certificates in the file must be PEM-formatted.)");
     ->addOption("--ssl.keyfile", "The keyfile used for secure connections.",
                 new StringParameter(&_keyfile))
     .setLongDescription(R"(If you use SSL-encryption by binding the server to
-an SSL endpoint (e.g. `--server.endpoint ssl://127.0.0.1:8529`), you must use
+an SSL endpoint (e.g. `--server.endpoint ssl://127.0.0.1:7890`), you must use
 this option to specify the filename of the server's private key. The file must
 be PEM-formatted and contain both, the certificate and the server's private key.
 

@@ -54,18 +54,18 @@ std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(vpack::Slice slice,
 }
 
 void SecondaryIndex::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     b.add("unique", _unique);
     b.add("column_ids");
     vpack::WriteTuple(b, _column_ids);
   });
+  b.close();
 }
 
 std::shared_ptr<Object> SecondaryIndex::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.id = GetId(),
                                   .database_id = GetDatabaseId(),
                                   .schema_id = GetSchemaId(),

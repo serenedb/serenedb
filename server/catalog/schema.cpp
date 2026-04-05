@@ -38,19 +38,19 @@ std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
 }
 
 void Schema::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     vpack::WriteObject(b, vpack::Embedded{SchemaOptions{
                             .owner_id = GetOwnerId(),
                             .id = GetId(),
                           }});
+  b.close();
   });
 }
 
 std::shared_ptr<Object> Schema::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 

@@ -186,9 +186,11 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
 }
 
 void catalog::Table::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& build) {
     vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
                        ObjectInternal{_database_id});
+  b.close();
   });
 }
 
@@ -317,9 +319,7 @@ Table::LookupCache::LookupCache(
 
 std::shared_ptr<Object> Table::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 

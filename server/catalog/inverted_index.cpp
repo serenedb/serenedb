@@ -65,12 +65,14 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     b.add("column_ids");
     vpack::WriteTuple(b, _column_ids);
     b.add("columns");
     vpack::WriteTuple(b, _columns);
   });
+  b.close();
 }
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
@@ -109,9 +111,7 @@ containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
 
 std::shared_ptr<Object> InvertedIndex::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {
                                    .id = GetId(),
                                    .database_id = GetDatabaseId(),

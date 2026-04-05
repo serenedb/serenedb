@@ -63,10 +63,12 @@ PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
 }
 
 void PgSqlView::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     b.add("id", GetId().id());
     b.add("query", _query);
   });
+  b.close();
 }
 
 std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
@@ -89,9 +91,7 @@ std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
 
 std::shared_ptr<Object> PgSqlView::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 

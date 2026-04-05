@@ -52,19 +52,19 @@ std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
 }
 
 void Database::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     vpack::WriteObject(b, vpack::Embedded{DatabaseOptions{
                             .replicationFactor = _replication_factor,
                             .writeConcern = _write_concern,
                           }});
   });
+  b.close();
 }
 
 std::shared_ptr<Object> Database::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.id = GetId()});
 }
 

@@ -90,19 +90,19 @@ std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
 }
 
 void Tokenizer::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
     b.add("analyzer", slice.get("analyzer"));
     b.add("features");
     _features.ToVPack(b);
   });
+  b.close();
 }
 
 std::shared_ptr<Object> Tokenizer::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.id = GetId()});
 }
 

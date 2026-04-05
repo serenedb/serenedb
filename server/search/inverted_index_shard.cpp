@@ -277,8 +277,10 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
   }
 }
 
-void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
-  vpack::WriteTuple(builder, _options.base);
+void InvertedIndexShard::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
+  vpack::WriteTuple(b, _options.base);
+  b.close();
 }
 
 Snapshot InvertedIndexShard::GetSnapshot() const {

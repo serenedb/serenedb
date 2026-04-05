@@ -145,6 +145,7 @@ PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
 }
 
 void PgSqlFunction::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     b.add("id", GetId().id());
     b.add("signature");
@@ -156,13 +157,12 @@ void PgSqlFunction::WriteInternal(vpack::Builder& b) const {
     b.add("query", _query);
     b.close();
   });
+  b.close();
 }
 
 std::shared_ptr<Object> PgSqlFunction::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 

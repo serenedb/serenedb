@@ -68,8 +68,10 @@ class TableShard : public catalog::Object {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
-  void WriteInternal(vpack::Builder& builder) const {
-    vpack::WriteTuple(builder, GetTableStats());
+  void WriteInternal(vpack::Builder& b) const final {
+    b.openObject();
+    vpack::WriteTuple(b, GetTableStats());
+    b.close();
   }
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);

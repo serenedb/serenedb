@@ -44,8 +44,10 @@ class SecondaryIndexShard : public IndexShard {
     : IndexShard{index_id, catalog::ObjectType::SecondaryIndexShard},
       _options{std::move(options)} {}
 
-  void WriteInternal(vpack::Builder& builder) const override {
-    vpack::WriteTuple(builder, _options.base);
+  void WriteInternal(vpack::Builder& b) const final {
+    b.openObject();
+    vpack::WriteTuple(b, _options.base);
+    b.close();
   }
 
  private:

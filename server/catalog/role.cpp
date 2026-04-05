@@ -130,6 +130,7 @@ Role::Role(ObjectId id, std::string_view name)
   : catalog::Object{{}, id, std::string{name}, ObjectType::Role} {}
 
 void catalog::Role::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
   WriteObject(b, [&](vpack::Builder& build) {
     build.add("id", GetId().id());
     {
@@ -154,6 +155,7 @@ void catalog::Role::WriteInternal(vpack::Builder& b) const {
       }
     }
   });
+  b.close();
 }
 
 std::shared_ptr<catalog::Role> catalog::Role::NewUser(std::string_view name,
@@ -357,9 +359,7 @@ auth::Level catalog::Role::databaseAuthLevel(std::string_view database) const {
 
 std::shared_ptr<Object> Role::Clone() const {
   vpack::Builder b;
-  b.openObject();
   WriteInternal(b);
-  b.close();
   return ReadInternal(b.slice(), {});
 }
 

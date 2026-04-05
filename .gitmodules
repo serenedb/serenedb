@@ -206,3 +206,7 @@
 	path = third_party/snappy
 	url = https://github.com/serenedb/snappy.git
 	shallow = true
+[submodule "third_party/duckdb"]
+	path = third_party/duckdb
+	url = https://github.com/serenedb/duckdb.git
+	shallow = true

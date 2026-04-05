@@ -2,8 +2,8 @@
 set -e
 
 # Create serenedb user and group
-getent group serenedb >/dev/null || groupadd -r serenedb
-getent passwd serenedb >/dev/null || useradd -r -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin -c "SereneDB" serenedb
+getent group serenedb >/dev/null || groupadd -r serenedb || exit 1
+getent passwd serenedb >/dev/null || useradd -r -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin -c "SereneDB" serenedb || exit 1
 
 # Create required directories
 install -o serenedb -g serenedb -m 755 -d /var/lib/serenedb

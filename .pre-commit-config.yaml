@@ -34,19 +34,19 @@ repos:
         exclude: \.test$
 
   - repo: https://github.com/BlankSpruce/gersemi
-    rev: 0.22.3
+    rev: 0.26.1
     hooks:
       - id: gersemi
         name: CMake formatter
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v21.1.2
+    rev: v21.1.8
     hooks:
       - id: clang-format
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
 
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.12.0-2
+    rev: v3.13.0-1
     hooks:
       - id: shfmt
 

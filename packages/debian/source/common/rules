@@ -14,13 +14,14 @@ override_dh_auto_build:
 override_dh_auto_install:
 	mkdir -p debian/@EDITION@
 	cp -a install/* debian/@EDITION@/
-	if [ -d debian/@EDITION@/usr/etc ]; then mv debian/@EDITION@/usr/etc debian/@EDITION@/etc; fi
-	if [ -d debian/@EDITION@/usr/var ]; then mv debian/@EDITION@/usr/var debian/@EDITION@/var; fi
+	if [ -d debian/@EDITION@/usr/etc ]; then rm -rf debian/@EDITION@/etc && mv debian/@EDITION@/usr/etc debian/@EDITION@/etc; fi
+	if [ -d debian/@EDITION@/usr/var ]; then rm -rf debian/@EDITION@/var && mv debian/@EDITION@/usr/var debian/@EDITION@/var; fi
 	mkdir -p debian/@EDITION@/lib/systemd/system
 	cp debian/serenedb.service debian/@EDITION@/lib/systemd/system
 	rm -f debian/serenedb.service
 
 override_dh_dwz:
+	# Skip dwz: causes issues with our binaries
 
 override_dh_strip:
 	dh_strip --dbg-package @EDITION@-dbg

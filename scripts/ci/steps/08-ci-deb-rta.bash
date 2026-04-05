@@ -25,7 +25,7 @@ export CARGO_TARGET_CACHE="${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-t
 
 PREFIX="deb-rta-$$"
 COMPOSE_FILE="${CI_DIR}/docker-compose.deb-rta.yml"
-EXEC="docker compose -p $PREFIX -f $COMPOSE_FILE exec -T serenedb"
+EXEC="docker compose -p ${PREFIX} -f ${COMPOSE_FILE} exec -T serenedb"
 
 cleanup() {
 	$EXEC journalctl -u serenedb --no-pager 2>/dev/null >"${WORKSPACE}/logs/deb-rta-journal.log" || true
@@ -44,7 +44,8 @@ $EXEC /deb-rta-setup.sh
 echo "=== Sqllogic tests ==="
 test_rc=0
 docker compose -p "$PREFIX" -f "$COMPOSE_FILE" up \
-	--no-deps --attach tests --exit-code-from tests tests || test_rc=$?
+	--no-deps --attach tests --exit-code-from tests \
+	--remove-orphans tests || test_rc=$?
 
 if [[ $test_rc -ne 0 ]]; then
 	echo "DEB_RTA=FAILED (sqllogic tests)"

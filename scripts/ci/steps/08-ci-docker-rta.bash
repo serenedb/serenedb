@@ -37,7 +37,8 @@ docker compose -p "$PREFIX" -f "$COMPOSE_FILE" up \
 # Verify serened produced logs
 log_lines=$(docker compose -p "$PREFIX" -f "$COMPOSE_FILE" logs serenedb 2>&1 | wc -l)
 if [[ "$log_lines" -eq 0 ]]; then
-	echo "WARNING: No serened log output found"
+	echo "ERROR: No serened log output found - service likely failed to start"
+	test_rc=1
 fi
 
 echo "DOCKER_RTA=$([ $test_rc -eq 0 ] && echo PASSED || echo FAILED)"

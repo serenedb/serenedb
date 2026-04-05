@@ -54,7 +54,7 @@ def decodeDate(d):
 
 def main():
   if len(sys.argv) < 6:
-    print("Usage: host database collection data_file count [offset] Example: python WikiLoader.py 'http://localhost:8529' _system wikipedia benchmark.data 10000000")
+    print("Usage: host database collection data_file count [offset] Example: python WikiLoader.py 'http://localhost:7890' _system wikipedia benchmark.data 10000000")
     return
 
 

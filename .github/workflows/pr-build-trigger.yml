@@ -23,7 +23,7 @@ jobs:
       contents: read
     steps:
       - name: Post build triggers comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const body = [
@@ -32,7 +32,7 @@ jobs:
               '_Check **Trigger Jobs** to start. Optionally enable extra checks below._',
               '',
               '#### Extra (optional)',
-              '- [ ] All architectures (x86_64 + aarch64)',
+              '- [ ] All architectures (amd64 + arm64)',
               '- [ ] ASAN',
               '- [ ] TSAN',
               '- [ ] MSAN',
@@ -73,7 +73,7 @@ jobs:
     steps:
       - name: Get PR info
         id: pr-info
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -88,7 +88,7 @@ jobs:
         env:
           PR_BRANCH: ${{ steps.pr-info.outputs.branch }}
           PR_SHA: ${{ steps.pr-info.outputs.sha }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const comment = context.payload.comment;

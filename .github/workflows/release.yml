@@ -1,6 +1,6 @@
 name: serenedb | make release
 
-run-name: "serenedb | make release [${{ inputs.BUILD_X64 && inputs.BUILD_ARM64 && 'x64+arm64' || inputs.BUILD_X64 && 'x64' || 'arm64' }}]"
+run-name: "serenedb | make release [${{ inputs.BUILD_AMD64 && inputs.BUILD_ARM64 && 'amd64+arm64' || inputs.BUILD_AMD64 && 'amd64' || 'arm64' }}]"
 
 on:
   workflow_dispatch:
@@ -10,6 +10,15 @@ on:
         required: false
         type: string
         default: ''
+      RTA:
+        description: 'RTA mode: off, test (warn on failure), required (block push/release on failure)'
+        required: true
+        type: choice
+        options:
+          - required
+          - test
+          - off
+        default: required
       PUSH_IMAGES_2_REGISTRY:
         description: 'Push Docker images to Docker Hub'
         required: true
@@ -25,13 +34,13 @@ on:
         required: false
         type: string
         default: ''
-      BUILD_X64:
-        description: 'Build for x86_64 (amd64)'
+      BUILD_AMD64:
+        description: 'Build for amd64'
         required: true
         type: boolean
         default: true
       BUILD_ARM64:
-        description: 'Build for aarch64 (arm64)'
+        description: 'Build for arm64'
         required: true
         type: boolean
         default: true
@@ -42,7 +51,6 @@ permissions:
   actions: write
 
 jobs:
-  # ==================== RESOLVE VERSION ====================
   resolve-version:
     name: Resolve version
     runs-on: ubuntu-latest
@@ -65,37 +73,34 @@ jobs:
           fi
           echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
 
-  # ==================== BUILD X64 ====================
-  build-x64:
-    if: inputs.BUILD_X64
+  build-amd64:
+    if: inputs.BUILD_AMD64
     needs: [resolve-version]
     uses: ./.github/workflows/make-package.yml
     with:
       LOCATION: linux-amd64
-      RUN_RTA: true
+      RTA: ${{ inputs.RTA }}
       UPLOAD_ARTIFACTS: true
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
-  # ==================== BUILD ARM64 ====================
   build-arm64:
     if: inputs.BUILD_ARM64
     needs: [resolve-version]
     uses: ./.github/workflows/make-package.yml
     with:
       LOCATION: linux-arm64
-      RUN_RTA: true
+      RTA: ${{ inputs.RTA }}
       UPLOAD_ARTIFACTS: true
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
-  # ==================== RELEASE ====================
   release:
     name: Docker & Release
-    needs: [resolve-version, build-x64, build-arm64]
+    needs: [resolve-version, build-amd64, build-arm64]
     if: >-
       always() && !cancelled() &&
-      (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
+      (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
     runs-on:
       - linux-amd64
     permissions:
@@ -108,6 +113,10 @@ jobs:
         with:
           fetch-depth: 1
           submodules: false
+          clean: true
+
+      - name: Init test runner submodule
+        run: git submodule update --init --depth 1 third_party/sqllogictest-rs
 
       - name: Set version
         run: |
@@ -117,68 +126,90 @@ jobs:
           MINOR=$(date -u +%m)
           echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
 
-      # Download tarball artifacts and map to Docker arch names
-      - name: Download x64 tarball
-        if: needs.build-x64.outputs.packages_ok == 'true'
-        uses: actions/download-artifact@v4
+      - name: Download amd64 packages
+        if: needs.build-amd64.outputs.packages_ok == 'true'
+        uses: actions/download-artifact@v8
         with:
-          name: tarball-linux-amd64
-          path: packages/tarball/
+          name: packages-linux-amd64
+          path: packages/linux-amd64/
 
-      - name: Download arm64 tarball
+      - name: Download arm64 packages
         if: needs.build-arm64.outputs.packages_ok == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          name: tarball-linux-arm64
-          path: packages/tarball/
+          name: packages-linux-arm64
+          path: packages/linux-arm64/
 
-      - name: Check tarballs
-        id: map_tarballs
+      - name: Prepare packages
+        id: prepare
         run: |
+          # Create install-{arch}.tar.gz symlinks for build_docker.bash
           mkdir -p packages/tarball
-          cd packages/tarball
-          echo "Available tarballs:"
-          ls -la install-*.tar.gz 2>/dev/null || echo "  (none)"
+          for arch_dir in packages/linux-*; do
+            [ -d "$arch_dir" ] || continue
+            arch=$(basename "$arch_dir" | sed 's/linux-//')
+            tarball=$(find "$arch_dir" -maxdepth 1 -name "serenedb-*-linux-${arch}.tar.gz" | head -1)
+            if [ -n "$tarball" ]; then
+              ln -sf "$(realpath "$tarball")" "packages/tarball/install-${arch}.tar.gz"
+            fi
+          done
+
           HAS_TARBALLS=false
-          for f in install-amd64.tar.gz install-arm64.tar.gz; do
+          for f in packages/tarball/install-*.tar.gz; do
             [ -e "$f" ] && HAS_TARBALLS=true
           done
           echo "has_tarballs=$HAS_TARBALLS" >> "$GITHUB_OUTPUT"
 
-      # Build multi-arch Docker image
+          # Collect packages for GitHub release
+          mkdir -p release-packages
+          find packages/ -name "serenedb*.deb" -exec cp {} release-packages/ \;
+          find packages/ -name "serenedb-*.tar.gz" -exec cp {} release-packages/ \;
+
+          echo "Available tarballs:"
+          ls -la packages/tarball/install-*.tar.gz 2>/dev/null || echo "  (none)"
+          echo "Available release packages:"
+          ls -la release-packages/ 2>/dev/null || echo "  (none)"
+
       - name: Setup QEMU
-        if: inputs.PUSH_IMAGES_2_REGISTRY && steps.map_tarballs.outputs.has_tarballs == 'true'
+        if: steps.prepare.outputs.has_tarballs == 'true'
         run: docker run --rm --privileged tonistiigi/binfmt --install all
 
-      - name: Build and push Docker images
-        if: inputs.PUSH_IMAGES_2_REGISTRY && steps.map_tarballs.outputs.has_tarballs == 'true'
+      - name: Build Docker images
+        id: docker_build
+        if: steps.prepare.outputs.has_tarballs == 'true'
+        env:
+          DOCKER_REGISTRY: serenedb
+          DOCKER_TAG: ${{ env.DOCKER_TAG }}
+        run: ./packages/build_docker.bash
+
+      - name: Docker RTA
+        id: docker_rta
+        if: inputs.RTA != 'off' && steps.docker_build.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        env:
+          DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-amd64
+          BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+          WORKSPACE: ${{ github.workspace }}
+        run: ./scripts/ci/steps/08-ci-docker-rta.bash
+
+      - name: Push Docker images
+        if: >-
+          inputs.PUSH_IMAGES_2_REGISTRY &&
+          steps.docker_build.outcome == 'success' &&
+          (inputs.RTA != 'required' || steps.docker_rta.outcome == 'success')
         env:
           DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-          PUSH_IMAGES_2_REGISTRY: "true"
           DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
-        run: ./packages/build_docker.bash
+        run: ./packages/push_docker.bash
 
-      # Download package artifacts for GitHub release
-      - name: Download x64 packages
-        if: inputs.CREATE_GITHUB_RELEASE && needs.build-x64.outputs.packages_ok == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: packages-linux-amd64-${{ github.run_number }}
-          path: release-packages/
-
-      - name: Download arm64 packages
-        if: inputs.CREATE_GITHUB_RELEASE && needs.build-arm64.outputs.packages_ok == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: packages-linux-arm64-${{ github.run_number }}
-          path: release-packages/
-
-      # Create GitHub Release
       - name: Create GitHub Release
-        if: inputs.CREATE_GITHUB_RELEASE && steps.map_tarballs.outputs.has_tarballs == 'true'
+        if: >-
+          inputs.CREATE_GITHUB_RELEASE &&
+          steps.prepare.outputs.has_tarballs == 'true' &&
+          (inputs.RTA != 'required' || steps.docker_rta.outcome == 'success')
         env:
           GH_TOKEN: ${{ github.token }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
@@ -203,13 +234,12 @@ jobs:
             --notes "${BODY}" \
             "${ASSETS[@]}"
 
-      # Cleanup artifacts
-      - name: Delete tarball artifacts
+      - name: Delete package artifacts
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for name in tarball-linux-amd64 tarball-linux-arm64; do
+          for name in packages-linux-amd64 packages-linux-arm64; do
             ARTIFACT_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
               --jq ".artifacts[] | select(.name == \"${name}\") | .id" 2>/dev/null || true)
             if [[ -n "$ARTIFACT_ID" ]]; then
@@ -218,8 +248,7 @@ jobs:
             fi
           done
 
-      # Telegram notification
-      - name: Send Telegram notification
+      - name: Send notification
         if: always() && !cancelled()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -230,10 +259,10 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           JOB_STATUS: >-
             ${{
-              (needs.build-x64.result == 'success' || needs.build-x64.result == 'skipped') &&
+              (needs.build-amd64.result == 'success' || needs.build-amd64.result == 'skipped') &&
               (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
                 && 'success'
-                || (needs.build-x64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
+                || (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
                   && 'warning'
                   || 'failure'
             }}
@@ -241,4 +270,4 @@ jobs:
           RUN_NAME: "serenedb | make release"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
+        run: ./scripts/send_notification.bash

@@ -170,7 +170,7 @@ struct ConnectionConfiguration {
   bool upgrade_h1_to_h2 = false;
 
   std::string host = "localhost";
-  std::string port = "8529";
+  std::string port = "7890";
   bool verify_host = false;
 
   std::chrono::milliseconds connect_timeout{60'000};

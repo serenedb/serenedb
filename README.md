@@ -50,4 +50,5 @@ SereneDB is designed to be powerful, convenient and dev-friendly.
 
 * **⭐ Star this repo** to show your interest and help us grow.
 * **Watch** releases to stay updated on our progress.
+* **[Contributing](CONTRIBUTING.md)** -- build instructions, code style, and how to get started.
 * Join the conversation on [Slack](https://www.serenedb.com/slack), [Telegram](https://telegram.me/serenedb) or [Reddit](https://www.reddit.com/r/serenedb).

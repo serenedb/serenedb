@@ -66,7 +66,7 @@ done
 
 # Generate HTML report
 echo ":: Generating HTML coverage report..."
-./scripts/prepare-code-coverage-artifact.py \
+./scripts/prepare_coverage.py \
     --unified-report \
     --compilation-dir . \
     llvm-profdata-21 \

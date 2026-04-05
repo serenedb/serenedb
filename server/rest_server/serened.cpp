@@ -53,10 +53,10 @@ static int RunServer(int argc, char** argv, GlobalContext& context) {
 
     auto options = std::make_shared<sdb::options::ProgramOptions>(
       argv[0], "Usage: " + name + " [<options>]",
-      "For more information use:", SBIN_DIRECTORY);
+      "For more information use:", BIN_DIRECTORY);
 
     int ret{EXIT_FAILURE};
-    SerenedServer server{options, SBIN_DIRECTORY};
+    SerenedServer server{options, BIN_DIRECTORY};
     ServerState state;
 
     server.addReporter(
@@ -144,7 +144,7 @@ static int RunServer(int argc, char** argv, GlobalContext& context) {
 int main(int argc, char* argv[]) {
   std::string workdir(basics::file_utils::CurrentDirectory().result());
 
-  GlobalContext context(argc, argv, SBIN_DIRECTORY);
+  GlobalContext context(argc, argv, BIN_DIRECTORY);
 
   gRestartAction = nullptr;
 

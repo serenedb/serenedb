@@ -103,8 +103,7 @@ macro(graviton1)
         # so force to generate little-endian code, because it's simpler and less error-prone
         # "fp simd" are included to armv8-a
         list(
-            APPEND
-            ARCHITECTURE_OPTIMIZATIONS
+            APPEND ARCHITECTURE_OPTIMIZATIONS
             -mlittle-endian
             -march=armv8-a+crc+crypto
         )
@@ -117,8 +116,7 @@ macro(graviton2)
         list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.2)
     else()
         list(
-            APPEND
-            ARCHITECTURE_OPTIMIZATIONS
+            APPEND ARCHITECTURE_OPTIMIZATIONS
             -mlittle-endian
             -march=armv8.2-a+fp16+rcpc+dotprod+crypto
         )
@@ -131,8 +129,7 @@ macro(graviton3)
         list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.4)
     else()
         list(
-            APPEND
-            ARCHITECTURE_OPTIMIZATIONS
+            APPEND ARCHITECTURE_OPTIMIZATIONS
             -mlittle-endian
             -march=armv8.4-a+sve+rng+bf16+int8+crypto
         )
@@ -166,8 +163,7 @@ else()
 endif()
 
 string(
-    REPLACE
-    ";"
+    REPLACE ";"
     " "
     ARCHITECTURE_OPTIMIZATIONS
     "${ARCHITECTURE_OPTIMIZATIONS}"

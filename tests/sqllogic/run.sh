@@ -21,7 +21,7 @@ declare -A defaults=(
 	[single_port]=''
 	[single_port_ssl]=''
 	[cluster_port]=''
-	[protocol]='simple' # simple|extended|both TODO(mbkkt) make both
+	[engines]='pg-wire-simple,pg-wire-extended'
 	[test]='./tests/sqllogic/sdb/**/*.test*'
 	[junit]='./out/sqllogic-tests'
 	[runner]='./third_party/sqllogictest-rs'
@@ -141,7 +141,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | single-port-ssl | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
+		single-port | single-port-ssl | cluster-port | jobs | engines | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -196,12 +196,20 @@ for var_name in "${!defaults[@]}"; do
 done
 
 # Display the values (for demonstration)
+IFS=',' read -ra engines_list <<<"$engines"
+for engine in "${engines_list[@]}"; do
+	if [[ "$engine" != "pg-wire-simple" && "$engine" != "pg-wire-extended" ]]; then
+		echo "Invalid engine '$engine'. Must be 'pg-wire-simple' or 'pg-wire-extended'" >&2
+		exit 1
+	fi
+done
+
 echo "Database: $database"
 echo "Host: $host"
 echo "Single Port: $single_port"
 echo "Single Port SSL: $single_port_ssl"
 echo "Cluster Port: $cluster_port"
-echo "Protocol: $protocol"
+echo "Engines: $engines"
 echo "Test Path: $test"
 echo "JUnit Path: $junit"
 echo "Runner: $runner"
@@ -226,17 +234,16 @@ launch_external
 
 # Run tests based on parameters
 run_tests() {
-	local mode=$1
-	local port=$2
-	local engine=$3
+	local port=$1
+	local engine=$2
 
 	echo
-	echo "Running tests for $database database in $mode mode on port $port with $engine engine"
+	echo "Running tests for $database database on port $port with $engine engine"
 
 	local ssl_port_opt=""
-	if [[ -n "$4" ]]; then
-		ssl_port_opt="--ssl-port $4"
-		echo "Using SSL port: $4"
+	if [[ -n "$3" ]]; then
+		ssl_port_opt="--ssl-port $3"
+		echo "Using SSL port: $3"
 	fi
 
 	echo
@@ -276,8 +283,8 @@ run_tests() {
 	sqllogictest "$test" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
-		--label "$database" --label "$mode" --label "$engine-protocol" \
-		--junit "$junit-$mode-$engine" \
+		--label "$database" \
+		--junit "$junit-$engine" \
 		$options \
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
 		$skip_opt \
@@ -285,27 +292,9 @@ run_tests() {
 	return $?
 }
 
-# Determine mode based on port settings
-if [[ -n "$single_port" && -n "$cluster_port" ]]; then
-	mode="both"
-	if [[ "$single_port" == "$cluster_port" ]]; then
-		echo "ERROR: single-port and cluster-port must be different when both are specified"
-		exit 1
-	fi
-elif [[ -n "$single_port" ]]; then
-	mode="single"
-elif [[ -n "$cluster_port" ]]; then
-	mode="cluster"
-else
-	# Default case when neither is specified
-	mode="single"
+# Default port when none specified
+if [[ -z "$single_port" ]]; then
 	single_port=5432
-fi
-
-# Validate protocol
-if [[ "$protocol" != "simple" && "$protocol" != "extended" && "$protocol" != "both" ]]; then
-	echo "Invalid protocol. Must be 'simple', 'extended', or 'both'"
-	exit 1
 fi
 
 # Variable to track the highest exit code encountered
@@ -344,31 +333,11 @@ if [[ "$cancellation" == "true" ]]; then
 fi
 
 for iter in $(seq 1 "$iterations"); do
-	if [[ "$protocol" == "simple" || "$protocol" == "both" ]]; then
-		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres" "$single_port_ssl"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-		if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
-			run_tests "cluster" "$cluster_port" "postgres"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-	fi
-
-	if [[ "$protocol" == "extended" || "$protocol" == "both" ]]; then
-		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres-extended" "$single_port_ssl"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-		if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
-			run_tests "cluster" "$cluster_port" "postgres-extended"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-	fi
+	for engine in "${engines_list[@]}"; do
+		run_tests "$single_port" "$engine" "$single_port_ssl"
+		test_exit_code=$?
+		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+	done
 done
 
 if [[ "$cancellation" == "true" ]]; then

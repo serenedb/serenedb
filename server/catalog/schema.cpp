@@ -40,10 +40,8 @@ std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
 void Schema::WriteInternal(vpack::Builder& b) const {
   b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
-    vpack::WriteObject(b, vpack::Embedded{SchemaOptions{
-                            .owner_id = GetOwnerId(),
-                            .id = GetId(),
-                          }});
+    b.add("owner_id", GetOwnerId().id());
+    b.add("id", GetId().id());
   });
   b.close();
 }

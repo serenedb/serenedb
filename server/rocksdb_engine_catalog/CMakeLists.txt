@@ -3,11 +3,13 @@ target_sources(
     PRIVATE
         rocksdb_comparator.cpp
         rocksdb_background_thread.cpp
+        rocksdb_settings_manager.cpp
         rocksdb_common.cpp
         rocksdb_key.cpp
         rocksdb_utils.cpp
         rocksdb_column_family_manager.cpp
         rocksdb_engine_catalog.cpp
+        rocksdb_settings_manager.cpp
         rocksdb_sync_thread.cpp
         rocksdb_wal_access.cpp
         rocksdb_recovery_manager.cpp

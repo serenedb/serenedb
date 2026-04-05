@@ -112,6 +112,7 @@
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
+#include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_sync_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -127,6 +128,59 @@
 // #define USE_SST_INGESTION
 
 namespace sdb {
+namespace {
+
+void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
+                         bool db_existed) {
+  // try to find version, using the version key
+  RocksDBKeyWithBuffer<SettingsKey> version_key{RocksDBSettingsType::Version};
+
+  if (db_existed) {
+    rocksdb::PinnableSlice old_version;
+    rocksdb::Status s =
+      db->Get({},
+              RocksDBColumnFamilyManager::get(
+                RocksDBColumnFamilyManager::Family::Definitions),
+              version_key.GetBuffer(), &old_version);
+
+    if (s.IsNotFound() || old_version.size() != 1) {
+      SDB_FATAL("xxxxx", Logger::ENGINES,
+                "Error reading stored version from database: ",
+                rocksutils::ConvertStatus(s).errorMessage());
+    } else if (old_version.data()[0] < kRocksDBFormatVersion) {
+      // Performing 'upgrade' routine
+      if (old_version.data()[0] != '0' || kRocksDBFormatVersion != '1') {
+        SDB_FATAL("xxxxx", Logger::ENGINES, "Your database is in an old ",
+                  "format. Please downgrade the server, ",
+                  "dump & restore the data");
+      }
+
+    } else if (old_version.data()[0] > kRocksDBFormatVersion) {
+      SDB_FATAL("xxxxx", Logger::ENGINES,
+                "You are using an old version of SereneDB, please update ",
+                "before opening this database");
+    } else {
+      SDB_ASSERT(old_version.data()[0] == kRocksDBFormatVersion);
+    }
+  }
+
+  if (!db_existed) {
+    // store current version
+    auto s = db->Put(
+      rocksdb::WriteOptions(),
+      RocksDBColumnFamilyManager::get(
+        RocksDBColumnFamilyManager::Family::Definitions),
+      version_key.GetBuffer(),
+      rocksdb::Slice{&kRocksDBFormatVersion, sizeof(kRocksDBFormatVersion)});
+
+    if (!s.ok()) {
+      SDB_FATAL("xxxxx", Logger::ENGINES, "Error storing endianess/version: ",
+                rocksutils::ConvertStatus(s).errorMessage());
+    }
+  }
+}
+
+}  // namespace
 
 DECLARE_GAUGE(rocksdb_wal_released_tick_flush, uint64_t,
               "Released tick for RocksDB WAL deletion (flush-induced)");
@@ -261,12 +315,12 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
   }
 
   auto key = make_key();
-  auto vpack_value = make_value();
-  rocksdb::Slice value{reinterpret_cast<const char*>(vpack_value.start()),
-                       vpack_value.byteSize()};
+  auto value = make_value();
+  std::string value_str{reinterpret_cast<const char*>(value.start()),
+                        value.byteSize()};
   batch.Put(RocksDBColumnFamilyManager::get(
               RocksDBColumnFamilyManager::Family::Definitions),
-            key.GetBuffer(), value);
+            key.GetBuffer(), value_str);
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
@@ -292,12 +346,10 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 
   auto old_key = make_old_key();
   auto new_key = make_new_key();
-  auto vpack_value = make_value();
-  rocksdb::Slice value{reinterpret_cast<const char*>(vpack_value.start()),
-                       vpack_value.byteSize()};
+  auto value = make_value();
 
-  batch.Delete(column, old_key.GetBuffer());
-  batch.Put(column, new_key.GetBuffer(), value);
+  batch.Delete(column, old_key.string());
+  batch.Put(column, new_key.string(), value.string());
 
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(db->Write(wo, &batch));
@@ -616,6 +668,9 @@ void RocksDBEngineCatalog::start() {
     cf_handles[std::to_underlying(
       RocksDBColumnFamilyManager::Family::Definitions)]);
 
+  // will crash the process if version does not match
+  StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
+
   _db_existed = db_existed;
 
   if (_options_provider.limitOpenFilesAtStartup()) {
@@ -649,6 +704,8 @@ void RocksDBEngineCatalog::start() {
   }
 
   SDB_ASSERT(_db != nullptr);
+  _settings_manager = std::make_unique<RocksDBSettingsManager>(*this);
+  _settings_manager->retrieveInitialValues();
 
   const double counter_sync_seconds = 2.5;
   _background_thread =
@@ -682,6 +739,15 @@ void RocksDBEngineCatalog::stop() {
   if (_background_thread) {
     // stop the press
     _background_thread->beginShutdown();
+
+    if (_settings_manager) {
+      auto sync_res = _settings_manager->sync(/*force*/ true);
+      if (!sync_res) {
+        SDB_WARN("xxxxx", Logger::ENGINES,
+                 "caught exception while shutting down RocksDB engine: ",
+                 sync_res.error().errorMessage());
+      }
+    }
 
     // wait until background thread stops
     while (_background_thread->isRunning()) {
@@ -764,7 +830,7 @@ Result RocksDBEngineCatalog::VisitDefinitionsImpl(
 }
 
 Result RocksDBEngineCatalog::VisitDefinitions(
-  ObjectId parent_id, catalog::ObjectType type,
+  ObjectId parent_id, RocksDBEntryType type,
   absl::FunctionRef<Result(DefinitionKey key, vpack::Slice)> visitor) {
   auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
   return VisitDefinitionsImpl(start, end, visitor);
@@ -794,7 +860,7 @@ Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
   vpack::Builder b;
   shard.WriteInternal(b);
   RocksDBKeyWithBuffer<DefinitionKey> key{
-    table_id, catalog::ObjectType::TableShard, shard_id};
+    table_id, RocksDBEntryType::TableShard, shard_id};
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
 
@@ -853,6 +919,9 @@ Result RocksDBEngineCatalog::flushWal(bool wait_for_sync,
 void RocksDBEngineCatalog::waitForEstimatorSync() {
   // release all unused ticks from flush feature
   SerenedServer::Instance().getFeature<FlushFeature>().releaseUnusedTicks();
+
+  // force-flush
+  std::ignore = _settings_manager->sync(/*force*/ true);
 }
 
 Result RocksDBEngineCatalog::RegisterRecoveryHelper(
@@ -897,8 +966,8 @@ void RocksDBEngineCatalog::determineWalFilesInitial() {
       live_files_size += f->SizeFileBytes();
     }
   }
-  _metrics_wal_sequence_lower_bound.store(_db->GetLatestSequenceNumber(),
-                                          std::memory_order_relaxed);
+  _metrics_wal_sequence_lower_bound.store(
+    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
   _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
   _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
   _metrics_live_wal_files_size.store(live_files_size,
@@ -1082,8 +1151,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     }
   }
 
-  _metrics_wal_sequence_lower_bound.store(_db->GetLatestSequenceNumber(),
-                                          std::memory_order_relaxed);
+  _metrics_wal_sequence_lower_bound.store(
+    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
   _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
   _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
   _metrics_live_wal_files_size.store(live_files_size,
@@ -1172,7 +1241,7 @@ void RocksDBEngineCatalog::pruneWalFiles() {
 void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
   std::ignore = VisitDefinitions(
-    id::kInstance, catalog::ObjectType::Database,
+    id::kInstance, RocksDBEntryType::Database,
     [&](DefinitionKey key, vpack::Slice result) -> Result {
       catalog::DatabaseOptions options;
 
@@ -1192,8 +1261,8 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   vpack::Builder builder;
   vpack::WriteTuple(builder, database);
   auto r =
-    CreateDefinition(id::kInstance, catalog::ObjectType::Database,
-                     id::kSystemDB, [&](bool) { return builder.slice(); });
+    CreateDefinition(id::kInstance, RocksDBEntryType::Database, id::kSystemDB,
+                     [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write database marker: ", r.errorMessage());
@@ -1206,8 +1275,8 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   builder.clear();
   vpack::WriteTuple(builder, schema_options);
   r =
-    CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema,
-                     schema_options.id, [&](bool) { return builder.slice(); });
+    CreateDefinition(id::kSystemDB, RocksDBEntryType::Schema, schema_options.id,
+                     [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write schema marker: ", r.errorMessage());
@@ -1215,7 +1284,7 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
 }
 
 Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
-                                              catalog::ObjectType type,
+                                              RocksDBEntryType type,
                                               ObjectId id,
                                               WriteProperties properties) {
   return WriteDefinition(
@@ -1224,24 +1293,8 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
     [&] { return properties(true); }, [] { return std::string_view{}; });
 }
 
-Result RocksDBEngineCatalog::ReplaceDefinition(ObjectId old_parent_id,
-                                               ObjectId new_parent_id,
-                                               catalog::ObjectType type,
-                                               ObjectId id,
-                                               WriteProperties properties) {
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      return RocksDBKeyWithBuffer<DefinitionKey>{old_parent_id, type, id};
-    },
-    [&] {
-      return RocksDBKeyWithBuffer<DefinitionKey>{new_parent_id, type, id};
-    },
-    [&] { return properties(true); }, [] { return std::string_view{}; });
-}
-
 Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
-                                            catalog::ObjectType type,
+                                            RocksDBEntryType type,
                                             ObjectId id) {
   return DeleteDefinition(
     _db->GetRootDB(),
@@ -1250,7 +1303,7 @@ Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
 }
 
 Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
-                                       catalog::ObjectType type) {
+                                       RocksDBEntryType type) {
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
   auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
@@ -1311,7 +1364,7 @@ Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
     _db->GetRootDB(),
     [&] {
       return RocksDBKeyWithBuffer<DefinitionKey>{
-        parent_id, catalog::ObjectType::Tombstone, id};
+        parent_id, RocksDBEntryType::Tombstone, id};
     },
     [] { return vpack::Slice::emptyStringSlice(); },
     [] { return std::string_view{}; });

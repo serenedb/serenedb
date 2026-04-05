@@ -187,10 +187,9 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
 
 void catalog::Table::WriteInternal(vpack::Builder& b) const {
   b.openObject();
-  WriteObject(b, [&](vpack::Builder& build) {
-    vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
-                       ObjectInternal{_database_id});
-  });
+  b.add("name", GetName());
+  vpack::WriteObject(b, vpack::Embedded{MakeTableOptions()},
+                     ObjectInternal{_database_id});
   b.close();
 }
 

@@ -54,10 +54,8 @@ std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
 void Database::WriteInternal(vpack::Builder& b) const {
   b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
-    vpack::WriteObject(b, vpack::Embedded{DatabaseOptions{
-                            .replicationFactor = _replication_factor,
-                            .writeConcern = _write_concern,
-                          }});
+    b.add("replicationFactor", _replication_factor);
+    b.add("writeConcern", _write_concern);
   });
   b.close();
 }

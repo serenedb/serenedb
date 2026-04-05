@@ -55,6 +55,7 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
+#include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb {
@@ -367,7 +368,8 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
       }
     };
 
-    rocksdb::SequenceNumber earliest = engine.db()->GetLatestSequenceNumber();
+    rocksdb::SequenceNumber earliest =
+      engine.settingsManager()->earliestSeqNeeded();
     auto recovery_start_sequence = std::min(earliest, engine.releasedTick());
 
 #ifdef SDB_GTEST

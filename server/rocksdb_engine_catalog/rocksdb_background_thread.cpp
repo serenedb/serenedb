@@ -33,6 +33,7 @@
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "storage_engine/table_shard.h"
 
 using namespace sdb;
@@ -86,6 +87,8 @@ void RocksDBBackgroundThread::run() {
   auto& flush_feature = SerenedServer::Instance().getFeature<FlushFeature>();
 
   const double start_time = utilities::GetMicrotime();
+  uint64_t runs_until_sync_forced = 1;
+  constexpr uint64_t kMaxRunsUntilSyncForced = 5;
 
   while (!isStopping()) {
     {
@@ -108,11 +111,57 @@ void RocksDBBackgroundThread::run() {
         // try..catch of its own, because we still want the following
         // garbage collection operations to be carried out even if
         // the sync fails.
-        SyncStats();
+        try {
+          // forceSync will effectively be true for the initial run that
+          // will happen when the recovery has finished. that way we
+          // can quickly push forward the WAL lower bound value after
+          // the recovery
+          bool force_sync = false;
+
+          // force a sync after at most x iterations (or initial run)
+          if (runs_until_sync_forced > 0 && --runs_until_sync_forced == 0) {
+            SDB_ASSERT(runs_until_sync_forced == 0);
+            force_sync = true;
+          }
+
+          SDB_IF_FAILURE("BuilderIndex::purgeWal") { force_sync = true; }
+
+          SDB_TRACE("xxxxx", Logger::ENGINES, "running ",
+                    (force_sync ? "forced " : ""), "background settings sync");
+
+          double start = utilities::GetMicrotime();
+          auto sync_res = _engine.settingsManager()->sync(force_sync);
+          SyncStats();
+          double end = utilities::GetMicrotime();
+
+          if (!sync_res) {
+            SDB_WARN("xxxxx", Logger::ENGINES,
+                     "background settings sync failed: ",
+                     sync_res.error().errorMessage());
+          } else if (*sync_res) {
+            // reset our counter
+            runs_until_sync_forced = kMaxRunsUntilSyncForced;
+          }
+
+          if (end - start > 5.0) {
+            SDB_WARN("xxxxx", Logger::ENGINES,
+                     "slow background settings sync took: ",
+                     absl::StrFormat("%.6f", end - start), " s");
+          } else if (end - start > 0.75) {
+            SDB_DEBUG("xxxxx", Logger::ENGINES,
+                      "slow background settings sync took: ",
+                      absl::StrFormat("%.6f", end - start), " s");
+          }
+        } catch (const std::exception& ex) {
+          SDB_WARN("xxxxx", Logger::ENGINES,
+                   "caught exception in rocksdb background sync operation: ",
+                   ex.what());
+        }
       }
 
       const uint64_t latest_seq_no = _engine.db()->GetLatestSequenceNumber();
-      const auto earliest_seq_needed = _engine.db()->GetLatestSequenceNumber();
+      const auto earliest_seq_needed =
+        _engine.settingsManager()->earliestSeqNeeded();
 
       uint64_t min_tick = latest_seq_no;
 
@@ -167,5 +216,13 @@ void RocksDBBackgroundThread::run() {
       SDB_WARN("xxxxx", Logger::ENGINES,
                "caught unknown exception in rocksdb background");
     }
+  }
+
+  // final write on shutdown
+  auto sync_res = _engine.settingsManager()->sync(/*force*/ true);
+  if (!sync_res) {
+    SDB_WARN("xxxxx", Logger::ENGINES,
+             "caught exception during final RocksDB sync operation: ",
+             sync_res.error().errorMessage());
   }
 }

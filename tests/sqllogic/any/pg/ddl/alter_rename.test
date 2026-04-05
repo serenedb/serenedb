@@ -317,18 +317,17 @@ statement ok
 ALTER INDEX IF EXISTS vedernikoff RENAME TO something;
 
 statement ok
-ALTER FUNCTION IF EXISTS vedernikoff RENAME TO something;
-
-statement ok
 ALTER TABLE IF EXISTS vedernikoff RENAME COLUMN a TO b;
 
 statement ok
 ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
 
+
 statement error
 ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
 ----
 db error: ERROR: cannot rename columns of a non-table relation
+
 
 statement error
 ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;

@@ -164,18 +164,7 @@ yaclib::Future<> RenameObject(ExecContext& context, const RenameStmt& stmt) {
   }
 
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    auto object_name = [&]() -> std::string_view {
-      switch (stmt.renameType) {
-        case OBJECT_TABLE:
-          return "table";
-        case OBJECT_VIEW:
-          return "view";
-        case OBJECT_INDEX:
-          return "index";
-        default:
-          return "relation";
-      }
-    }();
+    auto object_name = ToPgObjectTypeName(stmt.renameType);
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
       ERR_MSG("\"", name, "\" is not ",

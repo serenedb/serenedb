@@ -45,9 +45,7 @@ class SecondaryIndexShard : public IndexShard {
       _options{std::move(options)} {}
 
   void WriteInternal(vpack::Builder& b) const final {
-    b.openObject();
     vpack::WriteTuple(b, _options.base);
-    b.close();
   }
 
  private:

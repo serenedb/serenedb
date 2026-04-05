@@ -49,12 +49,6 @@ struct CreateIndexColumn {
   // how to implement "help".
 };
 
-struct IndexBaseOptions {
-  std::string name;
-  ObjectType type = ObjectType::Invalid;
-  std::vector<Column::Id> column_ids;
-};
-
 class Index : public SchemaObject {
  public:
   auto GetRelationId() const noexcept { return _relation_id; }

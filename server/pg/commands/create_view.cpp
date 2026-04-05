@@ -33,6 +33,7 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_resolver.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -87,6 +88,21 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
 
   auto view = std::make_shared<catalog::PgSqlView>(db, id::kGenerateNew, name,
                                                    std::move(query));
+
+  // Validate the view query
+  SDB_ASSERT(view->GetStatement());
+  if (view->GetStatement()->stmt->type != T_SelectStmt) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                    ERR_MSG("views must be based on SELECT statements"));
+  }
+  {
+    auto search_path = conn_ctx.Get<VariableType::PgSearchPath>("search_path");
+    pg::Objects objects;
+    pg::Disallowed disallowed;
+    disallowed.relations.emplace(pg::Objects::ObjectName{{}, name});
+    pg::ResolveQueryView(db, search_path, objects, disallowed,
+                         view->GetObjects(), conn_ctx);
+  }
 
   auto r = catalog.CreateView(db, schema, view, stmt.replace);
 

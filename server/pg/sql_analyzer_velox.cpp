@@ -205,15 +205,10 @@ constexpr containers::TrivialBiMap kSpecialForms = [](auto selector) {
 };
 
 std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
-  std::string type_name;
-  if (catalog::IsIndex(type)) {
-    type_name = "index";
-  } else {
-    type_name = magic_enum::enum_name(type);
-  }
-  return absl::StrCat("This operation is not supported for ",
-                      basics::string_utils::GetPluralFormLowerCase(type_name),
-                      ".");
+  return absl::StrCat(
+    "This operation is not supported for ",
+    basics::string_utils::GetPluralFormLowerCase(pg::ToPgObjectTypeName(type)),
+    ".");
 }
 
 std::shared_ptr<connector::ReadFileTable> MakeReadFileTable(
@@ -4235,7 +4230,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   CURSOR_POS(ErrorPosition(ExprLocation(node))),
                   ERR_MSG("object '", name, "' of type '",
-                          magic_enum::enum_name(logical_object.GetType()),
+                          pg::ToPgObjectTypeName(logical_object.GetType()),
                           "' cannot be used in FROM clause"));
 }
 

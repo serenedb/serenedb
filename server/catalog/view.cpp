@@ -90,9 +90,8 @@ std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
 }
 
 std::shared_ptr<Object> PgSqlView::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
+  return std::make_shared<PgSqlView>(GetDatabaseId(), GetId(), GetName(),
+                                     std::string{_query});
 }
 
 }  // namespace sdb::catalog

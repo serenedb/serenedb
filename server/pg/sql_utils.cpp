@@ -46,6 +46,25 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+std::string_view ToPgObjectTypeName(int pg_object_type) noexcept {
+  switch (pg_object_type) {
+    case OBJECT_TABLE:
+      return "table";
+    case OBJECT_INDEX:
+      return "index";
+    case OBJECT_VIEW:
+      return "view";
+    case OBJECT_FUNCTION:
+      return "function";
+    case OBJECT_SCHEMA:
+      return "schema";
+    case OBJECT_TSDICTIONARY:
+      return "text search dictionary";
+    default:
+      return "object";
+  }
+}
+
 template<typename Str>
 Str DeparseTypeName(const TypeName* type_name) {
   const auto* names = type_name->names;

@@ -60,6 +60,11 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
+struct IndexBaseOptions {
+  std::string name;
+  catalog::ObjectType type = catalog::ObjectType::Invalid;
+};
+
 catalog::ObjectType GetIndexType(char* method) {
   SDB_ASSERT(method);
   std::string_view m{method};
@@ -74,7 +79,7 @@ catalog::ObjectType GetIndexType(char* method) {
 
 Result ParseIndexOptions(const IndexStmt& index,
                          std::vector<catalog::CreateIndexColumn>& columns,
-                         catalog::IndexBaseOptions& options) {
+                         IndexBaseOptions& options) {
   if (!index.accessMethod) {
     return Result{ERROR_BAD_PARAMETER, "access method is not provided"};
   }
@@ -134,7 +139,7 @@ yaclib::Future<> CreateIndex(ExecContext& context, query::Query& query,
                     ERR_MSG("CONCURRENTLY is not implemented"));
   }
   std::vector<catalog::CreateIndexColumn> columns;
-  catalog::IndexBaseOptions options;
+  IndexBaseOptions options;
 
   if (auto r = ParseIndexOptions(stmt, columns, options); !r.ok()) {
     SDB_THROW(std::move(r));

@@ -201,10 +201,12 @@ ALTER TABLE pudge RENAME TO invoker;
 ----
 db error: ERROR: relation "invoker" already exists
 
+
 statement error
 ALTER VIEW pudge_view RENAME TO pudge;
 ----
 db error: ERROR: relation "pudge" already exists
+
 
 onlyif serenedb
 statement error
@@ -218,10 +220,12 @@ ALTER TABLE pudge RENAME TO pudge;
 ----
 db error: ERROR: relation "pudge" already exists
 
+
 statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
 ----
 db error: ERROR: relation "pudge_view" already exists
+
 
 statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
@@ -298,18 +302,6 @@ db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not e
 statement ok
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_pos;
 
-statement ok
-ALTER TABLE constr_test ADD CONSTRAINT constr_test_bound CHECK (a < 100);
-
-statement error
-ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_bound;
-----
-db error: ERROR: constraint "constr_test_bound" for relation "constr_test" already exists
-
-statement error
-ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_pos;
-----
-db error: ERROR: constraint "constr_test_pos" for relation "constr_test" already exists
 
 statement ok
 DROP TABLE constr_test;

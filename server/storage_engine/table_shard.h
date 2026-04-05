@@ -69,9 +69,7 @@ class TableShard : public catalog::Object {
   }
 
   void WriteInternal(vpack::Builder& b) const final {
-    b.openObject();
     vpack::WriteTuple(b, GetTableStats());
-    b.close();
   }
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);

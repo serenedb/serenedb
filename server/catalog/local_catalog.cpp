@@ -1391,20 +1391,22 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
   }
 
   auto obj_type = obj->GetType();
-  auto old_obj = basics::downCast<T>(std::move(obj));
+  auto old_obj = std::dynamic_pointer_cast<T>(std::move(obj));
   if (!old_obj) {
     return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                  magic_enum::enum_name(obj_type)};
+                  pg::ToPgObjectTypeName(obj_type)};
   }
 
   if (old_obj->GetName() == new_name) {
     return Result{ERROR_SERVER_DUPLICATE_NAME};
   }
 
-  auto new_obj = basics::downCast<T>(old_obj->Clone());
-  if (!new_obj) {
+  auto cloned = old_obj->Clone();
+  if (!cloned) {
     return Result{ERROR_INTERNAL, "Failed to clone object"};
   }
+  auto new_obj = basics::downCast<T>(std::move(cloned));
+  SDB_ASSERT(new_obj);
   new_obj->SetName(new_name);
 
   absl::MutexLock lock{&_mutex};
@@ -1489,7 +1491,7 @@ Result LocalCatalog::RenameRelation(ObjectId database_id,
       return RenameIndex(database_id, schema, name, new_name);
     default:
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
   }
 }
 
@@ -1609,7 +1611,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
   }
   if (obj->GetType() != ObjectType::Table) {
     return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                  magic_enum::enum_name(obj->GetType())};
+                  pg::ToPgObjectTypeName(obj->GetType())};
   }
 
   auto table = basics::downCast<Table>(std::move(obj));
@@ -1727,7 +1729,7 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(obj);
     if (obj->GetType() != ObjectType::Table) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
     }
     auto table = basics::downCast<Table>(std::move(obj));
     auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
@@ -1799,7 +1801,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(obj);
     if (!IsIndex(obj->GetType())) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
     }
     auto index = basics::downCast<Index>(std::move(obj));
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
@@ -1845,7 +1847,7 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(obj);
     if (obj->GetType() != ObjectType::PgSqlView) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
     }
     auto view = basics::downCast<PgSqlView>(std::move(obj));
     auto r =

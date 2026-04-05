@@ -190,7 +190,7 @@ void catalog::Table::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& build) {
     vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
                        ObjectInternal{_database_id});
-  b.close();
+    b.close();
   });
 }
 

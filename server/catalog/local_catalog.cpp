@@ -120,8 +120,6 @@ Result Apply(
   return {};
 }
 
-
-
 }  // namespace
 
 class SnapshotImpl : public Snapshot {
@@ -957,7 +955,8 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       {
-        vpack::Builder builder; database->WriteInternal(builder);
+        vpack::Builder builder;
+        database->WriteInternal(builder);
         auto r = _engine->CreateDefinition(
           id::kInstance, ObjectType::Database, database_id,
           [&](bool) { return builder.slice(); });
@@ -974,7 +973,8 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
                      });
       r = clone->RegisterObject(schema, database_id, false);
       SDB_ASSERT(r.ok());
-      vpack::Builder builder; schema->WriteInternal(builder);
+      vpack::Builder builder;
+      schema->WriteInternal(builder);
       return _engine->CreateDefinition(database_id, ObjectType::Schema,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -994,7 +994,8 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder builder; schema->WriteInternal(builder);
+      vpack::Builder builder;
+      schema->WriteInternal(builder);
       return _engine->CreateDefinition(database_id, ObjectType::Schema,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -1012,7 +1013,8 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b; role->WriteInternal(b);
+      vpack::Builder b;
+      role->WriteInternal(b);
       return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
                                        role->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1078,7 +1080,8 @@ Result LocalCatalog::CreateIndexImpl(
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       auto shard_type = IndexShardType(index->GetType());
       {  // Write index definition
-        vpack::Builder b; index->WriteInternal(b);
+        vpack::Builder b;
+        index->WriteInternal(b);
         r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
                                       index->GetId(),
                                       [&](bool) { return b.slice(); });
@@ -1223,7 +1226,8 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      vpack::Builder builder; view->WriteInternal(builder);
+      vpack::Builder builder;
+      view->WriteInternal(builder);
       return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
                                        view->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -1250,7 +1254,8 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder builder; function->WriteInternal(builder);
+      vpack::Builder builder;
+      function->WriteInternal(builder);
       return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlFunction,
                                        function->GetId(),
                                        [&](bool) { return builder.slice(); });
@@ -1309,7 +1314,8 @@ Result LocalCatalog::CreateTable(
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      vpack::Builder b; table->WriteInternal(b);
+      vpack::Builder b;
+      table->WriteInternal(b);
       r =
         _engine->CreateDefinition(*schema_id, ObjectType::Table, table->GetId(),
                                   [&](bool) { return b.slice(); });
@@ -1344,7 +1350,8 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b; dict->WriteInternal(b);
+      vpack::Builder b;
+      dict->WriteInternal(b);
       return _engine->CreateDefinition(*schema_id, ObjectType::Tokenizer,
                                        dict->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1409,7 +1416,8 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
         return r;
       }
 
-      vpack::Builder b; new_obj->WriteInternal(b);
+      vpack::Builder b;
+      new_obj->WriteInternal(b);
 
       ObjectId parent_id;
       if constexpr (std::is_same_v<T, Index>) {
@@ -1512,7 +1520,8 @@ Result LocalCatalog::ChangeRole(std::string_view name,
       if (!r.ok()) {
         return r;
       }
-      vpack::Builder b; new_role_ptr->WriteInternal(b);
+      vpack::Builder b;
+      new_role_ptr->WriteInternal(b);
       return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
                                        new_role_ptr->GetId(),
                                        [&](bool) { return b.slice(); });
@@ -1570,7 +1579,8 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
       return r;
     }
 
-    vpack::Builder builder; updated->WriteInternal(builder);
+    vpack::Builder builder;
+    updated->WriteInternal(builder);
     return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
                                      updated->GetId(),
                                      [&](bool) { return builder.slice(); });
@@ -1620,7 +1630,8 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     }
 
     return basics::SafeCall([&] {
-      vpack::Builder b; updated->WriteInternal(b);
+      vpack::Builder b;
+      updated->WriteInternal(b);
       return _engine->CreateDefinition(*schema_id, ObjectType::Table,
                                        updated->GetId(),
                                        [&](bool) { return b.slice(); });

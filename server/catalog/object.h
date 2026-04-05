@@ -74,9 +74,13 @@ constexpr bool IsIndexShard(ObjectType t) noexcept {
 }
 
 constexpr ObjectType IndexShardType(ObjectType index_type) noexcept {
-  return index_type == ObjectType::InvertedIndex
-           ? ObjectType::InvertedIndexShard
-           : ObjectType::SecondaryIndexShard;
+  SDB_ASSERT(IsIndex(index_type));
+  if (index_type == ObjectType::InvertedIndex) {
+    return ObjectType::InvertedIndexShard;
+  } else {
+    SDB_ASSERT(index_type == ObjectType::SecondaryIndex);
+    return ObjectType::SecondaryIndexShard;
+  }
 }
 
 // https://www.postgresql.org/docs/current/sql-grant.html

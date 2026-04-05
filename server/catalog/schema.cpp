@@ -44,7 +44,7 @@ void Schema::WriteInternal(vpack::Builder& b) const {
                             .owner_id = GetOwnerId(),
                             .id = GetId(),
                           }});
-  b.close();
+    b.close();
   });
 }
 

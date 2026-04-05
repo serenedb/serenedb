@@ -37,7 +37,6 @@ class IndexShard : public catalog::Object {
   virtual ~IndexShard() = default;
   std::shared_ptr<Object> Clone() const final { return nullptr; }
 
-
   ObjectId GetId() const { return _id; }
   ObjectId GetIndexId() const { return _index_id; }
 

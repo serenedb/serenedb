@@ -47,6 +47,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "general_server/general_server_feature.h"
 #include "pg/connection_context.h"
+#include "pg/duckdb_query_handler.h"
 #include "pg/hba.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_types.h"
@@ -616,6 +617,19 @@ void PgSQLCommTaskBase::ExecuteClose(std::string_view packet) {
 void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   if (IsCancelled()) {
     return;
+  }
+
+  // Try DuckDB path first for prototype
+  {
+    DuckDBQueryHandler duckdb_handler{_send};
+    if (duckdb_handler.ExecuteQuery(query_string)) {
+      SDB_INFO("xxxxx", Logger::COMMUNICATION,
+               "DuckDB executed query: ", query_string);
+      _success_packet = true;
+      return;
+    }
+    SDB_INFO("xxxxx", Logger::COMMUNICATION,
+             "DuckDB cannot execute query: ", query_string);
   }
 
   // Note that a simple Query message also destroys the unnamed portal.

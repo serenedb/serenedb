@@ -1,0 +1,99 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "connector/duckdb_catalog.h"
+
+#include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/storage/database_size.hpp>
+
+#include "connector/duckdb_schema_entry.h"
+
+namespace sdb::connector {
+
+SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
+  : duckdb::Catalog(db) {}
+
+void SereneDBCatalog::Initialize(bool load_builtin) {
+  auto info = duckdb::make_uniq<duckdb::CreateSchemaInfo>();
+  info->schema = "main";  // "main"
+  _default_schema = duckdb::make_uniq<SereneDBSchemaEntry>(*this, *info);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
+  duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
+  throw duckdb::NotImplementedException("CREATE SCHEMA through DuckDB");
+}
+
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::EntryLookupInfo& schema_lookup,
+  duckdb::OnEntryNotFound if_not_found) {
+  auto schema_name = schema_lookup.GetEntryName();
+  // Map "main", "public", or default to our single schema
+  if (schema_name == "main" || schema_name == "public" ||
+      schema_name.empty()) {
+    return _default_schema.get();
+  }
+  // Return null for unknown schemas — DuckDB will fall through to system catalog
+  return nullptr;
+}
+
+void SereneDBCatalog::ScanSchemas(
+  duckdb::ClientContext& context,
+  std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
+  callback(*_default_schema);
+}
+
+void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
+                                 duckdb::DropInfo& info) {
+  throw duckdb::NotImplementedException("DROP SCHEMA through DuckDB");
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
+  throw duckdb::NotImplementedException("CREATE TABLE AS through DuckDB");
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalInsert& op,
+  duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
+  throw duckdb::NotImplementedException("INSERT through DuckDB catalog");
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
+  throw duckdb::NotImplementedException("DELETE through DuckDB catalog");
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
+  throw duckdb::NotImplementedException("UPDATE through DuckDB catalog");
+}
+
+duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
+  duckdb::ClientContext& context) {
+  return {};
+}
+
+}  // namespace sdb::connector

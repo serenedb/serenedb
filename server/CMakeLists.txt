@@ -45,6 +45,7 @@ target_link_libraries(
         NuRaft::static_lib
         pg_query
         velox
+        duckdb_static
 )
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)

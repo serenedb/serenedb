@@ -1029,3 +1029,44 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/velox
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/axiom
 )
+
+################################################################################
+## duckdb
+################################################################################
+
+set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
+set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
+set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
+set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
+set(DISABLE_BUILTIN_EXTENSIONS TRUE CACHE BOOL "" FORCE)
+set(DISABLE_EXTENSION_LOAD TRUE CACHE BOOL "" FORCE)
+set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
+set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
+set(EXTENSION_STATIC_BUILD FALSE CACHE BOOL "" FORCE)
+set(ENABLE_SANITIZER FALSE CACHE BOOL "" FORCE)
+set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
+set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
+set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
+set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
+
+# DON'T CHANGE THIS sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+# Override install() to no-op within DuckDB subdirectory
+macro(install)
+endmacro()
+
+add_subdirectory(duckdb)
+
+# Restore install()
+macro(install)
+    _install(${ARGV})
+endmacro()
+
+target_include_directories(
+    duckdb_static
+    SYSTEM
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
+)
+target_link_libraries(duckdb_static PUBLIC dummy_static_extension_loader)

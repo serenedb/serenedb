@@ -6,6 +6,7 @@ target_sources(
         explain_executor.cpp
         show_executor.cpp
         velox_executor.cpp
+        duckdb_engine.cpp
         config.cpp
         utils.cpp
         config_variables.cpp

@@ -31,6 +31,7 @@ target_sources(
         sdb_catalog/sdb_log.cpp
         functions.cpp
         sql_analyzer_velox.cpp
+        duckdb_query_handler.cpp
         sql_collector.cpp
         sql_def.cpp
         sql_parser.cpp

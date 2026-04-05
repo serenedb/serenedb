@@ -28,6 +28,7 @@
 #include "connector/serenedb_connector.hpp"
 #include "pg/system_catalog.h"
 #include "pg_functions_registration.hpp"
+#include "query/duckdb_engine.h"
 #include "query/types.h"
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -91,6 +92,8 @@ void PostgresFeature::prepare() {
   velox::filesystems::registerS3FileSystem();
 
   RegisterVeloxFunctionsAndTypes();
+
+  query::DuckDBEngine::Instance().Initialize();
 }
 
 void PostgresFeature::start() {
@@ -114,6 +117,7 @@ void PostgresFeature::start() {
 }
 
 void PostgresFeature::unprepare() {
+  query::DuckDBEngine::Instance().Shutdown();
   velox::filesystems::finalizeS3FileSystem();
   folly::SingletonVault::singleton()->destroyInstancesFinal();
 }

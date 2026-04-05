@@ -20,6 +20,13 @@ add_library(
     search_filter_printer.cpp
     sst_sink_writer.cpp
     rocksdb_filter.cpp
+    duckdb_storage_extension.cpp
+    duckdb_catalog.cpp
+    duckdb_schema_entry.cpp
+    duckdb_table_entry.cpp
+    duckdb_table_function.cpp
+    duckdb_rocksdb_reader.cpp
+    duckdb_transaction.cpp
 )
 
 target_link_libraries(
@@ -29,6 +36,7 @@ target_link_libraries(
     rocksdb
     velox
     pg_query
+    duckdb_static
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?

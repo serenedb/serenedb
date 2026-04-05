@@ -47,6 +47,8 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
   duckdb::TableStorageInfo GetStorageInfo(
     duckdb::ClientContext& context) override;
 
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
+
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;
   }

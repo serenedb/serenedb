@@ -25,6 +25,10 @@
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/storage/database_size.hpp>
 
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/operator/logical_delete.hpp>
+
+#include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
@@ -100,7 +104,28 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
-  throw duckdb::NotImplementedException("DELETE through DuckDB catalog");
+  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto sdb_table = table_entry.GetSereneDBTable();
+
+  // Find PK column indices in the scan output.
+  // The scan outputs columns in table order. PK columns are at their
+  // natural positions (e.g., if PK is column 0, it's output index 0).
+  const auto& columns = sdb_table->Columns();
+  const auto& pk_col_ids = sdb_table->PKColumns();
+  std::vector<duckdb::idx_t> pk_indices;
+  for (auto pk_id : pk_col_ids) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].id == pk_id) {
+        pk_indices.push_back(i);
+        break;
+      }
+    }
+  }
+
+  auto& del = planner.Make<SereneDBPhysicalDelete>(
+    std::move(sdb_table), std::move(pk_indices), op.estimated_cardinality);
+  del.children.push_back(plan);
+  return del;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(

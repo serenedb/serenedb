@@ -35,4 +35,15 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
                                    const duckdb::LogicalType& type,
                                    duckdb::idx_t max_rows);
 
+// Read up to max_rows from a RocksDB column iterator, extracting the PK bytes
+// from each key and storing them in `rowid_output` as BLOB values.
+// Also reads column values into `col_output`. Returns number of rows read.
+// Key format: [ObjectId(8)][ColumnId(8)][PK bytes...]
+duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
+                                  duckdb::Vector& col_output,
+                                  const duckdb::LogicalType& type,
+                                  duckdb::Vector& rowid_output,
+                                  size_t key_prefix_size,
+                                  duckdb::idx_t max_rows);
+
 }  // namespace sdb::connector

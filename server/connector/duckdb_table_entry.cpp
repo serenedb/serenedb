@@ -94,11 +94,23 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   auto data = duckdb::make_uniq<SereneDBScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
+      continue;  // Skip generated PK — not a real column
+    }
     data->column_ids.push_back(col.id);
     data->column_types.push_back(VeloxTypeToDuckDB(col.type));
   }
+  // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
+  data->has_rowid = true;
+  data->table_entry = this;
   bind_data = std::move(data);
   return CreateSereneDBScanFunction();
+}
+
+duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
+  duckdb::vector<duckdb::column_t> result;
+  result.push_back(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+  return result;
 }
 
 duckdb::TableStorageInfo SereneDBTableEntry::GetStorageInfo(

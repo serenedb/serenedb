@@ -26,6 +26,7 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
 
+#include <iresearch/index/index_reader_options.hpp>
 #include <variant>
 
 #include "basics/assert.h"
@@ -944,7 +945,7 @@ void FieldWriterImpl::EndField(std::string_view name, FieldProperties props,
     return;
   }
 
-  const auto [wand_mask, doc_count] = _pw->EndField();
+  const auto [has_wand, doc_count] = _pw->EndField();
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);
@@ -965,7 +966,7 @@ void FieldWriterImpl::EndField(std::string_view name, FieldProperties props,
   if (IndexFeatures::None != (props.index_features & IndexFeatures::Freq)) {
     _index_out->WriteV64(total_term_freq);
   }
-  _index_out->WriteU64(wand_mask);
+  _index_out->WriteU64(has_wand);
 
   // build fst
   const Entry& root = *_stack.begin();
@@ -1043,10 +1044,10 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
 
   virtual void Prepare(burst_trie::Version version, IndexInput& in);
 
-  uint8_t WandCount() const noexcept { return _wand_count; }
+  bool HasWand() const noexcept { return _has_wand; }
 
  protected:
-  uint8_t WandIndex(uint8_t i) const noexcept;
+  // uint8_t WandIndex(uint8_t i) const noexcept;
 
  private:
   FieldMeta _field;
@@ -1055,27 +1056,26 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t _terms_count;
   uint64_t _doc_count;
   uint64_t _doc_freq;
-  uint64_t _wand_mask{};
-  uint32_t _wand_count{};
+  bool _has_wand{};
   FreqAttr _freq;  // total term freq
 };
 
-uint8_t TermReaderBase::WandIndex(uint8_t i) const noexcept {
-  if (i >= kMaxScorers) {
-    return WandContext::kDisable;
-  }
+// uint8_t TermReaderBase::WandIndex(uint8_t i) const noexcept {
+//   if (i >= kMaxScorers) {
+//     return WandContext::kDisable;
+//   }
 
-  const uint64_t mask{uint64_t{1} << i};
+//   const uint64_t mask{uint64_t{1} << i};
 
-  if (0 == (_wand_mask & mask)) {
-    return WandContext::kDisable;
-  }
+//   if (0 == (_wand_mask & mask)) {
+//     return WandContext::kDisable;
+//   }
 
-  return static_cast<uint8_t>(std::popcount(_wand_mask & (mask - 1)));
-}
+//   return static_cast<uint8_t>(std::popcount(_wand_mask & (mask - 1)));
+// }
 
 bool TermReaderBase::has_scorer(uint8_t index) const noexcept {
-  return WandIndex(index) != WandContext::kDisable;
+  return index == 0 && _has_wand;
 }
 
 void TermReaderBase::Prepare(burst_trie::Version version, IndexInput& in) {
@@ -1095,8 +1095,7 @@ void TermReaderBase::Prepare(burst_trie::Version version, IndexInput& in) {
     _freq.value = static_cast<uint32_t>(in.ReadV64());
   }
 
-  _wand_mask = in.ReadI64();
-  _wand_count = static_cast<uint8_t>(std::popcount(_wand_mask));
+  _has_wand = in.ReadI64();
 
   SDB_ASSERT(!field_limits::valid(_field.norm) ||
              IsSubsetOf(IndexFeatures::Norm, _field.index_features));
@@ -1736,7 +1735,7 @@ class TermIteratorBase : public SeekTermIterator {
       it->LoadData(field_meta, _term_meta.meta, *_postings);
     }
     return _postings->Iterator(field_meta.index_features, features,
-                               {.cookie = &_term_meta}, _field->WandCount());
+                               {.cookie = &_term_meta}, IteratorFieldOptions{_field->HasWand()});
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -2178,7 +2177,7 @@ class SingleTermIterator : public SeekTermIterator {
 
   DocIterator::ptr postings(IndexFeatures features) const final {
     return _postings->Iterator(_field->meta().index_features, features,
-                               {.cookie = &_meta}, _field->WandCount());
+                               {.cookie = &_meta}, IteratorFieldOptions{_field->HasWand()});
   }
 
   const TermMetaImpl& Meta() const noexcept { return _meta.meta; }
@@ -2774,7 +2773,7 @@ class FieldReaderImpl final : public FieldReader {
       SDB_ASSERT(_owner != nullptr);
       SDB_ASSERT(_owner->_pr != nullptr);
       return _owner->_pr->BitUnion(meta().index_features, term_provider, set,
-                                   WandCount());
+                                   HasWand());
     }
 
     SeekTermIterator::ptr iterator(
@@ -2823,8 +2822,8 @@ class FieldReaderImpl final : public FieldReader {
 
       const IteratorFieldOptions field_options{
         options,
-        WandIndex(options.index),
-        WandCount(),
+        WandContext::kDisable,
+        HasWand()
       };
 
       return _owner->_pr->Iterator(meta().index_features, features, cookies,

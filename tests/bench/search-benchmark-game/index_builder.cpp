@@ -29,7 +29,7 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::Scorer** scorer_ptr,
                                                  size_t segment_pool_size,
                                                  size_t segment_mem_max) {
   irs::IndexWriterOptions writer_opts;
-  writer_opts.reader_options.scorers = {scorer_ptr, 1};
+  writer_opts.reader_options.scorer = scorer_ptr[0];
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
   writer_opts.features = [](irs::IndexFeatures id) {

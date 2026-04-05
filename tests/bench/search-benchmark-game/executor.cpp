@@ -39,7 +39,7 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
     _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
     _reader{
-      irs::DirectoryReader(_dir, _format, {.scorers = {&_scorer_ptr, 1}})} {}
+      irs::DirectoryReader(_dir, _format, {.scorer = _scorer_ptr})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

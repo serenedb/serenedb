@@ -56,7 +56,6 @@ set(iresearch-tests_sources
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
-    ./search/wand_test.cpp
     ./search/bm25_test.cpp
     ./search/cost_attribute_test.cpp
     ./search/boost_attribute_test.cpp

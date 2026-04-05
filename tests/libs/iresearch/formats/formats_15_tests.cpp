@@ -20,6 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/index/index_reader_options.hpp>
 #include <limits>
 #include <random>
 
@@ -267,7 +268,7 @@ class Format15TestCase : public tests::FormatTestCase {
   Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
 
   std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr> WriteReadMeta(
-    irs::Directory& dir, DocsView docs, irs::ScorersView scorers,
+    irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
     irs::IndexFeatures features);
 
   void AssertWanderator(irs::DocIterator::ptr& actual,
@@ -308,12 +309,12 @@ class Format15TestCase : public tests::FormatTestCase {
 
 std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr>
 Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
-                                irs::ScorersView scorers,
+                                irs::ScorerPtr scorers,
                                 irs::IndexFeatures features) {
   // If this assertion breaks and you really need to test wanderators
   // with different number of buckets you should adjust GetWanderator
   // and set it proper count of scorers as it currently expect only one.
-  EXPECT_EQ(scorers.size(), 1);
+  // EXPECT_EQ(scorers.size(), 1);
   auto codec = get_codec();
   EXPECT_NE(nullptr, codec);
   auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);

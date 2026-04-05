@@ -22,7 +22,7 @@
 
 #include "basics/containers/bitset.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/format_utils.hpp" I
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -122,15 +122,9 @@ struct PayBuffer : SkipBuffer {
   uint32_t last{};           // last start offset
 };
 
-inline std::vector<WandWriter::ptr> PrepareWandWriters(ScorersView scorers,
-                                                       size_t max_levels) {
-  std::vector<WandWriter::ptr> writers(std::min(scorers.size(), kMaxScorers));
-  auto scorer = scorers.begin();
-  for (auto& writer : writers) {
-    writer = (*scorer)->prepare_wand_writer(max_levels);
-    ++scorer;
-  }
-  return writers;
+inline WandWriter::ptr PrepareWandWriter(ScorerPtr scorer,
+                                         size_t max_levels) {
+  return (*scorer).prepare_wand_writer(max_levels);
 }
 
 // Assume that doc_count = 28, skip_n = skip_0 = 12
@@ -177,7 +171,7 @@ class PostingsWriterBase : public PostingsWriter {
   FieldStats EndField() noexcept final {
     const auto count = _docs.count();
     SDB_ASSERT(count < doc_limits::eof());
-    return {.wand_mask = _writers_mask,
+    return {.has_wand = _valid_writer != nullptr,
             .docs_count = static_cast<doc_id_t>(count)};
   }
 
@@ -249,9 +243,9 @@ class PostingsWriterBase : public PostingsWriter {
   void PrepareWriters(const FieldProperties& meta);
 
   template<typename Func>
-  void ApplyWriters(Func&& func) {
-    for (auto* writer : _valid_writers) {
-      func(*writer);
+  void ApplyToWriter(Func&& func) {
+    if (_valid_writer) {
+      func(*_valid_writer);
     }
   }
 
@@ -267,17 +261,15 @@ class PostingsWriterBase : public PostingsWriter {
   uint32_t* _buf;             // Buffer for encoding
   Attributes _attrs;          // Set of attributes
   const ColumnProvider* _columns{};
-  std::vector<WandWriter::ptr> _writers;    // List of wand writers
-  std::vector<WandWriter*> _valid_writers;  // Valid wand writers
-  uint64_t _writers_mask{};
+  WandWriter::ptr _writer;    // Wand writers
+  WandWriter* _valid_writer;  // Valid wand writer
   Features _features;  // Features supported by current field
   const PostingsFormat _postings_format_version;
   const TermsFormat _terms_format_version;
 };
 
 inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
-  _writers_mask = 0;
-  _valid_writers.clear();
+  _valid_writer = nullptr;
 
   if (!_columns) [[unlikely]] {
     return;
@@ -286,13 +278,9 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   // Enable/Disable frequency for WandWriter::Prepare
   _attrs.wand_freq = _features.HasFrequency() ? &_attrs.freq : nullptr;
 
-  for (size_t i = 0; auto& writer : _writers) {
-    const bool valid = writer && writer->Prepare(*_columns, meta, _attrs);
-    if (valid) {
-      SetBit(_writers_mask, i);
-      _valid_writers.emplace_back(writer.get());
-    }
-    ++i;
+
+  if (_writer && _writer->Prepare(*_columns, meta, _attrs)) {
+    _valid_writer = _writer.get();
   }
 }
 
@@ -357,8 +345,7 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
   out.WriteV32(_skip.Skip0());  // Write postings block size
 
   // Prepare wand writers
-  _writers = PrepareWandWriters(state.scorers, doc_limits::kMaxSkipLevels);
-  _valid_writers.reserve(_writers.size());
+  _writer = PrepareWandWriter(state.scorer, doc_limits::kMaxSkipLevels);
   _columns = state.columns;
 
   // Prepare documents bitset
@@ -429,11 +416,11 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
 
   const bool has_skip_list = _skip.Skip0() < meta.docs_count;
   auto write_max_score = [&](size_t level) {
-    ApplyWriters([&](auto& writer) {
+    ApplyToWriter([&](auto& writer) {
       const uint8_t size = writer.SizeRoot(level);
       _doc_out->WriteByte(size);
     });
-    ApplyWriters([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
+    ApplyToWriter([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
   };
 
   if (1 == meta.docs_count) {
@@ -693,7 +680,7 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
   auto& meta = static_cast<TermMetaImpl&>(base_meta);
 
   BeginTerm(meta);
-  ApplyWriters([&](auto& writer) { writer.Reset(); });
+  ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;
@@ -713,17 +700,17 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
 
         // FIXME(gnusi): optimize for 1 writer case? compile? maybe just 1
         // composite wand writer?
-        ApplyWriters([&](auto& writer) {
+        ApplyToWriter([&](auto& writer) {
           const uint8_t size = writer.Size(level);
           SDB_ASSERT(size <= WandWriter::kMaxSize);
           out.WriteByte(size);
         });
-        ApplyWriters([&](auto& writer) { writer.Write(level, out); });
+        ApplyToWriter([&](auto& writer) { writer.Write(level, out); });
       });
     }
 
     BeginDocument();
-    ApplyWriters([](auto& writer) { writer.Update(); });
+    ApplyToWriter([](auto& writer) { writer.Update(); });
     SDB_ASSERT(_attrs.pos);
     while (_attrs.pos->next()) {
       SDB_ASSERT(pos_limits::valid(_attrs.pos->value()));

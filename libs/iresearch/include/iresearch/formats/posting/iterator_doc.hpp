@@ -365,7 +365,7 @@ bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
 // Iterator over posting list.
 // IteratorTraits defines requested features.
 // FieldTraits defines requested features.
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
 class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
@@ -378,8 +378,8 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
                 "kBlockSize must be a multiple of kScoreBlock");
 
  public:
-  PostingIteratorImpl(WandExtent extent)
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, extent} {}
+  PostingIteratorImpl()
+    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, HasWand} {}
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
@@ -395,9 +395,9 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     return sdb::basics::downCast<InputType>(*this->_doc_in);
   }
 
-  class ReadSkip : private WandExtent {
+  class ReadSkip {
    public:
-    explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
+    explicit ReadSkip(bool has_wand) : _skip_levels(1), _has_wand(has_wand) {
       Disable();  // Prevent using skip-list by default
     }
 
@@ -469,12 +469,13 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     }
 
     IRS_FORCE_INLINE void SkipWandData(InputType& in) {
-      CommonSkipWandData(static_cast<WandExtent>(*this), in);
+      CommonSkipWandData(_has_wand, in);
     }
 
    private:
     std::vector<SkipState> _skip_levels;
     SkipState* _prev{};  // Pointer to skip context used by skip reader
+    bool _has_wand = false;
   };
 
   IRS_FORCE_INLINE void ReadTail(doc_id_t prev_doc);
@@ -489,9 +490,9 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   uint32_t _docs_count{};
 };
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::Prepare(const PostingCookie& meta,
                                              const IndexInput* doc_in,
                                              const IndexInput* pos_in,
@@ -569,10 +570,10 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   _docs_count = term_state.docs_count;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
 std::pair<doc_id_t, bool>
-PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                     InputType>::FillBlock(const doc_id_t min,
                                           const doc_id_t max,
                                           uint64_t* IRS_RESTRICT const doc_mask,
@@ -733,9 +734,9 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::ReadTail(doc_id_t prev_doc) {
   const auto tail = this->_left_in_list;
   SDB_ASSERT(tail < doc_limits::kBlockSize);
@@ -749,9 +750,9 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::ReadBlock(doc_id_t prev_doc) {
   IteratorTraits::ReadBlockDelta(GetDocIn(), this->_enc_buf, this->_docs,
                                  prev_doc);
@@ -765,9 +766,9 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::ReadLeaf(doc_id_t prev_doc) {
   if (this->_left_in_list >= doc_limits::kBlockSize) [[likely]] {
     ReadBlock(prev_doc);
@@ -776,9 +777,9 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::SeekAfterInit(SkipState& last,
                                                    doc_id_t target) {
   SDB_ASSERT(_skip.NumLevels());
@@ -801,9 +802,9 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   return true;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::InitAndSeek(SkipState& last,
                                                  doc_id_t target) {
   SDB_ASSERT(target > _skip.Reader().UpperBound());
@@ -835,9 +836,9 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
   return SeekAfterInit(last, target);
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-bool PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::SeekToLeaf(doc_id_t target) {
   const bool avoid_seek = [&] IRS_FORCE_INLINE {
     if constexpr (!IteratorTraits::Position()) {

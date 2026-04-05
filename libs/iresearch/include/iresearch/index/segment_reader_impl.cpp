@@ -198,7 +198,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
     meta.codec->get_field_reader(*dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(
-      ReaderState{.dir = &dir, .meta = &meta, .scorers = options.scorers});
+      ReaderState{.dir = &dir, .meta = &meta, .scorer = options.scorer});
   }
   // open column store
   reader->_data = std::make_shared<ColumnData>();

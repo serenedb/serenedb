@@ -70,27 +70,6 @@ struct Extent<WandContext::kDisable> {
   uint8_t value;
 };
 
-using DynamicExtent = Extent<WandContext::kDisable>;
-
-template<uint8_t PossibleMin, typename Func>
-auto ResolveExtent(uint8_t extent, Func&& func) {
-  if constexpr (PossibleMin == WandContext::kDisable) {
-    return std::forward<Func>(func)(Extent<0>{});
-  } else {
-    switch (extent) {
-      case 1:
-        return std::forward<Func>(func)(Extent<1>{});
-      case 0:
-        if constexpr (PossibleMin <= 0) {
-          return std::forward<Func>(func)(Extent<0>{});
-        }
-        [[fallthrough]];
-      default:
-        return std::forward<Func>(func)(DynamicExtent{extent});
-    }
-  }
-}
-
 template<typename PostingImpl>
 struct WandPostingAdapter : PostingAdapter<PostingImpl> {
   using PostingAdapter<PostingImpl>::PostingAdapter;
@@ -144,7 +123,7 @@ class PostingsReaderBase : public PostingsReader {
   explicit PostingsReaderBase(size_t block_size) noexcept
     : _block_size{block_size} {}
 
-  ScorersView _scorers;
+  ScorerPtr _scorer;
   IndexInput::ptr _doc_in;
   IndexInput::ptr _pos_in;
   IndexInput::ptr _pay_in;
@@ -215,8 +194,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
                    block_size, "', expected '", _block_size, "'")};
   }
 
-  _scorers =
-    state.scorers.subspan(0, std::min(state.scorers.size(), kMaxScorers));
+  _scorer = state.scorer;
   _docs_count = state.meta->docs_count;
 }
 
@@ -259,7 +237,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   PostingsReaderImpl() noexcept : PostingsReaderBase{doc_limits::kBlockSize} {}
 
   size_t BitUnion(IndexFeatures field, const term_provider_f& provider,
-                  size_t* set, uint8_t wand_count) final;
+                  size_t* set, bool has_wand) final;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
@@ -318,7 +296,7 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
 template<typename FormatTraits>
 size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, const term_provider_f& provider,
-  size_t* set, uint8_t wand_count) {
+  size_t* set, bool has_wand) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   uint32_t enc_buf[doc_limits::kBlockSize];
   doc_id_t docs[doc_limits::kBlockSize
@@ -348,7 +326,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
       doc_in->Seek(term_state.doc_start);
       SDB_ASSERT(!doc_in->IsEOF());
       if (term_state.docs_count < doc_limits::kBlockSize) {
-        CommonSkipWandData(DynamicExtent{wand_count}, *doc_in);
+        CommonSkipWandData(has_wand, *doc_in);
       }
       SDB_ASSERT(!doc_in->IsEOF());
 
@@ -459,15 +437,22 @@ auto ResolveWandFeatures(IndexFeatures field_features, auto&& f) {
   }
 }
 
-auto ResolveWandType(IndexFeatures field_features, uint8_t count,
+auto ResolveHasWand(bool has_wand, auto&& f) {
+  if (has_wand) {
+    return f.template operator()<true>();
+  } else {
+    return f.template operator()<false>();
+  }
+}
+
+auto ResolveWandType(IndexFeatures field_features, bool has_wand,
                      DataInput::Type type, auto&& f) {
   return ResolveWandFeatures(
     field_features, [&]<bool Pos, bool Offs> -> DocIterator::ptr {
-      return ResolveExtent<1>(count, [&]<typename Extent>(Extent&& extent) {
+      return ResolveHasWand(has_wand, [&]<bool HasWand>() {
         return ResolveInputType(
           type, [&]<typename InputType> -> DocIterator::ptr {
-            return f.template operator()<Pos, Offs, Extent, InputType>(
-              std::forward<Extent>(extent));
+            return f.template operator()<Pos, Offs, HasWand, InputType>();
           });
       });
     });
@@ -478,15 +463,13 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
   return ResolveWandType(
-    field_features, options.count, _doc_in->GetType(),
-    [&]<bool Pos, bool Offs, typename Extent, typename InputType>(
-      Extent&& extent) -> DocIterator::ptr {
+    field_features, options.has_wand, _doc_in->GetType(),
+    [&]<bool Pos, bool Offs, bool HasWand, typename InputType>() -> DocIterator::ptr {
       auto make_postings_iterator = [&]<bool Root>(
                                       const PostingCookie& cookie) {
         auto it = memory::make_managed<
-          SingleWandIterator<FormatTraits, Root, Pos, Offs, Extent, InputType>>(
-          std::forward<Extent>(extent));
-        it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+          SingleWandIterator<FormatTraits, Root, Pos, Offs, HasWand, InputType>>();
+        it->Prepare(cookie, _doc_in.get());
         return it;
       };
 
@@ -503,7 +486,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
       }
 
       using Iterator =
-        SingleWandIterator<FormatTraits, false, Pos, Offs, Extent, InputType>;
+        SingleWandIterator<FormatTraits, false, Pos, Offs, HasWand, InputType>;
       using Adapter = WandPostingAdapter<Iterator>;
 
       return memory::make_managed<MaxScoreIterator<Adapter>>(
@@ -536,23 +519,31 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-        return ResolveExtent<0>(
-          options.count,
-          [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
-            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
-              auto it = memory::make_managed<PostingIteratorImpl<
-                IteratorTraits, FieldTraits, Extent, BytesViewInput>>(
-                std::forward<Extent>(extent));
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
-              return it;
-            } else {
-              auto it = memory::make_managed<PostingIteratorImpl<
-                IteratorTraits, FieldTraits, Extent, IndexInput>>(
-                std::forward<Extent>(extent));
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
-              return it;
-            }
-          });
+        if (options.has_wand) {
+          if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+            auto it = memory::make_managed<PostingIteratorImpl<
+              IteratorTraits, FieldTraits, true, BytesViewInput>>();
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            return it;
+          } else {
+            auto it = memory::make_managed<PostingIteratorImpl<
+              IteratorTraits, FieldTraits, true, IndexInput>>();
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            return it;
+          }
+        } else {
+          if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+            auto it = memory::make_managed<PostingIteratorImpl<
+              IteratorTraits, FieldTraits, false, BytesViewInput>>();
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            return it;
+          } else {
+            auto it = memory::make_managed<PostingIteratorImpl<
+              IteratorTraits, FieldTraits, false, IndexInput>>();
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            return it;
+          }
+        }
       });
   };
 

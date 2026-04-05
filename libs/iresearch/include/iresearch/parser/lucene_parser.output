@@ -1,0 +1,996 @@
+Grammar
+
+    0 $accept: query $end
+
+    1 query: clause_list
+
+    2 clause_list: mod_clause
+    3            | clause_list mod_clause
+    4            | clause_list AND mod_clause
+    5            | clause_list OR mod_clause
+
+    6 mod_clause: term_expr
+    7           | PLUS term_expr
+    8           | MINUS term_expr
+    9           | NOT term_expr
+
+   10 term_expr: boosted_expr
+
+   11 @1: ε
+
+   12 term_expr: TERM COLON @1 term_expr
+
+   13 boosted_expr: modified_term
+   14             | modified_term CARET NUMBER
+   15             | modified_term CARET FLOAT
+
+   16 modified_term: base_term
+   17              | TERM TILDE
+   18              | TERM TILDE NUMBER
+   19              | PHRASE TILDE
+   20              | PHRASE TILDE NUMBER
+
+   21 base_term: TERM
+   22          | PHRASE
+   23          | REGEX
+   24          | PREFIX
+   25          | SUFFIX
+   26          | WILDCARD
+   27          | range_expr
+
+   28 @2: ε
+
+   29 base_term: LPAREN @2 clause_list RPAREN
+
+   30 range_expr: LBRACKET range_bound TO range_bound RBRACKET
+   31           | LBRACE range_bound TO range_bound RBRACE
+   32           | LBRACKET range_bound TO range_bound RBRACE
+   33           | LBRACE range_bound TO range_bound RBRACKET
+
+   34 range_bound: TERM
+   35            | STAR
+
+
+Terminals, with rules where they appear
+
+    $end (0) 0
+    error (256)
+    TERM <sv> (258) 12 17 18 21 34
+    PHRASE <sv> (259) 19 20 22
+    REGEX <sv> (260) 23
+    PREFIX <sv> (261) 24
+    SUFFIX <sv> (262) 25
+    WILDCARD <sv> (263) 26
+    STAR <sv> (264) 35
+    NUMBER <num> (265) 14 18 20
+    FLOAT <fnum> (266) 15
+    AND (267) 4
+    OR (268) 5
+    NOT (269) 9
+    TO (270) 30 31 32 33
+    LPAREN (271) 29
+    RPAREN (272) 29
+    LBRACKET (273) 30 32
+    RBRACKET (274) 30 33
+    LBRACE (275) 31 33
+    RBRACE (276) 31 32
+    COLON (277) 12
+    CARET (278) 14 15
+    TILDE (279) 17 18 19 20
+    PLUS (280) 7
+    MINUS (281) 8
+
+
+Nonterminals, with rules where they appear
+
+    $accept (27)
+        on left: 0
+    query (28)
+        on left: 1
+        on right: 0
+    clause_list (29)
+        on left: 2 3 4 5
+        on right: 1 3 4 5 29
+    mod_clause (30)
+        on left: 6 7 8 9
+        on right: 2 3 4 5
+    term_expr (31)
+        on left: 10 12
+        on right: 6 7 8 9 12
+    @1 (32)
+        on left: 11
+        on right: 12
+    boosted_expr (33)
+        on left: 13 14 15
+        on right: 10
+    modified_term <filter> (34)
+        on left: 16 17 18 19 20
+        on right: 13 14 15
+    base_term <filter> (35)
+        on left: 21 22 23 24 25 26 27 29
+        on right: 16
+    @2 (36)
+        on left: 28
+        on right: 29
+    range_expr <filter> (37)
+        on left: 30 31 32 33
+        on right: 27
+    range_bound <sv> (38)
+        on left: 34 35
+        on right: 30 31 32 33
+
+
+State 0
+
+    0 $accept: • query $end
+    1 query: • clause_list
+    2 clause_list: • mod_clause
+    3            | • clause_list mod_clause
+    4            | • clause_list AND mod_clause
+    5            | • clause_list OR mod_clause
+    6 mod_clause: • term_expr
+    7           | • PLUS term_expr
+    8           | • MINUS term_expr
+    9           | • NOT term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    NOT       shift, and go to state 7
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+    PLUS      shift, and go to state 11
+    MINUS     shift, and go to state 12
+
+    query          go to state 13
+    clause_list    go to state 14
+    mod_clause     go to state 15
+    term_expr      go to state 16
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 1
+
+   12 term_expr: TERM • COLON @1 term_expr
+   17 modified_term: TERM • TILDE
+   18              | TERM • TILDE NUMBER
+   21 base_term: TERM •  [$end, TERM, PHRASE, REGEX, PREFIX, SUFFIX, WILDCARD, AND, OR, NOT, LPAREN, RPAREN, LBRACKET, LBRACE, CARET, PLUS, MINUS]
+
+    COLON  shift, and go to state 21
+    TILDE  shift, and go to state 22
+
+    $default  reduce using rule 21 (base_term)
+
+
+State 2
+
+   19 modified_term: PHRASE • TILDE
+   20              | PHRASE • TILDE NUMBER
+   22 base_term: PHRASE •  [$end, TERM, PHRASE, REGEX, PREFIX, SUFFIX, WILDCARD, AND, OR, NOT, LPAREN, RPAREN, LBRACKET, LBRACE, CARET, PLUS, MINUS]
+
+    TILDE  shift, and go to state 23
+
+    $default  reduce using rule 22 (base_term)
+
+
+State 3
+
+   23 base_term: REGEX •
+
+    $default  reduce using rule 23 (base_term)
+
+
+State 4
+
+   24 base_term: PREFIX •
+
+    $default  reduce using rule 24 (base_term)
+
+
+State 5
+
+   25 base_term: SUFFIX •
+
+    $default  reduce using rule 25 (base_term)
+
+
+State 6
+
+   26 base_term: WILDCARD •
+
+    $default  reduce using rule 26 (base_term)
+
+
+State 7
+
+    9 mod_clause: NOT • term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+
+    term_expr      go to state 24
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 8
+
+   28 @2: ε •
+   29 base_term: LPAREN • @2 clause_list RPAREN
+
+    $default  reduce using rule 28 (@2)
+
+    @2  go to state 25
+
+
+State 9
+
+   30 range_expr: LBRACKET • range_bound TO range_bound RBRACKET
+   32           | LBRACKET • range_bound TO range_bound RBRACE
+   34 range_bound: • TERM
+   35            | • STAR
+
+    TERM  shift, and go to state 26
+    STAR  shift, and go to state 27
+
+    range_bound  go to state 28
+
+
+State 10
+
+   31 range_expr: LBRACE • range_bound TO range_bound RBRACE
+   33           | LBRACE • range_bound TO range_bound RBRACKET
+   34 range_bound: • TERM
+   35            | • STAR
+
+    TERM  shift, and go to state 26
+    STAR  shift, and go to state 27
+
+    range_bound  go to state 29
+
+
+State 11
+
+    7 mod_clause: PLUS • term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+
+    term_expr      go to state 30
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 12
+
+    8 mod_clause: MINUS • term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+
+    term_expr      go to state 31
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 13
+
+    0 $accept: query • $end
+
+    $end  shift, and go to state 32
+
+
+State 14
+
+    1 query: clause_list •  [$end]
+    3 clause_list: clause_list • mod_clause
+    4            | clause_list • AND mod_clause
+    5            | clause_list • OR mod_clause
+    6 mod_clause: • term_expr
+    7           | • PLUS term_expr
+    8           | • MINUS term_expr
+    9           | • NOT term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    AND       shift, and go to state 33
+    OR        shift, and go to state 34
+    NOT       shift, and go to state 7
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+    PLUS      shift, and go to state 11
+    MINUS     shift, and go to state 12
+
+    $default  reduce using rule 1 (query)
+
+    mod_clause     go to state 35
+    term_expr      go to state 16
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 15
+
+    2 clause_list: mod_clause •
+
+    $default  reduce using rule 2 (clause_list)
+
+
+State 16
+
+    6 mod_clause: term_expr •
+
+    $default  reduce using rule 6 (mod_clause)
+
+
+State 17
+
+   10 term_expr: boosted_expr •
+
+    $default  reduce using rule 10 (term_expr)
+
+
+State 18
+
+   13 boosted_expr: modified_term •  [$end, TERM, PHRASE, REGEX, PREFIX, SUFFIX, WILDCARD, AND, OR, NOT, LPAREN, RPAREN, LBRACKET, LBRACE, PLUS, MINUS]
+   14             | modified_term • CARET NUMBER
+   15             | modified_term • CARET FLOAT
+
+    CARET  shift, and go to state 36
+
+    $default  reduce using rule 13 (boosted_expr)
+
+
+State 19
+
+   16 modified_term: base_term •
+
+    $default  reduce using rule 16 (modified_term)
+
+
+State 20
+
+   27 base_term: range_expr •
+
+    $default  reduce using rule 27 (base_term)
+
+
+State 21
+
+   11 @1: ε •
+   12 term_expr: TERM COLON • @1 term_expr
+
+    $default  reduce using rule 11 (@1)
+
+    @1  go to state 37
+
+
+State 22
+
+   17 modified_term: TERM TILDE •  [$end, TERM, PHRASE, REGEX, PREFIX, SUFFIX, WILDCARD, AND, OR, NOT, LPAREN, RPAREN, LBRACKET, LBRACE, CARET, PLUS, MINUS]
+   18              | TERM TILDE • NUMBER
+
+    NUMBER  shift, and go to state 38
+
+    $default  reduce using rule 17 (modified_term)
+
+
+State 23
+
+   19 modified_term: PHRASE TILDE •  [$end, TERM, PHRASE, REGEX, PREFIX, SUFFIX, WILDCARD, AND, OR, NOT, LPAREN, RPAREN, LBRACKET, LBRACE, CARET, PLUS, MINUS]
+   20              | PHRASE TILDE • NUMBER
+
+    NUMBER  shift, and go to state 39
+
+    $default  reduce using rule 19 (modified_term)
+
+
+State 24
+
+    9 mod_clause: NOT term_expr •
+
+    $default  reduce using rule 9 (mod_clause)
+
+
+State 25
+
+    2 clause_list: • mod_clause
+    3            | • clause_list mod_clause
+    4            | • clause_list AND mod_clause
+    5            | • clause_list OR mod_clause
+    6 mod_clause: • term_expr
+    7           | • PLUS term_expr
+    8           | • MINUS term_expr
+    9           | • NOT term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   29          | LPAREN @2 • clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    NOT       shift, and go to state 7
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+    PLUS      shift, and go to state 11
+    MINUS     shift, and go to state 12
+
+    clause_list    go to state 40
+    mod_clause     go to state 15
+    term_expr      go to state 16
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 26
+
+   34 range_bound: TERM •
+
+    $default  reduce using rule 34 (range_bound)
+
+
+State 27
+
+   35 range_bound: STAR •
+
+    $default  reduce using rule 35 (range_bound)
+
+
+State 28
+
+   30 range_expr: LBRACKET range_bound • TO range_bound RBRACKET
+   32           | LBRACKET range_bound • TO range_bound RBRACE
+
+    TO  shift, and go to state 41
+
+
+State 29
+
+   31 range_expr: LBRACE range_bound • TO range_bound RBRACE
+   33           | LBRACE range_bound • TO range_bound RBRACKET
+
+    TO  shift, and go to state 42
+
+
+State 30
+
+    7 mod_clause: PLUS term_expr •
+
+    $default  reduce using rule 7 (mod_clause)
+
+
+State 31
+
+    8 mod_clause: MINUS term_expr •
+
+    $default  reduce using rule 8 (mod_clause)
+
+
+State 32
+
+    0 $accept: query $end •
+
+    $default  accept
+
+
+State 33
+
+    4 clause_list: clause_list AND • mod_clause
+    6 mod_clause: • term_expr
+    7           | • PLUS term_expr
+    8           | • MINUS term_expr
+    9           | • NOT term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    NOT       shift, and go to state 7
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+    PLUS      shift, and go to state 11
+    MINUS     shift, and go to state 12
+
+    mod_clause     go to state 43
+    term_expr      go to state 16
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 34
+
+    5 clause_list: clause_list OR • mod_clause
+    6 mod_clause: • term_expr
+    7           | • PLUS term_expr
+    8           | • MINUS term_expr
+    9           | • NOT term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    NOT       shift, and go to state 7
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+    PLUS      shift, and go to state 11
+    MINUS     shift, and go to state 12
+
+    mod_clause     go to state 44
+    term_expr      go to state 16
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 35
+
+    3 clause_list: clause_list mod_clause •
+
+    $default  reduce using rule 3 (clause_list)
+
+
+State 36
+
+   14 boosted_expr: modified_term CARET • NUMBER
+   15             | modified_term CARET • FLOAT
+
+    NUMBER  shift, and go to state 45
+    FLOAT   shift, and go to state 46
+
+
+State 37
+
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   12          | TERM COLON @1 • term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    LPAREN    shift, and go to state 8
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+
+    term_expr      go to state 47
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 38
+
+   18 modified_term: TERM TILDE NUMBER •
+
+    $default  reduce using rule 18 (modified_term)
+
+
+State 39
+
+   20 modified_term: PHRASE TILDE NUMBER •
+
+    $default  reduce using rule 20 (modified_term)
+
+
+State 40
+
+    3 clause_list: clause_list • mod_clause
+    4            | clause_list • AND mod_clause
+    5            | clause_list • OR mod_clause
+    6 mod_clause: • term_expr
+    7           | • PLUS term_expr
+    8           | • MINUS term_expr
+    9           | • NOT term_expr
+   10 term_expr: • boosted_expr
+   12          | • TERM COLON @1 term_expr
+   13 boosted_expr: • modified_term
+   14             | • modified_term CARET NUMBER
+   15             | • modified_term CARET FLOAT
+   16 modified_term: • base_term
+   17              | • TERM TILDE
+   18              | • TERM TILDE NUMBER
+   19              | • PHRASE TILDE
+   20              | • PHRASE TILDE NUMBER
+   21 base_term: • TERM
+   22          | • PHRASE
+   23          | • REGEX
+   24          | • PREFIX
+   25          | • SUFFIX
+   26          | • WILDCARD
+   27          | • range_expr
+   29          | • LPAREN @2 clause_list RPAREN
+   29          | LPAREN @2 clause_list • RPAREN
+   30 range_expr: • LBRACKET range_bound TO range_bound RBRACKET
+   31           | • LBRACE range_bound TO range_bound RBRACE
+   32           | • LBRACKET range_bound TO range_bound RBRACE
+   33           | • LBRACE range_bound TO range_bound RBRACKET
+
+    TERM      shift, and go to state 1
+    PHRASE    shift, and go to state 2
+    REGEX     shift, and go to state 3
+    PREFIX    shift, and go to state 4
+    SUFFIX    shift, and go to state 5
+    WILDCARD  shift, and go to state 6
+    AND       shift, and go to state 33
+    OR        shift, and go to state 34
+    NOT       shift, and go to state 7
+    LPAREN    shift, and go to state 8
+    RPAREN    shift, and go to state 48
+    LBRACKET  shift, and go to state 9
+    LBRACE    shift, and go to state 10
+    PLUS      shift, and go to state 11
+    MINUS     shift, and go to state 12
+
+    mod_clause     go to state 35
+    term_expr      go to state 16
+    boosted_expr   go to state 17
+    modified_term  go to state 18
+    base_term      go to state 19
+    range_expr     go to state 20
+
+
+State 41
+
+   30 range_expr: LBRACKET range_bound TO • range_bound RBRACKET
+   32           | LBRACKET range_bound TO • range_bound RBRACE
+   34 range_bound: • TERM
+   35            | • STAR
+
+    TERM  shift, and go to state 26
+    STAR  shift, and go to state 27
+
+    range_bound  go to state 49
+
+
+State 42
+
+   31 range_expr: LBRACE range_bound TO • range_bound RBRACE
+   33           | LBRACE range_bound TO • range_bound RBRACKET
+   34 range_bound: • TERM
+   35            | • STAR
+
+    TERM  shift, and go to state 26
+    STAR  shift, and go to state 27
+
+    range_bound  go to state 50
+
+
+State 43
+
+    4 clause_list: clause_list AND mod_clause •
+
+    $default  reduce using rule 4 (clause_list)
+
+
+State 44
+
+    5 clause_list: clause_list OR mod_clause •
+
+    $default  reduce using rule 5 (clause_list)
+
+
+State 45
+
+   14 boosted_expr: modified_term CARET NUMBER •
+
+    $default  reduce using rule 14 (boosted_expr)
+
+
+State 46
+
+   15 boosted_expr: modified_term CARET FLOAT •
+
+    $default  reduce using rule 15 (boosted_expr)
+
+
+State 47
+
+   12 term_expr: TERM COLON @1 term_expr •
+
+    $default  reduce using rule 12 (term_expr)
+
+
+State 48
+
+   29 base_term: LPAREN @2 clause_list RPAREN •
+
+    $default  reduce using rule 29 (base_term)
+
+
+State 49
+
+   30 range_expr: LBRACKET range_bound TO range_bound • RBRACKET
+   32           | LBRACKET range_bound TO range_bound • RBRACE
+
+    RBRACKET  shift, and go to state 51
+    RBRACE    shift, and go to state 52
+
+
+State 50
+
+   31 range_expr: LBRACE range_bound TO range_bound • RBRACE
+   33           | LBRACE range_bound TO range_bound • RBRACKET
+
+    RBRACKET  shift, and go to state 53
+    RBRACE    shift, and go to state 54
+
+
+State 51
+
+   30 range_expr: LBRACKET range_bound TO range_bound RBRACKET •
+
+    $default  reduce using rule 30 (range_expr)
+
+
+State 52
+
+   32 range_expr: LBRACKET range_bound TO range_bound RBRACE •
+
+    $default  reduce using rule 32 (range_expr)
+
+
+State 53
+
+   33 range_expr: LBRACE range_bound TO range_bound RBRACKET •
+
+    $default  reduce using rule 33 (range_expr)
+
+
+State 54
+
+   31 range_expr: LBRACE range_bound TO range_bound RBRACE •
+
+    $default  reduce using rule 31 (range_expr)

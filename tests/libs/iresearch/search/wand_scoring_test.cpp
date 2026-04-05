@@ -93,9 +93,8 @@ class WandScoringTestCase : public IndexTestBase {
   // Single segment with multiplier * 420 docs.
   irs::DirectoryReader CreateLargeIndex(const irs::Scorer& scorer,
                                         size_t multiplier = 1) {
-    const irs::Scorer* scorers[] = {&scorer};
     irs::IndexWriterOptions opts;
-    opts.reader_options.scorers = scorers;
+    opts.reader_options.scorer = &scorer;
     opts.features = [](irs::IndexFeatures id) {
       irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
       if (id == irs::IndexFeatures::Norm) {
@@ -124,9 +123,8 @@ class WandScoringTestCase : public IndexTestBase {
   // 3 segments, each with multiplier * 140 docs.
   irs::DirectoryReader CreateMultiSegmentIndex(const irs::Scorer& scorer,
                                                size_t multiplier = 1) {
-    const irs::Scorer* scorers[] = {&scorer};
     irs::IndexWriterOptions opts;
-    opts.reader_options.scorers = scorers;
+    opts.reader_options.scorer = &scorer;
     opts.features = [](irs::IndexFeatures id) {
       irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
       if (id == irs::IndexFeatures::Norm) {

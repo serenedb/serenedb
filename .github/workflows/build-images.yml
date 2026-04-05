@@ -34,6 +34,7 @@ jobs:
         with:
           fetch-depth: 1
           submodules: false
+          clean: true
 
       - name: Setup QEMU for multi-arch
         run: docker run --rm --privileged tonistiigi/binfmt --install all
@@ -47,7 +48,7 @@ jobs:
           PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
         run: ./build_images.sh
 
-      - name: Send Telegram notification
+      - name: Send notification
         if: always() && !cancelled()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -61,4 +62,4 @@ jobs:
           RUN_NAME: "serenedb | create infra"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
+        run: ./scripts/send_notification.bash

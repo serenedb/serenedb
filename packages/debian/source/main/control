@@ -1,22 +1,21 @@
 Source: serenedb
 Section: database
 Priority: optional
-Maintainer: SereneDB
-Build-Depends: debhelper (>= 9), docker-ce
+Maintainer: SereneDB GmbH <support@serenedb.com>
+Build-Depends: debhelper (>= 13)
+Rules-Requires-Root: no
 
 Package: serenedb
 Architecture: @ARCHITECTURE@
-Depends: ${misc:Depends}, tzdata
-Description: a real-time search & OLAP database
+# TODO: tzdata may be removable if timezone data is bundled into the binary
+Depends: tzdata, postgresql-client
+Description: SereneDB database server
+ SereneDB is a real-time search and analytics database with PostgreSQL wire protocol support.
 
 Package: serenedb-dbg
 Architecture: @ARCHITECTURE@
 Section: debug
-Priority: extra
-Conflicts:
-    serenedb (<< ${binary:Version}),
-    serenedb (>> ${binary:Version}),
-Pre-Depends:
-    serenedb (= ${binary:Version}),
-    ${misc:Depends}
-Description: debugging symbols for serenedb
+Priority: optional
+Depends: serenedb (= ${binary:Version})
+Description: debugging symbols for SereneDB
+ Debug symbols for crash analysis and profiling.

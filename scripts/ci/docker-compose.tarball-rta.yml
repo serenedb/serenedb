@@ -1,0 +1,64 @@
+services:
+  serenedb:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    tmpfs:
+      - /var/lib/serenedb
+      - /var/log/serenedb
+    volumes:
+      - "${WORKSPACE}:/workspace:ro"
+      - "${WORKSPACE}/logs:/logs"
+    environment:
+      - HOME=/tmp
+      - TARBALL_NAME
+    networks:
+      - rta-network
+    command: >
+      sh -c '
+        mkdir -p /tmp/serenedb &&
+        tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
+        exec /tmp/serenedb/usr/bin/serened \
+          --config /tmp/serenedb/etc/serenedb/serened.conf \
+          --server.endpoint pgsql+tcp://0.0.0.0:7890 \
+          --server.authentication 0
+      '
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      - serenedb
+    volumes:
+      - "${WORKSPACE}/tests/sqllogic:/sqllogic"
+      - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "${WORKSPACE}/logs:/logs"
+      - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+    environment:
+      - HOME=/sqllogic
+      - CARGO_HOME=/tmp/cargo
+      - CARGO_TARGET_DIR=/cargo-target
+    networks:
+      - rta-network
+    command: >
+      sh -c '
+        echo "Waiting for serened to accept connections..." &&
+        for i in $(seq 1 60); do
+          pg_isready -h serenedb -p 7890 -U postgres -q 2>/dev/null && break
+          sleep 1
+        done &&
+        pg_isready -h serenedb -p 7890 -U postgres &&
+
+        cd /sqllogic &&
+        exec ./run_sdb_tests.sh \
+          --host serenedb \
+          --single-port 7890 \
+          --fast \
+          --skip "encrypted|text_tokenizer|log_level" \
+          --runner=/sqllogictest-rs \
+          --junit /logs/tarball-rta-tests
+      '
+
+networks:
+  rta-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_rta-network

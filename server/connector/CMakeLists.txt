@@ -26,6 +26,8 @@ add_library(
     duckdb_table_entry.cpp
     duckdb_table_function.cpp
     duckdb_rocksdb_reader.cpp
+    duckdb_rocksdb_writer.cpp
+    duckdb_physical_insert.cpp
     duckdb_transaction.cpp
 )
 

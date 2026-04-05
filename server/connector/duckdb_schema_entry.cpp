@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_schema_entry.h"
 
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 
 #include "catalog/catalog.h"
@@ -56,6 +57,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   for (const auto& col : table->Columns()) {
     info->columns.AddColumn(duckdb::ColumnDefinition(
       col.name, VeloxTypeToDuckDB(col.type)));
+  }
+
+  // Add PK constraint if table has explicit PK columns
+  const auto& pk_col_ids = table->PKColumns();
+  if (!pk_col_ids.empty()) {
+    duckdb::vector<duckdb::string> pk_names;
+    for (auto pk_id : pk_col_ids) {
+      for (const auto& col : table->Columns()) {
+        if (col.id == pk_id) {
+          pk_names.push_back(col.name);
+          break;
+        }
+      }
+    }
+    info->constraints.push_back(
+      duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk_names), true));
   }
 
   // Create and cache the table entry

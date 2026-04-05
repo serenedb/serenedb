@@ -104,7 +104,27 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
 duckdb::TableStorageInfo SereneDBTableEntry::GetStorageInfo(
   duckdb::ClientContext& context) {
   duckdb::TableStorageInfo info;
-  // TODO: Fill with actual storage info
+
+  // Report PK as a unique index so DuckDB binder can use it for ON CONFLICT
+  const auto& pk_col_ids = _sdb_table->PKColumns();
+  if (!pk_col_ids.empty()) {
+    duckdb::IndexInfo idx_info;
+    idx_info.is_unique = true;
+    idx_info.is_primary = true;
+    idx_info.is_foreign = false;
+    // Map PK column IDs to column indices in the table
+    const auto& columns = _sdb_table->Columns();
+    for (auto pk_id : pk_col_ids) {
+      for (size_t i = 0; i < columns.size(); ++i) {
+        if (columns[i].id == pk_id) {
+          idx_info.column_set.insert(i);
+          break;
+        }
+      }
+    }
+    info.index_info.push_back(std::move(idx_info));
+  }
+
   return info;
 }
 

@@ -20,10 +20,14 @@
 
 #include "connector/duckdb_catalog.h"
 
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/storage/database_size.hpp>
 
+#include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_schema_entry.h"
+#include "connector/duckdb_table_entry.h"
 
 namespace sdb::connector {
 
@@ -76,7 +80,21 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
-  throw duckdb::NotImplementedException("INSERT through DuckDB catalog");
+  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto sdb_table = table_entry.GetSereneDBTable();
+
+  // Handle default column projection if not all columns specified
+  if (!op.column_index_map.empty()) {
+    plan = &planner.ResolveDefaultsProjection(op, *plan);
+  }
+
+  auto& insert = planner.Make<SereneDBPhysicalInsert>(
+    std::move(sdb_table), std::move(op.types), op.estimated_cardinality,
+    op.on_conflict_info.action_type);
+  if (plan) {
+    insert.children.push_back(*plan);
+  }
+  return insert;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(

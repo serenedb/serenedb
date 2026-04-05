@@ -28,6 +28,8 @@ add_library(
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
     duckdb_physical_insert.cpp
+    duckdb_physical_delete.cpp
+    duckdb_physical_update.cpp
     duckdb_transaction.cpp
 )
 

@@ -25,6 +25,11 @@
 #include <duckdb/storage/table_storage_info.hpp>
 #include <velox/type/Type.h>
 
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_update.hpp>
+
 #include "connector/duckdb_table_function.h"
 
 namespace sdb::connector {
@@ -105,6 +110,63 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   data->table_entry = this;
   bind_data = std::move(data);
   return CreateSereneDBScanFunction();
+}
+
+void SereneDBTableEntry::BindUpdateConstraints(
+  duckdb::Binder& binder, duckdb::LogicalGet& get,
+  duckdb::LogicalProjection& proj, duckdb::LogicalUpdate& update,
+  duckdb::ClientContext& context) {
+  std::cerr << "SereneDB BindUpdateConstraints called, update.columns before: "
+            << update.columns.size() << std::endl;
+  // Add PK columns to the update projection so our PhysicalUpdate can
+  // read them to build RocksDB keys. Uses DuckDB's BindExtraColumns
+  // which adds "identity" updates (col=col) for columns not in SET.
+  const auto& pk_col_ids = _sdb_table->PKColumns();
+  if (!pk_col_ids.empty()) {
+    duckdb::physical_index_set_t pk_set;
+    const auto& columns = _sdb_table->Columns();
+    for (auto pk_id : pk_col_ids) {
+      for (size_t i = 0; i < columns.size(); ++i) {
+        if (columns[i].id == pk_id) {
+          pk_set.insert(duckdb::PhysicalIndex(i));
+          break;
+        }
+      }
+    }
+    // BindExtraColumns skips sets of size <= 1, so we add PK columns
+    // manually by mimicking its logic: project col from scan, add identity
+    // update expression (col=col).
+    for (auto& physical_id : pk_set) {
+      bool already_present = false;
+      for (auto& existing : update.columns) {
+        if (existing == physical_id) {
+          already_present = true;
+          break;
+        }
+      }
+      if (already_present) {
+        continue;
+      }
+      auto& column = GetColumns().GetColumn(physical_id);
+      auto proj_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        column.Type(),
+        duckdb::ColumnBinding(
+          get.table_index,
+          duckdb::ProjectionIndex(get.GetColumnIds().size())));
+      auto proj_index = duckdb::ColumnBinding::PushExpression(
+        proj.expressions, std::move(proj_ref));
+      update.expressions.push_back(
+        duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+          column.Type(),
+          duckdb::ColumnBinding(proj.table_index, proj_index)));
+      get.AddColumnId(column.Logical().index);
+      update.columns.push_back(physical_id);
+    }
+  }
+
+  // Also call default logic for CHECK constraints etc.
+  duckdb::TableCatalogEntry::BindUpdateConstraints(binder, get, proj, update,
+                                                   context);
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {

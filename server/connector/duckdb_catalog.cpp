@@ -27,9 +27,11 @@
 
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_update.hpp>
 
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
+#include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 
@@ -131,7 +133,45 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
-  throw duckdb::NotImplementedException("UPDATE through DuckDB catalog");
+  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto sdb_table = table_entry.GetSereneDBTable();
+
+  // Input chunk layout: [SET_val_0, ..., SET_val_N-1, rowid]
+  // op.columns[i] = PhysicalIndex of the i-th SET column in the table.
+  // BindUpdateConstraints added PK columns as identity updates (col=col),
+  // so PK columns are now part of op.columns.
+
+  const auto& columns = sdb_table->Columns();
+  const auto& pk_col_ids = sdb_table->PKColumns();
+
+  // Build the update input indices (all SET values are at 0..N-1)
+  std::vector<duckdb::idx_t> update_input_indices;
+  for (size_t i = 0; i < op.columns.size(); ++i) {
+    update_input_indices.push_back(i);
+  }
+
+  // Find PK columns in op.columns — they're there as identity updates
+  std::vector<duckdb::idx_t> pk_indices;
+  for (auto pk_id : pk_col_ids) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].id == pk_id) {
+        // Find this table column in op.columns
+        for (size_t j = 0; j < op.columns.size(); ++j) {
+          if (op.columns[j].index == i) {
+            pk_indices.push_back(j);  // Input index j has PK value
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  auto& upd = planner.Make<SereneDBPhysicalUpdate>(
+    std::move(sdb_table), std::move(pk_indices), std::move(op.columns),
+    std::move(update_input_indices), op.estimated_cardinality);
+  upd.children.push_back(plan);
+  return upd;
 }
 
 duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(

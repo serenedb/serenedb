@@ -18,9 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_physical_delete.h"
+#include "connector/duckdb_physical_update.h"
 
 #include <duckdb/common/types/data_chunk.hpp>
+
+#include <iostream>
 
 #include "basics/assert.h"
 #include "connector/duckdb_rocksdb_writer.h"
@@ -33,34 +35,38 @@
 
 namespace sdb::connector {
 
-struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
-  std::atomic<duckdb::idx_t> delete_count{0};
+struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
+  std::atomic<duckdb::idx_t> update_count{0};
 };
 
-struct SereneDBDeleteSourceState : public duckdb::GlobalSourceState {
+struct SereneDBUpdateSourceState : public duckdb::GlobalSourceState {
   bool finished = false;
 };
 
-SereneDBPhysicalDelete::SereneDBPhysicalDelete(
+SereneDBPhysicalUpdate::SereneDBPhysicalUpdate(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
   std::vector<duckdb::idx_t> pk_col_indices,
+  std::vector<duckdb::PhysicalIndex> update_columns,
+  std::vector<duckdb::idx_t> update_col_input_indices,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                               {duckdb::LogicalType::BIGINT},
                               estimated_cardinality),
     _table(std::move(table)),
-    _pk_col_indices(std::move(pk_col_indices)) {}
+    _pk_col_indices(std::move(pk_col_indices)),
+    _update_columns(std::move(update_columns)),
+    _update_col_input_indices(std::move(update_col_input_indices)) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
-SereneDBPhysicalDelete::GetGlobalSinkState(
+SereneDBPhysicalUpdate::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
-  return duckdb::make_uniq<SereneDBDeleteGlobalState>();
+  return duckdb::make_uniq<SereneDBUpdateGlobalState>();
 }
 
-duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
+duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
-  auto& gstate = input.global_state.Cast<SereneDBDeleteGlobalState>();
+  auto& gstate = input.global_state.Cast<SereneDBUpdateGlobalState>();
 
   chunk.Flatten();
 
@@ -82,19 +88,24 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
   const auto& pk_col_ids = _table->PKColumns();
   const auto num_rows = chunk.size();
 
+  std::cerr << "SereneDB UPDATE: " << num_rows << " rows, "
+            << chunk.ColumnCount() << " input cols, "
+            << _update_columns.size() << " update cols, "
+            << _pk_col_indices.size() << " pk cols" << std::endl;
+  for (duckdb::idx_t i = 0; i < chunk.ColumnCount(); ++i) {
+    std::cerr << "  input col " << i << ": "
+              << chunk.data[i].GetType().ToString() << std::endl;
+  }
+
+  // Build PK bytes for each row from PK columns in the input
   std::string pk_buffer;
   std::string key_buffer;
+  std::string value_buffer;
+
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    // Build PK bytes from the PK column values in the input chunk
     pk_buffer.clear();
-    if (_pk_col_indices.empty()) {
-      // Generated PK — this shouldn't happen in DELETE since we can't
-      // reference the generated PK in WHERE. Skip for now.
-      continue;
-    }
     for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
       auto col_idx = _pk_col_indices[i];
-      // Find the DuckDB type for this PK column
       auto pk_id = pk_col_ids[i];
       duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
       for (const auto& col : columns) {
@@ -106,21 +117,32 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
       AppendPKValueFromDuckDB(pk_buffer, chunk.data[col_idx], row, pk_type);
     }
 
-    // Delete all column cells for this row
-    for (const auto& col : columns) {
-      if (col.id == catalog::Column::kGeneratedPKId) {
-        continue;
-      }
+    // Write only the updated columns
+    for (size_t i = 0; i < _update_columns.size(); ++i) {
+      auto table_col_idx = _update_columns[i].index;
+      auto input_col_idx = _update_col_input_indices[i];
+      const auto& col = columns[table_col_idx];
+
       key_buffer = table_key;
       basics::StrResize(key_buffer, kTablePrefixSize);
       key_utils::AppendColumnKey(key_buffer, col.id);
       key_buffer.append(pk_buffer);
 
-      auto status = txn->Delete(cf, key_buffer);
+      auto duckdb_type = VeloxTypeToDuckDB(col.type);
+      auto slice = SerializeScalarValue(chunk.data[input_col_idx], row,
+                                        duckdb_type, value_buffer);
+
+      rocksdb::Status status;
+      if (slice.empty()) {
+        rocksdb::Slice null_slice;
+        status = txn->Put(cf, key_buffer, null_slice);
+      } else {
+        status = txn->Put(cf, key_buffer, slice);
+      }
       if (!status.ok()) {
         txn->Rollback();
         delete txn;
-        SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ",
+        SDB_THROW(ERROR_INTERNAL, "RocksDB update failed: ",
                   status.ToString());
       }
     }
@@ -132,11 +154,11 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     SDB_THROW(ERROR_INTERNAL, "RocksDB commit failed: ", status.ToString());
   }
 
-  gstate.delete_count += num_rows;
+  gstate.update_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
-duckdb::SinkFinalizeType SereneDBPhysicalDelete::Finalize(
+duckdb::SinkFinalizeType SereneDBPhysicalUpdate::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
@@ -144,23 +166,23 @@ duckdb::SinkFinalizeType SereneDBPhysicalDelete::Finalize(
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
-SereneDBPhysicalDelete::GetGlobalSourceState(
+SereneDBPhysicalUpdate::GetGlobalSourceState(
   duckdb::ClientContext& context) const {
-  return duckdb::make_uniq<SereneDBDeleteSourceState>();
+  return duckdb::make_uniq<SereneDBUpdateSourceState>();
 }
 
-duckdb::SourceResultType SereneDBPhysicalDelete::GetDataInternal(
+duckdb::SourceResultType SereneDBPhysicalUpdate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
-  auto& source = input.global_state.Cast<SereneDBDeleteSourceState>();
+  auto& source = input.global_state.Cast<SereneDBUpdateSourceState>();
   if (source.finished) {
     return duckdb::SourceResultType::FINISHED;
   }
   source.finished = true;
 
-  auto& gstate = sink_state->Cast<SereneDBDeleteGlobalState>();
+  auto& gstate = sink_state->Cast<SereneDBUpdateGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.delete_count.load()));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.update_count.load()));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

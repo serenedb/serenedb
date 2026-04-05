@@ -66,6 +66,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SereneDBInsertGlobalState>();
 
+  chunk.Flatten();
+
   auto& engine = GetServerEngine();
   auto* db = engine.db();
   auto* cf = RocksDBColumnFamilyManager::get(

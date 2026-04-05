@@ -85,7 +85,7 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   std::string_view name = stmt.view->relname;
   auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
-  auto view = catalog::View::Create(db, name, std::move(query), &conn_ctx);
+  auto view = catalog::PgSqlView::Create(db, name, std::move(query), &conn_ctx);
   if (!view) {
     SDB_THROW(std::move(view.error()));
   }
@@ -108,7 +108,7 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
   return {};
 }
 
-std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {
+std::shared_ptr<catalog::PgSqlView> CreateSystemView(const ViewStmt& stmt) {
   SDB_ASSERT(stmt.view);
   SDB_ASSERT(stmt.view->relname);
 
@@ -116,7 +116,7 @@ std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {
   auto query = DeparseWithAlias(stmt.query, stmt.view->relname, stmt.aliases);
 
   auto view =
-    catalog::View::Create(id::kSystemDB, name, std::move(query), nullptr);
+    catalog::PgSqlView::Create(id::kSystemDB, name, std::move(query), nullptr);
   SDB_ASSERT(view.has_value(), "Cannot make system view");
 
   return std::move(*view);

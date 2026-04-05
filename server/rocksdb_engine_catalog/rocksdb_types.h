@@ -80,13 +80,5 @@ enum class RocksDBLogType : char {
 };
 
 /// settings keys
-// TODO(mbkkt) these values are random shit, fix it
-enum class RocksDBSettingsType : char {
-  Invalid = 0,
-  Version = 'V',
-  ServerTick = 'S',
-};
-
-inline constexpr char kRocksDBFormatVersion = '1';
 
 }  // namespace sdb

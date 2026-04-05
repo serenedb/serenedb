@@ -39,8 +39,6 @@ enum class ObjectType : uint8_t {
   // Tombstone must be scanned first so deleted objects are known
   // before live objects are loaded.
   Tombstone = 1,
-  Settings = 2,
-
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
   // Shards must come after their parent definition so the parent exists
@@ -54,8 +52,8 @@ enum class ObjectType : uint8_t {
   SecondaryIndexShard,
   InvertedIndex,
   InvertedIndexShard,
-  PgView,
-  PgFunction,
+  PgSqlView,
+  PgSqlFunction,
   Tokenizer,
 
   // Runtime only, not persisted.

@@ -80,7 +80,6 @@ class RocksDBKey;
 class RocksDBLogValue;
 class RocksDBRecoveryHelper;
 class RocksDBReplicationManager;
-class RocksDBSettingsManager;
 class RocksDBSyncThread;
 class RocksDBVPackComparator;
 class RocksDBWalAccess;
@@ -294,12 +293,6 @@ class RocksDBEngineCatalog {
 
   const rocksdb::DBOptions& rocksDBOptions() const { return _db_options; }
 
-  /// recovery manager
-  RocksDBSettingsManager* settingsManager() const {
-    SDB_ASSERT(_settings_manager);
-    return _settings_manager.get();
-  }
-
   /// manages the ongoing dump clients
   RocksDBReplicationManager* replicationManager() const {
     SDB_ASSERT(_replication_manager);
@@ -381,7 +374,6 @@ class RocksDBEngineCatalog {
   /// repository for replication contexts
   std::shared_ptr<RocksDBReplicationManager> _replication_manager;
   /// tracks the count of documents in collections
-  std::unique_ptr<RocksDBSettingsManager> _settings_manager;
   /// Local wal access abstraction
   std::unique_ptr<RocksDBWalAccess> _wal_access;
 

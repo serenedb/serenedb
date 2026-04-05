@@ -92,14 +92,4 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
   return {start, end};
 }
 
-std::string SettingsKey::Create(RocksDBSettingsType settings_type) {
-  std::string key;
-  key.reserve(sizeof(ObjectId) + sizeof(catalog::ObjectType) +
-              sizeof(RocksDBSettingsType));
-  Uint64ToPersistent(key, id::kInstance.id());
-  key.push_back(static_cast<char>(catalog::ObjectType::Settings));
-  key.push_back(static_cast<char>(settings_type));
-  return key;
-}
-
 }  // namespace sdb

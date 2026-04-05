@@ -770,7 +770,7 @@ class SqlAnalyzer {
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
   State ProcessView(State* parent, std::string_view view_name,
-                    const catalog::View& view, const RangeVar* node);
+                    const catalog::PgSqlView& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
@@ -934,11 +934,11 @@ class SqlAnalyzer {
                                 lp::ExprPtr expr);
 
   lp::AggregateExprPtr MaybeAggregateFuncCall(
-    State& state, const catalog::Function& logical_function,
+    State& state, const catalog::PgSqlFunction& logical_function,
     const FuncCall& func_call);
 
   lp::WindowExprPtr MaybeWindowFuncCall(
-    State& state, const catalog::Function& logical_function,
+    State& state, const catalog::PgSqlFunction& logical_function,
     const FuncCall& func_call);
 
   lp::ExprPtr ProcessColumnRef(State& state, const ColumnRef& expr);
@@ -981,17 +981,17 @@ class SqlAnalyzer {
   // it will be able to use in axiom) to return multiple columns as a single
   // expression for ProcessFuncCall
   State ResolveSQLFunctionAndInferArgsCommonType(
-    const catalog::Function& logical_function, std::vector<lp::ExprPtr> args,
-    int location);
+    const catalog::PgSqlFunction& logical_function,
+    std::vector<lp::ExprPtr> args, int location);
 
   void ProcessFunctionBody(State& state,
                            const State::FuncParamToExpr& func_params,
                            const Node& function_body,
                            const catalog::FunctionSignature& signature);
 
-  lp::ExprPtr InlineSQLFunctionExpr(State& state,
-                                    const catalog::Function& logical_function,
-                                    const FuncCall& expr);
+  lp::ExprPtr InlineSQLFunctionExpr(
+    State& state, const catalog::PgSqlFunction& logical_function,
+    const FuncCall& expr);
 
   lp::ExprPtr MakeCast(velox::TypePtr to, lp::ExprPtr from, int location = -1) {
     if (auto it = _param_to_idx.find(from.get()); it != _param_to_idx.end()) {
@@ -2481,7 +2481,7 @@ void SqlAnalyzer::ProcessCallStmt(State& state, const CallStmt& stmt) {
   auto args = ProcessExprListImpl(state, func_call.args);
 
   auto& logical_function =
-    basics::downCast<catalog::Function>(*function->object);
+    basics::downCast<catalog::PgSqlFunction>(*function->object);
   const auto language = logical_function.Options().language;
   if (language != catalog::FunctionLanguage::SQL) {
     ErrorUnsupportedLanguage(language, name, args, ExprLocation(&stmt));
@@ -3454,7 +3454,7 @@ TargetList SqlAnalyzer::ProcessTargetList(State& state, const List* tlist) {
 }
 
 lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
-  State& state, const catalog::Function& logical_function,
+  State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& func_call) {
   if (!logical_function.Options().IsAggregate() || func_call.over) {
     return nullptr;
@@ -3556,7 +3556,7 @@ SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(
       return;
     }
     const auto& logical_function =
-      basics::downCast<catalog::Function>(*func->object);
+      basics::downCast<catalog::PgSqlFunction>(*func->object);
     const auto& aggr_expr =
       MaybeAggregateFuncCall(state, logical_function, func_call);
     if (!aggr_expr) {
@@ -3600,7 +3600,7 @@ SqlAnalyzer::CollectedWindows SqlAnalyzer::CollectTargetListWindowFunctions(
       return;
     }
     const auto& logical_function =
-      basics::downCast<catalog::Function>(*func->object);
+      basics::downCast<catalog::PgSqlFunction>(*func->object);
     const auto& window_expr =
       MaybeWindowFuncCall(state, logical_function, func_call);
     if (!window_expr) {
@@ -4024,7 +4024,7 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 }
 
 State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
-                               const catalog::View& view,
+                               const catalog::PgSqlView& view,
                                const RangeVar* node) {
   auto view_state = view.GetState();
   SDB_ASSERT(view_state->stmt);
@@ -4220,7 +4220,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   auto& logical_object = *object->object;
 
   if (logical_object.GetType() == catalog::ObjectType::PgView) {
-    const auto& view = basics::downCast<catalog::View>(*object->object);
+    const auto& view = basics::downCast<catalog::PgSqlView>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {
     return ProcessTable(parent, schema_name, name, *object, node);
@@ -4518,7 +4518,7 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
         }
 
         auto& logical_function =
-          basics::downCast<catalog::Function>(*function->object);
+          basics::downCast<catalog::PgSqlFunction>(*function->object);
         if (logical_function.Options().IsAggregate()) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_GROUPING_ERROR),
@@ -5384,7 +5384,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
                     ERR_MSG("Function '", name, "' is not resolved"));
   }
   auto& logical_function =
-    basics::downCast<catalog::Function>(*function->object);
+    basics::downCast<catalog::PgSqlFunction>(*function->object);
 
   if (logical_function.Options().table) {
     if (state.expr_kind == ExprKind::AggregateArgument) {
@@ -5533,7 +5533,7 @@ velox::TypePtr ResolveWindowFunction(
 }
 
 lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
-  State& state, const catalog::Function& logical_function,
+  State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& func_call) {
   if (!func_call.over) {
     return nullptr;
@@ -6192,7 +6192,7 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
 }
 
 State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
-  const catalog::Function& logical_function, std::vector<lp::ExprPtr> args,
+  const catalog::PgSqlFunction& logical_function, std::vector<lp::ExprPtr> args,
   int location) {
   SDB_ASSERT(logical_function.Options().language ==
              catalog::FunctionLanguage::SQL);
@@ -6231,7 +6231,7 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
 }
 
 lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
-  State& state, const catalog::Function& logical_function,
+  State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& expr) {
   const auto& signature = logical_function.Signature();
   const auto& sql_function = logical_function.SqlFunction();

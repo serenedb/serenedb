@@ -224,14 +224,14 @@ class SnapshotImpl : public Snapshot {
       }
       return AddObjectDefinition<SchemaDependency>(parent_id,
                                                    std::move(object));
-    } else if constexpr (std::is_same_v<T, View>) {
+    } else if constexpr (std::is_same_v<T, PgSqlView>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
       return AddObjectDefinition(parent_id, std::move(object));
-    } else if constexpr (std::is_same_v<T, Function>) {
+    } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       auto r = AddToResolution<ResolveType::Function>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
@@ -280,10 +280,10 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Schema>) {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
-    } else if constexpr (std::is_same_v<T, View>) {
+    } else if constexpr (std::is_same_v<T, PgSqlView>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
-    } else if constexpr (std::is_same_v<T, Function>) {
+    } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Tokenizer>) {
@@ -441,7 +441,7 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<Table>>{});
   }
 
-  std::vector<std::shared_ptr<View>> GetViews(
+  std::vector<std::shared_ptr<PgSqlView>> GetViews(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
@@ -450,14 +450,14 @@ class SnapshotImpl : public Snapshot {
                std::views::transform([&](ObjectId view_id) {
                  auto it = _objects.find(view_id);
                  SDB_ASSERT(it != _objects.end());
-                 return basics::downCast<View>(*it);
+                 return basics::downCast<PgSqlView>(*it);
                }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<View>>{});
+      .value_or(std::vector<std::shared_ptr<PgSqlView>>{});
   }
 
-  std::vector<std::shared_ptr<Function>> GetFunctions(
+  std::vector<std::shared_ptr<PgSqlFunction>> GetFunctions(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
@@ -466,11 +466,11 @@ class SnapshotImpl : public Snapshot {
                std::views::transform([&](ObjectId function_id) {
                  auto it = _objects.find(function_id);
                  SDB_ASSERT(it != _objects.end());
-                 return basics::downCast<Function>(*it);
+                 return basics::downCast<PgSqlFunction>(*it);
                }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<Function>>{});
+      .value_or(std::vector<std::shared_ptr<PgSqlFunction>>{});
   }
 
   std::vector<std::shared_ptr<Index>> GetIndexes(
@@ -548,15 +548,17 @@ class SnapshotImpl : public Snapshot {
       .value_or(nullptr);
   }
 
-  std::shared_ptr<Function> GetFunction(ObjectId db_id, std::string_view schema,
-                                        std::string_view function) const final {
+  std::shared_ptr<PgSqlFunction> GetFunction(
+    ObjectId db_id, std::string_view schema,
+    std::string_view function) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .and_then([&](ObjectId schema_id) {
         return _resolution_table.ResolveObject<ResolveType::Function>(schema_id,
                                                                       function);
       })
-      .transform(
-        [&](ObjectId function_id) { return GetObject<Function>(function_id); })
+      .transform([&](ObjectId function_id) {
+        return GetObject<PgSqlFunction>(function_id);
+      })
       .value_or(nullptr);
   }
 
@@ -914,7 +916,7 @@ Result LocalCatalog::RegisterSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::RegisterView(ObjectId schema_id,
-                                  std::shared_ptr<View> view) {
+                                  std::shared_ptr<PgSqlView> view) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(view), schema_id, false);
@@ -930,7 +932,7 @@ Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
 }
 
 Result LocalCatalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
-                                      std::shared_ptr<Function> function) {
+                                      std::shared_ptr<PgSqlFunction> function) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(function), schema_id, false);
@@ -1194,7 +1196,7 @@ Result LocalCatalog::CreateInvertedIndex(
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
-                                std::shared_ptr<View> view, bool replace) {
+                                std::shared_ptr<PgSqlView> view, bool replace) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1237,7 +1239,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
 
 Result LocalCatalog::CreateFunction(ObjectId database_id,
                                     std::string_view schema,
-                                    std::shared_ptr<Function> function,
+                                    std::shared_ptr<PgSqlFunction> function,
                                     bool replace) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
@@ -1364,7 +1366,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
                                       std::string_view name,
                                       std::string_view new_name) {
   constexpr auto kResolveType = []() {
-    if constexpr (std::is_same_v<T, Function>) {
+    if constexpr (std::is_same_v<T, PgSqlFunction>) {
       return ResolveType::Function;
     } else {
       return ResolveType::Relation;
@@ -1439,7 +1441,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
                                 std::string_view new_name) {
-  return RenameObjectImpl<View>(database_id, schema, name, new_name);
+  return RenameObjectImpl<PgSqlView>(database_id, schema, name, new_name);
 }
 
 Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
@@ -1493,7 +1495,7 @@ Result LocalCatalog::RenameFunction(ObjectId database_id,
                                     std::string_view schema,
                                     std::string_view name,
                                     std::string_view new_name) {
-  return RenameObjectImpl<Function>(database_id, schema, name, new_name);
+  return RenameObjectImpl<PgSqlFunction>(database_id, schema, name, new_name);
 }
 
 Result LocalCatalog::ChangeRole(std::string_view name,
@@ -1540,7 +1542,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
 
 Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
-                                ChangeCallback<View> new_view) {
+                                ChangeCallback<PgSqlView> new_view) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1554,12 +1556,12 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
+  auto view = basics::downCast<PgSqlView>(_snapshot->GetObject(*object_id));
   if (!view) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  std::shared_ptr<View> updated;
+  std::shared_ptr<PgSqlView> updated;
   auto r = new_view(*view, updated);
   if (!r.ok()) {
     return r;
@@ -1840,7 +1842,7 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
                     magic_enum::enum_name(obj->GetType())};
     }
-    auto view = basics::downCast<View>(std::move(obj));
+    auto view = basics::downCast<PgSqlView>(std::move(obj));
     auto r =
       _engine->DropDefinition(*schema_id, ObjectType::PgView, view->GetId());
     if (!r.ok()) {
@@ -1865,7 +1867,7 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto func = clone->GetObject<Function>(*func_id);
+    auto func = clone->GetObject<PgSqlFunction>(*func_id);
     SDB_ASSERT(func);
     auto r =
       _engine->DropDefinition(*schema_id, ObjectType::PgFunction, *func_id);

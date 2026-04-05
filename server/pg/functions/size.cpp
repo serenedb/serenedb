@@ -57,8 +57,12 @@ int64_t GetRelationForkSize(const catalog::Snapshot& snapshot, uint64_t oid,
   switch (rel->GetType()) {
     case catalog::ObjectType::Table:
       return GetServerEngine().GetTableSize(rel->GetId());
-    case catalog::ObjectType::SecondaryIndex:
-      return 0;
+    case catalog::ObjectType::SecondaryIndex: {
+      auto shard = snapshot.GetIndexShard(rel->GetId());
+      SDB_ASSERT(shard);
+      SDB_ASSERT(shard->GetType() == catalog::ObjectType::SecondaryIndexShard);
+      return GetServerEngine().GetTableSize(shard->GetId());
+    }
     case catalog::ObjectType::InvertedIndex: {
       auto shard = snapshot.GetIndexShard(rel->GetId());
       SDB_ASSERT(shard);

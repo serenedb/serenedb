@@ -104,8 +104,8 @@ Result FunctionProperties::Read(FunctionProperties& properties,
   return {};
 }
 
-std::shared_ptr<Function> Function::ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx) {
+std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
+                                                           ReadContext ctx) {
   FunctionProperties properties;
   if (auto r = FunctionProperties::Read(properties, slice); !r.ok()) {
     return nullptr;
@@ -113,7 +113,7 @@ std::shared_ptr<Function> Function::ReadInternal(vpack::Slice slice,
 
   auto database = ctx.database_id;
 
-  auto from_vpack = [&]<typename T> -> std::shared_ptr<Function> {
+  auto from_vpack = [&]<typename T> -> std::shared_ptr<PgSqlFunction> {
     std::unique_ptr<T> impl;
 
     if constexpr (std::is_same_v<T, pg::FunctionImpl>) {
@@ -124,8 +124,8 @@ std::shared_ptr<Function> Function::ReadInternal(vpack::Slice slice,
       }
     }
 
-    return std::make_shared<catalog::Function>(std::move(properties),
-                                               std::move(impl), database);
+    return std::make_shared<catalog::PgSqlFunction>(std::move(properties),
+                                                    std::move(impl), database);
   };
 
   switch (properties.options.language) {
@@ -136,8 +136,9 @@ std::shared_ptr<Function> Function::ReadInternal(vpack::Slice slice,
   }
 }
 
-catalog::Function::Function(std::string_view name, FunctionSignature signature,
-                            FunctionOptions options)
+catalog::PgSqlFunction::PgSqlFunction(std::string_view name,
+                                      FunctionSignature signature,
+                                      FunctionOptions options)
   : SchemaObject{{},
                  {},
                  {},
@@ -151,9 +152,9 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
              _options.language == FunctionLanguage::Decorator);
 }
 
-catalog::Function::Function(FunctionProperties&& properties,
-                            std::unique_ptr<pg::FunctionImpl> function,
-                            ObjectId database_id)
+catalog::PgSqlFunction::PgSqlFunction(
+  FunctionProperties&& properties, std::unique_ptr<pg::FunctionImpl> function,
+  ObjectId database_id)
   : SchemaObject{{},
                  database_id,
                  {},
@@ -168,9 +169,9 @@ catalog::Function::Function(FunctionProperties&& properties,
   SDB_ASSERT(_sql_impl);
 }
 
-catalog::Function::~Function() = default;
+catalog::PgSqlFunction::~PgSqlFunction() = default;
 
-void catalog::Function::WriteInternal(vpack::Builder& b) const {
+void catalog::PgSqlFunction::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
     vpack::WriteObject(b, vpack::Embedded{FunctionMeta{
                             .id = Identifier{GetId().id()},
@@ -191,7 +192,7 @@ void catalog::Function::WriteInternal(vpack::Builder& b) const {
   });
 }
 
-std::shared_ptr<Object> Function::Clone() const {
+std::shared_ptr<Object> PgSqlFunction::Clone() const {
   vpack::Builder b;
   b.openObject();
   WriteInternal(b);

@@ -112,7 +112,6 @@
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_sync_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -128,59 +127,6 @@
 // #define USE_SST_INGESTION
 
 namespace sdb {
-namespace {
-
-void StartupVersionCheck(SerenedServer& server, rocksdb::TransactionDB* db,
-                         bool db_existed) {
-  // try to find version, using the version key
-  RocksDBKeyWithBuffer<SettingsKey> version_key{RocksDBSettingsType::Version};
-
-  if (db_existed) {
-    rocksdb::PinnableSlice old_version;
-    rocksdb::Status s =
-      db->Get({},
-              RocksDBColumnFamilyManager::get(
-                RocksDBColumnFamilyManager::Family::Definitions),
-              version_key.GetBuffer(), &old_version);
-
-    if (s.IsNotFound() || old_version.size() != 1) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "Error reading stored version from database: ",
-                rocksutils::ConvertStatus(s).errorMessage());
-    } else if (old_version.data()[0] < kRocksDBFormatVersion) {
-      // Performing 'upgrade' routine
-      if (old_version.data()[0] != '0' || kRocksDBFormatVersion != '1') {
-        SDB_FATAL("xxxxx", Logger::ENGINES, "Your database is in an old ",
-                  "format. Please downgrade the server, ",
-                  "dump & restore the data");
-      }
-
-    } else if (old_version.data()[0] > kRocksDBFormatVersion) {
-      SDB_FATAL("xxxxx", Logger::ENGINES,
-                "You are using an old version of SereneDB, please update ",
-                "before opening this database");
-    } else {
-      SDB_ASSERT(old_version.data()[0] == kRocksDBFormatVersion);
-    }
-  }
-
-  if (!db_existed) {
-    // store current version
-    auto s = db->Put(
-      rocksdb::WriteOptions(),
-      RocksDBColumnFamilyManager::get(
-        RocksDBColumnFamilyManager::Family::Definitions),
-      version_key.GetBuffer(),
-      rocksdb::Slice{&kRocksDBFormatVersion, sizeof(kRocksDBFormatVersion)});
-
-    if (!s.ok()) {
-      SDB_FATAL("xxxxx", Logger::ENGINES, "Error storing endianess/version: ",
-                rocksutils::ConvertStatus(s).errorMessage());
-    }
-  }
-}
-
-}  // namespace
 
 DECLARE_GAUGE(rocksdb_wal_released_tick_flush, uint64_t,
               "Released tick for RocksDB WAL deletion (flush-induced)");
@@ -670,9 +616,6 @@ void RocksDBEngineCatalog::start() {
     cf_handles[std::to_underlying(
       RocksDBColumnFamilyManager::Family::Definitions)]);
 
-  // will crash the process if version does not match
-  StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
-
   _db_existed = db_existed;
 
   if (_options_provider.limitOpenFilesAtStartup()) {
@@ -706,8 +649,6 @@ void RocksDBEngineCatalog::start() {
   }
 
   SDB_ASSERT(_db != nullptr);
-  _settings_manager = std::make_unique<RocksDBSettingsManager>(*this);
-  _settings_manager->retrieveInitialValues();
 
   const double counter_sync_seconds = 2.5;
   _background_thread =
@@ -741,15 +682,6 @@ void RocksDBEngineCatalog::stop() {
   if (_background_thread) {
     // stop the press
     _background_thread->beginShutdown();
-
-    if (_settings_manager) {
-      auto sync_res = _settings_manager->sync(/*force*/ true);
-      if (!sync_res) {
-        SDB_WARN("xxxxx", Logger::ENGINES,
-                 "caught exception while shutting down RocksDB engine: ",
-                 sync_res.error().errorMessage());
-      }
-    }
 
     // wait until background thread stops
     while (_background_thread->isRunning()) {
@@ -921,9 +853,6 @@ Result RocksDBEngineCatalog::flushWal(bool wait_for_sync,
 void RocksDBEngineCatalog::waitForEstimatorSync() {
   // release all unused ticks from flush feature
   SerenedServer::Instance().getFeature<FlushFeature>().releaseUnusedTicks();
-
-  // force-flush
-  std::ignore = _settings_manager->sync(/*force*/ true);
 }
 
 Result RocksDBEngineCatalog::RegisterRecoveryHelper(
@@ -968,8 +897,8 @@ void RocksDBEngineCatalog::determineWalFilesInitial() {
       live_files_size += f->SizeFileBytes();
     }
   }
-  _metrics_wal_sequence_lower_bound.store(
-    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
+  _metrics_wal_sequence_lower_bound.store(_db->GetLatestSequenceNumber(),
+                                          std::memory_order_relaxed);
   _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
   _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
   _metrics_live_wal_files_size.store(live_files_size,
@@ -1153,8 +1082,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
     }
   }
 
-  _metrics_wal_sequence_lower_bound.store(
-    _settings_manager->earliestSeqNeeded(), std::memory_order_relaxed);
+  _metrics_wal_sequence_lower_bound.store(_db->GetLatestSequenceNumber(),
+                                          std::memory_order_relaxed);
   _metrics_live_wal_files.store(live_files, std::memory_order_relaxed);
   _metrics_archived_wal_files.store(archived_files, std::memory_order_relaxed);
   _metrics_live_wal_files_size.store(live_files_size,

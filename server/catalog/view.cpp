@@ -42,13 +42,13 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 
-View::View(ObjectId database_id, ObjectId id, std::string_view name,
-           std::string query, std::shared_ptr<const State> state)
+PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+                     std::string query, std::shared_ptr<const State> state)
   : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgView},
     _query{std::move(query)},
     _state{std::move(state)} {}
 
-void View::WriteInternal(vpack::Builder& b) const {
+void PgSqlView::WriteInternal(vpack::Builder& b) const {
   WriteObject(b, [&](vpack::Builder& b) {
     b.add("id", GetId().id());
     b.add("query", _query);
@@ -57,11 +57,11 @@ void View::WriteInternal(vpack::Builder& b) const {
 
 namespace {
 
-std::shared_ptr<View::State> CreateState() {
-  return std::make_shared<View::State>();
+std::shared_ptr<PgSqlView::State> CreateState() {
+  return std::make_shared<PgSqlView::State>();
 }
 
-Result ParseQuery(View::State& state, ObjectId database_id,
+Result ParseQuery(PgSqlView::State& state, ObjectId database_id,
                   std::string_view query) {
   return basics::SafeCall([&] -> Result {
     const QueryString query_string{query};
@@ -90,7 +90,7 @@ Result ParseQuery(View::State& state, ObjectId database_id,
 }
 
 Result CheckView(ObjectId database, std::string_view name,
-                 const View::State& state, const Config& config) {
+                 const PgSqlView::State& state, const Config& config) {
   SDB_ASSERT(state.stmt);
   if (state.stmt->stmt->type != T_SelectStmt) {
     return {ERROR_BAD_PARAMETER,
@@ -110,7 +110,8 @@ Result CheckView(ObjectId database, std::string_view name,
 
 }  // namespace
 
-std::shared_ptr<View> View::ReadInternal(vpack::Slice slice, ReadContext ctx) {
+std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
+                                                   ReadContext ctx) {
   auto name =
     basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
   auto query_slice = slice.get("query");
@@ -128,14 +129,14 @@ std::shared_ptr<View> View::ReadInternal(vpack::Slice slice, ReadContext ctx) {
   }
 
   auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
-  return std::make_shared<View>(ctx.database_id, id, name, std::move(query),
-                                std::move(state));
+  return std::make_shared<PgSqlView>(ctx.database_id, id, name,
+                                     std::move(query), std::move(state));
 }
 
-ResultOr<std::shared_ptr<View>> View::Create(ObjectId database_id,
-                                             std::string_view name,
-                                             std::string query,
-                                             const Config* config) {
+ResultOr<std::shared_ptr<PgSqlView>> PgSqlView::Create(ObjectId database_id,
+                                                       std::string_view name,
+                                                       std::string query,
+                                                       const Config* config) {
   if (query.empty()) {
     return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
                                    "Query can't be empty"};
@@ -152,11 +153,11 @@ ResultOr<std::shared_ptr<View>> View::Create(ObjectId database_id,
     }
   }
 
-  return std::make_shared<View>(database_id, ObjectId{}, name, std::move(query),
-                                std::move(state));
+  return std::make_shared<PgSqlView>(database_id, ObjectId{}, name,
+                                     std::move(query), std::move(state));
 }
 
-std::shared_ptr<Object> View::Clone() const {
+std::shared_ptr<Object> PgSqlView::Clone() const {
   vpack::Builder b;
   b.openObject();
   WriteInternal(b);

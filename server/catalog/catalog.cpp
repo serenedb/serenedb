@@ -356,7 +356,7 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
     schema_id, ObjectType::PgFunction,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto function =
-        catalog::Function::ReadInternal(slice, {.database_id = db_id});
+        catalog::PgSqlFunction::ReadInternal(slice, {.database_id = db_id});
       if (!function) {
         return ErrorMeta(ERROR_INTERNAL, "function",
                          "Failed to read function definition", slice);
@@ -383,7 +383,7 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgView,
     [&](DefinitionKey, vpack::Slice slice) -> Result {
-      auto view = View::ReadInternal(slice, {.database_id = db_id});
+      auto view = PgSqlView::ReadInternal(slice, {.database_id = db_id});
       if (!view) {
         return ErrorMeta(ERROR_INTERNAL, "view",
                          "Failed to read view definition", slice);

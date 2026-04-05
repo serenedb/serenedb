@@ -26,9 +26,10 @@ namespace sdb::native {
 
 void MakeAlias(std::string_view alias, std::string_view existing);
 
-const catalog::Function* GetFunction(std::string_view name);
+const catalog::PgSqlFunction* GetFunction(std::string_view name);
 
-void VisitFunctions(absl::FunctionRef<void(const catalog::Function&)> visitor);
+void VisitFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
 
 void ClearFunctions();
 

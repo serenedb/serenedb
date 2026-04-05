@@ -110,7 +110,7 @@ void ResolveFunction(ObjectId database,
     return;
   }
 
-  auto resolve_sql_func = [&](const catalog::Function* func) {
+  auto resolve_sql_func = [&](const catalog::PgSqlFunction* func) {
     if (func->Options().language == catalog::FunctionLanguage::SQL) {
       bool changed = disallowed.functions.emplace(name).second;
       SDB_ASSERT(changed);
@@ -148,7 +148,7 @@ void ResolveFunction(ObjectId database,
   }
 
   SDB_ASSERT(data.object->GetType() == catalog::ObjectType::PgFunction);
-  resolve_sql_func(&basics::downCast<catalog::Function>(*data.object));
+  resolve_sql_func(&basics::downCast<catalog::PgSqlFunction>(*data.object));
 }
 
 // view, table
@@ -169,7 +169,7 @@ void ResolveRelation(ObjectId database,
   auto resolve_view = [&] {
     bool changed = disallowed.relations.emplace(name).second;
     SDB_ASSERT(changed);
-    auto state = basics::downCast<catalog::View>(*data.object).GetState();
+    auto state = basics::downCast<catalog::PgSqlView>(*data.object).GetState();
     ResolveQueryView(database, search_path, objects, disallowed, state->objects,
                      config);
     changed = disallowed.relations.erase(name) != 0;

@@ -34,7 +34,6 @@
 #include "catalog/identifiers/revision_id.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 
 namespace sdb {
 
@@ -61,11 +60,6 @@ class DefinitionKey : public RocksDBKey {
   static std::pair<std::string, std::string> CreateInterval(ObjectId parent_id);
   static std::pair<std::string, std::string> CreateInterval(
     ObjectId parent_id, catalog::ObjectType entry);
-};
-
-class SettingsKey : public RocksDBKey {
- public:
-  static std::string Create(RocksDBSettingsType settings_type);
 };
 
 template<typename Key>

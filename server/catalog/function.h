@@ -168,18 +168,18 @@ struct FunctionProperties {
 };
 // NOLINTEND
 
-class Function final : public SchemaObject {
+class PgSqlFunction final : public SchemaObject {
  public:
-  static std::shared_ptr<Function> ReadInternal(vpack::Slice slice,
-                                                ReadContext ctx);
+  static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,
+                                                     ReadContext ctx);
 
-  Function(std::string_view name, FunctionSignature signature,
-           FunctionOptions options);
+  PgSqlFunction(std::string_view name, FunctionSignature signature,
+                FunctionOptions options);
 
-  Function(FunctionProperties&& properties,
-           std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id);
+  PgSqlFunction(FunctionProperties&& properties,
+                std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id);
 
-  ~Function() final;
+  ~PgSqlFunction() final;
 
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone() const final;

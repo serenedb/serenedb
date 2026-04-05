@@ -29,27 +29,28 @@ namespace sdb::native {
 struct HashEq {
   using is_transparent = void;
 
-  size_t operator()(const std::unique_ptr<catalog::Function>& function) const {
+  size_t operator()(
+    const std::unique_ptr<catalog::PgSqlFunction>& function) const {
     return absl::HashOf(function->GetName());
   }
 
   size_t operator()(std::string_view name) const { return absl::HashOf(name); }
 
-  bool operator()(const std::unique_ptr<catalog::Function>& lhs,
-                  const std::unique_ptr<catalog::Function>& rhs) const {
+  bool operator()(const std::unique_ptr<catalog::PgSqlFunction>& lhs,
+                  const std::unique_ptr<catalog::PgSqlFunction>& rhs) const {
     return lhs->GetName() == rhs->GetName();
   }
-  bool operator()(const std::unique_ptr<catalog::Function>& lhs,
+  bool operator()(const std::unique_ptr<catalog::PgSqlFunction>& lhs,
                   std::string_view rhs) const {
     return lhs->GetName() == rhs;
   }
 };
 
-static containers::FlatHashSet<std::unique_ptr<catalog::Function>, HashEq,
+static containers::FlatHashSet<std::unique_ptr<catalog::PgSqlFunction>, HashEq,
                                HashEq>
   gFunctions;
 
-const catalog::Function* GetFunction(std::string_view name) {
+const catalog::PgSqlFunction* GetFunction(std::string_view name) {
   auto it = gFunctions.find(name);
   if (it == gFunctions.end()) {
     return nullptr;
@@ -58,7 +59,8 @@ const catalog::Function* GetFunction(std::string_view name) {
   return it->get();
 }
 
-void VisitFunctions(absl::FunctionRef<void(const catalog::Function&)> visitor) {
+void VisitFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
   for (const auto& function : gFunctions) {
     SDB_ASSERT(function);
     visitor(*function);

@@ -140,7 +140,7 @@ class CreateFunctionOptionsParser : public OptionsParser {
 
 }  // namespace
 
-std::shared_ptr<catalog::Function> CreateFunctionImpl(
+std::shared_ptr<catalog::PgSqlFunction> CreateFunctionImpl(
   const Config* config, ObjectId database_id, std::string_view database_name,
   std::string_view current_schema, const CreateFunctionStmt& stmt) {
   SDB_ASSERT(stmt.funcname);
@@ -199,8 +199,8 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
     properties.implementation = builder.slice();
   }
 
-  return std::make_shared<catalog::Function>(std::move(properties),
-                                             std::move(sql_impl), database_id);
+  return std::make_shared<catalog::PgSqlFunction>(
+    std::move(properties), std::move(sql_impl), database_id);
 }
 
 yaclib::Future<> CreateFunction(ExecContext& context,
@@ -235,7 +235,7 @@ yaclib::Future<> CreateFunction(ExecContext& context,
   return {};
 }
 
-std::shared_ptr<catalog::Function> CreateSystemFunction(
+std::shared_ptr<catalog::PgSqlFunction> CreateSystemFunction(
   const CreateFunctionStmt& stmt) {
   return CreateFunctionImpl(nullptr, id::kSystemDB, "", "", stmt);
 }

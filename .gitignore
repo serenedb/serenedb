@@ -21,5 +21,10 @@
 *.pyc
 docker.env
 
-# Macos
+# Match macos files
 .DS_Store
+
+# Match install and package dirs
+/install/
+/install_all/
+/package_all/

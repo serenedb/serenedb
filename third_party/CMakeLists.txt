@@ -532,8 +532,7 @@ add_subdirectory(taocpp-json)
 ################################################################################
 
 list(
-    APPEND
-    TZ_DATA_FILES
+    APPEND TZ_DATA_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/africa"
     "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/antarctica"
     "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/asia"

@@ -1,28 +1,27 @@
 services:
   serenedb-single:
-    image: "$BUILD_IMAGE"
+    image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     security_opt:
       - seccomp:unconfined
     volumes:
-      - "$WORKSPACE:/serenedb"
-      - "$WORKSPACE/logs:/var/log/serenedb"
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/logs:/var/log/serenedb"
     env_file:
-      - "$WORKSPACE/docker.env"
+      - "${WORKSPACE}/docker.env"
     environment:
       - BUILD_DIR
       - HOME=/serenedb
     networks:
       - test-network
     command: >
-        sh -c '
-          exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-            --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-            --server.endpoint pgsql+ssl://0.0.0.0:7778 \
-            --ssl.keyfile /serenedb/resources/ca.pem \
-            --server.endpoint tcp://0.0.0.0:8529 \
-            --server.authentication 0
-        '
+      sh -c '
+        exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
+          --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+          --server.endpoint pgsql+ssl://0.0.0.0:7778 \
+          --ssl.keyfile /serenedb/resources/ca.pem \
+          --server.authentication 0
+      '
 
   tests:
     image: ${BUILD_IMAGE}
@@ -30,9 +29,9 @@ services:
     group_add:
       - "${DOCKER_SOCK_GID:-999}"
     volumes:
-      - "$SQLLOGIC_DIR:/sqllogic"
-      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "$WORKSPACE/logs:/logs"
+      - "${SQLLOGIC_DIR}:/sqllogic"
+      - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "${WORKSPACE}/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

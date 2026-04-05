@@ -1,0 +1,51 @@
+services:
+  serenedb:
+    image: ${BUILD_IMAGE}
+    privileged: true
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - "${WORKSPACE}:/workspace:ro"
+      - "${WORKSPACE}/scripts/ci/deb-rta-setup.sh:/deb-rta-setup.sh:ro"
+    environment:
+      - DEB_PACKAGE
+    networks:
+      - rta-network
+    command: /lib/systemd/systemd
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      - serenedb
+    volumes:
+      - "${WORKSPACE}/tests/sqllogic:/sqllogic"
+      - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "${WORKSPACE}/logs:/logs"
+      - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+    environment:
+      - HOME=/sqllogic
+      - CARGO_HOME=/tmp/cargo
+      - CARGO_TARGET_DIR=/cargo-target
+    networks:
+      - rta-network
+    command: >
+      sh -c '
+        cd /sqllogic &&
+        exec ./run_sdb_tests.sh \
+          --host serenedb \
+          --single-port 7890 \
+          --fast \
+          --skip "encrypted|text_tokenizer|log_level" \
+          --runner=/sqllogictest-rs \
+          --junit /logs/deb-rta-tests
+      '
+
+networks:
+  rta-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_rta-network

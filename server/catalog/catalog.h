@@ -80,10 +80,10 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::PgSqlFunction;
   } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
-  } else if constexpr (std::is_same_v<T, Index> ||
-                       std::is_same_v<T, SecondaryIndex> ||
-                       std::is_same_v<T, InvertedIndex>) {
-    return ObjectType::SecondaryIndex;  // placeholder for base Index lookups
+  } else if constexpr (std::is_same_v<T, SecondaryIndex>) {
+    return ObjectType::SecondaryIndex;
+  } else if constexpr (std::is_same_v<T, InvertedIndex>) {
+    return ObjectType::InvertedIndex;
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     return ObjectType::Tokenizer;
   } else {

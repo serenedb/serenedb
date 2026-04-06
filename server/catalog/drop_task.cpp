@@ -114,24 +114,26 @@ AsyncResult TableShardDrop::Execute() {
 
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(_id, RocksDBEntryType::IndexShard);
+  auto shard_type = catalog::IndexShardType(_type);
+  auto r = server.DropEntry(_id, shard_type);
   if (!r.ok()) {
     return r;
   }
   if (_is_root) {
-    r = server.DropDefinition(_parent_id, RocksDBEntryType::Index, _id);
+    r = server.DropDefinition(_parent_id, _type, _id);
     if (!r.ok()) {
       return r;
     }
 
-    return server.DropDefinition(_parent_id, RocksDBEntryType::Tombstone, _id);
+    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
+                                 _id);
   }
   return {};
 }
 
 AsyncResult IndexDrop::Execute() {
   Result r;
-  if (_type == IndexType::Inverted && _is_root) {
+  if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
     r = RemoveIndexShards(_db_id, _schema_id, _parent_id, _id);
   }
   if (!r.ok() || !Finalize().ok()) {
@@ -149,11 +151,12 @@ Result TableDrop::Finalize() {
   }
 
   if (_is_root) {
-    r = server.DropDefinition(_parent_id, RocksDBEntryType::Table, _id);
+    r = server.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
     if (!r.ok()) {
       return r;
     }
-    return server.DropDefinition(_parent_id, RocksDBEntryType::Tombstone, _id);
+    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
+                                 _id);
   }
   return {};
 }
@@ -193,11 +196,12 @@ Result SchemaDrop::Finalize() {
   }
 
   if (_is_root) {
-    auto r = server.DropDefinition(_parent_id, RocksDBEntryType::Schema, _id);
+    auto r =
+      server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
     if (!r.ok()) {
       return r;
     }
-    r = server.DropDefinition(_parent_id, RocksDBEntryType::Tombstone, _id);
+    r = server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     if (!r.ok()) {
       return r;
     }
@@ -228,15 +232,16 @@ AsyncResult SchemaDrop::Execute() {
 
 Result DatabaseDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(_id, RocksDBEntryType::Schema);
+  auto r = server.DropEntry(_id, catalog::ObjectType::Schema);
   if (!r.ok()) {
     return r;
   }
-  r = server.DropDefinition(id::kInstance, RocksDBEntryType::Database, _id);
+  r = server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
   if (!r.ok()) {
     return r;
   }
-  return server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, _id);
+  return server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone,
+                               _id);
 }
 
 AsyncResult DatabaseDrop::Execute() {

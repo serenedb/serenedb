@@ -36,6 +36,8 @@ class VirtualTable;
 
 class VirtualTableSnapshot : public SchemaObject {
  public:
+  std::shared_ptr<Object> Clone() const final { return nullptr; }
+  void WriteInternal(vpack::Builder&) const override {}
   virtual velox::RowTypePtr RowType() const noexcept = 0;
 
   virtual velox::RowVectorPtr GetData(std::vector<std::string> names,

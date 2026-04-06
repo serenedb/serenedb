@@ -45,6 +45,10 @@ permissions:
   statuses: write
   contents: write
 
+concurrency:
+  group: build-manual-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-unit:
     name: unit ${{ matrix.instrumentation }} (${{ matrix.location }})

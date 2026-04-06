@@ -19,59 +19,79 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "view.h"
+#include "catalog/view.h"
 
 #include <vpack/serializer.h>
+#include <vpack/slice.h>
+#include <vpack/vpack_helper.h>
 
 #include "basics/errors.h"
+#include "basics/exceptions.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "catalog/sql_query_view.h"
-#include "general_server/state.h"
+#include "catalog/identifiers/identifier.h"
+#include "pg/sql_parser.h"
+#include "utils/query_string.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/parsenodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 
-ViewMeta ViewMeta::Make(const View& view) {
-  return {
-    .id = Identifier{view.GetId().id()},
-    .name = std::string{view.GetName()},
-    .type = view.GetViewType(),
-  };
+PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+                     std::string query)
+  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgSqlView},
+    _query{std::move(query)} {
+  SDB_ASSERT(!_query.empty());
+
+  const QueryString query_string{_query};
+  _memory_context = pg::CreateMemoryContext();
+  auto* tree = pg::Parse(*_memory_context, query_string);
+  SDB_ASSERT(list_length(tree) == 1);
+  _stmt = list_nth_node(RawStmt, tree, 0);
+  SDB_ASSERT(_stmt);
+
+  // Currently collector checks cross-database references and
+  // needs the name of the current database for this purpose.
+  // It looks like it'd be better to do it in resolver.
+  auto database = catalog::GetDatabase(database_id);
+  SDB_ASSERT(database);
+  pg::Collect((*database)->GetName(), *_stmt, _objects);
 }
 
-Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
-  auto r = vpack::ReadObjectNothrow(slice, options.meta,
-                                    {.skip_unknown = true, .strict = true});
-  if (!r.ok()) {
-    return r;
-  }
-
-  options.properties = slice;
-  return {};
+void PgSqlView::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
+  WriteObject(b, [&](vpack::Builder& b) {
+    b.add("id", GetId().id());
+    b.add("query", _query);
+  });
+  b.close();
 }
 
-View::View(ViewMeta&& options, ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 *options.id,
-                 std::move(options.name),
-                 ObjectType::View},
-    _type{options.type} {}
-
-Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx) {
-  SDB_ASSERT(ServerState::instance()->IsClientNode());
-
-  switch (options.meta.type) {
-    case ViewType::ViewSqlQuery:
-      SDB_ASSERT(ctx != ViewContext::User);
-      return SqlQueryView::Make(view, database_id, std::move(options), ctx,
-                                nullptr);
-    case ViewType::ViewSearch:
-      break;
+std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
+                                                   ReadContext ctx) {
+  auto name =
+    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
+  auto query_slice = slice.get("query");
+  if (!query_slice.isString()) {
+    return nullptr;
   }
-  return {};
+  auto query = std::string{query_slice.stringView()};
+  if (query.empty()) {
+    return nullptr;
+  }
+
+  auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
+  return std::make_shared<PgSqlView>(ctx.database_id, id, name,
+                                     std::move(query));
+}
+
+std::shared_ptr<Object> PgSqlView::Clone() const {
+  return std::make_shared<PgSqlView>(GetDatabaseId(), GetId(), GetName(),
+                                     std::string{_query});
 }
 
 }  // namespace sdb::catalog

@@ -57,7 +57,7 @@ yaclib::Future<> CreateIndex(ExecContext& ctx, query::Query& query,
 
 yaclib::Future<> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
-std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt);
+std::shared_ptr<catalog::PgSqlView> CreateSystemView(const ViewStmt& stmt);
 
 yaclib::Future<> DropObject(ExecContext& ctx, const DropStmt& stmt);
 
@@ -68,7 +68,7 @@ yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt);
 yaclib::Future<> CreateFunction(ExecContext& ctx,
                                 const CreateFunctionStmt& stmt);
 
-std::shared_ptr<catalog::Function> CreateSystemFunction(
+std::shared_ptr<catalog::PgSqlFunction> CreateSystemFunction(
   const CreateFunctionStmt& stmt);
 
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
@@ -81,5 +81,9 @@ yaclib::Future<> RemoveTombstone(ExecContext& ctx, std::string_view schemaname,
 yaclib::Future<> Vacuum(ExecContext& ctx, const VacuumStmt& stmt);
 
 yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt);
+
+yaclib::Future<> RenameObject(ExecContext& ctx, const RenameStmt& stmt);
+
+yaclib::Future<> AlterTable(ExecContext& ctx, const AlterTableStmt& stmt);
 
 }  // namespace sdb::pg

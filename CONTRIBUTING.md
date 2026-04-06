@@ -1,6 +1,6 @@
 # Contributing to SereneDB
 
-Thanks for your interest in contributing! SereneDB is an early-stage project, and we appreciate every contribution.
+Thanks fora your interest in contributing! SereneDB is an early-stage project, and we appreciate every contribution.
 
 ## Getting Started
 

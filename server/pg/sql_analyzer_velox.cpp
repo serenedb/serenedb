@@ -4168,7 +4168,8 @@ State SqlAnalyzer::ProcessIndex(State* parent,
         _exprs_for_offsets[field.name] =
           std::make_shared<lp::InputReferenceExpr>(offsets_type,
                                                    column_names.back());
-        offsets_requests.push_back({col_it->second->id, field.limit});
+        offsets_requests.push_back(
+          {col_it->second->id, field.limit, column_names.back()});
       }
       basics::downCast<connector::IndexTable>(*object.table)
         .SetOffsets(std::move(offsets_requests));
@@ -5447,7 +5448,8 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG(name, "() requires an inverted index scan in the same query"));
+        ERR_MSG(name,
+                "() requires an inverted index scan in the same sub-query"));
     }
     return _expr_for_scorer;
   }
@@ -5469,7 +5471,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
         ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
         ERR_MSG("OFFSETS(", field_name,
-                ") requires an inverted index scan in the same query"));
+                ") requires an inverted index scan in the same sub-query"));
     }
     return it->second;
   }

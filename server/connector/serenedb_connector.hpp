@@ -600,7 +600,9 @@ class IndexTable : public axiom::connector::Table {
 
   void SetOffsets(std::vector<catalog::Column::OffsetsFieldRequest>&& offsets) {
     SDB_ASSERT(_index.GetIndexType() == IndexType::Inverted);
-    _offsets_requests = std::move(offsets);
+    _offsets_requests.insert(_offsets_requests.end(),
+                             std::make_move_iterator(offsets.begin()),
+                             std::make_move_iterator(offsets.end()));
   }
 
   const std::shared_ptr<const irs::Scorer>& GetScorerPtr() const noexcept {
@@ -1552,6 +1554,34 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto reader_type =
       velox::ROW(std::move(reader_names), std::move(reader_types));
 
+    // Select only the offsets requests relevant to this DataSource, in the
+    // order they appear in output_type. The accumulated requests may contain
+    // entries from other sub-queries that reference the same index; column_name
+    // uniquely identifies each request across all sub-queries.
+    std::vector<catalog::Column::OffsetsFieldRequest> offsets;
+    const auto& all_offsets = handle.GetOffsetsRequests();
+    for (size_t i = 0; i < output_type->size(); ++i) {
+      if (column_oids[i] != catalog::Column::kInvertedIndexOffsetsId) {
+        continue;
+      }
+      const auto& col_name = output_type->nameOf(i);
+      auto it =
+        std::find_if(all_offsets.begin(), all_offsets.end(),
+                     [&](const catalog::Column::OffsetsFieldRequest& r) {
+                       return r.column_name == col_name;
+                     });
+      SDB_ENSURE(it != all_offsets.end(), ERROR_INTERNAL,
+                 "CreateSearchInvertedIndexDataSource: offsets request not "
+                 "found for column ",
+                 col_name);
+      SDB_ASSERT(
+        std::find_if(std::next(it), all_offsets.end(),
+                     [&](const catalog::Column::OffsetsFieldRequest& r) {
+                       return r.column_name == col_name;
+                     }) == all_offsets.end());
+      offsets.push_back(*it);
+    }
+
     return CreateWithMaterializer(
       handle, output_type, reader_type, column_oids, column_handles, pool,
       search_snapshot.snapshot->GetSnapshot(),
@@ -1560,7 +1590,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         using Mat = decltype(mat);
         return std::make_unique<SearchDataSource<Mat>>(
           pool, std::move(mat), search_snapshot.reader, handle.GetSearchQuery(),
-          handle.GetScorer(), handle.GetOffsetsRequests());
+          handle.GetScorer(), std::move(offsets));
       });
   }
 

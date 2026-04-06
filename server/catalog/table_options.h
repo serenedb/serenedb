@@ -157,9 +157,13 @@ struct Column {
 
   // Request for a single OFFSETS() column: which catalog column to extract
   // offsets for, and how many offset pairs to return per document at most.
+  // column_name is the mangled output column name produced by NextColumnName;
+  // it is globally unique across all sub-queries and used to match this request
+  // to the correct DataSource during SearchDataSource construction.
   struct OffsetsFieldRequest {
     Id column_id;
     size_t limit = pg::Objects::kDefaultOffsetsLimit;
+    std::string column_name;
   };
 
   Id id;

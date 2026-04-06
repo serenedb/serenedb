@@ -67,6 +67,19 @@ id	bo
 4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
 
 
+query
+EXPLAIN (EXECUTION) SELECT id, OFFSETS(offsets_test_idx.body) AS bo
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[2][expressions: (id:INTEGER, "id"), (bo:ARRAY<BIGINT>, "sdb_inverted_index_offsets$<slt:ignore>")] -> "id":INTEGER, "bo":ARRAY<BIGINT>
+  -- OrderBy[1][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
+    -- TableScan[0][offsets_test, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
+
 
 query
 SELECT id, OFFSETS(title) AS to_, OFFSETS(body) AS bo
@@ -199,6 +212,88 @@ id	wo
 4	{}
 
 
+# Two sub-queries on the same index: first branch requests two offsets columns
+# (title + body), second branch requests one (body only). Verifies that each
+# DataSource receives only its own filtered and correctly ordered requests.
+query
+SELECT id, OFFSETS(title) AS title_offs, OFFSETS(body) AS body_offs
+FROM offsets_test_idx
+WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+UNION ALL
+SELECT id, NULL::bigint[], OFFSETS(body)
+FROM offsets_test_idx
+WHERE PHRASE(body, 'quick')
+ORDER BY id, title_offs NULLS LAST;
+----
+id	title_offs	body_offs
+1	{0,5}	{6,9}
+1	NULL	{0,5}
+2	{0,5}	{0,3}
+3	NULL	{0,5}
+
+
+# Same scenario with branches swapped: first branch requests one offsets column
+# (body only), second branch requests two (title + body). Verifies correct
+# filtering regardless of which branch accumulates requests first.
+query
+SELECT id, NULL::bigint[] AS title_offs, OFFSETS(body) AS body_offs
+FROM offsets_test_idx
+WHERE PHRASE(body, 'quick')
+UNION ALL
+SELECT id, OFFSETS(title), OFFSETS(body)
+FROM offsets_test_idx
+WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+ORDER BY id, title_offs NULLS FIRST;
+----
+id	title_offs	body_offs
+1	NULL	{0,5}
+1	{0,5}	{6,9}
+2	{0,5}	{0,3}
+3	NULL	{0,5}
+
+
+# Same field in both sub-queries but with different limits. Row id=4 has 12
+# fox matches so the limit difference is visible in its output.
+query
+SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+UNION ALL
+SELECT id, 4, OFFSETS(body, 4)
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id, lim;
+----
+id	lim	body_offs
+1	2	{6,9}
+1	4	{6,9}
+2	2	{0,3}
+2	4	{0,3}
+4	2	{0,3,4,7}
+4	4	{0,3,4,7,8,11,12,15}
+
+
+query
+EXPLAIN (EXECUTION) SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+UNION ALL
+SELECT id, 4, OFFSETS(body, 4)
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+ORDER BY id, lim;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- OrderBy[5][id ASC NULLS LAST, lim ASC NULLS LAST] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
+  -- LocalPartition[4][REPARTITION ROUND ROBIN] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
+    -- Project[1][expressions: (id:INTEGER, "id"), (lim:INTEGER, 2), (body_offs:ARRAY<BIGINT>, "sdb_inverted_index_offsets$<slt:ignore>")] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
+      -- TableScan[0][offsets_test, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
+    -- Project[3][expressions: (id:INTEGER, "id"), (lim:INTEGER, 4), (body_offs:ARRAY<BIGINT>, "sdb_inverted_index_offsets$<slt:ignore>")] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
+      -- TableScan[2][offsets_test, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
+
+
 query error
 SELECT offsets_test_idx.id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
@@ -230,6 +325,7 @@ query error
 SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
 ----
 db error: ERROR: OFFSETS() second argument must be an integer literal
+
 
 query error
 SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
@@ -266,7 +362,13 @@ db error: ERROR: OFFSETS(): column 'id' not found in index
 query error
 SELECT OFFSETS(body) FROM offsets_test;
 ----
-db error: ERROR: OFFSETS(body) requires an inverted index scan in the same query
+db error: ERROR: OFFSETS(body) requires an inverted index scan in the same sub-query
+
+
+query error
+SELECT OFFSETS(body) FROM offsets_test;
+----
+db error: ERROR: OFFSETS(body) requires an inverted index scan in the same sub-query
 
 
 statement ok

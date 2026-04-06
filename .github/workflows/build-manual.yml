@@ -44,7 +44,6 @@ on:
 permissions:
   statuses: write
   contents: write
-  actions: write
 
 concurrency:
   group: build-manual-${{ github.ref }}
@@ -109,9 +108,6 @@ jobs:
     needs: [test-unit, test-functional, compile-check, validate-pg]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-      contents: read
     steps:
       - name: Checkout (for notify script)
         uses: actions/checkout@v6

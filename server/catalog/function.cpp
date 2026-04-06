@@ -26,14 +26,22 @@
 
 #include <string_view>
 
+#include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/object.h"
-#include "catalog/search_analyzer_impl.h"
-#include "catalog/sql_function_impl.h"
+#include "pg/sql_parser.h"
+#include "pg/sql_resolver.h"
 #include "query/types.h"
-#include "utils/velox_vpack.h"
+#include "utils/query_string.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/parsenodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 
@@ -63,19 +71,8 @@ bool FunctionSignature::IsProcedure() const {
 }
 void FunctionSignature::MarkAsProcedure() { return_type = pg::PROCEDURE(); }
 
-namespace {
-
-// NOLINTBEGIN
-struct FunctionMeta {
-  Identifier id;
-  std::string_view name;
-};
-// NOLINTEND
-
-}  // namespace
-
 Result FunctionProperties::Read(FunctionProperties& properties,
-                                vpack::Slice slice, bool is_user_request) {
+                                vpack::Slice slice) {
   if (!slice.isObject()) {
     return {ERROR_BAD_PARAMETER, "Function definition must be an object"};
   }
@@ -90,14 +87,14 @@ Result FunctionProperties::Read(FunctionProperties& properties,
   properties.id = Identifier{basics::VPackHelper::extractIdValue(slice)};
   properties.implementation = slice.get("implementation");
 
-  if (auto r = vpack::ReadNothrow(is_user_request, slice.get("signature"),
-                                  properties.signature);
+  if (auto r =
+        vpack::ReadTupleNothrow(slice.get("signature"), properties.signature);
       !r.ok()) {
     return r;
   }
 
-  if (auto r = vpack::ReadNothrow(is_user_request, slice.get("options"),
-                                  properties.options);
+  if (auto r =
+        vpack::ReadTupleNothrow(slice.get("options"), properties.options);
       !r.ok()) {
     return r;
   }
@@ -105,119 +102,68 @@ Result FunctionProperties::Read(FunctionProperties& properties,
   return {};
 }
 
-Result catalog::Function::Instantiate(
-  std::shared_ptr<catalog::Function>& function, ObjectId database,
-  vpack::Slice definition, bool is_user_request) {
+std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
+                                                           ReadContext ctx) {
   FunctionProperties properties;
-  auto r = FunctionProperties::Read(properties, definition, is_user_request);
-  if (!r.ok()) {
-    return r;
+  if (auto r = FunctionProperties::Read(properties, slice); !r.ok()) {
+    return nullptr;
   }
 
-  if (is_user_request) {
-    properties.id = {};
+  auto impl_slice = properties.implementation;
+  auto query = basics::VPackHelper::getString(impl_slice, "query", {});
+  if (query.empty()) {
+    return nullptr;
   }
 
-  auto from_vpack = [&]<typename T> {
-    std::unique_ptr<T> impl;
-
-    Result r;
-    if constexpr (std::is_same_v<T, pg::FunctionImpl>) {
-      r = T::FromVPack(ObjectId{database}, properties.implementation, impl,
-                       properties.signature.IsProcedure());
-    }
-
-    if (!r.ok()) {
-      return r;
-    }
-    function = std::make_shared<catalog::Function>(std::move(properties),
-                                                   std::move(impl), database);
-    return Result{};
-  };
-
-  switch (properties.options.language) {
-    case FunctionLanguage::SQL:
-      return from_vpack.operator()<pg::FunctionImpl>();
-    default:
-      return {ERROR_BAD_PARAMETER,
-              "Unsupported function language: ", properties.options.language};
-  }
+  return std::make_shared<PgSqlFunction>(
+    ctx.database_id, properties.id, properties.name, std::string{query},
+    std::move(properties.signature), std::move(properties.options));
 }
 
-catalog::Function::Function(std::string_view name, FunctionSignature signature,
-                            FunctionOptions options)
-  : SchemaObject{{},
-                 {},
-                 {},
-                 {},  // TOOD(mbkkt) think about id
-                 std::string{name},
-                 ObjectType::Function},
+PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
+                             std::string_view name, std::string query,
+                             FunctionSignature signature,
+                             FunctionOptions options)
+  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgSqlFunction},
     _signature{std::move(signature)},
-    _options{std::move(options)} {
+    _options{std::move(options)},
+    _query{std::move(query)} {
   SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_options.language == FunctionLanguage::VeloxNative ||
-             _options.language == FunctionLanguage::Decorator);
-}
 
-catalog::Function::Function(FunctionProperties&& properties,
-                            std::unique_ptr<pg::FunctionImpl> function,
-                            ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 properties.id,
-                 std::move(properties.name),
-                 ObjectType::Function},
-    _signature{std::move(properties.signature)},
-    _options{std::move(properties.options)},
-    _sql_impl{std::move(function)} {
-  SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_options.language == FunctionLanguage::SQL);
-  SDB_ASSERT(_sql_impl);
-}
+  if (!_query.empty()) {
+    const QueryString query_string{_query};
+    _memory_context = pg::CreateMemoryContext();
+    auto* tree = pg::Parse(*_memory_context, query_string);
+    SDB_ASSERT(list_length(tree) == 1);
+    _stmt = list_nth_node(RawStmt, tree, 0);
+    SDB_ASSERT(_stmt);
 
-catalog::Function::~Function() = default;
-
-void catalog::Function::WriteProperties(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
-  vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{
-                                .id = Identifier{GetId().id()},
-                                .name = GetName(),
-                              }});
-  builder.add("signature");
-  vpack::WriteObject(builder, _signature);
-  builder.add("options");
-  vpack::WriteObject(builder, _options);
-  builder.add("implementation");
-  switch (_options.language) {
-    case FunctionLanguage::SQL:
-      _sql_impl->ToVPack(builder);
-      break;
-    default:
-      SDB_ENSURE(false, ERROR_BAD_PARAMETER,
-                 "Unsupported function language: ", _options.language);
+    auto database = catalog::GetDatabase(database_id);
+    SDB_ASSERT(database);
+    pg::Collect((*database)->GetName(), *_stmt, _objects);
   }
 }
 
-void catalog::Function::WriteInternal(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
-  vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{
-                                .id = Identifier{GetId().id()},
-                                .name = GetName(),
-                              }});
-  builder.add("signature");
-  vpack::WriteTuple(builder, _signature);
-  builder.add("options");
-  vpack::WriteTuple(builder, _options);
-  builder.add("implementation");
-  switch (_options.language) {
-    case FunctionLanguage::SQL:
-      _sql_impl->ToVPack(builder);
-      break;
-    default:
-      SDB_ENSURE(false, ERROR_BAD_PARAMETER,
-                 "Unsupported function language: ", _options.language);
-  }
+void PgSqlFunction::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
+  WriteObject(b, [&](vpack::Builder& b) {
+    b.add("id", GetId().id());
+    b.add("signature");
+    vpack::WriteTuple(b, _signature);
+    b.add("options");
+    vpack::WriteTuple(b, _options);
+    b.add("implementation");
+    b.openObject();
+    b.add("query", _query);
+    b.close();
+  });
+  b.close();
+}
+
+std::shared_ptr<Object> PgSqlFunction::Clone() const {
+  vpack::Builder b;
+  WriteInternal(b);
+  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 
 }  // namespace sdb::catalog

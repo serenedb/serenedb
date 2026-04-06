@@ -42,6 +42,15 @@ DatabaseOptions MakeSystemDatabaseOptions() {
   return MakeDatabaseOptions(StaticStrings::kDefaultDatabase, id::kSystemDB);
 }
 
+std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
+                                                 ReadContext ctx) {
+  DatabaseOptions options;
+  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+    return nullptr;
+  }
+  return std::make_shared<Database>(ctx.id, std::move(options));
+}
+
 void Database::WriteInternal(vpack::Builder& b) const {
   const DatabaseOptions options{
     .name = _name,
@@ -51,24 +60,10 @@ void Database::WriteInternal(vpack::Builder& b) const {
   vpack::WriteTuple(b, options);
 }
 
-void Database::WriteProperties(vpack::Builder& b) const {
-  SDB_ASSERT(b.isOpenObject());
-  struct DatabaseProperties {
-    // NOLINTBEGIN
-    std::string_view name;
-    std::string id;
-    uint32_t replicationFactor = 1;
-    uint32_t writeConcern = 1;
-    // NOLINTEND
-  };
-  vpack::WriteObject(b,
-                     vpack::Embedded{DatabaseProperties{
-                       .name = GetName(),
-                       .id = absl::StrCat(GetId()),
-                       .replicationFactor = GetReplicationFactor(),
-                       .writeConcern = GetWriteConcern(),
-                     }},
-                     ObjectProperties{});
+std::shared_ptr<Object> Database::Clone() const {
+  vpack::Builder b;
+  WriteInternal(b);
+  return ReadInternal(b.slice(), {.id = GetId()});
 }
 
 }  // namespace sdb::catalog

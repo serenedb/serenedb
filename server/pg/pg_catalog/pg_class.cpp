@@ -193,7 +193,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   }
 
   {
-    VisitSystemViews([&](const catalog::View& view, Oid schema_oid) {
+    VisitSystemViews([&](const catalog::PgSqlView& view, Oid schema_oid) {
       PgClass row{
         .oid = view.GetId().id(),
         .relname = view.GetName(),

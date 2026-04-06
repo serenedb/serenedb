@@ -26,9 +26,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
-#include "catalog/native_functions.h"
-#include "catalog/sql_function_impl.h"
-#include "catalog/sql_query_view.h"
+#include "catalog/view.h"
 #include "catalog/virtual_table.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -110,12 +108,12 @@ void ResolveFunction(ObjectId database,
     return;
   }
 
-  auto resolve_sql_func = [&](const catalog::Function* func) {
+  auto resolve_sql_func = [&](const catalog::PgSqlFunction* func) {
     if (func->Options().language == catalog::FunctionLanguage::SQL) {
       bool changed = disallowed.functions.emplace(name).second;
       SDB_ASSERT(changed);
       ResolveSqlFunction(database, search_path, objects, disallowed,
-                         func->SqlFunction().GetObjects(), config);
+                         func->GetObjects(), config);
       changed = disallowed.functions.erase(name) != 0;
       SDB_ASSERT(changed);
     }
@@ -147,8 +145,8 @@ void ResolveFunction(ObjectId database,
               name.FullName(), "\" does not exist");
   }
 
-  SDB_ASSERT(data.object->GetType() == catalog::ObjectType::Function);
-  resolve_sql_func(&basics::downCast<catalog::Function>(*data.object));
+  SDB_ASSERT(data.object->GetType() == catalog::ObjectType::PgSqlFunction);
+  resolve_sql_func(&basics::downCast<catalog::PgSqlFunction>(*data.object));
 }
 
 // view, table
@@ -169,9 +167,9 @@ void ResolveRelation(ObjectId database,
   auto resolve_view = [&] {
     bool changed = disallowed.relations.emplace(name).second;
     SDB_ASSERT(changed);
-    auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
-    ResolveQueryView(database, search_path, objects, disallowed, state->objects,
-                     config);
+    auto& view = basics::downCast<catalog::PgSqlView>(*data.object);
+    ResolveQueryView(database, search_path, objects, disallowed,
+                     view.GetObjects(), config);
     changed = disallowed.relations.erase(name) != 0;
     SDB_ASSERT(changed);
   };
@@ -187,7 +185,7 @@ void ResolveRelation(ObjectId database,
   if (name.schema == StaticStrings::kInformationSchema) {
     ResolveInformationSchema(database, name.relation, data, config);
     if (data.object) {
-      if (data.object->GetType() == catalog::ObjectType::View) {
+      if (data.object->GetType() == catalog::ObjectType::PgSqlView) {
         resolve_view();
       }
       return;
@@ -222,9 +220,9 @@ void ResolveRelation(ObjectId database,
       }
     }
     data.catalog_data = std::move(impl);
-  } else if (data.object->GetType() == catalog::ObjectType::View) {
+  } else if (data.object->GetType() == catalog::ObjectType::PgSqlView) {
     resolve_view();
-  } else if (data.object->GetType() == catalog::ObjectType::Index) {
+  } else if (catalog::IsIndex(data.object->GetType())) {
     auto& index = basics::downCast<catalog::Index>(*data.object);
     auto snapshot = config.EnsureCatalogSnapshot();
     auto table = snapshot->GetObject<catalog::Table>(index.GetRelationId());

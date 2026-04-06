@@ -26,22 +26,16 @@
 
 namespace sdb::catalog {
 
-struct SecondaryIndexOptions {
-  bool unique = false;
-};
-
-struct SecondaryIndexOptionsWrapper : public IndexImplOptionsBaseWrapper {
-  SecondaryIndexOptionsWrapper(IndexBaseOptions&& options)
-    : IndexImplOptionsBaseWrapper{std::move(options)} {}
-  SecondaryIndexOptions impl;
-};
-
 class SecondaryIndex : public Index {
  public:
   SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                 ObjectId relation_id, SecondaryIndexOptionsWrapper options);
+                 ObjectId relation_id, std::string name,
+                 std::vector<Column::Id> column_ids, bool unique);
 
+  static std::shared_ptr<SecondaryIndex> ReadInternal(vpack::Slice slice,
+                                                      ReadContext ctx);
   void WriteInternal(vpack::Builder& builder) const final;
+  std::shared_ptr<Object> Clone() const final;
   bool IsUnique() const noexcept { return _unique; }
 
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(

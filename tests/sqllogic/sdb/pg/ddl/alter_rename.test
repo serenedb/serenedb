@@ -1,0 +1,349 @@
+# TODO: remove to pg tests
+
+statement ok
+CREATE TABLE pudge(a integer, b text);
+
+statement ok
+CREATE TABLE invoker(x integer);
+
+statement ok
+CREATE SCHEMA kostya;
+
+statement ok
+CREATE TABLE kostya.babsky(a integer);
+
+statement ok
+CREATE VIEW pudge_view AS SELECT * FROM pudge;
+
+statement ok
+CREATE FUNCTION clickclack() RETURNS TABLE(a integer, b text) LANGUAGE SQL
+BEGIN ATOMIC
+  SELECT * FROM pudge;
+END;
+
+statement ok
+CREATE INDEX deadinside ON pudge(a);
+
+
+statement ok
+ALTER TABLE invoker RENAME TO invoker_renamed;
+
+query
+SELECT * FROM invoker_renamed;
+----
+x
+
+statement error
+SELECT * FROM invoker;
+----
+db error: ERROR: relation "invoker" does not exist
+
+
+statement ok
+ALTER TABLE invoker_renamed RENAME TO invoker;
+
+query
+SELECT * FROM invoker;
+----
+x
+
+
+statement ok
+ALTER TABLE kostya.babsky RENAME TO babsky_renamed;
+
+query
+SELECT * FROM kostya.babsky_renamed;
+----
+a
+
+
+statement error
+SELECT * FROM kostya.babsky;
+----
+db error: ERROR: relation "kostya.babsky" does not exist
+
+
+statement ok
+ALTER TABLE kostya.babsky_renamed RENAME TO babsky;
+
+query
+SELECT * FROM kostya.babsky;
+----
+a
+
+
+statement ok
+ALTER VIEW pudge_view RENAME TO pudge_view_renamed;
+
+query
+SELECT * FROM pudge_view_renamed;
+----
+a	b
+
+statement error
+SELECT * FROM pudge_view;
+----
+db error: ERROR: relation "pudge_view" does not exist
+
+
+statement ok
+ALTER VIEW pudge_view_renamed RENAME TO pudge_view;
+
+query
+SELECT * FROM pudge_view;
+----
+a	b
+
+
+statement ok
+ALTER TABLE pudge_view RENAME TO pudge_view_tmp;
+
+statement ok
+ALTER TABLE pudge_view_tmp RENAME TO pudge_view;
+
+statement ok
+ALTER TABLE deadinside RENAME TO deadinside_tmp;
+
+statement ok
+ALTER TABLE deadinside_tmp RENAME TO deadinside;
+
+
+statement ok
+ALTER INDEX deadinside RENAME TO deadinside_renamed;
+
+
+statement error
+DROP INDEX deadinside;
+----
+db error: ERROR: index "deadinside" does not exist
+
+
+statement ok
+ALTER INDEX deadinside_renamed RENAME TO deadinside;
+
+
+statement ok
+ALTER INDEX pudge RENAME TO pudge_tmp;
+
+statement ok
+ALTER INDEX pudge_tmp RENAME TO pudge;
+
+
+statement ok
+ALTER FUNCTION clickclack RENAME TO clickclack_renamed;
+
+
+statement error
+SELECT * FROM clickclack();
+----
+db error: ERROR: function "clickclack" does not exist
+
+
+query
+SELECT * FROM clickclack_renamed();
+----
+a	b
+
+statement ok
+ALTER FUNCTION clickclack_renamed RENAME TO clickclack;
+
+query
+SELECT * FROM clickclack();
+----
+a	b
+
+
+statement error
+ALTER VIEW pudge RENAME TO something;
+----
+db error: ERROR: "pudge" is not a view
+
+
+statement error
+ALTER VIEW deadinside RENAME TO something;
+----
+db error: ERROR: "deadinside" is not a view
+
+
+statement error
+ALTER TABLE nonexistent RENAME TO something;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+
+statement error
+ALTER VIEW nonexistent RENAME TO something;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+
+statement error
+ALTER INDEX nonexistent RENAME TO something;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+
+statement error
+ALTER FUNCTION nonexistent RENAME TO something;
+----
+db error: ERROR: could not find a function named "nonexistent"
+
+
+statement error
+ALTER TABLE pudge RENAME TO invoker;
+----
+db error: ERROR: relation "invoker" already exists
+
+
+statement error
+ALTER VIEW pudge_view RENAME TO pudge;
+----
+db error: ERROR: relation "pudge" already exists
+
+
+statement error
+ALTER INDEX deadinside RENAME TO pudge;
+----
+db error: ERROR: relation "pudge" already exists
+
+
+statement error
+ALTER TABLE pudge RENAME TO pudge;
+----
+db error: ERROR: relation "pudge" already exists
+
+
+statement error
+ALTER VIEW pudge_view RENAME TO pudge_view;
+----
+db error: ERROR: relation "pudge_view" already exists
+
+
+statement error
+ALTER FUNCTION clickclack RENAME TO clickclack;
+----
+db error: ERROR: relation "clickclack" already exists
+
+
+statement error
+ALTER FUNCTION pudge RENAME TO something;
+----
+db error: ERROR: could not find a function named "pudge"
+
+
+statement ok
+ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
+
+query
+SELECT a_renamed FROM pudge;
+----
+a_renamed
+
+
+statement error
+SELECT a FROM pudge;
+----
+db error: ERROR: column "a" does not exist
+
+
+statement ok
+ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
+
+query
+SELECT a FROM pudge;
+----
+a
+
+
+statement error
+ALTER TABLE pudge RENAME COLUMN nonexistent TO something;
+----
+db error: ERROR: column "nonexistent" does not exist
+
+
+statement error
+ALTER TABLE pudge RENAME COLUMN a TO b;
+----
+db error: ERROR: column "b" of relation "pudge" already exists
+
+
+statement error
+ALTER TABLE nonexistent RENAME COLUMN a TO b;
+----
+db error: ERROR: relation "nonexistent" does not exist
+
+
+statement error
+ALTER TABLE pudge RENAME COLUMN a TO a;
+----
+db error: ERROR: column "a" of relation "pudge" already exists
+
+
+statement ok
+CREATE TABLE constr_test(a integer CONSTRAINT constr_test_pos CHECK (a > 0));
+
+statement ok
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_positive;
+
+statement error
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO something;
+----
+db error: ERROR: constraint "constr_test_pos" for table "constr_test" does not exist
+
+
+statement ok
+ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_pos;
+
+
+statement ok
+DROP TABLE constr_test;
+
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff RENAME TO something;
+
+statement ok
+ALTER VIEW IF EXISTS vedernikoff RENAME TO something;
+
+statement ok
+ALTER INDEX IF EXISTS vedernikoff RENAME TO something;
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff RENAME COLUMN a TO b;
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
+
+
+statement error
+ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
+----
+db error: ERROR: cannot rename columns of a non-table relation
+
+
+statement error
+ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
+----
+db error: ERROR: constraint "foo" for table "pudge_view" does not exist
+
+
+statement ok
+DROP FUNCTION clickclack;
+
+statement ok
+DROP VIEW pudge_view;
+
+statement ok
+DROP INDEX deadinside;
+
+statement ok
+DROP TABLE kostya.babsky;
+
+statement ok
+DROP SCHEMA kostya;
+
+statement ok
+DROP TABLE invoker;
+
+statement ok
+DROP TABLE pudge;

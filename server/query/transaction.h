@@ -114,7 +114,7 @@ class Transaction : public Config {
         }
       }
 
-      if (index_shard->GetType() == IndexType::Inverted) {
+      if (index_shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
         auto& inverted_index_shard =
           basics::downCast<search::InvertedIndexShard>(*index_shard);
         _search_transactions.try_emplace(inverted_index_shard.GetId(), nullptr);

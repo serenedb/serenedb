@@ -155,6 +155,24 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
       break;
     }
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+      // timestamp_t.value is int64 microseconds since epoch
+      auto val = duckdb::FlatVector::GetData<duckdb::timestamp_t>(vec)[idx].value;
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int64_t));
+      absl::big_endian::Store64(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+      break;
+    }
+    case duckdb::LogicalTypeId::DATE: {
+      auto val = duckdb::FlatVector::GetData<duckdb::date_t>(vec)[idx].days;
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int32_t));
+      absl::big_endian::Store32(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+      break;
+    }
     case duckdb::LogicalTypeId::VARCHAR: {
       // String PK: escape null bytes (\0 → \0\1) and terminate with \0\0
       // Same encoding as primary_key::AppendTypedValue for StringView

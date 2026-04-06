@@ -90,7 +90,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
     }
 
     _produced += _row_keys.size();
-    return _materializer.ReadRows(_row_keys, nullptr);
+    return _materializer.ReadRows(_row_keys, nullptr, {});
   }
 
   void addDynamicFilter(velox::column_index_t,
@@ -308,7 +308,7 @@ class SecondaryIndexFullScanDataSource final
     }
 
     _produced += _row_keys.size();
-    return _materializer.ReadRows(_row_keys, nullptr);
+    return _materializer.ReadRows(_row_keys, nullptr, {});
   }
 
   void addDynamicFilter(velox::column_index_t,

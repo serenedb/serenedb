@@ -43,7 +43,8 @@ class ParquetMaterializer {
     velox::RowTypePtr output_type, std::vector<catalog::Column::Id> column_ids);
 
   velox::RowVectorPtr ReadRows(std::span<std::string> row_keys,
-                               velox::VectorPtr scores);
+                               velox::VectorPtr scores,
+                               std::vector<velox::VectorPtr> offsets_per_field);
 
  private:
   uint32_t FindRowGroup(int64_t row_number, uint32_t search_from) const;
@@ -56,6 +57,7 @@ class ParquetMaterializer {
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   velox::RowTypePtr _output_type;
   int64_t _score_column_idx = -1;
+  std::vector<int64_t> _offsets_column_indices;
   std::vector<int64_t> _row_group_starts;
   int64_t _total_rows = 0;
   std::vector<uint64_t> _bitmap_buf;

@@ -109,19 +109,17 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& table_entry = op.table.Cast<SereneDBTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  // Find PK column indices in the scan output.
-  // The scan outputs columns in table order. PK columns are at their
-  // natural positions (e.g., if PK is column 0, it's output index 0).
-  const auto& columns = sdb_table->Columns();
+  // PK columns are added to the scan by BindRowIdColumns via GetRowIdColumns.
+  // They appear at the end of the child output, before the dummy rowid.
+  // Layout: [..., pk_col_0, pk_col_1, ..., rowid]
   const auto& pk_col_ids = sdb_table->PKColumns();
+  auto num_pk = pk_col_ids.size();
+  auto child_cols = plan.types.size();
+  // PK columns are at positions [child_cols - 1 - num_pk .. child_cols - 2]
+  // (last position is rowid)
   std::vector<duckdb::idx_t> pk_indices;
-  for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
-        pk_indices.push_back(i);
-        break;
-      }
-    }
+  for (size_t i = 0; i < num_pk; ++i) {
+    pk_indices.push_back(child_cols - 1 - num_pk + i);
   }
 
   auto& del = planner.Make<SereneDBPhysicalDelete>(
@@ -136,35 +134,23 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& table_entry = op.table.Cast<SereneDBTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  // Input chunk layout: [SET_val_0, ..., SET_val_N-1, rowid]
-  // op.columns[i] = PhysicalIndex of the i-th SET column in the table.
-  // BindUpdateConstraints added PK columns as identity updates (col=col),
-  // so PK columns are now part of op.columns.
+  // Input chunk layout: [SET_val_0, ..., SET_val_N, pk_virtual_0, ..., rowid]
+  // PK columns are added by BindRowIdColumns at the end, before rowid.
 
-  const auto& columns = sdb_table->Columns();
   const auto& pk_col_ids = sdb_table->PKColumns();
+  auto num_pk = pk_col_ids.size();
+  auto child_cols = plan.types.size();
 
-  // Build the update input indices (all SET values are at 0..N-1)
+  // SET values are at 0..op.columns.size()-1
   std::vector<duckdb::idx_t> update_input_indices;
   for (size_t i = 0; i < op.columns.size(); ++i) {
     update_input_indices.push_back(i);
   }
 
-  // Find PK columns in op.columns — they're there as identity updates
+  // PK columns are at [child_cols - 1 - num_pk .. child_cols - 2]
   std::vector<duckdb::idx_t> pk_indices;
-  for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == pk_id) {
-        // Find this table column in op.columns
-        for (size_t j = 0; j < op.columns.size(); ++j) {
-          if (op.columns[j].index == i) {
-            pk_indices.push_back(j);  // Input index j has PK value
-            break;
-          }
-        }
-        break;
-      }
-    }
+  for (size_t i = 0; i < num_pk; ++i) {
+    pk_indices.push_back(child_cols - 1 - num_pk + i);
   }
 
   auto& upd = planner.Make<SereneDBPhysicalUpdate>(

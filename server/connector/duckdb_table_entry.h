@@ -52,11 +52,16 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context) override;
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
+  duckdb::virtual_column_map_t GetVirtualColumns() const override;
 
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
                              duckdb::LogicalUpdate& update,
                              duckdb::ClientContext& context) override;
+
+  // Convert a virtual column ID (VIRTUAL_COLUMN_START + i) back to a real
+  // column index. Returns DConstants::INVALID_INDEX if not a PK virtual col.
+  static duckdb::column_t VirtualToPKColumnIndex(duckdb::column_t virtual_id);
 
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;

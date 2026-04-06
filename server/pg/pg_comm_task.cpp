@@ -51,6 +51,7 @@
 
 #include "connector/duckdb_client_state.h"
 #include "pg/duckdb_query_handler.h"
+#include "pg/duckdb_serialize.h"
 #include "query/duckdb_engine.h"
 #include "pg/hba.h"
 #include "pg/pg_feature.h"
@@ -773,19 +774,65 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
     }
 
     auto stmt_type = result->statement_type;
+    const auto& types = result->types;
+    const auto num_cols = static_cast<uint16_t>(types.size());
 
-    // Extended protocol Execute: send DataRows + CommandComplete only
-    // (RowDescription was already sent during Describe)
-    DuckDBQueryHandler handler{_send, _connection_ctx, *_duckdb_conn};
+    bool is_dml = (stmt_type == duckdb::StatementType::INSERT_STATEMENT ||
+                   stmt_type == duckdb::StatementType::UPDATE_STATEMENT ||
+                   stmt_type == duckdb::StatementType::DELETE_STATEMENT);
+
     uint64_t total_rows = 0;
-    if (!result->types.empty()) {
+
+    if (is_dml) {
+      // DML: extract affected row count from result, don't send DataRows
       while (true) {
         auto chunk = result->Fetch();
         if (!chunk || chunk->size() == 0) break;
-        total_rows += chunk->size();
-        handler.SendDataRows(*chunk, result->types);
+        // The result chunk has a single BIGINT column with the count
+        if (chunk->ColumnCount() > 0 && chunk->size() > 0) {
+          total_rows += duckdb::FlatVector::GetData<int64_t>(
+            chunk->data[0])[0];
+        }
+      }
+    } else if (num_cols > 0) {
+      // SELECT/etc: send DataRows with proper serialization
+      const auto& formats = portal->bind_info.output_formats;
+      const auto default_format =
+        formats.empty() ? VarFormat::Text : formats[0];
+
+      std::vector<DuckDBSerializationFunction> serializers;
+      serializers.reserve(num_cols);
+      for (uint16_t i = 0; i < num_cols; ++i) {
+        auto fmt = (i < formats.size()) ? formats[i] : default_format;
+        serializers.push_back(GetDuckDBSerialization(types[i], fmt));
+      }
+
+      SerializationContext ser_ctx{.buffer = &_send};
+
+      while (true) {
+        auto chunk = result->Fetch();
+        if (!chunk || chunk->size() == 0) break;
+        chunk->Flatten();
+        const auto batch_rows = chunk->size();
+        total_rows += batch_rows;
+
+        for (duckdb::idx_t row = 0; row < batch_rows; ++row) {
+          const auto uncommitted_size = _send.GetUncommittedSize();
+          auto* prefix_data = _send.GetContiguousData(7);
+          for (uint16_t col = 0; col < num_cols; ++col) {
+            serializers[col](ser_ctx, chunk->data[col], row);
+          }
+          prefix_data[0] = PQ_MSG_DATA_ROW;
+          absl::big_endian::Store32(
+            prefix_data + 1,
+            _send.GetUncommittedSize() - uncommitted_size - 1);
+          absl::big_endian::Store16(prefix_data + 5, num_cols);
+          _send.Commit(false);
+        }
       }
     }
+
+    DuckDBQueryHandler handler{_send, _connection_ctx, *_duckdb_conn};
     handler.SendCommandComplete(stmt_type, total_rows);
     _success_packet = true;
     return;
@@ -972,17 +1019,57 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
   }
 
   if (statement->duckdb_prepared) {
-    // DuckDB path: skip Velox analysis, just set up portal
-    // TODO: parse bind parameters from wire for prepared statements with params
     _current_query = statement->query_string->view();
 
-    // Skip remaining packet (param values + output formats) for now
-    // TODO: properly parse bind params and pass to DuckDB Execute
+    // Parse input format codes
+    if (packet.size() < sizeof(int16_t)) {
+      return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
+    }
+    uint16_t num_input_formats = absl::big_endian::Load16(packet.data());
+    packet.remove_prefix(sizeof(int16_t));
+    std::vector<VarFormat> input_formats;
+    for (uint16_t i = 0; i < num_input_formats; ++i) {
+      if (packet.size() < sizeof(int16_t)) {
+        return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
+      }
+      input_formats.push_back(
+        static_cast<VarFormat>(absl::big_endian::Load16(packet.data())));
+      packet.remove_prefix(sizeof(int16_t));
+    }
+
+    // Parse parameter values
+    if (packet.size() < sizeof(int16_t)) {
+      return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
+    }
+    uint16_t num_params = absl::big_endian::Load16(packet.data());
+    packet.remove_prefix(sizeof(int16_t));
+    // TODO: deserialize params and pass to DuckDB Execute
+    for (uint16_t i = 0; i < num_params; ++i) {
+      if (packet.size() < sizeof(int32_t)) {
+        return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
+      }
+      int32_t param_len = absl::big_endian::Load32(packet.data());
+      packet.remove_prefix(sizeof(int32_t));
+      if (param_len == -1) {
+        continue;  // NULL
+      }
+      if (packet.size() < static_cast<size_t>(param_len)) {
+        return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
+      }
+      packet.remove_prefix(param_len);
+    }
+
+    // Parse output format codes
+    auto maybe_output_formats = ParseBindFormats(packet);
+    if (!maybe_output_formats) {
+      return;
+    }
 
     auto& portal = (portal_it == _portals.end()) ? _anonymous_portal
                                                   : portal_it->second;
     portal.Reset(*this);
     portal.stmt = statement;
+    portal.bind_info.output_formats = std::move(*maybe_output_formats);
     portal_it = _portals.end();
     _send.Write(ToBuffer(kBindComplete), true);
     _success_packet = true;

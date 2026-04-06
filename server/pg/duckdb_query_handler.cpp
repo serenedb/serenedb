@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/strings/numbers.h>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
 
 #include "connector/duckdb_client_state.h"
@@ -66,13 +67,32 @@ std::string DuckDBQueryHandler::ExecuteSingleStatement(
 
   auto stmt_type = result->statement_type;
 
-  // DDL and non-row-returning statements: no RowDescription, just CommandComplete
+  bool is_dml = (stmt_type == duckdb::StatementType::INSERT_STATEMENT ||
+                 stmt_type == duckdb::StatementType::UPDATE_STATEMENT ||
+                 stmt_type == duckdb::StatementType::DELETE_STATEMENT);
+
+  // DDL: no RowDescription, just CommandComplete
   if (result->types.empty()) {
     SendCommandComplete(stmt_type, 0);
     return {};
   }
 
-  // Row-returning statements: RowDescription + DataRows + CommandComplete
+  // DML: extract affected row count, don't send DataRows
+  if (is_dml) {
+    uint64_t affected = 0;
+    while (true) {
+      auto chunk = result->Fetch();
+      if (!chunk || chunk->size() == 0) break;
+      if (chunk->ColumnCount() > 0 && chunk->size() > 0) {
+        chunk->Flatten();
+        affected += duckdb::FlatVector::GetData<int64_t>(chunk->data[0])[0];
+      }
+    }
+    SendCommandComplete(stmt_type, affected);
+    return {};
+  }
+
+  // SELECT/etc: RowDescription + DataRows + CommandComplete
   SendRowDescription(*result);
 
   uint64_t total_rows = 0;

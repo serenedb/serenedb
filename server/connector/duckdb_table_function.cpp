@@ -25,6 +25,7 @@
 
 #include "basics/assert.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -128,12 +129,18 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   std::cerr << "]" << std::endl;
   for (auto col_id : input.column_ids) {
     if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
-      // DuckDB requests rowid — we provide a dummy sequential int64.
-      // Our PhysicalDelete/Update ignores this and uses PK columns directly.
+      // Dummy sequential rowid
       state->scan_rowid = true;
       state->rowid_output_idx = state->projected_columns.size();
       state->projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state->projected_types.push_back(duckdb::LogicalType::BIGINT);
+    } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
+      // Virtual PK column: VIRTUAL_COLUMN_START + real_col_index
+      auto real_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+      SDB_ASSERT(real_idx != duckdb::DConstants::INVALID_INDEX);
+      SDB_ASSERT(real_idx < bind_data.column_ids.size());
+      state->projected_columns.push_back(real_idx);
+      state->projected_types.push_back(bind_data.column_types[real_idx]);
     } else if (col_id < num_bind_columns) {
       state->projected_columns.push_back(col_id);
       state->projected_types.push_back(bind_data.column_types[col_id]);
@@ -141,7 +148,6 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   }
 
   // Create iterators only for the real (non-rowid) projected columns
-  // We need at least one iterator to drive the scan (for row count)
   std::vector<catalog::Column::Id> scan_column_ids;
   for (auto proj_idx : state->projected_columns) {
     if (proj_idx != duckdb::DConstants::INVALID_INDEX) {

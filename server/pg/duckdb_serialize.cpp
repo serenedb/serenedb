@@ -891,12 +891,7 @@ template void ByteaOutHex<false>(char* buf, std::string_view value);
 template void ByteaOutEscape<true>(char* buf, std::string_view value);
 template void ByteaOutEscape<false>(char* buf, std::string_view value);
 
-void FillContext(const Config& config, SerializationContext& context) {
-  context.extra_float_digits =
-    config.Get<VariableType::PgExtraFloatDigits>("extra_float_digits");
-  context.bytea_output =
-    config.Get<VariableType::PgByteaOutput>("bytea_output");
-}
+// FillContext is defined in serialize.cpp — not duplicated here
 
 DuckDBSerializationFunction GetDuckDBSerialization(const duckdb::LogicalType& type,
                                        VarFormat format) {

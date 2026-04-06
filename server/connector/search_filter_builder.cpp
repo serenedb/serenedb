@@ -233,8 +233,6 @@ Filter& Negate(Source& parent) {
                                               : parent));
 }
 
-enum class ComparisonOp { None, Lt, Le, Gt, Ge };
-
 ComparisonOp GetComparisonOp(const velox::core::CallTypedExpr& call) {
   if (IsCallOf(&call, "_lte")) {
     return ComparisonOp::Le;
@@ -1058,6 +1056,11 @@ Result MakeSearchFilter(irs::And& root,
     }
   }
   return {};
+}
+
+void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
+  basics::StrResize(field_name, sizeof(column_id));
+  absl::big_endian::Store(field_name.data(), column_id);
 }
 
 }  // namespace sdb::connector

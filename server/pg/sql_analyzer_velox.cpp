@@ -760,6 +760,8 @@ class SqlAnalyzer {
   State ProcessRangeFunction(State* parent, const RangeFunction* node);
   void RefreshExprForScorer(std::vector<std::string>& names,
                             std::vector<lp::ExprPtr>& exprs);
+  void RefreshExprsForOffsets(std::vector<std::string>& names,
+                              std::vector<lp::ExprPtr>& exprs);
 
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
@@ -1229,7 +1231,11 @@ class SqlAnalyzer {
   CopyMessagesQueue* _copy_queue;
   std::shared_ptr<const irs::Scorer> _scorer_for_select;
   lp::ExprPtr _expr_for_scorer;
-  std::vector<std::unique_ptr<ProgressReporterBase>> _progress_reporters;
+  // Field requests for which OFFSETS() was requested in the current SELECT.
+  std::vector<pg::Objects::OffsetsFieldInfo> _offsets_fields_for_select;
+  // Maps catalog field name -> current virtual offsets column expr.
+  containers::FlatHashMap<std::string, lp::ExprPtr> _exprs_for_offsets;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1373,6 +1379,7 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   }
 
   RefreshExprForScorer(names, exprs);
+  RefreshExprsForOffsets(names, exprs);
 
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
@@ -1394,9 +1401,14 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
   auto scorer_for_select =
     std::exchange(_scorer_for_select, _objects.GetScorer(&stmt));
   auto expr_for_scorer = std::exchange(_expr_for_scorer, nullptr);
+  auto offsets_fields_for_select =
+    std::exchange(_offsets_fields_for_select, _objects.GetOffsetsFields(&stmt));
+  auto exprs_for_offsets = std::exchange(_exprs_for_offsets, {});
   irs::Finally end = [&] noexcept {
     _scorer_for_select = std::move(scorer_for_select);
     _expr_for_scorer = std::move(expr_for_scorer);
+    _offsets_fields_for_select = std::move(offsets_fields_for_select);
+    _exprs_for_offsets = std::move(exprs_for_offsets);
   };
 
   ProcessWithClause(state, stmt.withClause);
@@ -3119,6 +3131,7 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
   }
 
   RefreshExprForScorer(names, exprs);
+  RefreshExprsForOffsets(names, exprs);
 
   ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
@@ -3914,12 +3927,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
   auto l_query_type = ProcessStmt(l_state, *castNode(Node, stmt.larg));
   SDB_ASSERT(l_query_type == SqlCommandType::Select);
   auto l_expr_for_scorer = std::move(_expr_for_scorer);
+  auto l_exprs_for_offsets = std::move(_exprs_for_offsets);
 
   auto r_state = state.MakeChild();
   auto r_query_type = ProcessStmt(r_state, *castNode(Node, stmt.rarg));
   SDB_ASSERT(r_query_type == SqlCommandType::Select);
 
   _expr_for_scorer = std::move(l_expr_for_scorer);
+  _exprs_for_offsets = std::move(l_exprs_for_offsets);
 
   const auto [set_operation_type, set_operation_name] =
     [&] -> std::pair<lp::SetOperation, std::string_view> {
@@ -4098,7 +4113,17 @@ State SqlAnalyzer::ProcessIndex(State* parent,
     if (_expr_for_scorer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("Only one inverted index scan can produce a score per query"));
+        ERR_MSG(
+          "Only one inverted index scan can produce a score per sub-query"));
+    }
+
+    // TODO(Dronplane): looks like this restriction could be lifted if we make
+    // _exprs_for_offsets kind of map by index_id->offsets.
+    if (!_exprs_for_offsets.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(
+          "Only one inverted index scan can produce offsets per sub-query"));
     }
 
     if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
@@ -4116,6 +4141,42 @@ State SqlAnalyzer::ProcessIndex(State* parent,
       column_names.emplace_back(std::move(unique_score_name));
       _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
         velox::REAL(), column_names.back());
+    }
+
+    if (!_offsets_fields_for_select.empty()) {
+      std::vector<catalog::Column::OffsetsFieldRequest> offsets_requests;
+      auto offsets_type = catalog::Column::MakeOffsetsType();
+      std::vector types = type->children();
+      std::vector type_names = type->names();
+      const auto& name_to_column = table.NameToColumn();
+
+      for (const auto& field : _offsets_fields_for_select) {
+        auto col_it = name_to_column.find(field.name);
+        if (col_it == name_to_column.end()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+            ERR_MSG("OFFSETS(): column '", field.name, "' not found in table"));
+        }
+        if (!absl::c_contains(index.GetColumnIds(), col_it->second->id)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+            ERR_MSG("OFFSETS(): column '", field.name, "' not found in index"));
+        }
+        auto offsets_col_name =
+          catalog::Column::MakeOffsetsName(col_it->second->id);
+        types.push_back(offsets_type);
+        type_names.push_back(offsets_col_name);
+        type = velox::ROW(type_names, types);
+        column_names.push_back(_id_generator.NextColumnName(offsets_col_name));
+        _exprs_for_offsets[field.name] =
+          std::make_shared<lp::InputReferenceExpr>(offsets_type,
+                                                   column_names.back());
+        offsets_requests.push_back(
+          {col_it->second->id, field.limit, column_names.back()});
+      }
+      basics::downCast<connector::IndexTable>(*object.table)
+        .SetOffsets(std::move(offsets_requests));
+      _offsets_fields_for_select.clear();
     }
   }
   scan_table = object.table;
@@ -4452,6 +4513,31 @@ void SqlAnalyzer::RefreshExprForScorer(std::vector<std::string>& names,
       _expr_for_scorer =
         std::make_shared<lp::InputReferenceExpr>(velox::REAL(), names[i]);
       ;
+    }
+  }
+}
+
+void SqlAnalyzer::RefreshExprsForOffsets(std::vector<std::string>& names,
+                                         std::vector<lp::ExprPtr>& exprs) {
+  if (_exprs_for_offsets.empty()) {
+    return;
+  }
+  for (auto& [field_name, expr_ptr] : _exprs_for_offsets) {
+    if (!expr_ptr) {
+      continue;
+    }
+    SDB_ASSERT(expr_ptr->isInputReference());
+    const auto& offsets_column = expr_ptr->as<lp::InputReferenceExpr>()->name();
+    const auto offsets_type = expr_ptr->type();
+    for (size_t i = 0; i < exprs.size(); ++i) {
+      SDB_ASSERT(exprs[i]);
+      if (!exprs[i]->isInputReference()) {
+        continue;
+      }
+      if (exprs[i]->as<lp::InputReferenceExpr>()->name() == offsets_column) {
+        expr_ptr =
+          std::make_shared<lp::InputReferenceExpr>(offsets_type, names[i]);
+      }
     }
   }
 }
@@ -5365,9 +5451,32 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG(name, "() requires an inverted index scan in the same query"));
+        ERR_MSG(name,
+                "() requires an inverted index scan in the same sub-query"));
     }
     return _expr_for_scorer;
+  }
+
+  // OFFSETS(field) is not a catalog function -- it is an offsets directive
+  // resolved during collection. Return the injected offsets column reference
+  // set up in ProcessInvertedIndex for the given field.
+  if (schema.empty() && name == sdb::functions::kOffsets) {
+    // ensured by collector
+    SDB_ASSERT(list_length(expr.args) > 0);
+    const auto* arg = linitial_node(Node, expr.args);
+    // ensured by collector
+    SDB_ASSERT(IsA(arg, ColumnRef));
+    const auto field_name =
+      std::string_view{strVal(llast(castNode(ColumnRef, arg)->fields))};
+    auto it = _exprs_for_offsets.find(field_name);
+    if (it == _exprs_for_offsets.end()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG("OFFSETS(", field_name,
+                ") requires an inverted index scan in the same sub-query"));
+    }
+    return it->second;
   }
 
   auto* function = _objects.getFunction(schema, name);

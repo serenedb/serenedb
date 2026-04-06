@@ -66,7 +66,8 @@ const std::string& RocksDBMaterializer::ReadValue(std::string_view full_key) {
 }
 
 velox::RowVectorPtr RocksDBMaterializer::ReadRows(
-  std::span<const std::string> row_keys, velox::VectorPtr scores) {
+  std::span<const std::string> row_keys, velox::VectorPtr scores,
+  std::vector<velox::VectorPtr> offsets_per_field) {
   std::vector<velox::VectorPtr> columns;
   const auto num_columns = _row_type->size();
   if (!num_columns) {
@@ -76,6 +77,7 @@ velox::RowVectorPtr RocksDBMaterializer::ReadRows(
   std::string key = key_utils::PrepareTableKey(_object_key);
   const auto table_prefix_size = key.size();
 
+  size_t offsets_field_idx = 0;
   for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
     basics::StrResize(key, table_prefix_size);
     const auto column_id = _column_ids[col_idx];
@@ -84,6 +86,15 @@ velox::RowVectorPtr RocksDBMaterializer::ReadRows(
       SDB_ASSERT(scores);
       SDB_ASSERT(scores->size() == row_keys.size());
       columns.push_back(std::move(scores));
+      continue;
+    }
+
+    if (column_id == catalog::Column::kInvertedIndexOffsetsId) {
+      SDB_ASSERT(offsets_field_idx < offsets_per_field.size());
+      auto& offsets = offsets_per_field[offsets_field_idx++];
+      SDB_ASSERT(offsets);
+      SDB_ASSERT(offsets->size() == row_keys.size());
+      columns.push_back(std::move(offsets));
       continue;
     }
     auto read_column_id = _column_ids[col_idx];

@@ -29,7 +29,9 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "connector/serenedb_connector.hpp"
+#include "functions/search.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -242,6 +244,48 @@ void ObjectCollector::CollectFuncCall(const State& state,
         ERR_MSG("Only one scorer function is allowed per inverted index"),
         ERR_HINT("Use UNION to combine different score functions for same "
                  "inverted index"));
+    }
+    return;
+  }
+
+  // OFFSETS(field [, limit]) produces an offsets column in the output --
+  // not a catalog function, resolved during analysis similarly to
+  // BM25()/TFIDF().
+  if (name.schema.empty() && name.relation == sdb::functions::kOffsets) {
+    const auto nargs = list_length(expr.args);
+    if (nargs < 1 || nargs > 2) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("OFFSETS() requires one or two arguments"));
+    }
+    const auto* arg = linitial_node(Node, expr.args);
+    if (!IsA(arg, ColumnRef)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("OFFSETS() first argument must be a column reference"));
+    }
+    size_t limit = Objects::kDefaultOffsetsLimit;
+    if (nargs == 2) {
+      const auto v = TryGet<int>(expr.args, 1);
+      if (!v) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("OFFSETS() second argument must be an integer literal"));
+      }
+      if (v < 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG(
+            "OFFSETS() limit must be greater than zero or 0 for no limit"));
+      }
+      limit = v > 0 ? static_cast<size_t>(v.value())
+                    : std::numeric_limits<size_t>::max();
+    }
+    auto field_name =
+      std::string{strVal(llast(castNode(ColumnRef, arg)->fields))};
+    if (!_objects.AddOffsetsField(field_name, limit)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("OFFSETS() called multiple times for field '",
+                              field_name, "' with different limits"));
     }
     return;
   }

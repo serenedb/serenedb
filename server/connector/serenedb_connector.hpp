@@ -1105,8 +1105,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 #endif
 
-      const auto& points = serene_table_handle.GetPoints();
-      if (!points.empty()) {
+      if (const auto& points = serene_table_handle.GetPoints();
+          !points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
           object_key, points, output_column_count, compiled_filter,
@@ -1116,8 +1116,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           PointLookupPKColumnBuilder{});
       }
 
-      const auto& ranges_ryow = serene_table_handle.GetRanges();
-      if (!ranges_ryow.empty()) {
+      if (const auto& ranges_ryow = serene_table_handle.GetRanges();
+          !ranges_ryow.empty()) {
         return std::make_unique<RocksDBRYOWPrefixRangeLookupDataSource>(
           *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
           read_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
@@ -1133,8 +1133,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         connector_query_ctx->expressionEvaluator());
     }
 
-    const auto& points = serene_table_handle.GetPoints();
-    if (!points.empty()) {
+    if (const auto& points = serene_table_handle.GetPoints(); !points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
         *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
         object_key, points, output_column_count, compiled_filter, snapshot,
@@ -1143,8 +1142,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         PointLookupPKColumnBuilder{});
     }
 
-    const auto& ranges = serene_table_handle.GetRanges();
-    if (!ranges.empty()) {
+    if (const auto& ranges = serene_table_handle.GetRanges(); !ranges.empty()) {
       return std::make_unique<RocksDBSnapshotPrefixRangeLookupDataSource>(
         *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
         serene_table_handle.GetEffectiveColumnId(), object_key,

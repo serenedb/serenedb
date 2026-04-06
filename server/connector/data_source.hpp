@@ -105,12 +105,11 @@ class RocksDBBaseDataSource : public velox::connector::DataSource {
  public:
   void addDynamicFilter(
     velox::column_index_t output_channel,
-    const std::shared_ptr<velox::common::Filter>& filter) override;
-  uint64_t getCompletedBytes() override;
-  uint64_t getCompletedRows() override;
-  std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats()
-    override;
-  void cancel() override;
+    const std::shared_ptr<velox::common::Filter>& filter) final;
+  uint64_t getCompletedBytes() final;
+  uint64_t getCompletedRows() final;
+  std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats() final;
+  void cancel() final;
 
  protected:
   RocksDBBaseDataSource(velox::memory::MemoryPool& memory_pool,
@@ -223,11 +222,10 @@ class RocksDBFullScanDataSource
  public:
   using Base::Base;
 
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) override;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
  private:
-  template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
+  template<typename CreateFn>
   void InitIterators(CreateFn&& create);
 };
 
@@ -398,7 +396,7 @@ class RocksDBPrefixRangeDataSource
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
  private:
-  template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
+  template<typename CreateFn>
   void InitIterators(CreateFn&& create);
 
   velox::RowTypePtr _pk_type;

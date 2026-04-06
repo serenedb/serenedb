@@ -43,14 +43,17 @@ enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
 // A possibly-bounded interval on a single column value.
 struct ColumnRange {
-  static constexpr uint8_t kZero = 0x0;
-  static constexpr uint8_t kLeftBounded = 0x1;
-  static constexpr uint8_t kLeftInclusive = 0x2;
-  static constexpr uint8_t kRightBounded = 0x4;
-  static constexpr uint8_t kRightInclusive = 0x8;
-  // Contradictory: the range is empty (no value satisfies it, e.g. a>5 AND
-  // a<3). A contradictory ColumnRange is disjoint from every other range.
-  static constexpr uint8_t kContradictory = 0x10;
+  enum Flags : uint8_t {
+    kZero = 0x0,
+    kLeftBounded = 0x1,
+    kLeftInclusive = 0x2,
+    kRightBounded = 0x4,
+    kRightInclusive = 0x8,
+    // The range is empty (no value satisfies it, e.g. pk > 5 AND
+    // pk < 3). We need to keep it to distiguish between filter absence and
+    // contradictory filters, like a>5 AND pk < 3.
+    kEmptyRange = 0x10,
+  };
 
   [[nodiscard]] bool HasLeft() const noexcept { return _flags & kLeftBounded; }
   [[nodiscard]] bool IsLeftInclusive() const noexcept {
@@ -62,9 +65,7 @@ struct ColumnRange {
   [[nodiscard]] bool IsRightInclusive() const noexcept {
     return _flags & kRightInclusive;
   }
-  [[nodiscard]] bool IsContradictory() const noexcept {
-    return _flags & kContradictory;
-  }
+  [[nodiscard]] bool IsEmpty() const noexcept { return _flags & kEmptyRange; }
 
   [[nodiscard]] const velox::variant& LeftValue() const noexcept {
     return _left_value;
@@ -93,9 +94,7 @@ struct ColumnRange {
   }
 
   // Empty range -- matches no value.
-  [[nodiscard]] static ColumnRange Contradictory() {
-    return Make(kContradictory, {}, {});
-  }
+  [[nodiscard]] static ColumnRange Empty() { return Make(kEmptyRange, {}, {}); }
 
   // Full two-sided interval
   [[nodiscard]] static ColumnRange Bounded(velox::variant left_value,
@@ -114,7 +113,8 @@ struct ColumnRange {
   }
 
   // True iff both ranges represent the exact same interval.
-  [[nodiscard]] bool operator==(const ColumnRange& other) const noexcept;
+  [[nodiscard]] bool operator==(const ColumnRange& other) const noexcept =
+    default;
 
   // Tightest interval covering only keys in both ranges.
   // Returns nullopt when the result is empty (e.g. [1,1] ∩ [2,2]).
@@ -158,17 +158,17 @@ class KeyBounds {
   [[nodiscard]] static KeyBounds MakeContradictory(
     std::span<const std::string> pk_names) {
     KeyBounds kc{pk_names};
-    kc._contradictory = true;
+    kc._is_empty = true;
     return kc;
   }
 
-  [[nodiscard]] bool IsSpecificPoint() const;
+  [[nodiscard]] bool IsResolvedPoint() const;
 
   [[nodiscard]] bool IsUnconstrained() const noexcept {
-    return !_contradictory && _column_ranges.empty();
+    return !_is_empty && _column_ranges.empty();
   }
 
-  [[nodiscard]] bool IsContradictory() const noexcept { return _contradictory; }
+  [[nodiscard]] bool IsEmpty() const noexcept { return _is_empty; }
 
   // Returns the number of PK columns covered by the constraint's leading
   // prefix, or 0 if the constraint cannot drive a useful range scan.
@@ -226,8 +226,8 @@ class KeyBounds {
     : _pk_names{pk_names} {}
 
   std::span<const std::string> _pk_names;
-  bool _contradictory =
-    false;  // true -> contradictory predicate, matches no rows
+  // true -> contradictory predicate, matches no rows
+  bool _is_empty = false;
 
   containers::FlatHashMap<std::string, ColumnRange> _column_ranges;
   SourceExprsMap _source_exprs;
@@ -237,7 +237,7 @@ class KeyBounds {
 // Used after filter extraction -- no expression metadata, no names.
 using ResolvedPoint = std::vector<velox::variant>;
 
-// Converts specific (fully constrained) Points to SpecificPoint, ordered by
+// Converts specific (fully constrained) Points to Resolved, ordered by
 // pk_type column order.
 std::vector<ResolvedPoint> ToResolvedPoints(
   const std::vector<KeyBounds>& points,
@@ -251,13 +251,11 @@ struct ResolvedRange {
   ColumnRange range_column;            // constraint on column K
 
   // A sentinel that represents a contradictory predicate (no rows match).
-  [[nodiscard]] static ResolvedRange Contradictory() {
-    return {{}, ColumnRange::Contradictory()};
+  [[nodiscard]] static ResolvedRange Conflicting() {
+    return {{}, ColumnRange::Empty()};
   }
 
-  [[nodiscard]] bool IsContradictory() const noexcept {
-    return range_column.IsContradictory();
-  }
+  [[nodiscard]] bool IsEmpty() const noexcept { return range_column.IsEmpty(); }
 
   // Ordering: compare the leftmost key covered by each range.
   // Contradictory ranges sort before all real ranges.
@@ -267,45 +265,29 @@ struct ResolvedRange {
   // range's range_col is compared against the exact prefix value of the longer
   // range at that position.
   bool operator<(const ResolvedRange& other) const {
-    if (IsContradictory() || other.IsContradictory()) {
-      return IsContradictory() && !other.IsContradictory();
+    if (IsEmpty() || other.IsEmpty()) {
+      return IsEmpty() && !other.IsEmpty();
     }
-    const size_t min_depth = std::min(prefix.size(), other.prefix.size());
+    const auto min_depth = std::min(prefix.size(), other.prefix.size());
     for (size_t i = 0; i < min_depth; ++i) {
-      if (prefix[i] < other.prefix[i]) {
-        return true;
-      }
-      if (other.prefix[i] < prefix[i]) {
-        return false;
+      if (prefix[i] != other.prefix[i]) {
+        return prefix[i] < other.prefix[i];
       }
     }
 
-    if (prefix.size() == other.prefix.size()) {
-      return range_column.LeftBoundLessThan(other.range_column);
-    }
-
-    // Unequal prefix depths with a matching common prefix.
-    // At the first diverging position, one side has an exact prefix value and
-    // the other has its range_col starting there.
-    const bool range_is_this = prefix.size() < other.prefix.size();
-    const velox::variant& point =
-      range_is_this ? other.prefix[prefix.size()] : prefix[other.prefix.size()];
-    const ColumnRange& column_range =
-      range_is_this ? range_column : other.range_column;
-
-    if (!column_range.HasLeft() || column_range.LeftValue() < point) {
-      return range_is_this;
-    }
-    if (point < column_range.LeftValue()) {
-      return !range_is_this;
-    }
-    return !range_is_this && !column_range.IsLeftInclusive();
+    const auto left_at_split = (prefix.size() == min_depth)
+                                 ? range_column
+                                 : ColumnRange::Point(prefix[min_depth]);
+    const auto right_at_split = (other.prefix.size() == min_depth)
+                                  ? other.range_column
+                                  : ColumnRange::Point(other.prefix[min_depth]);
+    return left_at_split.LeftBoundLessThan(right_at_split);
   }
 };
 
 // Converts range KeyConstraints to ResolvedRange, ordered by pk_type column
 // order. Each constraint must have PrefixSize() >= 1.
-[[nodiscard]] std::vector<ResolvedRange> ToResolvedRanges(
+[[nodiscard]] std::vector<ResolvedRange> ToDisjointRanges(
   const std::vector<KeyBounds>& ranges, const velox::RowType& pk_type);
 
 [[nodiscard]] std::vector<KeyBounds> ExtractFilterExpr(
@@ -318,7 +300,7 @@ enum class ConstraintKind {
   // At least one constraint is a range; use range scan on the range prefix.
   Ranges,
   // No constraints, use full scan.
-  None
+  None,
 };
 
 struct ExtractAndRewriteResult {

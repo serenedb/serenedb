@@ -327,7 +327,8 @@ SereneDBTableLayout::createTableHandle(
       absl::c_sort(points);
       remaining_filter = std::move(res.remaining_filter);
     } else if (res.kind == ConstraintKind::Ranges) {
-      ranges = ToResolvedRanges(res.constraints, *pk_type);
+      ranges = ToDisjointRanges(res.constraints, *pk_type);
+      // absl::c_sort(ranges);
       remaining_filter = std::move(res.remaining_filter);
     }
 
@@ -406,9 +407,9 @@ std::string SereneDBConnectorTableHandle::toString() const {
     };
 
     std::vector<std::string> parts;
-    for (const auto& sr : _ranges) {
-      if (!sr.IsContradictory()) {
-        parts.push_back(format_range(sr));
+    for (const auto& range : _ranges) {
+      if (!range.IsEmpty()) {
+        parts.push_back(format_range(range));
       }
     }
     return absl::StrCat(_name, ", type=rocksdb_range_lookup, ranges=[",

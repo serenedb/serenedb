@@ -24,12 +24,22 @@
 #include <duckdb/transaction/transaction.hpp>
 #include <duckdb/transaction/transaction_manager.hpp>
 
+namespace sdb {
+class ConnectionContext;
+}
+
 namespace sdb::connector {
 
 class SereneDBTransaction final : public duckdb::Transaction {
  public:
   SereneDBTransaction(duckdb::TransactionManager& manager,
                       duckdb::ClientContext& context);
+
+  void SetConnectionContext(ConnectionContext* ctx) { _connection_ctx = ctx; }
+  ConnectionContext* GetConnectionContext() const { return _connection_ctx; }
+
+ private:
+  ConnectionContext* _connection_ctx = nullptr;
 };
 
 class SereneDBTransactionManager final : public duckdb::TransactionManager {

@@ -32,6 +32,7 @@ target_sources(
         functions.cpp
         sql_analyzer_velox.cpp
         duckdb_query_handler.cpp
+        duckdb_serialize.cpp
         sql_collector.cpp
         sql_def.cpp
         sql_parser.cpp

@@ -21,6 +21,7 @@ add_library(
     sst_sink_writer.cpp
     rocksdb_filter.cpp
     duckdb_storage_extension.cpp
+    duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_schema_entry.cpp
     duckdb_table_entry.cpp

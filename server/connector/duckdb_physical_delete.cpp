@@ -23,9 +23,11 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "basics/assert.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
+#include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -64,15 +66,13 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
 
   chunk.Flatten();
 
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);
   SDB_ASSERT(cf);
 
-  rocksdb::WriteOptions wo;
-  auto* txn = db->BeginTransaction(wo);
-  SDB_ASSERT(txn);
+  auto& conn_ctx = GetSereneDBContext(context.client);
+  conn_ctx.AddRocksDBWrite();
+  auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
   auto table_id = _table->GetId();
   std::string table_key = key_utils::PrepareTableKey(table_id);
@@ -118,18 +118,10 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
 
       auto status = txn->Delete(cf, key_buffer);
       if (!status.ok()) {
-        txn->Rollback();
-        delete txn;
         SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ",
                   status.ToString());
       }
     }
-  }
-
-  auto status = txn->Commit();
-  delete txn;
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB commit failed: ", status.ToString());
   }
 
   gstate.delete_count += num_rows;

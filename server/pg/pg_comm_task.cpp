@@ -47,7 +47,11 @@
 #include "catalog/identifiers/object_id.h"
 #include "general_server/general_server_feature.h"
 #include "pg/connection_context.h"
+#include <duckdb/main/client_context.hpp>
+
+#include "connector/duckdb_client_state.h"
 #include "pg/duckdb_query_handler.h"
+#include "query/duckdb_engine.h"
 #include "pg/hba.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_types.h"
@@ -387,6 +391,16 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         SendParameterStatus(param, *_connection_ctx->GetSetting(param));
       }
 
+      // Create per-session DuckDB connection and register SereneDB state
+      _duckdb_conn = query::DuckDBEngine::Instance().CreateConnection();
+      {
+        auto state =
+          duckdb::make_shared_ptr<connector::SereneDBClientState>(
+            _connection_ctx);
+        _duckdb_conn->context->registered_state->Insert(
+          connector::kSereneDBClientStateKey, std::move(state));
+      }
+
       _send.Write(ToBuffer(kReadyForQuery), true);
       std::move(cleanup).Cancel();
       _success_packet = true;
@@ -517,6 +531,42 @@ void DescribeParameters(const std::vector<velox::TypePtr>& param_types,
 
 void PgSQLCommTaskBase::DescribePortal(const SqlPortal& portal) {
   SDB_ASSERT(portal.stmt);
+  if (portal.stmt->duckdb_prepared) {
+    // DuckDB path: send RowDescription from prepared statement
+    auto& types = portal.stmt->duckdb_prepared->GetTypes();
+    auto& names = portal.stmt->duckdb_prepared->GetNames();
+    if (types.empty()) {
+      _send.Write(ToBuffer(kNoData), true);
+      return;
+    }
+    DuckDBQueryHandler handler{_send, _connection_ctx, *_duckdb_conn};
+    // Create a temporary result-like object for SendRowDescription
+    // Actually, just send RowDescription directly
+    const auto num_fields = static_cast<uint16_t>(types.size());
+    const auto uncommitted_size = _send.GetUncommittedSize();
+    auto* prefix_data = _send.GetContiguousData(7);
+    for (uint16_t i = 0; i < num_fields; ++i) {
+      _send.WriteUncommitted({names[i].data(), names[i].size()});
+      _send.WriteUncommitted({"\0", 1});
+      absl::big_endian::Store32(_send.GetContiguousData(4), 0);
+      absl::big_endian::Store16(_send.GetContiguousData(2), 0);
+      absl::big_endian::Store32(
+        _send.GetContiguousData(4),
+        DuckDBQueryHandler::DuckDBTypeToOid(types[i]));
+      absl::big_endian::Store16(_send.GetContiguousData(2),
+                                static_cast<uint16_t>(-1));
+      absl::big_endian::Store32(_send.GetContiguousData(4),
+                                static_cast<uint32_t>(-1));
+      absl::big_endian::Store16(_send.GetContiguousData(2), 0);
+    }
+    prefix_data[0] = PQ_MSG_ROW_DESCRIPTION;
+    absl::big_endian::Store32(
+      prefix_data + 1,
+      _send.GetUncommittedSize() - uncommitted_size - 1);
+    absl::big_endian::Store16(prefix_data + 5, num_fields);
+    _send.Commit(true);
+    return;
+  }
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
     SendNotices();
   }
@@ -525,6 +575,46 @@ void PgSQLCommTaskBase::DescribePortal(const SqlPortal& portal) {
 }
 
 void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
+  if (statement.duckdb_prepared) {
+    // DuckDB path: send parameter description + row description
+    // Parameter description: no params for now (TODO)
+    auto* prefix_data = _send.GetContiguousData(7);
+    prefix_data[0] = PQ_MSG_PARAMETER_DESCRIPTION;
+    absl::big_endian::Store32(prefix_data + 1, 6);  // length
+    absl::big_endian::Store16(prefix_data + 5, 0);  // 0 params
+    _send.Commit(false);
+
+    // Row description
+    auto& types = statement.duckdb_prepared->GetTypes();
+    auto& names = statement.duckdb_prepared->GetNames();
+    if (types.empty()) {
+      _send.Write(ToBuffer(kNoData), true);
+      return;
+    }
+    const auto num_fields = static_cast<uint16_t>(types.size());
+    const auto us2 = _send.GetUncommittedSize();
+    auto* pd2 = _send.GetContiguousData(7);
+    for (uint16_t i = 0; i < num_fields; ++i) {
+      _send.WriteUncommitted({names[i].data(), names[i].size()});
+      _send.WriteUncommitted({"\0", 1});
+      absl::big_endian::Store32(_send.GetContiguousData(4), 0);
+      absl::big_endian::Store16(_send.GetContiguousData(2), 0);
+      absl::big_endian::Store32(
+        _send.GetContiguousData(4),
+        DuckDBQueryHandler::DuckDBTypeToOid(types[i]));
+      absl::big_endian::Store16(_send.GetContiguousData(2),
+                                static_cast<uint16_t>(-1));
+      absl::big_endian::Store32(_send.GetContiguousData(4),
+                                static_cast<uint32_t>(-1));
+      absl::big_endian::Store16(_send.GetContiguousData(2), 0);
+    }
+    pd2[0] = PQ_MSG_ROW_DESCRIPTION;
+    absl::big_endian::Store32(pd2 + 1,
+                              _send.GetUncommittedSize() - us2 - 1);
+    absl::big_endian::Store16(pd2 + 5, num_fields);
+    _send.Commit(true);
+    return;
+  }
   if (!statement.query && statement.NextRoot(_connection_ctx)) {
     SendNotices();
   }
@@ -617,7 +707,7 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
 
   // Execute via DuckDB — no Velox fallback
   {
-    DuckDBQueryHandler duckdb_handler{_send};
+    DuckDBQueryHandler duckdb_handler{_send, _connection_ctx, *_duckdb_conn};
     auto error = duckdb_handler.ExecuteQuery(query_string);
     if (error.empty()) {
       _success_packet = true;
@@ -674,6 +764,32 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
   }
 
   _current_query = portal->stmt->query_string->view();
+
+  if (portal->stmt->duckdb_prepared) {
+    // DuckDB path: execute prepared statement directly
+    auto result = portal->stmt->duckdb_prepared->Execute();
+    if (result->HasError()) {
+      return SendError(result->GetError(), ERRCODE_INTERNAL_ERROR);
+    }
+
+    auto stmt_type = result->statement_type;
+
+    // Extended protocol Execute: send DataRows + CommandComplete only
+    // (RowDescription was already sent during Describe)
+    DuckDBQueryHandler handler{_send, _connection_ctx, *_duckdb_conn};
+    uint64_t total_rows = 0;
+    if (!result->types.empty()) {
+      while (true) {
+        auto chunk = result->Fetch();
+        if (!chunk || chunk->size() == 0) break;
+        total_rows += chunk->size();
+        handler.SendDataRows(*chunk, result->types);
+      }
+    }
+    handler.SendCommandComplete(stmt_type, total_rows);
+    _success_packet = true;
+    return;
+  }
 
   if (!portal->stmt->query && portal->stmt->NextRoot(_connection_ctx)) {
     SendNotices();
@@ -855,6 +971,24 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
       ERRCODE_PROTOCOL_VIOLATION);
   }
 
+  if (statement->duckdb_prepared) {
+    // DuckDB path: skip Velox analysis, just set up portal
+    // TODO: parse bind parameters from wire for prepared statements with params
+    _current_query = statement->query_string->view();
+
+    // Skip remaining packet (param values + output formats) for now
+    // TODO: properly parse bind params and pass to DuckDB Execute
+
+    auto& portal = (portal_it == _portals.end()) ? _anonymous_portal
+                                                  : portal_it->second;
+    portal.Reset(*this);
+    portal.stmt = statement;
+    portal_it = _portals.end();
+    _send.Write(ToBuffer(kBindComplete), true);
+    _success_packet = true;
+    return;
+  }
+
   if (!statement->query && statement->NextRoot(_connection_ctx)) {
     SendNotices();
   }
@@ -924,24 +1058,17 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
     }
   }
 
-  size_t root_count = 0;
-  if (it == _statements.end()) {
-    _anonymous_statement = MakeStatement(_current_query);
-    _anonymous_statement.params.oids = std::move(oids);
-    root_count = _anonymous_statement.RootCount();
-    _current_query = _anonymous_statement.query_string->view();
-  } else {
-    it->second = MakeStatement(_current_query);
-    it->second.params.oids = std::move(oids);
-    root_count = it->second.RootCount();
-    _current_query = it->second.query_string->view();
+  // Prepare via DuckDB instead of libpg_query + Velox
+  auto& stmt = (it == _statements.end()) ? _anonymous_statement : it->second;
+  stmt.Reset();
+  stmt.query_string = std::make_shared<QueryString>(_current_query);
+  stmt.duckdb_prepared = _duckdb_conn->Prepare(std::string{_current_query});
+  if (stmt.duckdb_prepared->HasError()) {
+    auto error = stmt.duckdb_prepared->GetError();
+    stmt.duckdb_prepared.reset();
+    return SendError(error, ERRCODE_SYNTAX_ERROR);
   }
-
-  if (root_count > 1) {
-    return SendError(
-      "cannot insert multiple commands into a prepared statement",
-      ERRCODE_PROTOCOL_VIOLATION);
-  }
+  _current_query = stmt.query_string->view();
 
   it = _statements.end();
   _send.Write(ToBuffer(kParseComplete), true);

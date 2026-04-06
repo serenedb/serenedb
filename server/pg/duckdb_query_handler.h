@@ -27,20 +27,27 @@
 #include "basics/message_buffer.h"
 #include "pg/protocol.h"
 
+namespace sdb {
+class ConnectionContext;
+}
+
 namespace sdb::pg {
 
 // DuckDB query execution with PG wire serialization.
 class DuckDBQueryHandler {
  public:
-  explicit DuckDBQueryHandler(message::Buffer& send_buffer)
-    : _send{send_buffer} {}
+  DuckDBQueryHandler(message::Buffer& send_buffer,
+                     std::shared_ptr<ConnectionContext> connection_ctx,
+                     duckdb::Connection& duckdb_conn)
+    : _send{send_buffer},
+      _connection_ctx{std::move(connection_ctx)},
+      _duckdb_conn{duckdb_conn} {}
 
   // Execute one or more SQL statements via DuckDB.
   // Handles multi-statement queries (each gets RowDesc + Data + CommandComplete).
   // Returns empty string on success, or error message on failure.
   std::string ExecuteQuery(std::string_view sql);
 
- private:
   // Execute a single statement and send results
   std::string ExecuteSingleStatement(duckdb::Connection& conn,
                                      const std::string& sql);
@@ -51,12 +58,16 @@ class DuckDBQueryHandler {
   void SendCommandComplete(duckdb::StatementType type, uint64_t rows);
 
   static int32_t DuckDBTypeToOid(const duckdb::LogicalType& type);
+
+ private:
   void SerializeValue(const duckdb::Value& value,
                       const duckdb::LogicalType& type);
 
   static std::string_view StatementTypeToTag(duckdb::StatementType type);
 
   message::Buffer& _send;
+  std::shared_ptr<ConnectionContext> _connection_ctx;
+  duckdb::Connection& _duckdb_conn;
 };
 
 }  // namespace sdb::pg

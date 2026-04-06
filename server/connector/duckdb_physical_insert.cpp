@@ -25,11 +25,13 @@
 
 #include "basics/assert.h"
 #include "catalog/identifiers/revision_id.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/rocksdb_sink_writer.hpp"
+#include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -68,16 +70,14 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
   chunk.Flatten();
 
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);
   SDB_ASSERT(cf);
 
-  // Create a RocksDB transaction for this batch
-  rocksdb::WriteOptions write_options;
-  auto* txn = db->BeginTransaction(write_options);
-  SDB_ASSERT(txn);
+  // Use the connection's transaction
+  auto& conn_ctx = GetSereneDBContext(context.client);
+  conn_ctx.AddRocksDBWrite();
+  auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
   const auto& columns = _table->Columns();
   auto table_id = _table->GetId();
@@ -149,15 +149,11 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
           // Overwrite — proceed without error
           continue;
         }
-        // THROW
-        txn->Rollback();
-        delete txn;
+        // THROW — connection will rollback
         SDB_THROW(ERROR_BAD_PARAMETER,
                   "duplicate key value violates unique constraint");
       }
       if (!s.IsNotFound()) {
-        txn->Rollback();
-        delete txn;
         SDB_THROW(ERROR_INTERNAL, "RocksDB error: ", s.ToString());
       }
     }
@@ -203,20 +199,13 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
         status = txn->Put(cf, key_buffer, slice);
       }
       if (!status.ok()) {
-        txn->Rollback();
-        delete txn;
         SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ",
                   status.ToString());
       }
     }
   }
 
-  // Commit transaction
-  auto status = txn->Commit();
-  delete txn;
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB commit failed: ", status.ToString());
-  }
+  // No commit here — connection manages transaction lifecycle
 
   auto skipped = std::count(skip_row.begin(), skip_row.end(), true);
   gstate.insert_count += num_rows - skipped;

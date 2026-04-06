@@ -22,7 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/strings/numbers.h>
+#include <duckdb/main/client_context.hpp>
 
+#include "connector/duckdb_client_state.h"
 #include "query/duckdb_engine.h"
 
 namespace sdb::pg {
@@ -36,16 +38,17 @@ std::string DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
     return {};
   }
 
-  auto conn = query::DuckDBEngine::Instance().CreateConnection();
+  // Use the persistent per-session DuckDB connection
+  auto& conn = _duckdb_conn;
 
   // Extract individual statements for multi-statement support
-  auto statements = conn->ExtractStatements(std::string{sql});
+  auto statements = conn.ExtractStatements(std::string{sql});
   if (statements.empty()) {
     return {};
   }
 
   for (auto& stmt : statements) {
-    auto error = ExecuteSingleStatement(*conn, stmt->query);
+    auto error = ExecuteSingleStatement(conn, stmt->query);
     if (!error.empty()) {
       return error;
     }

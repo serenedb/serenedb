@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <duckdb.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+
 #include <memory>
 
 #include "pg/connection_context.h"
@@ -71,6 +74,9 @@ struct SqlStatement {
   pg::MemoryContextPtr memory_context;
   Params params;
   query::QueryPtr query;
+
+  // DuckDB prepared statement (used instead of Velox pipeline when set)
+  duckdb::unique_ptr<duckdb::PreparedStatement> duckdb_prepared;
 
  private:
   bool ProcessNextRoot(

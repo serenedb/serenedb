@@ -79,6 +79,7 @@ void CommitTask::operator()() {
     SDB_ASSERT(promise.Valid());
     std::move(promise).Set();
   };
+  SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   if (!data) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "InvertedIndexShard ", _id,
               " is deleted");
@@ -160,6 +161,7 @@ void ConsolidationTask::operator()() {
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
     std::move(promise).Set();
   };
+  SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   if (!data) {
     SDB_WARN("xxxxx", Logger::SEARCH,
              "ConsolidationTask: inverted index shard is deleted");

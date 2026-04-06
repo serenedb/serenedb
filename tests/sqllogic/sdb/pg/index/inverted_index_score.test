@@ -383,7 +383,7 @@ EXPLAIN SELECT * FROM
 (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox'))
 ORDER BY BM25()
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 query
@@ -451,7 +451,7 @@ SELECT id, BM25() > 0 AS has_score FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
 ) sub ORDER BY id LIMIT 3;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 
@@ -565,13 +565,13 @@ id
 query error
 SELECT BM25();
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 query error
 SELECT TFIDF();
 ----
-db error: ERROR: tfidf() requires an inverted index scan in the same query
+db error: ERROR: tfidf() requires an inverted index scan in the same sub-query
 
 
 # Error: BM25(1) — must be 0 or 2 arguments
@@ -592,7 +592,7 @@ db error: ERROR: BM25() accepts 0 or 2 arguments: k1 and b
 query error
 SELECT id, BM25() FROM docs WHERE id > 0;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 # EXPLAIN for BM25 basic scan
@@ -675,7 +675,7 @@ EXPLAIN (EXECUTION) SELECT id, score, BM25() FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
 ) sub ORDER BY id;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 # Error: outer TFIDF() with inner BM25() — scorer type mismatch
@@ -684,7 +684,7 @@ EXPLAIN (EXECUTION) SELECT id, score, TFIDF() FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
 ) sub ORDER BY id;
 ----
-db error: ERROR: tfidf() requires an inverted index scan in the same query
+db error: ERROR: tfidf() requires an inverted index scan in the same sub-query
 
 
 # EXPLAIN for CTE with BM25
@@ -721,7 +721,7 @@ EXPLAIN (EXECUTION) SELECT id, BM25() > 0 AS has_score FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
 ) sub ORDER BY id LIMIT 3;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 query
@@ -764,7 +764,7 @@ SELECT docs_idx.id, BM25() FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_i
 WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
 LIMIT 3;
 ----
-db error: ERROR: Only one inverted index scan can produce a score per query
+db error: ERROR: Only one inverted index scan can produce a score per sub-query
 
 
 # Works: JOIN two inverted indexes, BM25() scoped inside each subquery (only one subquery scores)
@@ -930,7 +930,7 @@ EXPLAIN (REGISTERS, LOGICAL)
 select * from (select * from docs_idx)
 order by bm25() desc
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 query
@@ -982,7 +982,7 @@ UNION ALL
 ORDER BY BM25()
 LIMIT 6;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same query
+db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 statement ok

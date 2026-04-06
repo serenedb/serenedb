@@ -258,7 +258,7 @@ class PointLookupSKColumnBuilder {
   }
 
   velox::RowVectorPtr Finish(size_t found_count) {
-    return _materializer.ReadRows(_row_keys, nullptr);
+    return _materializer.ReadRows(_row_keys, nullptr, {});
   }
 
   const irs::bitset& PresentRows() const { return _dummy; }

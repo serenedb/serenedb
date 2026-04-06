@@ -17,12 +17,10 @@
 ///
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
-
 #include "pg/pg_catalog/pg_attribute.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include "app/app_server.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
@@ -109,7 +107,7 @@ void EmitColumnsForTable(const catalog::Table& table,
   auto& pk_columns = table.PKColumns();
 
   // Collect NOT NULL column names from check constraints
-  absl::flat_hash_set<std::string_view> notnull_cols;
+  containers::FlatHashSet<std::string_view> notnull_cols;
   for (const auto& check : table.CheckConstraints()) {
     auto [is_notnull, col_name] = check.IsNotNull();
     if (is_notnull) {

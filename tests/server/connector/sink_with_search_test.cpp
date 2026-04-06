@@ -925,7 +925,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
     RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
                         velox::ROW(names, types), all_column_oids,
                         all_column_oids[0], kObjectKey),
-    reader, *query, nullptr);
+    reader, *query, nullptr, {});
 
   source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
   const auto expected = makeRowVector(

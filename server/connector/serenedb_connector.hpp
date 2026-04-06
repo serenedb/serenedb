@@ -531,7 +531,8 @@ class IndexTable : public axiom::connector::Table {
   CopyColumns(const axiom::connector::Table& table,
               const catalog::Index& index) {
     std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
-    columns.reserve(table.allColumns().size() + 1);
+    columns.reserve(table.allColumns().size() + index.GetColumnIds().size() +
+                    1);
     for (const auto* col : table.allColumns()) {
       auto* sdb_col = basics::downCast<const SereneDBColumn>(col);
       columns.push_back(std::make_unique<SereneDBColumn>(
@@ -544,6 +545,18 @@ class IndexTable : public axiom::connector::Table {
         catalog::Column::GenerateScoreName(table.type()->names());
       columns.push_back(std::make_unique<SereneDBColumn>(
         score_name, velox::REAL(), catalog::Column::kInvertedIndexScoreId));
+      // Add one virtual offsets column per requested index column.
+      // It is only included in the output type when a corresponding offsets
+      // requested. We can not emit here only requested as index could be
+      // referenced multiple times and first creation of IndexTable object could
+      // be without offsets. So we must ensure we always have such columns for
+      // every indexed column.
+      auto offsets_type = catalog::Column::MakeOffsetsType();
+      for (const auto& column_id : index.GetColumnIds()) {
+        columns.push_back(std::make_unique<SereneDBColumn>(
+          catalog::Column::MakeOffsetsName(column_id), offsets_type,
+          catalog::Column::kInvertedIndexOffsetsId));
+      }
     }
     return columns;
   }
@@ -566,6 +579,7 @@ class IndexTable : public axiom::connector::Table {
   const auto& GetIndex() const noexcept { return _index; }
   const auto& GetTable() const noexcept { return _table; }
   auto& GetTransaction() const noexcept { return _transaction; }
+  const auto& GetOffsetsRequests() const noexcept { return _offsets_requests; }
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
@@ -584,6 +598,13 @@ class IndexTable : public axiom::connector::Table {
     _scorer = std::move(scorer);
   }
 
+  void SetOffsets(std::vector<catalog::Column::OffsetsFieldRequest>&& offsets) {
+    SDB_ASSERT(_index.GetType() == catalog::ObjectType::InvertedIndex);
+    _offsets_requests.insert(_offsets_requests.end(),
+                             std::make_move_iterator(offsets.begin()),
+                             std::make_move_iterator(offsets.end()));
+  }
+
   const std::shared_ptr<const irs::Scorer>& GetScorerPtr() const noexcept {
     SDB_ASSERT(_index.GetType() == catalog::ObjectType::InvertedIndex);
     return _scorer;
@@ -593,6 +614,7 @@ class IndexTable : public axiom::connector::Table {
   query::Transaction& _transaction;
   axiom::connector::TablePtr _table;
   const catalog::Index& _index;
+  std::vector<catalog::Column::OffsetsFieldRequest> _offsets_requests;
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
   std::shared_ptr<const irs::Scorer> _scorer;
@@ -615,6 +637,7 @@ class InvertedIndexTableHandle final
       _search_query{std::move(search_query)},
       _scorer{std::move(scorer)},
       _underlying_table{table.GetTable()},
+      _offsets_requests{table.GetOffsetsRequests()},
       _search_filter_str{std::move(search_filter_str)} {
     const auto& column_map = table.columnMap();
     _effective_column_id = ComputeEffectiveColumnId(column_map);
@@ -656,6 +679,8 @@ class InvertedIndexTableHandle final
     return *_underlying_table;
   }
 
+  const auto& GetOffsetsRequests() const noexcept { return _offsets_requests; }
+
  private:
   std::string _name;
   ObjectId _table_id;
@@ -665,6 +690,7 @@ class InvertedIndexTableHandle final
   irs::Filter::Query::ptr _search_query;
   std::shared_ptr<const irs::Scorer> _scorer;
   axiom::connector::TablePtr _underlying_table;
+  std::vector<catalog::Column::OffsetsFieldRequest> _offsets_requests;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
   std::string _search_filter_str;
 };
@@ -1515,18 +1541,47 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& search_snapshot =
       transaction.EnsureSearchSnapshot(handle.GetIndexId());
 
-    // TODO: teach ScanSpec to skip the score column instead of stripping it
-    // from the type.
+    // TODO: teach ScanSpec to skip the score/offsets columns instead of
+    // stripping them from the type.
     std::vector<std::string> reader_names;
     std::vector<velox::TypePtr> reader_types;
     for (size_t i = 0; i < output_type->size(); ++i) {
-      if (column_oids[i] != catalog::Column::kInvertedIndexScoreId) {
+      if (column_oids[i] != catalog::Column::kInvertedIndexScoreId &&
+          column_oids[i] != catalog::Column::kInvertedIndexOffsetsId) {
         reader_names.push_back(output_type->nameOf(i));
         reader_types.push_back(output_type->childAt(i));
       }
     }
     auto reader_type =
       velox::ROW(std::move(reader_names), std::move(reader_types));
+
+    // Select only the offsets requests relevant to this DataSource, in the
+    // order they appear in output_type. The accumulated requests may contain
+    // entries from other sub-queries that reference the same index; column_name
+    // uniquely identifies each request across all sub-queries.
+    std::vector<catalog::Column::OffsetsFieldRequest> offsets;
+    const auto& all_offsets = handle.GetOffsetsRequests();
+    for (size_t i = 0; i < output_type->size(); ++i) {
+      if (column_oids[i] != catalog::Column::kInvertedIndexOffsetsId) {
+        continue;
+      }
+      const auto& col_name = output_type->nameOf(i);
+      auto it =
+        std::find_if(all_offsets.begin(), all_offsets.end(),
+                     [&](const catalog::Column::OffsetsFieldRequest& r) {
+                       return r.column_name == col_name;
+                     });
+      SDB_ENSURE(it != all_offsets.end(), ERROR_INTERNAL,
+                 "CreateSearchInvertedIndexDataSource: offsets request not "
+                 "found for column ",
+                 col_name);
+      SDB_ASSERT(
+        std::find_if(std::next(it), all_offsets.end(),
+                     [&](const catalog::Column::OffsetsFieldRequest& r) {
+                       return r.column_name == col_name;
+                     }) == all_offsets.end());
+      offsets.push_back(*it);
+    }
 
     return CreateWithMaterializer(
       handle, output_type, reader_type, column_oids, column_handles, pool,
@@ -1536,7 +1591,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         using Mat = decltype(mat);
         return std::make_unique<SearchDataSource<Mat>>(
           pool, std::move(mat), search_snapshot.reader, handle.GetSearchQuery(),
-          handle.GetScorer());
+          handle.GetScorer(), std::move(offsets));
       });
   }
 

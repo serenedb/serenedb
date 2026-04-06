@@ -46,7 +46,8 @@ class RocksDBMaterializer {
                       ObjectId object_key);
 
   velox::RowVectorPtr ReadRows(std::span<const std::string> row_keys,
-                               velox::VectorPtr scores);
+                               velox::VectorPtr scores,
+                               std::vector<velox::VectorPtr> offsets_per_field);
 
  protected:
   const std::string& ReadValue(std::string_view full_key);

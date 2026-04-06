@@ -36,17 +36,6 @@ struct InvertedIndexColumnInfo {
   search::Features features;
 };
 
-struct InvertedIndexOptionsImpl {
-  containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo> columns;
-};
-
-struct InvertedIndexOptionsWrapper : public IndexImplOptionsBaseWrapper {
-  InvertedIndexOptionsWrapper(IndexBaseOptions&& options)
-    : IndexImplOptionsBaseWrapper{std::move(options)} {}
-
-  InvertedIndexOptionsImpl impl;
-};
-
 struct ColumnAnalyzer {
   Tokenizer::AnalyzerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
@@ -54,12 +43,25 @@ struct ColumnAnalyzer {
 
 class InvertedIndex final : public Index {
  public:
-  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, InvertedIndexOptionsWrapper options)
-    : Index{database_id, schema_id, id, relation_id, std::move(options.base)},
-      _options{std::move(options.impl)} {}
+  using ColumnOptions =
+    containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo>;
 
+  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
+                ObjectId relation_id, std::string name,
+                std::vector<Column::Id> column_ids, ColumnOptions columns)
+    : Index{database_id,
+            schema_id,
+            id,
+            relation_id,
+            std::move(name),
+            std::move(column_ids),
+            ObjectType::InvertedIndex},
+      _columns{std::move(columns)} {}
+
+  static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
+                                                     ReadContext ctx);
   void WriteInternal(vpack::Builder& builder) const final;
+  std::shared_ptr<Object> Clone() const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 
@@ -70,8 +72,7 @@ class InvertedIndex final : public Index {
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
-  // TODO(codeworse): Add inverted index specific options
-  InvertedIndexOptionsImpl _options;
+  ColumnOptions _columns;
 };
 
 }  // namespace sdb::catalog

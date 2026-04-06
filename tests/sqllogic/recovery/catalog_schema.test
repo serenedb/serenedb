@@ -1,0 +1,32 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA kostya;
+
+statement ok
+CREATE TABLE kostya.pudge(id INTEGER);
+
+statement ok
+INSERT INTO kostya.pudge VALUES (322);
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM kostya.pudge;
+----
+id
+322
+
+connection after_crash
+statement ok
+DROP TABLE kostya.pudge;
+
+connection after_crash
+statement ok
+DROP SCHEMA kostya;

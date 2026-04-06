@@ -1,0 +1,22 @@
+control substitution on
+
+statement ok
+CREATE DATABASE deadinside;
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+connection after_crash
+statement ok
+DROP DATABASE deadinside;

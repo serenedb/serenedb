@@ -271,8 +271,6 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
   std::weak_ptr<velox::RowVector> _data;
 
   void WriteInternal(vpack::Builder& build) const final {}
-
-  void WriteProperties(vpack::Builder& build) const final {}
 };
 
 template<typename T>

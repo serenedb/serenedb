@@ -24,86 +24,33 @@
 #include <vpack/serializer.h>
 #include <vpack/slice.h>
 
-#include "basics/containers/small_vector.h"
 #include "basics/result.h"
-#include "catalog/fwd.h"
-#include "catalog/identifiers/index_id.h"
 #include "catalog/object.h"
-#include "catalog/types.h"
+#include "pg/sql_collector.h"
+#include "pg/sql_utils.h"
 #include "query/config.h"
 
 namespace sdb::catalog {
 
-enum class ViewContext {
-  Internal,
-  User,
-  Restore,
-};
-
-enum class ViewType : uint8_t {
-  ViewSearch = 0,
-  ViewSqlQuery,
-};
-
-// NOLINTBEGIN
-struct ViewMeta {
-  vpack::Optional<Identifier> id;
-  std::string name;
-  ViewType type = ViewType::ViewSearch;
-
-  static ViewMeta Make(const View& view);
-};
-
-struct ViewOptions {
-  ViewMeta meta;
-  vpack::Slice properties = vpack::Slice::emptyObjectSlice();
-
-  static Result Read(ViewOptions& options, vpack::Slice slice);
-};
-// NOLINTEND
-
-class View : public SchemaObject {
+class PgSqlView final : public SchemaObject {
  public:
-  using Indexes = containers::SmallVector<IndexId, 1>;
-  // TODO(mbkkt) absl::FunctionRef
-  // visitor for map<CollectionId, set<IndexId>>, Indexes is movable
-  using CollectionVisitor = std::function<bool(ObjectId, Indexes*)>;
+  PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+            std::string query);
 
-  auto GetViewType() const noexcept { return _type; }
+  static std::shared_ptr<PgSqlView> ReadInternal(vpack::Slice slice,
+                                                 ReadContext ctx);
 
-  virtual bool visitCollections(const CollectionVisitor& visitor) const = 0;
+  void WriteInternal(vpack::Builder& b) const final;
+  std::shared_ptr<Object> Clone() const final;
 
-  virtual Result Rename(std::shared_ptr<catalog::View>& new_view,
-                        std::string_view new_name) const = 0;
+  std::string_view GetQuery() const noexcept { return _query; }
+  const RawStmt* GetStatement() const noexcept { return _stmt; }
+  const pg::Objects& GetObjects() const noexcept { return _objects; }
 
-  virtual Result Update(std::shared_ptr<catalog::View>& new_view,
-                        vpack::Slice properties,
-                        const Config* config) const = 0;
-
- protected:
-  View(ViewMeta&& options, ObjectId database_id);
-
-  ViewType _type;
+  std::string _query;
+  pg::MemoryContextPtr _memory_context;
+  const RawStmt* _stmt{nullptr};
+  pg::Objects _objects;
 };
-
-Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx);
 
 }  // namespace sdb::catalog
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t customize::enum_name<sdb::catalog::ViewType>(
-  sdb::catalog::ViewType value) noexcept {
-  switch (value) {
-    case sdb::catalog::ViewType::ViewSearch:
-      return "search-alias";
-    case sdb::catalog::ViewType::ViewSqlQuery:
-      return "sql-query";
-    default:
-      return invalid_tag;
-  }
-}
-
-}  // namespace magic_enum

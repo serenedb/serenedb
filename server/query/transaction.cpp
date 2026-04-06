@@ -156,8 +156,8 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   if (it == _search_snapshots.end()) {
     auto index_shard = EnsureCatalogSnapshot()->GetIndexShard(index_id);
     SDB_ASSERT(index_shard);
-    SDB_ASSERT(index_shard->GetType() == IndexType::Inverted,
-               "Expected inverted index shard");
+    SDB_ASSERT(index_shard->GetType() ==
+               catalog::ObjectType::InvertedIndexShard);
     auto& inverted_index_shard =
       basics::downCast<search::InvertedIndexShard>(*index_shard.get());
     it = _search_snapshots

@@ -46,7 +46,6 @@ permissions:
   contents: write
 
 jobs:
-  # ==================== TESTS ====================
   test-unit:
     name: unit ${{ matrix.instrumentation }} (${{ matrix.location }})
     strategy:
@@ -100,7 +99,6 @@ jobs:
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 
-  # ==================== REPORT ====================
   report:
     name: Report Status
     needs: [test-unit, test-functional, compile-check, validate-pg]
@@ -110,10 +108,13 @@ jobs:
       - name: Checkout (for notify script)
         uses: actions/checkout@v6
         with:
+          fetch-depth: 1
+          submodules: false
+          clean: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
 
-      - name: Send Telegram notification
+      - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -126,11 +127,11 @@ jobs:
           RUN_NAME: "serenedb | build & test [${{ inputs.LOCATION }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
+        run: ./scripts/send_notification.bash
 
       - name: Update PR commit status
         if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const config = JSON.parse(process.env.BUILD_CONFIG);

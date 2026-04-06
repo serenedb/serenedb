@@ -129,35 +129,33 @@ Role::Role(PrivateTag, ObjectId id, std::string_view name)
 Role::Role(ObjectId id, std::string_view name)
   : catalog::Object{{}, id, std::string{name}, ObjectType::Role} {}
 
-void catalog::Role::WriteInternal(vpack::Builder& build) const {
-  WriteProperties(build);
-}
-
-void catalog::Role::WriteProperties(vpack::Builder& build) const {
-  SDB_ASSERT(build.isOpenObject());
-  build.add("id", GetId().id());
-  build.add("name", GetName());
-  {
-    vpack::ObjectBuilder auth_guard{&build, "authData", true};
-    build.add("active", _active);
+void catalog::Role::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
+  WriteObject(b, [&](vpack::Builder& build) {
+    build.add("id", GetId().id());
     {
-      vpack::ObjectBuilder password_guard{&build, "simple", true};
-      build.add("hash", _password_hash);
-      build.add("salt", _password_salt);
-      build.add("method", _password_method);
-    }
-  }
-  {
-    vpack::ObjectBuilder databases_guard{&build, "databases", true};
-    for (const auto& [name, context] : _db_access) {
-      vpack::ObjectBuilder database_guard{&build, name, true};
+      vpack::ObjectBuilder auth_guard{&build, "authData", true};
+      build.add("active", _active);
       {
-        vpack::ObjectBuilder permissions_guard{&build, "permissions", true};
-        auto lvl = context.database_auth_level;
-        AddAuthLevel(build, lvl);
+        vpack::ObjectBuilder password_guard{&build, "simple", true};
+        build.add("hash", _password_hash);
+        build.add("salt", _password_salt);
+        build.add("method", _password_method);
       }
     }
-  }
+    {
+      vpack::ObjectBuilder databases_guard{&build, "databases", true};
+      for (const auto& [name, context] : _db_access) {
+        vpack::ObjectBuilder database_guard{&build, name, true};
+        {
+          vpack::ObjectBuilder permissions_guard{&build, "permissions", true};
+          auto lvl = context.database_auth_level;
+          AddAuthLevel(build, lvl);
+        }
+      }
+    }
+  });
+  b.close();
 }
 
 std::shared_ptr<catalog::Role> catalog::Role::NewUser(std::string_view name,
@@ -214,63 +212,59 @@ void catalog::Role::fromDocumentDatabases(catalog::Role& role,
   }
 }
 
-Result catalog::Role::Instantiate(std::shared_ptr<catalog::Role>& role,
-                                  vpack::Slice slice, bool is_user_request) {
+std::shared_ptr<Role> Role::ReadInternal(vpack::Slice slice, ReadContext) {
   if (!slice.isObject()) {
-    return {ERROR_BAD_PARAMETER, "role should be object"};
+    return nullptr;
   }
 
-  const auto name_slice = slice.get("name");
+  auto name_slice = slice.get("name");
   if (!name_slice.isString()) {
-    return {ERROR_BAD_PARAMETER, "cannot extract name from role"};
+    return nullptr;
   }
 
-  const auto auth_data_slice = slice.get("authData");
+  auto auth_data_slice = slice.get("authData");
   if (!auth_data_slice.isObject()) {
-    return {ERROR_BAD_PARAMETER, "cannot extract authData from role"};
+    return nullptr;
   }
 
-  const auto simple_slice = auth_data_slice.get("simple");
+  auto simple_slice = auth_data_slice.get("simple");
   if (!simple_slice.isObject()) {
-    return {ERROR_BAD_PARAMETER, "cannot extract simple from role"};
+    return nullptr;
   }
 
-  const auto method_slice = simple_slice.get("method");
-  const auto salt_slice = simple_slice.get("salt");
-  const auto hash_slice = simple_slice.get("hash");
+  auto method_slice = simple_slice.get("method");
+  auto salt_slice = simple_slice.get("salt");
+  auto hash_slice = simple_slice.get("hash");
 
   if (!method_slice.isString() || !salt_slice.isString() ||
       !hash_slice.isString()) {
-    return {ERROR_BAD_PARAMETER, "cannot extract password internals from role"};
+    return nullptr;
   }
 
-  const auto active_slice = auth_data_slice.get("active");
+  auto active_slice = auth_data_slice.get("active");
   if (!active_slice.isBool()) {
-    return {ERROR_BAD_PARAMETER, "cannot extract active flag from role"};
+    return nullptr;
   }
 
-  const ObjectId id{
-    is_user_request ? 0 : basics::VPackHelper::extractIdValue(slice)};
-  const auto name = name_slice.stringView();
-  auto tmp = std::make_shared<catalog::Role>(PrivateTag{}, id, name);
+  const ObjectId id{basics::VPackHelper::extractIdValue(slice)};
+  auto role =
+    std::make_shared<catalog::Role>(PrivateTag{}, id, name_slice.stringView());
 
-  tmp->_active = active_slice.getBool();
-  tmp->_password_method = method_slice.stringView();
-  tmp->_password_salt = salt_slice.stringView();
-  tmp->_password_hash = hash_slice.stringView();
+  role->_active = active_slice.getBool();
+  role->_password_method = method_slice.stringView();
+  role->_password_salt = salt_slice.stringView();
+  role->_password_hash = hash_slice.stringView();
 
-  const auto databases_slice = slice.get("databases");
+  auto databases_slice = slice.get("databases");
   if (databases_slice.isObject()) {
-    fromDocumentDatabases(*tmp, databases_slice);
+    fromDocumentDatabases(*role, databases_slice);
   }
-  // TODO(mbkkt) remove it, probably only gtest needed it
   // ensure the root user always has the right to change permissions
-  if (tmp->_name == StaticStrings::kDefaultUser) {
-    tmp->grantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
+  if (role->_name == StaticStrings::kDefaultUser) {
+    role->grantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
   }
 
-  role = std::move(tmp);
-  return {};
+  return role;
 }
 
 bool catalog::Role::checkPassword(std::string_view password) const {
@@ -361,6 +355,12 @@ auth::Level catalog::Role::databaseAuthLevel(std::string_view database) const {
   }
 
   return std::max(lvl, auth::Level::None);
+}
+
+std::shared_ptr<Object> Role::Clone() const {
+  vpack::Builder b;
+  WriteInternal(b);
+  return ReadInternal(b.slice(), {});
 }
 
 }  // namespace sdb::catalog

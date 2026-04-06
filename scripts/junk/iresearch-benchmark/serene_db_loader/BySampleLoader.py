@@ -3,14 +3,14 @@
 # By script loads json documents incrementing counter in id field. Document template is
 # loaded from specified file.
 # Collection should be already created. DB server should be set up to run without authorization and
-# on localhost:8529
+# on localhost:7890
 import sys
 import json
 from serene import SereneClient
 
 def main():
   if len(sys.argv) < 6:
-    print("Usage: host database collection template_file number_of_copies\n Example: python BySampleLoader.py 'http://localhost:8529' _system persons person.json 10000000")
+    print("Usage: host database collection template_file number_of_copies\n Example: python BySampleLoader.py 'http://localhost:7890' _system persons person.json 10000000")
     return
 
   client = SereneClient(hosts=sys.argv[1])

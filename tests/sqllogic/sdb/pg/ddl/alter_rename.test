@@ -1,3 +1,5 @@
+# TODO: remove to pg tests
+
 statement ok
 CREATE TABLE pudge(a integer, b text);
 

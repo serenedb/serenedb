@@ -211,6 +211,9 @@ statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
+wait
+
+
 connection new2
 statement ok
 DROP TABLE t;

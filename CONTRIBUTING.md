@@ -1,4 +1,4 @@
-# Contributing to SereneDB
+# Contributing tfo SereneDB
 
 Thanks for your interest in contributing! SereneDB is an early-stage project, and we appreciate every contribution.
 

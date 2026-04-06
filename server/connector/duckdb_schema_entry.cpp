@@ -22,10 +22,17 @@
 
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 
+#include <iostream>
+
+#include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "connector/duckdb_table_entry.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 
@@ -120,8 +127,86 @@ void SereneDBSchemaEntry::Scan(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   duckdb::CatalogTransaction transaction,
   duckdb::BoundCreateTableInfo& info) {
-  throw duckdb::NotImplementedException(
-    "CREATE TABLE through DuckDB not yet supported — use SereneDB DDL path");
+  auto& create_info = info.Base();
+  auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
+
+  // Build SereneDB CreateTableRequest from DuckDB types
+  catalog::CreateTableRequest request;
+  request.name = table_info.table;
+
+  // Convert columns
+  catalog::Column::Id next_col_id = 0;
+  for (auto& col : table_info.columns.Physical()) {
+    catalog::Column sdb_col;
+    sdb_col.id = next_col_id++;
+    sdb_col.name = col.Name();
+    sdb_col.type = DuckDBTypeToVelox(col.Type());
+    request.columns.push_back(std::move(sdb_col));
+  }
+
+  // Extract PK columns from constraints
+  for (auto& constraint : table_info.constraints) {
+    if (constraint->type == duckdb::ConstraintType::UNIQUE) {
+      auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+      if (!unique.IsPrimaryKey()) {
+        continue;
+      }
+      if (unique.HasIndex()) {
+        // Single-column PK by index
+        auto idx = unique.GetIndex().index;
+        if (idx < request.columns.size()) {
+          request.pkColumns.push_back(request.columns[idx].id);
+        }
+      } else {
+        // Multi-column PK by names
+        for (auto& pk_name : unique.GetColumnNames()) {
+          for (auto& col : request.columns) {
+            if (col.name == pk_name) {
+              request.pkColumns.push_back(col.id);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Get database info
+  auto& catalog_feature =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_impl = catalog_feature.Global();
+  auto snapshot = catalog_impl.GetCatalogSnapshot();
+  auto databases = snapshot->GetDatabases();
+  SDB_ASSERT(!databases.empty());
+  auto& database = *databases.front();
+
+  // Create table options
+  catalog::CreateTableOptions options;
+  auto r = catalog::MakeTableOptions(
+    std::move(request), database.GetId(), options,
+    database.GetReplicationFactor(), database.GetWriteConcern(), false);
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to create table options: %s",
+                                        std::string{r.errorMessage()});
+  }
+
+  bool if_not_exists =
+    create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  catalog::CreateTableOperationOptions op_options;
+
+  r = catalog_impl.CreateTable(database.GetId(), "public", std::move(options),
+                               op_options);
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return nullptr;
+  }
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to create table: %s",
+                                        std::string{r.errorMessage()});
+  }
+
+  std::cerr << "SereneDB: Created table " << table_info.table << " via DuckDB"
+            << std::endl;
+  return nullptr;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
@@ -182,7 +267,36 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
 
 void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
                                     duckdb::DropInfo& info) {
-  throw duckdb::NotImplementedException("DROP through DuckDB");
+  if (info.type != duckdb::CatalogType::TABLE_ENTRY) {
+    throw duckdb::NotImplementedException("DROP for type %s not supported",
+                                          duckdb::CatalogTypeToString(info.type));
+  }
+
+  auto& catalog_feature =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_impl = catalog_feature.Global();
+  auto snapshot = catalog_impl.GetCatalogSnapshot();
+  auto databases = snapshot->GetDatabases();
+  SDB_ASSERT(!databases.empty());
+
+  auto r = catalog_impl.DropTable(databases.front()->GetId(), "public",
+                                  info.name);
+  bool if_exists =
+    info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+  if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND) && if_exists) {
+    return;
+  }
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to drop table: %s",
+                                        std::string{r.errorMessage()});
+  }
+
+  // Remove from our cache
+  _table_entries.erase(info.name);
+  _table_infos.erase(info.name);
+
+  std::cerr << "SereneDB: Dropped table " << info.name << " via DuckDB"
+            << std::endl;
 }
 
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,

@@ -28,7 +28,7 @@
 
 namespace sdb::pg {
 
-bool DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
+std::string DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
   // Strip trailing null bytes from PG wire protocol
   while (!sql.empty() && sql.back() == '\0') {
     sql.remove_suffix(1);
@@ -38,9 +38,7 @@ bool DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
   auto result = conn->Query(std::string{sql});
 
   if (result->HasError()) {
-    std::cerr << "DuckDB error for [" << sql << "]: " << result->GetError()
-              << std::endl;
-    return false;
+    return result->GetError();
   }
 
   SendRowDescription(*result);
@@ -56,7 +54,7 @@ bool DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
   }
 
   SendCommandComplete("SELECT", total_rows);
-  return true;
+  return {};  // empty string = success
 }
 
 void DuckDBQueryHandler::SendRowDescription(

@@ -30,6 +30,10 @@ namespace sdb::connector {
 // Convert a SereneDB Velox type to DuckDB LogicalType.
 duckdb::LogicalType VeloxTypeToDuckDB(const velox::TypePtr& type);
 
+// Convert a DuckDB LogicalType to Velox TypePtr.
+// Temporary — will be removed when catalog stops using Velox types.
+velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type);
+
 class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
  public:
   SereneDBTableEntry(duckdb::Catalog& catalog,

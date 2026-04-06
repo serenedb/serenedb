@@ -37,9 +37,8 @@ class DuckDBQueryHandler {
     : _send{send_buffer} {}
 
   // Execute a SQL query via DuckDB and write results to PG wire buffer.
-  // Returns true if query was handled, false if it should fall through
-  // to the existing Velox path.
-  bool ExecuteQuery(std::string_view sql);
+  // Returns empty string on success, or error message on failure.
+  std::string ExecuteQuery(std::string_view sql);
 
  private:
   void SendRowDescription(const duckdb::QueryResult& result);

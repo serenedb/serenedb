@@ -81,6 +81,38 @@ duckdb::LogicalType VeloxTypeToDuckDB(const velox::TypePtr& type) {
   }
 }
 
+velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return velox::BOOLEAN();
+    case duckdb::LogicalTypeId::TINYINT:
+      return velox::TINYINT();
+    case duckdb::LogicalTypeId::SMALLINT:
+      return velox::SMALLINT();
+    case duckdb::LogicalTypeId::INTEGER:
+      return velox::INTEGER();
+    case duckdb::LogicalTypeId::BIGINT:
+      return velox::BIGINT();
+    case duckdb::LogicalTypeId::FLOAT:
+      return velox::REAL();
+    case duckdb::LogicalTypeId::DOUBLE:
+      return velox::DOUBLE();
+    case duckdb::LogicalTypeId::VARCHAR:
+      return velox::VARCHAR();
+    case duckdb::LogicalTypeId::BLOB:
+      return velox::VARBINARY();
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      return velox::TIMESTAMP();
+    case duckdb::LogicalTypeId::DATE:
+      return velox::DATE();
+    case duckdb::LogicalTypeId::HUGEINT:
+      return velox::HUGEINT();
+    default:
+      return velox::VARCHAR();
+  }
+}
+
 SereneDBTableEntry::SereneDBTableEntry(duckdb::Catalog& catalog,
                                        duckdb::SchemaCatalogEntry& schema,
                                        duckdb::CreateTableInfo& info,

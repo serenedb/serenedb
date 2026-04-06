@@ -115,10 +115,6 @@ constexpr std::array<char, 5> kCloseComplete{
   PQ_MSG_CLOSE_COMPLETE, 0x00, 0x00, 0x00, 0x04,
 };
 
-constexpr std::array<char, 5> kEmptyResult{
-  PQ_MSG_EMPTY_QUERY_RESPONSE, 0x00, 0x00, 0x00, 0x04,
-};
-
 constexpr std::array<char, 9> kAuthOk{
   PQ_MSG_AUTHENTICATION_REQUEST, 0x00, 0x00, 0x00, 0x8, 0x00, 0x00, 0x00, 0x00,
 };
@@ -619,46 +615,17 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
     return;
   }
 
-  // Try DuckDB path first for prototype
+  // Execute via DuckDB — no Velox fallback
   {
     DuckDBQueryHandler duckdb_handler{_send};
-    if (duckdb_handler.ExecuteQuery(query_string)) {
-      SDB_INFO("xxxxx", Logger::COMMUNICATION,
-               "DuckDB executed query: ", query_string);
+    auto error = duckdb_handler.ExecuteQuery(query_string);
+    if (error.empty()) {
       _success_packet = true;
       return;
     }
-    SDB_INFO("xxxxx", Logger::COMMUNICATION,
-             "DuckDB cannot execute query: ", query_string);
+    // Send PG error to client
+    SendError(error, ERRCODE_INTERNAL_ERROR);
   }
-
-  // Note that a simple Query message also destroys the unnamed portal.
-  _anonymous_portal.Reset(*this);
-  _current_query = query_string;
-  // Note that a simple Query message also destroys the unnamed statement.
-  _anonymous_statement.Reset();
-  _anonymous_statement = MakeStatement(query_string);
-  _current_query = _anonymous_statement.query_string->view();
-  if (!_anonymous_statement.tree.list) {
-    // no query
-    _send.Write(ToBuffer(kEmptyResult), false);
-    _success_packet = true;
-    return;
-  }
-  if (!_anonymous_statement.query &&
-      _anonymous_statement.NextRoot(_connection_ctx)) {
-    SendNotices();
-  }
-  if (!_anonymous_statement.query) {
-    // no query
-    _send.Write(ToBuffer(kEmptyResult), false);
-    _success_packet = true;
-    return;
-  }
-  _anonymous_portal = BindStatement(_anonymous_statement, {});
-  DescribeAnalyzedQuery(_anonymous_statement,
-                        _anonymous_portal.bind_info.output_formats, false);
-  ExecutePortal(_anonymous_portal);
 }
 
 SqlStatement PgSQLCommTaskBase::MakeStatement(std::string_view query_string) {

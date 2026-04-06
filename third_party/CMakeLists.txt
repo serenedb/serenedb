@@ -1043,33 +1043,34 @@ set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
 # Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
-set(EXTENSION_STATIC_BUILD FALSE CACHE BOOL "" FORCE)
+set(EXTENSION_STATIC_BUILD TRUE CACHE BOOL "" FORCE)
 set(ENABLE_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
 set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
+set(BUILD_EXTENSIONS "core_functions;parquet;tpch;tpcds;json" CACHE STRING "" FORCE)
 
 # DON'T CHANGE THIS sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-# Override install() to no-op within DuckDB subdirectory
+# Override install() to no-op within DuckDB suCMake Errobdirectory
 macro(install)
 endmacro()
 
 add_subdirectory(duckdb)
-
-# Restore install()
-macro(install)
-    _install(${ARGV})
-endmacro()
 
 target_include_directories(
     duckdb_static
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
+
 # Link extension objects that aren't automatically included in duckdb_static
 target_link_libraries(duckdb_static PUBLIC
     duckdb_generated_extension_loader
     core_functions_extension
+    parquet_extension
+    tpch_extension
+    tpcds_extension
+    json_extension
 )

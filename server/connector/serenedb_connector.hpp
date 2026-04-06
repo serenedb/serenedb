@@ -147,7 +147,7 @@ inline std::unique_ptr<SinkIndexWriter> CreateBackfillIndexWriter(
     snapshot->template GetObject<catalog::Index>(shard->GetIndexId());
   SDB_ASSERT(index);
 
-  SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+  SDB_ASSERT(shard->GetType() == catalog::ObjectType::InvertedIndexShard);
   auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
   auto& inverted_index = basics::downCast<const catalog::InvertedIndex>(*index);
   return std::make_unique<SearchSinkBackfillWriter>(
@@ -537,7 +537,7 @@ class IndexTable : public axiom::connector::Table {
       columns.push_back(std::make_unique<SereneDBColumn>(
         col->name(), col->type(), sdb_col->Id()));
     }
-    if (index.GetIndexType() == IndexType::Inverted) {
+    if (index.GetType() == catalog::ObjectType::InvertedIndex) {
       // Always add the score column so createColumnHandle can resolve it.
       // It is only included in the output type when a scorer is active.
       auto score_name =
@@ -580,12 +580,12 @@ class IndexTable : public axiom::connector::Table {
   }
 
   void SetScorer(std::shared_ptr<const irs::Scorer> scorer) noexcept {
-    SDB_ASSERT(_index.GetIndexType() == IndexType::Inverted);
+    SDB_ASSERT(_index.GetType() == catalog::ObjectType::InvertedIndex);
     _scorer = std::move(scorer);
   }
 
   const std::shared_ptr<const irs::Scorer>& GetScorerPtr() const noexcept {
-    SDB_ASSERT(_index.GetIndexType() == IndexType::Inverted);
+    SDB_ASSERT(_index.GetType() == catalog::ObjectType::InvertedIndex);
     return _scorer;
   }
 
@@ -1260,7 +1260,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               id2colinfo.emplace(col.id, &col);
             }
 
-            if (shard->GetType() == IndexType::Secondary) {
+            if (shard->GetType() == catalog::ObjectType::SecondaryIndexShard) {
               SDB_ASSERT(index);
 
               // Build SK column indices into the input RowVector
@@ -1298,7 +1298,8 @@ class SereneDBConnector final : public velox::connector::Connector {
                 });
             }
 
-            SDB_ASSERT(shard->GetType() == IndexType::Inverted);
+            SDB_ASSERT(shard->GetType() ==
+                       catalog::ObjectType::InvertedIndexShard);
             auto backfill_writer =
               CreateBackfillIndexWriter(cis->index_id, transaction);
             return std::make_unique<RocksDBIndexBackfillDataSink>(

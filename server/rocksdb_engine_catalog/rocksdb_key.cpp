@@ -38,27 +38,28 @@ using namespace rocksutils;
 
 ObjectId DefinitionKey::GetParentId() const {
   SDB_ASSERT(_key.size() ==
-             sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
+             sizeof(ObjectId) + sizeof(catalog::ObjectType) + sizeof(ObjectId));
   return ObjectId{rocksutils::Uint64FromPersistent(_key.data())};
 }
 
-RocksDBEntryType DefinitionKey::GetEntryType() const {
+catalog::ObjectType DefinitionKey::GetEntryType() const {
   SDB_ASSERT(_key.size() ==
-             sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
-  return static_cast<RocksDBEntryType>(_key.data()[sizeof(ObjectId)]);
+             sizeof(ObjectId) + sizeof(catalog::ObjectType) + sizeof(ObjectId));
+  return static_cast<catalog::ObjectType>(_key.data()[sizeof(ObjectId)]);
 }
 
 ObjectId DefinitionKey::GetObjectId() const {
   SDB_ASSERT(_key.size() ==
-             sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
+             sizeof(ObjectId) + sizeof(catalog::ObjectType) + sizeof(ObjectId));
   return ObjectId{rocksutils::Uint64FromPersistent(
-    _key.data() + sizeof(ObjectId) + sizeof(RocksDBEntryType))};
+    _key.data() + sizeof(ObjectId) + sizeof(catalog::ObjectType))};
 }
 
-std::string DefinitionKey::Create(ObjectId parent_id, RocksDBEntryType entry,
+std::string DefinitionKey::Create(ObjectId parent_id, catalog::ObjectType entry,
                                   ObjectId id) {
   std::string key;
-  key.reserve(sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
+  key.reserve(sizeof(ObjectId) + sizeof(catalog::ObjectType) +
+              sizeof(ObjectId));
   Uint64ToPersistent(key, parent_id.id());
   key.push_back(static_cast<char>(entry));
   Uint64ToPersistent(key, id.id());
@@ -79,7 +80,7 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
 }
 
 std::pair<std::string, std::string> DefinitionKey::CreateInterval(
-  ObjectId parent_id, RocksDBEntryType type) {
+  ObjectId parent_id, catalog::ObjectType type) {
   std::string start, end;
   Uint64ToPersistent(start, parent_id.id());
   start.push_back(static_cast<char>(type));
@@ -93,10 +94,11 @@ std::pair<std::string, std::string> DefinitionKey::CreateInterval(
 
 std::string SettingsKey::Create(RocksDBSettingsType settings_type) {
   std::string key;
-  key.reserve(sizeof(ObjectId) + sizeof(RocksDBEntryType) +
+  static constexpr char kSettingsMarker = '8';
+  key.reserve(sizeof(ObjectId) + sizeof(kSettingsMarker) +
               sizeof(RocksDBSettingsType));
   Uint64ToPersistent(key, id::kInstance.id());
-  key.push_back(static_cast<char>(RocksDBEntryType::SettingsValue));
+  key.push_back(kSettingsMarker);
   key.push_back(static_cast<char>(settings_type));
   return key;
 }

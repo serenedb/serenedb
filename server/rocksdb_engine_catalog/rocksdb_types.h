@@ -30,31 +30,6 @@
 namespace sdb {
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Used to keep track of current key type in RocksDBKey and RocksDBKeyBounds
-/// Should not be written to disk from 3.2 milestone 1 onwards
-////////////////////////////////////////////////////////////////////////////////
-// TODO(mbkkt) these values are random shit, fix it
-enum class RocksDBEntryType : char {
-  Placeholder = '\0',
-
-  SettingsValue = '8',  // TODO(mbkkt) remove this
-
-  Role = '-',
-  Database = '0',
-  Schema = '+',
-  Function = '_',
-  View = '>',
-  Table = '1',
-  Index = '?',
-  Tokenizer = '2',
-
-  Tombstone = '~',
-
-  TableShard = '@',
-  IndexShard = '!',
-};
-
-////////////////////////////////////////////////////////////////////////////////
 /// Used to for various metadata in the write-ahead-log
 /// @note for deprecated values please leave the value in the enum as a comment
 ////////////////////////////////////////////////////////////////////////////////

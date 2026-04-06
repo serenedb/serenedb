@@ -118,7 +118,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
                                        const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
-  : IndexShard{id, index.GetId(), IndexType::Inverted},
+  : IndexShard{id, index.GetId(), catalog::ObjectType::InvertedIndexShard},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
@@ -277,8 +277,8 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
   }
 }
 
-void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
-  vpack::WriteTuple(builder, _options.base);
+void InvertedIndexShard::WriteInternal(vpack::Builder& b) const {
+  vpack::WriteTuple(b, _options.base);
 }
 
 Snapshot InvertedIndexShard::GetSnapshot() const {

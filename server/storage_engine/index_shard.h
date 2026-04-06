@@ -32,22 +32,16 @@ struct IndexShardOptions {
 
 class IndexShard : public catalog::Object {
  public:
-  // Existed index shard
-  IndexShard(ObjectId id, ObjectId index_id, IndexType type);
-
-  // New index shard
-  IndexShard(ObjectId index_id, IndexType type);
+  IndexShard(ObjectId id, ObjectId index_id, catalog::ObjectType type);
+  IndexShard(ObjectId index_id, catalog::ObjectType type);
   virtual ~IndexShard() = default;
-
-  virtual void WriteInternal(vpack::Builder& builder) const = 0;
+  std::shared_ptr<Object> Clone() const final { return nullptr; }
 
   ObjectId GetId() const { return _id; }
   ObjectId GetIndexId() const { return _index_id; }
-  IndexType GetType() const { return _type; }
 
  protected:
   ObjectId _index_id;
-  IndexType _type;
 };
 
 }  // namespace sdb

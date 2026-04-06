@@ -44,6 +44,11 @@ on:
 permissions:
   statuses: write
   contents: write
+  actions: write
+
+concurrency:
+  group: build-manual-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-unit:

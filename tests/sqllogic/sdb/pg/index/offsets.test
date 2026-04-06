@@ -384,6 +384,25 @@ SELECT OFFSETS(body) FROM offsets_test;
 db error: ERROR: OFFSETS(body) requires an inverted index scan in the same sub-query
 
 
+# Extract a context window around the first search hit using byte offsets.
+# bo[1] and bo[2] are the 0-based start/end bytes of the first match; SUBSTRING
+# is 1-based, so the window start is GREATEST(1, bo[1] + 1 - window) which
+# simplifies to GREATEST(1, bo[1] - 3) for window=4.
+query
+SELECT id, SUBSTRING(body, GREATEST(1, bo[1] - 3), bo[2] - bo[1] + 8) AS context, bo
+FROM (
+  SELECT id, body, OFFSETS(body, 1) AS bo
+  FROM offsets_test_idx
+  WHERE PHRASE(body, 'fox')
+) sub
+ORDER BY id;
+----
+id	context	bo
+1	ick fox jum	{6,9}
+2	fox runs fa	{0,3}
+4	fox fox fox	{0,3}
+
+
 statement ok
 DROP TABLE offsets_test;
 

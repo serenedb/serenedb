@@ -23,10 +23,8 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <filesystem>
-#include <mutex>
 
 #include "basics/assert.h"
-#include "basics/string_utils.h"
 #include "catalog/identifiers/revision_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
@@ -44,6 +42,7 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
+
 namespace {
 
 inline constexpr std::string_view kBulkInsertDir = "bulk_insert";
@@ -57,25 +56,28 @@ struct SSTInsertColumnMeta {
 };
 
 struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
-  std::atomic<duckdb::idx_t> insert_count{0};
+  duckdb::idx_t insert_count = 0;
 
+  // SST writers — one per data column
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> writers;
   std::vector<SSTInsertColumnMeta> columns;
+  std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
   std::string sst_directory;
   ObjectId table_id;
-  std::string table_key;
+  std::string table_key;  // [ObjectId] prefix
 
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
-  // Index writers -- created once, reused per Sink() call
+  // Index writers — created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
 
-  // Reusable buffers
+  // Reusable buffers — allocated once, reused across Sink() calls
+  std::vector<std::string> row_keys;  // [ColumnId(reserved)][ObjectId][PK]
+  std::string value_buffer;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
 
-  std::mutex write_mutex;
   bool has_data = false;
   bool finalized = false;
 
@@ -116,8 +118,9 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
 
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
+  state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
 
-  // Build column metadata -- skip generated PK column
+  // Build column metadata — skip generated PK column
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
   for (const auto& col : columns) {
@@ -164,7 +167,7 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
     }
   }
 
-  // Create index writers once (needs transaction context)
+  // Create index writers once
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
@@ -186,50 +189,38 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  std::lock_guard lock(gstate.write_mutex);
   gstate.has_data = true;
 
-  constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+  // Build row keys with reserved ColumnId slot:
+  // Layout: [ColumnId(reserved)][ObjectId][PK bytes]
+  // Reuses gstate.row_keys capacity across Sink() calls.
+  duckdb_primary_key::CreateBatchWithColumnSlot(
+    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // Generate monotonic PKs for all rows (empty pk_columns = generated PK)
-  std::vector<std::string> row_keys;
-  duckdb_primary_key::CreateBatch(chunk, {}, row_keys);
-
-  // Write each column to its SST file
-  std::string key_buffer;
-  std::string value_buffer;
-
+  // Write each column to its SST file.
+  // Only overwrites ColumnId in-place per column — no string copy.
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
     const auto& meta = gstate.columns[col];
     auto& writer = *gstate.writers[col];
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      // Build key: [ObjectId][ColumnId][PK bytes]
-      key_buffer = gstate.table_key;
-      basics::StrResize(key_buffer, kTablePrefixSize);
-      key_utils::AppendColumnKey(key_buffer, meta.id);
-      key_buffer.append(row_keys[row]);
+      key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
 
-      // Serialize value
       auto slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
-                                        meta.duckdb_type, value_buffer);
+                                        meta.duckdb_type, gstate.value_buffer);
 
-      auto status = writer.Put(key_buffer, slice);
+      auto status = writer.Put(gstate.row_keys[row], slice);
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
       }
     }
   }
 
-  // Update indexes (secondary + search) via transaction path
-  // (secondary indexes have different key ordering, can't use SST)
+  // Update indexes via transaction path (different key ordering than SST)
   if (!gstate.index_writers.empty()) {
     for (auto& writer : gstate.index_writers) {
       writer->Init(num_rows, chunk);
     }
-
-    std::string idx_key_buffer;
-    std::string idx_value_buffer;
 
     for (const auto& meta : gstate.columns) {
       gstate.active_writers.clear();
@@ -245,16 +236,13 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
       }
 
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-        idx_key_buffer = gstate.table_key;
-        basics::StrResize(idx_key_buffer, sizeof(ObjectId));
-        key_utils::AppendColumnKey(idx_key_buffer, meta.id);
-        idx_key_buffer.append(row_keys[row]);
+        key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
 
         auto slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
-                                          meta.duckdb_type, idx_value_buffer);
+                                          meta.duckdb_type, gstate.value_buffer);
 
         for (auto* writer : gstate.active_writers) {
-          writer->Write({&slice, 1}, idx_key_buffer);
+          writer->Write({&slice, 1}, gstate.row_keys[row]);
         }
       }
     }
@@ -283,7 +271,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalSSTInsert::Finalize(
     return duckdb::SinkFinalizeType::READY;
   }
 
-  // Finish all SST writers and collect file paths
   std::vector<std::string> sst_files;
   sst_files.reserve(gstate.writers.size());
 
@@ -296,7 +283,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalSSTInsert::Finalize(
     sst_files.push_back(file_info.file_path);
   }
 
-  // Ingest SST files into RocksDB
   rocksdb::IngestExternalFileOptions ingest_options;
   ingest_options.move_files = true;
 
@@ -329,7 +315,7 @@ duckdb::SourceResultType SereneDBPhysicalSSTInsert::GetDataInternal(
 
   auto& gstate = sink_state->Cast<SSTInsertGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.insert_count.load()));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.insert_count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

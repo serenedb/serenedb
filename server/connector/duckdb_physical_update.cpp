@@ -45,7 +45,7 @@ struct UpdateColumnMeta {
 };
 
 struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
-  std::atomic<duckdb::idx_t> update_count{0};
+  duckdb::idx_t update_count = 0;
 
   ObjectId table_id;
   std::string table_key;
@@ -71,7 +71,6 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   // Reusable buffers
   std::vector<std::string> row_keys;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
-  std::string key_buffer;
   std::string value_buffer;
 };
 
@@ -241,21 +240,24 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   conn_ctx.AddRocksDBWrite();
   auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
-  constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+  // 1. Build row keys with reserved ColumnId slot
+  duckdb_primary_key::CreateBatchWithColumnSlot(
+    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // 1. Build PK bytes
-  duckdb_primary_key::CreateBatch(chunk, gstate.pk_columns, gstate.row_keys);
-
-  // 2. Delete old index entries -- old values are in the input chunk
-  //    (scan includes indexed columns via virtual columns)
+  // 2. Delete old index entries — old values are in the input chunk
   if (!gstate.delete_index_writers.empty()) {
     for (auto& writer : gstate.delete_index_writers) {
       writer->Init(num_rows, chunk);
     }
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      auto pk_bytes = std::string_view{
+        gstate.row_keys[row].data() + sizeof(catalog::Column::Id) +
+          sizeof(ObjectId),
+        gstate.row_keys[row].size() - sizeof(catalog::Column::Id) -
+          sizeof(ObjectId)};
       for (auto& writer : gstate.delete_index_writers) {
-        writer->DeleteRow(gstate.row_keys[row]);
+        writer->DeleteRow(pk_bytes);
       }
     }
 
@@ -264,18 +266,15 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     }
   }
 
-  // 3. Write updated columns to RocksDB
+  // 3. Write updated columns — only overwrites ColumnId in-place
   for (const auto& col : gstate.update_columns) {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      gstate.key_buffer = gstate.table_key;
-      basics::StrResize(gstate.key_buffer, kTablePrefixSize);
-      key_utils::AppendColumnKey(gstate.key_buffer, col.id);
-      gstate.key_buffer.append(gstate.row_keys[row]);
+      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
 
       auto slice = SerializeScalarValue(chunk.data[col.input_col_idx], row,
                                         col.duckdb_type, gstate.value_buffer);
 
-      auto status = txn->Put(gstate.cf, gstate.key_buffer, slice);
+      auto status = txn->Put(gstate.cf, gstate.row_keys[row], slice);
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB update failed: ", status.ToString());
       }
@@ -344,16 +343,13 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       }
 
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-        gstate.key_buffer = gstate.table_key;
-        basics::StrResize(gstate.key_buffer, kTablePrefixSize);
-        key_utils::AppendColumnKey(gstate.key_buffer, col_meta.id);
-        gstate.key_buffer.append(gstate.row_keys[row]);
+        key_utils::SetupColumnForKey(gstate.row_keys[row], col_meta.id);
 
         auto slice = SerializeScalarValue(
           chunk.data[src_col], row, col_meta.duckdb_type, gstate.value_buffer);
 
         for (auto* writer : gstate.active_writers) {
-          writer->Write({&slice, 1}, gstate.key_buffer);
+          writer->Write({&slice, 1}, gstate.row_keys[row]);
         }
       }
     }
@@ -391,7 +387,7 @@ duckdb::SourceResultType SereneDBPhysicalUpdate::GetDataInternal(
 
   auto& gstate = sink_state->Cast<SereneDBUpdateGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.update_count.load()));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.update_count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

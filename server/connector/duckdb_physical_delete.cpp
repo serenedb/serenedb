@@ -43,7 +43,7 @@ struct DeleteColumnMeta {
 };
 
 struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
-  std::atomic<duckdb::idx_t> delete_count{0};
+  duckdb::idx_t delete_count = 0;
 
   ObjectId table_id;
   std::string table_key;
@@ -58,7 +58,6 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   // Reusable buffers
   std::vector<std::string> row_keys;
-  std::string key_buffer;
 };
 
 struct SereneDBDeleteSourceState : public duckdb::GlobalSourceState {
@@ -216,23 +215,25 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
   conn_ctx.AddRocksDBWrite();
   auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
-  constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+  // 1. Build row keys with reserved ColumnId slot
+  duckdb_primary_key::CreateBatchWithColumnSlot(
+    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // 1. Build PK bytes
-  duckdb_primary_key::CreateBatch(chunk, gstate.pk_columns, gstate.row_keys);
-
-  // 2. Delete index entries -- old values are in the input chunk
-  //    (scan includes indexed columns via virtual columns)
+  // 2. Delete index entries — old values are in the input chunk
   if (!gstate.index_writers.empty()) {
-    // The input chunk contains indexed column values from the scan.
-    // Pass the whole chunk to Init so writers can read old values.
     for (auto& writer : gstate.index_writers) {
       writer->Init(num_rows, chunk);
     }
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      // DeleteRow needs PK bytes (without ColumnId prefix)
+      auto pk_bytes = std::string_view{
+        gstate.row_keys[row].data() + sizeof(catalog::Column::Id) +
+          sizeof(ObjectId),
+        gstate.row_keys[row].size() - sizeof(catalog::Column::Id) -
+          sizeof(ObjectId)};
       for (auto& writer : gstate.index_writers) {
-        writer->DeleteRow(gstate.row_keys[row]);
+        writer->DeleteRow(pk_bytes);
       }
     }
 
@@ -241,15 +242,12 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     }
   }
 
-  // 3. Delete all column cells from RocksDB
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    for (const auto& col : gstate.columns) {
-      gstate.key_buffer = gstate.table_key;
-      basics::StrResize(gstate.key_buffer, kTablePrefixSize);
-      key_utils::AppendColumnKey(gstate.key_buffer, col.id);
-      gstate.key_buffer.append(gstate.row_keys[row]);
+  // 3. Delete all column cells — only overwrites ColumnId in-place
+  for (const auto& col : gstate.columns) {
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
 
-      auto status = txn->Delete(gstate.cf, gstate.key_buffer);
+      auto status = txn->Delete(gstate.cf, gstate.row_keys[row]);
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ", status.ToString());
       }
@@ -284,7 +282,7 @@ duckdb::SourceResultType SereneDBPhysicalDelete::GetDataInternal(
 
   auto& gstate = sink_state->Cast<SereneDBDeleteGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.delete_count.load()));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.delete_count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

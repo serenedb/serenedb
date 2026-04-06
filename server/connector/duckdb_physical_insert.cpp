@@ -46,7 +46,7 @@ struct InsertColumnMeta {
 };
 
 struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
-  std::atomic<duckdb::idx_t> insert_count{0};
+  duckdb::idx_t insert_count = 0;
 
   // Table metadata (computed once)
   ObjectId table_id;
@@ -65,7 +65,6 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::vector<bool> skip_row;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
-  std::string key_buffer;
   std::string value_buffer;
 };
 
@@ -141,30 +140,25 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   conn_ctx.AddRocksDBWrite();
   auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
-  constexpr size_t kTablePrefixSize = sizeof(ObjectId);
-
-  // 1. Build PK keys for all rows
-  duckdb_primary_key::CreateBatch(chunk, gstate.pk_columns, gstate.row_keys);
+  // 1. Build row keys with reserved ColumnId slot:
+  // Layout: [ColumnId(reserved)][ObjectId][PK bytes]
+  duckdb_primary_key::CreateBatchWithColumnSlot(
+    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
   // 2. Conflict detection for explicit PKs
   gstate.skip_row.assign(num_rows, false);
   if (!gstate.has_generated_pk) {
     rocksdb::ReadOptions ro;
     ro.snapshot = txn->GetSnapshot();
-    std::string check_key;
     rocksdb::PinnableSlice check_value;
 
-    // Use first data column for existence check
     auto first_col_id = gstate.columns.front().id;
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      check_key = gstate.table_key;
-      basics::StrResize(check_key, kTablePrefixSize);
-      key_utils::AppendColumnKey(check_key, first_col_id);
-      check_key.append(gstate.row_keys[row]);
+      key_utils::SetupColumnForKey(gstate.row_keys[row], first_col_id);
 
       check_value.Reset();
-      auto s = txn->Get(ro, gstate.cf, check_key, &check_value);
+      auto s = txn->Get(ro, gstate.cf, gstate.row_keys[row], &check_value);
       if (s.ok()) {
         if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
           gstate.skip_row[row] = true;
@@ -188,12 +182,12 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
 
   // 4. Write each column: data + index writers
+  // Only overwrites ColumnId in-place per column — no string copy.
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
-      continue;  // Column not in input (default value)
+      continue;
     }
 
-    // Prepare index writers: filter to those interested in this column
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
       if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
@@ -206,30 +200,23 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
         continue;
       }
 
-      // Build full key: [ObjectId][ColumnId][PK]
-      gstate.key_buffer = gstate.table_key;
-      basics::StrResize(gstate.key_buffer, kTablePrefixSize);
-      key_utils::AppendColumnKey(gstate.key_buffer, col.id);
-      gstate.key_buffer.append(gstate.row_keys[row]);
+      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
 
-      // Serialize value
       auto slice = SerializeScalarValue(chunk.data[col.input_col_idx], row,
                                         col.duckdb_type, gstate.value_buffer);
 
-      // Write to RocksDB
-      auto status = txn->Put(gstate.cf, gstate.key_buffer, slice);
+      auto status = txn->Put(gstate.cf, gstate.row_keys[row], slice);
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
       }
 
-      // Write to index writers
       for (auto* writer : gstate.active_writers) {
-        writer->Write({&slice, 1}, gstate.key_buffer);
+        writer->Write({&slice, 1}, gstate.row_keys[row]);
       }
     }
   }
 
-  // 5. Finish index writers for this batch
+  // 5. Finish index writers
   for (auto& writer : gstate.index_writers) {
     writer->Finish();
   }
@@ -268,7 +255,7 @@ duckdb::SourceResultType SereneDBPhysicalInsert::GetDataInternal(
 
   auto& gstate = sink_state->Cast<SereneDBInsertGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.insert_count.load()));
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.insert_count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

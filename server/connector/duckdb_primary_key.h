@@ -106,4 +106,34 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
   }
 }
 
+// Build pre-formatted row keys with reserved ColumnId slot.
+// Layout: [ColumnId(8B reserved)][ObjectId(8B)][PK bytes]
+// Use key_utils::SetupColumnForKey() to fill in ColumnId per column — no copy.
+// This mirrors the Velox MakeColumnKey pattern.
+inline void CreateBatchWithColumnSlot(
+  const duckdb::DataChunk& chunk, std::span<const PKColumn> pk_columns,
+  std::string_view object_id, std::vector<std::string>& keys) {
+  SDB_ASSERT(object_id.size() == sizeof(ObjectId));
+  const auto num_rows = chunk.size();
+  keys.resize(num_rows);
+
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    auto& key = keys[row];
+    // Reserve [ColumnId][ObjectId] prefix, then append PK
+    basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
+    std::memcpy(key.data() + sizeof(catalog::Column::Id), object_id.data(),
+                sizeof(ObjectId));
+
+    if (pk_columns.empty()) {
+      CreateGenerated(key);
+    } else {
+      Create(chunk, pk_columns, row, key);
+    }
+
+    // Copy ObjectId to offset 0 — SetupColumnForKey will overwrite offset 8.
+    // Final layout: [ObjectId][ColumnId][PK] — matches RocksDB key format.
+    std::memcpy(key.data(), object_id.data(), sizeof(ObjectId));
+  }
+}
+
 }  // namespace sdb::connector::duckdb_primary_key

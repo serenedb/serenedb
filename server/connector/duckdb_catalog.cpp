@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_catalog.h"
 
+#include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
@@ -99,18 +100,55 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &planner.ResolveDefaultsProjection(op, *plan);
   }
 
-  // Use SST bulk insert when:
-  //   1. Has child plan (COPY FROM / INSERT...SELECT, not INSERT VALUES)
-  //   2. Generated PK (monotonic -> naturally sorted, no conflict possible)
-  //   3. No ON CONFLICT DO NOTHING/REPLACE (SST bypasses transaction)
+  // Use SST bulk insert for COPY FROM / INSERT...SELECT (has child plan).
+  // SST bypasses transactions — no conflict detection.
   bool use_sst =
-    plan != nullptr && sdb_table->PKColumns().empty() &&
+    plan != nullptr &&
     op.on_conflict_info.action_type == duckdb::OnConflictAction::THROW;
 
   if (use_sst) {
+    auto* sorted_plan = plan.get();
+
+    // For explicit PKs, add a Sort by PK columns before SST insert.
+    // SST requires keys in ascending order. Generated PKs are monotonic
+    // (no sort needed).
+    const auto& pk_col_ids = sdb_table->PKColumns();
+    if (!pk_col_ids.empty()) {
+      const auto& columns = sdb_table->Columns();
+      duckdb::vector<duckdb::BoundOrderByNode> orders;
+      duckdb::vector<duckdb::idx_t> projections;
+
+      // Sort by PK columns (ascending, nulls first)
+      for (auto pk_id : pk_col_ids) {
+        for (size_t i = 0; i < columns.size(); ++i) {
+          if (columns[i].id == pk_id) {
+            auto col_expr =
+              duckdb::make_uniq_base<duckdb::Expression,
+                                     duckdb::BoundReferenceExpression>(
+                VeloxTypeToDuckDB(columns[i].type), i);
+            orders.emplace_back(duckdb::OrderType::ASCENDING,
+                                duckdb::OrderByNullType::NULLS_FIRST,
+                                std::move(col_expr));
+            break;
+          }
+        }
+      }
+
+      // Project all input columns through the sort
+      for (duckdb::idx_t i = 0; i < plan->types.size(); ++i) {
+        projections.push_back(i);
+      }
+
+      auto& sort = planner.Make<duckdb::PhysicalOrder>(
+        plan->types, std::move(orders), std::move(projections),
+        op.estimated_cardinality, true);
+      sort.children.push_back(*plan);
+      sorted_plan = &sort;
+    }
+
     auto& insert = planner.Make<SereneDBPhysicalSSTInsert>(
       std::move(sdb_table), std::move(op.types), op.estimated_cardinality);
-    insert.children.push_back(*plan);
+    insert.children.push_back(*sorted_plan);
     return insert;
   }
 

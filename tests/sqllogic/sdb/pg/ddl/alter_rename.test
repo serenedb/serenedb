@@ -19,9 +19,8 @@ BEGIN ATOMIC
   SELECT * FROM pudge;
 END;
 
-onlyif serenedb
 statement ok
-CREATE INDEX deadinside ON pudge USING inverted(b);
+CREATE INDEX deadinside ON pudge(a);
 
 
 statement ok
@@ -100,37 +99,30 @@ ALTER TABLE pudge_view RENAME TO pudge_view_tmp;
 statement ok
 ALTER TABLE pudge_view_tmp RENAME TO pudge_view;
 
-onlyif serenedb
 statement ok
 ALTER TABLE deadinside RENAME TO deadinside_tmp;
 
-onlyif serenedb
 statement ok
 ALTER TABLE deadinside_tmp RENAME TO deadinside;
 
 
-onlyif serenedb
 statement ok
 ALTER INDEX deadinside RENAME TO deadinside_renamed;
 
 
-onlyif serenedb
 statement error
 DROP INDEX deadinside;
 ----
 db error: ERROR: index "deadinside" does not exist
 
 
-onlyif serenedb
 statement ok
 ALTER INDEX deadinside_renamed RENAME TO deadinside;
 
 
-onlyif serenedb
 statement ok
 ALTER INDEX pudge RENAME TO pudge_tmp;
 
-onlyif serenedb
 statement ok
 ALTER INDEX pudge_tmp RENAME TO pudge;
 
@@ -165,7 +157,6 @@ ALTER VIEW pudge RENAME TO something;
 db error: ERROR: "pudge" is not a view
 
 
-onlyif serenedb
 statement error
 ALTER VIEW deadinside RENAME TO something;
 ----
@@ -208,7 +199,6 @@ ALTER VIEW pudge_view RENAME TO pudge;
 db error: ERROR: relation "pudge" already exists
 
 
-onlyif serenedb
 statement error
 ALTER INDEX deadinside RENAME TO pudge;
 ----
@@ -341,7 +331,6 @@ DROP FUNCTION clickclack;
 statement ok
 DROP VIEW pudge_view;
 
-onlyif serenedb
 statement ok
 DROP INDEX deadinside;
 

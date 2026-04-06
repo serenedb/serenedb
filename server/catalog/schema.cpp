@@ -38,12 +38,11 @@ std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
 }
 
 void Schema::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    b.add("owner_id", GetOwnerId().id());
-    b.add("id", GetId().id());
-  });
-  b.close();
+  vpack::WriteTuple(b, SchemaOptions{
+                         .owner_id = GetOwnerId(),
+                         .id = GetId(),
+                         .name = _name,
+                       });
 }
 
 std::shared_ptr<Object> Schema::Clone() const {

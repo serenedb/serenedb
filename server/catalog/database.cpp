@@ -52,12 +52,12 @@ std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
 }
 
 void Database::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    b.add("replicationFactor", _replication_factor);
-    b.add("writeConcern", _write_concern);
-  });
-  b.close();
+  const DatabaseOptions options{
+    .name = _name,
+    .replicationFactor = _replication_factor,
+    .writeConcern = _write_concern,
+  };
+  vpack::WriteTuple(b, options);
 }
 
 std::shared_ptr<Object> Database::Clone() const {

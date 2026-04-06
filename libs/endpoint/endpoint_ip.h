@@ -39,7 +39,7 @@ class EndpointIp : public Endpoint {
  public:
   ~EndpointIp() override;
 
-  static constexpr uint16_t kDefaultPortHttp{8529};
+  static constexpr uint16_t kDefaultPortHttp{7890};
   static constexpr uint16_t kDefaultPortPgSql{5432};
   static constexpr std::string_view kDefaultHost{"127.0.0.1"};
 

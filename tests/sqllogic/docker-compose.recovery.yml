@@ -1,18 +1,18 @@
 services:
   serenedb-recovery:
-    image: "$BUILD_IMAGE"
+    image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     security_opt:
       - seccomp:unconfined
     volumes:
-      - "$WORKSPACE:/serenedb"
-      - "$WORKSPACE/logs:/var/log/serenedb"
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/logs:/var/log/serenedb"
       - type: tmpfs
         target: /serenedb_datadir
         tmpfs:
           size: 16G
     env_file:
-      - "$WORKSPACE/docker.env"
+      - "${WORKSPACE}/docker.env"
     environment:
       - BUILD_DIR
       - HOME=/serenedb
@@ -26,9 +26,9 @@ services:
     group_add:
       - "${DOCKER_SOCK_GID:-999}"
     volumes:
-      - "$SQLLOGIC_DIR:/sqllogic"
-      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "$WORKSPACE/logs:/logs"
+      - "${SQLLOGIC_DIR}:/sqllogic"
+      - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "${WORKSPACE}/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     depends_on:
       - serenedb-recovery

@@ -34,19 +34,19 @@ repos:
         exclude: \.test$
 
   - repo: https://github.com/BlankSpruce/gersemi
-    rev: 0.22.3
+    rev: 0.26.1
     hooks:
       - id: gersemi
         name: CMake formatter
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v21.1.2
+    rev: v21.1.8
     hooks:
       - id: clang-format
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
 
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.12.0-2
+    rev: v3.13.0-1
     hooks:
       - id: shfmt
 
@@ -66,7 +66,7 @@ repos:
         name: Check LLM Unicode symbols
         language: python
         entry: python3 scripts/check_llm_symbols.py
-        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|py|sh|cmake|md|txt)$
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|py|sh|bash|cmake|md|txt|yml|yaml)$
       - id: check-no-anon-namespace-in-headers
         name: Check no anonymous namespace in headers
         language: python
@@ -77,3 +77,13 @@ repos:
         language: python
         entry: python3 scripts/check_no_fault_injection_outside_recovery.py
         files: \.test
+      - id: check-snake-case-filenames
+        name: Check C++ filenames are snake_case
+        language: python
+        entry: python3 scripts/check_snake_case_filenames.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: check-cpp-extensions
+        name: Check C++ file extensions (.hpp/.tpp/.cpp)
+        language: python
+        entry: python3 scripts/check_cpp_extensions.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|c\+\+|h\+\+)$

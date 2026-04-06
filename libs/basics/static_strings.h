@@ -32,9 +32,8 @@ class StaticStrings {
  public:
   static constexpr std::string_view kLgplNotice =
     "This executable uses the GNU C library (glibc), which is licensed under "
-    "the GNU Lesser General Public License (LGPL), see "
-    "https://www.gnu.org/copyleft/lesser.html and "
-    "https://www.gnu.org/licenses/gpl.html";
+    "the GNU Lesser General Public License v2.1 (LGPL-2.1), see "
+    "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html";
 
   static constexpr std::string_view kRocksDbEngineRoot = "engine_rocksdb";
   static const std::string kSereneDBConnector;

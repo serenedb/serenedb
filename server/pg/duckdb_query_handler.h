@@ -63,8 +63,6 @@ class DuckDBQueryHandler {
   void SerializeValue(const duckdb::Value& value,
                       const duckdb::LogicalType& type);
 
-  static std::string_view StatementTypeToTag(duckdb::StatementType type);
-
   message::Buffer& _send;
   std::shared_ptr<ConnectionContext> _connection_ctx;
   duckdb::Connection& _duckdb_conn;

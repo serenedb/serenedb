@@ -585,10 +585,15 @@ void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
     absl::big_endian::Store16(prefix_data + 5, 0);  // 0 params
     _send.Commit(false);
 
-    // Row description
+    // Row description — skip for DML/DDL (they don't return data rows)
+    auto return_type =
+      statement.duckdb_prepared->GetStatementProperties().return_type;
+    bool is_dml =
+      (return_type != duckdb::StatementReturnType::QUERY_RESULT);
+
     auto& types = statement.duckdb_prepared->GetTypes();
     auto& names = statement.duckdb_prepared->GetNames();
-    if (types.empty()) {
+    if (types.empty() || is_dml) {
       _send.Write(ToBuffer(kNoData), true);
       return;
     }
@@ -768,35 +773,41 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
 
   if (portal->stmt->duckdb_prepared) {
     // DuckDB path: execute prepared statement directly
-    auto result = portal->stmt->duckdb_prepared->Execute();
+    duckdb::vector<duckdb::Value> empty_params;
+    auto result = portal->stmt->duckdb_prepared->Execute(empty_params);
     if (result->HasError()) {
       return SendError(result->GetError(), ERRCODE_INTERNAL_ERROR);
     }
 
     auto stmt_type = result->statement_type;
+    auto return_type =
+      portal->stmt->duckdb_prepared->GetStatementProperties().return_type;
     const auto& types = result->types;
     const auto num_cols = static_cast<uint16_t>(types.size());
 
-    bool is_dml = (stmt_type == duckdb::StatementType::INSERT_STATEMENT ||
-                   stmt_type == duckdb::StatementType::UPDATE_STATEMENT ||
-                   stmt_type == duckdb::StatementType::DELETE_STATEMENT);
+    bool is_dml =
+      (return_type == duckdb::StatementReturnType::CHANGED_ROWS);
 
     uint64_t total_rows = 0;
 
     if (is_dml) {
       // DML: extract affected row count from result, don't send DataRows
+      int chunk_count = 0;
       while (true) {
         auto chunk = result->Fetch();
         if (!chunk || chunk->size() == 0) break;
-        // The result chunk has a single BIGINT column with the count
+        chunk_count++;
         if (chunk->ColumnCount() > 0 && chunk->size() > 0) {
           chunk->Flatten();
           for (duckdb::idx_t i = 0; i < chunk->size(); ++i) {
-            total_rows += duckdb::FlatVector::GetData<int64_t>(
-              chunk->data[0])[i];
+            auto val = duckdb::FlatVector::GetData<int64_t>(chunk->data[0])[i];
+            std::cerr << "DML chunk " << chunk_count << " row " << i
+                      << " count=" << val << std::endl;
+            total_rows += val;
           }
         }
       }
+      std::cerr << "DML total_rows=" << total_rows << std::endl;
     } else if (num_cols > 0) {
       // SELECT/etc: send DataRows with proper serialization
       const auto& formats = portal->bind_info.output_formats;
@@ -835,8 +846,7 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
       }
     }
 
-    DuckDBQueryHandler handler{_send, _connection_ctx, *_duckdb_conn};
-    handler.SendCommandComplete(stmt_type, total_rows);
+    SendDuckDBCommandComplete(stmt_type, total_rows);
     _success_packet = true;
     return;
   }
@@ -1333,6 +1343,78 @@ void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree, uint64_t rows,
   auto* root = castNode(Node, tree.GetRoot());
 
   const auto command_tag = GetCommandTag(root, query);
+  const auto uncommitted_size = _send.GetUncommittedSize();
+  auto* prefix_data = _send.GetContiguousData(5);
+  {
+    Size taglen = 0;
+    const char* tagname = GetCommandTagNameAndLen(command_tag, &taglen);
+    _send.WriteUncommitted({tagname, taglen});
+  }
+  if (command_tag_display_rowcount(command_tag)) {
+    _send.WriteContiguousData(3 + basics::kIntStrMaxLen, [&](auto* data) {
+      char* const buf = reinterpret_cast<char*>(data);
+      char* ptr = buf;
+      if (command_tag == CMDTAG_INSERT) {
+        *ptr++ = ' ';
+        *ptr++ = '0';
+      }
+      *ptr++ = ' ';
+      ptr = absl::numbers_internal::FastIntToBuffer(rows, ptr);
+      return static_cast<size_t>(ptr - buf);
+    });
+  }
+  _send.WriteUncommitted({"\0", 1});
+  prefix_data[0] = PQ_MSG_COMMAND_COMPLETE;
+  absl::big_endian::Store32(prefix_data + 1,
+                            _send.GetUncommittedSize() - uncommitted_size - 1);
+  _send.Commit(false);
+}
+
+void PgSQLCommTaskBase::SendDuckDBCommandComplete(
+  duckdb::StatementType stmt_type, uint64_t rows) {
+  // Map DuckDB statement type to PG CommandTag
+  CommandTag command_tag;
+  switch (stmt_type) {
+    case duckdb::StatementType::SELECT_STATEMENT:
+      command_tag = CMDTAG_SELECT;
+      break;
+    case duckdb::StatementType::INSERT_STATEMENT:
+      command_tag = CMDTAG_INSERT;
+      break;
+    case duckdb::StatementType::UPDATE_STATEMENT:
+      command_tag = CMDTAG_UPDATE;
+      break;
+    case duckdb::StatementType::DELETE_STATEMENT:
+      command_tag = CMDTAG_DELETE;
+      break;
+    case duckdb::StatementType::CREATE_STATEMENT:
+      command_tag = CMDTAG_CREATE_TABLE;
+      break;
+    case duckdb::StatementType::DROP_STATEMENT:
+      command_tag = CMDTAG_DROP_TABLE;
+      break;
+    case duckdb::StatementType::ALTER_STATEMENT:
+      command_tag = CMDTAG_ALTER_TABLE;
+      break;
+    case duckdb::StatementType::COPY_STATEMENT:
+      command_tag = CMDTAG_COPY;
+      break;
+    case duckdb::StatementType::SET_STATEMENT:
+    case duckdb::StatementType::VARIABLE_SET_STATEMENT:
+      command_tag = CMDTAG_SET;
+      break;
+    case duckdb::StatementType::EXPLAIN_STATEMENT:
+      command_tag = CMDTAG_EXPLAIN;
+      break;
+    case duckdb::StatementType::TRANSACTION_STATEMENT:
+      command_tag = CMDTAG_COMMIT;
+      break;
+    default:
+      command_tag = CMDTAG_SELECT;
+      break;
+  }
+
+  // Same logic as the original SendCommandComplete
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
   {

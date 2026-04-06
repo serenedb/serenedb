@@ -111,38 +111,6 @@ std::string DuckDBQueryHandler::ExecuteSingleStatement(
   return {};
 }
 
-std::string_view DuckDBQueryHandler::StatementTypeToTag(
-  duckdb::StatementType type) {
-  switch (type) {
-    case duckdb::StatementType::SELECT_STATEMENT:
-      return "SELECT";
-    case duckdb::StatementType::INSERT_STATEMENT:
-      return "INSERT 0";
-    case duckdb::StatementType::UPDATE_STATEMENT:
-      return "UPDATE";
-    case duckdb::StatementType::DELETE_STATEMENT:
-      return "DELETE";
-    case duckdb::StatementType::CREATE_STATEMENT:
-      return "CREATE TABLE";
-    case duckdb::StatementType::DROP_STATEMENT:
-      return "DROP TABLE";
-    case duckdb::StatementType::ALTER_STATEMENT:
-      return "ALTER TABLE";
-    case duckdb::StatementType::TRANSACTION_STATEMENT:
-      return "TRANSACTION";
-    case duckdb::StatementType::COPY_STATEMENT:
-      return "COPY";
-    case duckdb::StatementType::EXPLAIN_STATEMENT:
-      return "EXPLAIN";
-    case duckdb::StatementType::VACUUM_STATEMENT:
-      return "VACUUM";
-    case duckdb::StatementType::SET_STATEMENT:
-    case duckdb::StatementType::VARIABLE_SET_STATEMENT:
-      return "SET";
-    default:
-      return "OK";
-  }
-}
 
 void DuckDBQueryHandler::SendRowDescription(
   const duckdb::QueryResult& result) {
@@ -199,16 +167,25 @@ void DuckDBQueryHandler::SendDataRows(
 
 void DuckDBQueryHandler::SendCommandComplete(duckdb::StatementType type,
                                              uint64_t rows) {
+  // DuckDB's StatementTypeToString returns the PG command tag
+  auto tag = duckdb::StatementTypeToString(type);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
-
-  auto tag = StatementTypeToTag(type);
-  _send.WriteUncommitted(tag);
-  _send.WriteUncommitted({" ", 1});
-  auto rows_str = std::to_string(rows);
-  _send.WriteUncommitted({rows_str.data(), rows_str.size()});
+  _send.WriteUncommitted({tag.data(), tag.size()});
+  // Add row count for DML/SELECT
+  if (type == duckdb::StatementType::INSERT_STATEMENT) {
+    _send.WriteUncommitted({" 0 ", 3});
+    auto rows_str = std::to_string(rows);
+    _send.WriteUncommitted({rows_str.data(), rows_str.size()});
+  } else if (type == duckdb::StatementType::SELECT_STATEMENT ||
+             type == duckdb::StatementType::UPDATE_STATEMENT ||
+             type == duckdb::StatementType::DELETE_STATEMENT ||
+             type == duckdb::StatementType::COPY_STATEMENT) {
+    _send.WriteUncommitted({" ", 1});
+    auto rows_str = std::to_string(rows);
+    _send.WriteUncommitted({rows_str.data(), rows_str.size()});
+  }
   _send.WriteUncommitted({"\0", 1});
-
   prefix_data[0] = PQ_MSG_COMMAND_COMPLETE;
   absl::big_endian::Store32(prefix_data + 1,
                             _send.GetUncommittedSize() - uncommitted_size - 1);

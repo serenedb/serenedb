@@ -170,6 +170,8 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void SendBatch(const velox::RowVectorPtr& batch);
   void SendCommandComplete(const SqlTree& tree, uint64_t rows,
                            const query::QueryPtr& query);
+  void SendDuckDBCommandComplete(duckdb::StatementType stmt_type,
+                                 uint64_t rows);
 
   template<typename Func>
   void SafeCall(Func&& func) noexcept;

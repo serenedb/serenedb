@@ -85,7 +85,9 @@ std::string DuckDBQueryHandler::ExecuteSingleStatement(
       if (!chunk || chunk->size() == 0) break;
       if (chunk->ColumnCount() > 0 && chunk->size() > 0) {
         chunk->Flatten();
-        affected += duckdb::FlatVector::GetData<int64_t>(chunk->data[0])[0];
+        for (duckdb::idx_t i = 0; i < chunk->size(); ++i) {
+          affected += duckdb::FlatVector::GetData<int64_t>(chunk->data[0])[i];
+        }
       }
     }
     SendCommandComplete(stmt_type, affected);

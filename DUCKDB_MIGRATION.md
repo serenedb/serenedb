@@ -181,8 +181,10 @@ psql -h localhost -p 6162 -d postgres -U postgres
 
 ## Testing
 
+**Important: always remove data dir before running tests**
+
 ```bash
-# Start server
+# Start server (always clean data dir first)
 rm -rf build_data
 ./build/bin/serened ./build_data --server.endpoint pgsql+tcp://0.0.0.0:6161
 

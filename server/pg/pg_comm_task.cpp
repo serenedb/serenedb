@@ -790,8 +790,11 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
         if (!chunk || chunk->size() == 0) break;
         // The result chunk has a single BIGINT column with the count
         if (chunk->ColumnCount() > 0 && chunk->size() > 0) {
-          total_rows += duckdb::FlatVector::GetData<int64_t>(
-            chunk->data[0])[0];
+          chunk->Flatten();
+          for (duckdb::idx_t i = 0; i < chunk->size(); ++i) {
+            total_rows += duckdb::FlatVector::GetData<int64_t>(
+              chunk->data[0])[i];
+          }
         }
       }
     } else if (num_cols > 0) {

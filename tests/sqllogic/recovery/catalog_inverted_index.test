@@ -1,0 +1,42 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+CREATE TABLE pudge(id INTEGER, val TEXT);
+
+onlyif serenedb
+statement ok
+INSERT INTO pudge VALUES (1, 'clickclack babsky'), (2, 'deadinside kostya'), (3, 'vedernikoff');
+
+onlyif serenedb
+statement ok
+CREATE INDEX deadinside ON pudge USING inverted(val);
+
+onlyif serenedb
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, val FROM pudge ORDER BY id;
+----
+id	val
+1	clickclack babsky
+2	deadinside kostya
+3	vedernikoff
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP INDEX deadinside;
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP TABLE pudge;

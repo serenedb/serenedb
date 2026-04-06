@@ -72,10 +72,9 @@
 #include "basics/string_utils.h"
 #include "catalog/function.h"
 #include "catalog/object.h"
-#include "catalog/sql_function_impl.h"
-#include "catalog/sql_query_view.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/view.h"
 #include "catalog/virtual_table.h"
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
@@ -208,7 +207,7 @@ constexpr containers::TrivialBiMap kSpecialForms = [](auto selector) {
 std::string GetUnsupportedObjectTypeDetail(catalog::ObjectType type) {
   return absl::StrCat(
     "This operation is not supported for ",
-    basics::string_utils::GetPluralFormLowerCase(magic_enum::enum_name(type)),
+    basics::string_utils::GetPluralFormLowerCase(pg::ToPgObjectTypeName(type)),
     ".");
 }
 
@@ -761,11 +760,13 @@ class SqlAnalyzer {
   State ProcessRangeFunction(State* parent, const RangeFunction* node);
   void RefreshExprForScorer(std::vector<std::string>& names,
                             std::vector<lp::ExprPtr>& exprs);
+  void RefreshExprsForOffsets(std::vector<std::string>& names,
+                              std::vector<lp::ExprPtr>& exprs);
 
   std::optional<State> MaybeCTE(State* parent, std::string_view name,
                                 const RangeVar* node);
   State ProcessView(State* parent, std::string_view view_name,
-                    const SqlQueryView& view, const RangeVar* node);
+                    const catalog::PgSqlView& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
@@ -929,11 +930,11 @@ class SqlAnalyzer {
                                 lp::ExprPtr expr);
 
   lp::AggregateExprPtr MaybeAggregateFuncCall(
-    State& state, const catalog::Function& logical_function,
+    State& state, const catalog::PgSqlFunction& logical_function,
     const FuncCall& func_call);
 
   lp::WindowExprPtr MaybeWindowFuncCall(
-    State& state, const catalog::Function& logical_function,
+    State& state, const catalog::PgSqlFunction& logical_function,
     const FuncCall& func_call);
 
   lp::ExprPtr ProcessColumnRef(State& state, const ColumnRef& expr);
@@ -976,17 +977,17 @@ class SqlAnalyzer {
   // it will be able to use in axiom) to return multiple columns as a single
   // expression for ProcessFuncCall
   State ResolveSQLFunctionAndInferArgsCommonType(
-    const catalog::Function& logical_function, std::vector<lp::ExprPtr> args,
-    int location);
+    const catalog::PgSqlFunction& logical_function,
+    std::vector<lp::ExprPtr> args, int location);
 
   void ProcessFunctionBody(State& state,
                            const State::FuncParamToExpr& func_params,
                            const Node& function_body,
                            const catalog::FunctionSignature& signature);
 
-  lp::ExprPtr InlineSQLFunctionExpr(State& state,
-                                    const catalog::Function& logical_function,
-                                    const FuncCall& expr);
+  lp::ExprPtr InlineSQLFunctionExpr(
+    State& state, const catalog::PgSqlFunction& logical_function,
+    const FuncCall& expr);
 
   lp::ExprPtr MakeCast(velox::TypePtr to, lp::ExprPtr from, int location = -1) {
     if (auto it = _param_to_idx.find(from.get()); it != _param_to_idx.end()) {
@@ -1230,7 +1231,11 @@ class SqlAnalyzer {
   CopyMessagesQueue* _copy_queue;
   std::shared_ptr<const irs::Scorer> _scorer_for_select;
   lp::ExprPtr _expr_for_scorer;
-  std::vector<std::unique_ptr<ProgressReporterBase>> _progress_reporters;
+  // Field requests for which OFFSETS() was requested in the current SELECT.
+  std::vector<pg::Objects::OffsetsFieldInfo> _offsets_fields_for_select;
+  // Maps catalog field name -> current virtual offsets column expr.
+  containers::FlatHashMap<std::string, lp::ExprPtr> _exprs_for_offsets;
+  std::vector<std::unique_ptr<pg::ProgressReporterBase>> _progress_reporters;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1374,6 +1379,7 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   }
 
   RefreshExprForScorer(names, exprs);
+  RefreshExprsForOffsets(names, exprs);
 
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
@@ -1395,9 +1401,14 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt,
   auto scorer_for_select =
     std::exchange(_scorer_for_select, _objects.GetScorer(&stmt));
   auto expr_for_scorer = std::exchange(_expr_for_scorer, nullptr);
+  auto offsets_fields_for_select =
+    std::exchange(_offsets_fields_for_select, _objects.GetOffsetsFields(&stmt));
+  auto exprs_for_offsets = std::exchange(_exprs_for_offsets, {});
   irs::Finally end = [&] noexcept {
     _scorer_for_select = std::move(scorer_for_select);
     _expr_for_scorer = std::move(expr_for_scorer);
+    _offsets_fields_for_select = std::move(offsets_fields_for_select);
+    _exprs_for_offsets = std::move(exprs_for_offsets);
   };
 
   ProcessWithClause(state, stmt.withClause);
@@ -1649,7 +1660,7 @@ void SqlAnalyzer::AddIndexColumns(State& state, const Node& stmt,
 
   const auto& id2column = table.IdToColumn();
   for (auto& index : object.Indexes()) {
-    if (index->GetIndexType() != IndexType::Secondary) {
+    if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
       continue;
     }
 
@@ -1742,7 +1753,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot insert into view \"", table_name, "\""),
@@ -1841,7 +1852,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
   const std::string_view table_name = relation.relname;
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot update view \"", table_name, "\""),
@@ -1949,7 +1960,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
   const std::string_view table_name = relation.relname;
-  if (logical_object.GetType() == catalog::ObjectType::View) {
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("cannot delete from view \"", table_name, "\""),
@@ -2296,7 +2307,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
     SDB_ASSERT(object.object);
-    if (object.object->GetType() == catalog::ObjectType::View) {
+    if (object.object->GetType() == catalog::ObjectType::PgSqlView) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("cannot copy to view \"", relname, "\""),
@@ -2476,7 +2487,7 @@ void SqlAnalyzer::ProcessCallStmt(State& state, const CallStmt& stmt) {
   auto args = ProcessExprListImpl(state, func_call.args);
 
   auto& logical_function =
-    basics::downCast<catalog::Function>(*function->object);
+    basics::downCast<catalog::PgSqlFunction>(*function->object);
   const auto language = logical_function.Options().language;
   if (language != catalog::FunctionLanguage::SQL) {
     ErrorUnsupportedLanguage(language, name, args, ExprLocation(&stmt));
@@ -2827,14 +2838,16 @@ void SqlAnalyzer::ProcessIndexStmt(State& state, const IndexStmt& stmt) {
   FillColumnsInfo(table_state, pk, table_type, column_names, column_exprs);
 
   std::string_view access_method = stmt.accessMethod;
-  auto index_type = magic_enum::enum_cast<IndexType>(
-                      access_method, magic_enum::case_insensitive)
-                      .value_or(IndexType::Unknown);
-  // "btree" is the PostgreSQL default when no USING clause is specified.
-  if (index_type == IndexType::Unknown && access_method == "btree") {
-    index_type = IndexType::Secondary;
-  }
-  const bool is_secondary = (index_type == IndexType::Secondary);
+  auto index_type = [&] {
+    if (access_method == "btree" || access_method == "secondary") {
+      return catalog::ObjectType::SecondaryIndex;
+    }
+    if (access_method == "inverted") {
+      return catalog::ObjectType::InvertedIndex;
+    }
+    return catalog::ObjectType::Invalid;
+  }();
+  const bool is_secondary = (index_type == catalog::ObjectType::SecondaryIndex);
 
   // SST table writer requires all columns to be sorted by.
   // So we put sorting operator as we do it for COPY
@@ -3010,7 +3023,9 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node,
     case T_CreatedbStmt:
     case T_DropdbStmt:
     case T_CreateSchemaStmt:
-    case T_DropStmt: {
+    case T_DropStmt:
+    case T_RenameStmt:
+    case T_AlterTableStmt: {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
@@ -3116,6 +3131,7 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
   }
 
   RefreshExprForScorer(names, exprs);
+  RefreshExprsForOffsets(names, exprs);
 
   ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
@@ -3445,7 +3461,7 @@ TargetList SqlAnalyzer::ProcessTargetList(State& state, const List* tlist) {
 }
 
 lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
-  State& state, const catalog::Function& logical_function,
+  State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& func_call) {
   if (!logical_function.Options().IsAggregate() || func_call.over) {
     return nullptr;
@@ -3547,7 +3563,7 @@ SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(
       return;
     }
     const auto& logical_function =
-      basics::downCast<catalog::Function>(*func->object);
+      basics::downCast<catalog::PgSqlFunction>(*func->object);
     const auto& aggr_expr =
       MaybeAggregateFuncCall(state, logical_function, func_call);
     if (!aggr_expr) {
@@ -3591,7 +3607,7 @@ SqlAnalyzer::CollectedWindows SqlAnalyzer::CollectTargetListWindowFunctions(
       return;
     }
     const auto& logical_function =
-      basics::downCast<catalog::Function>(*func->object);
+      basics::downCast<catalog::PgSqlFunction>(*func->object);
     const auto& window_expr =
       MaybeWindowFuncCall(state, logical_function, func_call);
     if (!window_expr) {
@@ -3911,12 +3927,14 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
   auto l_query_type = ProcessStmt(l_state, *castNode(Node, stmt.larg));
   SDB_ASSERT(l_query_type == SqlCommandType::Select);
   auto l_expr_for_scorer = std::move(_expr_for_scorer);
+  auto l_exprs_for_offsets = std::move(_exprs_for_offsets);
 
   auto r_state = state.MakeChild();
   auto r_query_type = ProcessStmt(r_state, *castNode(Node, stmt.rarg));
   SDB_ASSERT(r_query_type == SqlCommandType::Select);
 
   _expr_for_scorer = std::move(l_expr_for_scorer);
+  _exprs_for_offsets = std::move(l_exprs_for_offsets);
 
   const auto [set_operation_type, set_operation_name] =
     [&] -> std::pair<lp::SetOperation, std::string_view> {
@@ -4015,13 +4033,13 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
 }
 
 State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
-                               const SqlQueryView& view, const RangeVar* node) {
-  auto view_state = view.GetState();
-  SDB_ASSERT(view_state->stmt);
-  SDB_ASSERT(view_state->stmt->stmt);
+                               const catalog::PgSqlView& view,
+                               const RangeVar* node) {
+  SDB_ASSERT(view.GetStatement());
+  SDB_ASSERT(view.GetStatement()->stmt);
 
   auto state = parent->MakeChild();
-  auto subquery_type = ProcessStmt(state, *view_state->stmt->stmt);
+  auto subquery_type = ProcessStmt(state, *view.GetStatement()->stmt);
   SDB_ASSERT(subquery_type == SqlCommandType::Select);
   SDB_ASSERT(!state.resolver.HasTables());
   // ^ is supposed to be cleared in the project target list
@@ -4089,13 +4107,23 @@ State SqlAnalyzer::ProcessIndex(State* parent,
     SDB_ASSERT(dynamic_cast<connector::IndexTable*>(object.table.get()));
   }
 
-  if (index.GetIndexType() == IndexType::Inverted) {
+  if (index.GetType() == catalog::ObjectType::InvertedIndex) {
     SDB_ASSERT(!table.Columns().empty());
 
     if (_expr_for_scorer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("Only one inverted index scan can produce a score per query"));
+        ERR_MSG(
+          "Only one inverted index scan can produce a score per sub-query"));
+    }
+
+    // TODO(Dronplane): looks like this restriction could be lifted if we make
+    // _exprs_for_offsets kind of map by index_id->offsets.
+    if (!_exprs_for_offsets.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(
+          "Only one inverted index scan can produce offsets per sub-query"));
     }
 
     if (auto scorer = std::exchange(_scorer_for_select, nullptr)) {
@@ -4113,6 +4141,42 @@ State SqlAnalyzer::ProcessIndex(State* parent,
       column_names.emplace_back(std::move(unique_score_name));
       _expr_for_scorer = std::make_shared<lp::InputReferenceExpr>(
         velox::REAL(), column_names.back());
+    }
+
+    if (!_offsets_fields_for_select.empty()) {
+      std::vector<catalog::Column::OffsetsFieldRequest> offsets_requests;
+      auto offsets_type = catalog::Column::MakeOffsetsType();
+      std::vector types = type->children();
+      std::vector type_names = type->names();
+      const auto& name_to_column = table.NameToColumn();
+
+      for (const auto& field : _offsets_fields_for_select) {
+        auto col_it = name_to_column.find(field.name);
+        if (col_it == name_to_column.end()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+            ERR_MSG("OFFSETS(): column '", field.name, "' not found in table"));
+        }
+        if (!absl::c_contains(index.GetColumnIds(), col_it->second->id)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+            ERR_MSG("OFFSETS(): column '", field.name, "' not found in index"));
+        }
+        auto offsets_col_name =
+          catalog::Column::MakeOffsetsName(col_it->second->id);
+        types.push_back(offsets_type);
+        type_names.push_back(offsets_col_name);
+        type = velox::ROW(type_names, types);
+        column_names.push_back(_id_generator.NextColumnName(offsets_col_name));
+        _exprs_for_offsets[field.name] =
+          std::make_shared<lp::InputReferenceExpr>(offsets_type,
+                                                   column_names.back());
+        offsets_requests.push_back(
+          {col_it->second->id, field.limit, column_names.back()});
+      }
+      basics::downCast<connector::IndexTable>(*object.table)
+        .SetOffsets(std::move(offsets_requests));
+      _offsets_fields_for_select.clear();
     }
   }
   scan_table = object.table;
@@ -4209,8 +4273,8 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
 
-  if (logical_object.GetType() == catalog::ObjectType::View) {
-    const auto& view = basics::downCast<SqlQueryView>(*object->object);
+  if (logical_object.GetType() == catalog::ObjectType::PgSqlView) {
+    const auto& view = basics::downCast<catalog::PgSqlView>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {
     return ProcessTable(parent, schema_name, name, *object, node);
@@ -4220,14 +4284,14 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
       basics::downCast<catalog::VirtualTableSnapshot>(logical_object);
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
-  } else if (logical_object.GetType() == catalog::ObjectType::Index) {
+  } else if (catalog::IsIndex(logical_object.GetType())) {
     return ProcessIndex(parent, *object, node);
   }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   CURSOR_POS(ErrorPosition(ExprLocation(node))),
                   ERR_MSG("object '", name, "' of type '",
-                          magic_enum::enum_name(logical_object.GetType()),
+                          pg::ToPgObjectTypeName(logical_object.GetType()),
                           "' cannot be used in FROM clause"));
 }
 
@@ -4453,6 +4517,31 @@ void SqlAnalyzer::RefreshExprForScorer(std::vector<std::string>& names,
   }
 }
 
+void SqlAnalyzer::RefreshExprsForOffsets(std::vector<std::string>& names,
+                                         std::vector<lp::ExprPtr>& exprs) {
+  if (_exprs_for_offsets.empty()) {
+    return;
+  }
+  for (auto& [field_name, expr_ptr] : _exprs_for_offsets) {
+    if (!expr_ptr) {
+      continue;
+    }
+    SDB_ASSERT(expr_ptr->isInputReference());
+    const auto& offsets_column = expr_ptr->as<lp::InputReferenceExpr>()->name();
+    const auto offsets_type = expr_ptr->type();
+    for (size_t i = 0; i < exprs.size(); ++i) {
+      SDB_ASSERT(exprs[i]);
+      if (!exprs[i]->isInputReference()) {
+        continue;
+      }
+      if (exprs[i]->as<lp::InputReferenceExpr>()->name() == offsets_column) {
+        expr_ptr =
+          std::make_shared<lp::InputReferenceExpr>(offsets_type, names[i]);
+      }
+    }
+  }
+}
+
 State SqlAnalyzer::ProcessRangeSubselect(State* parent,
                                          const RangeSubselect* node) {
   SDB_ASSERT(node);
@@ -4508,7 +4597,7 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
         }
 
         auto& logical_function =
-          basics::downCast<catalog::Function>(*function->object);
+          basics::downCast<catalog::PgSqlFunction>(*function->object);
         if (logical_function.Options().IsAggregate()) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_GROUPING_ERROR),
@@ -5362,9 +5451,32 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG(name, "() requires an inverted index scan in the same query"));
+        ERR_MSG(name,
+                "() requires an inverted index scan in the same sub-query"));
     }
     return _expr_for_scorer;
+  }
+
+  // OFFSETS(field) is not a catalog function -- it is an offsets directive
+  // resolved during collection. Return the injected offsets column reference
+  // set up in ProcessInvertedIndex for the given field.
+  if (schema.empty() && name == sdb::functions::kOffsets) {
+    // ensured by collector
+    SDB_ASSERT(list_length(expr.args) > 0);
+    const auto* arg = linitial_node(Node, expr.args);
+    // ensured by collector
+    SDB_ASSERT(IsA(arg, ColumnRef));
+    const auto field_name =
+      std::string_view{strVal(llast(castNode(ColumnRef, arg)->fields))};
+    auto it = _exprs_for_offsets.find(field_name);
+    if (it == _exprs_for_offsets.end()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG("OFFSETS(", field_name,
+                ") requires an inverted index scan in the same sub-query"));
+    }
+    return it->second;
   }
 
   auto* function = _objects.getFunction(schema, name);
@@ -5374,7 +5486,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
                     ERR_MSG("Function '", name, "' is not resolved"));
   }
   auto& logical_function =
-    basics::downCast<catalog::Function>(*function->object);
+    basics::downCast<catalog::PgSqlFunction>(*function->object);
 
   if (logical_function.Options().table) {
     if (state.expr_kind == ExprKind::AggregateArgument) {
@@ -5523,7 +5635,7 @@ velox::TypePtr ResolveWindowFunction(
 }
 
 lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
-  State& state, const catalog::Function& logical_function,
+  State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& func_call) {
   if (!func_call.over) {
     return nullptr;
@@ -6182,11 +6294,11 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
 }
 
 State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
-  const catalog::Function& logical_function, std::vector<lp::ExprPtr> args,
+  const catalog::PgSqlFunction& logical_function, std::vector<lp::ExprPtr> args,
   int location) {
   SDB_ASSERT(logical_function.Options().language ==
              catalog::FunctionLanguage::SQL);
-  const auto& sql_function = logical_function.SqlFunction();
+
   const auto& signature = logical_function.Signature();
 
   std::string_view name = logical_function.GetName();
@@ -6215,16 +6327,16 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   }
 
   State state;
-  const auto& function_body = *sql_function.GetStatement()->stmt;
+  const auto& function_body = *logical_function.GetStatement()->stmt;
   ProcessFunctionBody(state, param2expr, function_body, signature);
   return state;
 }
 
 lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
-  State& state, const catalog::Function& logical_function,
+  State& state, const catalog::PgSqlFunction& logical_function,
   const FuncCall& expr) {
   const auto& signature = logical_function.Signature();
-  const auto& sql_function = logical_function.SqlFunction();
+
   const auto& params = signature.parameters;
 
   const auto num_args = list_length(expr.args);
@@ -6320,7 +6432,7 @@ lp::ExprPtr SqlAnalyzer::InlineSQLFunctionExpr(
 
   // Extract the body expression from the function's SELECT statement and
   // process it inline in the caller's state with the expanded param mappings.
-  const auto& function_body = *sql_function.GetStatement()->stmt;
+  const auto& function_body = *logical_function.GetStatement()->stmt;
   SDB_ENSURE(IsA(&function_body, SelectStmt), ERROR_BAD_PARAMETER,
              "SQL function body must be a SELECT statement");
   const auto* select_stmt = castNode(SelectStmt, &function_body);

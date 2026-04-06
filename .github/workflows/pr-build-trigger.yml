@@ -69,7 +69,7 @@ jobs:
       actions: write
       contents: read
       pull-requests: write
-      statuses: write
+      checks: write
     steps:
       - name: Get PR info
         id: pr-info
@@ -104,14 +104,34 @@ jobs:
             const enableMsan = isChecked('MSAN');
 
             const { owner, repo } = context.repo;
-            const statusContext = 'serenedb | build & test';
+            const checkName = 'serenedb | build & test';
 
-            await github.rest.repos.createCommitStatus({
-              owner, repo, sha,
-              state: 'pending',
-              description: 'Build queued',
-              context: statusContext,
+            const { data: check } = await github.rest.checks.create({
+              owner, repo,
+              head_sha: sha,
+              name: checkName,
+              status: 'in_progress',
+              output: { title: 'Build queued', summary: 'Waiting for workflow to start...' },
             });
+
+            // Cancel in-progress runs on this branch
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch,
+              status: 'in_progress', per_page: 10,
+            });
+            for (const run of runs.workflow_runs) {
+              core.info(`Cancelling run #${run.id} (${run.status})`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
+            // Also cancel queued/waiting runs
+            const { data: queued } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch,
+              status: 'queued', per_page: 10,
+            });
+            for (const run of queued.workflow_runs) {
+              core.info(`Cancelling queued run #${run.id}`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
 
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
@@ -132,7 +152,7 @@ jobs:
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
-                  PR_STATUS_CONTEXT: statusContext,
+                  CHECK_RUN_ID: check.id,
                 }),
               },
             });
@@ -151,6 +171,15 @@ jobs:
               }
             }
 
+            // Update check run with the Actions run URL
+            await github.rest.checks.update({
+              owner, repo,
+              check_run_id: check.id,
+              status: 'in_progress',
+              details_url: runUrl,
+              output: { title: 'Build in progress', summary: `[View Run](${runUrl})` },
+            });
+
             const opts = [
               enableAsan && 'asan',
               enableTsan && 'tsan',
@@ -167,15 +196,15 @@ jobs:
             // Results are stored as JSON in a hidden HTML comment for reliable parsing
             const dataRe = /<!-- ci-data:(.*?) -->/;
             const dataMatch = updatedBody.match(dataRe);
-            const runs = dataMatch ? JSON.parse(dataMatch[1]) : [];
-            runs.push({ opts: optsStr, url: runUrl, time: timestamp });
+            const history = dataMatch ? JSON.parse(dataMatch[1]) : [];
+            history.push({ opts: optsStr, url: runUrl, time: timestamp });
 
             // Build visible output
-            const latest = runs[runs.length - 1];
+            const latest = history[history.length - 1];
             let resultsBlock = `\n\n**Latest:** ${latest.opts} · [View Run](${latest.url}) · ${latest.time}`;
 
-            if (runs.length > 1) {
-              const oldRuns = runs.slice(0, -1).reverse().map(r =>
+            if (history.length > 1) {
+              const oldRuns = history.slice(0, -1).reverse().map(r =>
                 `| ${r.opts} | [View Run](${r.url}) | ${r.time} |`
               );
               resultsBlock += [
@@ -193,7 +222,7 @@ jobs:
 
             // Replace or append results section
             const sectionRe = /\n\n<!-- ci-data:.*? -->[\s\S]*$/;
-            const newData = `\n\n<!-- ci-data:${JSON.stringify(runs)} -->${resultsBlock}`;
+            const newData = `\n\n<!-- ci-data:${JSON.stringify(history)} -->${resultsBlock}`;
             if (sectionRe.test(updatedBody)) {
               updatedBody = updatedBody.replace(sectionRe, newData);
             } else {

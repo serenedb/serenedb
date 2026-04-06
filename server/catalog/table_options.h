@@ -99,6 +99,7 @@ struct Column {
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
   static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
+  static constexpr Id kInvertedIndexOffsetsId = kMaxRealId + 3;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
     static constexpr std::string_view kUpdatePrefix = "upd$";
@@ -137,6 +138,33 @@ struct Column {
 
   static std::string GenerateScoreName(
     std::span<const std::string> column_names);
+
+  // Prefix used in virtual offsets column names. Ends with kReservedSymbol so
+  // it can never collide with a user-defined column name.
+  static constexpr std::string_view kOffsetsNamePrefix =
+    "sdb_inverted_index_offsets$";
+
+  // Encodes the searched column's catalog ID into the virtual column name.
+  static std::string MakeOffsetsName(Id column_id) {
+    static_assert(kOffsetsNamePrefix.ends_with(query::kReservedSymbol));
+    return absl::StrCat(kOffsetsNamePrefix, column_id);
+  }
+
+  // ARRAY(BIGINT) -- flat offsets column: interleaved start,end pairs.
+  static velox::TypePtr MakeOffsetsType() {
+    return velox::ARRAY(velox::BIGINT());
+  }
+
+  // Request for a single OFFSETS() column: which catalog column to extract
+  // offsets for, and how many offset pairs to return per document at most.
+  // column_name is the mangled output column name produced by NextColumnName;
+  // it is globally unique across all sub-queries and used to match this request
+  // to the correct DataSource during SearchDataSource construction.
+  struct OffsetsFieldRequest {
+    Id column_id;
+    size_t limit = pg::Objects::kDefaultOffsetsLimit;
+    std::string column_name;
+  };
 
   Id id;
   velox::TypePtr type;

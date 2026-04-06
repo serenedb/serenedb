@@ -230,7 +230,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegment) {
     RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
                         velox::ROW(names, types), all_column_oids,
                         all_column_oids[0], kObjectKey),
-    reader, *query, nullptr);
+    reader, *query, nullptr, {});
   auto expected =
     makeRowVector({makeFlatVector<int32_t>({1, 100}),
                    makeFlatVector<velox::StringView>({"1", "100"}),
@@ -294,7 +294,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadManySegments) {
     RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
                         velox::ROW(names, types), all_column_oids,
                         all_column_oids[0], kObjectKey),
-    reader, *query, nullptr);
+    reader, *query, nullptr, {});
   const auto expected =
     makeRowVector({makeFlatVector<velox::StringView>({"1", "100"}),
                    makeFlatVector<velox::StringView>({"value1", "value3"})});
@@ -433,7 +433,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
       RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
                           velox::ROW(names, types), all_column_oids,
                           all_column_oids[0], kObjectKey),
-      reader, *query, nullptr);
+      reader, *query, nullptr, {});
     auto expected =
       makeRowVector({makeFlatVector<int32_t>({1, 100}),
                      makeFlatVector<velox::StringView>({"1", "100"}),
@@ -487,7 +487,7 @@ TEST_F(DataSourceWithSearchTest, test_ReadSingleSegmentWithDeletes) {
       RocksDBMaterializer(*pool(), nullptr, _db, nullptr, *_cf_handles.front(),
                           velox::ROW(names, types), all_column_oids,
                           all_column_oids[0], kObjectKey),
-      reader, *query, nullptr);
+      reader, *query, nullptr, {});
     auto expected = makeRowVector(
       {makeFlatVector<int32_t>({1}), makeFlatVector<velox::StringView>({"1"}),
        makeFlatVector<velox::StringView>({"value1"})});

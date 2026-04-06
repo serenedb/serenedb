@@ -113,7 +113,7 @@ class SecondaryIndexes {
    private:
     void SkipNonSecondary() {
       while (_idx < _indexes.size() &&
-             _indexes[_idx]->GetIndexType() != IndexType::Secondary) {
+             _indexes[_idx]->GetType() != catalog::ObjectType::SecondaryIndex) {
         ++_idx;
       }
     }
@@ -175,7 +175,7 @@ SereneDBTableLayout::createTableHandle(
   const auto* table = &this->table();
   const auto* idx_table = dynamic_cast<const IndexTable*>(table);
   if (idx_table &&
-      idx_table->GetIndex().GetIndexType() == IndexType::Inverted) {
+      idx_table->GetIndex().GetType() == catalog::ObjectType::InvertedIndex) {
     const auto* inv_index = idx_table;
     const auto& index =
       basics::downCast<const catalog::InvertedIndex>(inv_index->GetIndex());
@@ -243,7 +243,7 @@ SereneDBTableLayout::createTableHandle(
   }
 
   if (idx_table &&
-      idx_table->GetIndex().GetIndexType() == IndexType::Secondary) {
+      idx_table->GetIndex().GetType() == catalog::ObjectType::SecondaryIndex) {
     const auto& sec_index =
       basics::downCast<const catalog::SecondaryIndex>(idx_table->GetIndex());
     const auto& underlying =

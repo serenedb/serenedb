@@ -61,8 +61,15 @@ jobs:
             echo "No PG test changes, skipping"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            # Strip the tests/sqllogic/ prefix so paths are relative to the
+            # sqllogic directory (e.g. "sdb/pg/ddl/foo.test"), matching the
+            # glob format that run.sh --test expects.
+            RELATIVE=$(echo "$CHANGED" | sed 's|^tests/sqllogic/||')
+            echo "pg_tests<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$RELATIVE"                >> "$GITHUB_OUTPUT"
+            echo "EOF"                      >> "$GITHUB_OUTPUT"
             echo "PG test files changed:"
-            echo "$CHANGED"
+            echo "$RELATIVE"
           fi
 
       - name: Prepare
@@ -82,6 +89,7 @@ jobs:
           export DOCKER_UID="$(id -u)"
           export DOCKER_GID="$(id -g)"
           export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
+          export PG_CHANGED_TESTS="${{ steps.detect.outputs.pg_tests }}"
 
           cd tests/sqllogic
           PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"

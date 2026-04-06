@@ -1060,4 +1060,9 @@ Result MakeSearchFilter(irs::And& root,
   return {};
 }
 
+void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
+  basics::StrResize(field_name, sizeof(column_id));
+  absl::big_endian::Store(field_name.data(), column_id);
+}
+
 }  // namespace sdb::connector

@@ -56,19 +56,10 @@ yaclib::Future<> UpdateIndexes(
   for (const auto& table : tables) {
     for (auto index_shard : snapshot->GetIndexShardsByTable(table->GetId())) {
       SDB_ASSERT(index_shard);
-      switch (index_shard->GetType()) {
-        case IndexType::Inverted: {
-          auto& inverted_index =
-            basics::downCast<search::InvertedIndexShard>(*index_shard);
-          index_futures.push_back(inverted_index.CommitWait());
-          break;
-        }
-        case IndexType::Secondary:
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_CASE_NOT_FOUND),
-                          ERR_MSG("Secondary index is not supported"));
-          break;
-        case IndexType::Unknown:
-          SDB_UNREACHABLE();
+      if (index_shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
+        auto& inverted_index =
+          basics::downCast<search::InvertedIndexShard>(*index_shard);
+        index_futures.push_back(inverted_index.CommitWait());
       }
     }
   }

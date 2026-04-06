@@ -217,7 +217,7 @@ struct NumericParameter : public Parameter {
     } else if constexpr (std::is_same_v<ValueType, double>) {
       return "double";
     } else {
-      static_assert("unsupported ValueType");
+      static_assert(false, "unsupported ValueType");
     }
   }
 

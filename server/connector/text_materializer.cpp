@@ -42,13 +42,15 @@ TextMaterializer::TextMaterializer(
   for (size_t i = 0; i < column_ids.size(); ++i) {
     if (column_ids[i] == catalog::Column::kInvertedIndexScoreId) {
       _score_column_idx = i;
-      break;
+    } else if (column_ids[i] == catalog::Column::kInvertedIndexOffsetsId) {
+      _offsets_column_indices.push_back(i);
     }
   }
 }
 
-velox::RowVectorPtr TextMaterializer::ReadRows(std::span<std::string> row_keys,
-                                               velox::VectorPtr scores) {
+velox::RowVectorPtr TextMaterializer::ReadRows(
+  std::span<std::string> row_keys, velox::VectorPtr scores,
+  std::vector<velox::VectorPtr> offsets_per_field) {
   if (row_keys.empty()) {
     return nullptr;
   }
@@ -76,6 +78,13 @@ velox::RowVectorPtr TextMaterializer::ReadRows(std::span<std::string> row_keys,
     SDB_ASSERT(scores);
     SDB_ASSERT(scores->size() == row_keys.size());
     result->children()[_score_column_idx] = std::move(scores);
+  }
+  for (size_t fi = 0; fi < _offsets_column_indices.size(); ++fi) {
+    SDB_ASSERT(fi < offsets_per_field.size());
+    auto& offsets = offsets_per_field[fi];
+    SDB_ASSERT(offsets);
+    SDB_ASSERT(offsets->size() == row_keys.size());
+    result->children()[_offsets_column_indices[fi]] = std::move(offsets);
   }
   return result;
 }

@@ -6,8 +6,11 @@ statement ok
 INSERT INTO t VALUES (NOW());
 
 
-statement async ok
-SELECT pg_sleep(2);
+query async
+SELECT 1 FROM pg_sleep(2);
+----
+?column?
+1
 
 
 statement async ok

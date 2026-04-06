@@ -15,6 +15,8 @@
 # Usage (legacy external serened -- sequential fallback):
 #   SERVICE_HOST=serenedb-recovery SERVICE_PORT=7777 ./run_recovery_tests.sh
 
+set -o pipefail
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 : "${SERVICE_HOST:=localhost}"
@@ -97,27 +99,21 @@ cleanup() {
 	done
 }
 
-wait_for_port() {
-	local host=$1 port=$2 timeout=${3:-60}
-	for ((i = 0; i < timeout * 2; i++)); do
-		if bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null; then
-			return 0
-		fi
-		sleep 0.5
-	done
-	return 1
-}
-
 if [[ "$EXTERNAL_MODE" == "false" ]]; then
 	: "${BUILD_DIR:=build}"
 	: "${WORKSPACE:=$(realpath "$SCRIPT_DIR/../../")}"
 
-	if [[ ! -x "$WORKSPACE/$BUILD_DIR/bin/serened" ]]; then
-		echo "ERROR: serened not found at $WORKSPACE/$BUILD_DIR/bin/serened"
+	SERENED="$WORKSPACE/$BUILD_DIR/bin/serened"
+	if [[ ! -x "$SERENED" ]]; then
+		echo "ERROR: serened not found at $SERENED"
 		exit 1
 	fi
 
 	trap cleanup EXIT INT TERM
+
+	# Use tmpfs for serened logs -- always writable, per-run isolation
+	SERENED_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serened-logs-XXXXXX")
+	DATADIRS+=("$SERENED_LOG_DIR")
 
 	echo "Spawning $JOBS serened instance(s)..."
 	for ((i = 0; i < JOBS; i++)); do
@@ -126,21 +122,55 @@ if [[ "$EXTERNAL_MODE" == "false" ]]; then
 		DATADIRS+=("$datadir")
 
 		PORT=$port "$SCRIPT_DIR/run_serened_loop.sh" "$datadir" \
-			>"${LOG_DIR:-/tmp}/serened-worker-${i}.log" 2>&1 &
+			>"$SERENED_LOG_DIR/worker-${i}.log" 2>&1 &
 		LOOP_PIDS+=($!)
 
 		echo "  Worker $i: port=$port pid=${LOOP_PIDS[-1]}"
 	done
 
 	echo "Waiting for instances to become ready..."
+	all_ready=true
 	for ((i = 0; i < JOBS; i++)); do
 		port=$((BASE_PORT + i))
-		if ! wait_for_port localhost "$port"; then
-			echo "ERROR: serened on port $port failed to start within 60s"
-			exit 1
+		pid=${LOOP_PIDS[$i]}
+		ready=false
+
+		for ((attempt = 0; attempt < 60; attempt++)); do
+			# Check if the loop process is still alive
+			if ! kill -0 "$pid" 2>/dev/null; then
+				echo "  ERROR: worker $i (pid $pid) died"
+				echo "  --- worker $i log ---"
+				cat "$SERENED_LOG_DIR/worker-${i}.log" 2>/dev/null
+				all_ready=false
+				break
+			fi
+			# Try connecting
+			if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); s.connect(('localhost',$port)); s.close()" 2>/dev/null; then
+				echo "  Worker $i ready (port $port, ${attempt}s)"
+				ready=true
+				break
+			fi
+			sleep 1
+		done
+
+		if [[ "$ready" == "false" && "$all_ready" == "true" ]]; then
+			echo "  ERROR: worker $i not ready after 60s"
+			echo "  --- worker $i log ---"
+			cat "$SERENED_LOG_DIR/worker-${i}.log" 2>/dev/null
+			all_ready=false
 		fi
 	done
+
+	if [[ "$all_ready" != "true" ]]; then
+		echo "ERROR: not all serened instances started"
+		exit 1
+	fi
 	echo "All $JOBS instance(s) ready"
+
+	# Copy serened logs to LOG_DIR for CI artifact collection
+	if [[ -n "$LOG_DIR" && -d "$LOG_DIR" ]]; then
+		cp "$SERENED_LOG_DIR"/worker-*.log "$LOG_DIR/" 2>/dev/null || true
+	fi
 fi
 
 # --- Distribute tests across workers (round-robin) ---

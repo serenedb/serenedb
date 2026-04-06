@@ -38,7 +38,9 @@ namespace sdb::connector {
 class PrimaryKeyBuilder {
  public:
   PrimaryKeyBuilder(ObjectId table_id, velox::RowTypePtr pk_type)
-    : _table_id{table_id}, _pk_type{std::move(pk_type)} {}
+    : _table_id{table_id}, _pk_type{std::move(pk_type)} {
+    _column_key.reserve(key_utils::kKeyPrefixSize);
+  }
 
   void BuildFullKey(std::string& key, catalog::Column::Id column_id,
                     std::span<const velox::variant> values) const {
@@ -71,14 +73,14 @@ class PrimaryKeyBuilder {
   // Returns a compact span of found_count slices (non-contiguous in storage).
   std::span<const rocksdb::Slice> BuildPresentKeys(
     catalog::Column::Id col_id, const irs::bitset& present_rows) {
-    std::string prefix;
-    key_utils::AppendTableKey(prefix, _table_id);
-    key_utils::AppendColumnKey(prefix, col_id);
-    SDB_ASSERT(prefix.size() == key_utils::kKeyPrefixSize);
+    _column_key.clear();
+    key_utils::AppendTableKey(_column_key, _table_id);
+    key_utils::AppendColumnKey(_column_key, col_id);
+    SDB_ASSERT(_column_key.size() == key_utils::kKeyPrefixSize);
     size_t key_idx = 0;
     for (size_t i = 0; i < present_rows.size(); ++i) {
       if (present_rows.test(i)) {
-        std::memcpy(_key_storage[i].data(), prefix.data(),
+        std::memcpy(_key_storage[i].data(), _column_key.data(),
                     key_utils::kKeyPrefixSize);
         _slice_storage[key_idx++] = _key_storage[i];
       }
@@ -99,6 +101,7 @@ class PrimaryKeyBuilder {
 
   std::vector<std::string> _key_storage;
   std::vector<rocksdb::Slice> _slice_storage;
+  std::string _column_key;
 };
 
 class SecondaryKeyBuilder {

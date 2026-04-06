@@ -230,8 +230,10 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
 
   auto make_iterator = [&] {
     auto it_options = _read_options;
-    it_options.adaptive_readahead = true;
-    it_options.auto_prefix_mode = true;
+    // We store iterators between batches and async_io can hang
+    // if we start it on one thread but next batch would be handled by another
+    // thread.
+    it_options.async_io = false;
     if constexpr (std::is_same_v<MultiGetSource, rocksdb::Transaction>) {
       return std::unique_ptr<rocksdb::Iterator>(
         src.GetIterator(it_options, &_cf));
@@ -259,7 +261,7 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
     column_iterator->Seek(rocksdb::Slice(_multi_get_buffer->begin() + offset,
                                          kColumnKeySize + key.size()));
     if (!column_iterator->Valid()) {
-      SDB_THROW(ERROR_INTERNAL, "Invalid iterator read sate");
+      SDB_THROW(ERROR_INTERNAL, "Invalid iterator read state");
     }
     if (column_iterator->key() !=
         rocksdb::Slice(_multi_get_buffer->begin() + offset,

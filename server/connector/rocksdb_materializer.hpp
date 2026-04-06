@@ -111,7 +111,6 @@ class RocksDBMaterializer {
   // scans are replaced with empty Values node.
   catalog::Column::Id _effective_column_id;
   ObjectId _object_key;
-  bool _is_range = true;
   size_t _produced = 0;
   std::string _value_buffer;
   rocksdb::ReadOptions _read_options;

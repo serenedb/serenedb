@@ -26,7 +26,7 @@
 
 namespace sdb::connector {
 
-// DuckDB LogicalType → velox::TypeKind, then delegate to the existing
+// DuckDB LogicalType -> velox::TypeKind, then delegate to the existing
 // SearchSinkInsertBaseImpl::SwitchColumnImpl which uses velox::Type.
 // This avoids duplicating the complex SetupColumnWriter logic.
 static velox::TypePtr DuckDBLogicalTypeToVeloxType(
@@ -62,16 +62,16 @@ static velox::TypePtr DuckDBLogicalTypeToVeloxType(
   }
 }
 
-bool DuckDBSearchSinkInsertWriter::SwitchColumn(
-  const duckdb::LogicalType& type, bool have_nulls,
-  catalog::Column::Id column_id) {
+bool DuckDBSearchSinkInsertWriter::SwitchColumn(const duckdb::LogicalType& type,
+                                                bool have_nulls,
+                                                catalog::Column::Id column_id) {
   auto velox_type = DuckDBLogicalTypeToVeloxType(type);
   return SwitchColumnImpl(*velox_type, have_nulls, column_id);
 }
 
-bool DuckDBSearchSinkUpdateWriter::SwitchColumn(
-  const duckdb::LogicalType& type, bool have_nulls,
-  catalog::Column::Id column_id) {
+bool DuckDBSearchSinkUpdateWriter::SwitchColumn(const duckdb::LogicalType& type,
+                                                bool have_nulls,
+                                                catalog::Column::Id column_id) {
   auto velox_type = DuckDBLogicalTypeToVeloxType(type);
   return SwitchColumnImpl(*velox_type, have_nulls, column_id);
 }

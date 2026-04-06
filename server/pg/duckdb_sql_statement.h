@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,27 +20,39 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb.hpp>
-#include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "basics/message_buffer.h"
+#include "pg/duckdb_serialize.h"
 #include "pg/serialize.h"
 
 namespace sdb::pg {
 
-// Serialization function for DuckDB -- takes RecursiveUnifiedVectorFormat
-// (like Velox DecodedVector). Handles all vector encodings + nested types.
-// Row is the logical index; physical access via sel vector.
-// TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
-// instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
-// for scalar types, and can lazily create child format for arrays).
-using DuckDBSerializationFunction = void (*)(
-  SerializationContext context,
-  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
+// DuckDB-based SQL statement -- replaces the old Velox-based SqlStatement.
+// Used by both simple and extended protocol.
+struct DuckDBStatement {
+  void Reset() noexcept {
+    prepared.reset();
+    extracted.clear();
+    current_stmt_idx = 0;
+    param_oids.clear();
+  }
 
-DuckDBSerializationFunction GetDuckDBSerialization(
-  const duckdb::LogicalType& type, VarFormat format);
+  duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
+  // For simple protocol multi-statement support
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> extracted;
+  uint32_t current_stmt_idx = 0;
+  // Parameter type OIDs from Parse message
+  std::vector<int32_t> param_oids;
+};
+
+struct DuckDBBindInfo {
+  std::vector<VarFormat> output_formats;
+  duckdb::vector<duckdb::Value> param_values;
+};
 
 }  // namespace sdb::pg

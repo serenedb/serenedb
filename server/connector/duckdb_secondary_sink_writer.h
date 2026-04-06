@@ -54,8 +54,7 @@ inline bool AppendSKValue(std::string& key, const duckdb::DataChunk& input,
                           duckdb::idx_t row_idx) {
   bool has_null = false;
   for (const auto& sk : sk_columns) {
-    auto& validity =
-      duckdb::FlatVector::Validity(input.data[sk.input_col_idx]);
+    auto& validity = duckdb::FlatVector::Validity(input.data[sk.input_col_idx]);
     if (!validity.RowIsValid(row_idx)) {
       secondary_key::AppendNullMarker(key);
       has_null = true;
@@ -104,8 +103,8 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
     secondary_key::AppendDummyColumnId(_key_buffer);
-    bool has_null = duckdb_secondary_key::AppendSKValue(
-      _key_buffer, *_input, _sk_columns, _row_idx);
+    bool has_null = duckdb_secondary_key::AppendSKValue(_key_buffer, *_input,
+                                                        _sk_columns, _row_idx);
     constexpr bool kAlwaysPKInKey = !Unique;
     bool pk_in_key = kAlwaysPKInKey || has_null;
     _value_buffer.clear();
@@ -160,8 +159,7 @@ class DuckDBSecondarySinkInsertWriter final
  public:
   using Base::Base;
 
-  void Init(duckdb::idx_t batch_size,
-            const duckdb::DataChunk& input) final {
+  void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) final {
     Base::InitBase(input);
   }
 
@@ -195,8 +193,7 @@ class DuckDBSecondarySinkDeleteWriter final
  public:
   using Base::Base;
 
-  void Init(duckdb::idx_t batch_size,
-            const duckdb::DataChunk& input) final {
+  void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) final {
     Base::InitBase(input);
   }
 
@@ -221,8 +218,7 @@ class DuckDBSecondarySinkUpdateWriter final
     : Base{trx, shard_id, columns, std::move(sk_columns)},
       _old_sk_columns{std::move(old_sk_columns)} {}
 
-  void Init(duckdb::idx_t batch_size,
-            const duckdb::DataChunk& input) final {
+  void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) final {
     Base::InitBase(input);
   }
 

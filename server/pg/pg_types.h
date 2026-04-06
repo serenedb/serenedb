@@ -27,6 +27,7 @@
 
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
+#include "pg/duckdb_pg_types.h"
 
 namespace sdb {
 namespace catalog {
@@ -173,10 +174,6 @@ std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;
-
-enum class DeserializeError {
-  InvalidRepresentation,
-};
 
 std::expected<velox::Variant, DeserializeError> DeserializeParameter(
   const velox::Type& type, VarFormat format, std::string_view data);

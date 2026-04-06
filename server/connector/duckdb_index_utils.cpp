@@ -34,7 +34,6 @@
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
-
 namespace {
 
 // Build SK column mappings: for each index column, find the corresponding
@@ -170,7 +169,7 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
   };
 
   if (updated_col_ids.empty()) {
-    // No filter — create writers for all indexes (INSERT/DELETE)
+    // No filter -- create writers for all indexes (INSERT/DELETE)
     conn_ctx.EnsureIndexesTransactions(table_id, visitor);
   } else {
     // Filter: only indexes whose columns overlap with updated set (UPDATE)

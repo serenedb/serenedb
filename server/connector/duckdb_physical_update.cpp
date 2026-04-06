@@ -87,8 +87,8 @@ SereneDBPhysicalUpdate::SereneDBPhysicalUpdate(
   std::vector<duckdb::idx_t> indexed_col_indices,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
-                              {duckdb::LogicalType::BIGINT},
-                              estimated_cardinality),
+                             {duckdb::LogicalType::BIGINT},
+                             estimated_cardinality),
     _table(std::move(table)),
     _pk_col_indices(std::move(pk_col_indices)),
     _update_columns(std::move(update_columns)),
@@ -157,8 +157,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   ColumnChunkMapping del_col_mapping;
 
   // PK columns
-  for (size_t i = 0; i < _pk_col_indices.size() && i < pk_col_ids.size();
-       ++i) {
+  for (size_t i = 0; i < _pk_col_indices.size() && i < pk_col_ids.size(); ++i) {
     del_col_mapping[pk_col_ids[i]] = _pk_col_indices[i];
   }
 
@@ -193,8 +192,12 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
               [&](auto a, auto b) {
                 size_t pos_a = 0, pos_b = 0;
                 for (size_t i = 0; i < columns.size(); ++i) {
-                  if (columns[i].id == a) pos_a = i;
-                  if (columns[i].id == b) pos_b = i;
+                  if (columns[i].id == a) {
+                    pos_a = i;
+                  }
+                  if (columns[i].id == b) {
+                    pos_b = i;
+                  }
                 }
                 return pos_a < pos_b;
               });
@@ -206,7 +209,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   }
 
   // Only create index writers for indexes whose columns overlap with
-  // the updated columns — indexes on non-updated columns are untouched
+  // the updated columns -- indexes on non-updated columns are untouched
   std::vector<catalog::Column::Id> updated_col_ids;
   for (const auto& upd : state->update_columns) {
     updated_col_ids.push_back(upd.id);
@@ -243,7 +246,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   // 1. Build PK bytes
   duckdb_primary_key::CreateBatch(chunk, gstate.pk_columns, gstate.row_keys);
 
-  // 2. Delete old index entries — old values are in the input chunk
+  // 2. Delete old index entries -- old values are in the input chunk
   //    (scan includes indexed columns via virtual columns)
   if (!gstate.delete_index_writers.empty()) {
     for (auto& writer : gstate.delete_index_writers) {
@@ -274,23 +277,24 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
       auto status = txn->Put(gstate.cf, gstate.key_buffer, slice);
       if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL, "RocksDB update failed: ",
-                  status.ToString());
+        SDB_THROW(ERROR_INTERNAL, "RocksDB update failed: ", status.ToString());
       }
     }
   }
 
   // 4. Insert new index entries
   //    For updated columns: use new values from input chunk
-  //    For non-updated indexed columns: use old values from scan (already in chunk)
+  //    For non-updated indexed columns: use old values from scan (already in
+  //    chunk)
   if (!gstate.insert_index_writers.empty()) {
     for (auto& writer : gstate.insert_index_writers) {
       writer->Init(num_rows, chunk);
     }
 
     // Build a mapping: for each table column, where is its (new) value?
-    // Updated columns → use update input position
-    // Non-updated columns → use indexed column position from scan (if available)
+    // Updated columns -> use update input position
+    // Non-updated columns -> use indexed column position from scan (if
+    // available)
     containers::FlatHashMap<catalog::Column::Id, duckdb::idx_t> col_to_input;
 
     // Indexed columns from scan (old values, but current for non-updated)
@@ -326,7 +330,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       auto it = col_to_input.find(col_meta.id);
       duckdb::idx_t src_col = duckdb::DConstants::INVALID_INDEX;
       if (it != col_to_input.end()) {
-        src_col = it->second;  // Updated column — new value
+        src_col = it->second;  // Updated column -- new value
       }
       // If not an updated column, the writer reads from _input (chunk)
       // at the position set during Init. For non-updated indexed columns,
@@ -334,7 +338,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       // TODO: map non-updated indexed columns properly
 
       if (src_col == duckdb::DConstants::INVALID_INDEX) {
-        // Non-updated column — skip index insert for now.
+        // Non-updated column -- skip index insert for now.
         // Old value is still correct in RocksDB, index entry unchanged.
         continue;
       }
@@ -345,9 +349,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         key_utils::AppendColumnKey(gstate.key_buffer, col_meta.id);
         gstate.key_buffer.append(gstate.row_keys[row]);
 
-        auto slice = SerializeScalarValue(chunk.data[src_col], row,
-                                          col_meta.duckdb_type,
-                                          gstate.value_buffer);
+        auto slice = SerializeScalarValue(
+          chunk.data[src_col], row, col_meta.duckdb_type, gstate.value_buffer);
 
         for (auto* writer : gstate.active_writers) {
           writer->Write({&slice, 1}, gstate.key_buffer);

@@ -60,21 +60,22 @@ class SereneDBCatalog final : public duckdb::Catalog {
     duckdb::LogicalInsert& op,
     duckdb::optional_ptr<duckdb::PhysicalOperator> plan) override;
 
-  duckdb::PhysicalOperator& PlanDelete(
-    duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
-    duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) override;
+  duckdb::PhysicalOperator& PlanDelete(duckdb::ClientContext& context,
+                                       duckdb::PhysicalPlanGenerator& planner,
+                                       duckdb::LogicalDelete& op,
+                                       duckdb::PhysicalOperator& plan) override;
 
-  duckdb::PhysicalOperator& PlanUpdate(
-    duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
-    duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) override;
+  duckdb::PhysicalOperator& PlanUpdate(duckdb::ClientContext& context,
+                                       duckdb::PhysicalPlanGenerator& planner,
+                                       duckdb::LogicalUpdate& op,
+                                       duckdb::PhysicalOperator& plan) override;
 
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
     duckdb::TableCatalogEntry& table,
     duckdb::unique_ptr<duckdb::LogicalOperator> plan) override;
 
-  duckdb::DatabaseSize GetDatabaseSize(
-    duckdb::ClientContext& context) override;
+  duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) override;
   bool InMemory() override { return false; }
   std::string GetDBPath() override { return ""; }
 

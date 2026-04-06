@@ -1049,7 +1049,12 @@ set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
 set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
-set(BUILD_EXTENSIONS "core_functions;parquet;tpch;tpcds;json" CACHE STRING "" FORCE)
+set(BUILD_EXTENSIONS
+    "core_functions;parquet;tpch;tpcds;json"
+    CACHE STRING
+    ""
+    FORCE
+)
 
 # DON'T CHANGE THIS sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
@@ -1066,11 +1071,13 @@ target_include_directories(
 )
 
 # Link extension objects that aren't automatically included in duckdb_static
-target_link_libraries(duckdb_static PUBLIC
-    duckdb_generated_extension_loader
-    core_functions_extension
-    parquet_extension
-    tpch_extension
-    tpcds_extension
-    json_extension
+target_link_libraries(
+    duckdb_static
+    PUBLIC
+        duckdb_generated_extension_loader
+        core_functions_extension
+        parquet_extension
+        tpch_extension
+        tpcds_extension
+        json_extension
 )

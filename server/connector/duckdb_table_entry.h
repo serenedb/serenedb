@@ -31,14 +31,14 @@ namespace sdb::connector {
 duckdb::LogicalType VeloxTypeToDuckDB(const velox::TypePtr& type);
 
 // Convert a DuckDB LogicalType to Velox TypePtr.
-// Temporary — will be removed when catalog stops using Velox types.
+// Temporary -- will be removed when catalog stops using Velox types.
 velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type);
 
 class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
  public:
   // indexed_col_indices: table column indices that are part of any index
-  // (secondary or inverted). These are added to virtual columns so DELETE/UPDATE
-  // scans return them automatically.
+  // (secondary or inverted). These are added to virtual columns so
+  // DELETE/UPDATE scans return them automatically.
   SereneDBTableEntry(duckdb::Catalog& catalog,
                      duckdb::SchemaCatalogEntry& schema,
                      duckdb::CreateTableInfo& info,

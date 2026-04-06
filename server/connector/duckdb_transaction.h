@@ -25,6 +25,7 @@
 #include <duckdb/transaction/transaction_manager.hpp>
 
 namespace sdb {
+
 class ConnectionContext;
 }
 
@@ -49,8 +50,7 @@ class SereneDBTransactionManager final : public duckdb::TransactionManager {
   duckdb::Transaction& StartTransaction(
     duckdb::ClientContext& context) override;
   duckdb::ErrorData CommitTransaction(
-    duckdb::ClientContext& context,
-    duckdb::Transaction& transaction) override;
+    duckdb::ClientContext& context, duckdb::Transaction& transaction) override;
   void RollbackTransaction(duckdb::Transaction& transaction) override;
   void Checkpoint(duckdb::ClientContext& context, bool force) override;
 

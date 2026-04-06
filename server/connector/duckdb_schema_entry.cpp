@@ -26,7 +26,6 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
-
 #include <iostream>
 
 #include "app/app_server.h"
@@ -63,9 +62,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   auto databases = snapshot->GetDatabases();
-  auto table = snapshot->GetTable(
-    databases.front()->GetId(), "public",
-    std::string_view{table_name.data(), table_name.size()});
+  auto table =
+    snapshot->GetTable(databases.front()->GetId(), "public",
+                       std::string_view{table_name.data(), table_name.size()});
   if (!table) {
     return nullptr;
   }
@@ -75,8 +74,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   info->table = table_name;
   info->schema = name;
   for (const auto& col : table->Columns()) {
-    info->columns.AddColumn(duckdb::ColumnDefinition(
-      col.name, VeloxTypeToDuckDB(col.type)));
+    info->columns.AddColumn(
+      duckdb::ColumnDefinition(col.name, VeloxTypeToDuckDB(col.type)));
   }
 
   // Add PK constraint if table has explicit PK columns
@@ -117,8 +116,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
 
   // Create and cache the table entry
   auto entry = duckdb::make_uniq<SereneDBTableEntry>(
-    catalog, *this, *info, std::move(table),
-    std::move(indexed_col_indices));
+    catalog, *this, *info, std::move(table), std::move(indexed_col_indices));
   auto* ptr = entry.get();
   _table_entries[table_name] = std::move(entry);
   _table_infos[table_name] = std::move(info);
@@ -132,8 +130,8 @@ void SereneDBSchemaEntry::Scan(
     return;
   }
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto tables = snapshot->GetTables(
-    snapshot->GetDatabases().front()->GetId(), "public");
+  auto tables =
+    snapshot->GetTables(snapshot->GetDatabases().front()->GetId(), "public");
   for (auto& table : tables) {
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
     info->table = table->GetName();
@@ -142,8 +140,8 @@ void SereneDBSchemaEntry::Scan(
       info->columns.AddColumn(duckdb::ColumnDefinition(
         std::string{col.name}, VeloxTypeToDuckDB(col.type)));
     }
-    auto entry = duckdb::make_uniq<SereneDBTableEntry>(
-      catalog, *this, *info, std::move(table));
+    auto entry = duckdb::make_uniq<SereneDBTableEntry>(catalog, *this, *info,
+                                                       std::move(table));
     callback(*entry);
     // Keep alive
     _table_entries[info->table] = std::move(entry);
@@ -154,12 +152,11 @@ void SereneDBSchemaEntry::Scan(
 void SereneDBSchemaEntry::Scan(
   duckdb::CatalogType type,
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  // Without context — just scan what we have cached
+  // Without context -- just scan what we have cached
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
-  duckdb::CatalogTransaction transaction,
-  duckdb::BoundCreateTableInfo& info) {
+  duckdb::CatalogTransaction transaction, duckdb::BoundCreateTableInfo& info) {
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
@@ -215,9 +212,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
 
   // Create table options
   catalog::CreateTableOptions options;
-  auto r = catalog::MakeTableOptions(
-    std::move(request), database.GetId(), options,
-    database.GetReplicationFactor(), database.GetWriteConcern(), false);
+  auto r = catalog::MakeTableOptions(std::move(request), database.GetId(),
+                                     options, database.GetReplicationFactor(),
+                                     database.GetWriteConcern(), false);
   if (!r.ok()) {
     throw duckdb::InvalidInputException("Failed to create table options: %s",
                                         std::string{r.errorMessage()});
@@ -273,7 +270,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   }
 
   // Build CreateIndexColumn vector from DuckDB info.
-  // At bind time, column_ids may not be populated yet — use names/expressions.
+  // At bind time, column_ids may not be populated yet -- use names/expressions.
   const auto& columns = sdb_table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
 
@@ -316,10 +313,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       });
     }
   } else {
-    // Try parsed_expressions — extract column names from ColumnRefExpression
+    // Try parsed_expressions -- extract column names from ColumnRefExpression
     for (auto& expr : info.parsed_expressions) {
-      if (expr->GetExpressionType() ==
-          duckdb::ExpressionType::COLUMN_REF) {
+      if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
         auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
         auto col_name = col_ref.GetColumnName();
         const catalog::Column* cat_col = nullptr;
@@ -368,21 +364,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     }
     it = info.options.find("cleanup_interval_step");
     if (it != info.options.end()) {
-      shard_options.base.cleanup_interval_step =
-        it->second.GetValue<int64_t>();
+      shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
     create_result = catalog_impl.CreateIndex(
-      database.GetId(), "public", sdb_table->GetName(),
-      std::move(idx_columns), std::move(options), shard_options,
-      {.create_with_tombstone = false});
+      database.GetId(), "public", sdb_table->GetName(), std::move(idx_columns),
+      std::move(options), shard_options, {.create_with_tombstone = false});
   } else {
     SecondaryIndexShardOptions shard_options;
     shard_options.base.unique =
       (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateIndex(
-      database.GetId(), "public", sdb_table->GetName(),
-      std::move(idx_columns), std::move(options), shard_options,
-      {.create_with_tombstone = false});
+      database.GetId(), "public", sdb_table->GetName(), std::move(idx_columns),
+      std::move(options), shard_options, {.create_with_tombstone = false});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
@@ -415,8 +408,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateFunctionInfo& info) {
+  duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
   throw duckdb::NotImplementedException("CREATE FUNCTION through DuckDB");
 }
 
@@ -426,8 +418,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateSequenceInfo& info) {
+  duckdb::CatalogTransaction transaction, duckdb::CreateSequenceInfo& info) {
   throw duckdb::NotImplementedException("CREATE SEQUENCE through DuckDB");
 }
 
@@ -439,9 +430,8 @@ SereneDBSchemaEntry::CreateTableFunction(
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
-SereneDBSchemaEntry::CreateCopyFunction(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateCopyFunctionInfo& info) {
+SereneDBSchemaEntry::CreateCopyFunction(duckdb::CatalogTransaction transaction,
+                                        duckdb::CreateCopyFunctionInfo& info) {
   throw duckdb::NotImplementedException("CREATE COPY FUNCTION through DuckDB");
 }
 
@@ -453,9 +443,8 @@ SereneDBSchemaEntry::CreatePragmaFunction(
     "CREATE PRAGMA FUNCTION through DuckDB");
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry>
-SereneDBSchemaEntry::CreateCollation(duckdb::CatalogTransaction transaction,
-                                     duckdb::CreateCollationInfo& info) {
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
+  duckdb::CatalogTransaction transaction, duckdb::CreateCollationInfo& info) {
   throw duckdb::NotImplementedException("CREATE COLLATION through DuckDB");
 }
 
@@ -467,8 +456,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
 void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
                                     duckdb::DropInfo& info) {
   if (info.type != duckdb::CatalogType::TABLE_ENTRY) {
-    throw duckdb::NotImplementedException("DROP for type %s not supported",
-                                          duckdb::CatalogTypeToString(info.type));
+    throw duckdb::NotImplementedException(
+      "DROP for type %s not supported", duckdb::CatalogTypeToString(info.type));
   }
 
   auto& catalog_feature =
@@ -478,10 +467,9 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
   auto databases = snapshot->GetDatabases();
   SDB_ASSERT(!databases.empty());
 
-  auto r = catalog_impl.DropTable(databases.front()->GetId(), "public",
-                                  info.name);
-  bool if_exists =
-    info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+  auto r =
+    catalog_impl.DropTable(databases.front()->GetId(), "public", info.name);
+  bool if_exists = info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
   if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND) && if_exists) {
     return;
   }

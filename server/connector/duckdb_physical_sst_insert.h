@@ -46,7 +46,7 @@ class SereneDBPhysicalSSTInsert final : public duckdb::PhysicalOperator {
     duckdb::ClientContext& context,
     duckdb::OperatorSinkFinalizeInput& input) const override;
 
-  // Source interface — returns insert count
+  // Source interface -- returns insert count
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
     duckdb::ClientContext& context) const override;
   duckdb::SourceResultType GetDataInternal(

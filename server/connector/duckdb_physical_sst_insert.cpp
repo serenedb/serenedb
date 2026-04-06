@@ -22,7 +22,6 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
-
 #include <filesystem>
 #include <mutex>
 
@@ -31,11 +30,11 @@
 #include "catalog/identifiers/revision_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "pg/connection_context.h"
+#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
-#include "connector/duckdb_primary_key.h"
+#include "pg/connection_context.h"
 #include "rocksdb/options.h"
 #include "rocksdb/sst_file_writer.h"
 #include "rocksdb/table.h"
@@ -45,7 +44,6 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
-
 namespace {
 
 inline constexpr std::string_view kBulkInsertDir = "bulk_insert";
@@ -71,7 +69,7 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
-  // Index writers — created once, reused per Sink() call
+  // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
 
   // Reusable buffers
@@ -100,7 +98,7 @@ SereneDBPhysicalSSTInsert::SereneDBPhysicalSSTInsert(
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
-                              std::move(types), estimated_cardinality),
+                             std::move(types), estimated_cardinality),
     _table(std::move(table)) {}
 
 // --- GetGlobalSinkState ---
@@ -119,7 +117,7 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
-  // Build column metadata — skip generated PK column
+  // Build column metadata -- skip generated PK column
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
   for (const auto& col : columns) {
@@ -136,9 +134,8 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   }
 
   // Create SST directory
-  state->sst_directory =
-    absl::StrCat(engine.path(), "/", kBulkInsertDir, "/",
-                 RevisionId::create().id());
+  state->sst_directory = absl::StrCat(engine.path(), "/", kBulkInsertDir, "/",
+                                      RevisionId::create().id());
   std::filesystem::create_directories(state->sst_directory);
 
   // Configure SstFileWriter options (from sst_sink_writer.cpp)
@@ -159,10 +156,8 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   // Open one SST file per column
   state->writers.resize(state->columns.size());
   for (size_t i = 0; i < state->columns.size(); ++i) {
-    state->writers[i] =
-      std::make_unique<rocksdb::SstFileWriter>(env, options);
-    auto sst_path =
-      absl::StrCat(state->sst_directory, "/column_", i, "_.sst");
+    state->writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
+    auto sst_path = absl::StrCat(state->sst_directory, "/column_", i, "_.sst");
     auto status = state->writers[i]->Open(sst_path);
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));

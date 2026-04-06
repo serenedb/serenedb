@@ -26,7 +26,6 @@
 #include "connector/duckdb_transaction.h"
 
 namespace sdb::connector {
-
 namespace {
 
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(

@@ -22,7 +22,6 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-
 #include <span>
 #include <string>
 #include <vector>
@@ -44,9 +43,9 @@ struct PKColumn {
 };
 
 // Build PK column mappings from table metadata.
-// Maps each PK column ID to its position in the table column list + DuckDB type.
-inline std::vector<PKColumn> BuildPKColumns(
-  const catalog::Table& table) {
+// Maps each PK column ID to its position in the table column list + DuckDB
+// type.
+inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
   const auto& columns = table.Columns();
   const auto& pk_col_ids = table.PKColumns();
   std::vector<PKColumn> result;
@@ -69,8 +68,8 @@ inline std::vector<PKColumn> BuildPKColumns(
 // Append PK bytes from a DuckDB DataChunk row.
 // Uses sortable encoding (big-endian + sign-bit-flip).
 inline void Create(const duckdb::DataChunk& chunk,
-                   std::span<const PKColumn> pk_columns,
-                   duckdb::idx_t row_idx, std::string& key) {
+                   std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
+                   std::string& key) {
   for (const auto& pk : pk_columns) {
     AppendPKValueFromDuckDB(key, chunk.data[pk.input_col_idx], row_idx,
                             pk.type);
@@ -93,7 +92,7 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
   keys.resize(num_rows);
 
   if (pk_columns.empty()) {
-    // Generated PKs — monotonic
+    // Generated PKs -- monotonic
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       keys[row].clear();
       CreateGenerated(keys[row]);

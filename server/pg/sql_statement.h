@@ -22,7 +22,6 @@
 
 #include <duckdb.hpp>
 #include <duckdb/main/prepared_statement.hpp>
-
 #include <memory>
 
 #include "pg/connection_context.h"

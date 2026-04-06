@@ -218,8 +218,7 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
   return count;
 }
 
-void DeserializeValueIntoDuckDB(std::string_view value,
-                                duckdb::Vector& output,
+void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
                                 const duckdb::LogicalType& type,
                                 duckdb::idx_t idx) {
   auto& validity = duckdb::FlatVector::Validity(output);

@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb.hpp>
-
 #include <iresearch/index/index_writer.hpp>
 
 #include "catalog/inverted_index.h"

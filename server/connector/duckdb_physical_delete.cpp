@@ -71,8 +71,8 @@ SereneDBPhysicalDelete::SereneDBPhysicalDelete(
   std::vector<duckdb::idx_t> indexed_col_indices,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
-                              {duckdb::LogicalType::BIGINT},
-                              estimated_cardinality),
+                             {duckdb::LogicalType::BIGINT},
+                             estimated_cardinality),
     _table(std::move(table)),
     _pk_col_indices(std::move(pk_col_indices)),
     _indexed_col_indices(std::move(indexed_col_indices)) {}
@@ -102,7 +102,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     });
   }
 
-  // PK columns — map input chunk positions to types
+  // PK columns -- map input chunk positions to types
   for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
     duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
     if (i < pk_col_ids.size()) {
@@ -131,13 +131,13 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     col_mapping[pk_col_ids[i]] = _pk_col_indices[i];
   }
 
-  // Indexed (non-PK) columns — _indexed_col_indices maps 1:1 to the
+  // Indexed (non-PK) columns -- _indexed_col_indices maps 1:1 to the
   // non-PK indexed columns from GetRowIdColumns(), which are in the same
   // order as the table entry's indexed_col_indices.
   {
     // Reconstruct which column IDs are in the indexed positions
-    containers::FlatHashSet<catalog::Column::Id> pk_id_set(
-      pk_col_ids.begin(), pk_col_ids.end());
+    containers::FlatHashSet<catalog::Column::Id> pk_id_set(pk_col_ids.begin(),
+                                                           pk_col_ids.end());
     // Get all indexed table-column-indices (from the table entry)
     // We need to figure out which column IDs correspond to _indexed_col_indices
     // They're the non-PK indexed columns in sorted order
@@ -171,8 +171,12 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
               [&](auto a, auto b) {
                 size_t pos_a = 0, pos_b = 0;
                 for (size_t i = 0; i < columns.size(); ++i) {
-                  if (columns[i].id == a) pos_a = i;
-                  if (columns[i].id == b) pos_b = i;
+                  if (columns[i].id == a) {
+                    pos_a = i;
+                  }
+                  if (columns[i].id == b) {
+                    pos_b = i;
+                  }
                 }
                 return pos_a < pos_b;
               });
@@ -183,7 +187,8 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     }
   }
 
-  // Also map all table columns by their table position (for INSERT-style writers)
+  // Also map all table columns by their table position (for INSERT-style
+  // writers)
   for (size_t i = 0; i < columns.size(); ++i) {
     if (!col_mapping.contains(columns[i].id)) {
       col_mapping[columns[i].id] = i;  // fallback: table position
@@ -216,7 +221,7 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
   // 1. Build PK bytes
   duckdb_primary_key::CreateBatch(chunk, gstate.pk_columns, gstate.row_keys);
 
-  // 2. Delete index entries — old values are in the input chunk
+  // 2. Delete index entries -- old values are in the input chunk
   //    (scan includes indexed columns via virtual columns)
   if (!gstate.index_writers.empty()) {
     // The input chunk contains indexed column values from the scan.
@@ -246,8 +251,7 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
 
       auto status = txn->Delete(gstate.cf, gstate.key_buffer);
       if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ",
-                  status.ToString());
+        SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ", status.ToString());
       }
     }
   }

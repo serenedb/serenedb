@@ -35,8 +35,7 @@ class DuckDBSinkIndexWriter {
   DuckDBSinkIndexWriter() = default;
   virtual ~DuckDBSinkIndexWriter() = default;
 
-  virtual void Init(duckdb::idx_t batch_size,
-                    const duckdb::DataChunk& input) {}
+  virtual void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) {}
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;
@@ -66,8 +65,7 @@ class DuckDBSinkIndexWriter {
 // Base implementation of column centric index writers (same as Velox version)
 class DuckDBColumnSinkWriterImplBase {
  public:
-  DuckDBColumnSinkWriterImplBase(
-    std::span<const catalog::Column::Id> columns) {
+  DuckDBColumnSinkWriterImplBase(std::span<const catalog::Column::Id> columns) {
     _columns.reserve(columns.size());
     for (auto c : columns) {
       _columns.insert(c);

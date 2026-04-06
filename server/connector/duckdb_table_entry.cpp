@@ -20,14 +20,14 @@
 
 #include "connector/duckdb_table_entry.h"
 
-#include <duckdb/function/table_function.hpp>
-#include <duckdb/planner/table_filter.hpp>
-#include <duckdb/storage/table_storage_info.hpp>
 #include <velox/type/Type.h>
 
+#include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/table_storage_info.hpp>
 
 #include "connector/duckdb_table_function.h"
 
@@ -70,8 +70,7 @@ duckdb::LogicalType VeloxTypeToDuckDB(const velox::TypePtr& type) {
       auto& row = type->asRow();
       duckdb::child_list_t<duckdb::LogicalType> children;
       for (size_t i = 0; i < row.size(); ++i) {
-        children.emplace_back(row.nameOf(i),
-                              VeloxTypeToDuckDB(row.childAt(i)));
+        children.emplace_back(row.nameOf(i), VeloxTypeToDuckDB(row.childAt(i)));
       }
       return duckdb::LogicalType::STRUCT(std::move(children));
     }
@@ -112,11 +111,10 @@ velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type) {
   }
 }
 
-SereneDBTableEntry::SereneDBTableEntry(duckdb::Catalog& catalog,
-                                       duckdb::SchemaCatalogEntry& schema,
-                                       duckdb::CreateTableInfo& info,
-                                       std::shared_ptr<catalog::Table> sdb_table,
-                                       std::vector<size_t> indexed_col_indices)
+SereneDBTableEntry::SereneDBTableEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
+  std::vector<size_t> indexed_col_indices)
   : duckdb::TableCatalogEntry(catalog, schema, info),
     _sdb_table(std::move(sdb_table)),
     _indexed_col_indices(std::move(indexed_col_indices)) {}
@@ -133,7 +131,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
     if (col.id == catalog::Column::kGeneratedPKId) {
-      continue;  // Skip generated PK — not a real column
+      continue;  // Skip generated PK -- not a real column
     }
     data->column_ids.push_back(col.id);
     data->column_types.push_back(VeloxTypeToDuckDB(col.type));
@@ -145,10 +143,11 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   return CreateSereneDBScanFunction();
 }
 
-void SereneDBTableEntry::BindUpdateConstraints(
-  duckdb::Binder& binder, duckdb::LogicalGet& get,
-  duckdb::LogicalProjection& proj, duckdb::LogicalUpdate& update,
-  duckdb::ClientContext& context) {
+void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
+                                               duckdb::LogicalGet& get,
+                                               duckdb::LogicalProjection& proj,
+                                               duckdb::LogicalUpdate& update,
+                                               duckdb::ClientContext& context) {
   // PK columns are now added via GetRowIdColumns/BindRowIdColumns.
   // Just call default logic for CHECK constraints etc.
   duckdb::TableCatalogEntry::BindUpdateConstraints(binder, get, proj, update,
@@ -196,7 +195,9 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
           break;
         }
       }
-      if (is_pk) break;
+      if (is_pk) {
+        break;
+      }
     }
     if (!is_pk) {
       result.push_back(duckdb::VIRTUAL_COLUMN_START + idx);
@@ -217,8 +218,8 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
     for (size_t i = 0; i < columns.size(); ++i) {
       if (columns[i].id == pk_id) {
         result.insert({duckdb::VIRTUAL_COLUMN_START + i,
-                       duckdb::TableColumn(columns[i].name,
-                                           VeloxTypeToDuckDB(columns[i].type))});
+                       duckdb::TableColumn(
+                         columns[i].name, VeloxTypeToDuckDB(columns[i].type))});
         break;
       }
     }
@@ -228,9 +229,9 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
   for (auto idx : _indexed_col_indices) {
     auto virt_id = duckdb::VIRTUAL_COLUMN_START + idx;
     if (!result.contains(virt_id)) {
-      result.insert({virt_id,
-                     duckdb::TableColumn(columns[idx].name,
-                                         VeloxTypeToDuckDB(columns[idx].type))});
+      result.insert(
+        {virt_id, duckdb::TableColumn(columns[idx].name,
+                                      VeloxTypeToDuckDB(columns[idx].type))});
     }
   }
 

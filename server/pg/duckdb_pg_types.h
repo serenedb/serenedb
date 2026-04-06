@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,27 +20,26 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb.hpp>
-#include <duckdb/common/vector/unified_vector_format.hpp>
+#include <expected>
+#include <string_view>
 
-#include "basics/message_buffer.h"
 #include "pg/serialize.h"
 
 namespace sdb::pg {
 
-// Serialization function for DuckDB -- takes RecursiveUnifiedVectorFormat
-// (like Velox DecodedVector). Handles all vector encodings + nested types.
-// Row is the logical index; physical access via sel vector.
-// TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
-// instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
-// for scalar types, and can lazily create child format for arrays).
-using DuckDBSerializationFunction = void (*)(
-  SerializationContext context,
-  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
+enum class DeserializeError { InvalidRepresentation };
 
-DuckDBSerializationFunction GetDuckDBSerialization(
-  const duckdb::LogicalType& type, VarFormat format);
+// Deserialize a PG wire protocol parameter value into a DuckDB Value.
+// Mirrors the old Velox DeserializeParameter but returns duckdb::Value.
+std::expected<duckdb::Value, DeserializeError> DuckDBDeserializeParameter(
+  const duckdb::LogicalType& type, VarFormat format, std::string_view data);
+
+// Map DuckDB LogicalType to PG type OID.
+// Adapted from pg_types.cpp Type2Oid.
+int32_t DuckDBTypeToOid(const duckdb::LogicalType& type);
+
+// Map PG type OID to DuckDB LogicalType.
+duckdb::LogicalType OidToDuckDBType(int32_t oid);
 
 }  // namespace sdb::pg

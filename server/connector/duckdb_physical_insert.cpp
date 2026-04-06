@@ -58,7 +58,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
-  // Index writers — created once, reused per Sink() call
+  // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
 
   // Reusable buffers
@@ -78,10 +78,9 @@ struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
 SereneDBPhysicalInsert::SereneDBPhysicalInsert(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality,
-  duckdb::OnConflictAction on_conflict)
+  duckdb::idx_t estimated_cardinality, duckdb::OnConflictAction on_conflict)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
-                              std::move(types), estimated_cardinality),
+                             std::move(types), estimated_cardinality),
     _table(std::move(table)),
     _on_conflict(on_conflict) {}
 
@@ -220,8 +219,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       // Write to RocksDB
       auto status = txn->Put(gstate.cf, gstate.key_buffer, slice);
       if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ",
-                  status.ToString());
+        SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
       }
 
       // Write to index writers

@@ -29,10 +29,12 @@
 #include "rocksdb/utilities/transaction.h"
 
 namespace rocksdb {
+
 class ColumnFamilyHandle;
 }
 
 namespace sdb {
+
 class ConnectionContext;
 }
 
@@ -44,11 +46,11 @@ namespace sdb::connector {
 // Writers are created once (e.g. in GetGlobalSinkState) and reused for each
 // Sink() call. The WriteKind template selects Insert/Delete/Update writers.
 //
-// col_id_to_chunk_pos: optional override mapping Column::Id → position in
+// col_id_to_chunk_pos: optional override mapping Column::Id -> position in
 // the input DataChunk. If empty, table column order is assumed (for INSERT).
 // For DELETE/UPDATE, pass the actual positions of columns in the scan output.
 //
-// updated_col_ids: optional filter — only create writers for indexes whose
+// updated_col_ids: optional filter -- only create writers for indexes whose
 // columns overlap with this set. If empty, create writers for ALL indexes.
 // Used by UPDATE to skip indexes on non-updated columns.
 enum class DuckDBWriteKind { Insert, Delete, Update };

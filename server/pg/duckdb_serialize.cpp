@@ -20,9 +20,6 @@
 
 #include "pg/duckdb_serialize.h"
 
-#include <duckdb/common/types/timestamp.hpp>
-#include <duckdb/common/vector/list_vector.hpp>
-
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/ascii.h>
@@ -38,6 +35,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/types/timestamp.hpp>
 #include <limits>
 #include <string_view>
 #include <type_traits>
@@ -47,9 +45,7 @@
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "pg/functions/interval.h"
-
 #include "query/config.h"
-
 
 namespace sdb::pg {
 namespace {
@@ -61,23 +57,38 @@ namespace {
     SerializePrimitiveType<kind, VarFormat::Binary>
 
 // Map DuckDB LogicalTypeId to PG OID (for array element types)
-constexpr int32_t Kind2Oid(duckdb::LogicalTypeId kind, bool /*is_array*/ = false) {
+constexpr int32_t Kind2Oid(duckdb::LogicalTypeId kind,
+                           bool /*is_array*/ = false) {
   switch (kind) {
-    case duckdb::LogicalTypeId::BOOLEAN: return 16;
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return 16;
     case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT: return 21;
-    case duckdb::LogicalTypeId::INTEGER: return 23;
-    case duckdb::LogicalTypeId::BIGINT: return 20;
-    case duckdb::LogicalTypeId::FLOAT: return 700;
-    case duckdb::LogicalTypeId::DOUBLE: return 701;
-    case duckdb::LogicalTypeId::VARCHAR: return 25;
-    case duckdb::LogicalTypeId::BLOB: return 17;
-    case duckdb::LogicalTypeId::TIMESTAMP: return 1114;
-    case duckdb::LogicalTypeId::DATE: return 1082;
-    case duckdb::LogicalTypeId::INTERVAL: return 1186;
-    case duckdb::LogicalTypeId::UUID: return 2950;
-    case duckdb::LogicalTypeId::DECIMAL: return 1700;
-    default: return 25;  // TEXT fallback
+    case duckdb::LogicalTypeId::SMALLINT:
+      return 21;
+    case duckdb::LogicalTypeId::INTEGER:
+      return 23;
+    case duckdb::LogicalTypeId::BIGINT:
+      return 20;
+    case duckdb::LogicalTypeId::FLOAT:
+      return 700;
+    case duckdb::LogicalTypeId::DOUBLE:
+      return 701;
+    case duckdb::LogicalTypeId::VARCHAR:
+      return 25;
+    case duckdb::LogicalTypeId::BLOB:
+      return 17;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      return 1114;
+    case duckdb::LogicalTypeId::DATE:
+      return 1082;
+    case duckdb::LogicalTypeId::INTERVAL:
+      return 1186;
+    case duckdb::LogicalTypeId::UUID:
+      return 2950;
+    case duckdb::LogicalTypeId::DECIMAL:
+      return 1700;
+    default:
+      return 25;  // TEXT fallback
   }
 }
 
@@ -114,14 +125,14 @@ constexpr int32_t Kind2Oid(duckdb::LogicalTypeId kind, bool /*is_array*/ = false
 
 template<DuckDBSerializationFunction ValueSerialization>
 void SerializeNullable(SerializationContext context,
-                       const duckdb::Vector& vector,
+                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
   auto* length_data = context.buffer->GetContiguousData(4);
-  if (!duckdb::FlatVector::Validity(vector).RowIsValid(row)) {
+  if (!vdata.unified.validity.RowIsValid(vdata.unified.sel->get_index(row))) {
     absl::big_endian::Store32(length_data, -1);
   } else {
     const auto uncommitted_size = context.buffer->GetUncommittedSize();
-    ValueSerialization(context, vector, row);
+    ValueSerialization(context, vdata, row);
     absl::big_endian::Store32(
       length_data, context.buffer->GetUncommittedSize() - uncommitted_size);
   }
@@ -129,11 +140,11 @@ void SerializeNullable(SerializationContext context,
 
 template<typename T, VarFormat Format, bool Precise = true>
 void SerializeFloat(SerializationContext context,
-                    const duckdb::Vector& vector,
+                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
 
-  auto value = duckdb::FlatVector::GetData<T>(vector)[row];
+  auto value = vdata.unified.GetData<T>()[vdata.unified.sel->get_index(row)];
   // Postgres converts -0.0 as 0.0
   if (value == 0) {
     value = 0;
@@ -176,9 +187,10 @@ void SerializeFloat(SerializationContext context,
 
 template<typename T, VarFormat Format>
 void SerializeInt(SerializationContext context,
-                  const duckdb::Vector& vector,
+                  const duckdb::RecursiveUnifiedVectorFormat& vdata,
                   duckdb::idx_t row) {
-  const auto value = duckdb::FlatVector::GetData<T>(vector)[row];
+  const auto value =
+    vdata.unified.GetData<T>()[vdata.unified.sel->get_index(row)];
 
   if constexpr (Format == VarFormat::Text) {
     context.buffer->WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
@@ -233,9 +245,10 @@ void WriteArrayItemQuotedAndEscaped(std::string_view item,
 
 template<VarFormat Format, bool InArray>
 void SerializeVarchar(SerializationContext context,
-                      const duckdb::Vector& vector,
+                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
-  auto raw = duckdb::FlatVector::GetData<duckdb::string_t>(vector)[row];
+  auto raw = vdata.unified
+               .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
   if constexpr (Format == VarFormat::Text && InArray) {
     if (ArrayItemNeedQuotesAndEscape(value)) {
@@ -250,16 +263,17 @@ void SerializeVarchar(SerializationContext context,
 
 template<VarFormat Format, typename UnscaledType>
 void SerializeDecimal(SerializationContext context,
-                      const duckdb::Vector& vector,
+                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
-  const auto& type = vector.GetType();
+  const auto& type = vdata.logical_type;
   auto precision = duckdb::DecimalType::GetWidth(type);
   auto scale = duckdb::DecimalType::GetScale(type);
-  auto value = duckdb::FlatVector::GetData<UnscaledType>(vector)[row];
+  auto value =
+    vdata.unified.GetData<UnscaledType>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     // Use DuckDB's Value::ToString for text decimal formatting
-    auto dec_value = duckdb::Value::DECIMAL(
-      duckdb::hugeint_t(value), precision, scale);
+    auto dec_value =
+      duckdb::Value::DECIMAL(duckdb::hugeint_t(value), precision, scale);
     auto str = dec_value.ToString();
     context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
       memcpy(data, str.data(), str.size());
@@ -325,8 +339,8 @@ void SerializeDecimal(SerializationContext context,
     if (extra_base != 1 && value != 0) {
       data -= 2;
       ndigits--;
-      int16_t extra_value = static_cast<int16_t>(
-        static_cast<int64_t>((value % (kBaseSystem / extra_base)) * extra_base));
+      int16_t extra_value = static_cast<int16_t>(static_cast<int64_t>(
+        (value % (kBaseSystem / extra_base)) * extra_base));
       value /= (kBaseSystem / extra_base);
       absl::big_endian::Store16(data, extra_value);
     }
@@ -334,9 +348,8 @@ void SerializeDecimal(SerializationContext context,
     while (value != 0) {
       data -= 2;
       ndigits--;
-      absl::big_endian::Store16(data,
-                                static_cast<int16_t>(
-                                  static_cast<int64_t>(value % kBaseSystem)));
+      absl::big_endian::Store16(
+        data, static_cast<int16_t>(static_cast<int64_t>(value % kBaseSystem)));
       value /= kBaseSystem;
     }
     SDB_ASSERT(ndigits == 0);
@@ -345,9 +358,10 @@ void SerializeDecimal(SerializationContext context,
 
 template<bool InArray>
 void SerializeByteaTextHex(SerializationContext context,
-                           const duckdb::Vector& vector,
+                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
-  auto raw = duckdb::FlatVector::GetData<duckdb::string_t>(vector)[row];
+  auto raw = vdata.unified
+               .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
   const auto required_size = (InArray ? 3 : 0) + 2 + 2 * value.size();
   auto* buf =
@@ -358,9 +372,10 @@ void SerializeByteaTextHex(SerializationContext context,
 
 template<bool InArray>
 void SerializeByteaTextEscape(SerializationContext context,
-                              const duckdb::Vector& vector,
+                              const duckdb::RecursiveUnifiedVectorFormat& vdata,
                               duckdb::idx_t row) {
-  auto raw = duckdb::FlatVector::GetData<duckdb::string_t>(vector)[row];
+  auto raw = vdata.unified
+               .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
 
   const auto required_size = ByteaOutEscapeLength<InArray>(value);
@@ -374,9 +389,10 @@ void SerializeByteaTextEscape(SerializationContext context,
 }
 
 void SerializeByteaBinary(SerializationContext context,
-                          const duckdb::Vector& vector,
+                          const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
-  auto raw = duckdb::FlatVector::GetData<duckdb::string_t>(vector)[row];
+  auto raw = vdata.unified
+               .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
   context.buffer->WriteUncommitted(value);
 }
@@ -387,29 +403,32 @@ constexpr auto kGapDays =
 
 template<duckdb::LogicalTypeId Kind, VarFormat Format>
 void SerializePrimitiveType(SerializationContext context,
-                            const duckdb::Vector& vector,
+                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                             duckdb::idx_t row) {
   if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
     SDB_ASSERT(false);
   } else if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {
-    SerializeInt<int8_t, Format>(context, vector, row);
+    SerializeInt<int8_t, Format>(context, vdata, row);
   } else if constexpr (Kind == duckdb::LogicalTypeId::SMALLINT) {
-    SerializeInt<int16_t, Format>(context, vector, row);
+    SerializeInt<int16_t, Format>(context, vdata, row);
   } else if constexpr (Kind == duckdb::LogicalTypeId::INTEGER) {
-    SerializeInt<int32_t, Format>(context, vector, row);
+    SerializeInt<int32_t, Format>(context, vdata, row);
   } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT) {
-    SerializeInt<int64_t, Format>(context, vector, row);
+    SerializeInt<int64_t, Format>(context, vdata, row);
   } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
     if constexpr (Format == VarFormat::Text) {
-      auto value = duckdb::FlatVector::GetData<bool>(vector)[row];
+      auto value =
+        vdata.unified.GetData<bool>()[vdata.unified.sel->get_index(row)];
       context.buffer->WriteUncommitted(value ? "t" : "f");
     } else {
       auto* ptr = reinterpret_cast<bool*>(
         context.buffer->GetContiguousData(sizeof(bool)));
-      *ptr = duckdb::FlatVector::GetData<bool>(vector)[row];
+      *ptr = vdata.unified.GetData<bool>()[vdata.unified.sel->get_index(row)];
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::TIMESTAMP) {
-    const auto timestamp = duckdb::FlatVector::GetData<duckdb::timestamp_t>(vector)[row];
+    const auto timestamp =
+      vdata.unified
+        .GetData<duckdb::timestamp_t>()[vdata.unified.sel->get_index(row)];
     if constexpr (Format == VarFormat::Text) {
       auto str = duckdb::Timestamp::ToString(timestamp);
       context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
@@ -430,10 +449,12 @@ void SerializePrimitiveType(SerializationContext context,
 template<DuckDBSerializationFunction ElementSerialization, int32_t ElementOID,
          VarFormat Format>
 void SerializeOneDimArray(SerializationContext context,
-                          const duckdb::Vector& vector,
+                          const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
-  auto list_data = duckdb::ListVector::GetData(vector)[row];
-  auto& child_vector = duckdb::ListVector::GetEntry(vector);
+  auto list_data =
+    vdata.unified
+      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  auto& child_vdata = vdata.children[0];
   auto array_size = list_data.length;
   auto array_offset = list_data.offset;
   if constexpr (Format == VarFormat::Text) {
@@ -443,10 +464,11 @@ void SerializeOneDimArray(SerializationContext context,
         context.buffer->WriteUncommitted(",");
       }
       const auto element_row = array_offset + i;
-      if (!duckdb::FlatVector::Validity(child_vector).RowIsValid(element_row)) {
+      if (!child_vdata.unified.validity.RowIsValid(
+            child_vdata.unified.sel->get_index(element_row))) {
         context.buffer->WriteUncommitted("NULL");
       } else {
-        ElementSerialization(context, child_vector, element_row);
+        ElementSerialization(context, child_vdata, element_row);
       }
     }
     context.buffer->WriteUncommitted("}");
@@ -459,7 +481,7 @@ void SerializeOneDimArray(SerializationContext context,
     absl::big_endian::Store32(prefix_data + 16, 0);
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
       const auto element_row = array_offset + i;
-      SerializeNullable<ElementSerialization>(context, child_vector,
+      SerializeNullable<ElementSerialization>(context, child_vdata,
                                               element_row);
     }
   }
@@ -469,14 +491,16 @@ void SerializeOneDimArray(SerializationContext context,
 template<DuckDBSerializationFunction ElementSerialization, VarFormat Format,
          bool First = true>
 int32_t FlattenArray(SerializationContext context,
-                     const duckdb::Vector& vector,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
-  if (vector.GetType().id() != duckdb::LogicalTypeId::LIST) {
-    SerializeNullable<ElementSerialization>(context, vector, row);
+  if (vdata.logical_type.id() != duckdb::LogicalTypeId::LIST) {
+    SerializeNullable<ElementSerialization>(context, vdata, row);
     return 0;
   }
-  auto list_data = duckdb::ListVector::GetData(vector)[row];
-  auto& child_vector = duckdb::ListVector::GetEntry(vector);
+  auto list_data =
+    vdata.unified
+      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  auto& child_vdata = vdata.children[0];
   auto array_size = list_data.length;
   auto array_offset = list_data.offset;
   if constexpr (First) {
@@ -490,7 +514,7 @@ int32_t FlattenArray(SerializationContext context,
   duckdb::idx_t i = 0;
   int32_t dims = -1;
   if constexpr (First) {
-    dims = FlattenArray<ElementSerialization, Format>(context, child_vector,
+    dims = FlattenArray<ElementSerialization, Format>(context, child_vdata,
                                                       array_offset + i) +
            1;
     i++;
@@ -498,7 +522,7 @@ int32_t FlattenArray(SerializationContext context,
   for (; i < array_size; ++i) {
     auto element_row = array_offset + i;
     const auto inner_dim = FlattenArray<ElementSerialization, Format, false>(
-      context, child_vector, element_row);
+      context, child_vdata, element_row);
     SDB_ASSERT(dims == -1 || dims == inner_dim + 1);
     dims = inner_dim + 1;
   }
@@ -509,19 +533,22 @@ int32_t FlattenArray(SerializationContext context,
 template<DuckDBSerializationFunction ElementSerialization, int32_t ElementOID,
          VarFormat Format>
 void SerializeArray(SerializationContext context,
-                    const duckdb::Vector& vector,
+                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   if constexpr (Format == VarFormat::Text) {
-    if (vector.GetType().id() != duckdb::LogicalTypeId::LIST) {
-      if (!duckdb::FlatVector::Validity(vector).RowIsValid(row)) {
+    if (vdata.logical_type.id() != duckdb::LogicalTypeId::LIST) {
+      if (!vdata.unified.validity.RowIsValid(
+            vdata.unified.sel->get_index(row))) {
         context.buffer->WriteUncommitted("NULL");
       } else {
-        ElementSerialization(context, vector, row);
+        ElementSerialization(context, vdata, row);
       }
       return;
     }
-    auto list_data = duckdb::ListVector::GetData(vector)[row];
-    auto& child_vector = duckdb::ListVector::GetEntry(vector);
+    auto list_data =
+      vdata.unified
+        .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+    auto& child_vdata = vdata.children[0];
     auto array_size = list_data.length;
     auto array_offset = list_data.offset;
     context.buffer->WriteUncommitted("{");
@@ -531,7 +558,7 @@ void SerializeArray(SerializationContext context,
       }
       const auto element_row = array_offset + i;
       SerializeArray<ElementSerialization, ElementOID, Format>(
-        context, child_vector, element_row);
+        context, child_vdata, element_row);
     }
     context.buffer->WriteUncommitted("}");
   } else {
@@ -539,17 +566,18 @@ void SerializeArray(SerializationContext context,
     absl::big_endian::Store32(prefix_data + 4, 0);
     absl::big_endian::Store32(prefix_data + 8, ElementOID);
     const auto dims =
-      FlattenArray<ElementSerialization, Format>(context, vector, row);
+      FlattenArray<ElementSerialization, Format>(context, vdata, row);
     absl::big_endian::Store32(prefix_data, dims);
   }
 }
 
 template<VarFormat Format>
 void SerializeDate(SerializationContext context,
-                   const duckdb::Vector& vector,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
   // days from 1970-01-01
-  auto days = duckdb::FlatVector::GetData<int32_t>(vector)[row];
+  auto days =
+    vdata.unified.GetData<int32_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     // TODO(mkornaukhov) support BC date and add some validation for dates
     // Format is "%04d-%02d-%02d", max year is 5874897
@@ -595,27 +623,30 @@ void SerializeDate(SerializationContext context,
 // TODO: These will be used when custom OID types are registered in DuckDB
 [[maybe_unused]]
 void SerializeRegtypeText(SerializationContext context,
-                          const duckdb::Vector& vector,
+                          const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
-  const auto oid = duckdb::FlatVector::GetData<int64_t>(vector)[row];
+  const auto oid =
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   // TODO: implement RegtypeOut for DuckDB custom types
   context.buffer->WriteUncommitted(std::to_string(oid));
 }
 
 [[maybe_unused]]
 void SerializeRegclassText(SerializationContext context,
-                           const duckdb::Vector& vector,
+                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
-  const auto oid = duckdb::FlatVector::GetData<int64_t>(vector)[row];
+  const auto oid =
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   // TODO: implement RegclassOut for DuckDB custom types
   context.buffer->WriteUncommitted(std::to_string(oid));
 }
 
 [[maybe_unused]]
-void SerializeRegnamespaceText(SerializationContext context,
-                               const duckdb::Vector& vector,
-                               duckdb::idx_t row) {
-  const auto oid = duckdb::FlatVector::GetData<int64_t>(vector)[row];
+void SerializeRegnamespaceText(
+  SerializationContext context,
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
+  const auto oid =
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   // TODO: implement RegnamespaceOut for DuckDB custom types
   context.buffer->WriteUncommitted(std::to_string(oid));
 }
@@ -624,9 +655,10 @@ void SerializeRegnamespaceText(SerializationContext context,
 // truncate 64-bit OID to 32-bit for PG wire protocol compatibility.
 [[maybe_unused]]
 void SerializeOidBinary(SerializationContext context,
-                        const duckdb::Vector& vector,
+                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
-  const auto oid = duckdb::FlatVector::GetData<int64_t>(vector)[row];
+  const auto oid =
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   if (oid != static_cast<int32_t>(oid)) {
     SDB_WARN("xxxxx", Logger::COMMUNICATION, "reg* OID ", oid,
              " truncated to 32-bit for binary wire protocol");
@@ -637,9 +669,11 @@ void SerializeOidBinary(SerializationContext context,
 
 template<VarFormat Format>
 void SerializeInterval(SerializationContext context,
-                       const duckdb::Vector& vector,
+                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
-  const auto interval = duckdb::FlatVector::GetData<duckdb::interval_t>(vector)[row];
+  const auto interval =
+    vdata.unified
+      .GetData<duckdb::interval_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Interval::ToString(interval);
     context.buffer->WriteUncommitted(str);
@@ -654,9 +688,11 @@ void SerializeInterval(SerializationContext context,
 
 template<VarFormat Format>
 void SerializeUuid(SerializationContext context,
-                   const duckdb::Vector& vector,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
-  const auto uuid = duckdb::FlatVector::GetData<duckdb::hugeint_t>(vector)[row];
+  const auto uuid =
+    vdata.unified
+      .GetData<duckdb::hugeint_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     // Format is "%08x-%04x-%04x-%04x-%012x"
     static constexpr size_t kUUIDStrSize = 8 + 1 + 4 + 1 + 4 + 1 + 4 + 1 + 12;
@@ -693,9 +729,11 @@ void SerializeUuid(SerializationContext context,
 
 template<VarFormat Format, bool InArray>
 void SerializeJson(SerializationContext context,
-                   const duckdb::Vector& vector,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
-  const auto str = duckdb::FlatVector::GetData<duckdb::string_t>(vector)[row];
+  const auto str =
+    vdata.unified
+      .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{str.GetData(), str.GetSize()};
   if constexpr (InArray && Format == VarFormat::Text) {
     if (ArrayItemNeedQuotesAndEscape(value)) {
@@ -706,10 +744,9 @@ void SerializeJson(SerializationContext context,
   context.buffer->WriteUncommitted(value);
 }
 
-DuckDBSerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
-                                            VarFormat format,
-                                            SerializationContext& context,
-                                            size_t dims) {
+DuckDBSerializationFunction GetArraySerialization(
+  const duckdb::LogicalType& type, VarFormat format,
+  SerializationContext& context, size_t dims) {
   // TODO: Add custom SereneDB types (OID, Reg*, etc.) when implemented as
   // DuckDB custom logical types. For now, only standard DuckDB types.
 
@@ -753,7 +790,8 @@ DuckDBSerializationFunction GetArraySerialization(const duckdb::LogicalType& typ
     case duckdb::LogicalTypeId::FLOAT: {
       static constexpr auto kSerializeBinary =
         SerializeFloat<float, VarFormat::Binary>;
-      static constexpr auto kOid = Kind2Oid(duckdb::LogicalTypeId::FLOAT, false);
+      static constexpr auto kOid =
+        Kind2Oid(duckdb::LogicalTypeId::FLOAT, false);
       return irs::ResolveBool(
         context.extra_float_digits > 0, [&]<bool Precise> {
           static constexpr auto kSerializeText =
@@ -764,7 +802,8 @@ DuckDBSerializationFunction GetArraySerialization(const duckdb::LogicalType& typ
     case duckdb::LogicalTypeId::DOUBLE: {
       static constexpr auto kSerializeBinary =
         SerializeFloat<double, VarFormat::Binary>;
-      static constexpr auto kOid = Kind2Oid(duckdb::LogicalTypeId::DOUBLE, false);
+      static constexpr auto kOid =
+        Kind2Oid(duckdb::LogicalTypeId::DOUBLE, false);
       return irs::ResolveBool(
         context.extra_float_digits > 0, [&]<bool Precise> {
           static constexpr auto kSerializeText =
@@ -773,7 +812,8 @@ DuckDBSerializationFunction GetArraySerialization(const duckdb::LogicalType& typ
         });
     }
     case duckdb::LogicalTypeId::VARCHAR: {
-      static constexpr auto kOid = Kind2Oid(duckdb::LogicalTypeId::VARCHAR, false);
+      static constexpr auto kOid =
+        Kind2Oid(duckdb::LogicalTypeId::VARCHAR, false);
       static constexpr auto kSerializeText =
         SerializeVarchar<VarFormat::Text, true>;
       static constexpr auto kSerializeBinary =
@@ -891,10 +931,10 @@ template void ByteaOutHex<false>(char* buf, std::string_view value);
 template void ByteaOutEscape<true>(char* buf, std::string_view value);
 template void ByteaOutEscape<false>(char* buf, std::string_view value);
 
-// FillContext is defined in serialize.cpp — not duplicated here
+// FillContext is defined in serialize.cpp -- not duplicated here
 
-DuckDBSerializationFunction GetDuckDBSerialization(const duckdb::LogicalType& type,
-                                       VarFormat format) {
+DuckDBSerializationFunction GetDuckDBSerialization(
+  const duckdb::LogicalType& type, VarFormat format) {
   // Handle decimal first (needs width check)
   if (type.id() == duckdb::LogicalTypeId::DECIMAL) {
     auto width = duckdb::DecimalType::GetWidth(type);
@@ -968,7 +1008,8 @@ DuckDBSerializationFunction GetDuckDBSerialization(const duckdb::LogicalType& ty
         inner = &duckdb::ListType::GetChildType(*inner);
         dims++;
       }
-      // TODO: pass proper SerializationContext for extra_float_digits/bytea_output
+      // TODO: pass proper SerializationContext for
+      // extra_float_digits/bytea_output
       SerializationContext dummy_ctx{};
       return GetArraySerialization(*inner, format, dummy_ctx, dims);
     }

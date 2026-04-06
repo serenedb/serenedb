@@ -599,7 +599,7 @@ class IndexTable : public axiom::connector::Table {
   }
 
   void SetOffsets(std::vector<catalog::Column::OffsetsFieldRequest>&& offsets) {
-    SDB_ASSERT(_index.GetIndexType() == IndexType::Inverted);
+    SDB_ASSERT(_index.GetType() == catalog::ObjectType::InvertedIndex);
     _offsets_requests.insert(_offsets_requests.end(),
                              std::make_move_iterator(offsets.begin()),
                              std::make_move_iterator(offsets.end()));

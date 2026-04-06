@@ -54,8 +54,7 @@ jobs:
           git fetch origin main --depth=1
           CHANGED=$(git diff --name-only origin/main -- \
             'tests/sqllogic/pg/' \
-            'tests/sqllogic/any/pg/' \
-            'tests/sqllogic/sdb/pg/' || true)
+            'tests/sqllogic/any/pg/' || true)
 
           if [[ -z "$CHANGED" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"

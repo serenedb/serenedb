@@ -46,16 +46,13 @@ void DuckDBEngine::Initialize() {
                             "Extra digits for float display",
                             duckdb::LogicalType::INTEGER, duckdb::Value(1));
   config.AddExtensionOption("bytea_output", "Output format for bytea",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("hex"));
-  config.AddExtensionOption("default_transaction_isolation",
-                            "Default transaction isolation level",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("read committed"));
-  config.AddExtensionOption("transaction_isolation",
-                            "Current transaction isolation level",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("read committed"));
+                            duckdb::LogicalType::VARCHAR, duckdb::Value("hex"));
+  config.AddExtensionOption(
+    "default_transaction_isolation", "Default transaction isolation level",
+    duckdb::LogicalType::VARCHAR, duckdb::Value("read committed"));
+  config.AddExtensionOption(
+    "transaction_isolation", "Current transaction isolation level",
+    duckdb::LogicalType::VARCHAR, duckdb::Value("read committed"));
   config.AddExtensionOption("client_encoding", "Client encoding",
                             duckdb::LogicalType::VARCHAR,
                             duckdb::Value("UTF8"));
@@ -67,8 +64,7 @@ void DuckDBEngine::Initialize() {
                             duckdb::Value("18.3"));
   config.AddExtensionOption("standard_conforming_strings",
                             "Standard conforming strings",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("on"));
+                            duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
   config.AddExtensionOption("DateStyle", "Date display style",
                             duckdb::LogicalType::VARCHAR,
                             duckdb::Value("ISO, MDY"));
@@ -76,8 +72,7 @@ void DuckDBEngine::Initialize() {
                             duckdb::LogicalType::VARCHAR,
                             duckdb::Value("postgres"));
   config.AddExtensionOption("integer_datetimes", "Integer datetimes",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("on"));
+                            duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
   // Attach SereneDB as the default database

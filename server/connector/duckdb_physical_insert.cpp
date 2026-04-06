@@ -24,13 +24,12 @@
 #include <duckdb/execution/execution_context.hpp>
 
 #include "basics/assert.h"
-#include "catalog/identifiers/revision_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_index_utils.h"
+#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
-#include "connector/primary_key.hpp"
-#include "connector/rocksdb_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -39,13 +38,42 @@
 
 namespace sdb::connector {
 
+// Column metadata computed once in GetGlobalSinkState
+struct InsertColumnMeta {
+  catalog::Column::Id id;
+  duckdb::LogicalType duckdb_type;
+  size_t input_col_idx;
+};
+
 struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::atomic<duckdb::idx_t> insert_count{0};
+
+  // Table metadata (computed once)
+  ObjectId table_id;
+  std::string table_key;
+  std::vector<InsertColumnMeta> columns;  // non-generated-PK columns
+  std::vector<duckdb_primary_key::PKColumn> pk_columns;
+  bool has_generated_pk = false;
+
+  // RocksDB handles
+  rocksdb::ColumnFamilyHandle* cf = nullptr;
+
+  // Index writers — created once, reused per Sink() call
+  std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
+
+  // Reusable buffers
+  std::vector<std::string> row_keys;
+  std::vector<bool> skip_row;
+  std::vector<DuckDBSinkIndexWriter*> active_writers;
+  std::string key_buffer;
+  std::string value_buffer;
 };
 
 struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
   bool finished = false;
 };
+
+// --- Constructor ---
 
 SereneDBPhysicalInsert::SereneDBPhysicalInsert(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
@@ -57,11 +85,47 @@ SereneDBPhysicalInsert::SereneDBPhysicalInsert(
     _table(std::move(table)),
     _on_conflict(on_conflict) {}
 
+// --- GetGlobalSinkState: set up once ---
+
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalInsert::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
-  return duckdb::make_uniq<SereneDBInsertGlobalState>();
+  auto state = duckdb::make_uniq<SereneDBInsertGlobalState>();
+
+  state->cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  SDB_ASSERT(state->cf);
+
+  state->table_id = _table->GetId();
+  state->table_key = key_utils::PrepareTableKey(state->table_id);
+
+  // Build column metadata
+  const auto& columns = _table->Columns();
+  for (size_t i = 0; i < columns.size(); ++i) {
+    if (columns[i].id == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    state->columns.push_back(InsertColumnMeta{
+      .id = columns[i].id,
+      .duckdb_type = VeloxTypeToDuckDB(columns[i].type),
+      .input_col_idx = i,
+    });
+  }
+
+  // PK column mappings
+  state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
+  state->has_generated_pk = _table->PKColumns().empty();
+
+  // Create index writers once (needs transaction context)
+  auto& conn_ctx = GetSereneDBContext(context);
+  conn_ctx.AddRocksDBWrite();
+  state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
+    state->table_id, conn_ctx, *_table);
+
+  return state;
 }
+
+// --- Sink ---
 
 duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
@@ -69,87 +133,47 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   auto& gstate = input.global_state.Cast<SereneDBInsertGlobalState>();
 
   chunk.Flatten();
+  const auto num_rows = chunk.size();
+  if (num_rows == 0) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
 
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  SDB_ASSERT(cf);
-
-  // Use the connection's transaction
   auto& conn_ctx = GetSereneDBContext(context.client);
   conn_ctx.AddRocksDBWrite();
   auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
-  const auto& columns = _table->Columns();
-  auto table_id = _table->GetId();
-  std::string table_key = key_utils::PrepareTableKey(table_id);
-
-  const auto num_rows = chunk.size();
-  const auto num_input_cols = chunk.ColumnCount();
   constexpr size_t kTablePrefixSize = sizeof(ObjectId);
 
-  // Determine PK columns
-  const auto& pk_columns = _table->PKColumns();
-  bool has_generated_pk = pk_columns.empty();
+  // 1. Build PK keys for all rows
+  duckdb_primary_key::CreateBatch(chunk, gstate.pk_columns, gstate.row_keys);
 
-  // Build row keys (PK bytes) for all rows
-  std::vector<std::string> row_keys(num_rows);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    if (has_generated_pk) {
-      auto generated_pk =
-        std::bit_cast<int64_t>(RevisionId::create().id());
-      primary_key::AppendSigned(row_keys[row], generated_pk);
-    } else {
-      // Build PK from explicit PK columns in the input
-      for (size_t pk_idx = 0; pk_idx < pk_columns.size(); ++pk_idx) {
-        // Find which input column corresponds to this PK column
-        auto pk_col_id = pk_columns[pk_idx];
-        duckdb::idx_t input_col = 0;
-        for (size_t i = 0; i < columns.size(); ++i) {
-          if (columns[i].id == pk_col_id) {
-            input_col = i;
-            break;
-          }
-        }
-        SDB_ASSERT(input_col < num_input_cols);
-        auto duckdb_type = VeloxTypeToDuckDB(columns[input_col].type);
-        AppendPKValueFromDuckDB(row_keys[row], chunk.data[input_col], row,
-                                duckdb_type);
-      }
-    }
-  }
-
-  // Conflict detection for explicit PKs
-  // Check if any row key already exists in RocksDB
-  std::vector<bool> skip_row(num_rows, false);
-  if (!has_generated_pk) {
-    // Use first column's key prefix to check existence
+  // 2. Conflict detection for explicit PKs
+  gstate.skip_row.assign(num_rows, false);
+  if (!gstate.has_generated_pk) {
     rocksdb::ReadOptions ro;
     ro.snapshot = txn->GetSnapshot();
     std::string check_key;
     rocksdb::PinnableSlice check_value;
-    auto first_col_id = columns[0].id;
-    if (first_col_id == catalog::Column::kGeneratedPKId && columns.size() > 1) {
-      first_col_id = columns[1].id;
-    }
+
+    // Use first data column for existence check
+    auto first_col_id = gstate.columns.front().id;
+
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      check_key = table_key;
+      check_key = gstate.table_key;
       basics::StrResize(check_key, kTablePrefixSize);
       key_utils::AppendColumnKey(check_key, first_col_id);
-      check_key.append(row_keys[row]);
+      check_key.append(gstate.row_keys[row]);
 
       check_value.Reset();
-      auto s = txn->Get(ro, cf, check_key, &check_value);
+      auto s = txn->Get(ro, gstate.cf, check_key, &check_value);
       if (s.ok()) {
-        // Key exists — PK conflict
         if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
-          skip_row[row] = true;
+          gstate.skip_row[row] = true;
           continue;
         }
         if (_on_conflict == duckdb::OnConflictAction::REPLACE) {
-          // Overwrite — proceed without error
           continue;
         }
-        // THROW — connection will rollback
         SDB_THROW(ERROR_BAD_PARAMETER,
                   "duplicate key value violates unique constraint");
       }
@@ -159,58 +183,66 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     }
   }
 
-  // Write each column to RocksDB
-  std::string key_buffer;
-  std::string value_buffer;
+  // 3. Init index writers for this batch
+  for (auto& writer : gstate.index_writers) {
+    writer->Init(num_rows, chunk);
+  }
 
-  for (size_t col_idx = 0; col_idx < columns.size(); ++col_idx) {
-    const auto& col = columns[col_idx];
-    if (col.id == catalog::Column::kGeneratedPKId) {
-      continue;  // Generated PK is not stored
-    }
-    if (col_idx >= num_input_cols) {
-      continue;  // Column not in input (has default — skip for now)
+  // 4. Write each column: data + index writers
+  for (const auto& col : gstate.columns) {
+    if (col.input_col_idx >= chunk.ColumnCount()) {
+      continue;  // Column not in input (default value)
     }
 
-    auto duckdb_type = VeloxTypeToDuckDB(col.type);
+    // Prepare index writers: filter to those interested in this column
+    gstate.active_writers.clear();
+    for (auto& writer : gstate.index_writers) {
+      if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
+        gstate.active_writers.push_back(writer.get());
+      }
+    }
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      if (skip_row[row]) {
+      if (gstate.skip_row[row]) {
         continue;
       }
+
       // Build full key: [ObjectId][ColumnId][PK]
-      key_buffer = table_key;
-      basics::StrResize(key_buffer, kTablePrefixSize);
-      key_utils::AppendColumnKey(key_buffer, col.id);
-      key_buffer.append(row_keys[row]);
+      gstate.key_buffer = gstate.table_key;
+      basics::StrResize(gstate.key_buffer, kTablePrefixSize);
+      key_utils::AppendColumnKey(gstate.key_buffer, col.id);
+      gstate.key_buffer.append(gstate.row_keys[row]);
 
       // Serialize value
-      auto slice =
-        SerializeScalarValue(chunk.data[col_idx], row, duckdb_type,
-                             value_buffer);
+      auto slice = SerializeScalarValue(chunk.data[col.input_col_idx], row,
+                                        col.duckdb_type, gstate.value_buffer);
 
       // Write to RocksDB
-      rocksdb::Status status;
-      if (slice.empty()) {
-        // NULL value
-        rocksdb::Slice null_slice;
-        status = txn->Put(cf, key_buffer, null_slice);
-      } else {
-        status = txn->Put(cf, key_buffer, slice);
-      }
+      auto status = txn->Put(gstate.cf, gstate.key_buffer, slice);
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ",
                   status.ToString());
       }
+
+      // Write to index writers
+      for (auto* writer : gstate.active_writers) {
+        writer->Write({&slice, 1}, gstate.key_buffer);
+      }
     }
   }
 
-  // No commit here — connection manages transaction lifecycle
+  // 5. Finish index writers for this batch
+  for (auto& writer : gstate.index_writers) {
+    writer->Finish();
+  }
 
-  auto skipped = std::count(skip_row.begin(), skip_row.end(), true);
+  auto skipped =
+    std::count(gstate.skip_row.begin(), gstate.skip_row.end(), true);
   gstate.insert_count += num_rows - skipped;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
+
+// --- Finalize ---
 
 duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
@@ -218,6 +250,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   return duckdb::SinkFinalizeType::READY;
 }
+
+// --- Source (returns insert count) ---
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBPhysicalInsert::GetGlobalSourceState(

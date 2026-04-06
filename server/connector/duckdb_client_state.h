@@ -22,10 +22,10 @@
 
 #include <duckdb.hpp>
 #include <duckdb/main/client_context_state.hpp>
-
 #include <memory>
 
 namespace sdb {
+
 class ConnectionContext;
 }
 

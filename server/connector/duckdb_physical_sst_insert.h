@@ -22,19 +22,17 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
-#include <duckdb/parser/statement/insert_statement.hpp>
 
 #include "catalog/table.h"
 
 namespace sdb::connector {
 
-class SereneDBPhysicalInsert final : public duckdb::PhysicalOperator {
+class SereneDBPhysicalSSTInsert final : public duckdb::PhysicalOperator {
  public:
-  SereneDBPhysicalInsert(
-    duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
-    duckdb::vector<duckdb::LogicalType> types,
-    duckdb::idx_t estimated_cardinality,
-    duckdb::OnConflictAction on_conflict = duckdb::OnConflictAction::THROW);
+  SereneDBPhysicalSSTInsert(duckdb::PhysicalPlan& plan,
+                            std::shared_ptr<catalog::Table> table,
+                            duckdb::vector<duckdb::LogicalType> types,
+                            duckdb::idx_t estimated_cardinality);
 
   // Sink interface
   bool IsSink() const override { return true; }
@@ -48,7 +46,7 @@ class SereneDBPhysicalInsert final : public duckdb::PhysicalOperator {
     duckdb::ClientContext& context,
     duckdb::OperatorSinkFinalizeInput& input) const override;
 
-  // Source interface -- returns insert count
+  // Source interface — returns insert count
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
     duckdb::ClientContext& context) const override;
   duckdb::SourceResultType GetDataInternal(
@@ -58,7 +56,6 @@ class SereneDBPhysicalInsert final : public duckdb::PhysicalOperator {
 
  private:
   std::shared_ptr<catalog::Table> _table;
-  duckdb::OnConflictAction _on_conflict;
 };
 
 }  // namespace sdb::connector

@@ -29,6 +29,9 @@ add_library(
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
     duckdb_physical_insert.cpp
+    duckdb_physical_sst_insert.cpp
+    duckdb_index_utils.cpp
+    duckdb_search_sink_writer.cpp
     duckdb_physical_delete.cpp
     duckdb_physical_update.cpp
     duckdb_transaction.cpp

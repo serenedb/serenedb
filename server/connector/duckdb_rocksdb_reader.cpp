@@ -50,15 +50,15 @@ static duckdb::idx_t ReadScalarColumn(rocksdb::Iterator& it,
   auto* data = duckdb::FlatVector::GetData<T>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
-  return IterateColumn(it, max_rows, [&](duckdb::idx_t idx,
-                                         std::string_view value) {
-    if (value.empty()) {
-      validity.SetInvalid(idx);
-      return;
-    }
-    SDB_ASSERT(value.size() == sizeof(T));
-    std::memcpy(&data[idx], value.data(), sizeof(T));
-  });
+  return IterateColumn(it, max_rows,
+                       [&](duckdb::idx_t idx, std::string_view value) {
+                         if (value.empty()) {
+                           validity.SetInvalid(idx);
+                           return;
+                         }
+                         SDB_ASSERT(value.size() == sizeof(T));
+                         std::memcpy(&data[idx], value.data(), sizeof(T));
+                       });
 }
 
 static duckdb::idx_t ReadBoolColumn(rocksdb::Iterator& it,
@@ -67,15 +67,15 @@ static duckdb::idx_t ReadBoolColumn(rocksdb::Iterator& it,
   auto* data = duckdb::FlatVector::GetData<bool>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
-  return IterateColumn(
-    it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
-      if (value.empty()) {
-        validity.SetInvalid(idx);
-        return;
-      }
-      SDB_ASSERT(value.size() == kTrueValue.size());
-      data[idx] = (value == kTrueValue);
-    });
+  return IterateColumn(it, max_rows,
+                       [&](duckdb::idx_t idx, std::string_view value) {
+                         if (value.empty()) {
+                           validity.SetInvalid(idx);
+                           return;
+                         }
+                         SDB_ASSERT(value.size() == kTrueValue.size());
+                         data[idx] = (value == kTrueValue);
+                       });
 }
 
 static duckdb::idx_t ReadVarcharColumn(rocksdb::Iterator& it,
@@ -120,17 +120,17 @@ static duckdb::idx_t ReadTimestampColumn(rocksdb::Iterator& it,
   auto* data = duckdb::FlatVector::GetData<duckdb::timestamp_t>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
-  return IterateColumn(
-    it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
-      if (value.empty()) {
-        validity.SetInvalid(idx);
-        return;
-      }
-      SDB_ASSERT(value.size() == sizeof(int64_t));
-      int64_t v;
-      std::memcpy(&v, value.data(), sizeof(v));
-      data[idx] = duckdb::timestamp_t(v);
-    });
+  return IterateColumn(it, max_rows,
+                       [&](duckdb::idx_t idx, std::string_view value) {
+                         if (value.empty()) {
+                           validity.SetInvalid(idx);
+                           return;
+                         }
+                         SDB_ASSERT(value.size() == sizeof(int64_t));
+                         int64_t v;
+                         std::memcpy(&v, value.data(), sizeof(v));
+                         data[idx] = duckdb::timestamp_t(v);
+                       });
 }
 
 static duckdb::idx_t ReadDateColumn(rocksdb::Iterator& it,
@@ -139,17 +139,17 @@ static duckdb::idx_t ReadDateColumn(rocksdb::Iterator& it,
   auto* data = duckdb::FlatVector::GetData<duckdb::date_t>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
-  return IterateColumn(
-    it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
-      if (value.empty()) {
-        validity.SetInvalid(idx);
-        return;
-      }
-      SDB_ASSERT(value.size() == sizeof(int32_t));
-      int32_t v;
-      std::memcpy(&v, value.data(), sizeof(v));
-      data[idx] = duckdb::date_t(v);
-    });
+  return IterateColumn(it, max_rows,
+                       [&](duckdb::idx_t idx, std::string_view value) {
+                         if (value.empty()) {
+                           validity.SetInvalid(idx);
+                           return;
+                         }
+                         SDB_ASSERT(value.size() == sizeof(int32_t));
+                         int32_t v;
+                         std::memcpy(&v, value.data(), sizeof(v));
+                         data[idx] = duckdb::date_t(v);
+                       });
 }
 
 duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
@@ -196,7 +196,6 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
   // We need to read both value AND key for each row in one pass.
   // Can't use the typed readers (they advance the iterator).
   // Instead, do a generic loop extracting both.
-  auto& col_validity = duckdb::FlatVector::Validity(col_output);
   duckdb::idx_t count = 0;
 
   while (it.Valid() && count < max_rows) {
@@ -208,111 +207,116 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
       duckdb::StringVector::AddStringOrBlob(rowid_output, pk_bytes.data(),
                                             pk_bytes.size());
 
-    // Read column value using the same logic as ReadColumnIntoDuckDB
-    // but inline to avoid double iteration
-    auto value = it.value().ToStringView();
-    if (value.empty()) {
-      col_validity.SetInvalid(count);
-    } else {
-      // Dispatch by type — same as the typed readers but for a single row
-      switch (type.id()) {
-        case duckdb::LogicalTypeId::BOOLEAN: {
-          SDB_ASSERT(value.size() == kTrueValue.size());
-          duckdb::FlatVector::GetData<bool>(col_output)[count] =
-            (value == kTrueValue);
-          break;
-        }
-        case duckdb::LogicalTypeId::TINYINT: {
-          SDB_ASSERT(value.size() == sizeof(int8_t));
-          duckdb::FlatVector::GetData<int8_t>(col_output)[count] =
-            *reinterpret_cast<const int8_t*>(value.data());
-          break;
-        }
-        case duckdb::LogicalTypeId::SMALLINT: {
-          SDB_ASSERT(value.size() == sizeof(int16_t));
-          int16_t v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<int16_t>(col_output)[count] = v;
-          break;
-        }
-        case duckdb::LogicalTypeId::INTEGER: {
-          SDB_ASSERT(value.size() == sizeof(int32_t));
-          int32_t v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<int32_t>(col_output)[count] = v;
-          break;
-        }
-        case duckdb::LogicalTypeId::BIGINT: {
-          SDB_ASSERT(value.size() == sizeof(int64_t));
-          int64_t v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<int64_t>(col_output)[count] = v;
-          break;
-        }
-        case duckdb::LogicalTypeId::FLOAT: {
-          SDB_ASSERT(value.size() == sizeof(float));
-          float v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<float>(col_output)[count] = v;
-          break;
-        }
-        case duckdb::LogicalTypeId::DOUBLE: {
-          SDB_ASSERT(value.size() == sizeof(double));
-          double v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<double>(col_output)[count] = v;
-          break;
-        }
-        case duckdb::LogicalTypeId::HUGEINT: {
-          SDB_ASSERT(value.size() == sizeof(duckdb::hugeint_t));
-          duckdb::hugeint_t v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<duckdb::hugeint_t>(col_output)[count] = v;
-          break;
-        }
-        case duckdb::LogicalTypeId::VARCHAR: {
-          const size_t offset = value[0] == 0 ? 1 : 0;
-          duckdb::FlatVector::GetData<duckdb::string_t>(col_output)[count] =
-            duckdb::StringVector::AddString(col_output,
-                                            value.data() + offset,
-                                            value.size() - offset);
-          break;
-        }
-        case duckdb::LogicalTypeId::BLOB: {
-          duckdb::FlatVector::GetData<duckdb::string_t>(col_output)[count] =
-            duckdb::StringVector::AddStringOrBlob(col_output, value.data(),
-                                                  value.size());
-          break;
-        }
-        case duckdb::LogicalTypeId::TIMESTAMP: {
-          SDB_ASSERT(value.size() == sizeof(int64_t));
-          int64_t v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<duckdb::timestamp_t>(col_output)[count] =
-            duckdb::timestamp_t(v);
-          break;
-        }
-        case duckdb::LogicalTypeId::DATE: {
-          SDB_ASSERT(value.size() == sizeof(int32_t));
-          int32_t v;
-          std::memcpy(&v, value.data(), sizeof(v));
-          duckdb::FlatVector::GetData<duckdb::date_t>(col_output)[count] =
-            duckdb::date_t(v);
-          break;
-        }
-        default:
-          duckdb::FlatVector::GetData<duckdb::string_t>(col_output)[count] =
-            duckdb::StringVector::AddString(col_output, value.data(),
-                                            value.size());
-          break;
-      }
-    }
+    // Read column value via shared helper
+    DeserializeValueIntoDuckDB(it.value().ToStringView(), col_output, type,
+                               count);
 
     ++count;
     it.Next();
   }
   rocksutils::CheckIteratorStatus(it);
   return count;
+}
+
+void DeserializeValueIntoDuckDB(std::string_view value,
+                                duckdb::Vector& output,
+                                const duckdb::LogicalType& type,
+                                duckdb::idx_t idx) {
+  auto& validity = duckdb::FlatVector::Validity(output);
+
+  if (value.empty()) {
+    validity.SetInvalid(idx);
+    return;
+  }
+
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN: {
+      SDB_ASSERT(value.size() == kTrueValue.size());
+      duckdb::FlatVector::GetData<bool>(output)[idx] = (value == kTrueValue);
+      break;
+    }
+    case duckdb::LogicalTypeId::TINYINT: {
+      SDB_ASSERT(value.size() == sizeof(int8_t));
+      duckdb::FlatVector::GetData<int8_t>(output)[idx] =
+        static_cast<int8_t>(value[0]);
+      break;
+    }
+    case duckdb::LogicalTypeId::SMALLINT: {
+      SDB_ASSERT(value.size() == sizeof(int16_t));
+      int16_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<int16_t>(output)[idx] = v;
+      break;
+    }
+    case duckdb::LogicalTypeId::INTEGER: {
+      SDB_ASSERT(value.size() == sizeof(int32_t));
+      int32_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<int32_t>(output)[idx] = v;
+      break;
+    }
+    case duckdb::LogicalTypeId::BIGINT: {
+      SDB_ASSERT(value.size() == sizeof(int64_t));
+      int64_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<int64_t>(output)[idx] = v;
+      break;
+    }
+    case duckdb::LogicalTypeId::FLOAT: {
+      SDB_ASSERT(value.size() == sizeof(float));
+      float v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<float>(output)[idx] = v;
+      break;
+    }
+    case duckdb::LogicalTypeId::DOUBLE: {
+      SDB_ASSERT(value.size() == sizeof(double));
+      double v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<double>(output)[idx] = v;
+      break;
+    }
+    case duckdb::LogicalTypeId::HUGEINT: {
+      SDB_ASSERT(value.size() == sizeof(duckdb::hugeint_t));
+      duckdb::hugeint_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<duckdb::hugeint_t>(output)[idx] = v;
+      break;
+    }
+    case duckdb::LogicalTypeId::VARCHAR: {
+      const size_t offset = value[0] == 0 ? 1 : 0;
+      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+        duckdb::StringVector::AddString(output, value.data() + offset,
+                                        value.size() - offset);
+      break;
+    }
+    case duckdb::LogicalTypeId::BLOB: {
+      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+        duckdb::StringVector::AddStringOrBlob(output, value.data(),
+                                              value.size());
+      break;
+    }
+    case duckdb::LogicalTypeId::TIMESTAMP: {
+      SDB_ASSERT(value.size() == sizeof(int64_t));
+      int64_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<duckdb::timestamp_t>(output)[idx] =
+        duckdb::timestamp_t(v);
+      break;
+    }
+    case duckdb::LogicalTypeId::DATE: {
+      SDB_ASSERT(value.size() == sizeof(int32_t));
+      int32_t v;
+      std::memcpy(&v, value.data(), sizeof(v));
+      duckdb::FlatVector::GetData<duckdb::date_t>(output)[idx] =
+        duckdb::date_t(v);
+      break;
+    }
+    default:
+      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+        duckdb::StringVector::AddString(output, value.data(), value.size());
+      break;
+  }
 }
 
 }  // namespace sdb::connector

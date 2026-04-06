@@ -46,4 +46,12 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
                                   size_t key_prefix_size,
                                   duckdb::idx_t max_rows);
 
+// Deserialize a single RocksDB value into a DuckDB Vector at position idx.
+// Read-path counterpart to SerializeScalarValue on the write path.
+// Handles NULL (empty value), strings (leading \0 byte), scalars (memcpy).
+void DeserializeValueIntoDuckDB(std::string_view value,
+                                duckdb::Vector& output,
+                                const duckdb::LogicalType& type,
+                                duckdb::idx_t idx);
+
 }  // namespace sdb::connector

@@ -22,7 +22,6 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector.hpp>
-
 #include <string>
 
 #include "rocksdb/slice.h"
@@ -31,7 +30,7 @@ namespace sdb::connector {
 
 // Serialize a single value from a DuckDB Vector at row `idx` into `buffer`.
 // Returns a Slice pointing into `buffer`. If the value is NULL, returns
-// an empty Slice (zero length) — matching RocksDB NULL convention.
+// an empty Slice (zero length) -- matching RocksDB NULL convention.
 // Type dispatch happens at the caller (once per column).
 rocksdb::Slice SerializeScalarValue(const duckdb::Vector& vec,
                                     duckdb::idx_t idx,

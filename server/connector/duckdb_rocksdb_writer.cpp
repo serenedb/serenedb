@@ -49,8 +49,8 @@ rocksdb::Slice SerializeScalarValue(const duckdb::Vector& vec,
     }
     case duckdb::LogicalTypeId::TINYINT: {
       buffer.resize(sizeof(int8_t));
-      buffer[0] = static_cast<char>(
-        duckdb::FlatVector::GetData<int8_t>(vec)[idx]);
+      buffer[0] =
+        static_cast<char>(duckdb::FlatVector::GetData<int8_t>(vec)[idx]);
       return {buffer};
     }
     case duckdb::LogicalTypeId::SMALLINT: {
@@ -89,10 +89,10 @@ rocksdb::Slice SerializeScalarValue(const duckdb::Vector& vec,
       auto data = str.GetData();
       auto size = str.GetSize();
       if (size == 0) {
-        // Empty string → single \0 byte (distinguishes from NULL)
+        // Empty string -> single \0 byte (distinguishes from NULL)
         buffer.assign(1, '\0');
       } else if (data[0] == '\0') {
-        // Starts with \0 → prefix with extra \0
+        // Starts with \0 -> prefix with extra \0
         buffer.resize(size + 1);
         buffer[0] = '\0';
         std::memcpy(buffer.data() + 1, data, size);
@@ -158,7 +158,8 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
       // timestamp_t.value is int64 microseconds since epoch
-      auto val = duckdb::FlatVector::GetData<duckdb::timestamp_t>(vec)[idx].value;
+      auto val =
+        duckdb::FlatVector::GetData<duckdb::timestamp_t>(vec)[idx].value;
       auto base = key.size();
       basics::StrAppend(key, sizeof(int64_t));
       absl::big_endian::Store64(key.data() + base, val);
@@ -174,7 +175,7 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
       break;
     }
     case duckdb::LogicalTypeId::VARCHAR: {
-      // String PK: escape null bytes (\0 → \0\1) and terminate with \0\0
+      // String PK: escape null bytes (\0 -> \0\1) and terminate with \0\0
       // Same encoding as primary_key::AppendTypedValue for StringView
       static constexpr std::string_view kNullEsc{"\0\1", 2};
       static constexpr std::string_view kStringEnd{"\0\0", 2};
@@ -204,7 +205,7 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
         static constexpr char kZero[] = "\x80\0\0\0";
         std::memcpy(key.data() + base, kZero, sizeof(float));
       } else {
-        // NaN → positive NaN canonical form
+        // NaN -> positive NaN canonical form
         static constexpr char kPosNaN[] = "\xFF\xC0\x00\x00";
         std::memcpy(key.data() + base, kPosNaN, sizeof(float));
       }
@@ -224,8 +225,7 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
         std::memcpy(key.data() + base, kZero, sizeof(double));
       } else {
         // NaN
-        static constexpr char kPosNaN[] =
-          "\xFF\xF8\x00\x00\x00\x00\x00\x00";
+        static constexpr char kPosNaN[] = "\xFF\xF8\x00\x00\x00\x00\x00\x00";
         std::memcpy(key.data() + base, kPosNaN, sizeof(double));
       }
       break;

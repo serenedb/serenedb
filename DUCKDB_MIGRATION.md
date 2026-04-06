@@ -3,7 +3,7 @@
 ## Architecture
 
 ```
-PG wire (pg_comm_task.cpp) → DuckDB (plan + execute)
+PG wire (pg_comm_task.cpp) -> DuckDB (plan + execute)
                                ↓
                     StorageExtension + Catalog
                     (PlanInsert/Delete/Update)
@@ -18,29 +18,29 @@ PG wire (pg_comm_task.cpp) → DuckDB (plan + execute)
 
 ## What Works
 
-### Core DML (all via DuckDB → RocksDB)
-- **SELECT** — full scan via `duckdb_table_function.cpp`, projection pushdown, self-joins, LATERAL, recursive CTEs
-- **INSERT** — generated PK (RevisionId) + explicit PK, conflict detection (THROW policy)
-- **DELETE** — PK columns injected via virtual columns (`GetRowIdColumns`/`GetVirtualColumns`)
-- **UPDATE** — column-wise writes, PK columns available via same virtual column mechanism
+### Core DML (all via DuckDB -> RocksDB)
+- **SELECT** -- full scan via `duckdb_table_function.cpp`, projection pushdown, self-joins, LATERAL, recursive CTEs
+- **INSERT** -- generated PK (RevisionId) + explicit PK, conflict detection (THROW policy)
+- **DELETE** -- PK columns injected via virtual columns (`GetRowIdColumns`/`GetVirtualColumns`)
+- **UPDATE** -- column-wise writes, PK columns available via same virtual column mechanism
 
 ### DDL
-- **CREATE TABLE** — through DuckDB catalog → `SereneDBSchemaEntry::CreateTable` → SereneDB catalog
-- **DROP TABLE** — through DuckDB catalog → `SereneDBSchemaEntry::DropEntry`
+- **CREATE TABLE** -- through DuckDB catalog -> `SereneDBSchemaEntry::CreateTable` -> SereneDB catalog
+- **DROP TABLE** -- through DuckDB catalog -> `SereneDBSchemaEntry::DropEntry`
 
 ### Infrastructure
-- **Transactions** — `ConnectionContext` accessible via `SereneDBClientState` registered on DuckDB's `ClientContext`. Physical operators use `GetSereneDBContext(context.client)` to access RocksDB transaction. BEGIN/COMMIT/ROLLBACK work.
-- **Per-session DuckDB connection** — stored on `PgSQLCommTaskBase::_duckdb_conn`, created during PG auth
-- **Config (SET/SHOW)** — PG variables registered via `AddExtensionOption`. SHOW patched in DuckDB parser (`transform_show.cpp`) to use `current_setting()`.
-- **Extended protocol** — Parse/Bind/Execute with proper binary serialization via `duckdb_serialize.cpp`
-- **EXPLAIN** — DuckDB native, projection pushdown visible
-- **Scan rescan** — fixed via LookupEntry cache in schema entry
-- **Command tags** — proper INSERT/UPDATE/DELETE/CREATE/DROP tags
-- **Multi-statement** — via `ExtractStatements`
-- **core_functions extension** — enabled for `current_setting()`, `version()`, etc.
+- **Transactions** -- `ConnectionContext` accessible via `SereneDBClientState` registered on DuckDB's `ClientContext`. Physical operators use `GetSereneDBContext(context.client)` to access RocksDB transaction. BEGIN/COMMIT/ROLLBACK work.
+- **Per-session DuckDB connection** -- stored on `PgSQLCommTaskBase::_duckdb_conn`, created during PG auth
+- **Config (SET/SHOW)** -- PG variables registered via `AddExtensionOption`. SHOW patched in DuckDB parser (`transform_show.cpp`) to use `current_setting()`.
+- **Extended protocol** -- Parse/Bind/Execute with proper binary serialization via `duckdb_serialize.cpp`
+- **EXPLAIN** -- DuckDB native, projection pushdown visible
+- **Scan rescan** -- fixed via LookupEntry cache in schema entry
+- **Command tags** -- proper INSERT/UPDATE/DELETE/CREATE/DROP tags
+- **Multi-statement** -- via `ExtractStatements`
+- **core_functions extension** -- enabled for `current_setting()`, `version()`, etc.
 
 ### Serialization
-- `duckdb_serialize.cpp` — full PG wire serializer adapted from Velox version, supports text+binary for all standard types (int, float, varchar, bool, timestamp, date, interval, uuid, decimal, bytea, arrays)
+- `duckdb_serialize.cpp` -- full PG wire serializer adapted from Velox version, supports text+binary for all standard types (int, float, varchar, bool, timestamp, date, interval, uuid, decimal, bytea, arrays)
 - Used by extended protocol for proper format negotiation
 
 ## Key Files
@@ -50,7 +50,7 @@ PG wire (pg_comm_task.cpp) → DuckDB (plan + execute)
 |------|---------|
 | `server/query/duckdb_engine.h/cpp` | Singleton DuckDB instance, connection factory, config registration |
 | `server/pg/duckdb_query_handler.h/cpp` | Simple protocol: execute SQL, serialize results to PG wire |
-| `server/pg/duckdb_serialize.h/cpp` | DuckDB Vector → PG wire serialization (text+binary) |
+| `server/pg/duckdb_serialize.h/cpp` | DuckDB Vector -> PG wire serialization (text+binary) |
 
 ### Storage Extension (Catalog)
 | File | Purpose |
@@ -60,22 +60,22 @@ PG wire (pg_comm_task.cpp) → DuckDB (plan + execute)
 | `server/connector/duckdb_schema_entry.h/cpp` | Schema: LookupEntry, CreateTable, DropEntry, Scan |
 | `server/connector/duckdb_table_entry.h/cpp` | Table: GetScanFunction, GetStorageInfo, type conversion |
 | `server/connector/duckdb_transaction.h/cpp` | TransactionManager (stub, real txn via ConnectionContext) |
-| `server/connector/duckdb_client_state.h/cpp` | ClientContextState: bridges DuckDB → ConnectionContext |
+| `server/connector/duckdb_client_state.h/cpp` | ClientContextState: bridges DuckDB -> ConnectionContext |
 
 ### RocksDB Integration
 | File | Purpose |
 |------|---------|
 | `server/connector/duckdb_table_function.h/cpp` | RocksDB scan as DuckDB TableFunction, projection pushdown |
-| `server/connector/duckdb_rocksdb_reader.h/cpp` | Per-column type-dispatched reading from RocksDB → DuckDB Vector |
-| `server/connector/duckdb_rocksdb_writer.h/cpp` | DuckDB Vector → RocksDB value serialization |
-| `server/connector/duckdb_physical_insert.h/cpp` | PhysicalInsert: DataChunk → RocksDB writes |
-| `server/connector/duckdb_physical_delete.h/cpp` | PhysicalDelete: PK columns → RocksDB deletes |
+| `server/connector/duckdb_rocksdb_reader.h/cpp` | Per-column type-dispatched reading from RocksDB -> DuckDB Vector |
+| `server/connector/duckdb_rocksdb_writer.h/cpp` | DuckDB Vector -> RocksDB value serialization |
+| `server/connector/duckdb_physical_insert.h/cpp` | PhysicalInsert: DataChunk -> RocksDB writes |
+| `server/connector/duckdb_physical_delete.h/cpp` | PhysicalDelete: PK columns -> RocksDB deletes |
 | `server/connector/duckdb_physical_update.h/cpp` | PhysicalUpdate: column-wise RocksDB updates |
 
 ### DuckDB Patches (serenedb/duckdb fork)
 | File | Change |
 |------|--------|
-| `src/parser/transform/statement/transform_show.cpp` | SHOW varname → SELECT current_setting('varname') |
+| `src/parser/transform/statement/transform_show.cpp` | SHOW varname -> SELECT current_setting('varname') |
 
 ## Key Patterns
 
@@ -101,7 +101,7 @@ PK columns are injected via virtual columns with IDs `VIRTUAL_COLUMN_START + col
 - Empty string: single `\0` byte
 
 ### Type mapping
-- Velox types still in catalog (`Column::type` is `velox::TypePtr`) — temporary
+- Velox types still in catalog (`Column::type` is `velox::TypePtr`) -- temporary
 - `VeloxTypeToDuckDB` / `DuckDBTypeToVelox` bridge functions in `duckdb_table_entry.cpp`
 - Will be removed when catalog switches to DuckDB types
 
@@ -118,7 +118,7 @@ PK columns are injected via virtual columns with IDs `VIRTUAL_COLUMN_START + col
 
 #### DML (for colleague)
 - **SST file writer** for bulk insert (COPY FROM, CTAS, index backfill)
-- **Index writers** — secondary + inverted index updates during INSERT/UPDATE/DELETE (existing `SinkIndexWriter` interface)
+- **Index writers** -- secondary + inverted index updates during INSERT/UPDATE/DELETE (existing `SinkIndexWriter` interface)
 - **ON CONFLICT DO UPDATE** (DO NOTHING needs DuckDB IsDuckTable fix)
 - **RETURNING** clause
 - **INSERT ... SELECT** with proper row counting
@@ -137,7 +137,7 @@ PK columns are injected via virtual columns with IDs `VIRTUAL_COLUMN_START + col
 - LIMIT pushdown into search
 
 #### COPY
-- COPY FROM CSV/Parquet → RocksDB (with SST writers)
+- COPY FROM CSV/Parquet -> RocksDB (with SST writers)
 - COPY TO
 
 #### PG Compatibility
@@ -147,7 +147,7 @@ PK columns are injected via virtual columns with IDs `VIRTUAL_COLUMN_START + col
 - Custom logical types for OID/Reg* types
 
 #### Extended Protocol
-- Parameter binding ($1, $2) — currently skipped
+- Parameter binding ($1, $2) -- currently skipped
 
 #### Infrastructure
 - Replace Velox types in catalog with DuckDB LogicalType
@@ -166,7 +166,7 @@ DuckDB build options are configured in `third_party/CMakeLists.txt`.
 
 ## Development Setup
 
-Two developers working on same machine — use separate ports and data dirs:
+Two developers working on same machine -- use separate ports and data dirs:
 
 | Developer | Focus | Port |
 |-----------|-------|------|

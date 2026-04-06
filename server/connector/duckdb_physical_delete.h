@@ -32,6 +32,9 @@ class SereneDBPhysicalDelete final : public duckdb::PhysicalOperator {
   SereneDBPhysicalDelete(duckdb::PhysicalPlan& plan,
                          std::shared_ptr<catalog::Table> table,
                          std::vector<duckdb::idx_t> pk_col_indices,
+                         // Positions of indexed columns in the input chunk
+                         // (old values for index maintenance)
+                         std::vector<duckdb::idx_t> indexed_col_indices,
                          duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const override { return true; }
@@ -54,8 +57,9 @@ class SereneDBPhysicalDelete final : public duckdb::PhysicalOperator {
 
  private:
   std::shared_ptr<catalog::Table> _table;
-  // Indices into the input chunk for PK columns (used to build RocksDB keys)
   std::vector<duckdb::idx_t> _pk_col_indices;
+  // Positions of indexed columns in the input chunk (for old values)
+  std::vector<duckdb::idx_t> _indexed_col_indices;
 };
 
 }  // namespace sdb::connector

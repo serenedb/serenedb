@@ -31,13 +31,11 @@ class SereneDBPhysicalUpdate final : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalUpdate(duckdb::PhysicalPlan& plan,
                          std::shared_ptr<catalog::Table> table,
-                         // PK column indices in the input chunk
                          std::vector<duckdb::idx_t> pk_col_indices,
-                         // Which table columns are being updated
                          std::vector<duckdb::PhysicalIndex> update_columns,
-                         // Column indices in the input for updated values
-                         // (after PK + rowid columns)
                          std::vector<duckdb::idx_t> update_col_input_indices,
+                         // Positions of indexed columns in the input chunk
+                         std::vector<duckdb::idx_t> indexed_col_indices,
                          duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const override { return true; }
@@ -63,6 +61,7 @@ class SereneDBPhysicalUpdate final : public duckdb::PhysicalOperator {
   std::vector<duckdb::idx_t> _pk_col_indices;
   std::vector<duckdb::PhysicalIndex> _update_columns;
   std::vector<duckdb::idx_t> _update_col_input_indices;
+  std::vector<duckdb::idx_t> _indexed_col_indices;
 };
 
 }  // namespace sdb::connector

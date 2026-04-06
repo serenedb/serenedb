@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb.hpp>
-
 #include <memory>
 
 namespace sdb::query {

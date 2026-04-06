@@ -81,7 +81,7 @@ class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
              duckdb::AlterInfo& info) override;
 
  private:
-  // Keep table entries alive — DuckDB returns raw pointers from LookupEntry
+  // Keep table entries alive -- DuckDB returns raw pointers from LookupEntry
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<SereneDBTableEntry>>
     _table_entries;
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::CreateTableInfo>>

@@ -54,7 +54,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
 
 static duckdb::BindInfo SereneDBGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  auto& data = const_cast<SereneDBScanBindData&>(bind_data->Cast<SereneDBScanBindData>());
+  auto& data =
+    const_cast<SereneDBScanBindData&>(bind_data->Cast<SereneDBScanBindData>());
   if (data.table_entry) {
     return duckdb::BindInfo(*data.table_entry);
   }
@@ -71,7 +72,7 @@ bool SereneDBScanBindData::Equals(const duckdb::FunctionData& other) const {
 struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   // Only iterators for the projected (requested) columns
   std::vector<std::unique_ptr<rocksdb::Iterator>> iterators;
-  // Maps output column index → bind_data column index
+  // Maps output column index -> bind_data column index
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
   std::vector<std::string> column_keys;
@@ -239,7 +240,7 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
       gstate.projected_types[first_real_output], batch_size);
     iter_idx = 1;
   } else if (!gstate.iterators.empty()) {
-    // Only rowid requested — still need to iterate to count rows
+    // Only rowid requested -- still need to iterate to count rows
     // Use a dummy read that just counts
     auto& it = *gstate.iterators[0];
     while (it.Valid() && count < batch_size) {
@@ -257,15 +258,18 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
   }
 
   // Read remaining real columns
-  for (duckdb::idx_t out = (first_real_output == duckdb::DConstants::INVALID_INDEX ? 0 : first_real_output + 1);
+  for (duckdb::idx_t out =
+         (first_real_output == duckdb::DConstants::INVALID_INDEX
+            ? 0
+            : first_real_output + 1);
        out < gstate.projected_columns.size(); ++out) {
     if (gstate.projected_columns[out] == duckdb::DConstants::INVALID_INDEX) {
-      continue;  // rowid — already handled
+      continue;  // rowid -- already handled
     }
     SDB_ASSERT(iter_idx < gstate.iterators.size());
-    auto col_count = ReadColumnIntoDuckDB(
-      *gstate.iterators[iter_idx], output.data[out],
-      gstate.projected_types[out], count);
+    auto col_count =
+      ReadColumnIntoDuckDB(*gstate.iterators[iter_idx], output.data[out],
+                           gstate.projected_types[out], count);
     SDB_ASSERT(col_count == count);
     ++iter_idx;
   }

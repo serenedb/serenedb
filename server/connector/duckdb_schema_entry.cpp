@@ -48,6 +48,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   if (type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
+
+  // Return cached entry if we already looked up this table
+  auto cached = _table_entries.find(std::string{table_name});
+  if (cached != _table_entries.end()) {
+    return cached->second.get();
+  }
+
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   auto databases = snapshot->GetDatabases();
   auto table = snapshot->GetTable(

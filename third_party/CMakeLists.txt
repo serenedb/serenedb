@@ -1040,8 +1040,7 @@ set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
 set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
-set(DISABLE_BUILTIN_EXTENSIONS TRUE CACHE BOOL "" FORCE)
-set(DISABLE_EXTENSION_LOAD TRUE CACHE BOOL "" FORCE)
+# Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
 set(EXTENSION_STATIC_BUILD FALSE CACHE BOOL "" FORCE)
@@ -1069,4 +1068,8 @@ target_include_directories(
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
-target_link_libraries(duckdb_static PUBLIC dummy_static_extension_loader)
+# Link extension objects that aren't automatically included in duckdb_static
+target_link_libraries(duckdb_static PUBLIC
+    duckdb_generated_extension_loader
+    core_functions_extension
+)

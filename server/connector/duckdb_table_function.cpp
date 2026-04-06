@@ -82,8 +82,10 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t rowid_output_idx = 0;  // output column index for rowid
 
   ~SereneDBScanGlobalState() override {
+    iterators.clear();  // Release iterators before snapshot
     if (snapshot) {
       GetServerEngine().db()->ReleaseSnapshot(snapshot);
+      snapshot = nullptr;
     }
   }
 };

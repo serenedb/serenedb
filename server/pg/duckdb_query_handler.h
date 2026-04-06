@@ -29,26 +29,32 @@
 
 namespace sdb::pg {
 
-// Standalone DuckDB query execution and PG wire serialization.
-// Bypasses the existing Query/Executor/Cursor pipeline for prototyping.
+// DuckDB query execution with PG wire serialization.
 class DuckDBQueryHandler {
  public:
   explicit DuckDBQueryHandler(message::Buffer& send_buffer)
     : _send{send_buffer} {}
 
-  // Execute a SQL query via DuckDB and write results to PG wire buffer.
+  // Execute one or more SQL statements via DuckDB.
+  // Handles multi-statement queries (each gets RowDesc + Data + CommandComplete).
   // Returns empty string on success, or error message on failure.
   std::string ExecuteQuery(std::string_view sql);
 
  private:
+  // Execute a single statement and send results
+  std::string ExecuteSingleStatement(duckdb::Connection& conn,
+                                     const std::string& sql);
+
   void SendRowDescription(const duckdb::QueryResult& result);
   void SendDataRows(duckdb::DataChunk& chunk,
                     const duckdb::vector<duckdb::LogicalType>& types);
-  void SendCommandComplete(std::string_view tag, uint64_t rows);
+  void SendCommandComplete(duckdb::StatementType type, uint64_t rows);
 
   static int32_t DuckDBTypeToOid(const duckdb::LogicalType& type);
   void SerializeValue(const duckdb::Value& value,
                       const duckdb::LogicalType& type);
+
+  static std::string_view StatementTypeToTag(duckdb::StatementType type);
 
   message::Buffer& _send;
 };

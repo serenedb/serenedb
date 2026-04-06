@@ -21,8 +21,7 @@
 #include "pg/duckdb_query_handler.h"
 
 #include <absl/base/internal/endian.h>
-
-#include <iostream>
+#include <absl/strings/numbers.h>
 
 #include "query/duckdb_engine.h"
 
@@ -33,14 +32,44 @@ std::string DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
   while (!sql.empty() && sql.back() == '\0') {
     sql.remove_suffix(1);
   }
+  if (sql.empty()) {
+    return {};
+  }
 
   auto conn = query::DuckDBEngine::Instance().CreateConnection();
-  auto result = conn->Query(std::string{sql});
+
+  // Extract individual statements for multi-statement support
+  auto statements = conn->ExtractStatements(std::string{sql});
+  if (statements.empty()) {
+    return {};
+  }
+
+  for (auto& stmt : statements) {
+    auto error = ExecuteSingleStatement(*conn, stmt->query);
+    if (!error.empty()) {
+      return error;
+    }
+  }
+  return {};
+}
+
+std::string DuckDBQueryHandler::ExecuteSingleStatement(
+  duckdb::Connection& conn, const std::string& sql) {
+  auto result = conn.Query(sql);
 
   if (result->HasError()) {
     return result->GetError();
   }
 
+  auto stmt_type = result->statement_type;
+
+  // DDL and non-row-returning statements: no RowDescription, just CommandComplete
+  if (result->types.empty()) {
+    SendCommandComplete(stmt_type, 0);
+    return {};
+  }
+
+  // Row-returning statements: RowDescription + DataRows + CommandComplete
   SendRowDescription(*result);
 
   uint64_t total_rows = 0;
@@ -53,8 +82,41 @@ std::string DuckDBQueryHandler::ExecuteQuery(std::string_view sql) {
     SendDataRows(*chunk, result->types);
   }
 
-  SendCommandComplete("SELECT", total_rows);
-  return {};  // empty string = success
+  SendCommandComplete(stmt_type, total_rows);
+  return {};
+}
+
+std::string_view DuckDBQueryHandler::StatementTypeToTag(
+  duckdb::StatementType type) {
+  switch (type) {
+    case duckdb::StatementType::SELECT_STATEMENT:
+      return "SELECT";
+    case duckdb::StatementType::INSERT_STATEMENT:
+      return "INSERT 0";
+    case duckdb::StatementType::UPDATE_STATEMENT:
+      return "UPDATE";
+    case duckdb::StatementType::DELETE_STATEMENT:
+      return "DELETE";
+    case duckdb::StatementType::CREATE_STATEMENT:
+      return "CREATE TABLE";
+    case duckdb::StatementType::DROP_STATEMENT:
+      return "DROP TABLE";
+    case duckdb::StatementType::ALTER_STATEMENT:
+      return "ALTER TABLE";
+    case duckdb::StatementType::TRANSACTION_STATEMENT:
+      return "TRANSACTION";
+    case duckdb::StatementType::COPY_STATEMENT:
+      return "COPY";
+    case duckdb::StatementType::EXPLAIN_STATEMENT:
+      return "EXPLAIN";
+    case duckdb::StatementType::VACUUM_STATEMENT:
+      return "VACUUM";
+    case duckdb::StatementType::SET_STATEMENT:
+    case duckdb::StatementType::VARIABLE_SET_STATEMENT:
+      return "SET";
+    default:
+      return "OK";
+  }
 }
 
 void DuckDBQueryHandler::SendRowDescription(
@@ -64,26 +126,19 @@ void DuckDBQueryHandler::SendRowDescription(
   auto* prefix_data = _send.GetContiguousData(7);
 
   for (uint16_t i = 0; i < num_fields; ++i) {
-    // Column name
     const auto& name = result.names[i];
     _send.WriteUncommitted({name.data(), name.size()});
     _send.WriteUncommitted({"\0", 1});
 
-    // table OID (0 = not from a table)
-    absl::big_endian::Store32(_send.GetContiguousData(4), 0);
-    // attribute number (0)
-    absl::big_endian::Store16(_send.GetContiguousData(2), 0);
-    // type OID
+    absl::big_endian::Store32(_send.GetContiguousData(4), 0);  // table OID
+    absl::big_endian::Store16(_send.GetContiguousData(2), 0);  // attr number
     absl::big_endian::Store32(_send.GetContiguousData(4),
                               DuckDBTypeToOid(result.types[i]));
-    // type size (-1 = variable)
     absl::big_endian::Store16(_send.GetContiguousData(2),
-                              static_cast<uint16_t>(-1));
-    // type modifier (-1 = none)
+                              static_cast<uint16_t>(-1));  // type size
     absl::big_endian::Store32(_send.GetContiguousData(4),
-                              static_cast<uint32_t>(-1));
-    // format code (0 = text)
-    absl::big_endian::Store16(_send.GetContiguousData(2), 0);
+                              static_cast<uint32_t>(-1));  // type modifier
+    absl::big_endian::Store16(_send.GetContiguousData(2), 0);  // format text
   }
 
   prefix_data[0] = PQ_MSG_ROW_DESCRIPTION;
@@ -117,12 +172,12 @@ void DuckDBQueryHandler::SendDataRows(
   }
 }
 
-void DuckDBQueryHandler::SendCommandComplete(std::string_view tag,
+void DuckDBQueryHandler::SendCommandComplete(duckdb::StatementType type,
                                              uint64_t rows) {
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
 
-  // "SELECT N\0"
+  auto tag = StatementTypeToTag(type);
   _send.WriteUncommitted(tag);
   _send.WriteUncommitted({" ", 1});
   auto rows_str = std::to_string(rows);
@@ -138,15 +193,11 @@ void DuckDBQueryHandler::SendCommandComplete(std::string_view tag,
 void DuckDBQueryHandler::SerializeValue(const duckdb::Value& value,
                                         const duckdb::LogicalType& type) {
   if (value.IsNull()) {
-    // NULL is represented as -1 length
     absl::big_endian::Store32(_send.GetContiguousData(4),
                               static_cast<uint32_t>(-1));
     return;
   }
 
-  // For the prototype, use text format via ToString() for all types.
-  // This is correct but not optimized — will be replaced with direct
-  // vector access in the production version.
   auto str = value.ToString();
   absl::big_endian::Store32(_send.GetContiguousData(4),
                             static_cast<uint32_t>(str.size()));
@@ -154,47 +205,46 @@ void DuckDBQueryHandler::SerializeValue(const duckdb::Value& value,
 }
 
 int32_t DuckDBQueryHandler::DuckDBTypeToOid(const duckdb::LogicalType& type) {
-  // Map DuckDB types to PostgreSQL type OIDs
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN:
-      return 16;  // BOOLOID
+      return 16;
     case duckdb::LogicalTypeId::TINYINT:
     case duckdb::LogicalTypeId::SMALLINT:
-      return 21;  // INT2OID
+      return 21;
     case duckdb::LogicalTypeId::INTEGER:
-      return 23;  // INT4OID
+      return 23;
     case duckdb::LogicalTypeId::BIGINT:
-      return 20;  // INT8OID
+      return 20;
     case duckdb::LogicalTypeId::FLOAT:
-      return 700;  // FLOAT4OID
+      return 700;
     case duckdb::LogicalTypeId::DOUBLE:
-      return 701;  // FLOAT8OID
+      return 701;
     case duckdb::LogicalTypeId::DECIMAL:
-      return 1700;  // NUMERICOID
+      return 1700;
     case duckdb::LogicalTypeId::VARCHAR:
-      return 25;  // TEXTOID
+      return 25;
     case duckdb::LogicalTypeId::BLOB:
-      return 17;  // BYTEAOID
+      return 17;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      return 1114;  // TIMESTAMPOID
+      return 1114;
     case duckdb::LogicalTypeId::DATE:
-      return 1082;  // DATEOID
+      return 1082;
     case duckdb::LogicalTypeId::TIME:
     case duckdb::LogicalTypeId::TIME_TZ:
-      return 1083;  // TIMEOID
+      return 1083;
     case duckdb::LogicalTypeId::INTERVAL:
-      return 1186;  // INTERVALOID
+      return 1186;
     case duckdb::LogicalTypeId::UUID:
-      return 2950;  // UUIDOID
+      return 2950;
     case duckdb::LogicalTypeId::LIST:
     case duckdb::LogicalTypeId::ARRAY:
-      return 2277;  // ANYARRAYOID
+      return 2277;
     case duckdb::LogicalTypeId::STRUCT:
     case duckdb::LogicalTypeId::MAP:
-      return 2249;  // RECORDOID
+      return 2249;
     default:
-      return 25;  // TEXTOID fallback
+      return 25;
   }
 }
 

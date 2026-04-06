@@ -42,7 +42,7 @@ on:
         default: '{}'
 
 permissions:
-  statuses: write
+  checks: write
   contents: write
 
 concurrency:
@@ -133,22 +133,25 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash
 
-      - name: Update PR commit status
-        if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
+      - name: Update PR check run
+        if: contains(inputs.BUILD_CONFIG, 'CHECK_RUN_ID')
         uses: actions/github-script@v8
         with:
           script: |
             const config = JSON.parse(process.env.BUILD_CONFIG);
-            const state = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
+            const conclusion = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.repos.createCommitStatus({
+            await github.rest.checks.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: config.PR_SHA,
-              state: state,
-              description: state === 'success' ? 'All checks passed' : 'Some checks failed',
-              context: config.PR_STATUS_CONTEXT || 'serenedb | build & test',
-              target_url: runUrl,
+              check_run_id: config.CHECK_RUN_ID,
+              status: 'completed',
+              conclusion: conclusion,
+              details_url: runUrl,
+              output: {
+                title: conclusion === 'success' ? 'All checks passed' : 'Some checks failed',
+                summary: `[View Run](${runUrl})`,
+              },
             });
         env:
           BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}

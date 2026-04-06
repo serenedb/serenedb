@@ -69,7 +69,7 @@ jobs:
       actions: write
       contents: read
       pull-requests: write
-      statuses: write
+      checks: write
     steps:
       - name: Get PR info
         id: pr-info
@@ -104,13 +104,14 @@ jobs:
             const enableMsan = isChecked('MSAN');
 
             const { owner, repo } = context.repo;
-            const statusContext = 'serenedb | build & test';
+            const checkName = 'serenedb | build & test';
 
-            await github.rest.repos.createCommitStatus({
-              owner, repo, sha,
-              state: 'pending',
-              description: 'Build queued',
-              context: statusContext,
+            const { data: check } = await github.rest.checks.create({
+              owner, repo,
+              head_sha: sha,
+              name: checkName,
+              status: 'in_progress',
+              output: { title: 'Build queued', summary: 'Waiting for workflow to start...' },
             });
 
             // Cancel in-progress runs on this branch
@@ -151,7 +152,7 @@ jobs:
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
-                  PR_STATUS_CONTEXT: statusContext,
+                  CHECK_RUN_ID: check.id,
                 }),
               },
             });
@@ -170,13 +171,13 @@ jobs:
               }
             }
 
-            // Update pending status with run URL so the check is clickable in PR
-            await github.rest.repos.createCommitStatus({
-              owner, repo, sha,
-              state: 'pending',
-              description: 'Build in progress',
-              context: statusContext,
-              target_url: runUrl,
+            // Update check run with the Actions run URL
+            await github.rest.checks.update({
+              owner, repo,
+              check_run_id: check.id,
+              status: 'in_progress',
+              details_url: runUrl,
+              output: { title: 'Build in progress', summary: `[View Run](${runUrl})` },
             });
 
             const opts = [

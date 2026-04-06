@@ -201,6 +201,19 @@ id	bo
 1	{6,9}
 
 query
+SELECT id, b_offs FROM (
+SELECT id, OFFSETS(body, 2) AS b_offs
+FROM offsets_test_idx
+WHERE PHRASE(body, 'fox')
+) sub ORDER BY id;
+----
+id	b_offs
+1	{6,9}
+2	{0,3}
+4	{0,3,4,7}
+
+
+query
 SELECT id, OFFSETS(wordcount) AS wo
 FROM offsets_test_idx
 WHERE PHRASE(body, 'fox')

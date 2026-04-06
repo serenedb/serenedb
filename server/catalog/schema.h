@@ -34,7 +34,10 @@ class Schema : public DatabaseObject {
  public:
   Schema(ObjectId database_id, SchemaOptions options);
 
-  void WriteInternal(vpack::Builder& build) const override;
+  static std::shared_ptr<Schema> ReadInternal(vpack::Slice slice,
+                                              ReadContext ctx);
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone() const final;
 };
 
 }  // namespace sdb::catalog

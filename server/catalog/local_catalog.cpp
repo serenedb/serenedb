@@ -24,6 +24,8 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 #include <vpack/builder.h>
+#include <vpack/iterator.h>
+#include <vpack/serializer.h>
 #include <vpack/slice.h>
 
 #include <algorithm>
@@ -56,6 +58,7 @@
 #include "basics/recursive_locker.h"
 #include "basics/result.h"
 #include "basics/result_or.h"
+#include "basics/static_strings.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
@@ -63,11 +66,13 @@
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
+#include "catalog/secondary_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -85,6 +90,7 @@
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
+#include "storage_engine/secondary_index_shard.h"
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
 #include "yaclib/async/future.hpp"
@@ -210,14 +216,14 @@ class SnapshotImpl : public Snapshot {
       }
       return AddObjectDefinition<SchemaDependency>(parent_id,
                                                    std::move(object));
-    } else if constexpr (std::is_same_v<T, View>) {
+    } else if constexpr (std::is_same_v<T, PgSqlView>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
         return r;
       }
       return AddObjectDefinition(parent_id, std::move(object));
-    } else if constexpr (std::is_same_v<T, Function>) {
+    } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       auto r = AddToResolution<ResolveType::Function>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
@@ -266,10 +272,10 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Schema>) {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
-    } else if constexpr (std::is_same_v<T, View>) {
+    } else if constexpr (std::is_same_v<T, PgSqlView>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
-    } else if constexpr (std::is_same_v<T, Function>) {
+    } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, Tokenizer>) {
@@ -327,7 +333,7 @@ class SnapshotImpl : public Snapshot {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tables.insert(object->GetId());
       } break;
-      case ObjectType::Function: {
+      case ObjectType::PgSqlFunction: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->functions.insert(object->GetId());
       } break;
@@ -335,11 +341,12 @@ class SnapshotImpl : public Snapshot {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->tokenizers.insert(object->GetId());
       } break;
-      case ObjectType::View: {
+      case ObjectType::PgSqlView: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->views.insert(object->GetId());
       } break;
-      case ObjectType::Index: {
+      case ObjectType::SecondaryIndex:
+      case ObjectType::InvertedIndex: {
         auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
         table_deps->indexes.insert(object->GetId());
         const auto& index = basics::downCast<Index>(*object);
@@ -353,7 +360,8 @@ class SnapshotImpl : public Snapshot {
         auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
         table_deps->shard_id = object->GetId();
       } break;
-      case ObjectType::IndexShard: {
+      case ObjectType::SecondaryIndexShard:
+      case ObjectType::InvertedIndexShard: {
         auto index_deps = GetDependencyForWrite<IndexDependency>(parent_id);
         index_deps->shard_id = object->GetId();
       } break;
@@ -425,7 +433,7 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<Table>>{});
   }
 
-  std::vector<std::shared_ptr<View>> GetViews(
+  std::vector<std::shared_ptr<PgSqlView>> GetViews(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
@@ -434,14 +442,14 @@ class SnapshotImpl : public Snapshot {
                std::views::transform([&](ObjectId view_id) {
                  auto it = _objects.find(view_id);
                  SDB_ASSERT(it != _objects.end());
-                 return basics::downCast<View>(*it);
+                 return basics::downCast<PgSqlView>(*it);
                }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<View>>{});
+      .value_or(std::vector<std::shared_ptr<PgSqlView>>{});
   }
 
-  std::vector<std::shared_ptr<Function>> GetFunctions(
+  std::vector<std::shared_ptr<PgSqlFunction>> GetFunctions(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .transform([&](ObjectId schema_id) {
@@ -450,11 +458,11 @@ class SnapshotImpl : public Snapshot {
                std::views::transform([&](ObjectId function_id) {
                  auto it = _objects.find(function_id);
                  SDB_ASSERT(it != _objects.end());
-                 return basics::downCast<Function>(*it);
+                 return basics::downCast<PgSqlFunction>(*it);
                }) |
                std::ranges::to<std::vector>();
       })
-      .value_or(std::vector<std::shared_ptr<Function>>{});
+      .value_or(std::vector<std::shared_ptr<PgSqlFunction>>{});
   }
 
   std::vector<std::shared_ptr<Index>> GetIndexes(
@@ -532,15 +540,17 @@ class SnapshotImpl : public Snapshot {
       .value_or(nullptr);
   }
 
-  std::shared_ptr<Function> GetFunction(ObjectId db_id, std::string_view schema,
-                                        std::string_view function) const final {
+  std::shared_ptr<PgSqlFunction> GetFunction(
+    ObjectId db_id, std::string_view schema,
+    std::string_view function) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
       .and_then([&](ObjectId schema_id) {
         return _resolution_table.ResolveObject<ResolveType::Function>(schema_id,
                                                                       function);
       })
-      .transform(
-        [&](ObjectId function_id) { return GetObject<Function>(function_id); })
+      .transform([&](ObjectId function_id) {
+        return GetObject<PgSqlFunction>(function_id);
+      })
       .value_or(nullptr);
   }
 
@@ -729,7 +739,8 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(db_deps);
           db_deps->schemas.erase(id);
         } break;
-        case ObjectType::Index: {
+        case ObjectType::SecondaryIndex:
+        case ObjectType::InvertedIndex: {
           auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->indexes.erase(id);
@@ -740,7 +751,7 @@ class SnapshotImpl : public Snapshot {
             dep->indexes.erase(obj->GetId());
           }
         } break;
-        case ObjectType::Function: {
+        case ObjectType::PgSqlFunction: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->functions.erase(id);
@@ -755,7 +766,7 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->tables.erase(id);
         } break;
-        case ObjectType::View: {
+        case ObjectType::PgSqlView: {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->views.erase(id);
@@ -796,19 +807,21 @@ class SnapshotImpl : public Snapshot {
           }
         }
       } break;
-      case ObjectType::Index: {
+      case ObjectType::SecondaryIndex:
+      case ObjectType::InvertedIndex: {
         auto index_deps = GetDependency<IndexDependency>(id);
         if (index_deps->shard_id.isSet()) {
           RemoveObjectDefinition(id, index_deps->shard_id);
         }
 
       } break;
-      case ObjectType::Function:
-      case ObjectType::View:
+      case ObjectType::PgSqlFunction:
+      case ObjectType::PgSqlView:
       case ObjectType::Tokenizer:
         break;
       case ObjectType::TableShard:
-      case ObjectType::IndexShard:
+      case ObjectType::SecondaryIndexShard:
+      case ObjectType::InvertedIndexShard:
         SDB_ASSERT(!root);
         break;
       default:
@@ -895,7 +908,7 @@ Result LocalCatalog::RegisterSchema(ObjectId database_id,
 }
 
 Result LocalCatalog::RegisterView(ObjectId schema_id,
-                                  std::shared_ptr<View> view) {
+                                  std::shared_ptr<PgSqlView> view) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(view), schema_id, false);
@@ -903,9 +916,7 @@ Result LocalCatalog::RegisterView(ObjectId schema_id,
 }
 
 Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
-                                   CreateTableOptions options) {
-  auto table = std::make_shared<Table>(std::move(options), database_id);
-
+                                   std::shared_ptr<Table> table) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(table, schema_id, false);
@@ -913,7 +924,7 @@ Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
 }
 
 Result LocalCatalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
-                                      std::shared_ptr<Function> function) {
+                                      std::shared_ptr<PgSqlFunction> function) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(function), schema_id, false);
@@ -947,7 +958,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
         vpack::Builder builder;
         database->WriteInternal(builder);
         auto r = _engine->CreateDefinition(
-          id::kInstance, RocksDBEntryType::Database, database_id,
+          id::kInstance, ObjectType::Database, database_id,
           [&](bool) { return builder.slice(); });
 
         if (!r.ok()) {
@@ -964,8 +975,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       SDB_ASSERT(r.ok());
       vpack::Builder builder;
       schema->WriteInternal(builder);
-
-      return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
+      return _engine->CreateDefinition(database_id, ObjectType::Schema,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
@@ -986,8 +996,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder builder;
       schema->WriteInternal(builder);
-
-      return _engine->CreateDefinition(database_id, RocksDBEntryType::Schema,
+      return _engine->CreateDefinition(database_id, ObjectType::Schema,
                                        schema->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
@@ -1005,10 +1014,8 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
         return r;
       }
       vpack::Builder b;
-      b.openObject();
       role->WriteInternal(b);
-      b.close();
-      return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
+      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
                                        role->GetId(),
                                        [&](bool) { return b.slice(); });
     },
@@ -1022,25 +1029,12 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
   return {};
 }
 
-ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexImplOptionsBaseWrapper&& impl_options) {
-  auto index =
-    MakeIndex(database_id, schema_id, id, relation_id, std::move(impl_options));
-  if (!index) {
-    return std::unexpected<Result>(std::in_place, std::move(index).error());
-  }
-
+Result LocalCatalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                                   std::shared_ptr<Index> index) {
   absl::MutexLock lock{&_mutex};
-
-  auto r = Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(*index, relation_id, false);
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(index, index->GetRelationId(), false);
   });
-  if (!r.ok()) {
-    return std::unexpected<Result>(std::in_place, r.errorNumber(),
-                                   r.errorMessage());
-  }
-  return *index;
 }
 
 Result LocalCatalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
@@ -1058,88 +1052,39 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   });
 }
 
-Result LocalCatalog::CreateIndex(
-  ObjectId database_id, std::string_view relation_schema,
-  std::string_view relation_name,
-  std::vector<CreateIndexColumn>&& create_columns, IndexBaseOptions options,
+Result LocalCatalog::CreateIndexImpl(
+  std::string_view relation_schema, std::shared_ptr<Index> index,
   IndexShardOptions& shard_options,
   CreateIndexOperationOptions operation_options) {
-  if (create_columns.empty()) {
-    return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
-  }
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, relation_schema);
-  if (!schema_id) {
-    return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"",
-            relation_schema, "\""};
-  }
-
-  auto relation =
-    _snapshot->GetRelation(database_id, relation_schema, relation_name);
-  if (!relation) {
-    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation_name,
-            "\" does not exist"};
-  }
-  if (relation->GetType() != catalog::ObjectType::Table) {
-    return Result{ERROR_NOT_IMPLEMENTED, "Only table indexes are supported"};
-  }
-
-  auto& table = basics::downCast<Table>(*relation);
-  auto& table_columns = table.Columns();
-  auto find_column = [&](std::string_view name) {
-    auto it = absl::c_find_if(
-      table_columns, [&](const catalog::Column& c) { return c.name == name; });
-    return it != table_columns.end() ? &*it : nullptr;
-  };
-
-  options.column_ids.reserve(create_columns.size());
-  for (auto& c : create_columns) {
-    const auto* column = find_column(c.name);
-    if (!column) {
-      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
-                    "\" does not exist"};
-    }
-    c.catalog_column = column;
-    options.column_ids.push_back(column->id);
-  }
-
-  auto index = MakeIndex(database_id, relation_schema, *schema_id, ObjectId{0},
-                         table.GetId(), std::move(options),
-                         std::move(create_columns), _snapshot, shard_options);
-  if (!index) {
-    return std::move(index).error();
-  }
-
   return Apply(
     _snapshot,
     [&](auto& clone) {
-      auto r = clone->RegisterObject(*index, (*index)->GetRelationId(), false);
+      auto r = clone->RegisterObject(index, index->GetRelationId(), false);
       if (!r.ok()) {
         return r;
       }
-      auto shard = (*index)->CreateIndexShard(true, ObjectId{0}, shard_options);
+      auto shard = index->CreateIndexShard(true, ObjectId{0}, shard_options);
       if (!shard) {
         return std::move(shard).error();
       }
-      r = clone->RegisterObject(*shard, (*index)->GetId(), false);
+      r = clone->RegisterObject(*shard, index->GetId(), false);
       SDB_ASSERT(r.ok());
 
       if (operation_options.create_with_tombstone) {
-        r =
-          _engine->WriteTombstone((*index)->GetRelationId(), (*index)->GetId());
+        r = _engine->WriteTombstone(index->GetRelationId(), index->GetId());
         if (!r.ok()) {
           return r;
         }
-        (*index)->SetTombstoned(true);
+        index->SetTombstoned(true);
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      auto shard_type = IndexShardType(index->GetType());
       {  // Write index definition
         vpack::Builder b;
-        (*index)->WriteInternal(b);
-        r = _engine->CreateDefinition(
-          (*index)->GetRelationId(), RocksDBEntryType::Index, (*index)->GetId(),
-          [&](bool) { return b.slice(); });
+        index->WriteInternal(b);
+        r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
+                                      index->GetId(),
+                                      [&](bool) { return b.slice(); });
         if (!r.ok()) {
           return r;
         }
@@ -1148,9 +1093,9 @@ Result LocalCatalog::CreateIndex(
         vpack::Builder b;
         (*shard)->WriteInternal(b);
 
-        r = _engine->CreateDefinition(
-          (*index)->GetId(), RocksDBEntryType::IndexShard, (*shard)->GetId(),
-          [&](bool) { return b.slice(); });
+        r = _engine->CreateDefinition(index->GetId(), shard_type,
+                                      (*shard)->GetId(),
+                                      [&](bool) { return b.slice(); });
         if (!r.ok()) {
           return r;
         }
@@ -1158,12 +1103,97 @@ Result LocalCatalog::CreateIndex(
       return Result{};
     },
     [&](auto& clone) {
-      clone->UnregisterObject(*index, (*index)->GetRelationId(), true);
+      clone->UnregisterObject(index, index->GetRelationId(), true);
     });
 }
 
+Result LocalCatalog::CreateSecondaryIndex(
+  ObjectId database_id, std::string_view schema, std::string_view relation,
+  std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
+  CreateIndexOperationOptions operation_options) {
+  if (columns.empty()) {
+    return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
+  }
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"", schema,
+            "\""};
+  }
+  auto rel = _snapshot->GetRelation(database_id, schema, relation);
+  if (!rel) {
+    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
+            "\" does not exist"};
+  }
+  if (rel->GetType() != ObjectType::Table) {
+    return Result{ERROR_NOT_IMPLEMENTED, "Only table indexes are supported"};
+  }
+  auto& table = basics::downCast<Table>(*rel);
+  for (auto& c : columns) {
+    auto it = absl::c_find_if(
+      table.Columns(), [&](const Column& col) { return col.name == c.name; });
+    if (it == table.Columns().end()) {
+      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
+                    "\" does not exist"};
+    }
+    c.catalog_column = &*it;
+  }
+  auto index = catalog::CreateSecondaryIndex(
+    database_id, *schema_id, ObjectId{0}, table.GetId(), std::move(name),
+    std::move(columns), unique);
+  if (!index) {
+    return std::move(index).error();
+  }
+  SecondaryIndexShardOptions shard_options;
+  shard_options.base.unique = unique;
+  return CreateIndexImpl(schema, *index, shard_options, operation_options);
+}
+
+Result LocalCatalog::CreateInvertedIndex(
+  ObjectId database_id, std::string_view schema, std::string_view relation,
+  std::string name, std::vector<CreateIndexColumn>&& columns,
+  IndexShardOptions& shard_options,
+  CreateIndexOperationOptions operation_options) {
+  if (columns.empty()) {
+    return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
+  }
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"", schema,
+            "\""};
+  }
+  auto rel = _snapshot->GetRelation(database_id, schema, relation);
+  if (!rel) {
+    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
+            "\" does not exist"};
+  }
+  if (rel->GetType() != ObjectType::Table) {
+    return Result{ERROR_NOT_IMPLEMENTED, "Only table indexes are supported"};
+  }
+  auto& table = basics::downCast<Table>(*rel);
+  for (auto& c : columns) {
+    auto it = absl::c_find_if(
+      table.Columns(), [&](const Column& col) { return col.name == c.name; });
+    if (it == table.Columns().end()) {
+      return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
+                    "\" does not exist"};
+    }
+    c.catalog_column = &*it;
+  }
+  auto index = catalog::CreateInvertedIndex(
+    database_id, schema, *schema_id, ObjectId{0}, table.GetId(),
+    std::move(name), std::move(columns), _snapshot);
+  if (!index) {
+    return std::move(index).error();
+  }
+  return CreateIndexImpl(schema, *index, shard_options, operation_options);
+}
+
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
-                                std::shared_ptr<View> view, bool replace) {
+                                std::shared_ptr<PgSqlView> view, bool replace) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1176,7 +1206,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, view->GetName())
         .transform([&](ObjectId existed_id) {
           auto existed_object = _snapshot->GetObject<SchemaObject>(existed_id);
-          return existed_object->GetType() == ObjectType::View
+          return existed_object->GetType() == ObjectType::PgSqlView
                    ? Result{}
                    : Result{ERROR_SERVER_ILLEGAL_NAME, "\"", view->GetName(),
                             "\" is not a view"};
@@ -1197,20 +1227,17 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder builder;
-      builder.openObject();
-      view->WriteProperties(builder);
-      builder.close();
-
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::View, view->GetId(),
-        [&](bool internal) { return builder.slice(); });
+      view->WriteInternal(builder);
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
+                                       view->GetId(),
+                                       [&](bool) { return builder.slice(); });
     },
     [&](auto clone) { clone->UnregisterObject(view, *schema_id, true); });
 }
 
 Result LocalCatalog::CreateFunction(ObjectId database_id,
                                     std::string_view schema,
-                                    std::shared_ptr<Function> function,
+                                    std::shared_ptr<PgSqlFunction> function,
                                     bool replace) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
@@ -1228,10 +1255,8 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder builder;
-      builder.openObject();
       function->WriteInternal(builder);
-      builder.close();
-      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Function,
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlFunction,
                                        function->GetId(),
                                        [&](bool) { return builder.slice(); });
     },
@@ -1290,22 +1315,19 @@ Result LocalCatalog::CreateTable(
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
       vpack::Builder b;
-      b.openObject();
       table->WriteInternal(b);
-      b.close();
-      r = _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
-                                    table->GetId(),
-                                    [&](bool) { return b.slice(); });
+      r =
+        _engine->CreateDefinition(*schema_id, ObjectType::Table, table->GetId(),
+                                  [&](bool) { return b.slice(); });
       if (!r.ok()) {
         return r;
       }
 
-      b.clear();
-      shard->WriteInternal(b);
-
+      vpack::Builder shard_b;
+      shard->WriteInternal(shard_b);
       r = _engine->CreateDefinition(
-        shard->GetTableId(), RocksDBEntryType::TableShard, shard->GetId(),
-        [&](bool) -> vpack::Slice { return b.slice(); });
+        shard->GetTableId(), ObjectType::TableShard, shard->GetId(),
+        [&](bool) -> vpack::Slice { return shard_b.slice(); });
       return r;
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
@@ -1329,10 +1351,8 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
         return r;
       }
       vpack::Builder b;
-      b.openObject();
       dict->WriteInternal(b);
-      b.close();
-      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Tokenizer,
+      return _engine->CreateDefinition(*schema_id, ObjectType::Tokenizer,
                                        dict->GetId(),
                                        [&](bool) { return b.slice(); });
     },
@@ -1341,126 +1361,145 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
     });
 }
 
-Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
-                                std::string_view name,
-                                std::string_view new_name) {
-  absl::MutexLock lock{&_mutex};
+template<typename T>
+Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
+                                      std::string_view schema,
+                                      std::string_view name,
+                                      std::string_view new_name) {
+  constexpr auto kResolveType = []() {
+    if constexpr (std::is_same_v<T, PgSqlFunction>) {
+      return ResolveType::Function;
+    } else {
+      return ResolveType::Relation;
+    }
+  }();
+
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  auto object_id = _snapshot->GetObjectId<kResolveType>(*schema_id, name);
   if (!object_id) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
-  if (!view) {
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  if (view->GetName() == new_name) {
-    return {};
+  auto obj_type = obj->GetType();
+  auto old_obj = std::dynamic_pointer_cast<T>(std::move(obj));
+  if (!old_obj) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  pg::ToPgObjectTypeName(obj_type)};
   }
 
-  std::shared_ptr<View> new_view;
-  auto r = view->Rename(new_view, new_name);
-  if (!r.ok()) {
-    return r;
+  if (old_obj->GetName() == new_name) {
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
   }
 
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      if (auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                               new_view);
-          !r.ok()) {
-        return r;
-      }
-
-      vpack::Builder builder;
-      builder.openObject();
-      new_view->WriteProperties(builder);
-      builder.close();
-
-      return _engine->CreateDefinition(
-        *schema_id, RocksDBEntryType::View, new_view->GetId(),
-        [&](bool internal) { return builder.slice(); });
-    },
-    [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto obj = clone->GetObject<View>(new_view->GetId());
-      if (obj->GetName() == new_view->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id,
-                                                             new_name, view);
-        SDB_ASSERT(r.ok());
-      }
-    });
-}
-
-Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
-                                 std::string_view name,
-                                 std::string_view new_name) {
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  auto cloned = old_obj->Clone();
+  if (!cloned) {
+    return Result{ERROR_INTERNAL, "Failed to clone object"};
   }
-
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!object_id) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  auto old_table = basics::downCast<Table>(_snapshot->GetObject(*object_id));
-  if (!old_table) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
-  }
-
-  if (old_table->GetName() == new_name) {
-    return {};
-  }
-
-  NewOptions options{
-    .name = new_name,
-    .schema = old_table->GetSchema(),
-    .number_of_shards = old_table->numberOfShards(),
-    .replication_factor = old_table->replicationFactor(),
-    .write_concern = old_table->writeConcern(),
-    .wait_for_sync = old_table->waitForSync(),
-  };
-
-  auto new_table = std::make_shared<Table>(*old_table, std::move(options));
+  auto new_obj = basics::downCast<T>(std::move(cloned));
+  SDB_ASSERT(new_obj);
+  new_obj->SetName(new_name);
 
   absl::MutexLock lock{&_mutex};
   return Apply(
     _snapshot,
     [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      auto r = clone->ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                           new_table);
+      auto r = clone->ReplaceObject<kResolveType>(*schema_id, name, new_obj);
       if (!r.ok()) {
         return r;
       }
 
       vpack::Builder b;
-      b.openObject();
-      new_table->WriteInternal(b);
-      b.close();
-      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
-                                       new_table->GetId(),
+      new_obj->WriteInternal(b);
+
+      ObjectId parent_id;
+      if constexpr (std::is_same_v<T, Index>) {
+        parent_id = old_obj->GetRelationId();
+      } else {
+        parent_id = *schema_id;
+      }
+
+      return _engine->CreateDefinition(parent_id, new_obj->GetType(),
+                                       new_obj->GetId(),
                                        [&](bool) { return b.slice(); });
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto obj = clone->GetObject<Table>(new_table->GetId());
-      if (obj->GetName() == new_table->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(
-          *schema_id, new_name, old_table);
+      auto current = clone->GetObject<T>(new_obj->GetId());
+      if (current->GetName() == new_obj->GetName()) {
+        auto r =
+          clone->ReplaceObject<kResolveType>(*schema_id, new_name, old_obj);
         SDB_ASSERT(r.ok());
       }
     });
+}
+
+Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
+                                std::string_view name,
+                                std::string_view new_name) {
+  return RenameObjectImpl<PgSqlView>(database_id, schema, name, new_name);
+}
+
+Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
+                                 std::string_view name,
+                                 std::string_view new_name) {
+  return RenameObjectImpl<Table>(database_id, schema, name, new_name);
+}
+
+Result LocalCatalog::RenameIndex(ObjectId database_id, std::string_view schema,
+                                 std::string_view name,
+                                 std::string_view new_name) {
+  return RenameObjectImpl<Index>(database_id, schema, name, new_name);
+}
+
+Result LocalCatalog::RenameRelation(ObjectId database_id,
+                                    std::string_view schema,
+                                    std::string_view name,
+                                    std::string_view new_name) {
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!object_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+
+  switch (obj->GetType()) {
+    case ObjectType::Table:
+      return RenameTable(database_id, schema, name, new_name);
+    case ObjectType::PgSqlView:
+      return RenameView(database_id, schema, name, new_name);
+    case ObjectType::SecondaryIndex:
+    case ObjectType::InvertedIndex:
+      return RenameIndex(database_id, schema, name, new_name);
+    default:
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    pg::ToPgObjectTypeName(obj->GetType())};
+  }
+}
+
+Result LocalCatalog::RenameFunction(ObjectId database_id,
+                                    std::string_view schema,
+                                    std::string_view name,
+                                    std::string_view new_name) {
+  return RenameObjectImpl<PgSqlFunction>(database_id, schema, name, new_name);
 }
 
 Result LocalCatalog::ChangeRole(std::string_view name,
@@ -1484,10 +1523,8 @@ Result LocalCatalog::ChangeRole(std::string_view name,
         return r;
       }
       vpack::Builder b;
-      b.openObject();
       new_role_ptr->WriteInternal(b);
-      b.close();
-      return _engine->CreateDefinition(id::kInstance, RocksDBEntryType::Role,
+      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
                                        new_role_ptr->GetId(),
                                        [&](bool) { return b.slice(); });
     },
@@ -1510,7 +1547,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
 
 Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                                 std::string_view name,
-                                ChangeCallback<View> new_view) {
+                                ChangeCallback<PgSqlView> new_view) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1524,12 +1561,12 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto view = basics::downCast<View>(_snapshot->GetObject(*object_id));
+  auto view = basics::downCast<PgSqlView>(_snapshot->GetObject(*object_id));
   if (!view) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  std::shared_ptr<View> updated;
+  std::shared_ptr<PgSqlView> updated;
   auto r = new_view(*view, updated);
   if (!r.ok()) {
     return r;
@@ -1545,13 +1582,10 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
     }
 
     vpack::Builder builder;
-    builder.openObject();
-    updated->WriteProperties(builder);
-    builder.close();
-
-    return _engine->CreateDefinition(
-      *schema_id, RocksDBEntryType::View, updated->GetId(),
-      [&](bool internal) { return builder.slice(); });
+    updated->WriteInternal(builder);
+    return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
+                                     updated->GetId(),
+                                     [&](bool) { return builder.slice(); });
   });
 }
 
@@ -1571,11 +1605,16 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto table = basics::downCast<Table>(_snapshot->GetObject(*object_id));
-  if (!table) {
+  auto obj = _snapshot->GetObject(*object_id);
+  if (!obj) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
+  if (obj->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  pg::ToPgObjectTypeName(obj->GetType())};
+  }
 
+  auto table = basics::downCast<Table>(std::move(obj));
   std::shared_ptr<Table> updated;
   auto r = new_table(*table, updated);
   if (!r.ok()) {
@@ -1595,7 +1634,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     return basics::SafeCall([&] {
       vpack::Builder b;
       updated->WriteInternal(b);
-      return _engine->CreateDefinition(*schema_id, RocksDBEntryType::Table,
+      return _engine->CreateDefinition(*schema_id, ObjectType::Table,
                                        updated->GetId(),
                                        [&](bool) { return b.slice(); });
     });
@@ -1610,7 +1649,7 @@ Result LocalCatalog::DropRole(std::string_view role) {
   }
   auto r = Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     clone->UnregisterObject(role_ptr, id::kInstance);
-    return _engine->DropDefinition(id::kInstance, RocksDBEntryType::Role,
+    return _engine->DropDefinition(id::kInstance, ObjectType::Role,
                                    role_ptr->GetId());
   });
 
@@ -1690,7 +1729,7 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(obj);
     if (obj->GetType() != ObjectType::Table) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
     }
     auto table = basics::downCast<Table>(std::move(obj));
     auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
@@ -1726,15 +1765,15 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   }
 
   ObjectId tombstone_parent;
-  if (object->GetType() == ObjectType::Index) {
+  if (IsIndex(object->GetType())) {
     auto& index = basics::downCast<Index>(*object);
     tombstone_parent = index.GetRelationId();
   } else {
     tombstone_parent = *schema_id;
   }
 
-  auto r = _engine->DropDefinition(tombstone_parent,
-                                   RocksDBEntryType::Tombstone, *object_id);
+  auto r = _engine->DropDefinition(tombstone_parent, ObjectType::Tombstone,
+                                   *object_id);
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
@@ -1760,9 +1799,9 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     }
     auto obj = clone->GetObject(*index_id);
     SDB_ASSERT(obj);
-    if (obj->GetType() != ObjectType::Index) {
+    if (!IsIndex(obj->GetType())) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
     }
     auto index = basics::downCast<Index>(std::move(obj));
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
@@ -1770,7 +1809,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
       return r;
     }
 
-    if (index->GetIndexType() == IndexType::Inverted) {
+    if (index->GetType() == ObjectType::InvertedIndex) {
       auto deps = clone->GetDependency<IndexDependency>(*(index_id));
       SDB_ASSERT(deps);
       if (deps->shard_id.isSet()) {
@@ -1806,13 +1845,13 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     }
     auto obj = clone->GetObject(*view_id);
     SDB_ASSERT(obj);
-    if (obj->GetType() != ObjectType::View) {
+    if (obj->GetType() != ObjectType::PgSqlView) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    magic_enum::enum_name(obj->GetType())};
+                    pg::ToPgObjectTypeName(obj->GetType())};
     }
-    auto view = basics::downCast<View>(std::move(obj));
-    auto r = _engine->DropDefinition(*schema_id, RocksDBEntryType::View,
-                                     view->GetId());
+    auto view = basics::downCast<PgSqlView>(std::move(obj));
+    auto r =
+      _engine->DropDefinition(*schema_id, ObjectType::PgSqlView, view->GetId());
     if (!r.ok()) {
       return r;
     }
@@ -1835,10 +1874,10 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto func = clone->GetObject<Function>(*func_id);
+    auto func = clone->GetObject<PgSqlFunction>(*func_id);
     SDB_ASSERT(func);
     auto r =
-      _engine->DropDefinition(*schema_id, RocksDBEntryType::Function, *func_id);
+      _engine->DropDefinition(*schema_id, ObjectType::PgSqlFunction, *func_id);
     if (!r.ok()) {
       return r;
     }
@@ -1882,8 +1921,7 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
     auto dict = clone->GetObject<Tokenizer>(*id);
     SDB_ASSERT(dict);
-    auto r =
-      _engine->DropDefinition(*schema_id, RocksDBEntryType::Tokenizer, *id);
+    auto r = _engine->DropDefinition(*schema_id, ObjectType::Tokenizer, *id);
     if (!r.ok()) {
       return r;
     }

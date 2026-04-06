@@ -26,7 +26,6 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
-#include "catalog/sql_function_impl.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/options_parser.h"
@@ -140,7 +139,7 @@ class CreateFunctionOptionsParser : public OptionsParser {
 
 }  // namespace
 
-std::shared_ptr<catalog::Function> CreateFunctionImpl(
+std::shared_ptr<catalog::PgSqlFunction> CreateFunctionImpl(
   const Config* config, ObjectId database_id, std::string_view database_name,
   std::string_view current_schema, const CreateFunctionStmt& stmt) {
   SDB_ASSERT(stmt.funcname);
@@ -185,22 +184,9 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
     signature.MarkAsProcedure();
   }
 
-  auto sql_impl = std::make_unique<pg::FunctionImpl>();
-  auto r = sql_impl->Init(database_id, function_name, std::move(function_body),
-                          stmt.is_procedure, config);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  if (config) {
-    // Case for non system views
-    vpack::Builder builder;
-    sql_impl->ToVPack(builder);
-    properties.implementation = builder.slice();
-  }
-
-  return std::make_shared<catalog::Function>(std::move(properties),
-                                             std::move(sql_impl), database_id);
+  return std::make_shared<catalog::PgSqlFunction>(
+    database_id, id::kGenerateNew, function_name, std::move(function_body),
+    std::move(properties.signature), std::move(properties.options));
 }
 
 yaclib::Future<> CreateFunction(ExecContext& context,
@@ -235,7 +221,7 @@ yaclib::Future<> CreateFunction(ExecContext& context,
   return {};
 }
 
-std::shared_ptr<catalog::Function> CreateSystemFunction(
+std::shared_ptr<catalog::PgSqlFunction> CreateSystemFunction(
   const CreateFunctionStmt& stmt) {
   return CreateFunctionImpl(nullptr, id::kSystemDB, "", "", stmt);
 }

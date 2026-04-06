@@ -57,9 +57,10 @@ class Table : public SchemaObject {
   Table(TableOptions&& options, ObjectId database_id);
   Table(const catalog::Table& other, NewOptions options);
 
-  void WriteProperties(vpack::Builder& build) const final;
-
-  void WriteInternal(vpack::Builder& build) const final;
+  static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
+                                             ReadContext ctx);
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone() const final;
 
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
@@ -89,6 +90,15 @@ class Table : public SchemaObject {
     return *_sharding_strategy;
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
+
+  Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
+                      std::string_view new_name) const;
+  Result RenameConstraint(std::shared_ptr<Table>& result,
+                          std::string_view old_name,
+                          std::string_view new_name) const;
+  Result DropConstraint(std::shared_ptr<Table>& result,
+                        std::string_view constraint_name) const;
+
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {
@@ -117,6 +127,8 @@ class Table : public SchemaObject {
     std::span<const catalog::Column::Id> ids) const;
 
  private:
+  NewOptions MakeNewOptions() const;
+
   struct TableOutput;
   TableOutput MakeTableOptions() const;
 

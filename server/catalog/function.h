@@ -29,6 +29,9 @@
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "pg/sql_collector.h"
+#include "pg/sql_utils.h"
+#include "query/config.h"
 
 namespace sdb {
 namespace aql {
@@ -54,16 +57,9 @@ namespace catalog {
 
 enum class FunctionLanguage : uint8_t {
   Invalid = 0,
-  AqlNative,
   SQL,
-  AnalyzerJson,
   VeloxNative,
   Decorator,
-  WasmHex,
-  WasmBase64,
-  WasmBase64Web,
-  WasmText,
-  // PLpgSQL,
 };
 
 enum class FunctionState : uint8_t {
@@ -164,99 +160,36 @@ struct FunctionProperties {
   ObjectId id;
   vpack::Slice implementation;
 
-  static Result Read(FunctionProperties& options, vpack::Slice slice,
-                     bool is_user_request = false);
+  static Result Read(FunctionProperties& options, vpack::Slice slice);
 };
 // NOLINTEND
 
-class Function final : public SchemaObject {
+class PgSqlFunction final : public SchemaObject {
  public:
-  static Result Instantiate(std::shared_ptr<catalog::Function>& function,
-                            ObjectId database_id, vpack::Slice definition,
-                            bool is_user_request);
+  PgSqlFunction(ObjectId database_id, ObjectId id, std::string_view name,
+                std::string query, FunctionSignature signature,
+                FunctionOptions options);
 
-  Function(std::string_view name, FunctionSignature signature,
-           FunctionOptions options);
+  static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,
+                                                     ReadContext ctx);
 
-  Function(FunctionProperties&& properties,
-           std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id);
-
-  ~Function() final;
-
-  void WriteProperties(vpack::Builder& build) const final;
-
-  void WriteInternal(vpack::Builder& build) const final;
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone() const final;
 
   const FunctionSignature& Signature() const noexcept { return _signature; }
-
   const FunctionOptions& Options() const noexcept { return _options; }
-
-  pg::FunctionImpl& SqlFunction() const noexcept {
-    SDB_ASSERT(_options.language == FunctionLanguage::SQL);
-    SDB_ASSERT(_sql_impl);
-    return *_sql_impl;
-  }
+  std::string_view GetQuery() const noexcept { return _query; }
+  const RawStmt* GetStatement() const noexcept { return _stmt; }
+  const pg::Objects& GetObjects() const noexcept { return _objects; }
 
  private:
   FunctionSignature _signature;
   FunctionOptions _options;
-  std::unique_ptr<pg::FunctionImpl> _sql_impl;
+  std::string _query;
+  pg::MemoryContextPtr _memory_context;
+  const RawStmt* _stmt{nullptr};
+  pg::Objects _objects;
 };
 
 }  // namespace catalog
 }  // namespace sdb
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<sdb::catalog::FunctionLanguage>(
-  sdb::catalog::FunctionLanguage value) noexcept {
-  switch (value) {
-    using enum sdb::catalog::FunctionLanguage;
-    case SQL:
-      return "sql";
-    case AqlNative:
-      return "aql-native";
-    case AnalyzerJson:
-      return "analyzer-json";
-    // TODO(mbkkt) wasm when it will be available
-    default:
-      return invalid_tag;
-  }
-}
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<sdb::catalog::FunctionState>(
-  sdb::catalog::FunctionState value) noexcept {
-  switch (value) {
-    using enum sdb::catalog::FunctionState;
-    case Immutable:
-      return "immutable";
-    case Stable:
-      return "stable";
-    case Volatile:
-      return "volatile";
-    default:
-      return invalid_tag;
-  }
-}
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<sdb::catalog::FunctionParallel>(
-  sdb::catalog::FunctionParallel value) noexcept {
-  switch (value) {
-    using enum sdb::catalog::FunctionParallel;
-    case Safe:
-      return "safe";
-    case Restricted:
-      return "restricted";
-    case Unsafe:
-      return "unsafe";
-    default:
-      return invalid_tag;
-  }
-}
-
-}  // namespace magic_enum

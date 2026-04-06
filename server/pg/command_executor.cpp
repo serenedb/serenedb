@@ -102,6 +102,14 @@ yaclib::Future<> DDLExecutor::Execute(velox::RowVectorPtr& batch) {
         const auto& stmt = *castNode(DefineStmt, &_node);
         return CreateTokenizer(*_context, stmt);
       }
+      case NodeTag::T_RenameStmt: {
+        const auto& stmt = *castNode(RenameStmt, &_node);
+        return RenameObject(*_context, stmt);
+      }
+      case NodeTag::T_AlterTableStmt: {
+        const auto& stmt = *castNode(AlterTableStmt, &_node);
+        return AlterTable(*_context, stmt);
+      }
       default:
         SDB_UNREACHABLE();
     }
@@ -154,8 +162,8 @@ yaclib::Future<> FinishCreateIndexExecutor::Execute(
     auto shard = snapshot->GetIndexShard(index->GetId());
     SDB_ASSERT(shard);
 
-    if (shard->GetType() != IndexType::Inverted) {
-      SDB_ASSERT(shard->GetType() == IndexType::Secondary);
+    if (shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+      SDB_ASSERT(shard->GetType() == catalog::ObjectType::SecondaryIndexShard);
       return {};
     }
 

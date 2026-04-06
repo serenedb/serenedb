@@ -62,7 +62,10 @@ class Tokenizer : public SchemaObject {
 
   vpack::Slice Slice() const noexcept;
 
-  void WriteInternal(vpack::Builder& b) const final;
+  static std::shared_ptr<Tokenizer> ReadInternal(vpack::Slice slice,
+                                                 ReadContext ctx);
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone() const final;
 
   Tokenizer(ObjectId id, std::string_view name, search::Features features,
             std::string data);

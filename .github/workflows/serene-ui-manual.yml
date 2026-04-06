@@ -66,7 +66,6 @@ jobs:
             BUILD_MACOS_APP: ${{ inputs.BUILD_MACOS_APP }}
             PUSH_RELEASE: ${{ inputs.PUSH_RELEASE }}
         secrets:
-            PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
             TG_TOKEN: ${{ secrets.TG_TOKEN }}
             TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
             APPLE_ID: ${{ secrets.APPLE_ID }}

@@ -108,30 +108,11 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
                       ERR_MSG("DROP for this object type is not implemented: ",
                               magic_enum::enum_name(stmt.removeType)));
   }
-  auto get_object_name = [&] -> std::string_view {
-    switch (stmt.removeType) {
-      case OBJECT_TABLE:
-        return "table";
-      case OBJECT_INDEX:
-        return "index";
-      case OBJECT_VIEW:
-        return "view";
-      case OBJECT_FUNCTION:
-        return "function";
-      case OBJECT_SCHEMA:
-        return "schema";
-      case OBJECT_TSDICTIONARY:
-        return "text search dictionary";
-      default:
-        SDB_ASSERT(false);  // it's better to specify the name
-        return "object";
-    }
-  };
   if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
     // The error message from catalog contains the actual object type name
     auto actual_type = r.errorMessage();
     auto actual_name = absl::AsciiStrToLower(actual_type);
-    auto object_name = get_object_name();
+    auto object_name = ToPgObjectTypeName(stmt.removeType);
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
       ERR_MSG("\"", name, "\" is not ",
@@ -152,13 +133,13 @@ yaclib::Future<> DropObject(ExecContext& context, const DropStmt& stmt) {
         ERR_MSG("function ", name, "() does not exist, skipping")));
     } else {
       if (!stmt.missing_ok) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-          ERR_MSG(get_object_name(), " \"", name, "\" does not exist"));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG(ToPgObjectTypeName(stmt.removeType), " \"",
+                                name, "\" does not exist"));
       }
       conn_ctx.AddNotice(
         SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                       ERR_MSG(get_object_name(), " \"", name,
+                       ERR_MSG(ToPgObjectTypeName(stmt.removeType), " \"", name,
                                "\" does not exist, skipping")));
     }
     r = {};

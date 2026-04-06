@@ -143,7 +143,7 @@ struct IndexShardDrop final : public DropTask,
 struct IndexDrop final : public DropTask,
                          std::enable_shared_from_this<IndexDrop> {
  public:
-  IndexDrop(ObjectId id, IndexType type, ObjectId db_id, ObjectId schema_id,
+  IndexDrop(ObjectId id, ObjectType type, ObjectId db_id, ObjectId schema_id,
             ObjectId table_id, bool is_root = false)
     : DropTask{id, table_id, is_root},
       _db_id{db_id},
@@ -156,7 +156,7 @@ struct IndexDrop final : public DropTask,
     : DropTask{index, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
-      _type{index->GetIndexType()},
+      _type{index->GetType()},
       _shard_drop{std::move(shard_drop)} {}
 
   std::string GetContext() const noexcept final {
@@ -178,7 +178,7 @@ struct IndexDrop final : public DropTask,
  private:
   ObjectId _db_id;
   ObjectId _schema_id;
-  IndexType _type;
+  ObjectType _type;
   std::shared_ptr<IndexShardDrop> _shard_drop;
 };
 

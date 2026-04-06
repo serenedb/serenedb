@@ -1,0 +1,54 @@
+control substitution on
+
+statement ok
+CREATE FUNCTION babsky() RETURNS INTEGER AS 'SELECT 322' LANGUAGE SQL;
+
+statement ok
+CREATE FUNCTION clickclack(x INTEGER) RETURNS INTEGER AS 'SELECT x * 2' LANGUAGE SQL;
+
+statement ok
+CREATE FUNCTION vedernikoff() RETURNS TABLE(name TEXT, score INTEGER) LANGUAGE SQL
+BEGIN ATOMIC
+  VALUES ('deadinside', 993), ('kostya', 322);
+END;
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM babsky();
+----
+babsky
+322
+
+connection after_crash
+query
+SELECT * FROM clickclack(5);
+----
+clickclack
+10
+
+connection after_crash
+query
+SELECT * FROM vedernikoff() ORDER BY score;
+----
+name	score
+kostya	322
+deadinside	993
+
+connection after_crash
+statement ok
+DROP FUNCTION babsky;
+
+connection after_crash
+statement ok
+DROP FUNCTION clickclack;
+
+connection after_crash
+statement ok
+DROP FUNCTION vedernikoff;

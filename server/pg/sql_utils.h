@@ -25,6 +25,7 @@
 
 #include "basics/assert.h"
 #include "catalog/fwd.h"
+#include "catalog/object.h"
 #include "query/config.h"
 
 struct Node;
@@ -69,6 +70,33 @@ namespace sdb {
 
 class QueryString;
 namespace pg {
+
+std::string_view ToPgObjectTypeName(int pg_object_type) noexcept;
+
+constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
+  switch (t) {
+    using enum catalog::ObjectType;
+    case Table:
+      return "table";
+    case PgSqlView:
+      return "view";
+    case SecondaryIndex:
+    case InvertedIndex:
+      return "index";
+    case PgSqlFunction:
+      return "function";
+    case Schema:
+      return "schema";
+    case Database:
+      return "database";
+    case Role:
+      return "role";
+    case Tokenizer:
+      return "text search dictionary";
+    default:
+      return "object";
+  }
+}
 
 bool IsDistinctAll(const List* distinct_clause) noexcept;
 

@@ -8,7 +8,7 @@ cd "$PROJECT_ROOT"
 source packages/find_version.bash
 
 # Configuration
-VERSION="${SERENEDB_DEBIAN_UPSTREAM}-${SERENEDB_DEBIAN_REVISION}"
+VERSION="${SERENEDB_VERSION}"
 EDITION="serenedb"
 ARCH="$(dpkg --print-architecture)"
 BASE="package_all"
@@ -26,7 +26,7 @@ cp -a "${SOURCE}/main/." "$TARGET/"
 cp -a "install_all" "${BASE}/install"
 
 # Process templates
-for f in serenedb.init serenedb.service compat config templates preinst prerm postinst postrm rules; do
+for f in serenedb.service compat preinst prerm postinst postrm rules; do
 	[[ -f "${SOURCE}/common/$f" ]] && {
 		cp "${SOURCE}/common/$f" "${TARGET}/$f"
 		sed -i "s/@EDITION@/${EDITION}/g" "${TARGET}/$f"
@@ -42,7 +42,7 @@ cp -a "${SOURCE}/common/source" "$TARGET/"
 	echo ""
 	echo "  * New version."
 	echo ""
-	echo -n " -- SereneDB  "
+	echo -n " -- SereneDB GmbH <support@serenedb.com>  "
 	date -R
 } >"${TARGET}/changelog"
 
@@ -54,6 +54,6 @@ unset LC_ALL LC_CTYPE LANG LANGUAGE
 export LC_ALL=C
 
 cd "$BASE"
-debian/rules binary
+dpkg-buildpackage -b -uc -us -d
 
 echo "==> Build complete!"

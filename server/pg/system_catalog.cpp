@@ -30,7 +30,6 @@
 #include "basics/containers/trivial_map.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/sql_function_impl.h"
 #include "catalog/view.h"
 #include "functions/search.h"
 #include "functions/vector.h"
@@ -765,12 +764,14 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
   return it == schema.end() ? nullptr : *it;
 }
 
-containers::FlatHashMap<std::string, std::shared_ptr<Function>>
+containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
   gPgCatalogFunctions;
-containers::FlatHashMap<std::string, std::shared_ptr<Function>>
+containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
   gInfoSchemaFunctions;
-containers::FlatHashMap<std::string, std::shared_ptr<View>> gPgCatalogViews;
-containers::FlatHashMap<std::string, std::shared_ptr<View>> gInfoSchemaViews;
+containers::FlatHashMap<std::string, std::shared_ptr<PgSqlView>>
+  gPgCatalogViews;
+containers::FlatHashMap<std::string, std::shared_ptr<PgSqlView>>
+  gInfoSchemaViews;
 
 }  // namespace
 
@@ -807,7 +808,7 @@ void VisitSystemTables(
 }
 
 void VisitSystemViews(
-  absl::FunctionRef<void(const catalog::View&, Oid)> visitor) {
+  absl::FunctionRef<void(const catalog::PgSqlView&, Oid)> visitor) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto& [name, view] : gPgCatalogViews) {
     SDB_ASSERT(view);
@@ -819,7 +820,7 @@ void VisitSystemViews(
   }
 }
 
-std::shared_ptr<catalog::Function> GetInfoSchemaFunction(
+std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
   std::string_view name) {
   auto it = gInfoSchemaFunctions.find(name);
   if (it != gInfoSchemaFunctions.end()) {
@@ -828,7 +829,7 @@ std::shared_ptr<catalog::Function> GetInfoSchemaFunction(
   return nullptr;
 }
 
-std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
+std::shared_ptr<catalog::PgSqlFunction> GetFunction(std::string_view name) {
 #ifndef SDB_GTEST
   // For query building tests we need to run this without feature
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
@@ -851,8 +852,8 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
     table = it->table;
     kind = it->kind;
   }
-  return std::make_shared<catalog::Function>(
-    name, FunctionSignature{},
+  return std::make_shared<catalog::PgSqlFunction>(
+    ObjectId{}, id::kGenerateNew, name, std::string{}, FunctionSignature{},
     FunctionOptions{
       .language = language,
       .state = FunctionState::Immutable,
@@ -862,7 +863,7 @@ std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
     });
 }
 
-std::shared_ptr<View> GetInfoSchemaView(std::string_view name) {
+std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
   auto it = gInfoSchemaViews.find(name);
   if (it == gInfoSchemaViews.end()) {
     return nullptr;
@@ -870,7 +871,7 @@ std::shared_ptr<View> GetInfoSchemaView(std::string_view name) {
   return it->second;
 }
 
-std::shared_ptr<View> GetView(std::string_view name) {
+std::shared_ptr<PgSqlView> GetView(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   auto it = gPgCatalogViews.find(name);
   if (it == gPgCatalogViews.end()) {

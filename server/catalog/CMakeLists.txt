@@ -14,14 +14,10 @@ target_sources(
         storage_options.cpp
         key_generator.cpp
         search_analyzer_impl.cpp
-        sql_function_impl.cpp
         table.cpp
         index.cpp
         view.cpp
         function.cpp
-        native_functions.cpp
-        base_query_view.cpp
-        sql_query_view.cpp
         validators.cpp
         sharding_strategy.cpp
         replication_common.cpp

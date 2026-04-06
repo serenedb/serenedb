@@ -55,6 +55,9 @@ namespace sdb::catalog {
 template<typename T>
 using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
 
+class SecondaryIndex;
+class InvertedIndex;
+
 struct CreateTableOperationOptions {
   bool wait_for_sync_replication = false;
   bool enforce_replication_factor = false;
@@ -67,18 +70,20 @@ struct CreateIndexOperationOptions {
 
 template<typename T>
 constexpr ObjectType GetObjectType() noexcept {
-  if constexpr (std::is_same_v<T, View>) {
-    return ObjectType::View;
+  if constexpr (std::is_same_v<T, PgSqlView>) {
+    return ObjectType::PgSqlView;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
   } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
-  } else if constexpr (std::is_same_v<T, Function>) {
-    return ObjectType::Function;
+  } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
+    return ObjectType::PgSqlFunction;
   } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
-  } else if constexpr (std::is_same_v<T, Index>) {
-    return ObjectType::Index;
+  } else if constexpr (std::is_same_v<T, SecondaryIndex>) {
+    return ObjectType::SecondaryIndex;
+  } else if constexpr (std::is_same_v<T, InvertedIndex>) {
+    return ObjectType::InvertedIndex;
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     return ObjectType::Tokenizer;
   } else {
@@ -96,9 +101,9 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Table>> GetTables(
     ObjectId database, std::string_view schema) const = 0;
-  virtual std::vector<std::shared_ptr<View>> GetViews(
+  virtual std::vector<std::shared_ptr<PgSqlView>> GetViews(
     ObjectId database, std::string_view schema) const = 0;
-  virtual std::vector<std::shared_ptr<Function>> GetFunctions(
+  virtual std::vector<std::shared_ptr<PgSqlFunction>> GetFunctions(
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Index>> GetIndexes(
     ObjectId database, std::string_view schema) const = 0;
@@ -114,7 +119,7 @@ struct Snapshot {
   virtual std::shared_ptr<SchemaObject> GetRelation(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
-  virtual std::shared_ptr<Function> GetFunction(
+  virtual std::shared_ptr<PgSqlFunction> GetFunction(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
   virtual std::shared_ptr<Tokenizer> GetTokenizer(
@@ -137,10 +142,23 @@ struct Snapshot {
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto obj = GetObject(id);
-    if (obj && obj->GetType() == GetObjectType<T>()) {
-      return basics::downCast<T>(obj);
+    if (!obj) {
+      return nullptr;
     }
-    return nullptr;
+    if constexpr (std::is_same_v<T, Index>) {
+      if (!IsIndex(obj->GetType())) {
+        return nullptr;
+      }
+    } else if constexpr (std::is_same_v<T, IndexShard>) {
+      if (!IsIndexShard(obj->GetType())) {
+        return nullptr;
+      }
+    } else {
+      if (obj->GetType() != GetObjectType<T>()) {
+        return nullptr;
+      }
+    }
+    return basics::downCast<T>(obj);
   }
 };
 
@@ -173,19 +191,18 @@ struct LogicalCatalog {
   virtual Result RegisterSchema(ObjectId database,
                                 std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result RegisterView(ObjectId schema_id,
-                              std::shared_ptr<catalog::View> view) = 0;
+                              std::shared_ptr<catalog::PgSqlView> view) = 0;
   virtual Result RegisterTable(ObjectId database_id, ObjectId schema_id,
-                               CreateTableOptions options) = 0;
+                               std::shared_ptr<Table> table) = 0;
   virtual Result RegisterTableShard(std::shared_ptr<TableShard> shard) = 0;
   virtual Result RegisterFunction(
     ObjectId database_id, ObjectId schema_id,
-    std::shared_ptr<catalog::Function> function) = 0;
+    std::shared_ptr<catalog::PgSqlFunction> function) = 0;
   virtual Result RegisterTokenizer(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
-  virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
-    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexImplOptionsBaseWrapper&& impl_options) = 0;
+  virtual Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                               std::shared_ptr<Index> index) = 0;
   virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
 
   virtual Result CreateDatabase(
@@ -194,19 +211,23 @@ struct LogicalCatalog {
   virtual Result CreateSchema(ObjectId database_id,
                               std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result CreateView(ObjectId database_id, std::string_view schema,
-                            std::shared_ptr<catalog::View> view,
+                            std::shared_ptr<catalog::PgSqlView> view,
                             bool replace) = 0;
-  virtual Result CreateFunction(ObjectId database_id, std::string_view schema,
-                                std::shared_ptr<catalog::Function> function,
-                                bool replace) = 0;
+  virtual Result CreateFunction(
+    ObjectId database_id, std::string_view schema,
+    std::shared_ptr<catalog::PgSqlFunction> function, bool replace) = 0;
   virtual Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                                  std::shared_ptr<Tokenizer> dict) = 0;
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
-  virtual Result CreateIndex(
+  virtual Result CreateSecondaryIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
-    std::vector<CreateIndexColumn>&& columns, IndexBaseOptions options,
+    std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
+    CreateIndexOperationOptions operation_options = {}) = 0;
+  virtual Result CreateInvertedIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns,
     IndexShardOptions& shard_options,
     CreateIndexOperationOptions operation_options = {}) = 0;
 
@@ -216,10 +237,19 @@ struct LogicalCatalog {
   virtual Result RenameView(ObjectId database_id, std::string_view schema,
                             std::string_view name,
                             std::string_view new_name) = 0;
+  virtual Result RenameIndex(ObjectId database_id, std::string_view schema,
+                             std::string_view name,
+                             std::string_view new_name) = 0;
+  virtual Result RenameRelation(ObjectId database_id, std::string_view schema,
+                                std::string_view name,
+                                std::string_view new_name) = 0;
+  virtual Result RenameFunction(ObjectId database_id, std::string_view schema,
+                                std::string_view name,
+                                std::string_view new_name) = 0;
 
   virtual Result ChangeView(ObjectId database_id, std::string_view schema,
                             std::string_view name,
-                            ChangeCallback<catalog::View> callback) = 0;
+                            ChangeCallback<catalog::PgSqlView> callback) = 0;
   virtual Result ChangeTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
                              ChangeCallback<catalog::Table> callback) = 0;

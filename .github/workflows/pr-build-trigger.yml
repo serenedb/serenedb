@@ -113,6 +113,25 @@ jobs:
               context: statusContext,
             });
 
+            // Cancel in-progress runs on this branch
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch,
+              status: 'in_progress', per_page: 10,
+            });
+            for (const run of runs.workflow_runs) {
+              core.info(`Cancelling run #${run.id} (${run.status})`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
+            // Also cancel queued/waiting runs
+            const { data: queued } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch,
+              status: 'queued', per_page: 10,
+            });
+            for (const run of queued.workflow_runs) {
+              core.info(`Cancelling queued run #${run.id}`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
+
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
               owner, repo, workflow_id: 'build-manual.yml', branch, per_page: 1,
@@ -150,6 +169,15 @@ jobs:
                 break;
               }
             }
+
+            // Update pending status with run URL so the check is clickable in PR
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'pending',
+              description: 'Build in progress',
+              context: statusContext,
+              target_url: runUrl,
+            });
 
             const opts = [
               enableAsan && 'asan',

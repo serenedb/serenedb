@@ -85,6 +85,13 @@ class SearchDataSource final : public velox::connector::DataSource {
   // Pointer to the segment currently being scanned; valid between next_segment
   // and the following _doc.reset().
   const irs::SubReader* _current_seg = nullptr;
+
+  void ResetDocOffsets(const irs::SubReader& segment);
+  void CollectDocOffsets(
+    irs::doc_id_t doc_id,
+    std::vector<std::vector<std::vector<int64_t>>>& offsets_data);
+  std::vector<velox::VectorPtr> BuildOffsetsColumns(
+    const std::vector<std::vector<std::vector<int64_t>>>& offsets_data) const;
 };
 
 }  // namespace sdb::connector

@@ -224,7 +224,8 @@ class RocksDBEngineCatalog {
 
   Result CreateDefinition(ObjectId parent_id, catalog::ObjectType type,
                           ObjectId id, WriteProperties properties);
-  Result DropDefinition(ObjectId parent_id, catalog::ObjectType type, ObjectId id);
+  Result DropDefinition(ObjectId parent_id, catalog::ObjectType type,
+                        ObjectId id);
   Result DropEntry(ObjectId parent_id, catalog::ObjectType type);
   Result DropEntry(ObjectId parent_id);
   Result DropRange(std::string_view start, std::string_view end,

@@ -58,7 +58,8 @@ ObjectId DefinitionKey::GetObjectId() const {
 std::string DefinitionKey::Create(ObjectId parent_id, catalog::ObjectType entry,
                                   ObjectId id) {
   std::string key;
-  key.reserve(sizeof(ObjectId) + sizeof(catalog::ObjectType) + sizeof(ObjectId));
+  key.reserve(sizeof(ObjectId) + sizeof(catalog::ObjectType) +
+              sizeof(ObjectId));
   Uint64ToPersistent(key, parent_id.id());
   key.push_back(static_cast<char>(entry));
   Uint64ToPersistent(key, id.id());

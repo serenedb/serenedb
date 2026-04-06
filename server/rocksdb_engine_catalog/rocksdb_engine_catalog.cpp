@@ -1261,8 +1261,8 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   vpack::Builder builder;
   vpack::WriteTuple(builder, database);
   auto r =
-    CreateDefinition(id::kInstance, catalog::ObjectType::Database, id::kSystemDB,
-                     [&](bool) { return builder.slice(); });
+    CreateDefinition(id::kInstance, catalog::ObjectType::Database,
+                     id::kSystemDB, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write database marker: ", r.errorMessage());
@@ -1275,8 +1275,8 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   builder.clear();
   vpack::WriteTuple(builder, schema_options);
   r =
-    CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema, schema_options.id,
-                     [&](bool) { return builder.slice(); });
+    CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema,
+                     schema_options.id, [&](bool) { return builder.slice(); });
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write schema marker: ", r.errorMessage());

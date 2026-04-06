@@ -52,7 +52,7 @@ void RejectFilter(velox::core::TypedExprPtr filter,
 }
 
 struct MatchedPoints {
-  std::vector<SpecificPoint> points;
+  std::vector<ResolvedPoint> points;
   velox::core::TypedExprPtr remaining_filter;
 };
 
@@ -60,12 +60,10 @@ std::optional<MatchedPoints> TryMatchPointFilters(
   const velox::core::TypedExprPtr& filter,
   std::span<const std::string> column_names) {
   auto res = ExtractAndRewriteFilterExpr(filter, column_names);
-  if (res.points.empty() || !absl::c_all_of(res.points, [](const Point& p) {
-        return p.IsSpecific();
-      })) {
+  if (res.kind != ConstraintKind::Points) {
     return std::nullopt;
   }
-  auto points = ToSpecificPoints(res.points, column_names);
+  auto points = ToResolvedPoints(res.constraints, column_names);
   SortAndDedupPoints(points);
   return MatchedPoints{std::move(points), std::move(res.remaining_filter)};
 }
@@ -140,13 +138,15 @@ class SecondaryIndexes {
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout,
-  std::vector<SpecificPoint> points, velox::core::TypedExprPtr remaining_filter)
+  std::vector<ResolvedPoint> points, std::vector<ResolvedRange> ranges,
+  velox::core::TypedExprPtr remaining_filter)
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     _transaction{
       basics::downCast<RocksDBTable>(layout.table()).GetTransaction()},
     _points{std::move(points)},
+    _ranges{std::move(ranges)},
     _remaining_filter{std::move(remaining_filter)} {
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
@@ -262,7 +262,7 @@ SereneDBTableLayout::createTableHandle(
         velox::BOOLEAN(), filters, velox::expression::kAnd);
     }
 
-    std::vector<SpecificPoint> points;
+    std::vector<ResolvedPoint> points;
     if (remaining_filter) {
       if (auto sk = TryMatchPointFilters(remaining_filter, sk_type->names())) {
         points = std::move(sk->points);
@@ -315,14 +315,25 @@ SereneDBTableLayout::createTableHandle(
       velox::BOOLEAN(), filters, velox::expression::kAnd);
   }
 
-  std::vector<SpecificPoint> points;
+  std::vector<ResolvedPoint> points;
+  std::vector<ResolvedRange> ranges;
   if (remaining_filter) {
-    // Try PK index.
-    if (auto pk = TryMatchPointFilters(remaining_filter, pk_type->names())) {
-      points = std::move(pk->points);
-      remaining_filter = std::move(pk->remaining_filter);
-    } else {
-      // Try SK indexes.
+    // 1. Try PK point lookup.
+    auto res = ExtractAndRewriteFilterExpr(remaining_filter, pk_type->names());
+    [[maybe_unused]] size_t c_id = 0;
+
+    if (res.kind == ConstraintKind::Points && !res.constraints.empty()) {
+      points = ToResolvedPoints(res.constraints, pk_type->names());
+      absl::c_sort(points);
+      remaining_filter = std::move(res.remaining_filter);
+    } else if (res.kind == ConstraintKind::Ranges) {
+      ranges = ToDisjointRanges(res.constraints, *pk_type);
+      // absl::c_sort(ranges);
+      remaining_filter = std::move(res.remaining_filter);
+    }
+
+    // 2. No PK match -- try secondary index.
+    if (points.empty() && ranges.empty()) {
       SecondaryIndexes indexes{rocksdb_table.CatalogTable(),
                                rocksdb_table.GetTransaction()};
       for (auto index : indexes) {
@@ -346,7 +357,7 @@ SereneDBTableLayout::createTableHandle(
   SDB_ASSERT(!table->columnMap().empty(),
              "SereneDBFullScanTableHandle: need a column for count field");
   return std::make_shared<SereneDBConnectorTableHandle>(
-    session, *table->layouts().front(), std::move(points),
+    session, *table->layouts().front(), std::move(points), std::move(ranges),
     std::move(remaining_filter));
 }
 
@@ -358,7 +369,7 @@ std::string SereneDBConnectorTableHandle::toString() const {
     const auto& names = _pk_type->names();
     const auto& types = _pk_type->children();
     std::string points_str = absl::StrJoin(
-      _points, ", ", [&](std::string* out, const SpecificPoint& point) {
+      _points, ", ", [&](std::string* out, const ResolvedPoint& point) {
         SDB_ASSERT(types.size() == point.size());
         absl::StrAppend(out, "(");
         for (size_t i = 0; i < point.size(); ++i) {
@@ -371,6 +382,38 @@ std::string SereneDBConnectorTableHandle::toString() const {
       });
     return absl::StrCat(_name, ", type=rocksdb_point_lookup, points=[",
                         points_str, "]", filter_str);
+  }
+  if (!_ranges.empty()) {
+    const auto& names = _pk_type->names();
+    const auto& types = _pk_type->children();
+    auto format_range = [&](const ResolvedRange& sr) {
+      std::string format_str;
+      for (size_t i = 0; i < sr.prefix.size(); ++i) {
+        if (i > 0) {
+          absl::StrAppend(&format_str, ", ");
+        }
+        absl::StrAppend(&format_str, names[i], "=",
+                        sr.prefix[i].toString(types[i]));
+      }
+      const size_t prefix_size = sr.prefix.size();
+      if (prefix_size < names.size()) {
+        if (prefix_size > 0) {
+          absl::StrAppend(&format_str, ", ");
+        }
+        absl::StrAppend(&format_str, names[prefix_size], "=",
+                        sr.range_column.toString());
+      }
+      return absl::StrCat("{", format_str, "}");
+    };
+
+    std::vector<std::string> parts;
+    for (const auto& range : _ranges) {
+      if (!range.IsEmpty()) {
+        parts.push_back(format_range(range));
+      }
+    }
+    return absl::StrCat(_name, ", type=rocksdb_range_lookup, ranges=[",
+                        absl::StrJoin(parts, ", "), "]", filter_str);
   }
   return absl::StrCat(_name, ", type=rocksdb_full_scan", filter_str);
 }

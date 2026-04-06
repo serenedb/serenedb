@@ -233,8 +233,6 @@ Filter& Negate(Source& parent) {
                                               : parent));
 }
 
-enum class ComparisonOp { None, Lt, Le, Gt, Ge };
-
 ComparisonOp GetComparisonOp(const velox::core::CallTypedExpr& call) {
   if (IsCallOf(&call, "_lte")) {
     return ComparisonOp::Le;

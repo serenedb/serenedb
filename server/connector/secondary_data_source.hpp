@@ -39,7 +39,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
                            Materializer materializer, Source& source,
                            rocksdb::ColumnFamilyHandle& cf,
                            const rocksdb::Snapshot* snapshot, ObjectId shard_id,
-                           std::vector<SpecificPoint> values,
+                           std::vector<ResolvedPoint> values,
                            velox::RowTypePtr sk_type)
     : _materializer{std::move(materializer)},
       _source{source},
@@ -109,7 +109,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   void cancel() final { _iterator.reset(); }
 
  private:
-  void SeekToPoint(const SpecificPoint& point) {
+  void SeekToPoint(const ResolvedPoint& point) {
     BuildScanPrefix(point);
 
     rocksdb::ReadOptions ro;
@@ -163,7 +163,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
     }
   }
 
-  void BuildScanPrefix(const SpecificPoint& point) {
+  void BuildScanPrefix(const ResolvedPoint& point) {
     _scan_prefix.clear();
     secondary_key::AppendShardPrefix(_scan_prefix, _shard_id);
     secondary_key::AppendDummyColumnId(_scan_prefix);
@@ -196,7 +196,7 @@ class SecondaryIndexDataSource final : public velox::connector::DataSource {
   rocksdb::ColumnFamilyHandle& _cf;
   const rocksdb::Snapshot* _snapshot;
   ObjectId _shard_id;
-  std::vector<SpecificPoint> _values;
+  std::vector<ResolvedPoint> _values;
   velox::RowTypePtr _sk_type;
   primary_key::Keys _row_keys;
   std::string _scan_prefix;

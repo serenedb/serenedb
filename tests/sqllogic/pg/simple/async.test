@@ -6,40 +6,40 @@ statement ok
 INSERT INTO t VALUES (NOW());
 
 
-statement nowait ok
+statement async ok
 SELECT pg_sleep(2);
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES (NOW()), (NOW());
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES (NOW()), (NOW());
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES (NOW()), (NOW());
 
 
-query nowait
+query async
 SELECT 1;
 ----
 ?column?
 1
 
 
-sync
+wait
 
 
-query
+query async
 SELECT COUNT(*) FROM t;
 ----
 count
 7
 
 
-query
+query async
 SELECT MAX(id) - MIN(id) < INTERVAL '2 seconds' FROM t;
 ----
 ?column?

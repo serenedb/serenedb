@@ -1,4 +1,5 @@
 control substitution on
+control max-async-connections 5
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY test_english(
@@ -85,7 +86,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) t;
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
@@ -97,7 +98,7 @@ r
 one
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
@@ -106,7 +107,7 @@ statement ok
 DROP INDEX index_t;
 
 
-sync
+wait
 
 
 connection new2
@@ -134,11 +135,11 @@ statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('foo'), ('bar');
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('baz'), ('qux');
 
 
@@ -152,7 +153,7 @@ statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
-sync
+wait
 
 
 connection new2
@@ -176,37 +177,37 @@ SELECT COUNT(*) >= 1 FROM t WHERE r = 'baz';
 t
 
 
-statement nowait ok
+statement async ok
 VACUUM (UPDATE_INDEXES) t;
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
-query nowait
+query async
 SELECT r FROM index_t WHERE PHRASE(r, 'one') LIMIT 1;
 ----
 r
 one
 
 
-query nowait
+query async
 SELECT COUNT(*) >= 13 FROM t;
 ----
 ?column?
 t
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 
-statement nowait ok
+statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 

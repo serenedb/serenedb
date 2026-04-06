@@ -195,15 +195,15 @@ jobs:
             // Results are stored as JSON in a hidden HTML comment for reliable parsing
             const dataRe = /<!-- ci-data:(.*?) -->/;
             const dataMatch = updatedBody.match(dataRe);
-            const runs = dataMatch ? JSON.parse(dataMatch[1]) : [];
-            runs.push({ opts: optsStr, url: runUrl, time: timestamp });
+            const history = dataMatch ? JSON.parse(dataMatch[1]) : [];
+            history.push({ opts: optsStr, url: runUrl, time: timestamp });
 
             // Build visible output
-            const latest = runs[runs.length - 1];
+            const latest = history[history.length - 1];
             let resultsBlock = `\n\n**Latest:** ${latest.opts} · [View Run](${latest.url}) · ${latest.time}`;
 
-            if (runs.length > 1) {
-              const oldRuns = runs.slice(0, -1).reverse().map(r =>
+            if (history.length > 1) {
+              const oldRuns = history.slice(0, -1).reverse().map(r =>
                 `| ${r.opts} | [View Run](${r.url}) | ${r.time} |`
               );
               resultsBlock += [
@@ -221,7 +221,7 @@ jobs:
 
             // Replace or append results section
             const sectionRe = /\n\n<!-- ci-data:.*? -->[\s\S]*$/;
-            const newData = `\n\n<!-- ci-data:${JSON.stringify(runs)} -->${resultsBlock}`;
+            const newData = `\n\n<!-- ci-data:${JSON.stringify(history)} -->${resultsBlock}`;
             if (sectionRe.test(updatedBody)) {
               updatedBody = updatedBody.replace(sectionRe, newData);
             } else {

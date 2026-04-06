@@ -41,7 +41,6 @@ void CommitTask::Finalize(
 
   if (res != CommitResult::NoChanges) {
     _state->pending_commits.fetch_add(1, std::memory_order_release);
-    ScheduleContinue(_commit_interval_msec);
 
     if (res == CommitResult::Done) {
       _state->noop_commit_count.store(0, std::memory_order_release);
@@ -56,6 +55,7 @@ void CommitTask::Finalize(
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
     }
+    ScheduleContinue(std::move(inverted_index_shard), _commit_interval_msec);
   } else {
     _state->non_empty_commits.store(0, std::memory_order_release);
     _state->noop_commit_count.fetch_add(1, std::memory_order_release);
@@ -63,7 +63,8 @@ void CommitTask::Finalize(
          count < 1;) {
       if (_state->pending_commits.compare_exchange_weak(
             count, 1, std::memory_order_acq_rel)) {
-        ScheduleContinue(_commit_interval_msec);
+        ScheduleContinue(std::move(inverted_index_shard),
+                         _commit_interval_msec);
         break;
       }
     }
@@ -74,12 +75,11 @@ void CommitTask::operator()() {
   SDB_TRACE("xxxxx", Logger::SEARCH, "CommitTask started");
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
-  SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
     SDB_ASSERT(promise.Valid());
     std::move(promise).Set();
   };
-  if (!data || data.use_count() == 1) {
+  if (!data) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "InvertedIndexShard ", _id,
               " is deleted");
     return;
@@ -157,11 +157,10 @@ void ConsolidationTask::operator()() {
   SDB_TRACE("xxxxx", Logger::SEARCH, "ConsolidationTask started");
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
-  SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
     std::move(promise).Set();
   };
-  if (!data || data.use_count() == 1) {
+  if (!data) {
     SDB_WARN("xxxxx", Logger::SEARCH,
              "ConsolidationTask: inverted index shard is deleted");
     return;
@@ -169,14 +168,14 @@ void ConsolidationTask::operator()() {
   auto id = data->GetId();
   _state->pending_consolidations.fetch_sub(1, std::memory_order_release);
 
-  absl::Cleanup reschedule = [this]() noexcept {
+  absl::Cleanup reschedule = [this, data]() mutable noexcept {
     try {
       for (auto count =
              _state->pending_consolidations.load(std::memory_order_acquire);
            count < 1;) {
         if (_state->pending_consolidations.compare_exchange_weak(
               count, count + 1, std::memory_order_acq_rel)) {
-          ScheduleContinue(_consolidation_interval_msec);
+          ScheduleContinue(std::move(data), _consolidation_interval_msec);
           break;
         }
       }
@@ -214,7 +213,8 @@ void ConsolidationTask::operator()() {
       _state->noop_consolidation_count.load(std::memory_order_acquire) <
         kMaxNoopConsolidations) {
     _state->pending_consolidations.fetch_add(1, std::memory_order_release);
-    ScheduleContinue(_consolidation_interval_msec);
+    ScheduleContinue(std::move(data), _consolidation_interval_msec);
+    std::move(reschedule).Cancel();
   }
   SDB_IF_FAILURE("SearchConsolidationTask::consolidateUnsafe") {
     SDB_THROW(ERROR_DEBUG);

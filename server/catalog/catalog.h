@@ -145,11 +145,7 @@ struct Snapshot {
     if (!obj) {
       return nullptr;
     }
-    if constexpr (std::is_base_of_v<Index, T> && !std::is_same_v<T, Index>) {
-      if (obj->GetType() != GetObjectType<T>()) {
-        return nullptr;
-      }
-    } else if constexpr (std::is_same_v<T, Index>) {
+    if constexpr (std::is_same_v<T, Index>) {
       if (!IsIndex(obj->GetType())) {
         return nullptr;
       }

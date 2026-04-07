@@ -984,16 +984,10 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
     }
     _current_portal = &portal;
   }
-  // Register callback so DuckDB wakes us when a blocked task becomes ready
-  duckdb::Executor::Get(*_duckdb_conn->context)
-    .SetTaskRescheduledCallback([weak = weak_from_this(), feature = &_feature] {
-      feature->ScheduleProcessWakeup(weak);
-    });
   auto state = ProcessState::DonePacket;
   do {
     state = ProcessQueryResult();
   } while (state == ProcessState::More);
-  // Callback is destroyed with the Executor when query finishes.
   _pop_packet = state == ProcessState::DonePacket;
 }
 
@@ -1116,8 +1110,12 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         // More work needed -- continue polling
         return ProcessState::More;
       case duckdb::PendingExecutionResult::BLOCKED:
-        // Blocked -- schedule async wakeup that will WaitForTask + resume
-        _feature.ScheduleProcessWakeup(weak_from_this());
+        // Blocked -- register callback and return Wait
+        duckdb::Executor::Get(*_duckdb_conn->context)
+          .SetTaskRescheduledCallback(
+            [weak = weak_from_this(), feature = &_feature] {
+              feature->ScheduleProcessWakeup(weak);
+            });
         return ProcessState::Wait;
       case duckdb::PendingExecutionResult::EXECUTION_FINISHED:
         // Same as RESULT_READY -- execution complete

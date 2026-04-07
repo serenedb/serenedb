@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <shared_mutex>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 
@@ -83,6 +84,7 @@ class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
              duckdb::AlterInfo& info) override;
 
  private:
+  mutable std::shared_mutex _lock;
   // Keep table entries alive -- DuckDB returns raw pointers from LookupEntry
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<SereneDBTableEntry>>
     _table_entries;

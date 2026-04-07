@@ -59,10 +59,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     return nullptr;
   }
 
-  // Return cached entry if we already looked up this table
-  auto cached = _table_entries.find(std::string{table_name});
-  if (cached != _table_entries.end()) {
-    return cached->second.get();
+  {
+    std::shared_lock lock{_lock};
+    auto cached = _table_entries.find(std::string{table_name});
+    if (cached != _table_entries.end()) {
+      return cached->second.get();
+    }
   }
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
@@ -118,7 +120,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     std::sort(indexed_col_indices.begin(), indexed_col_indices.end());
   }
 
-  // Create and cache the table entry
+  // Create and cache the table entry under write lock
+  std::unique_lock lock{_lock};
+  // Re-check after acquiring write lock
+  auto cached = _table_entries.find(std::string{table_name});
+  if (cached != _table_entries.end()) {
+    return cached->second.get();
+  }
   auto entry = duckdb::make_uniq<SereneDBTableEntry>(
     catalog, *this, *info, std::move(table), std::move(indexed_col_indices));
   auto* ptr = entry.get();
@@ -134,22 +142,28 @@ void SereneDBSchemaEntry::Scan(
     return;
   }
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto tables =
-    snapshot->GetTables(snapshot->GetDatabases().front()->GetId(), "public");
-  for (auto& table : tables) {
+  auto tables = snapshot->GetTables(GetDatabaseId(), "public");
+  std::unique_lock lock{_lock};
+  for (auto& sdb_table : tables) {
+    auto table_name = std::string{sdb_table->GetName()};
+    // Reuse cached entry — never replace (other threads may hold pointers)
+    auto cached = _table_entries.find(table_name);
+    if (cached != _table_entries.end()) {
+      callback(*cached->second);
+      continue;
+    }
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
-    info->table = table->GetName();
+    info->table = table_name;
     info->schema = name;
-    for (const auto& col : table->Columns()) {
+    for (const auto& col : sdb_table->Columns()) {
       info->columns.AddColumn(duckdb::ColumnDefinition(
         std::string{col.name}, VeloxTypeToDuckDB(col.type)));
     }
-    auto entry = duckdb::make_uniq<SereneDBTableEntry>(catalog, *this, *info,
-                                                       std::move(table));
+    auto entry = duckdb::make_uniq<SereneDBTableEntry>(
+      catalog, *this, *info, std::move(sdb_table));
     callback(*entry);
-    // Keep alive
-    _table_entries[info->table] = std::move(entry);
-    _table_infos[info->table] = std::move(info);
+    _table_entries[table_name] = std::move(entry);
+    _table_infos[table_name] = std::move(info);
   }
 }
 
@@ -477,8 +491,11 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
   }
 
   // Remove from our cache
-  _table_entries.erase(info.name);
-  _table_infos.erase(info.name);
+  {
+    std::unique_lock lock{_lock};
+    _table_entries.erase(info.name);
+    _table_infos.erase(info.name);
+  }
 
   std::cerr << "SereneDB: Dropped table " << info.name << " via DuckDB"
             << std::endl;

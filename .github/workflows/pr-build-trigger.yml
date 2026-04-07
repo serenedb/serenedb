@@ -80,7 +80,7 @@ jobs:
             const { owner, repo } = context.repo;
             const [{ data: pr }, { data: mergeRef }] = await Promise.all([
               github.rest.pulls.get({ owner, repo, pull_number: prNumber }),
-              // Resolve the merge commit SHA — this is what GitHub uses as head_sha
+              // Resolve the merge commit SHA -- this is what GitHub uses as head_sha
               // for workflow runs triggered on refs/pull/<N>/merge.
               github.rest.git.getRef({ owner, repo, ref: `pull/${prNumber}/merge` }),
             ]);

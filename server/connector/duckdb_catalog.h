@@ -41,6 +41,7 @@ class SereneDBCatalog final : public duckdb::Catalog {
   }
 
   std::string GetCatalogType() override { return "serenedb"; }
+  std::string GetDefaultSchema() const override { return "public"; }
   void Initialize(bool load_builtin) override;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(

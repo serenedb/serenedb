@@ -50,7 +50,10 @@ SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db,
                                  std::shared_ptr<catalog::Database> database)
   : duckdb::Catalog{db}, _database{std::move(database)} {}
 
-void SereneDBCatalog::Initialize(bool load_builtin) {}
+void SereneDBCatalog::Initialize(bool load_builtin) {
+  // Pre-populate with "public" schema so LookupSchema works from the start
+  GetOrCreateSchemaEntry("public");
+}
 
 SereneDBSchemaEntry& SereneDBCatalog::GetOrCreateSchemaEntry(
   const std::string& schema_name) {

@@ -92,10 +92,6 @@ class RocksDBMaterializer {
                                         std::string_view column_key,
                                         catalog::Column::Id column_id);
 
-  template<typename T>
-  static void ReadScalarType(std::string_view value, velox::vector_size_t idx,
-                             velox::FlatVector<T>& vector);
-
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::DB* _db;
   rocksdb::Transaction* _transaction;

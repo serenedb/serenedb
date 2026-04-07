@@ -34,6 +34,7 @@
 #include "basics/containers/bitset.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/column_decoder.hpp"
 #include "connector/common.h"
 #include "connector/key_builder.hpp"
 #include "connector/multiget_context.hpp"
@@ -132,11 +133,6 @@ class RocksDBPerColumnIteratorDataSource : public RocksDBBaseDataSource {
   velox::VectorPtr ReadArrayColumn(rocksdb::Iterator& it, uint64_t max_size,
                                    velox::TypePtr array_type);
 
-  template<velox::TypeKind ElemKind>
-  velox::VectorPtr ReadScalarArrayColumn(rocksdb::Iterator& it,
-                                         uint64_t max_size,
-                                         velox::TypePtr array_type);
-
   velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
 
   template<
@@ -188,11 +184,7 @@ class PointLookupPKColumnBuilder {
   const irs::bitset& PresentRows() const { return _present_rows; }
 
  private:
-  absl::AnyInvocable<void(velox::BaseVector& result, size_t idx,
-                          const rocksdb::PinnableSlice& val)>
-    _writer;
-  velox::TypeKind _type_kind;
-  velox::VectorPtr _vec;
+  std::unique_ptr<IColumnDecoder> _decoder;
   irs::bitset _present_rows;
 };
 

@@ -22,7 +22,7 @@
 
 #include <velox/vector/FlatVector.h>
 
-#include "common.h"
+#include "column_decoder.hpp"
 #include "key_utils.hpp"
 #include "primary_key.hpp"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -334,42 +334,15 @@ template<velox::TypeKind Kind>
 velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
   std::span<const std::string> row_keys, std::string_view column_key,
   catalog::Column::Id column_id) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
+  const auto n = static_cast<velox::vector_size_t>(row_keys.size());
+  auto decoder = MakeColumnDecoder(velox::Type::create<Kind>(), n, _memory_pool);
   DispatchColumnRead(
     column_key, column_id, row_keys,
     [&](size_t original_idx, [[maybe_unused]] std::string_view key,
         std::string_view value) {
-      ReadScalarType(value, static_cast<velox::vector_size_t>(original_idx),
-                     *result);
+      decoder->Add(static_cast<velox::vector_size_t>(original_idx), value);
     });
-  return result;
-}
-
-template<typename T>
-void RocksDBMaterializer::ReadScalarType(std::string_view value,
-                                         velox::vector_size_t idx,
-                                         velox::FlatVector<T>& vector) {
-  if (!value.empty()) {
-    if constexpr (std::is_same_v<T, velox::StringView>) {
-      const size_t offset = value[0] == 0 ? 1 : 0;
-      velox::StringView val(value.data() + offset, value.size() - offset);
-      vector.set(idx, val);
-    } else if constexpr (std::is_same_v<T, bool>) {
-      SDB_ASSERT(value.size() == kTrueValue.size(),
-                 "DataSource: unexpected value size for bool column");
-      vector.set(idx, value == kTrueValue);
-    } else {
-      SDB_ASSERT(value.size() == sizeof(T),
-                 "DataSource: unexpected value size for scalar column");
-      T tmp;
-      memcpy(&tmp, value.data(), sizeof(T));
-      vector.set(idx, tmp);
-    }
-  } else {
-    vector.setNull(idx, true);
-  }
+  return decoder->Finish(n);
 }
 
 }  // namespace sdb::connector

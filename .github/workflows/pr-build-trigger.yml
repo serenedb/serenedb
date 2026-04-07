@@ -1,7 +1,7 @@
 name: auto | pr trigger
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, labeled]
   issue_comment:
     types: [edited]
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   post-checkboxes:
     if: >-
-      github.event_name == 'pull_request' && (
+      github.event_name == 'pull_request_target' && (
         github.event.action == 'opened' ||
         (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
       )
@@ -70,7 +70,7 @@ jobs:
       actions: write
       contents: read
       pull-requests: write
-      checks: write
+      statuses: write
     steps:
       - name: Get PR info
         id: pr-info
@@ -108,14 +108,13 @@ jobs:
             const enableMsan = isChecked('MSAN');
 
             const { owner, repo } = context.repo;
-            const checkName = 'serenedb | build & test';
+            const statusContext = 'serenedb | build & test';
 
-            const { data: check } = await github.rest.checks.create({
-              owner, repo,
-              head_sha: sha,
-              name: checkName,
-              status: 'in_progress',
-              output: { title: 'Build queued', summary: 'Waiting for workflow to start...' },
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'pending',
+              description: 'Build queued',
+              context: statusContext,
             });
 
             // Cancel in-progress runs on the base branch
@@ -157,7 +156,7 @@ jobs:
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
-                  CHECK_RUN_ID: check.id,
+                  PR_STATUS_CONTEXT: statusContext,
                 }),
               },
             });
@@ -176,13 +175,13 @@ jobs:
               }
             }
 
-            // Update check run with the Actions run URL
-            await github.rest.checks.update({
-              owner, repo,
-              check_run_id: check.id,
-              status: 'in_progress',
-              details_url: runUrl,
-              output: { title: 'Build in progress', summary: `[View Run](${runUrl})` },
+            // Update pending status with run URL so the check is clickable in PR
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'pending',
+              description: 'Build in progress',
+              context: statusContext,
+              target_url: runUrl,
             });
 
             const opts = [

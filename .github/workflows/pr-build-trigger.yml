@@ -1,13 +1,7 @@
 name: auto | pr trigger
 
 on:
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'PR number to test against'
-        required: true
-        type: number
-  pull_request_target:
+  pull_request:
     types: [opened, labeled]
   issue_comment:
     types: [edited]
@@ -19,7 +13,7 @@ concurrency:
 jobs:
   post-checkboxes:
     if: >-
-      github.event_name == 'pull_request_target' && (
+      github.event_name == 'pull_request' && (
         github.event.action == 'opened' ||
         (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
       )
@@ -83,33 +77,28 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const prNumber = context.eventName === 'workflow_dispatch'
-              ? parseInt(context.payload.inputs.pr_number)
-              : context.payload.issue.number;
-            const { owner, repo } = context.repo;
-            const [{ data: pr }, { data: mergeRef }] = await Promise.all([
-              github.rest.pulls.get({ owner, repo, pull_number: prNumber }),
-              // Resolve the merge commit SHA -- this is what GitHub uses as head_sha
-              // for workflow runs triggered on refs/pull/<N>/merge.
-              github.rest.git.getRef({ owner, repo, ref: `pull/${prNumber}/merge` }),
-            ]);
-            core.setOutput('ref', `refs/pull/${prNumber}/merge`);
-            core.setOutput('head_sha', pr.head.sha);          // for the check run (must point to PR head)
-            core.setOutput('merge_sha', mergeRef.object.sha); // for matching workflow runs
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            });
+            core.setOutput('branch', pr.head.ref);
+            core.setOutput('sha', pr.head.sha);
+            core.setOutput('base_ref', pr.base.ref);
 
       - name: Parse options and trigger build
         env:
-          PR_REF: ${{ steps.pr-info.outputs.ref }}
-          PR_HEAD_SHA: ${{ steps.pr-info.outputs.head_sha }}
-          PR_MERGE_SHA: ${{ steps.pr-info.outputs.merge_sha }}
+          PR_BRANCH: ${{ steps.pr-info.outputs.branch }}
+          PR_SHA: ${{ steps.pr-info.outputs.sha }}
+          BASE_REF: ${{ steps.pr-info.outputs.base_ref }}
         uses: actions/github-script@v8
         with:
           script: |
             const comment = context.payload.comment;
             const body = comment.body || '';
-            const ref = process.env.PR_REF;
-            const headSha = process.env.PR_HEAD_SHA;
-            const mergeSha = process.env.PR_MERGE_SHA;
+            const branch = process.env.PR_BRANCH;
+            const sha = process.env.PR_SHA;
+            const baseRef = process.env.BASE_REF;
 
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
@@ -123,55 +112,64 @@ jobs:
 
             const { data: check } = await github.rest.checks.create({
               owner, repo,
-              head_sha: headSha,
+              head_sha: sha,
               name: checkName,
               status: 'in_progress',
               output: { title: 'Build queued', summary: 'Waiting for workflow to start...' },
             });
 
-            // Cancel in-progress/queued runs for this PR (matched by head SHA).
-            for (const status of ['in_progress', 'queued']) {
-              const { data: existing } = await github.rest.actions.listWorkflowRuns({
-                owner, repo, workflow_id: 'build-manual.yml', status, per_page: 10,
-              });
-              for (const run of existing.workflow_runs.filter(r => r.head_sha === mergeSha)) {
-                core.info(`Cancelling run #${run.id} (${run.status})`);
-                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
-              }
+            // Cancel in-progress runs on the base branch
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef,
+              status: 'in_progress', per_page: 10,
+            });
+            for (const run of runs.workflow_runs) {
+              core.info(`Cancelling run #${run.id} (${run.status})`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
+            // Also cancel queued/waiting runs
+            const { data: queued } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef,
+              status: 'queued', per_page: 10,
+            });
+            for (const run of queued.workflow_runs) {
+              core.info(`Cancelling queued run #${run.id}`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
             }
 
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', per_page: 1,
+              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef, per_page: 1,
             });
             const prevId = before.workflow_runs[0]?.id || 0;
 
             await github.rest.actions.createWorkflowDispatch({
               owner, repo,
               workflow_id: 'build-manual.yml',
-              ref: ref,
+              ref: baseRef,
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
                 ENABLE_ASAN: enableAsan.toString(),
                 ENABLE_TSAN: enableTsan.toString(),
                 ENABLE_MSAN: enableMsan.toString(),
                 VALIDATE_PG_TESTS: 'true',
+                PR_SHA: sha,
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
-                  PR_SHA: headSha,
+                  PR_SHA: sha,
                   CHECK_RUN_ID: check.id,
                 }),
               },
             });
 
             // Wait for the new run to appear (up to 30s)
-            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml`;
+            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(baseRef)}`;
             for (let i = 0; i < 6; i++) {
               await new Promise(r => setTimeout(r, 5000));
               const { data: after } = await github.rest.actions.listWorkflowRuns({
-                owner, repo, workflow_id: 'build-manual.yml', per_page: 3,
+                owner, repo, workflow_id: 'build-manual.yml', branch: baseRef, per_page: 3,
               });
-              const run = after.workflow_runs.find(r => r.id > prevId && r.head_sha === mergeSha);
+              const run = after.workflow_runs.find(r => r.id > prevId);
               if (run) {
                 runUrl = run.html_url;
                 break;

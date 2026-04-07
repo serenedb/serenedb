@@ -8,6 +8,11 @@ on:
         type: string
         required: false
         default: "linux"
+      PR_SHA:
+        description: "Commit SHA to checkout (fork PR support; empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
       BUILD_CONFIG:
         description: "Internal: JSON overrides (PR_SHA presence triggers diff-only mode)"
         type: string
@@ -30,6 +35,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
           submodules: false
           clean: true

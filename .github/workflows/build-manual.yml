@@ -35,6 +35,11 @@ on:
         description: 'Validate tests with Postgres'
         type: boolean
         default: true
+      PR_SHA:
+        description: 'Exact commit SHA to build (fork PR support; empty = workflow ref)'
+        type: string
+        required: false
+        default: ''
       BUILD_CONFIG:
         description: 'Internal: PR metadata (set by trigger bot)'
         type: string
@@ -63,6 +68,7 @@ jobs:
       KIND: unit
       DEV: true
       INSTRUMENTATION: ${{ matrix.instrumentation }}
+      PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   test-functional:
@@ -78,6 +84,7 @@ jobs:
       KIND: ${{ matrix.instrumentation == 'none' && 'functional' || (inputs.FULL_SANITIZER_TESTS && 'functional' || 'functional_fast') }}
       DEV: true
       INSTRUMENTATION: ${{ matrix.instrumentation }}
+      PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   compile-check:
@@ -92,6 +99,7 @@ jobs:
       KIND: none
       DEV: false
       INSTRUMENTATION: none
+      PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   validate-pg:
@@ -100,6 +108,7 @@ jobs:
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux
+      PR_SHA: ${{ inputs.PR_SHA }}
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 

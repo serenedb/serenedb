@@ -153,43 +153,45 @@ install_tar() {
 	fi
 }
 
-install_pgcli() {
-	if command -v pgcli >/dev/null 2>&1; then
-		echo "pgcli is already installed: $(command -v pgcli)"
+install_psql() {
+	if command -v psql >/dev/null 2>&1; then
+		echo "psql is already installed: $(command -v psql)"
 		return
 	fi
 
 	if ! [ -t 0 ]; then
-		echo "Non-interactive shell detected, skipping pgcli installation."
+		echo "Non-interactive shell detected, skipping psql installation."
 		return
 	fi
 
 	echo
-	printf "Install pgcli to connect to SereneDB? [Y/n] "
+	printf "Install psql to connect to SereneDB? [Y/n] "
 	read -r REPLY </dev/tty
 	case "${REPLY}" in
 	[nN][oO] | [nN])
-		echo "Skipping pgcli installation."
-		echo "To connect manually: pgcli -h 127.0.0.1 -p 7890"
+		echo "Skipping psql installation."
+		echo "To connect manually: psql -h 127.0.0.1 -p 7890"
 		return
 		;;
 	esac
 
-	echo "Installing pgcli..."
+	echo "Installing psql..."
 
-	if command -v pip3 >/dev/null 2>&1; then
-		pip3 install --quiet pgcli
-	elif command -v pip >/dev/null 2>&1; then
-		pip install --quiet pgcli
-	elif command -v pipx >/dev/null 2>&1; then
-		pipx install pgcli
+	if command -v apt-get >/dev/null 2>&1; then
+		apt-get install -y -qq --no-install-recommends postgresql-client
+	elif command -v dnf >/dev/null 2>&1; then
+		dnf install -y -q postgresql
+	elif command -v apk >/dev/null 2>&1; then
+		apk add --no-cache postgresql-client
+	elif command -v zypper >/dev/null 2>&1; then
+		zypper install -y postgresql
 	else
-		echo "Could not install pgcli automatically (no pip/pipx found)."
-		echo "Install it manually: https://www.pgcli.com/install"
+		echo "Could not install psql automatically."
+		echo "Install the postgresql-client package for your distro manually."
 		return
 	fi
 
-	echo "pgcli installed successfully."
+	echo "psql installed successfully."
 }
 
 print_next_steps() {
@@ -204,7 +206,7 @@ print_next_steps() {
 	echo "  ${BIN}"
 	echo
 	echo "Connect to it (in another terminal):"
-	echo "  pgcli -h 127.0.0.1 -p 7890"
+	echo "  psql -h 127.0.0.1 -p 7890"
 	echo
 	echo "========================================"
 }
@@ -222,7 +224,7 @@ smoke_test() {
 	fi
 	echo
 	echo "Successfully installed SereneDB ${VER} to ${BIN}"
-	install_pgcli
+	install_psql
 	print_next_steps "${BIN}" "${VER}"
 }
 

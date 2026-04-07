@@ -39,14 +39,21 @@ class InvertedIndex;
 // Aggregated info about column for index creation.
 // Filled on different levels during creaton to gather all
 // necessary info for building and validating new index.
+
+struct CreateIndexColumnOptions {
+  virtual ~CreateIndexColumnOptions() = default;
+};
 struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  // TODO(Dronplane): parse opclass options. Passing List* down to concrete
-  // index might be an option but that will leak SQL parsing too deep. On the
-  // other hand if we just parse to some generic map of strings it is unclear
-  // how to implement "help".
+  std::unique_ptr<CreateIndexColumnOptions> options;
+};
+
+struct CreateHNSWIndexColumnOptions final : public CreateIndexColumnOptions {
+  int dims = 0;
+  int m = 32;
+  int ef_construction = 40;
 };
 
 class Index : public SchemaObject {

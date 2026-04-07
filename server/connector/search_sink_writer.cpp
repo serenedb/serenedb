@@ -169,6 +169,10 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     } else {
       _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
     }
+  } else if constexpr (Kind == velox::TypeKind::ARRAY) {
+    _field.PrepareForVectorValue();
+    SDB_ASSERT(!have_nulls);
+    _current_writer = MakeIndexWriter(&WriteVectorValue);
   } else {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
               velox::TypeKindName::toName(Kind),
@@ -217,6 +221,17 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   }
   _document.emplace(_trx.Insert(false, batch_size));
   _emit_pk = true;
+}
+
+SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
+  std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
+  SearchSinkInsertBaseImpl::Field& field) {
+  SDB_ASSERT(!cell_slices.empty());
+  SDB_ASSERT(cell_slices.size() <= 2);
+  field.value = irs::bytes_view{
+    reinterpret_cast<const irs::byte_type*>(cell_slices[1].data()),
+    cell_slices[1].size()};
+  return field;
 }
 
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
@@ -293,6 +308,12 @@ void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gNumberStreamPool.emplace(search::AnalyzerImpl::NumberStreamTag{});
+}
+
+void SearchSinkInsertBaseImpl::Field::PrepareForVectorValue() {
+  string_analyzer.reset();
+  analyzer.reset();
+  index_features = irs::IndexFeatures::None;
 }
 
 template<typename T>

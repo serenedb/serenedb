@@ -92,6 +92,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
       return true;
     }
 
+    void PrepareForVectorValue();
+
     void PrepareForVerbatimStringValue();
     void PrepareForStringValue(catalog::ColumnAnalyzer&& column_analyzer);
     void SetStringValue(std::string_view value);
@@ -131,6 +133,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   static Field& WriteBooleanValue(std::string_view full_key,
                                   std::span<const rocksdb::Slice> cell_slices,
                                   Field& field);
+  static Field& WriteVectorValue(std::string_view full_key,
+                                 std::span<const rocksdb::Slice> cell_slices,
+                                 Field& field);
 
   template<typename T>
   static Field& WriteNumericValue(std::string_view full_key,
@@ -141,6 +146,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   // Builds actual executor to avoid switch/case on each row whenever possible.
   template<velox::TypeKind Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
+
+  // Setup column writer for HNSW vector columns
+  void SetupVectorColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
   AnalyzerProvider _analyzer_provider;
   Field _field;

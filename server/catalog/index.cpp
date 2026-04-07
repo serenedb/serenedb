@@ -35,8 +35,15 @@ namespace {
 
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
-  for (auto c : indexed_columns) {
+  for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
+    if (c.opclass == "hnsw") {
+      if (c.catalog_column->type->kind() != velox::TypeKind::ARRAY) {
+        return {ERROR_BAD_PARAMETER, "Column ", c.name,
+                " must be an ARRAY type for hnsw index"};
+      }
+      continue;
+    }
     if (c.catalog_column->type->providesCustomComparison()) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
               " has type with custom comparison and can not be indexed"};
@@ -110,7 +117,15 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   InvertedIndex::ColumnOptions inverted_columns;
   for (const auto& c : columns) {
     InvertedIndexColumnInfo index_col;
-    if (!c.opclass.empty()) {
+    if (c.opclass == "hnsw") {
+      SDB_ASSERT(c.options);
+      const auto& options =
+        basics::downCast<CreateHNSWIndexColumnOptions>(*c.options);
+      index_col.hnsw_info =
+        irs::HNSWInfo{.d = options.dims,
+                      .m = options.m,
+                      .ef_construction = options.ef_construction};
+    } else if (!c.opclass.empty()) {
       auto object_name = pg::ParseObjectName(c.opclass, schema_name);
       if (object_name.schema != schema_name) {
         // Technically nothing prevents us from allowing so.

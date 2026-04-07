@@ -22,6 +22,7 @@
 
 #include <velox/connectors/Connector.h>
 
+#include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/column_collector.hpp>
@@ -92,6 +93,52 @@ class SearchDataSource final : public velox::connector::DataSource {
     std::vector<std::vector<std::vector<int64_t>>>& offsets_data);
   std::vector<velox::VectorPtr> BuildOffsetsColumns(
     const std::vector<std::vector<std::vector<int64_t>>>& offsets_data) const;
+};
+
+template<typename Materializer>
+class ANNSearchDataSource final : public velox::connector::DataSource {
+ public:
+  ANNSearchDataSource(velox::memory::MemoryPool& memory_pool,
+                      Materializer materializer, const irs::IndexReader& reader,
+                      std::string field_name, std::vector<float> query,
+                      size_t top_k)
+    : _memory_pool{memory_pool},
+      _materializer{std::move(materializer)},
+      _reader{reader},
+      _field_name{std::move(field_name)},
+      _query{std::move(query)},
+      _top_k{top_k} {}
+
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
+    _split = std::move(split);
+    _done = false;
+  }
+
+  std::optional<velox::RowVectorPtr> next(
+    uint64_t size, velox::ContinueFuture& future) final;
+
+  void addDynamicFilter(velox::column_index_t,
+                        const std::shared_ptr<velox::common::Filter>&) final {
+    VELOX_UNSUPPORTED();
+  }
+  uint64_t getCompletedBytes() final { return 0; }
+  uint64_t getCompletedRows() final { return _produced; }
+  std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats()
+    final {
+    return {};
+  }
+  void cancel() final {}
+
+ private:
+  velox::memory::MemoryPool& _memory_pool;
+  Materializer _materializer;
+  const irs::IndexReader& _reader;
+  std::string _field_name;
+  std::vector<float> _query;
+  size_t _top_k;
+  std::shared_ptr<velox::connector::ConnectorSplit> _split;
+  bool _done = false;
+  uint64_t _produced = 0;
 };
 
 }  // namespace sdb::connector

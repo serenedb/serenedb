@@ -84,6 +84,11 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
               " not found in the index definition");
   }
 
+  if (it->second.hnsw_info.has_value()) {
+    SDB_THROW(ERROR_INTERNAL,
+              "GetColumnAnalyzer called for HNSW vector column");
+  }
+
   if (!it->second.text_dictionary.isSet()) {
     auto analyzer = std::make_unique<irs::StringTokenizer>();
     return {.analyzer = Tokenizer::AnalyzerWrapper{

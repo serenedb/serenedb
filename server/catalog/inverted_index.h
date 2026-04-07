@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <optional>
 
 #include "basics/object_pool.hpp"
 #include "catalog/index.h"
@@ -34,6 +36,7 @@ struct InvertedIndexColumnInfo {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
   search::Features features;
+  std::optional<irs::HNSWInfo> hnsw_info;
 };
 
 struct ColumnAnalyzer {
@@ -68,6 +71,8 @@ class InvertedIndex final : public Index {
   ColumnAnalyzer GetColumnAnalyzer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
+
+  const ColumnOptions& GetColumns() const noexcept { return _columns; }
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 

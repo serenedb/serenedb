@@ -2,7 +2,7 @@ statement ok
 SET BYTEA_OUTPUT = 'EsCaPe';
 
 # Basic bytea literal - text conversion
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 'hello'::bytea;
 ----
@@ -10,7 +10,7 @@ bytea
 hello
 
 # Empty bytea
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ''::bytea;
 ----
@@ -18,7 +18,7 @@ bytea
 (empty)
 
 # Basic bytea literal - hex format
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x48656c6c6f'::bytea;
 ----
@@ -26,7 +26,7 @@ bytea
 Hello
 
 # Bytea with hex notation - uppercase
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x48454C4C4F'::bytea;
 ----
@@ -35,7 +35,7 @@ HELLO
 
 
 # Bytea with hex notation - mixed case
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x48654C6c4F'::bytea;
 ----
@@ -44,7 +44,7 @@ HeLlO
 
 
 # Bytea with null byte
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x00'::bytea;
 ----
@@ -53,7 +53,7 @@ bytea
 
 
 # Bytea with multiple null bytes
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x000000'::bytea;
 ----
@@ -62,7 +62,7 @@ bytea
 
 
 # Bytea with null bytes in middle
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x48656c00006c6f'::bytea;
 ----
@@ -71,7 +71,7 @@ Hel\\000\\000lo
 
 
 # Bytea with all byte values (0-255 sample)
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x00010203040506070809'::bytea;
 ----
@@ -80,7 +80,7 @@ bytea
 
 
 # Bytea with high byte values
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\xFEFF'::bytea;
 ----
@@ -89,7 +89,7 @@ bytea
 
 
 # Bytea with escape format
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'\\x414243'::bytea;
 ----
@@ -98,7 +98,7 @@ ABC
 
 
 # Bytea from text with special characters
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 'hello@world#2024'::bytea;
 ----
@@ -107,7 +107,7 @@ hello@world#2024
 
 
 # Bytea from text with newline
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'line1\nline2'::bytea;
 ----
@@ -116,7 +116,7 @@ line1\\012line2
 
 
 # Bytea from text with tab
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'tab\there'::bytea;
 ----
@@ -125,7 +125,7 @@ tab\\011here
 
 
 # Bytea from text with quotes
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 'it''s working'::bytea;
 ----
@@ -134,7 +134,7 @@ it's working
 
 
 # Bytea with unicode - Chinese
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '你好世界'::bytea;
 ----
@@ -143,7 +143,7 @@ bytea
 
 
 # Bytea with unicode - emoji
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '🌍🌎🌏'::bytea;
 ----
@@ -152,7 +152,7 @@ bytea
 
 
 # Bytea with unicode - accented
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 'café résumé naïve'::bytea;
 ----
@@ -161,7 +161,7 @@ caf\\303\\251 r\\303\\251sum\\303\\251 na\\303\\257ve
 
 
 # Bytea with spaces
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '  spaces  '::bytea;
 ----
@@ -170,7 +170,7 @@ bytea
 
 
 # Bytea representing binary data - DEADBEEF
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\xDEADBEEF'::bytea;
 ----
@@ -179,7 +179,7 @@ bytea
 
 
 # Bytea representing binary data - all Fs
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\xFFFFFFFF'::bytea;
 ----
@@ -188,7 +188,7 @@ bytea
 
 
 # Bytea with single byte
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x41'::bytea;
 ----
@@ -197,7 +197,7 @@ A
 
 
 # Bytea with two bytes
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x4142'::bytea;
 ----
@@ -206,7 +206,7 @@ AB
 
 
 # Bytea odd number of hex digits should fail but test even
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x010203'::bytea;
 ----
@@ -214,14 +214,14 @@ bytea
 \\001\\002\\003
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x01 02 03'::bytea;
 ----
 bytea
 \\001\\002\\003
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\121\121'::bytea;
 ----
@@ -229,7 +229,7 @@ bytea
 QQ
 
 # Bytea array - single element
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\x48656c6c6f'::bytea];
 ----
@@ -238,7 +238,7 @@ array
 
 
 # Bytea array - multiple elements
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\x41'::bytea, '\x42'::bytea, '\x43'::bytea];
 ----
@@ -247,7 +247,7 @@ array
 
 
 # Bytea array - with null bytes
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\x00'::bytea, '\xFF'::bytea];
 ----
@@ -256,7 +256,7 @@ array
 
 
 # Bytea array - with text conversion
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['hello'::bytea, 'world'::bytea];
 ----
@@ -265,7 +265,7 @@ array
 
 
 # Bytea array - empty bytea elements
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY[''::bytea, ''::bytea, ''::bytea];
 ----
@@ -274,7 +274,7 @@ array
 
 
 # Bytea array - unicode strings as bytea
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['世界'::bytea, '🌍'::bytea, 'café'::bytea];
 ----
@@ -283,7 +283,7 @@ array
 
 
 # NULL bytea
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT NULL::bytea;
 ----
@@ -292,7 +292,7 @@ NULL
 
 
 # Bytea array with NULL
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY[NULL::bytea];
 ----
@@ -301,7 +301,7 @@ array
 
 
 # Bytea array with NULL and values
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\x41'::bytea, NULL::bytea, '\x42'::bytea];
 ----
@@ -310,7 +310,7 @@ array
 
 
 # Bytea array with mixed formats
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\xDEAD'::bytea, 'text'::bytea, '\xBEEF'::bytea];
 ----
@@ -319,7 +319,7 @@ array
 
 
 # Bytea with long hex string
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x0102030405060708090A0B0C0D0E0F101112131415'::bytea;
 ----
@@ -328,7 +328,7 @@ bytea
 
 
 # Bytea with PDF header signature
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x255044462D'::bytea;
 ----
@@ -337,7 +337,7 @@ bytea
 
 
 # Bytea with PNG header signature
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x89504E470D0A1A0A'::bytea;
 ----
@@ -346,7 +346,7 @@ bytea
 
 
 # Bytea with JPEG header signature
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\xFFD8FFE0'::bytea;
 ----
@@ -355,7 +355,7 @@ bytea
 
 
 # Bytea with ZIP header signature
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x504B0304'::bytea;
 ----
@@ -372,7 +372,7 @@ PK\\003\\004
 
 
 # Bytea with carriage return and newline
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'text\r\nmore'::bytea;
 ----
@@ -381,7 +381,7 @@ text\\015\\012more
 
 
 # Bytea with form feed
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'page1\fpage2'::bytea;
 ----
@@ -390,7 +390,7 @@ page1\\014page2
 
 
 # Bytea with vertical tab
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'text1\ttext2'::bytea;
 ----
@@ -399,7 +399,7 @@ text1\\011text2
 
 
 # Bytea with bell character
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'alert\a'::bytea;
 ----
@@ -408,7 +408,7 @@ alerta
 
 
 # Bytea array with special binary sequences
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\x00'::bytea, '\xFF'::bytea, '\xDEAD'::bytea, '\xBEEF'::bytea];
 ----
@@ -417,7 +417,7 @@ array
 
 
 # Bytea with alternating bits
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\xAAAAAAAA'::bytea;
 ----
@@ -426,7 +426,7 @@ bytea
 
 
 # Bytea with alternating bits pattern 2
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\x55555555'::bytea;
 ----
@@ -435,7 +435,7 @@ UUUU
 
 
 # Bytea representing 64-bit integer max
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT '\xFFFFFFFFFFFFFFFF'::bytea;
 ----
@@ -444,21 +444,21 @@ bytea
 
 
 # Bytea with escape sequences in text
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT E'\x41\x42\x43'::bytea;
 ----
 bytea
 ABC
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\x01 02 03'::bytea, '\x01 02 03'::bytea];
 ----
 array
 {"\\\\001\\\\002\\\\003","\\\\001\\\\002\\\\003"}
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ARRAY['\121\121'::bytea, '\121\121'::bytea];
 ----

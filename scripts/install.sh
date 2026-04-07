@@ -1,5 +1,5 @@
 #!/bin/bash -e
-# SereneDB installer — https://install.serenedb.com
+# SereneDB installer - https://install.serenedb.com
 # Usage: curl -fsSL https://install.serenedb.com | bash
 # Override version: SERENEDB_VERSION=26.04.4 curl -fsSL https://install.serenedb.com | bash
 

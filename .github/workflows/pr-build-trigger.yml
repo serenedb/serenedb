@@ -1,6 +1,12 @@
 name: auto | pr trigger
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to test against'
+        required: true
+        type: number
   pull_request_target:
     types: [opened, labeled]
   issue_comment:
@@ -77,7 +83,9 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const prNumber = context.payload.issue.number;
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? parseInt(context.payload.inputs.pr_number)
+              : context.payload.issue.number;
             const { owner, repo } = context.repo;
             const [{ data: pr }, { data: mergeRef }] = await Promise.all([
               github.rest.pulls.get({ owner, repo, pull_number: prNumber }),

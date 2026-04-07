@@ -26,7 +26,7 @@ numeric
 0.0005000000000000000
 
 # Rust driver decimal doesn't support more than 29 symbols
-skipif postgres-extended
+skipif pg-wire-extended
 query
 select 1234567890123456::numeric;
 ----

@@ -107,6 +107,7 @@
 #include "pg/pg_catalog/pg_user_mapping.h"
 #include "pg/pg_feature.h"
 #include "pg/sdb_catalog/sdb_log.h"
+#include "pg/sdb_catalog/sdb_search_tasks_status.h"
 #include "pg/sql_parser.h"
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
@@ -219,6 +220,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgUserMapping>>(),
   MakeTable<SystemTable<SdbLog>>(),
   MakeTable<SystemTable<SdbShowAllSettings>>(),
+  MakeTable<SystemTable<SdbSearchTasksStatus>>(),
 };
 
 const PgSystemSchema kInformationSchema{

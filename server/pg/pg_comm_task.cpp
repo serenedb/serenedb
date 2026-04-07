@@ -1047,6 +1047,9 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   auto& portal = *_current_portal;
   Config& config = *portal.stmt->query->GetContext().transaction;
   portal.serialization_context.snapshot = config.EnsureCatalogSnapshot();
+  irs::Finally clear_snapshot = [&]() noexcept {
+    portal.serialization_context.snapshot.reset();
+  };
   SDB_ASSERT(portal.serialization_context.snapshot);
   const velox::vector_size_t batch_rows = batch ? batch->size() : 0;
   if (batch_rows == 0) {
@@ -1115,6 +1118,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   if (state == query::Cursor::Process::Wait) {
     return ProcessState::Wait;
   }
+
   SDB_ASSERT(state == query::Cursor::Process::Done);
   SendCommandComplete(portal.stmt->tree, portal.rows, portal.stmt->query);
 

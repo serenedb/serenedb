@@ -102,7 +102,7 @@ query
 EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_full_scan]<slt:ignore>
+<slt:ignore>[t_choice_cpk, type=rocksdb_range_lookup, ranges=[{a=3}]]<slt:ignore>
 
 
 # No filter -> full scan
@@ -354,3 +354,2226 @@ id	val
 
 statement ok
 DROP TABLE t_choice_nulls;
+
+
+# =============================================================================
+# neq / NOT IN range tests
+# =============================================================================
+
+statement ok
+CREATE TABLE t_neq (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_neq VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# id != 4  ->  two ranges: (-inf, 4) and (4, +inf)  ->  4 rows
+query
+SELECT * FROM t_neq WHERE id != 4 ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+5	50
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_neq WHERE id != 4;
+----
+QUERY PLAN
+<slt:ignore>[t_neq, type=rocksdb_range_lookup, ranges=[{id=(-inf, 4)}, {id=(4, +inf)}]]<slt:ignore>
+
+# NOT (id = 4)  ->  same two ranges as id != 4
+query
+SELECT * FROM t_neq WHERE NOT (id = 4) ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+5	50
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_neq WHERE NOT (id = 4);
+----
+QUERY PLAN
+<slt:ignore>[t_neq, type=rocksdb_range_lookup, ranges=[{id=(-inf, 4)}, {id=(4, +inf)}]]<slt:ignore>
+
+# NOT (id IN (2, 4))  ->  3 ranges: (-inf, 2), (2, 4), (4, +inf)  ->  3 rows
+query
+SELECT * FROM t_neq WHERE NOT (id IN (2, 4)) ORDER BY id;
+----
+id	val
+1	10
+3	30
+5	50
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_neq WHERE NOT (id IN (2, 4));
+----
+QUERY PLAN
+<slt:ignore>[t_neq, type=rocksdb_range_lookup, ranges=[{id=(-inf, 2)}, {id=(2, 4)}, {id=(4, +inf)}]]<slt:ignore>
+
+statement ok
+DROP TABLE t_neq;
+
+# NOT (a != 1 OR b != 2)  ->  De Morgan: a = 1 AND b = 2  ->  point lookup
+statement ok
+CREATE TABLE t_neq_cpk (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_neq_cpk VALUES (1, 2, 10), (1, 3, 11), (2, 2, 20), (3, 4, 30);
+
+query
+SELECT * FROM t_neq_cpk WHERE NOT (a != 1 OR b != 2);
+----
+a	b	val
+1	2	10
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_neq_cpk WHERE NOT (a != 1 OR b != 2);
+----
+QUERY PLAN
+<slt:ignore>[t_neq_cpk, type=rocksdb_point_lookup, points=[(a=1, b=2)]]<slt:ignore>
+
+statement ok
+DROP TABLE t_neq_cpk;
+
+
+# =============================================================================
+# Range lookup tests — single PK column
+# =============================================================================
+
+statement ok
+CREATE TABLE t_range1 (a INTEGER, val INTEGER, PRIMARY KEY (a));
+
+statement ok
+INSERT INTO t_range1 VALUES (1, 10), (2, 20), (3, 30), (5, 50), (8, 80), (9, 90), (10, 100);
+
+# Two disjoint ranges: a < 2 OR a > 8
+query
+SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
+----
+a	val
+1	10
+9	90
+10	100
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(8, +inf)}]]<slt:ignore>
+
+# Overlapping bounds collapse to single range: a > 2 AND a >= 3 → a >= 3
+query
+SELECT * FROM t_range1 WHERE a > 2 AND a >= 3 ORDER BY a;
+----
+a	val
+3	30
+5	50
+8	80
+9	90
+10	100
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a > 2 AND a >= 3 ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=[3, +inf)}]]<slt:ignore>
+
+# Single lower bound: a >= 5
+query
+SELECT * FROM t_range1 WHERE a >= 5 ORDER BY a;
+----
+a	val
+5	50
+8	80
+9	90
+10	100
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a >= 5 ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=[5, +inf)}]]<slt:ignore>
+
+# Single upper bound: a < 5
+query
+SELECT * FROM t_range1 WHERE a < 5 ORDER BY a;
+----
+a	val
+1	10
+2	20
+3	30
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a < 5 ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}]]<slt:ignore>
+
+# Closed interval: a >= 2 AND a <= 8
+query
+SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
+----
+a	val
+2	20
+3	30
+5	50
+8	80
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=[2, 8]}]]<slt:ignore>
+
+statement ok
+DROP TABLE t_range1;
+
+
+# =============================================================================
+# Range lookup tests — composite PK
+# Chosen when the filter has an equality prefix of K >= 1 PK columns followed
+# by a range on the next column. Falls back to full scan otherwise.
+# =============================================================================
+
+statement ok
+CREATE TABLE t_range (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_range VALUES
+  (1, 1, 11), (1, 3, 13), (1, 5, 15), (1, 7, 17), (1, 9, 19),
+  (2, 1, 21), (2, 3, 23), (2, 5, 25), (2, 7, 27), (2, 9, 29),
+  (3, 1, 31), (3, 5, 35), (3, 9, 39);
+
+# --- Basic range shapes ---
+
+# Exclusive lower bound: a=1 AND b > 5
+query
+SELECT * FROM t_range WHERE a = 1 AND b > 5 ORDER BY b;
+----
+a	b	val
+1	7	17
+1	9	19
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 5 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(5, +inf)}]]<slt:ignore>
+
+# Inclusive lower bound: a=1 AND b >= 5
+query
+SELECT * FROM t_range WHERE a = 1 AND b >= 5 ORDER BY b;
+----
+a	b	val
+1	5	15
+1	7	17
+1	9	19
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b >= 5 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=[5, +inf)}]]<slt:ignore>
+
+# Exclusive upper bound only: a=2 AND b < 7
+query
+SELECT * FROM t_range WHERE a = 2 AND b < 7 ORDER BY b;
+----
+a	b	val
+2	1	21
+2	3	23
+2	5	25
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 2 AND b < 7 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=2, b=(-inf, 7)}]]<slt:ignore>
+
+# Closed interval: a=1 AND b >= 3 AND b <= 7
+query
+SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
+----
+a	b	val
+1	3	13
+1	5	15
+1	7	17
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, 7]}]]<slt:ignore>
+
+# Half-open exclusive on both sides: a=1 AND b > 1 AND b < 9
+query
+SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
+----
+a	b	val
+1	3	13
+1	5	15
+1	7	17
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(1, 9)}]]<slt:ignore>
+
+# --- OR of ranges ---
+
+# OR of two disjoint ranges on the same equality prefix → 2 separate bounds.
+query
+SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
+----
+a	b	val
+1	1	11
+1	9	19
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 3)}, {a=1, b=(7, +inf)}]]<slt:ignore>
+
+# OR of overlapping ranges on the same equality prefix → merged into one.
+# (a=1 AND b>=3 AND b<=7) OR (a=1 AND b>=5 AND b<=9) → a=1 AND b ∈ [3,9]
+query
+SELECT * FROM t_range WHERE (a=1 AND b >= 3 AND b <= 7) OR (a=1 AND b >= 5 AND b <= 9) ORDER BY b;
+----
+a	b	val
+1	3	13
+1	5	15
+1	7	17
+1	9	19
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE (a=1 AND b >= 3 AND b <= 7) OR (a=1 AND b >= 5 AND b <= 9) ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, 9]}]]<slt:ignore>
+
+# OR of ranges with different equality prefixes → two separate range constraints.
+query
+SELECT * FROM t_range WHERE (a=1 AND b > 7) OR (a=2 AND b > 5) ORDER BY a, b;
+----
+a	b	val
+1	9	19
+2	7	27
+2	9	29
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE (a=1 AND b > 7) OR (a=2 AND b > 5) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(7, +inf)}, {a=2, b=(5, +inf)}]]<slt:ignore>
+
+
+# Range on first PK column only → range lookup on a.
+query
+SELECT * FROM t_range WHERE a > 1 ORDER BY a, b;
+----
+a	b	val
+2	1	21
+2	3	23
+2	5	25
+2	7	27
+2	9	29
+3	1	31
+3	5	35
+3	9	39
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a > 1 ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
+
+query
+SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
+----
+a	b	val
+1	1	11
+1	3	13
+1	5	15
+1	7	17
+1	9	19
+3	1	31
+3	5	35
+3	9	39
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1]}, {a=(2, +inf)}]]<slt:ignore>
+
+# Filter on non-first PK column only → full scan.
+query
+SELECT * FROM t_range WHERE b > 5 ORDER BY a, b;
+----
+a	b	val
+1	7	17
+1	9	19
+2	7	27
+2	9	29
+3	9	39
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE b > 5 ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_full_scan]<slt:ignore>
+
+# OR mixing a range-scannable branch with a non-range-scannable one → full scan.
+# b > 3 alone has no equality prefix → forces full scan.
+query
+SELECT * FROM t_range WHERE (a=1 AND b > 5) OR (b > 3) ORDER BY a, b;
+----
+a	b	val
+1	5	15
+1	7	17
+1	9	19
+2	5	25
+2	7	27
+2	9	29
+3	5	35
+3	9	39
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE (a=1 AND b > 5) OR (b > 3) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_full_scan]<slt:ignore>
+
+# Range on a combined with range on b: only a's range is used for seek.
+query
+SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
+----
+a	b	val
+2	7	27
+2	9	29
+3	9	39
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
+
+# Impossible range (b > 9 AND b < 1) → contradiction → 0 rows, full scan.
+query
+SELECT * FROM t_range WHERE a = 1 AND b > 9 AND b < 1 ORDER BY b;
+----
+a	b	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 9 AND b < 1 ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# Boundary equality: b >= 5 AND b <= 5 is equivalent to b = 5 → point lookup.
+query
+SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
+----
+a	b	val
+1	5	15
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_point_lookup, points=[(a=1, b=5)]]<slt:ignore>
+
+# NULL value in non-PK column passes through range scan correctly.
+query
+SELECT * FROM t_range WHERE a = 1 AND b > 5 AND val IS NULL ORDER BY b;
+----
+a	b	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 5 AND val IS NULL ORDER BY b;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(5, +inf)}]]<slt:ignore>
+
+# --- RYOW: range lookup within a transaction ---
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+statement count 2
+INSERT INTO t_range VALUES (4, 3, 43), (4, 7, 47);
+
+query
+SELECT * FROM t_range WHERE a = 4 AND b > 5 ORDER BY b;
+----
+a	b	val
+4	7	47
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 4 AND b > 5;
+----
+QUERY PLAN
+<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=4, b=(5, +inf)}]]<slt:ignore>
+
+statement ok
+ROLLBACK;
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+DROP TABLE t_range;
+
+
+statement ok
+CREATE TABLE t_range3 (a INTEGER, b INTEGER, c INTEGER, val INTEGER, PRIMARY KEY (a, b, c));
+
+statement ok
+INSERT INTO t_range3 VALUES
+  (1, 2, 1, 121), (1, 2, 3, 123), (1, 2, 5, 125), (1, 2, 7, 127),
+  (1, 3, 1, 131), (1, 3, 5, 135),
+  (2, 2, 1, 221), (2, 2, 9, 229);
+
+# a=1 AND b=2 AND c>3 → K=2 equality prefix (a,b) + c range.
+query
+SELECT * FROM t_range3 WHERE a = 1 AND b = 2 AND c > 3 ORDER BY c;
+----
+a	b	c	val
+1	2	5	125
+1	2	7	127
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND b = 2 AND c > 3 ORDER BY c;
+----
+QUERY PLAN
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(3, +inf)}]]<slt:ignore>
+
+# a=1 AND b=2 (only equalities, no range col) → range lookup on equality prefix.
+query
+SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
+----
+a	b	c	val
+1	2	1	121
+1	2	3	123
+1	2	5	125
+1	2	7	127
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
+----
+QUERY PLAN
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2}]]<slt:ignore>
+
+# a=1 AND c>3 (gap: b not constrained) → not a valid prefix → full scan.
+query
+SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
+----
+a	b	c	val
+1	2	5	125
+1	2	7	127
+1	3	5	135
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1}]]<slt:ignore>
+
+# a > 1 range on first col of 3-col PK → range lookup on a.
+query
+SELECT * FROM t_range3 WHERE a > 1 ORDER BY a, b, c;
+----
+a	b	c	val
+2	2	1	221
+2	2	9	229
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a > 1 ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
+
+# OR of two complete-prefix ranges on 3-col PK.
+query
+SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND b=2 AND c<5) ORDER BY a, b, c;
+----
+a	b	c	val
+1	2	7	127
+2	2	1	221
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND b=2 AND c<5) ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(5, +inf)}, {a=2, b=2, c=(-inf, 5)}]]<slt:ignore>
+
+
+# SELECT * FROM t_range3 WHERE (a < 2 AND b <= 2) OR (a <= 1 AND b < 3) ORDER BY a, b, c;
+
+
+# Unite multiple columns
+
+query
+SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
+----
+a	b	c	val
+1	2	1	121
+1	2	3	123
+1	2	5	125
+1	2	7	127
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>Filter[1][expression: or(and(presto_lte("a",1),presto_lte("b",2)),and(presto_lt("a",2),presto_lt("b",3)))]<slt:ignore>
+<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}]]<slt:ignore>
+
+
+statement ok
+DROP TABLE t_range3;
+
+# NOT function handling tests — single PK column.
+statement ok
+CREATE TABLE t_not (a INT PRIMARY KEY, val INT);
+
+statement ok
+INSERT INTO t_not VALUES (1, 10), (3, 30), (5, 50), (7, 70), (9, 90);
+
+# NOT(a > v) → a <= v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
+----
+a	val
+1	10
+3	30
+5	50
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5]}]]<slt:ignore>
+
+# NOT(a >= v) → a < v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
+----
+a	val
+1	10
+3	30
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}]]<slt:ignore>
+
+# NOT(a < v) → a >= v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
+----
+a	val
+5	50
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=[5, +inf)}]]<slt:ignore>
+
+# NOT(a <= v) → a > v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
+----
+a	val
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(5, +inf)}]]<slt:ignore>
+
+# NOT(NOT(a > v)) → double negation → a > v  (range_lookup)
+query
+SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
+----
+a	val
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(5, +inf)}]]<slt:ignore>
+
+# NOT(a > x AND a < y) → De Morgan → a <= x OR a >= y  (two ranges)
+query
+SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
+----
+a	val
+1	10
+3	30
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3]}, {a=[7, +inf)}]]<slt:ignore>
+
+# NOT(a > x OR a < y) → De Morgan → a <= x AND a >= y  (single range)
+query
+SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
+----
+a	val
+3	30
+5	50
+7	70
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=[3, 7]}]]<slt:ignore>
+
+# NOT(a = v) → full scan (equality negation not pushed to range)
+query
+SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
+----
+a	val
+1	10
+3	30
+7	70
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}, {a=(5, +inf)}]]<slt:ignore>
+
+# NOT(a IN (...)) → full scan (IN negation not pushed to range)
+query
+SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
+----
+a	val
+1	10
+5	50
+9	90
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3)}, {a=(3, 7)}, {a=(7, +inf)}]]<slt:ignore>
+
+statement ok
+DROP TABLE t_not;
+
+# NOT function handling tests — composite PK (a, b).
+statement ok
+CREATE TABLE t_not2 (a INT, b INT, val INT, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_not2 VALUES (1, 2, 12), (1, 5, 15), (3, 2, 32), (3, 8, 38), (5, 1, 51), (5, 9, 59);
+
+# NOT on first PK column: NOT(a > 3) → a <= 3  (range_lookup on first col)
+query
+SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
+----
+a	b	val
+1	2	12
+1	5	15
+3	2	32
+3	8	38
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3]}]]<slt:ignore>
+
+# NOT(NOT(a = 1 AND b > 2)) → double negation → a = 1 AND b > 2  (range_lookup with prefix)
+query
+SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
+----
+a	b	val
+1	5	15
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=1, b=(2, +inf)}]]<slt:ignore>
+
+# NOT(a > 4 OR a < 2) → De Morgan → a <= 4 AND a >= 2 → [2, 4]  (range_lookup)
+query
+SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
+----
+a	b	val
+3	2	32
+3	8	38
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=[2, 4]}]]<slt:ignore>
+
+# NOT(a > 1 AND a < 5) → De Morgan → a <= 1 OR a >= 5  (two ranges)
+query
+SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
+----
+a	b	val
+1	2	12
+1	5	15
+5	1	51
+5	9	59
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1]}, {a=[5, +inf)}]]<slt:ignore>
+
+# NOT(a = 1 AND b > 2) → De Morgan AND → a != 1 OR b <= 2 → full scan (OR loses prefix)
+query
+SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
+----
+a	b	val
+1	2	12
+3	2	32
+3	8	38
+5	1	51
+5	9	59
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
+----
+QUERY PLAN
+<slt:ignore>[t_not2, type=rocksdb_full_scan]<slt:ignore>
+
+statement ok
+DROP TABLE t_not2;
+
+# Complex tests — composite PK: BIGINT, INT, VARCHAR columns.
+statement ok
+CREATE TABLE t_complex (
+  region BIGINT,
+  priority INT,
+  name VARCHAR,
+  score INT,
+  PRIMARY KEY (region, priority, name)
+);
+
+statement ok
+INSERT INTO t_complex VALUES
+  (1, 10, 'alice', 100),
+  (1, 10, 'bob',   200),
+  (1, 20, 'alice', 300),
+  (1, 20, 'carol', 400),
+  (2, 10, 'alice', 500),
+  (2, 30, 'bob',   600),
+  (3,  5, 'dave',  700),
+  (3, 40, 'eve',   800);
+
+# Equality on all PK columns → point lookup.
+query
+SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
+----
+region	priority	name	score
+1	10	alice	100
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_point_lookup, points=[(region=1, priority=10, name=alice)]<slt:ignore>
+
+# Equality prefix + range on third column (name <= 'bob').
+query
+SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=10, name=(-inf, bob]}]]<slt:ignore>
+
+# Equality on first + range on second column (priority > 15).
+query
+SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
+----
+region	priority	name	score
+1	20	alice	300
+1	20	carol	400
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=(15, +inf)}]]<slt:ignore>
+
+# OR of two prefix ranges on first column.
+query
+SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+1	20	alice	300
+1	20	carol	400
+3	5	dave	700
+3	40	eve	800
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=(-inf, 1]}, {region=[3, +inf)}]]<slt:ignore>
+
+# NOT + AND: NOT(region > 1 AND priority < 20) → region <= 1 OR priority >= 20.
+# De Morgan yields an OR whose branches differ on column → full scan.
+query
+SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+1	20	alice	300
+1	20	carol	400
+2	30	bob	600
+3	40	eve	800
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_full_scan]<slt:ignore>
+
+# NOT + OR on first column: NOT(region < 1 OR region > 2) → 1 <= region <= 2.
+query
+SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+1	20	alice	300
+1	20	carol	400
+2	10	alice	500
+2	30	bob	600
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=[1, 2]}]]<slt:ignore>
+
+# AND of prefix equality + NOT on range: region = 2 AND NOT(priority > 20).
+query
+SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
+----
+region	priority	name	score
+2	10	alice	500
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=2, priority=(-inf, 20]}]]<slt:ignore>
+
+# Complex: (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10).
+query
+SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
+----
+region	priority	name	score
+1	10	alice	100
+1	10	bob	200
+3	5	dave	700
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
+----
+QUERY PLAN
+<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=(-inf, 10]}, {region=3, priority=(-inf, 10]}]]<slt:ignore>
+
+statement ok
+DROP TABLE t_complex;
+
+# Contradictory/void range tests — predicate can never be satisfied → 0 rows, range scan.
+statement ok
+CREATE TABLE t_void (a INT PRIMARY KEY, val INT);
+
+statement ok
+INSERT INTO t_void VALUES (1, 10), (3, 30), (5, 50);
+
+# a < 1 AND a > 1 → contradictory, 0 ranges → empty result.
+query
+SELECT * FROM t_void WHERE a < 1 AND a > 1;
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a < 1 AND a > 1;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# a > 5 AND a < 3 → contradictory.
+query
+SELECT * FROM t_void WHERE a > 5 AND a < 3;
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a > 5 AND a < 3;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# a = 3 AND a = 5 → point contradiction.
+query
+SELECT * FROM t_void WHERE a = 3 AND a = 5;
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a = 3 AND a = 5;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+# OR where one branch is contradictory: (a < 1 AND a > 1) OR a = 3 → just a = 3.
+query
+SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
+----
+a	val
+3	30
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_point_lookup, points=[(a=3)]]<slt:ignore>
+
+# Both OR branches contradictory → 0 ranges.
+query
+SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
+----
+a	val
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
+----
+QUERY PLAN
+<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+
+statement ok
+DROP TABLE t_void;
+
+# ── Sweep-line tests: 3-column PK, overlapping/intersecting OR ranges ─────────
+# PK = (a, b, c). All columns INTEGER, values 1..3 → 27 rows.
+# val = a*100 + b*10 + c for easy identification.
+# Goal: verify the sweep produces disjoint ranges so no row is returned twice.
+
+statement ok
+CREATE TABLE t_sweep3
+  (a INTEGER, b INTEGER, c INTEGER, val INTEGER,
+   PRIMARY KEY (a, b, c));
+
+statement ok
+INSERT INTO t_sweep3 VALUES
+  (1,1,1,111),(1,1,2,112),(1,1,3,113),
+  (1,2,1,121),(1,2,2,122),(1,2,3,123),
+  (1,3,1,131),(1,3,2,132),(1,3,3,133),
+  (2,1,1,211),(2,1,2,212),(2,1,3,213),
+  (2,2,1,221),(2,2,2,222),(2,2,3,223),
+  (2,3,1,231),(2,3,2,232),(2,3,3,233),
+  (3,1,1,311),(3,1,2,312),(3,1,3,313),
+  (3,2,1,321),(3,2,2,322),(3,2,3,323),
+  (3,3,1,331),(3,3,2,332),(3,3,3,333);
+
+
+# ── 1-D disjoint ranges (gap between them) ───────────────────────────────────
+# a < 2 OR a > 2  →  a=1 (9 rows) + a=3 (9 rows) = 18 rows; a=2 excluded
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a > 2;
+----
+count
+18
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a > 2;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]]<slt:ignore>
+
+
+# ── 1-D adjacent inclusive+inclusive (full coverage) ─────────────────────────
+# a <= 2 OR a >= 2  →  all 27 rows
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 2;
+----
+count
+27
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 2;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+
+
+# ── 1-D adjacent exclusive+inclusive (no gap) ────────────────────────────────
+# a < 2 OR a >= 2  →  all 27 rows
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a >= 2;
+----
+count
+27
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a >= 2;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+
+
+# ── 1-D overlapping ranges (a<=2 covers 1,2; a>=1 covers 1,2,3 → all) ────────
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 1;
+----
+count
+27
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 1;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+
+
+# ── 1-D duplicate range (a=2 OR a=2) → exactly 9 rows, no duplicates ─────────
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE a = 2 OR a = 2;
+----
+count
+9
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a = 2 OR a = 2;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
+
+
+# ── 1-D three disjoint ranges ────────────────────────────────────────────────
+# a < 1 OR (a > 1 AND a < 3) OR a > 3  →  no rows (all values are 1,2,3)
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE a < 1 OR (a > 1 AND a < 3) OR a > 3;
+----
+count
+9
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a < 1 OR (a > 1 AND a < 3) OR a > 3;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1)}, {a=(1, 3)}, {a=(3, +inf)}]]<slt:ignore>
+
+
+# ── 2-D: same a, b disjoint (b<2 OR b>1 covers all b) → fuses to a=[2,2] ─────
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE (a=2 AND b < 2) OR (a=2 AND b > 1);
+----
+count
+9
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a=2 AND b < 2) OR (a=2 AND b > 1);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
+
+
+# ── 2-D: same a, b adjacent exclusive+inclusive → fuses to a=[1,1] ───────────
+# (a=1 AND b<=2) OR (a=1 AND b>2)  →  all b for a=1 = 9 rows
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b <= 2) OR (a=1 AND b > 2);
+----
+count
+9
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b <= 2) OR (a=1 AND b > 2);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1}]]<slt:ignore>
+
+
+# ── 2-D: different a, same b constraint → b is trailing, full scan on a ───────
+# (a<2 AND b=1) OR (a>2 AND b=1) → b=1 is 2nd col, can't be in prefix when a
+# is a range; falls back to full scan with post-filter
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE (a < 2 AND b = 1) OR (a > 2 AND b = 1);
+----
+count
+6
+
+# ── 2-D: overlapping both columns → full scan with post-filter ───────────────
+# (1,3,*) and (3,1,*) are not covered by either condition: 27 - 6 = 21 rows.
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE (a <= 2 AND b <= 2) OR (a >= 2 AND b >= 2);
+----
+count
+21
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a <= 2 AND b <= 2) OR (a >= 2 AND b >= 2);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+
+
+# ── 3-D: disjoint specific-point prefixes ────────────────────────────────────
+# (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2) → 2 point lookups
+query rowsort
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+2	2	2	222
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=1), (a=2, b=2, c=2)]]<slt:ignore>
+
+
+# ── 3-D: same point duplicated → exactly 1 lookup, 1 row ─────────────────────
+query rowsort
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=3 AND b=3 AND c=3) OR (a=3 AND b=3 AND c=3)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=3 AND b=3 AND c=3) OR (a=3 AND b=3 AND c=3)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=3, b=3, c=3)]]<slt:ignore>
+
+
+# ── 3-D: c adjacent (inclusive+exclusive) fuses to b-level range ─────────────
+# (a=1 AND b=1 AND c<=2) OR (a=1 AND b=1 AND c>2)  →  all c for a=1,b=1
+query
+SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b=1 AND c <= 2) OR (a=1 AND b=1 AND c > 2);
+----
+count
+3
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+  WHERE (a=1 AND b=1 AND c <= 2) OR (a=1 AND b=1 AND c > 2);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=1}]]<slt:ignore>
+
+
+# ── 3-D: b adjacent then c fuses to a-level range ────────────────────────────
+# (a=2 AND b<=2 AND c=1) OR (a=2 AND b>2 AND c=1)  →  all b for a=2, c=1
+# c=1 is a trailing constraint → post-filter, scan covers a=[2,2]
+query rowsort
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=2 AND b <= 2 AND c = 1) OR (a=2 AND b > 2 AND c = 1)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+2	1	1	211
+2	2	1	221
+2	3	1	231
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=2 AND b <= 2 AND c = 1) OR (a=2 AND b > 2 AND c = 1)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
+
+
+# ── 3-D: all three columns overlapping → full scan ───────────────────────────
+query
+SELECT COUNT(*) FROM t_sweep3
+  WHERE (a <= 2 AND b <= 2 AND c <= 2) OR (a >= 1 AND b >= 1 AND c >= 1);
+----
+count
+27
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+  WHERE (a <= 2 AND b <= 2 AND c <= 2) OR (a >= 1 AND b >= 1 AND c >= 1);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+
+
+# ── 3-D: two ranges sharing a prefix, disjoint on c ──────────────────────────
+# (a=1 AND b=2 AND c<2) OR (a=1 AND b=2 AND c>2) → c=2 row excluded
+query rowsort
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=1 AND b=2 AND c < 2) OR (a=1 AND b=2 AND c > 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	2	1	121
+1	2	3	123
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=1 AND b=2 AND c < 2) OR (a=1 AND b=2 AND c > 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(-inf, 2)}, {a=1, b=2, c=(2, +inf)}]]<slt:ignore>
+
+
+# ── 3-D: three-way triple point OR deduplicated ───────────────────────────────
+query rowsort
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=1 AND b=1 AND c=1)
+     OR (a=2 AND b=2 AND c=2)
+     OR (a=1 AND b=1 AND c=1)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+2	2	2	222
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a=1 AND b=1 AND c=1)
+     OR (a=2 AND b=2 AND c=2)
+     OR (a=1 AND b=1 AND c=1)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=1), (a=2, b=2, c=2)]]<slt:ignore>
+
+
+# =============================================================================
+# Sweep algorithm tests: all 3 PK column ranges differ but range scans still fire
+# =============================================================================
+
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b < 2) OR (a > 2 AND b > 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+1	1	3	113
+3	3	1	331
+3	3	2	332
+3	3	3	333
+
+# Reject filters at all, but for data source range are passed
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b < 2) OR (a > 2 AND b > 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[expression: or(and(presto_lt("a",2),presto_lt("b",2)),and(presto_gt("a",2),presto_gt("b",2)))] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+
+# Beyond-prefix equality on b: b=1 for a<2, b=3 for a>2.
+# Scan uses only a-ranges; original filter retained as post-filter.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b = 1) OR (a > 2 AND b = 3)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+1	1	3	113
+3	3	1	331
+3	3	2	332
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a < 2 AND b = 1) OR (a > 2 AND b = 3)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[expression: or(and(presto_lt("a",2),presto_eq("b",1)),and(presto_gt("a",2),presto_eq("b",3)))]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]]<slt:ignore>
+
+# Beyond-prefix on c: each KC uses prefix=2 (a equality + b range), c is beyond.
+# Scan uses {a=1, b<2} and {a=3, b>2}; original filter retained as post-filter.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2 AND c < 3) OR (a = 3 AND b > 2 AND c > 1)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+3	3	2	332
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2 AND c < 3) OR (a = 3 AND b > 2 AND c > 1)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[expression: or(and(presto_eq("a",1),presto_lt("b",2),presto_lt("c",3)),and(presto_eq("a",3),presto_gt("b",2),presto_gt("c",1)))]<slt:ignore>
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=3, b=(2, +inf)}]]<slt:ignore>
+
+# Per-a-value b-ranges differ: each a-group gets its own shape
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2) OR (a = 2 AND b BETWEEN 1 AND 2) OR (a = 3 AND b > 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+1	1	3	113
+2	1	1	211
+2	1	2	212
+2	1	3	213
+2	2	1	221
+2	2	2	222
+2	2	3	223
+3	3	1	331
+3	3	2	332
+3	3	3	333
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b < 2) OR (a = 2 AND b BETWEEN 1 AND 2) OR (a = 3 AND b > 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=2, b=[1, 2]}, {a=3, b=(2, +inf)}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+
+# All 3 PK columns constrained differently
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b = 1 AND c < 3) OR (a = 2 AND b = 2 AND c > 1) OR (a = 3 AND b = 3 AND c = 2)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	1	111
+1	1	2	112
+2	2	2	222
+2	2	3	223
+3	3	2	332
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 AND b = 1 AND c < 3) OR (a = 2 AND b = 2 AND c > 1) OR (a = 3 AND b = 3 AND c = 2)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=1, c=(-inf, 3)}, {a=2, b=2, c=(1, +inf)}, {a=3, b=3, c=2}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+
+# Overlapping a-ranges -> fall back to full scan with remaining filter
+query
+SELECT COUNT(*) FROM t_sweep3
+  WHERE (a < 3 AND b < 2) OR (a > 1 AND b < 3);
+----
+count
+15
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+  WHERE (a < 3 AND b < 2) OR (a > 1 AND b < 3);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan<slt:ignore>
+
+# =============================================================================
+# AND of per-column OR/AND filters: (cond_a) AND (cond_b) AND (cond_c)
+# =============================================================================
+
+# Point lookups: (a=1 OR a=3) AND (b=1 OR b=3) AND c=2
+# Each OR on the same column produces 2 KCs; AND intersects them -> 4 point KCs.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 OR a = 3) AND (b = 1 OR b = 3) AND c = 2
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	2	112
+1	3	2	132
+3	1	2	312
+3	3	2	332
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 OR a = 3) AND (b = 1 OR b = 3) AND c = 2
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=2), (a=1, b=3, c=2), (a=3, b=1, c=2), (a=3, b=3, c=2)]]<slt:ignore>
+
+# Range on a, range on b, OR on c -> a is range column (prefix=1), b/c beyond prefix.
+# Scan uses a=[1,2] with original expression as remaining filter.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a >= 1 AND a <= 2) AND (b >= 2 AND b <= 3) AND (c = 1 OR c = 3)
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	2	1	121
+1	2	3	123
+1	3	1	131
+1	3	3	133
+2	2	1	221
+2	2	3	223
+2	3	1	231
+2	3	3	233
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a >= 1 AND a <= 2) AND (b >= 2 AND b <= 3) AND (c = 1 OR c = 3)
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=[1, 2]}]<slt:ignore>
+
+# OR on a (point), neq on b, range on c -> prefix=2 (a equality + b range), c beyond.
+# Scan uses {a=1,b<2},{a=1,b>2},{a=2,b<2},{a=2,b>2} with remaining filter.
+query
+SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 OR a = 2) AND (b < 2 OR b > 2) AND c >= 2
+  ORDER BY a, b, c;
+----
+a	b	c	val
+1	1	2	112
+1	1	3	113
+1	3	2	132
+1	3	3	133
+2	1	2	212
+2	1	3	213
+2	3	2	232
+2	3	3	233
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+  WHERE (a = 1 OR a = 2) AND (b < 2 OR b > 2) AND c >= 2
+  ORDER BY a, b, c;
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=1, b=(2, +inf)}, {a=2, b=(-inf, 2)}, {a=2, b=(2, +inf)}]<slt:ignore>
+
+# Tautological per-column ORs -> always true -> full scan.
+# (x > 1 OR x < 2) is true for every integer x.
+query
+SELECT COUNT(*) FROM t_sweep3
+  WHERE (a > 1 OR a < 2) AND (b > 1 OR b < 2) AND (c > 1 OR c < 2);
+----
+count
+27
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+  WHERE (a > 1 OR a < 2) AND (b > 1 OR b < 2) AND (c > 1 OR c < 2);
+----
+QUERY PLAN
+<slt:ignore>[t_sweep3, type=rocksdb_full_scan<slt:ignore>
+
+statement ok
+DROP TABLE t_sweep3;
+
+
+# =============================================================================
+# BETWEEN tests  (a BETWEEN x AND y  ≡  x <= a AND a <= y)
+# =============================================================================
+
+statement ok
+CREATE TABLE t_between (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_between VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# Basic BETWEEN: id BETWEEN 2 AND 4  ->  range [2, 4]  ->  3 rows
+query
+SELECT * FROM t_between WHERE id BETWEEN 2 AND 4 ORDER BY id;
+----
+id	val
+2	20
+3	30
+4	40
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_between WHERE id BETWEEN 2 AND 4;
+----
+QUERY PLAN
+<slt:ignore>[t_between, type=rocksdb_range_lookup, ranges=[{id=[2, 4]}]]<slt:ignore>
+
+# Degenerate BETWEEN where bounds are equal: id BETWEEN 3 AND 3  ->  point lookup
+query
+SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
+----
+id	val
+3	30
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
+----
+QUERY PLAN
+<slt:ignore>[t_between, type=rocksdb_point_lookup, points=[(id=3)]]<slt:ignore>
+
+# Impossible BETWEEN (lo > hi): id BETWEEN 4 AND 2  ->  0 rows
+query
+SELECT count(*) FROM t_between WHERE id BETWEEN 4 AND 2;
+----
+count
+0
+
+statement ok
+DROP TABLE t_between;
+
+# BETWEEN on compound PK: prefix equality + range on next column
+statement ok
+CREATE TABLE t_between_cpk (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_between_cpk VALUES
+  (1, 1, 11), (1, 3, 13), (1, 5, 15), (1, 7, 17),
+  (2, 2, 22), (2, 4, 24), (2, 6, 26);
+
+# a = 1 AND b BETWEEN 3 AND 6  ->  range lookup {a=1, b=[3, 6]}  ->  2 rows
+query
+SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6 ORDER BY b;
+----
+a	b	val
+1	3	13
+1	5	15
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6;
+----
+QUERY PLAN
+<slt:ignore>[t_between_cpk, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, 6]}]]<slt:ignore>
+
+statement ok
+DROP TABLE t_between_cpk;
+
+# =============================================================================
+# Contradictory sub-expression simplification
+# =============================================================================
+
+statement ok
+CREATE TABLE t_contra (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_contra VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# id > 0 AND (id = 4 OR (id = 2 AND id != 2))
+# Inner AND: id=2 AND id!=2 -> contradictory (no row satisfies both)
+# OR: contradictory branch contributes nothing -> reduces to id=4
+# AND with id>0: intersect -> id=4 (point lookup)
+query
+SELECT * FROM t_contra WHERE id > 0 AND (id = 4 OR (id = 2 AND id != 2));
+----
+id	val
+4	40
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT * FROM t_contra
+  WHERE id > 0 AND (id = 4 OR (id = 2 AND id != 2));
+----
+QUERY PLAN
+<slt:ignore>[t_contra, type=rocksdb_point_lookup, points=[(id=4)]]<slt:ignore>
+
+statement ok
+DROP TABLE t_contra;
+
+# =============================================================================
+# DML with point lookup data source
+# =============================================================================
+
+statement ok
+CREATE TABLE t_dml_point (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_dml_point VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# UPDATE via point lookup: only id=3 changes.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_point SET val = 99 WHERE id = 3;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_point, type=rocksdb_point_lookup, points=[(id=3)]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+UPDATE t_dml_point SET val = 99 WHERE id = 3;
+
+query
+SELECT * FROM t_dml_point ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	99
+4	40
+5	50
+
+# DELETE via point lookup: only id=1 removed.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_point WHERE id = 1;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_point, type=rocksdb_point_lookup, points=[(id=1)]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+DELETE FROM t_dml_point WHERE id = 1;
+
+query
+SELECT * FROM t_dml_point ORDER BY id;
+----
+id	val
+2	20
+3	99
+4	40
+5	50
+
+# DELETE non-existent key: 0 rows affected, table unchanged.
+statement count 0
+DELETE FROM t_dml_point WHERE id = 999;
+
+query
+SELECT count(*) FROM t_dml_point;
+----
+count
+4
+
+# UPDATE non-existent key: 0 rows affected.
+statement count 0
+UPDATE t_dml_point SET val = 0 WHERE id = 999;
+
+query
+SELECT count(*) FROM t_dml_point;
+----
+count
+4
+
+# Multi-point DELETE via IN: removes id=2 and id=4.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_point WHERE id IN (2, 4);
+----
+QUERY PLAN
+<slt:ignore>[t_dml_point, type=rocksdb_point_lookup, points=[(id=2), (id=4)]]<slt:ignore>
+
+skipif serenedb
+statement count 2
+DELETE FROM t_dml_point WHERE id IN (2, 4);
+
+query
+SELECT * FROM t_dml_point ORDER BY id;
+----
+id	val
+3	99
+5	50
+
+statement ok
+DROP TABLE t_dml_point;
+
+
+# =============================================================================
+# DML with range lookup data source
+# =============================================================================
+
+statement ok
+CREATE TABLE t_dml_range (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_dml_range VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# UPDATE via range lookup: ids 2..4 updated.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_range, type=rocksdb_range_lookup, ranges=[{id=[2, 4]}]]<slt:ignore>
+
+skipif serenedb
+statement count 3
+UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
+
+query
+SELECT * FROM t_dml_range ORDER BY id;
+----
+id	val
+1	10
+2	0
+3	0
+4	0
+5	50
+
+# DELETE via range lookup: ids > 3.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_range WHERE id > 3;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_range, type=rocksdb_range_lookup, ranges=[{id=(3, +inf)}]]<slt:ignore>
+
+skipif serenedb
+statement count 2
+DELETE FROM t_dml_range WHERE id > 3;
+
+query
+SELECT * FROM t_dml_range ORDER BY id;
+----
+id	val
+1	10
+2	0
+3	0
+
+# DELETE range that matches no rows: id > 100.
+statement count 0
+DELETE FROM t_dml_range WHERE id > 100;
+
+query
+SELECT count(*) FROM t_dml_range;
+----
+count
+3
+
+# DELETE all rows via range covering the full table.
+statement count 3
+DELETE FROM t_dml_range WHERE id >= 1;
+
+query
+SELECT count(*) FROM t_dml_range;
+----
+count
+0
+
+statement ok
+DROP TABLE t_dml_range;
+
+
+# =============================================================================
+# DML with compound PK — point and range lookup
+# =============================================================================
+
+statement ok
+CREATE TABLE t_dml_cpk (a INTEGER, b INTEGER, val INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO t_dml_cpk VALUES
+  (1, 1, 11), (1, 3, 13), (1, 5, 15),
+  (2, 2, 22), (2, 4, 24), (2, 6, 26),
+  (3, 1, 31), (3, 3, 33);
+
+# UPDATE via full-PK point lookup: only (2,4) changes.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_cpk SET val = 99 WHERE a = 2 AND b = 4;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_cpk, type=rocksdb_point_lookup, points=[(a=2, b=4)]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+UPDATE t_dml_cpk SET val = 99 WHERE a = 2 AND b = 4;
+
+query
+SELECT * FROM t_dml_cpk WHERE a = 2 ORDER BY b;
+----
+a	b	val
+2	2	22
+2	4	99
+2	6	26
+
+# DELETE via prefix range: all rows where a=1 AND b >= 3.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_cpk, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, +inf)}]]<slt:ignore>
+
+skipif serenedb
+statement count 2
+DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
+
+query
+SELECT * FROM t_dml_cpk WHERE a = 1 ORDER BY b;
+----
+a	b	val
+1	1	11
+
+# UPDATE via prefix equality only (a=3): both rows in prefix group updated.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_cpk SET val = 0 WHERE a = 3;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_cpk, type=rocksdb_range_lookup, ranges=[{a=3}]]<slt:ignore>
+
+skipif serenedb
+statement count 2
+UPDATE t_dml_cpk SET val = 0 WHERE a = 3;
+
+query
+SELECT * FROM t_dml_cpk WHERE a = 3 ORDER BY b;
+----
+a	b	val
+3	1	0
+3	3	0
+
+# DELETE via BETWEEN on second PK column: a=2 AND b BETWEEN 2 AND 4.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_cpk, type=rocksdb_range_lookup, ranges=[{a=2, b=[2, 4]}]]<slt:ignore>
+
+skipif serenedb
+statement count 2
+DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
+
+query
+SELECT * FROM t_dml_cpk ORDER BY a, b;
+----
+a	b	val
+1	1	11
+2	6	26
+3	1	0
+3	3	0
+
+# DELETE non-existent point in compound PK: 0 rows.
+statement count 0
+DELETE FROM t_dml_cpk WHERE a = 9 AND b = 9;
+
+statement ok
+DROP TABLE t_dml_cpk;
+
+
+# =============================================================================
+# DML within a transaction (RYOW): point and range lookup see own writes
+# =============================================================================
+
+statement ok
+CREATE TABLE t_dml_ryow (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_dml_ryow VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 1;
+
+statement ok
+BEGIN;
+
+# Insert a new row; read it back to verify it is visible within the tx.
+statement count 1
+INSERT INTO t_dml_ryow VALUES (6, 60);
+
+query
+SELECT * FROM t_dml_ryow WHERE id = 6;
+----
+id	val
+6	60
+
+# Update inside tx; verify the new value is visible.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_ryow SET val = 99 WHERE id = 3;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_ryow, type=rocksdb_point_lookup, points=[(id=3)]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+UPDATE t_dml_ryow SET val = 99 WHERE id = 3;
+
+query
+SELECT * FROM t_dml_ryow WHERE id = 3;
+----
+id	val
+3	99
+
+# Delete inside tx; verify the row is gone.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_ryow WHERE id = 2;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_ryow, type=rocksdb_point_lookup, points=[(id=2)]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+DELETE FROM t_dml_ryow WHERE id = 2;
+
+query
+SELECT count(*) FROM t_dml_ryow WHERE id = 2;
+----
+count
+0
+
+# Range scan inside tx sees pre-existing, inserted, and updated rows.
+query
+SELECT * FROM t_dml_ryow WHERE id >= 4 ORDER BY id;
+----
+id	val
+4	40
+5	50
+6	60
+
+statement ok
+ROLLBACK;
+
+# After rollback all changes are gone.
+query
+SELECT * FROM t_dml_ryow ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+4	40
+5	50
+
+onlyif serenedb
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+statement ok
+DROP TABLE t_dml_ryow;
+
+
+# =============================================================================
+# DML corner cases
+# =============================================================================
+
+statement ok
+CREATE TABLE t_dml_corner (id INTEGER PRIMARY KEY, val INTEGER);
+
+statement ok
+INSERT INTO t_dml_corner VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+
+# Contradictory range (id > 5 AND id < 1): 0 rows affected.
+statement count 0
+DELETE FROM t_dml_corner WHERE id > 5 AND id < 1;
+
+query
+SELECT count(*) FROM t_dml_corner;
+----
+count
+5
+
+# UPDATE with contradictory constraint on same column (id = 3 AND id != 3): 0 rows.
+statement count 0
+UPDATE t_dml_corner SET val = 0 WHERE id = 3 AND id != 3;
+
+query
+SELECT val FROM t_dml_corner WHERE id = 3;
+----
+val
+30
+
+# Range boundary: DELETE id >= 5 (only the last row).
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) DELETE FROM t_dml_corner WHERE id >= 5;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_corner, type=rocksdb_range_lookup, ranges=[{id=[5, +inf)}]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+DELETE FROM t_dml_corner WHERE id >= 5;
+
+query
+SELECT * FROM t_dml_corner ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+4	40
+
+# Range boundary: UPDATE id < 2 (only the first row).
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_corner SET val = 99 WHERE id < 2;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_corner, type=rocksdb_range_lookup, ranges=[{id=(-inf, 2)}]]<slt:ignore>
+
+skipif serenedb
+statement count 1
+UPDATE t_dml_corner SET val = 99 WHERE id < 2;
+
+query
+SELECT * FROM t_dml_corner ORDER BY id;
+----
+id	val
+1	99
+2	20
+3	30
+4	40
+
+# id != 3 -> range lookup, updates all rows except id=3.
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) UPDATE t_dml_corner SET val = 0 WHERE id != 3;
+----
+QUERY PLAN
+<slt:ignore>[t_dml_corner, type=rocksdb_range_lookup, ranges=[{id=(-inf, 3)}, {id=(3, +inf)}]]<slt:ignore>
+
+skipif serenedb
+statement count 3
+UPDATE t_dml_corner SET val = 0 WHERE id != 3;
+
+query
+SELECT * FROM t_dml_corner ORDER BY id;
+----
+id	val
+1	0
+2	0
+3	30
+4	0
+
+statement ok
+DROP TABLE t_dml_corner;

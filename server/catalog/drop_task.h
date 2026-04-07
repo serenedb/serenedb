@@ -40,6 +40,7 @@
 #include "catalog/types.h"
 #include "general_server/scheduler.h"
 #include "rest_server/serened_single.h"
+#include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"
 #include "yaclib/async/make.hpp"
 
@@ -67,7 +68,7 @@ class DropTask {
 
   static AsyncResult ExecuteTask(std::shared_ptr<DropTask> task) {
     SDB_ASSERT(task);
-    if (!task->_object.expired()) {
+    if (!task->AllowToDrop()) {
       SDB_TRACE("xxxxx", Logger::ROCKSDB,
                 "Waiting till the snapshots will free the object ",
                 task->GetContext());
@@ -77,9 +78,14 @@ class DropTask {
     return task->Execute();
   }
 
+  bool AllowToDrop() const noexcept {
+    return _object.expired() && AllowToDropDependencies();
+  }
+
   virtual AsyncResult Execute() = 0;
   virtual std::string_view GetName() const noexcept = 0;
   virtual std::string GetContext() const noexcept = 0;
+  virtual bool AllowToDropDependencies() const noexcept = 0;
 
  protected:
   ObjectId _parent_id;
@@ -108,34 +114,58 @@ class TableShardDrop final : public DropTask,
 
   AsyncResult Execute() final;
 
+  bool AllowToDropDependencies() const noexcept final { return true; }
+
  private:
   uint64_t _size;
+};
+
+struct IndexShardDrop final : public DropTask,
+                              std::enable_shared_from_this<IndexShardDrop> {
+ public:
+  IndexShardDrop(const std::shared_ptr<IndexShard>& shard)
+    : DropTask{shard, shard->GetIndexId()} {}
+
+  IndexShardDrop(ObjectId id, ObjectId parent_id) : DropTask{id, parent_id} {}
+
+  std::string GetContext() const noexcept final {
+    return absl::Substitute("IndexShardDrop(index $0 shard $1)",
+                            _parent_id.id(), _id.id());
+  }
+
+  std::string_view GetName() const noexcept final { return "index shard drop"; }
+
+  AsyncResult Execute() final { SDB_UNREACHABLE(); }
+
+  bool AllowToDropDependencies() const noexcept final { return true; }
 };
 
 struct IndexDrop final : public DropTask,
                          std::enable_shared_from_this<IndexDrop> {
  public:
-  IndexDrop(ObjectId id, catalog::ObjectType type, ObjectId db_id,
-            ObjectId schema_id, ObjectId table_id, ObjectId shard_id,
-            bool is_root = false)
+  IndexDrop(ObjectId id, ObjectType type, ObjectId db_id, ObjectId schema_id,
+            ObjectId table_id, bool is_root = false)
     : DropTask{id, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
-      _shard_id{shard_id},
       _type{type} {}
 
-  IndexDrop(const std::shared_ptr<Index>& index, ObjectId db_id,
-            ObjectId schema_id, ObjectId table_id, ObjectId shard_id,
-            bool is_root = false)
+  IndexDrop(const std::shared_ptr<Index>& index,
+            std::shared_ptr<IndexShardDrop> shard_drop, ObjectId db_id,
+            ObjectId schema_id, ObjectId table_id, bool is_root = false)
     : DropTask{index, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
-      _shard_id{shard_id},
-      _type{index->GetType()} {}
+      _type{index->GetType()},
+      _shard_drop{std::move(shard_drop)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("IndexDrop(schema $0 index $1)", _parent_id.id(),
                             _id.id());
+  }
+
+  bool AllowToDropDependencies() const noexcept final {
+    return !_shard_drop || _shard_drop->AllowToDrop();
   }
 
   std::string_view GetName() const noexcept final { return "index drop"; }
@@ -148,8 +178,8 @@ struct IndexDrop final : public DropTask,
  private:
   ObjectId _db_id;
   ObjectId _schema_id;
-  ObjectId _shard_id;
-  catalog::ObjectType _type;
+  ObjectType _type;
+  std::shared_ptr<IndexShardDrop> _shard_drop;
 };
 
 struct TableDrop final : public DropTask,
@@ -186,6 +216,15 @@ struct TableDrop final : public DropTask,
   AsyncResult Execute() final;
   Result Finalize();
 
+  bool AllowToDropDependencies() const noexcept final {
+    return absl::c_all_of(_indexes,
+                          [](const auto& index) {
+                            SDB_ASSERT(index);
+                            return index->AllowToDrop();
+                          }) &&
+           (!_shard_drop || _shard_drop->AllowToDrop());
+  }
+
  private:
   TableType _type;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
@@ -214,6 +253,13 @@ struct SchemaDrop final : public DropTask,
   AsyncResult Execute() final;
   Result Finalize();
 
+  bool AllowToDropDependencies() const noexcept final {
+    return absl::c_all_of(_tables, [](const auto& table) {
+      SDB_ASSERT(table);
+      return table->AllowToDrop();
+    });
+  }
+
  private:
   std::vector<std::shared_ptr<TableDrop>> _tables;
 };
@@ -236,6 +282,13 @@ struct DatabaseDrop final : public DropTask,
 
   AsyncResult Execute() final;
   Result Finalize();
+
+  bool AllowToDropDependencies() const noexcept final {
+    return absl::c_all_of(_schemas, [](const auto& schema) {
+      SDB_ASSERT(schema);
+      return schema->AllowToDrop();
+    });
+  }
 
  private:
   std::vector<std::shared_ptr<SchemaDrop>> _schemas;

@@ -283,7 +283,7 @@ class SereneDBConnectorTableHandle final
   explicit SereneDBConnectorTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TableLayout& layout,
-    std::vector<SpecificPoint> points,
+    std::vector<ResolvedPoint> points, std::vector<ResolvedRange> ranges,
     velox::core::TypedExprPtr remaining_filter);
 
   bool supportsIndexLookup() const final { return false; }
@@ -304,8 +304,12 @@ class SereneDBConnectorTableHandle final
 
   auto& GetRemainingFilter() const noexcept { return _remaining_filter; }
 
-  const std::vector<SpecificPoint>& GetPoints() const noexcept {
+  const std::vector<ResolvedPoint>& GetPoints() const noexcept {
     return _points;
+  }
+
+  const std::vector<ResolvedRange>& GetRanges() const noexcept {
+    return _ranges;
   }
 
   const containers::FlatHashMap<std::string, FilterColumn>& GetTableColumnMap()
@@ -319,7 +323,8 @@ class SereneDBConnectorTableHandle final
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
   velox::RowTypePtr _pk_type;
-  std::vector<SpecificPoint> _points;
+  std::vector<ResolvedPoint> _points;
+  std::vector<ResolvedRange> _ranges;
   velox::core::TypedExprPtr _remaining_filter;
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
@@ -702,7 +707,7 @@ class SecondaryIndexTableHandle final
 
   SecondaryIndexTableHandle(std::string name, ObjectId table_id,
                             query::Transaction& transaction, ObjectId shard_id,
-                            std::vector<SpecificPoint> points,
+                            std::vector<ResolvedPoint> points,
                             velox::RowTypePtr sk_type,
                             const axiom::connector::Table& underlying_table,
                             bool unique)
@@ -728,7 +733,7 @@ class SecondaryIndexTableHandle final
     const auto& names = _sk_type->names();
     const auto& types = _sk_type->children();
     std::string points_str = absl::StrJoin(
-      _points, ", ", [&](std::string* out, const SpecificPoint& point) {
+      _points, ", ", [&](std::string* out, const ResolvedPoint& point) {
         absl::StrAppend(out, "(");
         for (size_t i = 0; i < point.size(); ++i) {
           if (i > 0) {
@@ -766,7 +771,7 @@ class SecondaryIndexTableHandle final
   query::Transaction& _transaction;
   catalog::Column::Id _effective_column_id;
   ObjectId _shard_id;
-  std::vector<SpecificPoint> _points;
+  std::vector<ResolvedPoint> _points;
   velox::RowTypePtr _sk_type;
   const axiom::connector::Table* _underlying_table;
   bool _unique;
@@ -1126,8 +1131,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
 #endif
 
-      const auto& points = serene_table_handle.GetPoints();
-      if (!points.empty()) {
+      if (const auto& points = serene_table_handle.GetPoints();
+          !points.empty()) {
         return std::make_unique<RocksDBRYOWPointLookupDataSource>(
           *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
           object_key, points, output_column_count, compiled_filter,
@@ -1137,6 +1142,16 @@ class SereneDBConnector final : public velox::connector::Connector {
           PointLookupPKColumnBuilder{});
       }
 
+      if (const auto& ranges_ryow = serene_table_handle.GetRanges();
+          !ranges_ryow.empty()) {
+        return std::make_unique<RocksDBRYOWPrefixRangeLookupDataSource>(
+          *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
+          read_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
+          object_key, output_column_count, rocksdb_transaction.GetSnapshot(),
+          ranges_ryow, serene_table_handle.GetPKType(), compiled_filter,
+          connector_query_ctx->expressionEvaluator());
+      }
+
       return std::make_unique<RocksDBRYOWFullScanDataSource>(
         *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf, read_type,
         column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
@@ -1144,14 +1159,21 @@ class SereneDBConnector final : public velox::connector::Connector {
         connector_query_ctx->expressionEvaluator());
     }
 
-    const auto& points = serene_table_handle.GetPoints();
-    if (!points.empty()) {
+    if (const auto& points = serene_table_handle.GetPoints(); !points.empty()) {
       return std::make_unique<RocksDBSnapshotPointLookupDataSource>(
         *connector_query_ctx->memoryPool(), _cf, read_type, column_oids,
         object_key, points, output_column_count, compiled_filter, snapshot,
         connector_query_ctx->expressionEvaluator(), _db,
         PrimaryKeyBuilder{object_key, serene_table_handle.GetPKType()},
         PointLookupPKColumnBuilder{});
+    }
+
+    if (const auto& ranges = serene_table_handle.GetRanges(); !ranges.empty()) {
+      return std::make_unique<RocksDBSnapshotPrefixRangeLookupDataSource>(
+        *connector_query_ctx->memoryPool(), _db, _cf, read_type, column_oids,
+        serene_table_handle.GetEffectiveColumnId(), object_key,
+        output_column_count, snapshot, ranges, serene_table_handle.GetPKType(),
+        compiled_filter, connector_query_ctx->expressionEvaluator());
     }
 
     return std::make_unique<RocksDBSnapshotFullScanDataSource>(

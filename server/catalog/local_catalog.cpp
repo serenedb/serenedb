@@ -186,8 +186,10 @@ class SnapshotImpl : public Snapshot {
     ObjectId db_id, ObjectId schema_id, ObjectId table_id,
     const std::shared_ptr<Index>& index, bool is_root) {
     auto index_deps = GetDependency<IndexDependency>(index->GetId());
-    return std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
-                                       index_deps->shard_id, is_root);
+    auto shard = GetObject<IndexShard>(index_deps->shard_id);
+    auto shard_drop = std::make_shared<IndexShardDrop>(shard);
+    return std::make_shared<IndexDrop>(index, std::move(shard_drop), db_id,
+                                       schema_id, table_id, is_root);
   }
 
   template<typename T>
@@ -1807,16 +1809,6 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
         !r.ok()) {
       return r;
-    }
-
-    if (index->GetType() == ObjectType::InvertedIndex) {
-      auto deps = clone->GetDependency<IndexDependency>(*(index_id));
-      SDB_ASSERT(deps);
-      if (deps->shard_id.isSet()) {
-        auto shard = clone->GetObject<IndexShard>(deps->shard_id);
-        SDB_ASSERT(shard);
-        basics::downCast<search::InvertedIndexShard>(*shard).MarkDeleted();
-      }
     }
 
     // Check that SereneDB won't open this index after reboot

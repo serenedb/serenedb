@@ -1,5 +1,6 @@
 add_subdirectory(commands)
 add_subdirectory(functions)
+add_subdirectory(sdb_catalog)
 target_sources(
     sereneserver
     PRIVATE

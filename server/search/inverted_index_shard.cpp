@@ -281,14 +281,8 @@ void InvertedIndexShard::WriteInternal(vpack::Builder& b) const {
   vpack::WriteTuple(b, _options.base);
 }
 
-Snapshot InvertedIndexShard::GetSnapshot() const {
-  return {shared_from_this(), GetInvertedIndexSnapshot()};
-}
-
 void InvertedIndexShard::ScheduleConsolidation(absl::Duration delay) {
-  ConsolidationTask task{shared_from_this(), [self = shared_from_this()] {
-                           return /* TODO */ true;
-                         }};
+  ConsolidationTask task{shared_from_this(), [] { return /* TODO */ true; }};
 
   _state->pending_consolidations.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();

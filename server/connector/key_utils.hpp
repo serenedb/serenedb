@@ -32,6 +32,10 @@
 
 namespace sdb::connector::key_utils {
 
+inline constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+inline constexpr size_t kKeyPrefixSize =
+  kTablePrefixSize + sizeof(catalog::Column::Id);
+
 // Constructs common part of table row. Result could be used with AppendXXX
 // methods to construct full keys.
 std::string PrepareTableKey(ObjectId id);

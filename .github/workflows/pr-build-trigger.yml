@@ -1,7 +1,7 @@
 name: auto | pr trigger
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, labeled]
   issue_comment:
     types: [edited]
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   post-checkboxes:
     if: >-
-      github.event_name == 'pull_request' && (
+      github.event_name == 'pull_request_target' && (
         github.event.action == 'opened' ||
         (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
       )

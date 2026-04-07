@@ -75,16 +75,6 @@ void DuckDBEngine::Initialize() {
                             duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
-  // Attach SereneDB as the default database
-  auto conn = duckdb::make_uniq<duckdb::Connection>(*_db);
-  auto r1 = conn->Query("ATTACH '' AS serenedb (TYPE serenedb)");
-  if (r1->HasError()) {
-    std::cerr << "DuckDB ATTACH failed: " << r1->GetError() << std::endl;
-  }
-  auto r2 = conn->Query("USE serenedb");
-  if (r2->HasError()) {
-    std::cerr << "DuckDB USE failed: " << r2->GetError() << std::endl;
-  }
   std::cerr << "DuckDB engine initialized with SereneDB storage" << std::endl;
 }
 
@@ -92,12 +82,7 @@ void DuckDBEngine::Shutdown() { _db.reset(); }
 
 duckdb::unique_ptr<duckdb::Connection> DuckDBEngine::CreateConnection() {
   SDB_ASSERT(_db);
-  auto conn = duckdb::make_uniq<duckdb::Connection>(*_db);
-  auto r = conn->Query("USE serenedb");
-  if (r->HasError()) {
-    std::cerr << "DuckDB USE serenedb failed: " << r->GetError() << std::endl;
-  }
-  return conn;
+  return duckdb::make_uniq<duckdb::Connection>(*_db);
 }
 
 }  // namespace sdb::query

@@ -185,6 +185,7 @@ psql -h localhost -p 6162 -d postgres -U postgres
 
 ```bash
 # Start server (always clean data dir first)
+kill -9 $(lsof -t -i:6161)
 rm -rf build_data
 ./build/bin/serened ./build_data --server.endpoint pgsql+tcp://0.0.0.0:6161
 

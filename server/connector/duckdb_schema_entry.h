@@ -33,6 +33,8 @@ class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
  public:
   SereneDBSchemaEntry(duckdb::Catalog& catalog, duckdb::CreateSchemaInfo& info);
 
+  ObjectId GetDatabaseId() const;
+
   void Scan(
     duckdb::ClientContext& context, duckdb::CatalogType type,
     const std::function<void(duckdb::CatalogEntry&)>& callback) override;

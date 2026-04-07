@@ -39,7 +39,6 @@
 #include "pg/hba.h"
 #include "pg/sql_error.h"
 #include "utils/exec_context.h"
-#include "utils/query_string.h"
 
 namespace sdb::pg {
 
@@ -149,6 +148,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
   void BuildColumnSerializers(DuckDBPortal& portal);
   void ExecutePortal(DuckDBPortal& portal);
+  void ExecuteNextSimpleStatement();
   void ReleaseResult(DuckDBPortal& portal);
   ProcessState ProcessQueryResult();
   void SendBatch(const duckdb::DataChunk& chunk);

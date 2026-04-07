@@ -28,6 +28,7 @@
 #include <vpack/slice.h>
 
 #include <expected>
+#include <iostream>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 
@@ -60,6 +61,7 @@
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
 #include "general_server/state.h"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
@@ -694,6 +696,22 @@ Result CatalogFeature::Open() {
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
     SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
+  }
+
+  // Attach all existing databases into DuckDB
+  {
+    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    for (auto& db : snapshot->GetDatabases()) {
+      auto id_str = std::to_string(db->GetId().id());
+      auto query = "ATTACH '" + id_str + "' AS \"" + db->GetName() +
+                   "\" (TYPE serenedb)";
+      auto result = conn->Query(query);
+      if (result->HasError()) {
+        std::cerr << "Failed to attach database " << db->GetName() << ": "
+                  << result->GetError() << std::endl;
+      }
+    }
   }
 
   return r;

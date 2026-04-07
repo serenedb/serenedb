@@ -30,6 +30,7 @@
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
+#include "connector/duckdb_catalog.h"
 #include "catalog/index.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
@@ -44,6 +45,10 @@ namespace sdb::connector {
 SereneDBSchemaEntry::SereneDBSchemaEntry(duckdb::Catalog& catalog,
                                          duckdb::CreateSchemaInfo& info)
   : duckdb::SchemaCatalogEntry(catalog, info) {}
+
+ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
+  return catalog.Cast<SereneDBCatalog>().GetDatabaseId();
+}
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   duckdb::CatalogTransaction transaction,
@@ -61,9 +66,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   }
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto databases = snapshot->GetDatabases();
   auto table =
-    snapshot->GetTable(databases.front()->GetId(), "public",
+    snapshot->GetTable(GetDatabaseId(), "public",
                        std::string_view{table_name.data(), table_name.size()});
   if (!table) {
     return nullptr;
@@ -206,15 +210,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog_impl = catalog_feature.Global();
   auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto databases = snapshot->GetDatabases();
-  SDB_ASSERT(!databases.empty());
-  auto& database = *databases.front();
+  auto database_id = GetDatabaseId();
+  auto database = snapshot->GetDatabase(database_id);
+  SDB_ASSERT(database);
 
   // Create table options
   catalog::CreateTableOptions options;
-  auto r = catalog::MakeTableOptions(std::move(request), database.GetId(),
-                                     options, database.GetReplicationFactor(),
-                                     database.GetWriteConcern(), false);
+  auto r = catalog::MakeTableOptions(std::move(request), database_id,
+                                     options, database->GetReplicationFactor(),
+                                     database->GetWriteConcern(), false);
   if (!r.ok()) {
     throw duckdb::InvalidInputException("Failed to create table options: %s",
                                         std::string{r.errorMessage()});
@@ -224,7 +228,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
 
-  r = catalog_impl.CreateTable(database.GetId(), "public", std::move(options),
+  r = catalog_impl.CreateTable(database_id, "public", std::move(options),
                                op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
     return nullptr;
@@ -249,9 +253,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog_impl = catalog_feature.Global();
   auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto databases = snapshot->GetDatabases();
-  SDB_ASSERT(!databases.empty());
-  auto& database = *databases.front();
+  auto database_id = GetDatabaseId();
 
   // Map DuckDB index type to SereneDB IndexType
   // DuckDB default is empty or "ART"; PG default is "btree"
@@ -367,14 +369,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
     create_result = catalog_impl.CreateIndex(
-      database.GetId(), "public", sdb_table->GetName(), std::move(idx_columns),
+      database_id, "public", sdb_table->GetName(), std::move(idx_columns),
       std::move(options), shard_options, {.create_with_tombstone = false});
   } else {
     SecondaryIndexShardOptions shard_options;
     shard_options.base.unique =
       (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateIndex(
-      database.GetId(), "public", sdb_table->GetName(), std::move(idx_columns),
+      database_id, "public", sdb_table->GetName(), std::move(idx_columns),
       std::move(options), shard_options, {.create_with_tombstone = false});
   }
 
@@ -389,7 +391,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   // Start background tasks for inverted indexes
   auto new_snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    new_snapshot->GetRelation(database.GetId(), "public", info.index_name);
+    new_snapshot->GetRelation(database_id, "public", info.index_name);
   if (catalog_index) {
     auto shard = new_snapshot->GetIndexShard(catalog_index->GetId());
     if (shard && shard->GetType() == IndexType::Inverted) {
@@ -463,12 +465,8 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog_impl = catalog_feature.Global();
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto databases = snapshot->GetDatabases();
-  SDB_ASSERT(!databases.empty());
-
   auto r =
-    catalog_impl.DropTable(databases.front()->GetId(), "public", info.name);
+    catalog_impl.DropTable(GetDatabaseId(), "public", info.name);
   bool if_exists = info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
   if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND) && if_exists) {
     return;

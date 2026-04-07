@@ -24,7 +24,11 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/numbers.h>
 
+#include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/execution/executor.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <string_view>
 
 #include "app/app_server.h"
@@ -158,7 +162,8 @@ void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
   try {
     func();
   } catch (const duckdb::Exception& e) {
-    SendError(e.what(), ERRCODE_INTERNAL_ERROR);
+    duckdb::ErrorData error(e);
+    SendError(error.RawMessage(), ERRCODE_INTERNAL_ERROR);
   }
 } catch (const SqlException& e) {
   SendNotice(PQ_MSG_ERROR_RESPONSE, e.error());
@@ -190,12 +195,48 @@ void PgSQLCommTaskBase::ProcessFirstRoot() noexcept {
 }
 
 void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
-  // TODO: multi-statement support for extended protocol
-  // With DuckDB, each statement is prepared individually
+  std::lock_guard lock{_execution_mutex};
+  SDB_ASSERT(!_pop_packet);
+  _pop_packet = true;
+  SafeCall([&] {
+    SDB_ASSERT(_current_portal);
+    auto& stmt = *_current_portal->stmt;
+    ++stmt.current_stmt_idx;
+    if (stmt.current_stmt_idx >= stmt.extracted.size()) {
+      // All statements done
+      _success_packet = true;
+      return;
+    }
+    _anonymous_portal.rows = 0;
+    ExecuteNextSimpleStatement();
+  });
+  if (_pop_packet) {
+    FinishPacket();
+  }
 }
 
 void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
-  // DuckDB execution is synchronous -- no async wakeups needed
+  std::lock_guard lock{_execution_mutex};
+  SDB_ASSERT(!_pop_packet);
+  _pop_packet = true;
+  SafeCall([&] {
+    SDB_ASSERT(_current_portal);
+    auto state = ProcessState::DonePacket;
+    do {
+      state = ProcessQueryResult();
+    } while (state == ProcessState::More);
+    if (state == ProcessState::DonePacket) {
+      // If simple protocol multi-statement, continue with next statement
+      auto& stmt = *_current_portal->stmt;
+      if (_success_packet &&
+          stmt.current_stmt_idx + 1 < stmt.extracted.size()) {
+        _feature.ScheduleProcessNext(weak_from_this());
+        _pop_packet = false;
+        return;
+      }
+    }
+    _pop_packet = state == ProcessState::DonePacket;
+  });
   if (_pop_packet) {
     FinishPacket();
   }
@@ -337,6 +378,9 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         _duckdb_conn->context->registered_state->Insert(
           connector::kSereneDBClientStateKey, std::move(state));
       }
+      // Set default catalog to the user's database
+      // TODO: use CatalogSearchPath::Set directly instead of parsing a query
+      _duckdb_conn->Query(absl::StrCat("USE \"", DatabaseName(), "\""));
 
       _send.Write(ToBuffer(kReadyForQuery), true);
       std::move(cleanup).Cancel();
@@ -567,47 +611,80 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   }
 
   // Extract individual statements (simple protocol allows multi-statement)
-  auto statements = _duckdb_conn->ExtractStatements(std::string{query_string});
-  if (statements.empty()) {
+  _anonymous_statement.Reset();
+  _anonymous_statement.extracted =
+    _duckdb_conn->ExtractStatements(std::string{query_string});
+  if (_anonymous_statement.extracted.empty()) {
     _success_packet = true;
     return;
   }
+  _anonymous_statement.current_stmt_idx = 0;
 
-  for (auto& sql_stmt : statements) {
+  // Execute first statement -- ProcessNextRoot handles remaining if async
+  ExecuteNextSimpleStatement();
+}
+
+void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
+  auto& stmt = _anonymous_statement;
+  SDB_ASSERT(stmt.current_stmt_idx < stmt.extracted.size());
+
+  auto& sql_stmt = stmt.extracted[stmt.current_stmt_idx];
+  stmt.prepared = _duckdb_conn->Prepare(sql_stmt->query);
+  if (stmt.prepared->HasError()) {
+    SendError(stmt.prepared->GetError(), ERRCODE_INTERNAL_ERROR);
+    return;
+  }
+  _current_query = stmt.prepared->query;
+
+  // Bind (no params for simple protocol)
+  DuckDBBindInfo bind_info;
+  _anonymous_portal = BindStatement(stmt, std::move(bind_info));
+
+  // Describe (send RowDescription for simple protocol)
+  DescribeAnalyzedQuery(stmt, _anonymous_portal.bind_info.output_formats,
+                        false);
+
+  // Execute
+  _pop_packet = true;
+  ExecutePortal(_anonymous_portal);
+  if (!_pop_packet) {
+    return;  // went async -- ProcessWakeup will resume, then ProcessNextRoot
+  }
+  if (!_success_packet) {
+    return;  // error
+  }
+
+  // Advance to next statement if any
+  ++stmt.current_stmt_idx;
+  while (stmt.current_stmt_idx < stmt.extracted.size()) {
     if (IsCancelled()) {
       return;
     }
-
-    // Prepare
-    _anonymous_statement.Reset();
-    _anonymous_statement.prepared = _duckdb_conn->Prepare(sql_stmt->query);
-    if (_anonymous_statement.prepared->HasError()) {
-      SendError(_anonymous_statement.prepared->GetError(),
-                ERRCODE_INTERNAL_ERROR);
+    auto& next = stmt.extracted[stmt.current_stmt_idx];
+    stmt.prepared = _duckdb_conn->Prepare(next->query);
+    if (stmt.prepared->HasError()) {
+      SendError(stmt.prepared->GetError(), ERRCODE_INTERNAL_ERROR);
       return;
     }
-    _current_query = _anonymous_statement.prepared->query;
+    _current_query = stmt.prepared->query;
 
-    // Bind (no params for simple protocol)
-    DuckDBBindInfo bind_info;
-    _anonymous_portal =
-      BindStatement(_anonymous_statement, std::move(bind_info));
+    DuckDBBindInfo next_bind;
+    _anonymous_portal = BindStatement(stmt, std::move(next_bind));
+    DescribeAnalyzedQuery(stmt, _anonymous_portal.bind_info.output_formats,
+                          false);
 
-    // Describe (send RowDescription for simple protocol)
-    DescribeAnalyzedQuery(_anonymous_statement,
-                          _anonymous_portal.bind_info.output_formats, false);
-
-    // Execute
+    _anonymous_portal.rows = 0;
     _pop_packet = true;
     ExecutePortal(_anonymous_portal);
-    if (!_success_packet) {
-      return;  // error occurred
+    if (!_pop_packet) {
+      return;  // went async
     }
+    if (!_success_packet) {
+      return;  // error
+    }
+    ++stmt.current_stmt_idx;
   }
-  // TODO(future): optimize to use conn->Query() directly for simple protocol
 }
-
-// Not used -- extended protocol uses DuckDB Prepare directly in ParseQuery.
 
 void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
   if (IsCancelled()) {
@@ -891,18 +968,32 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   if (IsCancelled()) {
     return;
   }
-  // Execute the prepared statement with bound parameters
+  // Start async execution via PendingQuery
   auto& prepared = *portal.stmt->prepared;
-  portal.result = prepared.Execute(portal.bind_info.param_values);
-  if (portal.result->HasError()) {
-    SendError(portal.result->GetError(), ERRCODE_INTERNAL_ERROR);
+  portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
+  if (portal.pending->HasError()) {
+    SendError(portal.pending->GetError(), ERRCODE_INTERNAL_ERROR);
+    portal.pending.reset();
     return;
   }
-  _current_portal = &portal;
+  {
+    std::lock_guard lock{_queue_mutex};
+    if (IsCancelled()) {
+      portal.pending.reset();
+      return;
+    }
+    _current_portal = &portal;
+  }
+  // Register callback so DuckDB wakes us when a blocked task becomes ready
+  duckdb::Executor::Get(*_duckdb_conn->context)
+    .SetTaskRescheduledCallback([weak = weak_from_this(), feature = &_feature] {
+      feature->ScheduleProcessWakeup(weak);
+    });
   auto state = ProcessState::DonePacket;
   do {
     state = ProcessQueryResult();
   } while (state == ProcessState::More);
+  // Callback is destroyed with the Executor when query finishes.
   _pop_packet = state == ProcessState::DonePacket;
 }
 
@@ -963,13 +1054,12 @@ void PgSQLCommTaskBase::SendBatch(const duckdb::DataChunk& chunk) {
     return;
   }
 
-  // DML: extract affected row count
+  // DML: extract affected row count (single row with count)
   auto return_type =
     portal.stmt->prepared->GetStatementProperties().return_type;
   if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
-    for (duckdb::idx_t i = 0; i < batch_rows; ++i) {
-      portal.rows += chunk.GetValue(0, i).GetValue<int64_t>();
-    }
+    SDB_ASSERT(batch_rows == 1);
+    portal.rows += chunk.GetValue(0, 0).GetValue<int64_t>();
     return;
   }
 
@@ -1003,16 +1093,60 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   SDB_ASSERT(_current_portal);
   auto& portal = *_current_portal;
   SDB_ASSERT(portal.stmt);
+
+  // If we have a pending query, drive execution
+  if (portal.pending) {
+    auto status = portal.pending->ExecuteTask();
+    switch (status) {
+      case duckdb::PendingExecutionResult::RESULT_READY: {
+        // Execution complete -- get the streaming result
+        portal.result = portal.pending->Execute();
+        portal.pending.reset();
+        if (portal.result->HasError()) {
+          SendError(portal.result->GetError(), ERRCODE_INTERNAL_ERROR);
+          ReleaseResult(portal);
+          _success_packet = false;
+          return ProcessState::DonePacket;
+        }
+        // Fall through to fetch first chunk
+        break;
+      }
+      case duckdb::PendingExecutionResult::RESULT_NOT_READY:
+      case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
+        // More work needed -- continue polling
+        return ProcessState::More;
+      case duckdb::PendingExecutionResult::BLOCKED:
+        // Blocked -- schedule async wakeup that will WaitForTask + resume
+        _feature.ScheduleProcessWakeup(weak_from_this());
+        return ProcessState::Wait;
+      case duckdb::PendingExecutionResult::EXECUTION_FINISHED:
+        // Same as RESULT_READY -- execution complete
+        portal.result = portal.pending->Execute();
+        portal.pending.reset();
+        if (portal.result->HasError()) {
+          SendError(portal.result->GetError(), ERRCODE_INTERNAL_ERROR);
+          ReleaseResult(portal);
+          _success_packet = false;
+          return ProcessState::DonePacket;
+        }
+        break;
+      case duckdb::PendingExecutionResult::EXECUTION_ERROR:
+        SendError(portal.pending->GetError(), ERRCODE_INTERNAL_ERROR);
+        ReleaseResult(portal);
+        _success_packet = false;
+        return ProcessState::DonePacket;
+    }
+  }
+
   SDB_ASSERT(portal.result);
 
-  auto chunk = portal.result->Fetch();
+  auto chunk = portal.result->FetchRaw();
   if (!chunk || chunk->size() == 0) {
     // Done -- send command complete
     auto stmt_type = portal.result->statement_type;
     SendCommandComplete(stmt_type, portal.rows);
 
     ReleaseResult(portal);
-    // TODO: multi-statement support for simple protocol
     _success_packet = true;
     return ProcessState::DonePacket;
   }

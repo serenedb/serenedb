@@ -22,6 +22,7 @@
 
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
@@ -32,8 +33,10 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/database_size.hpp>
 
+#include "catalog/schema.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
@@ -43,43 +46,84 @@
 
 namespace sdb::connector {
 
-SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db)
-  : duckdb::Catalog(db) {}
+SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db,
+                                 std::shared_ptr<catalog::Database> database)
+  : duckdb::Catalog{db}, _database{std::move(database)} {}
 
-void SereneDBCatalog::Initialize(bool load_builtin) {
+void SereneDBCatalog::Initialize(bool load_builtin) {}
+
+SereneDBSchemaEntry& SereneDBCatalog::GetOrCreateSchemaEntry(
+  const std::string& schema_name) {
+  auto it = _schemas.find(schema_name);
+  if (it != _schemas.end()) {
+    return *it->second;
+  }
   auto info = duckdb::make_uniq<duckdb::CreateSchemaInfo>();
-  info->schema = "main";  // "main"
-  _default_schema = duckdb::make_uniq<SereneDBSchemaEntry>(*this, *info);
+  info->schema = schema_name;
+  auto entry = duckdb::make_uniq<SereneDBSchemaEntry>(*this, *info);
+  auto& ref = *entry;
+  _schemas[schema_name] = std::move(entry);
+  _schema_infos[schema_name] = std::move(info);
+  return ref;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
-  throw duckdb::NotImplementedException("CREATE SCHEMA through DuckDB");
+  auto& catalog_impl = catalog::GetCatalog();
+  auto schema = std::make_shared<catalog::Schema>(
+    GetDatabaseId(), catalog::SchemaOptions{.name = info.schema});
+  auto r = catalog_impl.CreateSchema(GetDatabaseId(), std::move(schema));
+  bool if_not_exists =
+    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return nullptr;
+  }
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to create schema: %s",
+                                        std::string{r.errorMessage()});
+  }
+  return &GetOrCreateSchemaEntry(info.schema);
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
   duckdb::CatalogTransaction transaction,
   const duckdb::EntryLookupInfo& schema_lookup,
   duckdb::OnEntryNotFound if_not_found) {
-  auto schema_name = schema_lookup.GetEntryName();
-  // Map "main", "public", or default to our single schema
-  if (schema_name == "main" || schema_name == "public" || schema_name.empty()) {
-    return _default_schema.get();
+  auto schema_name = std::string{schema_lookup.GetEntryName()};
+  // DuckDB uses "main" as default schema; map to "public" for PG compat
+  if (schema_name == "main" || schema_name.empty()) {
+    schema_name = "public";
   }
-  // Return null for unknown schemas -- DuckDB will fall through to system
-  // catalog
-  return nullptr;
+  // Check if schema exists in SereneDB catalog
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto schema = snapshot->GetSchema(GetDatabaseId(), schema_name);
+  if (!schema) {
+    return nullptr;
+  }
+  return &GetOrCreateSchemaEntry(schema_name);
 }
 
 void SereneDBCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
-  callback(*_default_schema);
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto schemas = snapshot->GetSchemas(GetDatabaseId());
+  for (auto& schema : schemas) {
+    callback(GetOrCreateSchemaEntry(std::string{schema->GetName()}));
+  }
 }
 
 void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
                                  duckdb::DropInfo& info) {
-  throw duckdb::NotImplementedException("DROP SCHEMA through DuckDB");
+  auto& catalog_impl = catalog::GetCatalog();
+  bool cascade = info.cascade;
+  auto r = catalog_impl.DropSchema(GetDatabaseId(), info.name, cascade);
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to drop schema: %s",
+                                        std::string{r.errorMessage()});
+  }
+  _schemas.erase(info.name);
+  _schema_infos.erase(info.name);
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(

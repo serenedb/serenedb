@@ -9,10 +9,7 @@ import { ConsoleSidebarTopbar } from "./ConsoleSidebarTopbar";
 import { ConsoleSidebarHeader } from "./ConsoleSidebarHeader";
 import { ConsoleSidebarSavedQueries } from "./ConsoleSidebarSavedQueries";
 import { ConsoleSidebarPinned } from "./ConsoleSidebarPinned";
-import {
-    EntitiesIcon,
-    SavedQueriesIcon,
-} from "@serene-ui/shared-frontend";
+import { EntitiesIcon, SavedQueriesIcon } from "@serene-ui/shared-frontend";
 import { PinIcon } from "../../../../shared/ui/icons/index";
 import { ConsoleExplorer } from "../../ConsoleExplorer";
 import { useDockviewLayoutSync } from "../../../../shared/hooks";
@@ -80,7 +77,11 @@ const restoreLayout = (event: PaneviewReadyEvent, storageKey: string) => {
 };
 
 const ensurePinnedPanel = (event: PaneviewReadyEvent) => {
-    if (event.api.panels.some((panel) => panel.id === CONSOLE_SIDEBAR_PINNED_PANEL_ID)) {
+    if (
+        event.api.panels.some(
+            (panel) => panel.id === CONSOLE_SIDEBAR_PINNED_PANEL_ID,
+        )
+    ) {
         return;
     }
 
@@ -191,7 +192,10 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
                 return;
             }
 
-            if (!entitiesPanel.api.isExpanded || !savedQueriesPanel.api.isExpanded) {
+            if (
+                !entitiesPanel.api.isExpanded ||
+                !savedQueriesPanel.api.isExpanded
+            ) {
                 return;
             }
 
@@ -202,7 +206,10 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = () => {
                 size: Math.max(targetPanelHeight, entitiesPanel.minimumSize),
             });
             savedQueriesPanel.api.setSize({
-                size: Math.max(targetPanelHeight, savedQueriesPanel.minimumSize),
+                size: Math.max(
+                    targetPanelHeight,
+                    savedQueriesPanel.minimumSize,
+                ),
             });
         },
         [],

@@ -34,14 +34,21 @@ export const ConsoleSidebarHeader = (
     }, []);
 
     React.useEffect(() => {
-        const disposable = props.containerApi.onDidLayoutChange((event) => {
+        const updateBorderVisibility = () => {
             const panels = props.containerApi.panels;
 
             if (panels.some((item) => item.api.isExpanded)) {
                 setShouldHideBorder(true);
                 return;
             }
+
             setShouldHideBorder(false);
+        };
+
+        updateBorderVisibility();
+
+        const disposable = props.containerApi.onDidLayoutChange(() => {
+            updateBorderVisibility();
         });
 
         return () => {
